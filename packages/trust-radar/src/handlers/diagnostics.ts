@@ -730,6 +730,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       recent_attempts: Array<{ generated_at: string; trigger: string; emailed: number; report_date: string }>;
       most_recent_error: string | null;
       most_recent_recipient: string | null;
+      /** Full Resend response on the most recent failure (cached in KV).
+       *  Includes HTTP status, Resend error `name` discriminator, message,
+       *  and up to 1KB of raw body. Null when no failure has been cached. */
+      resend_last_error: unknown;
     };
     try {
       const recentRow = await env.DB.prepare(
@@ -773,6 +777,21 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       const hoursSinceEmailed = emailedRow?.most_recent_emailed
         ? Math.round((Date.now() - Date.parse(emailedRow.most_recent_emailed.replace(' ', 'T') + 'Z')) / 3_600_000)
         : null;
+      // Resend full-error breadcrumb — written by sendViaResend on every
+      // failed pull (TTL 7 days). The `message` field captured in
+      // threat_briefings.report_data.email_error is truncated; this KV
+      // entry has the HTTP status, error name discriminator, and raw body
+      // up to 1KB. Surfacing it here lets the diagnostics endpoint show
+      // operators whether the failure mode is "rotate the key,"
+      // "verify the domain," or "you hit the rate limit."
+      let resendLastError: unknown = null;
+      try {
+        const cached = await env.CACHE.get('briefing:resend_last_error');
+        if (cached) {
+          try { resendLastError = JSON.parse(cached); } catch { resendLastError = cached; }
+        }
+      } catch { /* non-fatal */ }
+
       briefingStatus = {
         resend_configured: !!env.RESEND_API_KEY,
         most_recent_attempt: recentRow?.most_recent_attempt ?? null,
@@ -783,6 +802,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         recent_attempts: recentList.results,
         most_recent_error: mostRecentError,
         most_recent_recipient: mostRecentRecipient,
+        resend_last_error: resendLastError,
       };
     } catch {
       briefingStatus = {
@@ -795,6 +815,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         recent_attempts: [],
         most_recent_error: null,
         most_recent_recipient: null,
+        resend_last_error: null,
       };
     }
 
