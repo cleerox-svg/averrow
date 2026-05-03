@@ -280,7 +280,7 @@ export async function runFeed(
  *   - feed_configs.enabled = 0
  *   - feed_configs.paused_reason = 'auto:consecutive_failures'
  *     (ONLY the auto path; manual / operator pauses are untouched)
- *   - feed_status.last_failure_at IS NULL OR < now - 4 hours
+ *   - feed_status.last_failure IS NULL OR < now - 4 hours
  *
  * Action per matched feed:
  *   - feed_configs: enabled = 1, paused_reason = NULL
@@ -301,8 +301,8 @@ async function autoRecoverStalePausedFeeds(env: Env): Promise<number> {
     LEFT JOIN feed_status fs ON fs.feed_name = fc.feed_name
     WHERE fc.enabled = 0
       AND fc.paused_reason = 'auto:consecutive_failures'
-      AND (fs.last_failure_at IS NULL
-           OR fs.last_failure_at < datetime('now', '-4 hours'))
+      AND (fs.last_failure IS NULL
+           OR fs.last_failure < datetime('now', '-4 hours'))
   `).all<{ feed_name: string }>();
 
   if (stale.results.length === 0) return 0;
