@@ -135,12 +135,12 @@ migrations_dir = "migrations-audit"
 # helper (lib/geoip-mmdb.ts) returns null — cartographer falls
 # through to its normal pipeline. No regression for environments
 # that haven't enabled the binding.
-#
-# [[d1_databases]]
-# binding = "GEOIP_DB"
-# database_name = "geoip-db"
-# database_id = "<UUID FROM STEP 1>"
-# migrations_dir = "migrations-geoip"
+
+[[d1_databases]]
+binding = "GEOIP_DB"
+database_name = "geoip-db"
+database_id = "f47a6b18-b343-46d9-87e8-ef8ef4aa8521"
+migrations_dir = "migrations-geoip"
 
 # ─── KV Namespace (cache) ────────────────────────────────────
 [[kv_namespaces]]
