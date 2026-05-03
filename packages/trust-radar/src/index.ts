@@ -246,6 +246,51 @@ export default {
         });
       }
 
+      // GET /api/internal/geoip-status
+      // MCP-callable read of getGeoMmdbStatus(): row count, shadow
+      // table progress, recent_attempts, oldest running refresh
+      // age. Same shape as the admin endpoint but bypasses JWT —
+      // operator-tooling triage from MCP.
+      if (url.pathname === '/api/internal/geoip-status' && request.method === 'GET') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { getGeoMmdbStatus } = await import('./lib/geoip-mmdb');
+        const status = await getGeoMmdbStatus(env);
+        return Response.json({ success: true, data: status });
+      }
+
+      // POST /api/internal/geoip-refresh
+      // MCP-callable refresh trigger. Same semantics as the admin
+      // endpoint: optional `forceReload` body bypasses the
+      // skip-if-current guard.
+      if (url.pathname === '/api/internal/geoip-refresh' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        let forceReload = false;
+        try {
+          const body = await request.json().catch(() => null) as { forceReload?: boolean } | null;
+          if (body && typeof body.forceReload === 'boolean') forceReload = body.forceReload;
+        } catch { /* missing/invalid body is fine */ }
+        const { agentModules } = await import('./agents/index');
+        const { executeAgent } = await import('./lib/agentRunner');
+        const mod = agentModules['geoip_refresh'];
+        if (!mod) return new Response('geoip_refresh agent not registered', { status: 500 });
+        const result = await executeAgent(
+          env,
+          mod,
+          { trigger: 'mcp_internal', forceReload },
+          'api',
+          'event',
+        );
+        return Response.json({ success: true, data: result });
+      }
+
       // POST /api/internal/notifications/sweep-stale-platform
       // Marks platform_* notifications older than ?olderThanMinutes
       // as state='done'. Used to clear pre-fix stale alerts from
