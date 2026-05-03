@@ -253,6 +253,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "feed_configs",
         "feed_pull_history",
         "feed_status",
+        "geo_ip_refresh_log",
         "push_subscriptions",
         "social_mentions",
         "threat_briefings",
@@ -262,11 +263,12 @@ export const REPO_MANIFEST: RepoInventory = {
         "agent_activity_log",
         "agent_runs",
         "backlog_history",
+        "geo_ip_refresh_log",
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 1558,
-      "last_modified": "2026-05-02T03:59:17.386Z"
+      "loc": 1624,
+      "last_modified": "2026-05-03T02:26:07.026Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -288,13 +290,16 @@ export const REPO_MANIFEST: RepoInventory = {
       "triggers": [
         "cron"
       ],
-      "reads": [],
+      "reads": [
+        "CACHE",
+        "geo_ip_refresh_log"
+      ],
       "writes": [
         "geo_ip_refresh_log"
       ],
       "ai_models_referenced": [],
-      "loc": 421,
-      "last_modified": "2026-05-02T23:51:51.357Z"
+      "loc": 585,
+      "last_modified": "2026-05-03T02:26:23.542Z"
     },
     {
       "name": "honeypot-generator",
@@ -1092,6 +1097,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "CARTOGRAPHER_BACKFILL",
         "CERTSTREAM_MONITOR",
         "DB",
+        "GEOIP_DB",
         "GEOIP_REFRESH",
         "NEXUS_RUN",
         "THREAT_PUSH_HUB"

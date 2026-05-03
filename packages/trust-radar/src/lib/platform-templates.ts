@@ -57,6 +57,12 @@ export interface PlatformAgentStalledVars {
   minutes_running: number;
 }
 
+export interface PlatformGeoipRefreshStalledVars {
+  refresh_log_id: string;
+  minutes_running: number;
+  source_version: string | null;
+}
+
 export interface PlatformCronMissedVars {
   cron: 'orchestrator' | 'navigator';
   expected_interval_minutes: number;
@@ -174,6 +180,38 @@ export function renderPlatformFeedAutoPaused(v: PlatformFeedAutoPausedVars): Ren
     group_key: `platform_feed_auto_paused:${v.feed_id}`,
     audience: 'super_admin',
     severity: 'critical',
+  };
+}
+
+/**
+ * Layer C of the GeoIP refresh self-heal scheme. Fires when a
+ * geo_ip_refresh_log row has been in `running` state for longer
+ * than the workflow's worst-case runtime — strongly suggests the
+ * workflow crashed without Layer A's failure handler updating the
+ * row. Auto-recovery (mark failed) happens in flightControlAgent;
+ * this template formats the operator-visible alert.
+ *
+ * Dedup key includes the refresh_log_id so the same stuck workflow
+ * only notifies once. If the next refresh run also stalls, that's
+ * a new id → new alert.
+ */
+export function renderPlatformGeoipRefreshStalled(v: PlatformGeoipRefreshStalledVars): RenderedTemplate {
+  const versionSuffix = v.source_version ? ` (release ${v.source_version})` : '';
+  return {
+    title: `GeoIP refresh stalled (${v.minutes_running} min)`,
+    message:
+      `Workflow ${v.refresh_log_id}${versionSuffix} stuck in 'running' state. ` +
+      `Likely a step exhausted retries without the workflow's failure handler updating the log row, ` +
+      `or MaxMind / its CDN became unresponsive mid-import.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action:
+      `Flight Control auto-marked this row failed. The next scheduled tick (Sunday 02:00 UTC) ` +
+      `will retry. To trigger a manual retry now, hit the Force button on the GeoIP Pipeline tile ` +
+      `or POST /api/admin/geoip-refresh with { forceReload: true }.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_geoip_refresh_stalled:${v.refresh_log_id}`,
+    audience: 'super_admin',
+    severity: 'high',
   };
 }
 

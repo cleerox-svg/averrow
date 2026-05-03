@@ -46,6 +46,7 @@ export type NotificationEventKey =
   | 'platform_feed_at_risk'
   | 'platform_feed_auto_paused'
   | 'platform_agent_stalled'
+  | 'platform_geoip_refresh_stalled'
   | 'platform_cron_orchestrator_missed'
   | 'platform_cron_navigator_missed'
   | 'platform_enrichment_stuck_pile'
@@ -250,6 +251,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_agent_stalled',
     label: 'Agent Stalled',
     description: 'Agent run stuck in running state >15 min',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_geoip_refresh_stalled',
+    label: 'GeoIP Refresh Stalled',
+    description: 'GeoIP MaxMind refresh workflow stuck >60 min — Flight Control auto-recovered',
     dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,

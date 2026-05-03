@@ -50,7 +50,7 @@ import {
   cidrToIntRange,
   type LocationRow,
 } from '../lib/geoip-csv';
-import { HttpZipReader } from '../lib/zip-reader';
+import { HttpZipReader, type HttpZipMetadata } from '../lib/zip-reader';
 
 interface GeoipRefreshParams {
   /** Refresh log row id created by the geoip_refresh agent before
@@ -67,6 +67,10 @@ interface GeoipRefreshEnv {
   GEOIP_DB: D1Database;
   GEOIP_REFRESH: Workflow;
   MAXMIND_LICENSE_KEY: string;
+  // Optional — AE binding is declared at the worker level so the
+  // workflow gets it automatically. The `?` matches the main Env
+  // interface where AE is also optional (test harnesses don't bind it).
+  AE?: AnalyticsEngineDataset;
 }
 
 const LOCATIONS_FILENAME = 'GeoLite2-City-Locations-en.csv';
@@ -80,6 +84,43 @@ const D1_BATCH_LIMIT = 100;
 
 export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, GeoipRefreshParams> {
   async run(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
+    const refreshLogId = event.payload.refreshLogId;
+    try {
+      return await this.runImpl(event, step);
+    } catch (err) {
+      // ─── Layer A: workflow failure handler ────────────────────
+      // Per AGENT_STANDARD §15.1 "crashed" failure class — when a
+      // step exhausts its retries the exception propagates here.
+      // Without this catch, geo_ip_refresh_log stays in 'running'
+      // forever (we'd otherwise only update the row in the
+      // `finalize` step that never runs on failure). Logger writes
+      // the structured failure for post-mortem; AE writeDataPoint
+      // makes the failure-rate visible in Analytics Engine; we
+      // re-throw so the Cloudflare Workflow runtime still marks
+      // the instance failed (operator can see the same in the
+      // Workflows dashboard).
+      const errMsg = err instanceof Error ? err.message : String(err);
+      try {
+        await this.env.GEOIP_DB.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'failed',
+              completed_at = datetime('now'),
+              error_message = ?
+          WHERE id = ? AND status = 'running'
+        `).bind(`Workflow failed: ${errMsg.slice(0, 1000)}`, refreshLogId).run();
+      } catch { /* logging is best-effort */ }
+      try {
+        this.env.AE?.writeDataPoint({
+          blobs: ['geoip_refresh', 'workflow_failed', errMsg.slice(0, 100)],
+          doubles: [0, 0],
+          indexes: ['geoip_refresh'],
+        });
+      } catch { /* AE write is best-effort */ }
+      throw err;
+    }
+  }
+
+  private async runImpl(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
     const refreshLogId = event.payload.refreshLogId;
     const forceReload = event.payload.forceReload ?? false;
     const licenseKey = this.env.MAXMIND_LICENSE_KEY;
@@ -202,12 +243,14 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // ── Step 4: import-locations ─────────────────────────────
     // Open the ZIP via HTTP Range, locate the Locations entry, and
     // stream-decompress it through our CSV reader. Returns the
-    // built Map serialized as a Record so it survives Workflow's
-    // step-result JSON encoding for handoff to step 5.
-    const locationsRecord = await step.do(
+    // built Map serialized as a Record + the zip metadata so step
+    // 5 doesn't have to re-fetch the central directory (MaxMind
+    // has a daily quota; saving 3 HTTP requests per refresh is
+    // worth the small JSON state cost).
+    const step4 = await step.do(
       'import-locations',
       { retries: { limit: 3, delay: '20 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
-      async (): Promise<Record<string, LocationRow>> => {
+      async (): Promise<{ locations: Record<string, LocationRow>; zipMetadata: HttpZipMetadata }> => {
         const archiveUrl = `${baseUrl}&suffix=zip`;
         const zip = new HttpZipReader(archiveUrl);
         await zip.open();
@@ -222,9 +265,11 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         const map = await streamLocationsCsv(stream);
         const record: Record<string, LocationRow> = {};
         for (const [k, v] of map) record[k] = v;
-        return record;
+        return { locations: record, zipMetadata: zip.toMetadata() };
       },
     );
+    const locationsRecord = step4.locations;
+    const zipMetadata = step4.zipMetadata;
 
     // ── Step 5: import-blocks ────────────────────────────────
     // Stream-parse the 3.5M-row Blocks CSV and INSERT OR IGNORE in
@@ -234,9 +279,11 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       'import-blocks',
       { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
       async (): Promise<{ rowsWritten: number; rowsParsed: number }> => {
-        const archiveUrl = `${baseUrl}&suffix=zip`;
-        const zip = new HttpZipReader(archiveUrl);
-        await zip.open();
+        // Reuse step 4's central-directory metadata. Avoids 3
+        // additional HEAD/Range requests against MaxMind on this
+        // step (matters because GeoLite2 free tier has a daily
+        // download quota that we already hit once).
+        const zip = HttpZipReader.fromMetadata(zipMetadata);
         const blocksEntry = zip.findEntry(BLOCKS_FILENAME);
         if (!blocksEntry) {
           throw new Error(`Blocks CSV missing in MaxMind archive`);
@@ -349,6 +396,17 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         refreshLogId,
       ).run();
     });
+
+    // §14.2 — AE writeDataPoint per agent run / workflow run.
+    // Lets the Agents page sparkline + cost dashboards reflect
+    // refresh activity beyond the geo_ip_refresh_log table.
+    try {
+      this.env.AE?.writeDataPoint({
+        blobs: ['geoip_refresh', 'success', 'maxmind-geolite2-city'],
+        doubles: [importResult.rowsWritten, swapped.newRowCount],
+        indexes: ['geoip_refresh'],
+      });
+    } catch { /* AE write is best-effort */ }
 
     return {
       message: `MaxMind release ${probe.sha256First12} imported: ${swapped.newRowCount} rows live.`,

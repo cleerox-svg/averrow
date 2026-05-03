@@ -129,6 +129,17 @@ function parseCentralDirectory(cdir: Uint8Array): ZipEntry[] {
   return entries;
 }
 
+/** Serializable snapshot of a `HttpZipReader` after `open()`.
+ *  Lets a caller (e.g. a Workflow) hand the state across step
+ *  boundaries without re-fetching the central directory. Critical
+ *  for upstream rate-limit hygiene: MaxMind has a daily download
+ *  quota and every avoided HEAD/Range request preserves it. */
+export interface HttpZipMetadata {
+  url: string;
+  totalSize: number;
+  entries: ZipEntry[];
+}
+
 /**
  * Reader over an HTTP-accessible ZIP archive that supports Range
  * requests. The MaxMind CDN supports Range — verified against the
@@ -141,6 +152,29 @@ export class HttpZipReader {
 
   constructor(url: string) {
     this.url = url;
+  }
+
+  /**
+   * Construct a reader from a previously-captured `toMetadata()`
+   * snapshot. Skips `open()` entirely — useful between Workflow
+   * steps where step N has already paid the HTTP cost of finding
+   * the central directory and step N+1 just needs to stream more
+   * entries from the same archive.
+   */
+  static fromMetadata(meta: HttpZipMetadata): HttpZipReader {
+    const reader = new HttpZipReader(meta.url);
+    reader.totalSize = meta.totalSize;
+    reader.entries = meta.entries;
+    return reader;
+  }
+
+  /**
+   * Snapshot of the reader's state after `open()`. Pair with
+   * `fromMetadata()` to hand the discovered central directory
+   * across Workflow steps.
+   */
+  toMetadata(): HttpZipMetadata {
+    return { url: this.url, totalSize: this.totalSize, entries: this.entries.slice() };
   }
 
   /**

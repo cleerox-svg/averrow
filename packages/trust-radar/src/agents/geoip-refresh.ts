@@ -39,6 +39,7 @@
 
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
+import { logger } from '../lib/logger';
 
 interface RefreshConfigStatus {
   geoipDbBound: boolean;
@@ -151,6 +152,12 @@ export const geoipRefreshAgent: AgentModule = {
   // it. Drift CI re-validates per PR.
   reads: [
     { kind: 'external', name: 'MaxMind GeoLite2 Permalink', url: 'https://download.maxmind.com' },
+    // Self-heal SELECT (Phase A.5: stuck-row cleanup + dispatch guard).
+    { kind: 'd1_table', name: 'geo_ip_refresh_log' },
+    // Layer D: 429 cooldown stamp on KV (key
+    // `geoip:maxmind:cooldown_until`). KV-backed so a probe
+    // failure on one tick prevents wasted dispatches on the next.
+    { kind: 'kv', namespace: 'CACHE' },
   ],
   writes: [
     // Lives in GEOIP_DB, not the main DB. The drift extractor sees
@@ -220,6 +227,129 @@ export const geoipRefreshAgent: AgentModule = {
       };
     }
 
+    // ── Phase A.5: §15.3 idempotency — clean up stuck rows + dispatch guard ──
+    // Layer B of the self-healing scheme. A previous workflow that
+    // crashed (worker timeout, malformed deflate stream, MaxMind
+    // hung) leaves a 'running' row that nothing else will close
+    // unless the workflow's failure handler (Layer A) caught it.
+    // Layer C (Flight Control) is the long-tail safety net but
+    // runs hourly; here we cover the on-demand-trigger case so the
+    // operator gets immediate feedback when they click Force.
+    //
+    // STUCK_THRESHOLD_MIN must exceed the workflow's worst-case
+    // runtime (~30 min for a fresh import). 60 min gives us 2x
+    // headroom and clearly distinguishes "still running" from
+    // "stuck". Aligned with §16 SLA — geoip_refresh's
+    // expectedRuntimeP99Ms is 1800000 (30 min).
+    const STUCK_THRESHOLD_MIN = 60;
+    const forceReload = ctx.input?.forceReload === true;
+
+    // ── Layer D: MaxMind 429 cooldown ──
+    // MaxMind GeoLite2 has a daily download quota per license key.
+    // Each refresh attempt makes ~6-11 HTTP requests (HEAD + Range
+    // reads); a few retries can blow through the quota and lock us
+    // out for 24 hours. When the probe step sees HTTP 429, we
+    // stamp a cooldown key in KV. Subsequent dispatches refuse
+    // until the key expires, preventing wasted attempts that would
+    // just fail and confuse operators.
+    //
+    // forceReload bypasses the cooldown — operator override for
+    // the rare case where MaxMind 429'd us in error and we want
+    // to retry anyway.
+    const COOLDOWN_KV_KEY = 'geoip:maxmind:cooldown_until';
+    if (!forceReload) {
+      try {
+        const cooldownUntil = await env.CACHE.get(COOLDOWN_KV_KEY);
+        if (cooldownUntil) {
+          const remainingMs = Date.parse(cooldownUntil) - Date.now();
+          if (remainingMs > 0) {
+            const remainingMin = Math.ceil(remainingMs / 60_000);
+            agentOutputs.push({
+              type: 'insight',
+              summary:
+                `MaxMind 429 cooldown active — ${remainingMin} min remaining ` +
+                `(until ${cooldownUntil}). Pass forceReload=true to override.`,
+              severity: 'medium',
+              details: { phase: 'maxmind_cooldown_active', cooldown_until: cooldownUntil, remaining_min: remainingMin },
+            });
+            logger.warn('geoip_refresh_cooldown_active', {
+              agent_id: 'geoip_refresh',
+              cooldown_until: cooldownUntil,
+              remaining_min: remainingMin,
+            });
+            return {
+              itemsProcessed: 0,
+              itemsCreated: 0,
+              itemsUpdated: 0,
+              output: { phase: 'maxmind_cooldown_active', cooldown_until: cooldownUntil, remaining_min: remainingMin },
+              agentOutputs,
+            };
+          }
+        }
+      } catch { /* KV read failure shouldn't block dispatch — fall through */ }
+    }
+
+    const runningRows = await env.GEOIP_DB!.prepare(`
+      SELECT id, started_at,
+             CAST((julianday('now') - julianday(started_at)) * 24 * 60 AS INTEGER) AS age_min
+      FROM geo_ip_refresh_log
+      WHERE status = 'running'
+    `).all<{ id: string; started_at: string; age_min: number }>();
+
+    const stuck = runningRows.results.filter((r) => r.age_min > STUCK_THRESHOLD_MIN);
+    const young = runningRows.results.filter((r) => r.age_min <= STUCK_THRESHOLD_MIN);
+
+    let recoveredCount = 0;
+    for (const row of stuck) {
+      try {
+        await env.GEOIP_DB!.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'failed',
+              completed_at = datetime('now'),
+              error_message = ?
+          WHERE id = ? AND status = 'running'
+        `).bind(
+          `Auto-recovered: workflow exceeded ${STUCK_THRESHOLD_MIN}-min stuck threshold`,
+          row.id,
+        ).run();
+        recoveredCount++;
+      } catch { /* best-effort */ }
+    }
+    if (recoveredCount > 0) {
+      agentOutputs.push({
+        type: 'insight',
+        summary: `Self-heal recovered ${recoveredCount} stuck workflow(s) from prior run(s).`,
+        severity: 'info',
+        details: { stuck_recovered: stuck.map((s) => s.id), threshold_min: STUCK_THRESHOLD_MIN },
+      });
+      logger.warn('geoip_refresh_self_heal', {
+        agent_id: 'geoip_refresh',
+        recovered: recoveredCount,
+        stuck_ids: stuck.map((s) => s.id),
+        threshold_min: STUCK_THRESHOLD_MIN,
+      });
+    }
+
+    // §15.3 dispatch guard — if a young workflow is in flight and
+    // the operator didn't pass forceReload, refuse to dispatch.
+    // Prevents the duplicate-workflow race the operator hit when
+    // they clicked Force twice.
+    if (young.length > 0 && !forceReload) {
+      agentOutputs.push({
+        type: 'insight',
+        summary: `Skipped: ${young.length} workflow(s) already running (age <${STUCK_THRESHOLD_MIN} min). Pass forceReload=true to override.`,
+        severity: 'info',
+        details: { running_workflows: young, threshold_min: STUCK_THRESHOLD_MIN },
+      });
+      return {
+        itemsProcessed: 0,
+        itemsCreated: recoveredCount,
+        itemsUpdated: 0,
+        output: { phase: 'skipped_already_running', running: young, recovered: recoveredCount },
+        agentOutputs,
+      };
+    }
+
     // ── Phase B: open a refresh log row ──
     // Every refresh attempt gets a row regardless of outcome — the
     // dashboard reads the latest entry to render "last refreshed N
@@ -265,13 +395,33 @@ export const geoipRefreshAgent: AgentModule = {
         ? 'license_invalid'
         : probe.status === 403
           ? 'license_unentitled'
-          : 'maxmind_unreachable';
+          : probe.status === 429
+            ? 'maxmind_quota_exhausted'
+            : 'maxmind_unreachable';
       const probeSummary =
         probe.status === 401
           ? `MaxMind rejected the license key (HTTP 401). Verify the secret value via the account portal — keys can be rotated/revoked. Probe took ${probe.durationMs}ms.`
           : probe.status === 403
             ? `MaxMind license key valid but not entitled to GeoLite2-City (HTTP 403). Ensure the account has the GeoLite2 product enabled.`
-            : `MaxMind probe failed: ${probe.error ?? 'unknown'} (status=${probe.status}, ${probe.durationMs}ms). Retrying on the next tick is safe.`;
+            : probe.status === 429
+              ? `MaxMind daily quota exhausted (HTTP 429). Cooldown stamped — automatic dispatches will skip until ${new Date(Date.now() + 24 * 60 * 60_000).toISOString()}. Use forceReload to override.`
+              : `MaxMind probe failed: ${probe.error ?? 'unknown'} (status=${probe.status}, ${probe.durationMs}ms). Retrying on the next tick is safe.`;
+
+      // Layer D: stamp the 24h cooldown when MaxMind 429s us so
+      // subsequent dispatches don't burn additional quota / make
+      // the 429 stickier. Only fires for actual 429s — other
+      // failures (401/403/network) don't need the cooldown.
+      if (probe.status === 429) {
+        try {
+          const cooldownUntil = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+          await env.CACHE.put(COOLDOWN_KV_KEY, cooldownUntil, { expirationTtl: 24 * 60 * 60 });
+          logger.warn('geoip_refresh_cooldown_stamped', {
+            agent_id: 'geoip_refresh',
+            cooldown_until: cooldownUntil,
+            reason: 'maxmind_quota_exhausted',
+          });
+        } catch { /* KV write failure is non-fatal */ }
+      }
 
       try {
         await env.GEOIP_DB!.prepare(`
@@ -357,11 +507,8 @@ export const geoipRefreshAgent: AgentModule = {
 
     // Dispatch the Workflow. .create() returns a handle whose
     // `.id` we surface so the operator can grep wrangler tail
-    // for that specific run. The agent context can carry a
-    // `forceReload` flag from the admin endpoint when the
-    // operator wants to bypass the "is this version already
-    // loaded?" guard.
-    const forceReload = ctx.input?.forceReload === true;
+    // for that specific run. `forceReload` was resolved in the
+    // dispatch-guard step above (Phase A.5).
     let workflowInstanceId: string | null = null;
     try {
       const instance = await env.GEOIP_REFRESH.create({
@@ -408,6 +555,23 @@ export const geoipRefreshAgent: AgentModule = {
       severity: 'info',
       details: { phase: 'workflow_dispatched', probe, workflowInstanceId, refreshLogId: refreshId, durationMs },
     });
+    logger.info('geoip_refresh_dispatched', {
+      agent_id: 'geoip_refresh',
+      workflow_instance_id: workflowInstanceId,
+      refresh_log_id: refreshId,
+      sha256_first12: probe.source_sha256_first_chars,
+      force_reload: forceReload,
+      duration_ms: durationMs,
+    });
+    // §14.2 — AE row for the dispatch event itself (workflow run
+    // success/failure lands separately from the workflow handler).
+    try {
+      env.AE?.writeDataPoint({
+        blobs: ['geoip_refresh', 'dispatched', probe.source_sha256_first_chars ?? 'unknown'],
+        doubles: [durationMs, forceReload ? 1 : 0],
+        indexes: ['geoip_refresh'],
+      });
+    } catch { /* AE write is best-effort */ }
 
     return {
       itemsProcessed: 0,

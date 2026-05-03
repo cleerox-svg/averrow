@@ -23,6 +23,7 @@ import {
   renderPlatformAiSpendBurst,
   renderPlatformCronMissed,
   renderPlatformEnrichmentStuck,
+  renderPlatformGeoipRefreshStalled,
 } from "../lib/platform-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { getOrComputeMetric } from "../lib/system-metrics";
@@ -193,12 +194,21 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "threat_briefings" },
     { kind: "d1_table", name: "threats" },
+    // Layer C of the GeoIP self-heal scheme: FC supervisor reads
+    // geo_ip_refresh_log to find stuck workflows that need force-
+    // failing. Lives on GEOIP_DB; the binding is optional so the
+    // SELECT is wrapped in try/catch.
+    { kind: "d1_table", name: "geo_ip_refresh_log" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_activity_log" },
     { kind: "d1_table", name: "agent_runs" },
     { kind: "d1_table", name: "backlog_history" },
     { kind: "d1_table", name: "push_subscriptions" },
+    // Layer C of the GeoIP self-heal scheme: FC supervisor force-
+    // fails geo_ip_refresh_log rows that escaped both the workflow
+    // failure handler (Layer A) and the agent self-heal (Layer B).
+    { kind: "d1_table", name: "geo_ip_refresh_log" },
   ],
   outputs: [],
   status: "active",
@@ -620,6 +630,62 @@ export const flightControlAgent: AgentModule = {
     }
 
     mark('briefing_silent_emit');
+
+    // ── Layer C: GeoIP refresh stall supervisor ────────────────────
+    // Catches geo_ip_refresh_log rows stuck in 'running' that the
+    // workflow's failure handler (Layer A) missed AND the agent's
+    // self-heal (Layer B) didn't reach because no new dispatch
+    // happened. FC runs hourly so worst-case detection latency is
+    // ~1 hour after the workflow died. Aligned with the existing
+    // platform_agent_stalled pattern (§14.3 dedup via group_key).
+    //
+    // STUCK_THRESHOLD_MIN matches the agent's value (60). Any row
+    // older than that AND still 'running' is force-failed; the
+    // operator gets one notification per stuck workflow id.
+    //
+    // Skipped when GEOIP_DB binding is unset — the table won't
+    // exist, throwing on the SELECT. Wrapping in try/catch keeps
+    // FC's tick robust against optional bindings.
+    const GEOIP_STUCK_THRESHOLD_MIN = 60;
+    if (env.GEOIP_DB) {
+      try {
+        const stuck = await env.GEOIP_DB.prepare(`
+          SELECT id, source_version, started_at,
+                 CAST((julianday('now') - julianday(started_at)) * 24 * 60 AS INTEGER) AS age_min
+          FROM geo_ip_refresh_log
+          WHERE status = 'running'
+            AND started_at < datetime('now', '-' || ? || ' minutes')
+        `).bind(GEOIP_STUCK_THRESHOLD_MIN).all<{
+          id: string;
+          source_version: string | null;
+          started_at: string;
+          age_min: number;
+        }>();
+        for (const row of stuck.results ?? []) {
+          try {
+            await env.GEOIP_DB.prepare(`
+              UPDATE geo_ip_refresh_log
+              SET status = 'failed',
+                  completed_at = datetime('now'),
+                  error_message = ?
+              WHERE id = ? AND status = 'running'
+            `).bind(
+              `Auto-recovered by Flight Control: stuck >${GEOIP_STUCK_THRESHOLD_MIN} min`,
+              row.id,
+            ).run();
+            await emitPlatformNotification(env, 'platform_geoip_refresh_stalled',
+              renderPlatformGeoipRefreshStalled({
+                refresh_log_id: row.id,
+                minutes_running: row.age_min,
+                source_version: row.source_version,
+              }),
+            );
+          } catch { /* per-row failure shouldn't break FC tick */ }
+        }
+      } catch { /* table may not exist (binding present but migrations not yet applied) */ }
+    }
+
+    mark('geoip_refresh_supervisor');
 
     // ── C2 infrastructure overlap detection ────────────────────────
     try {
