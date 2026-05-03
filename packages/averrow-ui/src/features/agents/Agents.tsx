@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useAgents, useAgentDetail, useAgentHealth, useAgentOutputsByName, useApiUsage, useDashboardStats, usePipelineStatus } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
+import { useGeoipRefresh } from '@/hooks/useGeoipRefresh';
 import type { Agent, AgentDetailResponse, AgentHealthResponse, AgentOutput, PipelineEntry } from '@/hooks/useAgents';
 import { Card, StatCard, StatGrid, PageHeader, Tabs } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -637,6 +638,73 @@ function agentStatusLabel(status: string): 'active' | 'failed' | 'degraded' | 'i
   return 'inactive';
 }
 
+/**
+ * Trigger a GeoIP refresh from the Pipeline Automation tile.
+ * Two affordances:
+ *   - "Refresh" : poll MaxMind and re-import IFF a new release shipped
+ *   - "Force"   : bypass the skip-if-current guard (after schema
+ *                 changes, partial loads, or initial bootstrap when
+ *                 source_version is null and we still want a load)
+ *
+ * Gated to the geoip pipeline only — other tiles don't have a
+ * meaningful "trigger now" action because they're driven by feed
+ * cadence, not on-demand work.
+ */
+function GeoipRefreshAction() {
+  const refresh = useGeoipRefresh();
+  const onClick = (forceReload: boolean) => {
+    if (refresh.isPending) return;
+    refresh.mutate({ forceReload });
+  };
+  const label = refresh.isPending
+    ? 'Triggering…'
+    : refresh.isSuccess
+      ? 'Dispatched ✓'
+      : refresh.isError
+        ? 'Failed — retry'
+        : 'Refresh';
+  return (
+    <div className="mt-2 pt-2 border-t border-white/[0.04] flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onClick(false)}
+        disabled={refresh.isPending}
+        className="font-mono text-[9px] px-2 py-1 rounded transition-colors hover:bg-white/[0.08] disabled:opacity-50"
+        style={{
+          color: 'var(--amber)',
+          border: '1px solid rgba(229,168,50,0.30)',
+          background: 'rgba(229,168,50,0.06)',
+        }}
+        title="Poll MaxMind, re-import only if a new release shipped"
+      >
+        {label}
+      </button>
+      <button
+        type="button"
+        onClick={() => onClick(true)}
+        disabled={refresh.isPending}
+        className="font-mono text-[9px] px-2 py-1 rounded transition-colors hover:bg-white/[0.08] disabled:opacity-50"
+        style={{
+          color: 'var(--text-secondary)',
+          border: '1px solid var(--border-base)',
+        }}
+        title="Force re-import even if the live data already matches MaxMind's latest release"
+      >
+        Force
+      </button>
+      {refresh.isError && (
+        <span
+          className="font-mono text-[9px] truncate"
+          style={{ color: 'var(--sev-critical)' }}
+          title={refresh.error instanceof Error ? refresh.error.message : String(refresh.error)}
+        >
+          {refresh.error instanceof Error ? refresh.error.message : 'error'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function PipelineStrip({ agents }: { agents: Agent[] }) {
   const { data: pipelines } = usePipelineStatus(agents);
 
@@ -750,6 +818,12 @@ function PipelineStrip({ agents }: { agents: Agent[] }) {
                     ))}
                   </div>
                 )}
+
+                {/* Per-tile actions. Currently scoped to the geoip
+                    pipeline because it's the only one with a
+                    meaningful on-demand trigger; other tiles run
+                    on feed cadence. */}
+                {p.id === 'geoip' && <GeoipRefreshAction />}
               </div>
             </div>
           );
