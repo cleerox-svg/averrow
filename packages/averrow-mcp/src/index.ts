@@ -229,6 +229,45 @@ const TOOLS: ToolDef[] = [
       return apiPost("/api/internal/briefing/send", env);
     },
   },
+  {
+    name: "geoip_status",
+    description:
+      "Status of the dedicated GEOIP_DB (MaxMind GeoLite2-City reference data). " +
+      "Returns row_count, shadow_row_count (in-progress import), has_shadow_table, " +
+      "any_running_refresh, oldest_running_refresh_age_min (>60 = likely stuck), " +
+      "and recent_attempts[] (last 5 refresh log rows for pattern-spotting). " +
+      "Use this to answer 'is the GeoIP refresh actually doing anything?' without " +
+      "poking at SQL by hand.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async (_args, env) => {
+      return apiGet("/api/internal/geoip-status", env);
+    },
+  },
+  {
+    name: "trigger_geoip_refresh",
+    description:
+      "Trigger the geoip_refresh agent. Polls MaxMind for a new GeoLite2-City " +
+      "release; the workflow's skip-if-current step bails fast when live data " +
+      "matches the .sha256 fingerprint, so most calls are no-ops (~70 bytes of " +
+      "network). Pass forceReload=true to bypass the version guard — needed for " +
+      "the initial bootstrap (no source_version yet) or after schema changes. " +
+      "Auto-runs Sundays at 02:00 UTC; this tool is for manual triage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        forceReload: {
+          type: "boolean",
+          description:
+            "Bypass the skip-if-current guard. Default false (poll-only). " +
+            "Set true for the initial load or to re-import the same release.",
+        },
+      },
+    },
+    handler: async (args, env) => {
+      const forceReload = (args as { forceReload?: boolean })?.forceReload === true;
+      return apiPost("/api/internal/geoip-refresh", env, { forceReload });
+    },
+  },
   // ── UI Verification (authenticated via MCP_TEST_JWT) ────────
   {
     name: "verify_ui_smoke",
