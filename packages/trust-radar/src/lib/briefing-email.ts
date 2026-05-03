@@ -13,17 +13,29 @@ const FROM_ADDRESS = "Averrow Platform <briefing@averrow.com>";
 
 interface ResendResponse {
   id?: string;
+  /** Resend errors include a `name` discriminator like 'invalid_api_key',
+   *  'validation_error', 'rate_limit_exceeded', 'domain_not_verified'. */
+  name?: string;
   error?: string;
   message?: string;
   statusCode?: number;
 }
 
+/**
+ * Last-error breadcrumb stored under this KV key on failure so the next
+ * successful tick (or a manual diagnostic call) can read the full Resend
+ * response body, not just the truncated message that gets persisted in
+ * threat_briefings.report_data.email_error.
+ */
+const RESEND_LAST_ERROR_KV = 'briefing:resend_last_error';
+
 async function sendViaResend(
+  env: Env,
   apiKey: string,
   to: string,
   subject: string,
   html: string,
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+): Promise<{ ok: boolean; id?: string; error?: string; statusCode?: number; errorName?: string }> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -32,9 +44,54 @@ async function sendViaResend(
     },
     body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html }),
   });
-  const body = (await res.json()) as ResendResponse;
+
+  // Read raw body once so we can parse + cache the full diagnostic on failure
+  // even if Resend returns non-JSON HTML for 5xx (rare but happens on outages).
+  const rawBody = await res.text();
+  let body: ResendResponse;
+  try {
+    body = JSON.parse(rawBody) as ResendResponse;
+  } catch {
+    body = { message: `Non-JSON response: ${rawBody.slice(0, 240)}` };
+  }
+
   if (!res.ok) {
-    return { ok: false, error: body.message ?? body.error ?? `HTTP ${res.status}` };
+    // Compose a useful single-line error: "<HTTP> <name>: <message>".
+    // Resend returns errors like { name: 'invalid_api_key', message: 'API key is invalid' }
+    // — surfacing both lets the operator distinguish "rotate the key" from
+    // "verify the sending domain" from "you hit the rate limit." Previously
+    // only `message` was persisted, which collapsed all four scenarios into
+    // the same opaque "API key is invalid" / "Domain not verified" string.
+    const composed = [
+      `HTTP ${res.status}`,
+      body.name ?? null,
+      body.message ?? body.error ?? null,
+    ].filter(Boolean).join(' / ');
+
+    // Cache the full body in KV (TTL 7 days) so the next call to
+    // /api/internal/platform-diagnostics can pick it up. KV failures are
+    // non-fatal — caching is a diagnostic aid, not the alert path.
+    try {
+      await env.CACHE.put(
+        RESEND_LAST_ERROR_KV,
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          status: res.status,
+          name: body.name ?? null,
+          message: body.message ?? body.error ?? null,
+          raw: rawBody.slice(0, 1000),
+          recipient: to,
+        }),
+        { expirationTtl: 7 * 24 * 60 * 60 },
+      );
+    } catch { /* non-fatal */ }
+
+    return {
+      ok: false,
+      error: composed,
+      statusCode: res.status,
+      errorName: body.name,
+    };
   }
   return { ok: true, id: body.id };
 }
@@ -572,6 +629,7 @@ export async function sendBriefingEmail(
   const html = buildBriefingHtml(briefing, title);
 
   const result = await sendViaResend(
+    env,
     env.RESEND_API_KEY,
     recipient,
     subject,
@@ -581,9 +639,14 @@ export async function sendBriefingEmail(
   if (result.ok) {
     logger.info("briefing_email_sent", { to: recipient, resendId: result.id });
   } else {
+    // Surface the discriminator (`name`) and HTTP status, not just `message`.
+    // Operators reading the diagnostics endpoint need to know whether to
+    // rotate the key, verify the domain, or wait out a rate limit.
     logger.error("briefing_email_failed", {
       to: recipient,
       error: result.error,
+      statusCode: result.statusCode,
+      errorName: result.errorName,
     });
   }
 
