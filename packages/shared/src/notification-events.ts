@@ -45,6 +45,7 @@ export type NotificationEventKey =
   | 'platform_worker_cpu_burst'
   | 'platform_feed_at_risk'
   | 'platform_feed_auto_paused'
+  | 'platform_feed_silent'
   | 'platform_agent_stalled'
   | 'platform_geoip_refresh_stalled'
   | 'platform_cron_orchestrator_missed'
@@ -244,6 +245,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Feed Auto-Paused',
     description: 'Feed disabled after consecutive failures',
     dedupWindow: '-12 hours',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_feed_silent',
+    label: 'Feed Silent',
+    description: 'Feed enabled but has not pulled in 3× its schedule interval — likely a silent dispatch failure',
+    dedupWindow: '-6 hours',
     defaultEnabled: true,
     userToggleable: false,
   },

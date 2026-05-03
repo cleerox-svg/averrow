@@ -548,7 +548,7 @@ function shouldRunNow(config: FeedConfigRow, status: FeedStatusRow | undefined, 
   return now.getTime() - lastRun >= intervalMs - 60_000;
 }
 
-function parseCronIntervalMs(cron: string): number {
+export function parseCronIntervalMs(cron: string): number {
   const parts = cron.split(/\s+/);
   if (parts.length < 5) return 5 * 60 * 1000; // default 5 min
 

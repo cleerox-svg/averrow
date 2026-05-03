@@ -19,6 +19,7 @@ import {
   emitPlatformNotification,
   renderPlatformAgentStalled,
   renderPlatformFeedAutoPaused,
+  renderPlatformFeedSilent,
   renderPlatformBriefingSilent,
   renderPlatformAiSpendBurst,
   renderPlatformCronMissed,
@@ -26,6 +27,7 @@ import {
   renderPlatformGeoipRefreshStalled,
 } from "../lib/platform-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
+import { parseCronIntervalMs } from "../lib/feedRunner";
 import { getOrComputeMetric } from "../lib/system-metrics";
 
 // TTLs for backlog counters. "Monitoring" backlogs (the broad _checked
@@ -114,6 +116,19 @@ interface AutoPausedFeed {
   consecutive_failures: number;
   last_failure: string | null;
   last_error: string | null;
+}
+
+/**
+ * Silent-feed candidate row — joined from feed_configs + feed_status
+ * for the FC silent-ingest watchdog. enabled=1 + last_successful_pull
+ * is non-null + paused_reason is null; the elapsed-vs-interval check
+ * happens in TS because parseCronIntervalMs lives there.
+ */
+interface SilentFeedCandidate {
+  feed_name: string;
+  display_name: string | null;
+  schedule_cron: string;
+  last_successful_pull: string;
 }
 
 /**
@@ -247,7 +262,7 @@ export const flightControlAgent: AgentModule = {
     mark('anthropic_check');
 
     // Run all reads in parallel — single round trip to D1
-    const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, unscannedEmails, degradedFeeds, autoPausedFeeds, trippedAgents] = await Promise.all([
+    const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, unscannedEmails, degradedFeeds, autoPausedFeeds, silentFeedCandidates, trippedAgents] = await Promise.all([
       measureBacklogs(db),
       getAgentHealth(db),
       getNavigatorHealth(db),
@@ -286,6 +301,24 @@ export const flightControlAgent: AgentModule = {
             AND fc.paused_reason = 'auto:consecutive_failures'
           ORDER BY fs.consecutive_failures DESC
       `).all<AutoPausedFeed>(),
+      // Silent-feed candidates — enabled feeds that have ever pulled
+      // successfully. The interval check (last_pull older than
+      // 3× schedule_cron) happens in TS because parseCronIntervalMs
+      // lives there. Excludes feeds that have never run (status row
+      // missing or last_successful_pull NULL) to keep first-run noise
+      // out, and excludes anything paused/disabled — those have their
+      // own platform_feed_auto_paused alerts.
+      db.prepare(`
+        SELECT fc.feed_name,
+               fc.display_name,
+               fc.schedule_cron,
+               fs.last_successful_pull
+          FROM feed_configs fc
+          INNER JOIN feed_status fs ON fs.feed_name = fc.feed_name
+          WHERE fc.enabled = 1
+            AND fc.paused_reason IS NULL
+            AND fs.last_successful_pull IS NOT NULL
+      `).all<SilentFeedCandidate>(),
       // Auto-tripped agents — circuit breaker has flipped them to
       // enabled=0 with paused_reason='auto:consecutive_failures'.
       // Distinct from degraded (still running but failing).
@@ -583,6 +616,69 @@ export const flightControlAgent: AgentModule = {
               feed_name: feed.feed_name,
               consecutive_failures: feed.consecutive_failures,
               last_error: lastErr?.error_message ?? null,
+            })
+          );
+        } catch { /* notification failures never break FC */ }
+      }
+    }
+
+    // ── Silent-ingest watchdog ────────────────────────────────────
+    // Defensive companion to the auto-pause path. Catches the class
+    // of bug where runAllFeeds throws BEFORE any per-feed dispatch
+    // (so consecutive_failures never increments and feeds never get
+    // auto-paused), or where a deploy silently drops feeds from the
+    // dispatch loop. Triggered by elapsed-vs-interval ratio rather
+    // than failure count, so it fires regardless of cause.
+    //
+    // Threshold of 3× schedule_cron interval is generous enough that
+    // a feed legitimately running on its schedule never fires (max
+    // jitter we've seen is ~1.4× from the orchestrator's :07 cron
+    // alignment). 3× also tolerates one missed tick + one retry.
+    //
+    // group_key in the renderer is day-keyed so the operator gets at
+    // most one alert per day even if 20 feeds go silent at once.
+    {
+      const SILENT_RATIO_THRESHOLD = 3;
+      const nowMs = Date.now();
+      const overdue: Array<{ feed_name: string; ratio: number; hours_since: number }> = [];
+
+      for (const cand of silentFeedCandidates.results) {
+        const intervalMs = parseCronIntervalMs(cand.schedule_cron);
+        const lastPullStr = cand.last_successful_pull;
+        const lastMs = Date.parse(
+          lastPullStr.includes('Z') || lastPullStr.includes('+') ? lastPullStr : lastPullStr + 'Z'
+        );
+        if (!Number.isFinite(lastMs)) continue;
+        const elapsedMs = nowMs - lastMs;
+        const ratio = elapsedMs / intervalMs;
+        if (ratio >= SILENT_RATIO_THRESHOLD) {
+          overdue.push({
+            feed_name: cand.feed_name,
+            ratio,
+            hours_since: Math.round(elapsedMs / 3_600_000),
+          });
+        }
+      }
+
+      if (overdue.length > 0) {
+        // Sort worst-first so the title surfaces the most overdue feed.
+        overdue.sort((a, b) => b.ratio - a.ratio);
+        const worst = overdue[0]!;
+
+        await logActivity(db, 'flight_control', 'critical', 'feeds_silent',
+          `${overdue.length} enabled feed${overdue.length === 1 ? ' has' : 's have'} not pulled in 3×+ their schedule_cron interval: ${overdue.map(o => `${o.feed_name} (${o.ratio.toFixed(1)}×)`).join(', ')}`,
+          { count: overdue.length, feeds: overdue }
+        );
+
+        try {
+          await emitPlatformNotification(env, 'platform_feed_silent',
+            renderPlatformFeedSilent({
+              feed_ids: overdue.map(o => o.feed_name).join(', '),
+              feed_count: overdue.length,
+              worst_ratio: worst.ratio,
+              worst_feed: worst.feed_name,
+              worst_hours_since_pull: worst.hours_since,
+              cause_hint: null,
             })
           );
         } catch { /* notification failures never break FC */ }

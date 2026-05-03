@@ -2,6 +2,7 @@ import { logger } from '../lib/logger';
 import { feedModules, enrichmentModules, socialModules } from '../feeds/index';
 import { createAlert } from '../lib/alerts';
 import { cubeHealerAgent } from '../agents/cube-healer';
+import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platform-templates';
 import type { Env } from '../types';
 
 interface CronJobResult {
@@ -436,7 +437,22 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   // failure could starve the enrichment pipeline. The Enricher now
   // owns it, with full activity logging and stall detection.
 
-  // Feed ingestion — wrapped in try/catch so enrichment/social still run on failure
+  // Feed ingestion — wrapped in try/catch so enrichment/social still run on failure.
+  //
+  // History note: this catch swallowed a thrown error for ~3 days during the
+  // 2026-04-30 → 05-02 blackout (column-name typo in autoRecoverStalePausedFeeds,
+  // fixed in 50cb1e4). The orchestrator kept ticking, enrichment + social feeds
+  // ran from their own try/catch blocks below, but every ingest feed was silently
+  // skipped because runAllFeeds threw before reaching per-feed dispatch. Nothing
+  // surfaced to operators except a `logger.error` line that no human reads.
+  //
+  // The fix has two layers:
+  //  1. Right here — when this catch fires, emit a platform_feed_silent alert
+  //     directly with the throw message. Catches the specific shape (throw from
+  //     runAllFeeds before per-feed dispatch).
+  //  2. In flightControlAgent — a hourly watchdog that flags any enabled feed
+  //     whose last_successful_pull is older than 3× its schedule_cron interval.
+  //     Catches the broader symptom regardless of cause.
   const { runAllFeeds, runAllEnrichmentFeeds } = await import('../lib/feedRunner');
   let feedResult = { feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0 };
   try {
@@ -448,8 +464,30 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       feedsSkipped: feedResult.feedsSkipped,
     });
   } catch (err) {
-    console.error('[cron] INGEST FEEDS FAILED:', err instanceof Error ? err.message : String(err));
-    logger.error('ingest_feeds_error', { error: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[cron] INGEST FEEDS FAILED:', msg);
+    logger.error('ingest_feeds_error', { error: msg });
+
+    // Layer 1: surface the throw immediately as a platform notification so
+    // operators don't have to wait for the FC watchdog tick (or worse, for
+    // someone to manually run diagnostics) to find out ingestion is dead.
+    // Notification failures must never break the cron — wrap and swallow.
+    try {
+      await emitPlatformNotification(env, 'platform_feed_silent',
+        renderPlatformFeedSilent({
+          feed_ids: '(runAllFeeds threw before per-feed dispatch)',
+          feed_count: 0,
+          worst_ratio: 0,
+          worst_feed: 'runAllFeeds',
+          worst_hours_since_pull: 0,
+          cause_hint: msg,
+        })
+      );
+    } catch (notifyErr) {
+      logger.error('ingest_feeds_alert_emit_failed', {
+        error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+      });
+    }
   }
 
   // ─── API Key Health Check: log presence of enrichment API keys ───

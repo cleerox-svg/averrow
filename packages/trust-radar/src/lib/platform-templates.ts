@@ -51,6 +51,19 @@ export interface PlatformFeedAutoPausedVars {
   last_error: string | null;
 }
 
+export interface PlatformFeedSilentVars {
+  /** Comma-joined feed names — alert is roll-up, not per-feed. */
+  feed_ids: string;
+  feed_count: number;
+  /** The largest elapsed-vs-expected ratio in this batch, e.g. 8.4 means worst feed is 8.4× overdue. */
+  worst_ratio: number;
+  /** Worst-offender feed name and how long since its last successful pull (in hours). */
+  worst_feed: string;
+  worst_hours_since_pull: number;
+  /** Cause hint surfaced when the orchestrator caught a throw from runAllFeeds. */
+  cause_hint: string | null;
+}
+
 export interface PlatformAgentStalledVars {
   agent_id: string;
   run_id: string;
@@ -180,6 +193,59 @@ export function renderPlatformFeedAutoPaused(v: PlatformFeedAutoPausedVars): Ren
     group_key: `platform_feed_auto_paused:${v.feed_id}`,
     audience: 'super_admin',
     severity: 'critical',
+  };
+}
+
+/**
+ * Emitted when one or more feeds are enabled but haven't pulled
+ * for 3× their expected interval. Catches the silent-success class
+ * of bug where runAllFeeds throws before any per-feed code runs
+ * (e.g. the 2026-04-30 → 05-02 blackout caused by a column-name
+ * typo in autoRecoverStalePausedFeeds — fixed in 50cb1e4 — which
+ * was caught by orchestrator.ts:442-453 and only surfaced via
+ * `logger.error('ingest_feeds_error', …)` with no platform alert).
+ *
+ * Roll-up by group_key=date so the operator gets ONE notification
+ * per day even if many feeds go silent simultaneously. cause_hint
+ * is non-null when the orchestrator's outer try/catch triggered
+ * the alert directly (carries the throw message); null when the
+ * Flight Control watchdog inferred the silence from feed_status
+ * timestamps with no upstream throw to attribute it to.
+ */
+export function renderPlatformFeedSilent(v: PlatformFeedSilentVars): RenderedTemplate {
+  // Two trigger paths share this template:
+  //   1. Orchestrator catch-block (feed_count=0): runAllFeeds threw before
+  //      per-feed dispatch. cause_hint carries the throw message. We can't
+  //      enumerate feeds because dispatch never started.
+  //   2. FC watchdog (feed_count>=1): one or more enabled feeds are
+  //      3×+ overdue against schedule_cron. cause_hint is null because
+  //      no upstream throw was seen this tick.
+  const isThrowPath = v.feed_count === 0;
+  const titleSuffix = isThrowPath
+    ? `runAllFeeds threw before per-feed dispatch`
+    : v.feed_count === 1
+      ? `${v.worst_feed} silent`
+      : `${v.feed_count} feeds silent (${v.worst_feed} worst, ${v.worst_hours_since_pull}h)`;
+  const causeLine = v.cause_hint
+    ? ` Last upstream error: ${truncate(v.cause_hint, 240)}`
+    : '';
+  const message = isThrowPath
+    ? `Hourly orchestrator caught a throw from runAllFeeds — every enabled ingest feed is being silently skipped this tick.${causeLine}`
+    : `Feeds enabled but haven't pulled in 3×+ their interval: ${truncate(v.feed_ids, 320)}. ` +
+      `Worst case ${v.worst_feed} is ${v.worst_ratio.toFixed(1)}× overdue.${causeLine}`;
+  return {
+    title: `Ingest stalled — ${titleSuffix}`,
+    message,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action:
+      `Inspect orchestrator logs for 'ingest_feeds_error' or any throw before per-feed dispatch. ` +
+      `Verify feed_pull_history rows are landing for the affected feeds. ` +
+      `If the dispatch is healthy but feeds are dedup-rejected, expect this alert to recur — ` +
+      `widen the watchdog threshold rather than ignoring it.`,
+    link: PLATFORM_FEEDS_LINK,
+    group_key: `platform_feed_silent:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'high',
   };
 }
 
