@@ -160,10 +160,35 @@ export async function lookupGeoMmdb(env: Env, ip: string): Promise<GeoIpLookupRe
  * Stats summary for the diagnostics endpoint and admin dashboard.
  * Exposes what the GeoIP DB looks like to the operator without
  * coupling diagnostics.ts to D1 directly.
+ *
+ * The fields with the `shadow_*` prefix surface the in-progress
+ * refresh: when a Workflow is loading new data into
+ * `geo_ip_ranges_new` (the atomic-swap shadow table), we can show
+ * "X / 3.5M rows imported so far" instead of "configured but
+ * 0 rows" while the operator waits ~30 min for the import to land.
+ *
+ * `recent_attempts` returns the last 5 refresh log rows so the
+ * operator (or platform-diagnostics audit) can spot a stuck
+ * 'running' row that's been there for hours, or a sequence of
+ * `failed` rows that suggests MaxMind is rejecting the key.
  */
 export async function getGeoMmdbStatus(env: Env): Promise<{
   configured: boolean;
   row_count: number | null;
+  shadow_row_count: number | null;
+  has_shadow_table: boolean;
+  any_running_refresh: boolean;
+  oldest_running_refresh_age_min: number | null;
+  recent_attempts: Array<{
+    id: string;
+    status: string;
+    source_version: string | null;
+    rows_written: number;
+    started_at: string;
+    completed_at: string | null;
+    duration_ms: number | null;
+    error_message: string | null;
+  }>;
   last_refresh_at: string | null;
   last_refresh_status: string | null;
   last_refresh_source: string | null;
@@ -176,6 +201,11 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
     return {
       configured: false,
       row_count: null,
+      shadow_row_count: null,
+      has_shadow_table: false,
+      any_running_refresh: false,
+      oldest_running_refresh_age_min: null,
+      recent_attempts: [],
       last_refresh_at: null,
       last_refresh_status: null,
       last_refresh_source: null,
@@ -186,8 +216,16 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
   }
 
   try {
-    const [count, lastRefresh] = await Promise.all([
+    const [count, shadowCount, lastRefresh, recentAttempts, runningStats] = await Promise.all([
       db.prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`).first<{ n: number }>(),
+      // Shadow table only exists while a Workflow is mid-import.
+      // When the swap step runs, geo_ip_ranges_new is renamed to
+      // geo_ip_ranges and this query throws. We catch and report
+      // null for shadow_row_count when that happens.
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges_new`)
+        .first<{ n: number }>()
+        .catch(() => null),
       db.prepare(`
         SELECT completed_at, status, source, rows_written, duration_ms, error_message
         FROM geo_ip_refresh_log
@@ -201,11 +239,42 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
         duration_ms: number | null;
         error_message: string | null;
       }>(),
+      db.prepare(`
+        SELECT id, status, source_version, rows_written, started_at,
+               completed_at, duration_ms, error_message
+        FROM geo_ip_refresh_log
+        ORDER BY started_at DESC
+        LIMIT 5
+      `).all<{
+        id: string;
+        status: string;
+        source_version: string | null;
+        rows_written: number;
+        started_at: string;
+        completed_at: string | null;
+        duration_ms: number | null;
+        error_message: string | null;
+      }>(),
+      db.prepare(`
+        SELECT COUNT(*) AS n,
+               MIN(started_at) AS oldest
+        FROM geo_ip_refresh_log
+        WHERE status = 'running'
+      `).first<{ n: number; oldest: string | null }>(),
     ]);
+
+    const oldestRunningAge = runningStats?.oldest
+      ? Math.floor((Date.now() - Date.parse(runningStats.oldest + 'Z')) / 60_000)
+      : null;
 
     return {
       configured: true,
       row_count: count?.n ?? 0,
+      shadow_row_count: shadowCount?.n ?? null,
+      has_shadow_table: shadowCount !== null,
+      any_running_refresh: (runningStats?.n ?? 0) > 0,
+      oldest_running_refresh_age_min: oldestRunningAge,
+      recent_attempts: recentAttempts.results ?? [],
       last_refresh_at: lastRefresh?.completed_at ?? null,
       last_refresh_status: lastRefresh?.status ?? null,
       last_refresh_source: lastRefresh?.source ?? null,
@@ -217,6 +286,11 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
     return {
       configured: true,
       row_count: null,
+      shadow_row_count: null,
+      has_shadow_table: false,
+      any_running_refresh: false,
+      oldest_running_refresh_age_min: null,
+      recent_attempts: [],
       last_refresh_at: null,
       last_refresh_status: 'error',
       last_refresh_source: null,
