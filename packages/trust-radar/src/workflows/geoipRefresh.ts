@@ -8,34 +8,44 @@
  *   Step 2  skip-if-current      → bail early if the live data
  *                                  already matches this sha256
  *   Step 3  prepare-shadow-table → drop+create geo_ip_ranges_new
- *   Step 4  import-locations     → range-fetch + DEFLATE-decompress
- *                                  Locations CSV from MaxMind, build
- *                                  in-memory geoname → location map
- *   Step 5  import-blocks        → range-fetch + decompress Blocks
- *                                  CSV, parse row-by-row, batch
- *                                  INSERT 100 rows per D1 round-trip
- *                                  (no buffering of the full body)
- *   Step 6  atomic-swap          → DROP+RENAME so cartographer's
+ *   Step 4  import               → range-fetch + DEFLATE-decompress
+ *                                  Locations CSV (~22 MB in-memory map),
+ *                                  then range-fetch + decompress Blocks
+ *                                  CSV, joining each Block to its
+ *                                  Location and INSERT-OR-IGNORE'ing
+ *                                  100 rows per D1 round-trip
+ *   Step 5  atomic-swap          → DROP+RENAME so cartographer's
  *                                  next lookup hits the new data
- *   Step 7  finalize             → mark refresh log success +
+ *   Step 6  finalize             → mark refresh log success +
  *                                  stamp source_version (sha256)
  *
  * No R2 dependency — `HttpZipReader` walks the MaxMind archive via
  * HTTP Range requests, so the Worker never holds more than ~1MB
  * of ZIP bytes in memory.
  *
+ * Why Locations + Blocks are one step
+ * ────────────────────────────────────
+ * Workflows have a hard 1 MiB cap on each step's RETURN value
+ * (serialized JSON). The Locations map is ~150K rows × ~150 bytes
+ * ≈ 22 MB once Recordified — way over the cap. Returning the map
+ * from "import-locations" so a separate "import-blocks" step could
+ * use it threw `Step import-locations-1 output is too large` on
+ * every attempt (production 2026-05-04). Keeping the map inside
+ * one step's closure means it's never serialized, just held in
+ * Worker memory (well under the 128 MB Worker ceiling).
+ *
  * Memory profile
  * ──────────────
  *   - HEAD + EOCD + central directory ranges: ~1MB peak
- *   - Locations map (in step 4): ~22MB (150K rows × ~150b each)
- *   - Blocks streaming (in step 5): ~few KB at a time
+ *   - Locations map (within the import step): ~22MB
+ *   - Blocks streaming (within the import step): ~few KB at a time
  *
  * Recovery semantics
  * ──────────────────
- * Each step has its own retry policy. A network blip on step 5
- * retries from the start of step 5 only — the chunk-import step
- * is idempotent because INSERT OR IGNORE against the shadow table's
- * PRIMARY KEY treats re-runs as no-ops.
+ * Each step has its own retry policy. A network blip retries the
+ * whole `import` step from the beginning — that re-fetches Locations
+ * and Blocks. INSERT OR IGNORE against the shadow table's PRIMARY
+ * KEY makes the re-run idempotent.
  *
  * The shadow table approach also means a partially-written failure
  * NEVER affects the live `geo_ip_ranges` until the atomic-swap step
@@ -48,9 +58,8 @@ import {
   streamLocationsCsv,
   streamBlocksCsv,
   cidrToIntRange,
-  type LocationRow,
 } from '../lib/geoip-csv';
-import { HttpZipReader, type HttpZipMetadata } from '../lib/zip-reader';
+import { HttpZipReader } from '../lib/zip-reader';
 
 interface GeoipRefreshParams {
   /** Refresh log row id created by the geoip_refresh agent before
@@ -240,20 +249,35 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       },
     );
 
-    // ── Step 4: import-locations ─────────────────────────────
-    // Open the ZIP via HTTP Range, locate the Locations entry, and
-    // stream-decompress it through our CSV reader. Returns the
-    // built Map serialized as a Record + the zip metadata so step
-    // 5 doesn't have to re-fetch the central directory (MaxMind
-    // has a daily quota; saving 3 HTTP requests per refresh is
-    // worth the small JSON state cost).
-    const step4 = await step.do(
-      'import-locations',
-      { retries: { limit: 3, delay: '20 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
-      async (): Promise<{ locations: Record<string, LocationRow>; zipMetadata: HttpZipMetadata }> => {
+    // ── Step 4: import (Locations + Blocks in one step) ─────
+    // The Locations CSV has ~150K rows that we need keyed by
+    // geonameId so each Block row can be joined by FK. As a
+    // serialized Record this is ~22 MB — well past Workflows'
+    // 1 MiB step-output cap. Pre-2026-05-04 we returned this map
+    // from "import-locations" so a separate "import-blocks" step
+    // could read it; every attempt failed with `Step output is too
+    // large`. Keeping the map inside one step's closure (never
+    // serialized) is the only architecture that fits.
+    //
+    // Memory: 22 MB locations map + small streaming buffer ≈ 25 MB.
+    // Worker ceiling is 128 MB, so plenty of headroom.
+    //
+    // Wall time: ~30 min worst-case (1× Locations parse, 1× Blocks
+    // stream, ~3.5M D1 batched inserts). Step timeout is 1 hour.
+    //
+    // Retry semantics: a transient failure retries the whole step
+    // from the start — re-fetching both CSVs and rebuilding the
+    // map. The shadow table's PRIMARY KEY constraint makes
+    // INSERT OR IGNORE idempotent across retries.
+    const importResult = await step.do(
+      'import',
+      { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
+      async (): Promise<{ rowsWritten: number; rowsParsed: number; locationsCount: number }> => {
         const archiveUrl = `${baseUrl}&suffix=zip`;
         const zip = new HttpZipReader(archiveUrl);
         await zip.open();
+
+        // Phase 1: parse Locations into an in-step Map.
         const locEntry = zip.findEntry(LOCATIONS_FILENAME);
         if (!locEntry) {
           throw new Error(
@@ -261,38 +285,18 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
             zip.listEntries().map((e) => e.name).slice(0, 5).join(', '),
           );
         }
-        const stream = await zip.streamEntry(locEntry);
-        const map = await streamLocationsCsv(stream);
-        const record: Record<string, LocationRow> = {};
-        for (const [k, v] of map) record[k] = v;
-        return { locations: record, zipMetadata: zip.toMetadata() };
-      },
-    );
-    const locationsRecord = step4.locations;
-    const zipMetadata = step4.zipMetadata;
+        const locStream = await zip.streamEntry(locEntry);
+        const locations = await streamLocationsCsv(locStream);
 
-    // ── Step 5: import-blocks ────────────────────────────────
-    // Stream-parse the 3.5M-row Blocks CSV and INSERT OR IGNORE in
-    // 100-row D1 batches. Total wall time ~30 min worst-case;
-    // fits within Workflow's max step timeout (1 hour).
-    const importResult = await step.do(
-      'import-blocks',
-      { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
-      async (): Promise<{ rowsWritten: number; rowsParsed: number }> => {
-        // Reuse step 4's central-directory metadata. Avoids 3
-        // additional HEAD/Range requests against MaxMind on this
-        // step (matters because GeoLite2 free tier has a daily
-        // download quota that we already hit once).
-        const zip = HttpZipReader.fromMetadata(zipMetadata);
+        // Phase 2: stream Blocks, joining each row by geonameId.
         const blocksEntry = zip.findEntry(BLOCKS_FILENAME);
         if (!blocksEntry) {
           throw new Error(`Blocks CSV missing in MaxMind archive`);
         }
-        const stream = await zip.streamEntry(blocksEntry);
+        const blocksStream = await zip.streamEntry(blocksEntry);
 
         let pendingBatch: D1PreparedStatement[] = [];
         let rowsWritten = 0;
-        let rowsParsed = 0;
 
         const flushBatch = async () => {
           if (pendingBatch.length === 0) return;
@@ -303,13 +307,12 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
           pendingBatch = [];
         };
 
-        const { rowsParsed: parsed } = await streamBlocksCsv(stream, async (row) => {
-          rowsParsed++;
+        const { rowsParsed } = await streamBlocksCsv(blocksStream, async (row) => {
           const range = cidrToIntRange(row.network);
           if (!range) return;
           const loc = row.geonameId
-            ? locationsRecord[row.geonameId]
-            : (row.registeredCountryGeonameId ? locationsRecord[row.registeredCountryGeonameId] : undefined);
+            ? locations.get(row.geonameId)
+            : (row.registeredCountryGeonameId ? locations.get(row.registeredCountryGeonameId) : undefined);
           pendingBatch.push(
             this.env.GEOIP_DB.prepare(`
               INSERT OR IGNORE INTO geo_ip_ranges_new
@@ -331,9 +334,10 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
             await flushBatch();
           }
         });
-        // Flush whatever's left in the partial batch.
         await flushBatch();
-        return { rowsWritten, rowsParsed: parsed };
+
+        // Return only counters — small JSON, well under 1 MiB.
+        return { rowsWritten, rowsParsed, locationsCount: locations.size };
       },
     );
 
@@ -345,7 +349,8 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         WHERE id = ?
       `).bind(
         importResult.rowsWritten,
-        `Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed rows; preparing atomic swap.`,
+        `Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed rows ` +
+          `(${importResult.locationsCount} locations); preparing atomic swap.`,
         refreshLogId,
       ).run();
     });
