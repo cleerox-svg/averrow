@@ -140,6 +140,33 @@ describe("dns-backfill pre-stamp claim", () => {
     expect(grad!.sql).not.toMatch(/attempted_resolve_at/);
   });
 
+  it("chunks the pre-stamp UPDATE to stay under D1's max-SQL-variables limit", async () => {
+    // Live D1 probe (2026-05-04) rejects 200 placeholders with
+    // `too many SQL variables`. With the default batchSize=200 the
+    // unchunked pre-stamp threw on every navigator tick, returning
+    // empty without resolving anything. Chunk size 50 mirrors the
+    // existing Step 3a/3b chunks.
+    const domains = Array.from({ length: 200 }, (_, i) => `d${i}.test`);
+    vi.spyOn(resolverModule, "resolveDomain").mockResolvedValue({ kind: "transient" });
+
+    const { env, calls } = makeEnv({ selectDomains: domains });
+    await runDomainGeoBackfillBatch(env, { batchSize: 200, timeoutMs: 30_000 });
+
+    // Find every pre-stamp UPDATE (the one that sets only attempted_resolve_at,
+    // no enrichment_attempts).
+    const preStamps = calls.filter((c) =>
+      /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
+      !/enrichment_attempts/.test(c.sql),
+    );
+
+    // 200 / 50 = 4 chunks. No chunk binds more than 50 variables.
+    expect(preStamps.length).toBe(4);
+    for (const c of preStamps) {
+      expect(c.bindArgs.length).toBeLessThanOrEqual(50);
+      expect(c.bindArgs.length).toBeGreaterThan(0);
+    }
+  });
+
   it("guards the transient-bump against exceeding the cap", async () => {
     vi.spyOn(resolverModule, "resolveDomain").mockResolvedValue({ kind: "transient" });
     const { env, calls } = makeEnv({ selectDomains: ["t.test"] });

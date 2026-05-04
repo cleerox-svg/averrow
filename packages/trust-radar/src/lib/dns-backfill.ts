@@ -109,14 +109,23 @@ export async function runDomainGeoBackfillBatch(
     // domain is exhausting its retry budget" (enrichment_attempts,
     // graduates to cap=8). Step 3b skips domains whose attempts
     // are already at cap so we never double-bump past the cap.
-    const placeholders0 = domains.map(() => '?').join(',');
+    //
+    // Chunked at 50 placeholders to stay well below D1's max-SQL-
+    // variables ceiling (200 placeholders trigger `too many SQL
+    // variables` per a 2026-05-04 production probe). Matches the
+    // chunking pattern used by Step 3a/3b below.
+    const PRE_STAMP_CHUNK = 50;
     try {
-      await env.DB.prepare(`
-        UPDATE threats
-        SET attempted_resolve_at = datetime('now')
-        WHERE malicious_domain IN (${placeholders0})
-          AND (ip_address IS NULL OR ip_address = '')
-      `).bind(...domains).run();
+      for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
+        const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        await env.DB.prepare(`
+          UPDATE threats
+          SET attempted_resolve_at = datetime('now')
+          WHERE malicious_domain IN (${placeholders})
+            AND (ip_address IS NULL OR ip_address = '')
+        `).bind(...chunk).run();
+      }
     } catch (err) {
       // If the pre-stamp fails (D1 transient), bail out cleanly.
       // Re-running the whole batch on the next tick is safe and

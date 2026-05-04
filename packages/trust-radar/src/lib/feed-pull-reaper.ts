@@ -30,6 +30,16 @@ export const REAP_AGE_MINUTES = 15;
 /** Returns the number of rows reaped. Never throws. */
 export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
   try {
+    // Both sides of the comparison MUST go through `datetime()` so the
+    // engine compares parsed timestamps, not raw strings. feedRunner
+    // inserts `started_at` via `new Date().toISOString()` ("…T20:11:49.957Z")
+    // while `datetime('now', ...)` returns "YYYY-MM-DD HH:MM:SS" with a
+    // space separator. Naive string comparison fails because 'T' (0x54)
+    // sorts ABOVE ' ' (0x20), so an ISO-format `started_at` is always
+    // lexically greater than any space-format threshold — this is what
+    // left 13 reapable orphans visible in production despite the reaper
+    // running every 5 min for hours. Wrapping the LHS in datetime()
+    // forces SQLite to coerce both into the same canonical representation.
     const result = await env.DB.prepare(
       `UPDATE feed_pull_history
           SET status = 'failed',
@@ -40,7 +50,7 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
               )
         WHERE status = 'partial'
           AND completed_at IS NULL
-          AND started_at <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
+          AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
     ).run();
     return result.meta?.changes ?? 0;
   } catch (err) {

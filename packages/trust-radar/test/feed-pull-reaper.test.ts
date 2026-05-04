@@ -56,7 +56,13 @@ describe("reapOrphanFeedPullHistory", () => {
     expect(sql).toMatch(/UPDATE\s+feed_pull_history/);
     expect(sql).toMatch(/status\s*=\s*'partial'/);
     expect(sql).toMatch(/completed_at\s+IS\s+NULL/);
-    expect(sql).toMatch(/started_at\s*<=\s*datetime\('now',\s*'-15 minutes'\)/);
+    // BOTH sides of the comparison must run through datetime() — feedRunner
+    // inserts started_at as ISO ("…T…Z") and SQLite's datetime('now', …)
+    // returns "YYYY-MM-DD HH:MM:SS". Without canonicalization, lexical
+    // string comparison falsely says ISO > sqlite-format and the reaper
+    // never matches anything (verified live 2026-05-04: 13 reapable rows
+    // sat unreaped for hours because of this).
+    expect(sql).toMatch(/datetime\(started_at\)\s*<=\s*datetime\('now',\s*'-15 minutes'\)/);
 
     // Mutation: the row gets a final 'failed' state with a forensic
     // error_message that downstream consumers (status-page, feed-health
