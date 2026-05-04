@@ -24,6 +24,7 @@
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
 import { runDomainGeoBackfillBatch } from '../lib/dns-backfill';
+import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryOperations } from '../handlers/observatory';
@@ -119,6 +120,17 @@ async function runNavigatorImpl(
       }
     } catch (err) {
       console.error('[navigator] event drain error:', err);
+      // Non-fatal — continue to DNS backfill
+    }
+
+    // ── 1b. Reap orphan feed_pull_history rows ──
+    try {
+      const reapedCount = await reapOrphanFeedPullHistory(env);
+      if (reapedCount > 0) {
+        console.warn(`[navigator] reaped ${reapedCount} orphan feed_pull_history rows (status=partial, > 15min)`);
+      }
+    } catch (err) {
+      console.error('[navigator] orphan pull-history reap error:', err);
       // Non-fatal — continue to DNS backfill
     }
 
