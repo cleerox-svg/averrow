@@ -37,6 +37,7 @@ import { handleListAuditLog, handleExportAuditLog } from "../handlers/audit";
 import { handleEnrichGeo, handleEnrichAll, handleDailySnapshots } from "../handlers/threats";
 import { handleBudgetStatus, handleBudgetBreakdown, handleBudgetConfigPatch } from "../handlers/budget";
 import { handlePlatformDiagnostics } from "../handlers/diagnostics";
+import { handlePlatformStatus } from "../handlers/platform-status";
 import { handleCartographerHealth } from "../handlers/cartographer-health";
 import { handleD1Health } from "../handlers/d1-health";
 import { handleGenerateQualifiedReport } from "../handlers/qualifiedReport";
@@ -78,6 +79,13 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handlePlatformDiagnostics(request, env);
+  });
+  // Lightweight 30-day uptime rollup feeding the Home banner + (Phase 3)
+  // public status page. Cached 60s in KV; pass ?refresh=1 to bypass.
+  router.get("/api/admin/platform-status", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handlePlatformStatus(request, env);
   });
 
   // ─── Agent deployment approval (AGENT_STANDARD §12.1) ──────────
