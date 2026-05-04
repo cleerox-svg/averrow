@@ -19,6 +19,7 @@ import { HomeHeader } from './sections/HomeHeader';
 import { StatusRow } from './sections/StatusRow';
 import { StatGrid } from './sections/StatGrid';
 import { ThreatPulse } from './sections/ThreatPulse';
+import { BrandMovers } from './sections/BrandMovers';
 
 const SHELL_STYLE: React.CSSProperties = {
   containerType: 'inline-size' as React.CSSProperties['containerType'],
@@ -35,6 +36,7 @@ export function HomeUnified() {
       <StatusRow />
       <StatGrid />
       <ThreatPulse />
+      <BrandMovers />
     </div>
   );
 }

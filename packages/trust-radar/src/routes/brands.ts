@@ -6,7 +6,7 @@ import {
   handleListBrands, handleTopTargetedBrands, handleMonitoredBrands,
   handleAddMonitoredBrand, handleRemoveMonitoredBrand, handleGetBrand,
   handleBrandThreats, handleBrandThreatLocations, handleBrandThreatTimeline,
-  handleBrandProviders, handleBrandCampaigns, handleBrandStats,
+  handleBrandProviders, handleBrandCampaigns, handleBrandStats, handleBrandMovers,
   handleGetBrandAnalysis, handleGenerateBrandAnalysis,
   handleBrandDeepScan,
   handleCleanFalsePositives,
@@ -79,6 +79,13 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBrandStats(request, env);
+  });
+  // /api/brands/movers must be defined before /api/brands/:id below
+  // so itty-router doesn't intercept "movers" as the :id param.
+  router.get("/api/brands/movers", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandMovers(request, env);
   });
   router.post("/api/brands/monitor", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);

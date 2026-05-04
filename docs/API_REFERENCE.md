@@ -72,6 +72,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/brands/top-targeted` | User | Top targeted brands (with trends) |
 | GET | `/api/brands/monitored` | User | Monitored brands |
 | GET | `/api/brands/stats` | User | Brand aggregate statistics |
+| GET | `/api/brands/movers` | User | 7-day movers (rising / falling by active threat delta) |
 | POST | `/api/brands/monitor` | User | Add brand to monitoring |
 | DELETE | `/api/brands/monitor/:id` | User | Remove brand from monitoring |
 | GET | `/api/brands/:id` | User | Get brand detail |

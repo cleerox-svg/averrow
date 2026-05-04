@@ -19,6 +19,95 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
+// GET /api/brands/movers
+//
+// "Brand Movers" data for the unified Home — top 5 brands with the
+// largest positive delta in active threat count over the last 7 days
+// ("rising"), and top 5 with the largest negative delta ("falling").
+//
+// Source: daily_snapshots(date, entity_type='brand', entity_id, active_threats).
+// Anchored on MAX(date) rather than date('now') so the query keeps
+// working if the daily snapshot job hasn't run yet today (the table
+// is rebuilt at 00:00 UTC by generateDailySnapshots() each day).
+//
+// Both lists are computed in a single round-trip: one CTE pair builds
+// today/-7d active_threats per brand, then we LEFT JOIN brands and
+// run two filters (delta > 0 / delta < 0) over the same projected
+// rows. Cached in KV for 5 min — daily-grain data, no need for finer.
+export async function handleBrandMovers(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const cacheKey = "brand_movers:v1";
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) {
+      recordD1Reads(env, "brand_movers", newTally());
+      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
+    }
+
+    const tally = newTally();
+
+    // Single SQL — projects (brand row + today_count + week_ago_count + delta_7d)
+    // for every brand that had non-zero active threats on either anchor day.
+    // We then split rising/falling client-side from the same row set so we
+    // only pay one round-trip.
+    const rows = await session.prepare(`
+      WITH anchor AS (
+        SELECT MAX(date) AS today_date
+        FROM daily_snapshots
+        WHERE entity_type = 'brand'
+      ),
+      today_snap AS (
+        SELECT entity_id AS brand_id, active_threats AS today_count
+        FROM daily_snapshots, anchor
+        WHERE entity_type = 'brand' AND date = anchor.today_date
+      ),
+      week_ago_snap AS (
+        SELECT entity_id AS brand_id, active_threats AS week_ago_count
+        FROM daily_snapshots, anchor
+        WHERE entity_type = 'brand' AND date = date(anchor.today_date, '-7 days')
+      )
+      SELECT
+        b.id, b.name, b.canonical_domain, b.logo_url, b.email_security_grade,
+        b.threat_count,
+        COALESCE(t.today_count, 0) AS today_count,
+        COALESCE(w.week_ago_count, 0) AS week_ago_count,
+        COALESCE(t.today_count, 0) - COALESCE(w.week_ago_count, 0) AS delta_7d
+      FROM brands b
+      LEFT JOIN today_snap t     ON t.brand_id = b.id
+      LEFT JOIN week_ago_snap w  ON w.brand_id = b.id
+      WHERE COALESCE(t.today_count, 0) + COALESCE(w.week_ago_count, 0) > 0
+    `).all<{
+      id: string; name: string; canonical_domain: string;
+      logo_url: string | null; email_security_grade: string | null;
+      threat_count: number;
+      today_count: number; week_ago_count: number; delta_7d: number;
+    }>();
+    tally.queries += 1;
+
+    const all = rows.results ?? [];
+    const rising = all
+      .filter(r => r.delta_7d > 0)
+      .sort((a, b) => b.delta_7d - a.delta_7d)
+      .slice(0, 5);
+    const falling = all
+      .filter(r => r.delta_7d < 0)
+      .sort((a, b) => a.delta_7d - b.delta_7d)
+      .slice(0, 5);
+
+    const data = {
+      success: true,
+      data: { rising, falling },
+    };
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
+    recordD1Reads(env, "brand_movers", tally);
+    return attachBookmark(json(data, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
 // GET /api/brands/stats
 export async function handleBrandStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
