@@ -16,7 +16,7 @@ import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { useAuth } from '@/lib/auth';
 import { Card, StatCard, Avatar, Badge, SeverityDot } from '@/components/ui';
 import { InstallAppBanner } from '@/components/InstallAppBanner';
-import { PlatformStatusBadge } from '@/components/PlatformStatusBadge';
+import { PlatformStatusFlyout } from '@/components/PlatformStatusFlyout';
 import { RefreshCw } from 'lucide-react';
 
 // ── Latest Intel Feed ──────────────────────────────────────────────────
@@ -211,12 +211,12 @@ function HomeDashboard() {
       )}
 
       {/* Status bar — prominent live status, mirrors mobile.
-          PlatformStatusBadge polls /api/v1/public/platform-status
-          on a 60s interval; the pulsing dot is the liveness signal. */}
+          Click to expand a condensed availability breakdown for
+          Feeds / Agents / Processing. Incidents intentionally
+          excluded — operator wanted the flyout scoped to
+          availability only. Full /status page linked from inside. */}
       <div style={{ padding: '12px 32px 0' }}>
-        <Card variant="base" style={{ padding: '11px 16px' }}>
-          <PlatformStatusBadge variant="prominent" />
-        </Card>
+        <PlatformStatusFlyout />
       </div>
 
       {/* ── Stat bar ──────────────────────────────────────────── */}
