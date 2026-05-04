@@ -173,7 +173,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           height={chartHeight}
           className="max-md:!h-[160px]"
         >
-          <AreaChart data={chartData} margin={{ top: 10, right: 8, bottom: 4, left: -16 }}>
+          <AreaChart data={chartData} margin={{ top: 10, right: 8, bottom: 16, left: -16 }}>
             <XAxis
               dataKey="bucket"
               tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
@@ -219,7 +219,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
       {data && (
         <div
           className="grid grid-cols-1 md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]"
-          style={{ marginTop: 10, gap: 6 }}
+          style={{ marginTop: 16, gap: 6 }}
         >
           {data.series.map((s) => (
             <div
