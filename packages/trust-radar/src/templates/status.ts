@@ -17,6 +17,12 @@
  */
 import { wrapPage } from "./shared";
 import { computePlatformStatus } from "../lib/platform-status";
+import {
+  listIncidents,
+  listIncidentUpdates,
+  toPublicShape,
+  type PublicIncident,
+} from "../lib/incidents";
 import type {
   PlatformStatus,
   CategoryStatus,
@@ -81,16 +87,101 @@ function renderRow(rollup: CategoryRollup): string {
   `;
 }
 
-function renderBanner(status: PlatformStatus): string {
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+  }[c] ?? c));
+}
+
+function renderBanner(status: PlatformStatus, openIncident: PublicIncident | null): string {
+  // An open critical/high incident takes over the banner — the
+  // headline reads as the incident, not the platform-wide rollup.
+  // Lower-severity incidents render in the recent-incidents list
+  // below without hijacking the headline.
+  if (openIncident && (openIncident.severity === "critical" || openIncident.severity === "high")) {
+    const pill = STATUS_PILL.outage;
+    const sevLabel = openIncident.severity === "critical" ? "CRITICAL" : "HIGH";
+    return `
+  <div id="status-banner" class="status-banner" data-overall="incident" style="background:${pill.bg};border:1px solid ${pill.border};color:${pill.text}">
+    <div class="status-banner-headline">${sevLabel} INCIDENT — ${escapeHtml(openIncident.title)}</div>
+    <div class="status-banner-sub">
+      Status: ${openIncident.status} · Started ${new Date(openIncident.started_at).toUTCString()}
+      &nbsp;·&nbsp;<a href="/status/incidents/${openIncident.id}" style="color:inherit;border-bottom:1px dashed currentColor">Details →</a>
+    </div>
+  </div>`;
+  }
+
   const pill = STATUS_PILL[status.overall];
   const headline = STATUS_HEADLINE[status.overall];
   return `
   <div id="status-banner" class="status-banner" data-overall="${status.overall}" style="background:${pill.bg};border:1px solid ${pill.border};color:${pill.text}">
     <div class="status-banner-headline">${headline}</div>
     ${status.overall !== "operational"
-      ? `<div class="status-banner-sub">${status.overall_note.replace(/</g, "&lt;")}</div>`
+      ? `<div class="status-banner-sub">${escapeHtml(status.overall_note)}</div>`
       : ""}
   </div>`;
+}
+
+function renderIncidentCard(inc: PublicIncident): string {
+  const isResolved = inc.status === "resolved";
+  const pill = isResolved ? STATUS_PILL.operational : STATUS_PILL.outage;
+  const startedLabel = new Date(inc.started_at).toUTCString();
+  const updates = inc.updates.length > 0
+    ? `<div class="incident-updates">
+         ${inc.updates.slice(-3).map((u) => `
+           <div class="incident-update">
+             <span class="incident-update-time">${new Date(u.created_at).toUTCString()}</span>
+             ${u.status ? `<span class="incident-update-status">${escapeHtml(u.status)}</span>` : ""}
+             <span class="incident-update-msg">${escapeHtml(u.message)}</span>
+           </div>
+         `).join("")}
+       </div>`
+    : "";
+  return `
+  <div class="incident-card">
+    <div class="incident-card-head">
+      <div class="incident-card-title">${escapeHtml(inc.title)}</div>
+      <div class="incident-card-pill" style="background:${pill.bg};border:1px solid ${pill.border};color:${pill.text}">
+        ${isResolved ? "Resolved" : escapeHtml(inc.status)}
+      </div>
+    </div>
+    ${inc.details ? `<div class="incident-card-details">${escapeHtml(inc.details)}</div>` : ""}
+    <div class="incident-card-foot">
+      Started ${startedLabel}${inc.resolved_at ? ` · Resolved ${new Date(inc.resolved_at).toUTCString()}` : ""}
+    </div>
+    ${updates}
+  </div>`;
+}
+
+function renderIncidentsSection(incidents: PublicIncident[]): string {
+  if (incidents.length === 0) return "";
+  return `
+  <h2 class="incidents-section-title">Recent Incidents</h2>
+  <div class="incidents-list">
+    ${incidents.map(renderIncidentCard).join("")}
+  </div>`;
+}
+
+async function loadPublicIncidents(env: Env): Promise<PublicIncident[]> {
+  // Pull every public incident, then narrow to:
+  //   - all open (status != 'resolved')
+  //   - the 5 most recent resolved
+  // so the page shows context without scrolling forever.
+  try {
+    const rows = await listIncidents(env, { visibility: "public", limit: 50 });
+    const out: PublicIncident[] = [];
+    for (const row of rows) {
+      const updates = await listIncidentUpdates(env, row.id);
+      const publicUpdates = updates.filter((u) => u.visibility === "public");
+      const shape = toPublicShape(row, publicUpdates);
+      if (shape) out.push(shape);
+    }
+    const open = out.filter((i) => i.status !== "resolved");
+    const resolved = out.filter((i) => i.status === "resolved").slice(0, 5);
+    return [...open, ...resolved];
+  } catch {
+    return [];
+  }
 }
 
 export async function renderStatusPage(env: Env): Promise<string> {
@@ -104,12 +195,15 @@ export async function renderStatusPage(env: Env): Promise<string> {
     status = null;
   }
 
+  const incidents = await loadPublicIncidents(env);
+  const openIncident = incidents.find((i) => i.status !== "resolved") ?? null;
+
   const inlineData = status
     ? `<script id="status-data" type="application/json">${JSON.stringify(status).replace(/</g, "\\u003c")}</script>`
     : "";
 
   const initialBanner = status
-    ? renderBanner(status)
+    ? renderBanner(status, openIncident)
     : `<div id="status-banner" class="status-banner" data-overall="loading" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);color:var(--text-secondary)">
         <div class="status-banner-headline">Checking platform status…</div>
        </div>`;
@@ -117,6 +211,8 @@ export async function renderStatusPage(env: Env): Promise<string> {
   const initialRows = status
     ? status.categories.map(renderRow).join("")
     : `<div class="status-row"><div class="status-row-head"><div class="status-row-title">Loading…</div></div></div>`;
+
+  const incidentsSection = renderIncidentsSection(incidents);
 
   const lastChecked = status?.generated_at ?? new Date().toISOString();
 
@@ -155,6 +251,22 @@ export async function renderStatusPage(env: Env): Promise<string> {
 .status-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); text-align: center; margin-top: 1.5rem; letter-spacing: 0.05em; }
 .status-meta a { color: var(--accent, var(--amber, #E5A832)); text-decoration: none; border-bottom: 1px dashed currentColor; }
 
+/* ── Incidents section ─────────────────────────────────────────── */
+.incidents-section-title { font-family: var(--font-display); font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 2rem 0 0.75rem; letter-spacing: -0.01em; }
+.incidents-list { display: flex; flex-direction: column; gap: 8px; }
+.incident-card { background: var(--bg-card, rgba(22,30,48,0.65)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(8px); }
+.incident-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.incident-card-title { font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.incident-card-pill { font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 100px; flex-shrink: 0; }
+.incident-card-details { font-size: 13px; color: var(--text-secondary); margin: 4px 0 8px; line-height: 1.5; }
+.incident-card-foot { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+.incident-updates { margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 4px; }
+.incident-update { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.incident-update-time { color: var(--text-tertiary); }
+.incident-update-status { color: var(--amber); font-weight: 700; text-transform: uppercase; font-size: 9px; letter-spacing: 0.08em; }
+.incident-update-msg { flex: 1; min-width: 0; }
+[data-theme="light"] .incident-card { background: rgba(255,255,255,0.6); border-color: rgba(26,31,46,0.08); }
+
 [data-theme="light"] .status-row { background: rgba(255,255,255,0.6); border-color: rgba(26,31,46,0.08); }
 [data-theme="light"] .status-bar { opacity: 0.9; }
 
@@ -184,6 +296,8 @@ export async function renderStatusPage(env: Env): Promise<string> {
 
   <div id="status-banner-host">${initialBanner}</div>
   <div id="status-rows">${initialRows}</div>
+
+  <div id="status-incidents-host">${incidentsSection}</div>
 
   <div class="status-meta">
     Last checked: <span id="status-last-checked">${lastChecked}</span>

@@ -39,6 +39,10 @@ import { handleBudgetStatus, handleBudgetBreakdown, handleBudgetConfigPatch } fr
 import { handlePlatformDiagnostics } from "../handlers/diagnostics";
 import { handlePlatformStatus } from "../handlers/platform-status";
 import { handleNotificationDeliveryAudit } from "../handlers/notification-delivery-audit";
+import {
+  handleListIncidents, handleGetIncident, handleCreateIncident,
+  handleAppendIncidentUpdate, handlePromoteIncident, handleTransitionIncidentStatus,
+} from "../handlers/incidents";
 import { handleCartographerHealth } from "../handlers/cartographer-health";
 import { handleD1Health } from "../handlers/d1-health";
 import { handleGenerateQualifiedReport } from "../handlers/qualifiedReport";
@@ -94,6 +98,40 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleNotificationDeliveryAudit(request, env);
+  });
+
+  // ─── Incidents (migration 0132) ───────────────────────────────────
+  // Auto-created from critical platform_* notifications, operator-
+  // managed via this surface, and selectively promoted to /status.
+  router.get("/api/admin/incidents", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListIncidents(request, env);
+  });
+  router.post("/api/admin/incidents", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreateIncident(request, env, ctx.userId);
+  });
+  router.get("/api/admin/incidents/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetIncident(request, env, request.params["id"] ?? "");
+  });
+  router.post("/api/admin/incidents/:id/updates", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAppendIncidentUpdate(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+  router.post("/api/admin/incidents/:id/transition", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTransitionIncidentStatus(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+  router.post("/api/admin/incidents/:id/promote", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handlePromoteIncident(request, env, request.params["id"] ?? "", ctx.userId);
   });
 
   // ─── Agent deployment approval (AGENT_STANDARD §12.1) ──────────

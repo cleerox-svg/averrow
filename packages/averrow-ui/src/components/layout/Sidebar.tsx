@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
-  Gavel, Bell, Inbox, Target,
+  Gavel, Bell, Inbox, Target, Siren,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
   Smartphone, EyeOff, BellRing,
 } from 'lucide-react';
@@ -138,6 +138,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     {
       label: 'RESPONSE',
       items: [
+        { label: 'Incidents',    path: '/admin/incidents',  icon: Siren },
         { label: 'Takedowns',    path: '/admin/takedowns',  icon: Gavel },
         { label: 'Alerts',       path: '/alerts',           icon: Bell, badge: alertCount },
         { label: 'Spam Trap',    path: '/admin/spam-trap',  icon: Inbox },

@@ -367,7 +367,7 @@ export async function emitPlatformNotification<T extends NotificationType>(
   type: T,
   rendered: RenderedTemplate,
 ): Promise<number> {
-  return createNotification(env, {
+  const created = await createNotification(env, {
     type,
     severity: rendered.severity,
     title: rendered.title,
@@ -378,6 +378,43 @@ export async function emitPlatformNotification<T extends NotificationType>(
     audience: rendered.audience,
     groupKey: rendered.group_key,
   });
+
+  // Critical notifications auto-create an incident for durable
+  // tracking + the public /status surfacing path. Lower severities
+  // stay as notifications only — operators can still create an
+  // incident manually if a series of mediums adds up to a real
+  // disruption. See packages/trust-radar/src/lib/incidents.ts and
+  // the planning thread for the lifecycle.
+  if (created > 0 && rendered.severity === 'critical' && rendered.group_key) {
+    try {
+      const firstNotif = await env.DB.prepare(
+        `SELECT id FROM notifications
+          WHERE type = ? AND group_key = ?
+          ORDER BY created_at DESC
+          LIMIT 1`,
+      ).bind(type, rendered.group_key).first<{ id: string }>();
+
+      if (firstNotif) {
+        const { autoCreateIncidentFromNotification } = await import('./incidents');
+        await autoCreateIncidentFromNotification(env, {
+          notificationId: firstNotif.id,
+          groupKey: rendered.group_key,
+          type,
+          severity: 'critical',
+          title: rendered.title,
+          message: rendered.message,
+        });
+      }
+    } catch (err) {
+      // Auto-create must never break the notification path. If the
+      // incident write throws, the notification still fired — the
+      // incident table just doesn't get the record.
+      console.error('[emitPlatformNotification] incident auto-create failed:',
+        err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return created;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

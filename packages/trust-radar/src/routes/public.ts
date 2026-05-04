@@ -261,6 +261,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     return handlePlatformStatus(request, env);
   });
 
+  // Public incidents — only rows with visibility='public' AND
+  // public_title set are returned. Drives the open-incidents banner
+  // and the recent-incidents list on /status. Internal titles +
+  // descriptions are NEVER exposed here; see lib/incidents.toPublicShape.
+  router.get("/api/v1/public/incidents", async (request: Request, env: Env) => {
+    const { handlePublicIncidents } = await import("../handlers/incidents");
+    return handlePublicIncidents(request, env);
+  });
+
   // ─── React app — serve v2/index.html for all /v2/* routes ────────
   router.get("/v2/*", async (request: Request, env: Env) => {
     const url = new URL(request.url);
