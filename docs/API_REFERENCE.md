@@ -35,6 +35,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/contact` | Contact form submission |
 | GET | `/status` | Public platform status page (HTML). Server-rendered 30-day uptime rollup with per-day bars per category (Feeds / Agents / Processing). Inline script polls `/api/v1/public/platform-status` every 60s for live updates. |
 | GET | `/status/incidents` | Public incident archive (HTML). Lists every public incident, newest first, grouped by month. Linked from the recent-incidents section on `/status`. Same visibility gate as the rest. |
+| GET | `/status/feed.xml` | RSS 2.0 feed of public incidents (Content-Type `application/rss+xml`). Most recent 50, newest first by latest activity. Each item links to the `/status/incidents/:id` permalink. Cached 5 min. |
 | GET | `/status/incidents/:id` | Public incident permalink (HTML). Mirrors the `/api/v1/public/incidents` visibility gate — only renders when the incident's `visibility='public'` AND `public_title` is set. Returns 404 with the same shell otherwise (no information leak about whether the id exists). Linked from each card on `/status`. |
 
 ## Public API v1

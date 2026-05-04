@@ -310,6 +310,7 @@ export async function renderStatusPage(env: Env): Promise<string> {
 
   <div class="status-meta">
     Last checked: <span id="status-last-checked">${lastChecked}</span>
+    &middot; <a href="/status/feed.xml">Subscribe (RSS)</a>
   </div>
 </div>
 
