@@ -104,6 +104,27 @@ export function useAppendIncidentUpdate(id: string) {
   });
 }
 
+/** Edit (or clear) public_message on an existing update — works on
+ *  both operator-written and system-stored rows. Pass null to clear. */
+export function useEditUpdatePublicCopy(incidentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      updateId: string;
+      public_message: string | null;
+      visibility?: IncidentVisibility;
+    }) => {
+      await api.patch(`/api/admin/incidents/${incidentId}/updates/${input.updateId}`, {
+        public_message: input.public_message,
+        visibility: input.visibility,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incidents'] });
+    },
+  });
+}
+
 export function useTransitionIncident(id: string) {
   const qc = useQueryClient();
   return useMutation({

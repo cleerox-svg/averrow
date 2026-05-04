@@ -11,6 +11,7 @@ import { Card, PageHeader, Badge, Button } from '@/components/ui';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   useIncident, useAppendIncidentUpdate, useTransitionIncident, usePromoteIncident,
+  useEditUpdatePublicCopy,
   type IncidentStatus, type IncidentSeverity,
 } from './useIncidents';
 
@@ -43,6 +44,7 @@ export function AdminIncidentDetail() {
   const append = useAppendIncidentUpdate(id ?? '');
   const transition = useTransitionIncident(id ?? '');
   const promote = usePromoteIncident(id ?? '');
+  const editPublicCopy = useEditUpdatePublicCopy(id ?? '');
 
   const [updateMessage, setUpdateMessage] = useState('');
   const [updatePublicMessage, setUpdatePublicMessage] = useState('');
@@ -51,6 +53,12 @@ export function AdminIncidentDetail() {
 
   const [publicTitle, setPublicTitle] = useState('');
   const [publicDetails, setPublicDetails] = useState('');
+
+  // Inline per-update public-copy editor state. Tracks the currently
+  // open update id and the draft text. Only one row can be edited at
+  // a time to keep the layout simple.
+  const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState('');
 
   if (isLoading || !data) {
     return (
@@ -391,7 +399,7 @@ export function AdminIncidentDetail() {
                 </div>
                 {/* Show what we're actually rendering on /status, so
                     the operator can spot leaks before customers do. */}
-                {u.public_message && (
+                {u.public_message && editingUpdateId !== u.id && (
                   <div style={{
                     marginTop: 6,
                     padding: '6px 10px',
@@ -405,6 +413,89 @@ export function AdminIncidentDetail() {
                     <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
                     {u.public_message}
                   </div>
+                )}
+                {/* Inline public-copy editor — works for operator AND
+                    system rows. Synthetic telemetry rows skip this
+                    (their id is "telemetry:..." which isn't in the
+                    incident_updates table). */}
+                {editingUpdateId === u.id ? (
+                  <div style={{ marginTop: 8 }}>
+                    <textarea
+                      value={editingDraft}
+                      onChange={(e) => setEditingDraft(e.target.value)}
+                      placeholder="Customer-safe public version (no feed names, internal terminology, or commit hashes; ≤1000 chars)"
+                      maxLength={1000}
+                      rows={2}
+                      style={{
+                        width: '100%',
+                        fontFamily: 'var(--font-mono)', fontSize: 12,
+                        background: 'rgba(229,168,50,0.06)',
+                        border: '1px solid rgba(229,168,50,0.30)',
+                        borderRadius: 4, padding: 8,
+                        color: 'var(--text-primary)', resize: 'vertical',
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <Button
+                        onClick={() => {
+                          editPublicCopy.mutate(
+                            {
+                              updateId: u.id,
+                              public_message: editingDraft.trim() || null,
+                              visibility: editingDraft.trim() ? 'public' : 'internal',
+                            },
+                            { onSuccess: () => { setEditingUpdateId(null); setEditingDraft(''); } },
+                          );
+                        }}
+                        disabled={editPublicCopy.isPending}
+                      >
+                        Save
+                      </Button>
+                      {u.public_message && (
+                        <Button
+                          variant="danger"
+                          onClick={() => {
+                            editPublicCopy.mutate(
+                              { updateId: u.id, public_message: null, visibility: 'internal' },
+                              { onSuccess: () => { setEditingUpdateId(null); setEditingDraft(''); } },
+                            );
+                          }}
+                          disabled={editPublicCopy.isPending}
+                        >
+                          Clear public
+                        </Button>
+                      )}
+                      <Button
+                        variant="secondary"
+                        onClick={() => { setEditingUpdateId(null); setEditingDraft(''); }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  // Show the edit affordance for stored rows only.
+                  // Telemetry-synthetic rows have ids like "telemetry:..."
+                  // which we can't PATCH against incident_updates.
+                  !u.synthetic && (
+                    <div style={{ marginTop: 4 }}>
+                      <button
+                        onClick={() => {
+                          setEditingUpdateId(u.id);
+                          setEditingDraft(u.public_message ?? '');
+                        }}
+                        style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 10,
+                          color: 'var(--text-tertiary)',
+                          background: 'transparent', border: 'none',
+                          cursor: 'pointer', padding: 0,
+                          letterSpacing: '0.04em',
+                        }}
+                      >
+                        {u.public_message ? 'Edit public copy' : 'Add public copy'}
+                      </button>
+                    </div>
+                  )
                 )}
               </div>
             </div>

@@ -42,6 +42,7 @@ import { handleNotificationDeliveryAudit } from "../handlers/notification-delive
 import {
   handleListIncidents, handleGetIncident, handleCreateIncident,
   handleAppendIncidentUpdate, handlePromoteIncident, handleTransitionIncidentStatus,
+  handleEditIncidentUpdatePublicCopy,
 } from "../handlers/incidents";
 import { handleCartographerHealth } from "../handlers/cartographer-health";
 import { handleD1Health } from "../handlers/d1-health";
@@ -122,6 +123,19 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAppendIncidentUpdate(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+  // Edit any existing update's public copy (operator OR system rows).
+  // Lets the auto-create trigger row + recovery sweep messages get a
+  // sanitized public_message so they can surface on /status.
+  router.patch("/api/admin/incidents/:id/updates/:updateId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleEditIncidentUpdatePublicCopy(
+      request, env,
+      request.params["id"] ?? "",
+      request.params["updateId"] ?? "",
+      ctx.userId,
+    );
   });
   router.post("/api/admin/incidents/:id/transition", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);

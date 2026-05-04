@@ -34,6 +34,8 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/stats/public` | Public platform statistics |
 | POST | `/api/contact` | Contact form submission |
 | GET | `/status` | Public platform status page (HTML). Server-rendered 30-day uptime rollup with per-day bars per category (Feeds / Agents / Processing). Inline script polls `/api/v1/public/platform-status` every 60s for live updates. |
+| GET | `/status/incidents` | Public incident archive (HTML). Lists every public incident, newest first, grouped by month. Linked from the recent-incidents section on `/status`. Same visibility gate as the rest. |
+| GET | `/status/feed.xml` | RSS 2.0 feed of public incidents (Content-Type `application/rss+xml`). Most recent 50, newest first by latest activity. Each item links to the `/status/incidents/:id` permalink. Cached 5 min. |
 | GET | `/status/incidents/:id` | Public incident permalink (HTML). Mirrors the `/api/v1/public/incidents` visibility gate — only renders when the incident's `visibility='public'` AND `public_title` is set. Returns 404 with the same shell otherwise (no information leak about whether the id exists). Linked from each card on `/status`. |
 
 ## Public API v1
@@ -498,7 +500,8 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/incidents` | Super Admin | List incidents (migration 0132). `?status=open` filters to non-resolved. `?visibility=public\|internal` filters by exposure. Returns severity/status pivoted with parsed `affected_components`. Auto-created from critical platform_* notifications + manually creatable. |
 | POST | `/api/admin/incidents` | Super Admin | Create a manual incident. Body: `{ title, description?, severity?, status?, affected_components? }`. |
 | GET | `/api/admin/incidents/:id` | Super Admin | Incident detail + full update timeline (operator + system rows). |
-| POST | `/api/admin/incidents/:id/updates` | Super Admin | Append an operator update. Body: `{ message, status?, visibility? }`. If `status` is set, transitions the incident as part of the same write. |
+| POST | `/api/admin/incidents/:id/updates` | Super Admin | Append an operator update. Body: `{ message, status?, visibility?, public_message? }`. If `visibility='public'`, `public_message` is required (returns 400 otherwise). If `status` is set, transitions the incident as part of the same write. |
+| PATCH | `/api/admin/incidents/:id/updates/:updateId` | Super Admin | Edit an existing update's public copy. Works on operator AND auto-stored system rows so the auto-create trigger / recovery sweep messages can be promoted. Body: `{ public_message: string \| null, visibility? }`. Pass `public_message: null` to clear. Logs a system update for audit. |
 | POST | `/api/admin/incidents/:id/transition` | Super Admin | Status-only transition without a message. Body: `{ status }`. Logs a system update for audit. |
 | POST | `/api/admin/incidents/:id/promote` | Super Admin | Flip visibility internal↔public AND/OR edit `public_title` / `public_details`. Promoting to public requires a non-empty `public_title` (200/2000 char caps). |
 | GET | `/api/admin/cartographer-health` | Super Admin | Focused Phase 0 enrichment diagnostic. Returns migration sanity (column + index for migration 0110), attempts histogram, queue / exhausted / stuck-pile counts, throughput (1h / 6h / 24h), recent runs, and ip-api yield per recent batch with computed avg_yield_pct. |

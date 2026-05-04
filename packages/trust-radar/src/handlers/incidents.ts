@@ -376,6 +376,126 @@ export async function handleTransitionIncidentStatus(
   }, 200, origin);
 }
 
+// ─── Edit an existing update's public copy ───────────────────────
+//
+// Lets operators add a sanitized public_message to ANY incident
+// update — including auto-created system rows (the
+// "Auto-created from platform_..." entry, recovery sweep messages,
+// status-transition rows). Without this, only operator-written
+// updates could be promoted to /status, and the auto-create
+// trigger row stayed forever internal.
+//
+// Body:
+//   { public_message: string | null,  // null to clear
+//     visibility?: 'public' | 'internal' }
+//
+// To surface on /status, both visibility='public' AND a non-empty
+// public_message must be set — same gate as appendOperatorUpdate.
+
+interface EditUpdateBody {
+  public_message?: string | null;
+  visibility?: IncidentVisibility;
+}
+
+export async function handleEditIncidentUpdatePublicCopy(
+  request: Request,
+  env: Env,
+  incidentId: string,
+  updateId: string,
+  userId: string,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (!incidentId || !updateId) {
+    return json({ success: false, error: "missing id" }, 400, origin);
+  }
+
+  let body: EditUpdateBody;
+  try {
+    body = await request.json() as EditUpdateBody;
+  } catch {
+    return json({ success: false, error: "invalid JSON" }, 400, origin);
+  }
+
+  // Look up the current row so we can validate + log a sensible
+  // audit message. RETURNING makes the UPDATE atomic with the
+  // read-back, but D1 doesn't honor RETURNING reliably across
+  // versions, so use a separate SELECT after the UPDATE.
+  const existing = await env.DB.prepare(
+    `SELECT id, incident_id, visibility, public_message
+       FROM incident_updates
+      WHERE id = ? AND incident_id = ?`,
+  ).bind(updateId, incidentId).first<{
+    id: string;
+    incident_id: string;
+    visibility: IncidentVisibility;
+    public_message: string | null;
+  }>();
+  if (!existing) {
+    return json({ success: false, error: "update not found" }, 404, origin);
+  }
+
+  // Resolve final values. Pass `null` to clear, omit to leave alone.
+  const nextPublicMessage =
+    body.public_message === null
+      ? null
+      : typeof body.public_message === "string"
+        ? body.public_message.trim()
+        : existing.public_message;
+
+  if (nextPublicMessage && nextPublicMessage.length > 1000) {
+    return json({
+      success: false,
+      error: "public_message too long (1000 max)",
+    }, 400, origin);
+  }
+
+  const nextVisibility =
+    body.visibility && VALID_VISIBILITY.has(body.visibility)
+      ? body.visibility
+      : existing.visibility;
+
+  // Defense in depth: refuse to mark a row public without a
+  // sanitized message. The schema CHECK + toPublicShape gate would
+  // already block the leak, but bouncing here is a friendlier
+  // operator experience.
+  if (nextVisibility === "public" && (!nextPublicMessage || nextPublicMessage.length === 0)) {
+    return json({
+      success: false,
+      error: "public_message required when visibility=public",
+    }, 400, origin);
+  }
+
+  await env.DB.prepare(
+    `UPDATE incident_updates
+        SET public_message = ?, visibility = ?
+      WHERE id = ? AND incident_id = ?`,
+  ).bind(
+    nextPublicMessage ?? null,
+    nextVisibility,
+    updateId,
+    incidentId,
+  ).run();
+
+  // Append a system update so the timeline shows operator
+  // attribution for the public-copy edit. Visibility=internal so
+  // the audit row itself doesn't leak to /status.
+  await appendSystemUpdate(env, {
+    incidentId,
+    message: `Public copy ${nextPublicMessage ? "set/updated" : "cleared"} on update ${updateId} by ${userId}`,
+    eventType: "status_transition",
+  });
+
+  const updates = await listIncidentUpdates(env, incidentId);
+  const refreshed = await getIncident(env, incidentId);
+  return json({
+    success: true,
+    data: {
+      incident: refreshed ? rowToAdminShape(refreshed) : null,
+      updates,
+    },
+  }, 200, origin);
+}
+
 // ─── Public list (no auth) — feeds /status ───────────────────────
 
 export async function handlePublicIncidents(request: Request, env: Env): Promise<Response> {
