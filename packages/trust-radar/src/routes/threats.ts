@@ -10,6 +10,7 @@ import {
   handleRecentThreats,
 } from "../handlers/threats";
 import { handleCorrelations } from "../handlers/correlations";
+import { handleThreatInflow } from "../handlers/threat-inflow";
 import { handleGenerateBriefing, handleLatestBriefing, handleListBriefingHistory } from "../handlers/briefing";
 import {
   handleListCampaignsV2, handleCampaignStats, handleGetCampaign,
@@ -102,6 +103,14 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRecentThreats(request, env);
+  });
+  // Stacked-area inflow chart on the Threats page. Reads the
+  // threat_cube_status cube (no raw threats COUNTs) so it stays cheap
+  // at 113K+ threats. Accepts ?window=24h|7d.
+  router.get("/api/threats/inflow", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleThreatInflow(request, env);
   });
   router.get("/api/threats", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);

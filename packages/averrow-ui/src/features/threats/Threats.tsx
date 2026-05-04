@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Card, DataRow, FilterBar, PageHeader, SaasTechniqueBadge } from '@/components/ui';
+import { ThreatInflowChart } from './ThreatInflowChart';
 import { relativeTime } from '@/lib/time';
 import { CheckCircle, Search } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -59,6 +60,8 @@ export function Threats() {
         title="Threats"
         subtitle={data ? `${data.total.toLocaleString()} active indicators` : undefined}
       />
+
+      <ThreatInflowChart />
 
       <FilterBar
         filters={[
