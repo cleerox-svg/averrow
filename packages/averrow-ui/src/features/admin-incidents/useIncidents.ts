@@ -56,7 +56,7 @@ export interface IncidentUpdate {
   synthetic?: boolean;
 }
 
-export function useIncidents(opts: { onlyOpen?: boolean } = {}) {
+export function useIncidents(opts: { onlyOpen?: boolean; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['incidents', 'list', opts.onlyOpen ? 'open' : 'all'],
     queryFn: async (): Promise<Incident[]> => {
@@ -65,6 +65,9 @@ export function useIncidents(opts: { onlyOpen?: boolean } = {}) {
       return res.data ?? [];
     },
     refetchInterval: 30_000,
+    // Endpoint is super_admin-gated — caller passes enabled=false on
+    // surfaces where the user might be a regular tenant (Home).
+    enabled: opts.enabled !== false,
   });
 }
 
