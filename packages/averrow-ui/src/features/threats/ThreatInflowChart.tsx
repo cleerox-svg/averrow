@@ -26,16 +26,22 @@ import { Card } from '@/components/ui';
 // Brand-aligned threat-type palette. Anything not in the map falls
 // back to a deterministic hash-based color so new types don't render
 // invisible.
+// Threat-type → fill/stroke color. Aligned with the Threat Volume
+// chart on /trends so the palette stays consistent across the two
+// surfaces that visualize the same data shape. The earlier inflow
+// palette had malware_distribution as orange, which combined with
+// red phishing made the chart read as a wash of warm colors when
+// the two largest series were stacked together.
 const TYPE_COLORS: Record<string, string> = {
-  phishing:               '#C83C3C', // var(--red) — the headline attack
-  malware_distribution:   '#fb923c',
-  credential_harvesting:  '#fbbf24',
-  typosquatting:          '#E5A832', // var(--amber)
-  malicious_ip:           '#0A8AB5', // var(--blue)
-  c2:                     '#8b5cf6',
-  spam:                   '#6b7280',
-  social_engineering:     '#ec4899',
-  defacement:             '#10b981',
+  phishing:               '#C83C3C', // red — the headline attack
+  malware_distribution:   '#9333ea', // purple — distinct from phishing
+  malicious_ip:           '#78A0C8', // slate blue
+  c2:                     '#ef4444', // lighter red
+  typosquatting:          '#DCAA32', // gold
+  credential_harvesting:  '#E8923C', // orange
+  spam:                   '#6b7280', // gray
+  social_engineering:     '#ec4899', // pink
+  defacement:             '#10b981', // emerald
 };
 
 const FALLBACK_COLORS = ['#4ade80', '#06b6d4', '#a78bfa', '#f472b6', '#facc15'];
