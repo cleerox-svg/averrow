@@ -98,7 +98,8 @@ function formatAxisTick(iso: string, window: Window): string {
 interface Props {
   /** Override the default desktop height (mobile uses a smaller height). */
   height?: number;
-  /** Initial time window. Defaults to "24h" — Home overrides to "7d". */
+  /** Initial time window. Defaults to "24h" everywhere; users flip to
+   *  "7d" via the in-chart segmented toggle. */
   defaultWindow?: Window;
 }
 
