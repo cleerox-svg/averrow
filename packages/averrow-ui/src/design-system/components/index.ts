@@ -30,6 +30,15 @@ export type { StatTileProps } from '../../components/ui/StatTile';
 export { GradeBadge } from '../../components/ui/GradeBadge';
 export type { GradeBadgeProps, Grade } from '../../components/ui/GradeBadge';
 
+export { DimensionalCard } from '../../components/ui/DimensionalCard';
+export type { DimensionalCardProps, DimensionalCardVariant } from '../../components/ui/DimensionalCard';
+
+export { BrandAvatar } from '../../components/ui/BrandAvatar';
+export type { BrandAvatarProps } from '../../components/ui/BrandAvatar';
+
+export { SeverityPill } from '../../components/ui/SeverityPill';
+export type { SeverityPillProps } from '../../components/ui/SeverityPill';
+
 // ── Entity cards (unified across Brands / Providers / Campaigns / Threat Actors)
 export { EntityCard } from '../../components/ui/EntityCard';
 export type { EntityCardProps } from '../../components/ui/EntityCard';

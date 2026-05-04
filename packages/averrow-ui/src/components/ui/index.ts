@@ -8,10 +8,14 @@ export type { BadgeProps, Severity, BadgeStatus, BadgeSize, LegacyVariant } from
 
 export { DeepCard } from './DeepCard';
 export type { DeepCardProps, DeepVariant } from './DeepCard';
+export { DimensionalCard } from './DimensionalCard';
+export type { DimensionalCardProps, DimensionalCardVariant } from './DimensionalCard';
 export { Avatar } from './Avatar';
 export type { AvatarProps, AvatarSeverity } from './Avatar';
 export { DimensionalAvatar } from './DimensionalAvatar';
 export type { DimensionalAvatarProps } from './DimensionalAvatar';
+export { BrandAvatar } from './BrandAvatar';
+export type { BrandAvatarProps } from './BrandAvatar';
 export { StatCard, SimpleStatCard, DetailStatCard } from './StatCard';
 export type { StatCardProps } from './StatCard';
 export { StatTile } from './StatTile';
@@ -20,6 +24,8 @@ export { GradeBadge } from './GradeBadge';
 export type { GradeBadgeProps, Grade } from './GradeBadge';
 export { SeverityChip } from './SeverityChip';
 export type { SeverityChipProps, ChipSize } from './SeverityChip';
+export { SeverityPill } from './SeverityPill';
+export type { SeverityPillProps } from './SeverityPill';
 export { SaasTechniqueBadge } from './SaasTechniqueBadge';
 export type { SaasTechniqueBadgeProps } from './SaasTechniqueBadge';
 export { GlowNumber } from './GlowNumber';
