@@ -411,6 +411,113 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       }), { status: 500, headers: { 'Content-Type': 'application/json' } });
     }
   });
+  // Operator-uploaded GeoIP archive import. Lets us bootstrap
+  // geo_ip_ranges without burning the daily MaxMind quota: the
+  // operator downloads `GeoLite2-City-CSV_<release>.zip` via their
+  // browser session (no API quota), uploads to the GEOIP_STAGING
+  // R2 bucket, and POSTs here with the R2 key + the matching sha256
+  // (from MaxMind's `.zip.sha256` file).
+  //
+  // The endpoint creates a geo_ip_refresh_log row and dispatches
+  // the existing GeoipRefreshWorkflow with `r2Key` set — same
+  // workflow scaffolding (shadow table, atomic swap, finalize)
+  // just sourcing bytes from R2 instead of MaxMind. Stamps
+  // `source_version = <full sha256>` on success so the next Sunday
+  // auto-poll's skip-if-current check matches and no-ops.
+  //
+  // Returns 202 Accepted with the workflow instance ID — the
+  // import takes ~30 minutes to complete. Operator polls
+  // `/api/admin/geoip-status` to track progress.
+  router.post("/api/admin/geoip/import-from-r2", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+
+    const url = new URL(request.url);
+    const r2Key = url.searchParams.get("key");
+    const sha256 = url.searchParams.get("sha256");
+    if (!r2Key) {
+      return new Response(JSON.stringify({ success: false, error: "missing required ?key=<r2-object-key>" }),
+        { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    if (!sha256 || !/^[0-9a-f]{40,}$/i.test(sha256)) {
+      return new Response(JSON.stringify({ success: false, error: "missing or malformed ?sha256=<full-hex> (from MaxMind .zip.sha256)" }),
+        { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    if (!env.GEOIP_STAGING) {
+      return new Response(JSON.stringify({ success: false, error: "GEOIP_STAGING (R2) binding not configured. Add `[[r2_buckets]]` to wrangler.toml and redeploy." }),
+        { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+    if (!env.GEOIP_REFRESH) {
+      return new Response(JSON.stringify({ success: false, error: "GEOIP_REFRESH (Workflow) binding not configured." }),
+        { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+    if (!env.GEOIP_DB) {
+      return new Response(JSON.stringify({ success: false, error: "GEOIP_DB (D1) binding not configured." }),
+        { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+
+    // Verify the R2 object exists before opening a refresh log row.
+    const head = await env.GEOIP_STAGING.head(r2Key).catch(() => null);
+    if (!head) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: `R2 object not found at GEOIP_STAGING/${r2Key}. Upload first via \`wrangler r2 object put geoip-staging/${r2Key} --file=...\`.`,
+      }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }
+
+    const refreshId = `geoip_refresh_r2_${Date.now()}`;
+    try {
+      await env.GEOIP_DB.prepare(`
+        INSERT INTO geo_ip_refresh_log (id, source, status, started_at, source_version, error_message)
+        VALUES (?, 'maxmind-geolite2-city', 'running', datetime('now'), ?, ?)
+      `).bind(
+        refreshId,
+        sha256.slice(0, 12),
+        `Manual R2 import: key=${r2Key} size=${head.size}b sha256=${sha256.slice(0, 12)}...`,
+      ).run();
+    } catch (err) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: `Failed to open refresh log row: ${err instanceof Error ? err.message : String(err)}. ` +
+               `Likely the geoip-db migrations haven't been applied — run \`wrangler d1 migrations apply geoip-db --remote\`.`,
+      }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+
+    let workflowInstanceId: string;
+    try {
+      const instance = await env.GEOIP_REFRESH.create({
+        params: { refreshLogId: refreshId, r2Key, r2Sha256: sha256, forceReload: true },
+      });
+      workflowInstanceId = instance.id;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      try {
+        await env.GEOIP_DB.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'failed', completed_at = datetime('now'), error_message = ?
+          WHERE id = ?
+        `).bind(`Workflow dispatch failed: ${errMsg}`, refreshId).run();
+      } catch { /* best-effort */ }
+      return new Response(JSON.stringify({ success: false, error: `Workflow dispatch failed: ${errMsg}` }),
+        { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        refresh_log_id: refreshId,
+        workflow_instance_id: workflowInstanceId,
+        r2_key: r2Key,
+        r2_size_bytes: head.size,
+        sha256_first12: sha256.slice(0, 12),
+        message: "Workflow dispatched. Import takes ~30 minutes. Poll /api/admin/geoip-status to track progress.",
+      },
+    }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
   router.get("/api/admin/geoip-status", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

@@ -3,27 +3,9 @@
  * archives. Lets a Worker read MaxMind's GeoLite2-City.zip
  * directly without staging it in R2 first.
  *
- * ZIP format primer
- * ─────────────────
- * A ZIP file ends with an "End of Central Directory" record (EOCD,
- * signature `PK\x05\x06`) that points to the central directory.
- * The central directory is a list of fixed-shape records, one per
- * file entry, naming the file + giving its compressed size, method,
- * and "local header" offset.
- *
- * Each file entry begins with a "local file header" (signature
- * `PK\x03\x04`) immediately followed by the compressed bytes.
- * The local header repeats most metadata from the central directory
- * but its filename + extra field lengths can DIFFER from the central
- * directory's, so we re-read the local header to compute the
- * actual data start.
- *
- * This module only handles:
- *   - ZIP32 (4-byte size fields). MaxMind's CSVs are well under 4GB.
- *   - Compression method 0 (stored) and 8 (deflate). MaxMind uses 8.
- *
- * Anything else throws — fail loud rather than silently produce
- * wrong data for the geo lookup.
+ * Most of the parsing logic is shared with `r2-zip-reader.ts` via
+ * `zip-internals.ts` — this file owns the HTTP byte-fetch behavior
+ * (HEAD + Range requests against `fetch()`).
  *
  * Memory profile (for the Worker scenario)
  * ────────────────────────────────────────
@@ -37,97 +19,15 @@
  * Total in-memory peak: ~1-2MB regardless of archive size.
  */
 
-export interface ZipEntry {
-  name: string;
-  /** Compression method per ZIP spec — 0 = stored, 8 = deflate.
-   *  We throw on anything else so a malformed archive doesn't
-   *  silently produce garbage rows. */
-  compressionMethod: number;
-  compressedSize: number;
-  uncompressedSize: number;
-  /** Offset of the local file header (NOT the data) in the archive.
-   *  We have to re-read the local header at this offset to compute
-   *  the actual data offset because filename / extra field lengths
-   *  in the local header CAN differ from the central directory's. */
-  localHeaderOffset: number;
-}
+import {
+  type ZipEntry,
+  findEocdOffset,
+  parseCentralDirectory,
+  parseLocalHeaderLength,
+  readUint32LE,
+} from "./zip-internals";
 
-const EOCD_SIGNATURE = 0x06054b50; // PK\x05\x06
-const CDIR_ENTRY_SIGNATURE = 0x02014b50; // PK\x01\x02
-const LFH_SIGNATURE = 0x04034b50; // PK\x03\x04
-
-/**
- * Locate the EOCD record by scanning backwards from the end of the
- * provided buffer. Returns the offset within `buf`. The EOCD is
- * variable-length (trailing comment) but the signature is fixed.
- */
-function findEocdOffset(buf: Uint8Array): number {
-  // EOCD is at least 22 bytes; comment can extend it but is rare.
-  // Scan from the latest plausible start backwards.
-  const minStart = 0;
-  for (let i = buf.length - 22; i >= minStart; i--) {
-    if (
-      buf[i] === 0x50 &&
-      buf[i + 1] === 0x4b &&
-      buf[i + 2] === 0x05 &&
-      buf[i + 3] === 0x06
-    ) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-function readUint16LE(buf: Uint8Array, offset: number): number {
-  return (buf[offset] ?? 0) | ((buf[offset + 1] ?? 0) << 8);
-}
-
-function readUint32LE(buf: Uint8Array, offset: number): number {
-  // Use unsigned right shift to prevent sign extension on 4-byte
-  // sizes ≥ 2^31. Without `>>> 0` a 3GB compressedSize would land
-  // as a negative number and break Range header math downstream.
-  return (
-    ((buf[offset] ?? 0) |
-      ((buf[offset + 1] ?? 0) << 8) |
-      ((buf[offset + 2] ?? 0) << 16) |
-      ((buf[offset + 3] ?? 0) << 24)) >>>
-    0
-  );
-}
-
-function parseCentralDirectory(cdir: Uint8Array): ZipEntry[] {
-  const entries: ZipEntry[] = [];
-  let pos = 0;
-  const decoder = new TextDecoder('utf-8');
-
-  while (pos + 46 <= cdir.length) {
-    if (readUint32LE(cdir, pos) !== CDIR_ENTRY_SIGNATURE) {
-      // Either we've walked off the end or the archive is corrupt.
-      // Stop rather than misalign with later entries.
-      break;
-    }
-    const compressionMethod = readUint16LE(cdir, pos + 10);
-    const compressedSize = readUint32LE(cdir, pos + 20);
-    const uncompressedSize = readUint32LE(cdir, pos + 24);
-    const fileNameLen = readUint16LE(cdir, pos + 28);
-    const extraLen = readUint16LE(cdir, pos + 30);
-    const commentLen = readUint16LE(cdir, pos + 32);
-    const localHeaderOffset = readUint32LE(cdir, pos + 42);
-    const nameStart = pos + 46;
-    const name = decoder.decode(
-      cdir.subarray(nameStart, nameStart + fileNameLen),
-    );
-    entries.push({
-      name,
-      compressionMethod,
-      compressedSize,
-      uncompressedSize,
-      localHeaderOffset,
-    });
-    pos = nameStart + fileNameLen + extraLen + commentLen;
-  }
-  return entries;
-}
+export type { ZipEntry };
 
 /** Serializable snapshot of a `HttpZipReader` after `open()`.
  *  Lets a caller (e.g. a Workflow) hand the state across step
@@ -278,8 +178,8 @@ export class HttpZipReader {
     //
     // We optimistically pull the LFH plus a few hundred bytes of
     // worst-case filename + extra. 30 + 1024 = 1054 bytes covers
-    // any realistic entry; if that's ever short we throw with a
-    // clear message.
+    // any realistic entry; if that's ever short parseLocalHeaderLength
+    // throws with a clear message.
     const LFH_PROBE_BYTES = 30 + 1024;
     const lfhEnd = Math.min(
       this.totalSize - 1,
@@ -294,19 +194,7 @@ export class HttpZipReader {
       throw new Error(`Range lfh ${entry.name} → ${lfhRes.status}`);
     }
     const lfh = new Uint8Array(await lfhRes.arrayBuffer());
-    if (readUint32LE(lfh, 0) !== LFH_SIGNATURE) {
-      throw new Error(
-        `Local file header signature mismatch for ${entry.name} at offset ${entry.localHeaderOffset}`,
-      );
-    }
-    const lfhFileNameLen = readUint16LE(lfh, 26);
-    const lfhExtraLen = readUint16LE(lfh, 28);
-    const headerLen = 30 + lfhFileNameLen + lfhExtraLen;
-    if (headerLen > LFH_PROBE_BYTES) {
-      throw new Error(
-        `Local header for ${entry.name} is unexpectedly large (${headerLen}b > probe ${LFH_PROBE_BYTES}b)`,
-      );
-    }
+    const headerLen = parseLocalHeaderLength(lfh, entry.name, LFH_PROBE_BYTES);
     const dataOffset = entry.localHeaderOffset + headerLen;
     const dataEnd = dataOffset + entry.compressedSize - 1;
 

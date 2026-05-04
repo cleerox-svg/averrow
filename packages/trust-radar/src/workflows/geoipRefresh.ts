@@ -54,42 +54,51 @@
  */
 
 import { WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent } from 'cloudflare:workers';
-import {
-  streamLocationsCsv,
-  streamBlocksCsv,
-  cidrToIntRange,
-} from '../lib/geoip-csv';
 import { HttpZipReader } from '../lib/zip-reader';
+import { R2ZipReader } from '../lib/r2-zip-reader';
+import {
+  runGeoipBlocksImport,
+  prepareShadowTable as prepareShadowTableHelper,
+  atomicSwap as atomicSwapHelper,
+  type ZipReaderLike,
+} from '../lib/geoip-import';
 
 interface GeoipRefreshParams {
-  /** Refresh log row id created by the geoip_refresh agent before
-   *  workflow dispatch. Each step updates this row so the operator
-   *  sees progress through `geo_ip_refresh_log` queries. */
+  /** Refresh log row id created by the geoip_refresh agent (or the
+   *  manual-import admin endpoint) before workflow dispatch. Each
+   *  step updates this row so the operator sees progress through
+   *  `geo_ip_refresh_log` queries. */
   refreshLogId: string;
   /** Skip the "is this version already loaded?" guard. Useful when
    *  the operator wants a manual force-refresh after schema
    *  changes or partial loads. */
   forceReload?: boolean;
+  /** When set, import from this R2 object key (in GEOIP_STAGING)
+   *  instead of fetching from MaxMind. Enables operator-uploaded
+   *  archives to bootstrap geo_ip_ranges without burning the daily
+   *  MaxMind quota. Pair with `r2Sha256` so the next Sunday auto-
+   *  poll's skip-if-current check matches against the right
+   *  fingerprint. */
+  r2Key?: string;
+  /** SHA256 hex of the R2-staged archive. Stamped into
+   *  `geo_ip_refresh_log.source_version` on success. Required when
+   *  `r2Key` is set. */
+  r2Sha256?: string;
 }
 
 interface GeoipRefreshEnv {
   GEOIP_DB: D1Database;
   GEOIP_REFRESH: Workflow;
-  MAXMIND_LICENSE_KEY: string;
-  // Optional — AE binding is declared at the worker level so the
-  // workflow gets it automatically. The `?` matches the main Env
-  // interface where AE is also optional (test harnesses don't bind it).
+  /** Optional when r2Key is set — the manual-import path doesn't
+   *  hit MaxMind so it doesn't need the license key. The probe
+   *  step throws if both are missing AND r2Key is unset. */
+  MAXMIND_LICENSE_KEY?: string;
+  /** R2 bucket holding operator-uploaded archives. Optional in
+   *  the env — only required when r2Key is set on the workflow
+   *  payload. */
+  GEOIP_STAGING?: R2Bucket;
   AE?: AnalyticsEngineDataset;
 }
-
-const LOCATIONS_FILENAME = 'GeoLite2-City-Locations-en.csv';
-const BLOCKS_FILENAME = 'GeoLite2-City-Blocks-IPv4.csv';
-
-/** D1 batch limit is 100 statements per call. Chunking the imports
- *  at 100 rows means each round-trip writes a full batch. Round-trip
- *  latency dominates beneath that, so smaller batches just increase
- *  total wall time. */
-const D1_BATCH_LIMIT = 100;
 
 export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, GeoipRefreshParams> {
   async run(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
@@ -132,76 +141,95 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
   private async runImpl(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
     const refreshLogId = event.payload.refreshLogId;
     const forceReload = event.payload.forceReload ?? false;
-    const licenseKey = this.env.MAXMIND_LICENSE_KEY;
-    if (!licenseKey) {
+    const r2Key = event.payload.r2Key;
+    const r2Sha256 = event.payload.r2Sha256;
+    const isManualR2Import = !!r2Key;
+
+    if (isManualR2Import) {
+      if (!r2Sha256 || !/^[0-9a-f]{40,}$/i.test(r2Sha256)) {
+        throw new Error('r2Sha256 (full hex sha256 of the staged archive) is required when r2Key is set.');
+      }
+      if (!this.env.GEOIP_STAGING) {
+        throw new Error('GEOIP_STAGING (R2) binding not configured — manual import path is unavailable.');
+      }
+    } else if (!this.env.MAXMIND_LICENSE_KEY) {
       throw new Error('MAXMIND_LICENSE_KEY not bound — workflow cannot start.');
     }
 
-    const baseUrl = `https://download.maxmind.com/app/geoip_download` +
-      `?edition_id=GeoLite2-City-CSV&license_key=${encodeURIComponent(licenseKey)}`;
+    const licenseKey = this.env.MAXMIND_LICENSE_KEY;
+    const baseUrl = licenseKey
+      ? `https://download.maxmind.com/app/geoip_download` +
+        `?edition_id=GeoLite2-City-CSV&license_key=${encodeURIComponent(licenseKey)}`
+      : '';
 
     // ── Step 1: probe ────────────────────────────────────────
-    // Fetch the .sha256 fingerprint. Tiny request (~70 bytes)
-    // that authenticates the key AND identifies the release.
-    // Failure here prevents any wasted bandwidth on the full
-    // archive download.
-    const probe = await step.do(
-      'probe',
-      { retries: { limit: 3, delay: '15 seconds', backoff: 'exponential' }, timeout: '30 seconds' },
-      async (): Promise<{ sha256First12: string; full: string }> => {
-        const res = await fetch(`${baseUrl}&suffix=zip.sha256`);
-        if (!res.ok) {
-          throw new Error(`MaxMind probe ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
-        }
-        const body = await res.text();
-        const sha = body.trim().split(/\s+/)[0] ?? '';
-        return { sha256First12: sha.slice(0, 12), full: sha };
-      },
-    );
+    // Skipped for the manual-R2 path — the operator already supplied
+    // the sha256 alongside the upload, so probing MaxMind would just
+    // burn quota for no information. Build a synthetic `probe` with
+    // the operator-supplied fingerprint instead.
+    const probe = isManualR2Import
+      ? { sha256First12: r2Sha256!.slice(0, 12), full: r2Sha256! }
+      : await step.do(
+          'probe',
+          { retries: { limit: 3, delay: '15 seconds', backoff: 'exponential' }, timeout: '30 seconds' },
+          async (): Promise<{ sha256First12: string; full: string }> => {
+            const res = await fetch(`${baseUrl}&suffix=zip.sha256`);
+            if (!res.ok) {
+              throw new Error(`MaxMind probe ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+            }
+            const body = await res.text();
+            const sha = body.trim().split(/\s+/)[0] ?? '';
+            return { sha256First12: sha.slice(0, 12), full: sha };
+          },
+        );
 
     // ── Step 2: skip-if-current ──────────────────────────────
-    // If the live geo_ip_ranges already came from this exact
-    // sha256 (recorded as `source_version` on the most-recent
-    // success row), there's nothing to do. Mark the refresh log
-    // 'success' immediately and exit. This is what makes weekly
-    // auto-polling cheap — most polls find no new release.
-    const lastSuccess = await step.do(
-      'check-last-version',
-      async () => {
-        const r = await this.env.GEOIP_DB.prepare(`
-          SELECT source_version FROM geo_ip_refresh_log
-          WHERE status = 'success'
-          ORDER BY completed_at DESC
-          LIMIT 1
-        `).first<{ source_version: string | null }>();
-        return r?.source_version ?? null;
-      },
-    );
+    // Skipped for the manual-R2 path — the operator explicitly asked
+    // for a manual import, presumably because the live data is empty
+    // or stale. Running the no-op short-circuit here would silently
+    // discard the upload.
+    if (!isManualR2Import) {
+      const lastSuccess = await step.do(
+        'check-last-version',
+        async () => {
+          const r = await this.env.GEOIP_DB.prepare(`
+            SELECT source_version FROM geo_ip_refresh_log
+            WHERE status = 'success'
+            ORDER BY completed_at DESC
+            LIMIT 1
+          `).first<{ source_version: string | null }>();
+          return r?.source_version ?? null;
+        },
+      );
 
-    if (!forceReload && lastSuccess && probe.full.startsWith(lastSuccess)) {
-      await step.do('mark-no-op', async () => {
-        await this.env.GEOIP_DB.prepare(`
-          UPDATE geo_ip_refresh_log
-          SET status = 'success',
-              completed_at = datetime('now'),
-              rows_written = 0,
-              source_version = ?,
-              error_message = ?
-          WHERE id = ?
-        `).bind(
-          probe.sha256First12,
-          `No-op: live data already matches MaxMind release ${probe.sha256First12}`,
-          refreshLogId,
-        ).run();
-      });
-      return {
-        message: `No new release — already at ${probe.sha256First12}`,
-        skipped: true,
-        sha256: probe.sha256First12,
-      };
+      if (!forceReload && lastSuccess && probe.full.startsWith(lastSuccess)) {
+        await step.do('mark-no-op', async () => {
+          await this.env.GEOIP_DB.prepare(`
+            UPDATE geo_ip_refresh_log
+            SET status = 'success',
+                completed_at = datetime('now'),
+                rows_written = 0,
+                source_version = ?,
+                error_message = ?
+            WHERE id = ?
+          `).bind(
+            probe.sha256First12,
+            `No-op: live data already matches MaxMind release ${probe.sha256First12}`,
+            refreshLogId,
+          ).run();
+        });
+        return {
+          message: `No new release — already at ${probe.sha256First12}`,
+          skipped: true,
+          sha256: probe.sha256First12,
+        };
+      }
     }
 
     await step.do('log-refresh-starting', async () => {
+      const sourceLabel = isManualR2Import
+        ? `R2 archive ${r2Key}`
+        : `MaxMind release ${probe.sha256First12}`;
       await this.env.GEOIP_DB.prepare(`
         UPDATE geo_ip_refresh_log
         SET status = 'running',
@@ -210,7 +238,7 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         WHERE id = ?
       `).bind(
         probe.sha256First12,
-        `New release ${probe.sha256First12}; loading from MaxMind...`,
+        `Loading from ${sourceLabel}...`,
         refreshLogId,
       ).run();
     });
@@ -223,41 +251,19 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       'prepare-shadow-table',
       { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '60 seconds' },
       async () => {
-        await this.env.GEOIP_DB.batch([
-          this.env.GEOIP_DB.prepare(`DROP TABLE IF EXISTS geo_ip_ranges_new`),
-          this.env.GEOIP_DB.prepare(`
-            CREATE TABLE geo_ip_ranges_new (
-              start_ip_int INTEGER PRIMARY KEY NOT NULL,
-              end_ip_int   INTEGER NOT NULL,
-              country_code TEXT,
-              country_name TEXT,
-              region       TEXT,
-              city         TEXT,
-              postal_code  TEXT,
-              lat          REAL,
-              lng          REAL,
-              asn          TEXT,
-              asn_org      TEXT,
-              source       TEXT NOT NULL,
-              loaded_at    TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-          `),
-          this.env.GEOIP_DB.prepare(
-            `CREATE INDEX idx_geo_ip_end_new ON geo_ip_ranges_new(end_ip_int)`,
-          ),
-        ]);
+        await prepareShadowTableHelper(this.env.GEOIP_DB);
       },
     );
 
     // ── Step 4: import (Locations + Blocks in one step) ─────
-    // The Locations CSV has ~150K rows that we need keyed by
-    // geonameId so each Block row can be joined by FK. As a
-    // serialized Record this is ~22 MB — well past Workflows'
-    // 1 MiB step-output cap. Pre-2026-05-04 we returned this map
-    // from "import-locations" so a separate "import-blocks" step
-    // could read it; every attempt failed with `Step output is too
-    // large`. Keeping the map inside one step's closure (never
-    // serialized) is the only architecture that fits.
+    // Both branches converge on the same `runGeoipBlocksImport`
+    // helper — the only thing that varies is the byte source. The
+    // Locations Map (~22 MB) lives entirely inside this step's
+    // closure (held in Worker memory, never serialized as a step
+    // return value). Returning the map across step boundaries
+    // would blow the Workflows 1 MiB cap — verified in production
+    // (2026-05-04: every prior attempt failed with "Step
+    // import-locations-1 output is too large").
     //
     // Memory: 22 MB locations map + small streaming buffer ≈ 25 MB.
     // Worker ceiling is 128 MB, so plenty of headroom.
@@ -267,77 +273,24 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     //
     // Retry semantics: a transient failure retries the whole step
     // from the start — re-fetching both CSVs and rebuilding the
-    // map. The shadow table's PRIMARY KEY constraint makes
-    // INSERT OR IGNORE idempotent across retries.
+    // Map. The shadow table's PRIMARY KEY constraint makes the
+    // INSERT OR IGNORE re-run idempotent.
     const importResult = await step.do(
       'import',
       { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
-      async (): Promise<{ rowsWritten: number; rowsParsed: number; locationsCount: number }> => {
-        const archiveUrl = `${baseUrl}&suffix=zip`;
-        const zip = new HttpZipReader(archiveUrl);
-        await zip.open();
-
-        // Phase 1: parse Locations into an in-step Map.
-        const locEntry = zip.findEntry(LOCATIONS_FILENAME);
-        if (!locEntry) {
-          throw new Error(
-            `Locations CSV missing in MaxMind archive — listed entries: ` +
-            zip.listEntries().map((e) => e.name).slice(0, 5).join(', '),
-          );
+      async () => {
+        let zip: ZipReaderLike;
+        if (isManualR2Import) {
+          const r2Reader = new R2ZipReader(this.env.GEOIP_STAGING!, r2Key!);
+          await r2Reader.open();
+          zip = r2Reader;
+        } else {
+          const archiveUrl = `${baseUrl}&suffix=zip`;
+          const httpReader = new HttpZipReader(archiveUrl);
+          await httpReader.open();
+          zip = httpReader;
         }
-        const locStream = await zip.streamEntry(locEntry);
-        const locations = await streamLocationsCsv(locStream);
-
-        // Phase 2: stream Blocks, joining each row by geonameId.
-        const blocksEntry = zip.findEntry(BLOCKS_FILENAME);
-        if (!blocksEntry) {
-          throw new Error(`Blocks CSV missing in MaxMind archive`);
-        }
-        const blocksStream = await zip.streamEntry(blocksEntry);
-
-        let pendingBatch: D1PreparedStatement[] = [];
-        let rowsWritten = 0;
-
-        const flushBatch = async () => {
-          if (pendingBatch.length === 0) return;
-          const results = await this.env.GEOIP_DB.batch(pendingBatch);
-          for (const r of results) {
-            rowsWritten += r.meta?.changes ?? 0;
-          }
-          pendingBatch = [];
-        };
-
-        const { rowsParsed } = await streamBlocksCsv(blocksStream, async (row) => {
-          const range = cidrToIntRange(row.network);
-          if (!range) return;
-          const loc = row.geonameId
-            ? locations.get(row.geonameId)
-            : (row.registeredCountryGeonameId ? locations.get(row.registeredCountryGeonameId) : undefined);
-          pendingBatch.push(
-            this.env.GEOIP_DB.prepare(`
-              INSERT OR IGNORE INTO geo_ip_ranges_new
-                (start_ip_int, end_ip_int, country_code, country_name,
-                 region, city, postal_code, lat, lng, asn, asn_org, source)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'maxmind-geolite2-city')
-            `).bind(
-              range.start, range.end,
-              loc?.countryCode ?? null,
-              loc?.countryName ?? null,
-              loc?.region ?? null,
-              loc?.city ?? null,
-              row.postalCode,
-              row.lat,
-              row.lng,
-            ),
-          );
-          if (pendingBatch.length >= D1_BATCH_LIMIT) {
-            await flushBatch();
-          }
-        });
-        await flushBatch();
-
-        // Return only counters — small JSON, well under 1 MiB.
-        return { rowsWritten, rowsParsed, locationsCount: locations.size };
+        return await runGeoipBlocksImport(this.env.GEOIP_DB, zip);
       },
     );
 
@@ -361,27 +314,7 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     const swapped = await step.do(
       'atomic-swap',
       { retries: { limit: 2, delay: '10 seconds', backoff: 'constant' }, timeout: '60 seconds' },
-      async () => {
-        const rowCountResult = await this.env.GEOIP_DB.prepare(
-          `SELECT COUNT(*) AS n FROM geo_ip_ranges_new`,
-        ).first<{ n: number }>();
-        const newRowCount = rowCountResult?.n ?? 0;
-        if (newRowCount === 0) {
-          throw new Error('Atomic swap aborted: shadow table is empty.');
-        }
-        await this.env.GEOIP_DB.batch([
-          this.env.GEOIP_DB.prepare(`DROP INDEX IF EXISTS idx_geo_ip_end`),
-          this.env.GEOIP_DB.prepare(`DROP TABLE IF EXISTS geo_ip_ranges`),
-          this.env.GEOIP_DB.prepare(
-            `ALTER TABLE geo_ip_ranges_new RENAME TO geo_ip_ranges`,
-          ),
-          this.env.GEOIP_DB.prepare(`DROP INDEX IF EXISTS idx_geo_ip_end_new`),
-          this.env.GEOIP_DB.prepare(
-            `CREATE INDEX idx_geo_ip_end ON geo_ip_ranges(end_ip_int)`,
-          ),
-        ]);
-        return { newRowCount };
-      },
+      async () => atomicSwapHelper(this.env.GEOIP_DB),
     );
 
     // ── Step 7: finalize ─────────────────────────────────────
