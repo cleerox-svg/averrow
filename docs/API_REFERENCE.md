@@ -47,6 +47,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/v1/public/monitor` | Monitor request |
 | GET | `/api/v1/public/email-security/:domain` | Public email security check |
 | GET | `/api/v1/public/platform-status` | Platform uptime rollup (no auth) — feeds Home banner + Phase 3 public status page. Same payload as `/api/admin/platform-status`. KV-cached 60s. |
+| GET | `/api/v1/public/incidents` | Public incidents feed for `/status`. Returns only rows with `visibility='public'` AND `public_title` set. Stripped to `id`, `title`, `details`, `status`, `severity`, `affected_components`, `started_at`, `resolved_at`, `updates[]`. Internal title/description never exposed. |
 
 ## Dashboard
 
@@ -493,6 +494,12 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/internal/platform-status` | AVERROW_INTERNAL_SECRET | Same as above, accessible via `Authorization: Bearer $AVERROW_INTERNAL_SECRET` for the averrow-mcp server and the (Phase 3) public status page Worker. |
 | GET | `/api/admin/notification-delivery-audit` | Super Admin | Per-channel delivery audit for platform_* notifications. Reads `notification_deliveries` (migration 0131) and reports which channels (in_app / push / email) succeeded, failed, or were skipped per notification, plus a `delivery_health` rollup and a `stale` flag for unread platform alerts older than 6h. Built after 50cb1e4 to verify platform alerts actually reach humans. Accepts `?days=N` (default 7, max 30). |
 | GET | `/api/internal/notification-delivery-audit` | AVERROW_INTERNAL_SECRET | Same as above for programmatic / MCP access. |
+| GET | `/api/admin/incidents` | Super Admin | List incidents (migration 0132). `?status=open` filters to non-resolved. `?visibility=public\|internal` filters by exposure. Returns severity/status pivoted with parsed `affected_components`. Auto-created from critical platform_* notifications + manually creatable. |
+| POST | `/api/admin/incidents` | Super Admin | Create a manual incident. Body: `{ title, description?, severity?, status?, affected_components? }`. |
+| GET | `/api/admin/incidents/:id` | Super Admin | Incident detail + full update timeline (operator + system rows). |
+| POST | `/api/admin/incidents/:id/updates` | Super Admin | Append an operator update. Body: `{ message, status?, visibility? }`. If `status` is set, transitions the incident as part of the same write. |
+| POST | `/api/admin/incidents/:id/transition` | Super Admin | Status-only transition without a message. Body: `{ status }`. Logs a system update for audit. |
+| POST | `/api/admin/incidents/:id/promote` | Super Admin | Flip visibility internal↔public AND/OR edit `public_title` / `public_details`. Promoting to public requires a non-empty `public_title` (200/2000 char caps). |
 | GET | `/api/admin/cartographer-health` | Super Admin | Focused Phase 0 enrichment diagnostic. Returns migration sanity (column + index for migration 0110), attempts histogram, queue / exhausted / stuck-pile counts, throughput (1h / 6h / 24h), recent runs, and ip-api yield per recent batch with computed avg_yield_pct. |
 | GET | `/api/internal/cartographer-health` | AVERROW_INTERNAL_SECRET | Same as above, accessible via `Authorization: Bearer $AVERROW_INTERNAL_SECRET` for programmatic/CLI access (used by `scripts/cartographer-health.sh`). |
 | GET | `/api/admin/d1-health` | Super Admin | Database-level D1 diagnostic. Returns DB size (page_count × page_size), per-table row counts (top N, default 20), index counts (incl. partial), schema version, FK enforcement state, applied migrations, sample query latency. Accepts `?check_fk=true` to run `PRAGMA foreign_key_check` (slow — gated). Accepts `?top_n=N` (max 50). |

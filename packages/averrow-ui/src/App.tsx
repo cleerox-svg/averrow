@@ -29,6 +29,8 @@ const AdminDashboard = React.lazy(() => import('@/features/admin/AdminDashboard'
 const Organization = React.lazy(() => import('@/features/settings/Organization').then(m => ({ default: m.Organization })));
 const SuperAdminOrgs = React.lazy(() => import('@/features/admin/SuperAdminOrgs').then(m => ({ default: m.SuperAdminOrgs })));
 const AdminAudit = React.lazy(() => import('@/features/admin/AdminAudit').then(m => ({ default: m.AdminAudit })));
+const AdminIncidents = React.lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
+const AdminIncidentDetail = React.lazy(() => import('@/features/admin-incidents/IncidentDetail').then(m => ({ default: m.AdminIncidentDetail })));
 const PushAdmin = React.lazy(() => import('@/features/admin/PushAdmin').then(m => ({ default: m.PushAdmin })));
 const ArchitectDetail = React.lazy(() => import('@/features/agents/ArchitectDetail').then(m => ({ default: m.ArchitectDetail })));
 const Providers = React.lazy(() => import('@/features/providers/Providers').then(m => ({ default: m.Providers })));
@@ -150,6 +152,8 @@ export default function App() {
         <Route path="admin/users" element={lazyRoute(<Organization />)} />
         <Route path="admin/organizations" element={lazyRoute(<SuperAdminOrgs />)} />
         <Route path="admin/audit" element={lazyRoute(<AdminAudit />)} />
+        <Route path="admin/incidents" element={lazyRoute(<AdminIncidents />)} />
+        <Route path="admin/incidents/:id" element={lazyRoute(<AdminIncidentDetail />)} />
         <Route path="admin/push" element={lazyRoute(<PushAdmin />)} />
         <Route path="profile" element={lazyRoute(<Profile />)} />
         <Route path="notifications" element={lazyRoute(<Notifications />)} />
