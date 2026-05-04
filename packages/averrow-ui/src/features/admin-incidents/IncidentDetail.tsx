@@ -45,6 +45,7 @@ export function AdminIncidentDetail() {
   const promote = usePromoteIncident(id ?? '');
 
   const [updateMessage, setUpdateMessage] = useState('');
+  const [updatePublicMessage, setUpdatePublicMessage] = useState('');
   const [updateStatus, setUpdateStatus] = useState<IncidentStatus | ''>('');
   const [updatePublic, setUpdatePublic] = useState(false);
 
@@ -70,15 +71,24 @@ export function AdminIncidentDetail() {
 
   const handleAppend = () => {
     if (!updateMessage.trim()) return;
+    // Backend enforces this too — surface a friendly hint inline so
+    // the operator doesn't round-trip a 400.
+    if (updatePublic && !updatePublicMessage.trim()) {
+      // eslint-disable-next-line no-alert
+      alert('Public message required when this update is marked public.');
+      return;
+    }
     append.mutate(
       {
         message: updateMessage.trim(),
+        public_message: updatePublic ? updatePublicMessage.trim() : undefined,
         status: updateStatus || undefined,
         visibility: updatePublic ? 'public' : 'internal',
       },
       {
         onSuccess: () => {
           setUpdateMessage('');
+          setUpdatePublicMessage('');
           setUpdateStatus('');
           setUpdatePublic(false);
         },
@@ -176,6 +186,27 @@ export function AdminIncidentDetail() {
             color: 'var(--text-primary)', resize: 'vertical',
           }}
         />
+        {/* Customer-safe public copy. Only shown / required when the
+            operator marked the row public — internal updates skip
+            this. Backend rejects visibility=public without a
+            non-empty public_message. */}
+        {updatePublic && (
+          <textarea
+            value={updatePublicMessage}
+            onChange={(e) => setUpdatePublicMessage(e.target.value)}
+            placeholder="Customer-safe public version (no feed names, internal terminology, or commit hashes; ≤1000 chars)"
+            maxLength={1000}
+            rows={2}
+            style={{
+              width: '100%',
+              fontFamily: 'var(--font-mono)', fontSize: 13,
+              background: 'rgba(229,168,50,0.06)',
+              border: '1px solid rgba(229,168,50,0.30)',
+              borderRadius: 6, padding: 10, marginTop: 8,
+              color: 'var(--text-primary)', resize: 'vertical',
+            }}
+          />
+        )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
           <select
             value={updateStatus}
@@ -195,7 +226,14 @@ export function AdminIncidentDetail() {
             <input type="checkbox" checked={updatePublic} onChange={(e) => setUpdatePublic(e.target.checked)} />
             Mark this update public
           </label>
-          <Button onClick={handleAppend} disabled={!updateMessage.trim() || append.isPending}>
+          <Button
+            onClick={handleAppend}
+            disabled={
+              !updateMessage.trim() ||
+              append.isPending ||
+              (updatePublic && !updatePublicMessage.trim())
+            }
+          >
             Post update
           </Button>
         </div>
@@ -351,6 +389,23 @@ export function AdminIncidentDetail() {
                 }}>
                   {u.message}
                 </div>
+                {/* Show what we're actually rendering on /status, so
+                    the operator can spot leaks before customers do. */}
+                {u.public_message && (
+                  <div style={{
+                    marginTop: 6,
+                    padding: '6px 10px',
+                    background: 'rgba(229,168,50,0.06)',
+                    border: '1px solid rgba(229,168,50,0.20)',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
+                    {u.public_message}
+                  </div>
+                )}
               </div>
             </div>
             );

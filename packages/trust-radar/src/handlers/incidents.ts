@@ -180,6 +180,9 @@ export async function handleCreateIncident(
 
 interface UpdateBody {
   message?: string;
+  /** Sanitized public copy. Required for the row to surface on
+   *  /status even if visibility='public'. (Migration 0133.) */
+  public_message?: string | null;
   status?: IncidentStatus;
   visibility?: IncidentVisibility;
 }
@@ -203,16 +206,33 @@ export async function handleAppendIncidentUpdate(
   const message = (body.message ?? "").trim();
   if (!message) return json({ success: false, error: "message required" }, 400, origin);
 
+  const publicMessage = typeof body.public_message === "string" ? body.public_message.trim() : null;
+  if (publicMessage && publicMessage.length > 1000) {
+    return json({ success: false, error: "public_message too long (1000 max)" }, 400, origin);
+  }
+
   const incident = await getIncident(env, id);
   if (!incident) return json({ success: false, error: "not found" }, 404, origin);
 
   const newStatus = body.status && VALID_STATUS.has(body.status) ? body.status : undefined;
   const visibility = body.visibility && VALID_VISIBILITY.has(body.visibility) ? body.visibility : "internal";
 
+  // If the operator marked the row public but didn't write a
+  // sanitized version, refuse — defense in depth so the internal
+  // narration never leaks publicly. They can still post the row as
+  // internal-only without a public_message.
+  if (visibility === "public" && (!publicMessage || publicMessage.length === 0)) {
+    return json({
+      success: false,
+      error: "public_message required when visibility=public",
+    }, 400, origin);
+  }
+
   await appendOperatorUpdate(env, {
     incidentId: id,
     userId,
     message,
+    publicMessage: publicMessage || null,
     newStatus,
     visibility,
   });

@@ -62,7 +62,13 @@ export interface IncidentUpdateRow {
   incident_id: string;
   kind: IncidentUpdateKind;
   status: IncidentStatus | null;
+  /** Internal narration. Operators can write whatever detail they
+   *  want here — never exposed publicly. */
   message: string;
+  /** Sanitized customer-safe copy for /status. NULL means this
+   *  update never appears publicly even if visibility='public'.
+   *  See toPublicShape for the gate. (Migration 0133.) */
+  public_message: string | null;
   visibility: IncidentVisibility;
   event_ref: string | null;
   event_type: string | null;
@@ -230,6 +236,9 @@ interface AppendSystemUpdateInput {
   /** Defaults to 'internal' — system updates are noisy + safe to show
    *  internally but can leak detail; operator promotes per-update. */
   visibility?: IncidentVisibility;
+  /** Sanitized customer-safe copy. Required to surface publicly even
+   *  if visibility='public'. (Migration 0133.) */
+  publicMessage?: string | null;
 }
 
 export async function appendSystemUpdate(
@@ -238,12 +247,13 @@ export async function appendSystemUpdate(
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO incident_updates
-       (id, incident_id, kind, status, message, visibility, event_ref, event_type)
-     VALUES (?, ?, 'system', NULL, ?, ?, ?, ?)`,
+       (id, incident_id, kind, status, message, public_message, visibility, event_ref, event_type)
+     VALUES (?, ?, 'system', NULL, ?, ?, ?, ?, ?)`,
   ).bind(
     crypto.randomUUID(),
     input.incidentId,
     input.message.slice(0, 2000),
+    input.publicMessage ? input.publicMessage.slice(0, 1000) : null,
     input.visibility ?? "internal",
     input.eventRef ?? null,
     input.eventType ?? null,
@@ -254,6 +264,9 @@ interface AppendOperatorUpdateInput {
   incidentId: string;
   userId: string;
   message: string;
+  /** Sanitized customer-safe copy. Required to surface publicly even
+   *  if visibility='public'. (Migration 0133.) */
+  publicMessage?: string | null;
   /** If non-null, transitions the incident's status. */
   newStatus?: IncidentStatus;
   visibility?: IncidentVisibility;
@@ -265,13 +278,14 @@ export async function appendOperatorUpdate(
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO incident_updates
-       (id, incident_id, kind, status, message, visibility, created_by)
-     VALUES (?, ?, 'operator', ?, ?, ?, ?)`,
+       (id, incident_id, kind, status, message, public_message, visibility, created_by)
+     VALUES (?, ?, 'operator', ?, ?, ?, ?, ?)`,
   ).bind(
     crypto.randomUUID(),
     input.incidentId,
     input.newStatus ?? null,
     input.message.slice(0, 4000),
+    input.publicMessage ? input.publicMessage.slice(0, 1000) : null,
     input.visibility ?? "internal",
     input.userId,
   ).run();
@@ -434,6 +448,8 @@ export async function loadTelemetryEvents(
         kind: "system",
         status: null,
         message: `feed_pull · ${r.feed_name} · ${r.status}${errSnippet ? `: ${errSnippet}` : ""}`,
+        // Telemetry events are internal only — never auto-publicly visible.
+        public_message: null,
         visibility: "internal",
         event_ref: eventRef,
         event_type: "feed_pull",
@@ -467,6 +483,7 @@ export async function loadTelemetryEvents(
         kind: "system",
         status: null,
         message: `agent_run · ${r.agent_id} · ${r.status}${errSnippet ? `: ${errSnippet}` : ""}`,
+        public_message: null,
         visibility: "internal",
         event_ref: eventRef,
         event_type: "agent_run",
@@ -552,6 +569,18 @@ export function toPublicShape(
   // either is missing the operator hasn't promoted it; drop on the
   // floor.
   if (incident.visibility !== "public" || !incident.public_title) return null;
+  // Per-update gate (migration 0133): an update only appears publicly
+  // if BOTH visibility='public' AND public_message is non-null. The
+  // sanitized public_message is what we render — never the internal
+  // `message`, which may leak commit hashes / feed names / code paths.
+  const safeUpdates = publicUpdates
+    .filter((u) => u.public_message !== null && u.public_message.trim().length > 0)
+    .map((u) => ({
+      id: u.id,
+      status: u.status,
+      message: u.public_message ?? "",
+      created_at: u.created_at,
+    }));
   return {
     id: incident.id,
     title: incident.public_title,
@@ -561,12 +590,7 @@ export function toPublicShape(
     affected_components: parseComponents(incident.affected_components),
     started_at: incident.detected_at ?? incident.created_at,
     resolved_at: incident.resolved_at,
-    updates: publicUpdates.map((u) => ({
-      id: u.id,
-      status: u.status,
-      message: u.message,
-      created_at: u.created_at,
-    })),
+    updates: safeUpdates,
   };
 }
 

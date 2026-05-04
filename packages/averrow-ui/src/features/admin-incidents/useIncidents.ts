@@ -42,6 +42,9 @@ export interface IncidentUpdate {
   kind: IncidentUpdateKind;
   status: IncidentStatus | null;
   message: string;
+  /** Sanitized customer-safe copy. Required for the row to surface
+   *  on /status even if visibility='public'. (Migration 0133.) */
+  public_message: string | null;
   visibility: IncidentVisibility;
   event_ref: string | null;
   event_type: string | null;
@@ -87,6 +90,9 @@ export function useAppendIncidentUpdate(id: string) {
   return useMutation({
     mutationFn: async (input: {
       message: string;
+      /** Sanitized customer-safe copy. Required when visibility='public'
+       *  — backend returns 400 otherwise. */
+      public_message?: string;
       status?: IncidentStatus;
       visibility?: IncidentVisibility;
     }) => {
