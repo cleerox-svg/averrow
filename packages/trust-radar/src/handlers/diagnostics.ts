@@ -383,6 +383,24 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         AND enrichment_attempts >= 5
     `).first<{ n: number }>();
 
+    // Per-feed × per-type breakdown of the exhausted pile. Without
+    // this, "cartographer_exhausted: 1,402" is opaque — operators
+    // can't tell whether it's a feed regression (one feed dumping
+    // un-resolvable IPs), a class of threats (e.g. botnet IPs from
+    // sinkholes), or a geo-source coverage gap. Top 15 keeps the
+    // payload bounded; the full distribution stays queryable in D1.
+    const cartoExhaustedByFeedP = env.DB.prepare(`
+      SELECT source_feed, threat_type, COUNT(*) AS n
+        FROM threats
+       WHERE status = 'active'
+         AND enriched_at IS NULL
+         AND ip_address IS NOT NULL AND ip_address != ''
+         AND enrichment_attempts >= 5
+       GROUP BY source_feed, threat_type
+       ORDER BY n DESC
+       LIMIT 15
+    `).all<{ source_feed: string; threat_type: string; n: number }>();
+
     // ─── 3. Per-feed health ─────────────────────────────────────────
     const feedHealthP = env.DB.prepare(`
       SELECT
@@ -600,13 +618,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
 
     // ── Execute all in parallel ─────────────────────────────────────
     const [
-      clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, domainGeoDrainable,
+      clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
       feedHealth, feedStatus, feedErrors,
       agentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries,
     ] = await Promise.all([
-      clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, domainGeoDrainableP,
+      clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
@@ -841,6 +859,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           cartographer_queue: cartoQueue?.n ?? 0,
           cartographer_queue_raw: cartoQueueRaw?.n ?? 0,
           cartographer_exhausted: cartoExhausted?.n ?? 0,
+          cartographer_exhausted_by_feed: cartoExhaustedByFeed.results.map((r) => ({
+            source_feed: r.source_feed,
+            threat_type: r.threat_type,
+            count: r.n,
+          })),
           private_ip_inflation: (cartoQueueRaw?.n ?? 0) - (cartoQueue?.n ?? 0),
         },
 

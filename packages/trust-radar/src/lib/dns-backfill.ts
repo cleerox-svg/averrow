@@ -90,6 +90,42 @@ export async function runDomainGeoBackfillBatch(
       return { ...empty, durationMs: Date.now() - start };
     }
 
+    // ── Step 0: pre-stamp claim ──
+    //
+    // Atomically claim every selected domain by stamping
+    // `attempted_resolve_at = now` BEFORE running DoH resolution.
+    // Without this, a soft-cap during resolution leaves the stamp
+    // path unreached — the same 200 domains keep re-selecting on
+    // every subsequent tick because their cooldown gate never
+    // moves. Diagnostic evidence (2026-05-04): 90%+ of navigator
+    // ticks recorded `records_processed = 0` and only ~490 rows
+    // had `attempted_resolve_at` advanced in the prior 24h vs. a
+    // theoretical capacity of ~92K stamp events/day.
+    //
+    // Pre-stamp does NOT bump `enrichment_attempts` — the attempts
+    // counter only advances when an outcome (resolved / dead /
+    // transient) is recorded later. This separates "I tried to do
+    // work" (attempted_resolve_at, advances cooldown) from "this
+    // domain is exhausting its retry budget" (enrichment_attempts,
+    // graduates to cap=8). Step 3b skips domains whose attempts
+    // are already at cap so we never double-bump past the cap.
+    const placeholders0 = domains.map(() => '?').join(',');
+    try {
+      await env.DB.prepare(`
+        UPDATE threats
+        SET attempted_resolve_at = datetime('now')
+        WHERE malicious_domain IN (${placeholders0})
+          AND (ip_address IS NULL OR ip_address = '')
+      `).bind(...domains).run();
+    } catch (err) {
+      // If the pre-stamp fails (D1 transient), bail out cleanly.
+      // Re-running the whole batch on the next tick is safe and
+      // preferable to running resolution against an unclaimed
+      // batch (which would re-select the same domains forever).
+      console.error('[dns-backfill] pre-stamp claim failed:', err);
+      return { ...empty, durationMs: Date.now() - start };
+    }
+
     // ── Step 1: parallel DoH resolution, capped at CONCURRENCY ──
     // Three buckets:
     //   - domainToIp: resolver returned an A record → write ip_address
@@ -164,12 +200,12 @@ export async function runDomainGeoBackfillBatch(
 
     if (isOverCap()) softCapHit = true;
 
-    // ── Step 3a: graduate confirmed-dead domains immediately ──
+    // ── Step 3a: graduate confirmed-dead domains ──
     // All 3 resolvers said NXDOMAIN or no A record — authoritative
-    // enough to stop trying. Stamp enrichment_attempts to the cap
-    // (8) so the SELECT filter excludes them on every future tick.
-    // Without this they'd burn 8 × 6h cooldown cycles (48 hours
-    // each) before exiting via the natural cap.
+    // enough to stop trying. Push enrichment_attempts to the cap (8)
+    // so the SELECT filter excludes them on every future tick.
+    // attempted_resolve_at was already advanced in Step 0; we only
+    // need to advance the attempts counter here.
     let graduatedDead = 0;
     if (confirmedDead.size > 0) {
       const DEAD_CHUNK = 50;
@@ -181,8 +217,7 @@ export async function runDomainGeoBackfillBatch(
         try {
           const r = await env.DB.prepare(`
             UPDATE threats
-            SET attempted_resolve_at = datetime('now'),
-                enrichment_attempts = 8
+            SET enrichment_attempts = 8
             WHERE malicious_domain IN (${placeholders})
               AND (ip_address IS NULL OR ip_address = '')
           `).bind(...chunk).run();
@@ -193,16 +228,16 @@ export async function runDomainGeoBackfillBatch(
       }
     }
 
-    // ── Step 3b: stamp attempted_resolve_at + bump attempts ──
+    // ── Step 3b: bump enrichment_attempts for transient failures ──
     // For domains that hit a transient failure (timeout, SERVFAIL,
-    // resolver disagreement). Increments enrichment_attempts by 1.
-    // Combined with the COALESCE(enrichment_attempts, 0) < 8 filter
-    // in the SELECT above, this caps the worker at 8 retry rounds.
+    // resolver disagreement). Increments enrichment_attempts by 1
+    // so the cap-at-8 filter in the SELECT eventually exits them.
+    // attempted_resolve_at was advanced in Step 0; we don't re-stamp.
     //
-    // Skip domains that were either resolved (already updated above)
-    // or graduated as dead (already stamped attempts=8) — re-stamping
-    // them here would either bump resolved domains' attempts (waste)
-    // or increment past the cap (harmless but noisy).
+    // Skip resolved domains (Step 2 wrote ip_address) and dead ones
+    // (Step 3a stamped attempts=8) — both are now ineligible. We also
+    // gate on enrichment_attempts < 8 so a domain can't be bumped to
+    // 9; that would skew per-feed retry-cap diagnostics.
     const transient: string[] = [];
     for (const d of attempted) {
       if (!domainToIp.has(d) && !confirmedDead.has(d)) transient.push(d);
@@ -216,13 +251,13 @@ export async function runDomainGeoBackfillBatch(
         try {
           await env.DB.prepare(`
             UPDATE threats
-            SET attempted_resolve_at = datetime('now'),
-                enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
+            SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
             WHERE malicious_domain IN (${placeholders})
               AND (ip_address IS NULL OR ip_address = '')
+              AND COALESCE(enrichment_attempts, 0) < 8
           `).bind(...chunk).run();
         } catch (err) {
-          console.error('[dns-backfill] attempted_resolve_at stamp failed:', err);
+          console.error('[dns-backfill] attempts bump failed:', err);
         }
       }
     }

@@ -23,7 +23,7 @@
 
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
-import { runDomainGeoBackfillBatch } from '../lib/dns-backfill';
+import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
@@ -83,6 +83,8 @@ interface NavigatorImplResult {
   errorMessage: string | null;
   cubeRows: number;
   cubeErrors: string[];
+  /** Forwarded so the agent wrapper can emit a per-tick diagnostic. */
+  dnsResult: DnsBackfillResult | null;
 }
 
 async function runNavigatorImpl(
@@ -407,6 +409,7 @@ async function runNavigatorImpl(
     errorMessage: finalErrorMessage,
     cubeRows: cubeResults.totalRows,
     cubeErrors: cubeResults.errors,
+    dnsResult,
   };
 }
 
@@ -485,6 +488,33 @@ export const navigatorAgent: AgentModule = {
           itemsEnriched: result.itemsEnriched,
           cubeRows: result.cubeRows,
           cubeErrors: result.cubeErrors,
+        },
+      });
+    }
+
+    // Always emit a DNS-throughput diagnostic so per-tick numbers
+    // are queryable after the fact. Prior to this we only had
+    // ephemeral console logs and `agent_runs.records_processed`,
+    // which only counts enriched + events_drained — invisible to
+    // the resolution and stamping work that dominates a normal
+    // tick. Diagnostic queries (`SELECT details FROM agent_outputs
+    // WHERE agent_id='navigator' AND type='dns_throughput'`) can
+    // now distinguish "SELECT empty" from "softCapHit early" from
+    // "all transient" without re-deploying instrumentation.
+    if (result.dnsResult) {
+      const dr = result.dnsResult;
+      const severity = dr.softCapHit ? 'medium' : 'info';
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `dns-backfill: processed=${dr.processed} resolved=${dr.resolved} dead=${dr.graduatedDead} enriched_rows=${dr.enriched} softCap=${dr.softCapHit ? 'YES' : 'no'} ${dr.durationMs}ms`,
+        severity,
+        details: {
+          processed: dr.processed,
+          resolved: dr.resolved,
+          graduated_dead: dr.graduatedDead,
+          enriched_rows: dr.enriched,
+          soft_cap_hit: dr.softCapHit,
+          duration_ms: dr.durationMs,
         },
       });
     }
