@@ -45,6 +45,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/v1/public/leads` | Lead capture |
 | POST | `/api/v1/public/monitor` | Monitor request |
 | GET | `/api/v1/public/email-security/:domain` | Public email security check |
+| GET | `/api/v1/public/platform-status` | Platform uptime rollup (no auth) — feeds Home banner + Phase 3 public status page. Same payload as `/api/admin/platform-status`. KV-cached 60s. |
 
 ## Dashboard
 

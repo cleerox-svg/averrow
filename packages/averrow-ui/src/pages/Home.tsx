@@ -12,6 +12,7 @@ import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import { useDailyBriefing } from '@/hooks/useDailyBriefing';
 import { Card, StatCard, Avatar, Badge, SeverityDot } from '@/components/ui';
 import { InstallAppBanner } from '@/components/InstallAppBanner';
+import { PlatformStatusBadge } from '@/components/PlatformStatusBadge';
 import { RefreshCw } from 'lucide-react';
 
 // ── Latest Intel Feed ──────────────────────────────────────────────────
@@ -147,17 +148,8 @@ function HomeDashboard() {
           </div>
         </div>
 
-        {/* Platform status badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <SeverityDot severity="info" size={8} pulse />
-          <span style={{
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--sev-info)', letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-          }}>
-            Platform Operational
-          </span>
-        </div>
+        {/* Platform status badge — live from /api/v1/public/platform-status */}
+        <PlatformStatusBadge variant="compact" />
       </div>
 
       {/* ── Stat bar ──────────────────────────────────────────── */}

@@ -235,6 +235,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   );
   router.get("/api/stats/public", (request: Request, env: Env) => handlePublicStatsV2(request, env));
 
+  // Public platform status — feeds the Home banner (Phase 2) and the
+  // public status page (Phase 3). No auth: the data is just per-day
+  // uptime, nothing customer-specific. KV-cached 60s in the handler so
+  // anonymous traffic can't hammer D1.
+  router.get("/api/v1/public/platform-status", async (request: Request, env: Env) => {
+    const { handlePlatformStatus } = await import("../handlers/platform-status");
+    return handlePlatformStatus(request, env);
+  });
+
   // ─── React app — serve v2/index.html for all /v2/* routes ────────
   router.get("/v2/*", async (request: Request, env: Env) => {
     const url = new URL(request.url);

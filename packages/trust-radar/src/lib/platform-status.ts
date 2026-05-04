@@ -18,45 +18,17 @@
 
 import type { Env } from "../types";
 
-// ─── Types ────────────────────────────────────────────────────────
-
-export type CategoryStatus = "operational" | "degraded" | "outage";
-
-export type CategoryKey = "feeds" | "agents" | "processing";
-
-export interface DailyPoint {
-  /** YYYY-MM-DD (UTC). */
-  date: string;
-  status: CategoryStatus;
-  /** 0–100 uptime %, rounded to nearest int. */
-  uptime_pct: number;
-  /** Optional 1-line operator hint (e.g. "ingest feeds silent"). */
-  note?: string;
-}
-
-export interface CategoryRollup {
-  category: CategoryKey;
-  /** Status for the most recent fully-closed day (UTC). */
-  current: CategoryStatus;
-  /** Mean of the 30 daily uptimes. */
-  uptime_30d_pct: number;
-  /** Oldest first, length 30. Last entry = yesterday (UTC). */
-  daily: DailyPoint[];
-  /** Status for "right now" (rolling last 6h). May differ from current. */
-  realtime: CategoryStatus;
-  /** Short human-readable cause for the realtime state. */
-  realtime_note: string;
-}
-
-export interface PlatformStatus {
-  generated_at: string;
-  /** Worst of the three realtime states. Drives the Home banner. */
-  overall: CategoryStatus;
-  overall_note: string;
-  categories: CategoryRollup[];
-  /** Used by Phase 3 status page header copy. */
-  window_days: number;
-}
+// Shared types live in @averrow/shared so the React UI consumes the
+// exact same shape the worker emits. Re-exported here so existing
+// imports (handlers/platform-status, etc.) keep working.
+export type {
+  CategoryStatus,
+  CategoryKey,
+  DailyPoint,
+  CategoryRollup,
+  PlatformStatus,
+} from "@averrow/shared";
+import type { CategoryStatus, CategoryKey, DailyPoint, CategoryRollup, PlatformStatus } from "@averrow/shared";
 
 // ─── Thresholds ───────────────────────────────────────────────────
 // Tuned against the 50cb1e4 outage so Apr 30–May 2 land in 'outage'

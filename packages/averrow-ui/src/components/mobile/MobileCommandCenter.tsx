@@ -15,6 +15,7 @@ import { useFeedStats } from '@/hooks/useFeeds';
 import { useOperationsStats } from '@/hooks/useOperations';
 import { useNotifications } from '@/hooks/useNotifications';
 import { NotificationBell } from '@/components/NotificationBell';
+import { PlatformStatusBadge } from '@/components/PlatformStatusBadge';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -155,18 +156,10 @@ export function MobileCommandCenter() {
           </div>
         )}
 
-        {/* STATUS BAR */}
+        {/* STATUS BAR — live from /api/v1/public/platform-status */}
         <div style={{ padding:'10px 20px 0' }}>
           <DeepCard variant="base" style={{ padding:'11px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:9 }}>
-              <div style={{ position:'relative', width:8, height:8 }}>
-                <div style={{ position:'absolute', inset:0, borderRadius:'50%', background:'#4ade80', opacity:0.6, animation:'mcc-ping 1.6s ease-in-out infinite' }} />
-                <div style={{ width:8, height:8, borderRadius:'50%', background:'#22c55e', boxShadow:'0 0 8px rgba(34,197,94,0.9)' }} />
-              </div>
-              <span style={{ fontSize:10, fontFamily:'monospace', fontWeight:700, letterSpacing:'0.14em', color:'#4ade80', textShadow:'0 0 10px rgba(74,222,128,0.5)' }}>
-                ALL SYSTEMS OPERATIONAL
-              </span>
-            </div>
+            <PlatformStatusBadge variant="prominent" />
             <span style={{ fontSize:10, color:'var(--text-muted)', fontFamily:'monospace' }}>
               {lastScan ? `Scan: ${timeAgo(lastScan)}` : 'Scanning...'}
             </span>
