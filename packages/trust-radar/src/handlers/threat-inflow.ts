@@ -36,7 +36,9 @@ export async function handleThreatInflow(request: Request, env: Env): Promise<Re
   const url = new URL(request.url);
   const windowParam = url.searchParams.get("window") === "7d" ? "7d" : "24h";
 
-  const cacheKey = `threat_inflow:v1:${windowParam}`;
+  // v2 cache prefix — invalidates stale empty payloads cached under
+  // v1 while the SQLite modifier bug below was returning 0 rows.
+  const cacheKey = `threat_inflow:v2:${windowParam}`;
   try {
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
@@ -52,7 +54,14 @@ export async function handleThreatInflow(request: Request, env: Env): Promise<Re
   // SQLite truncates timestamps to the hour with strftime. We anchor
   // to the current hour so the rightmost bucket is always "now" — the
   // chart's leading-edge pulse falls on a real cube row.
-  const earliest = `datetime('now', '-${bucketCount - 1} hours', 'start of hour' || '+0 hours')`;
+  //
+  // The outer strftime('%Y-%m-%d %H:00:00', ...) already truncates to
+  // the hour, so no additional modifier is needed. The previous
+  // version passed the string 'start of hour' || '+0 hours' which
+  // SQLite concatenates into the invalid modifier 'start of hour+0 hours'
+  // (only `start of day|month|year` are valid), causing datetime() to
+  // return NULL → WHERE matched 0 rows → empty chart.
+  const earliest = `datetime('now', '-${bucketCount - 1} hours')`;
   // strftime to the same shape stored in threat_cube_status.hour_bucket
   // ('YYYY-MM-DD HH:00:00')
 
