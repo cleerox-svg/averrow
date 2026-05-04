@@ -82,7 +82,7 @@ this doc and ping the sibling platform.
 - **Product name:** "Averrow" / "FarmTrack".
 - **Tagline:** Averrow uses `AI-FIRST THREAT INTELLIGENCE`. FarmTrack uses `AN AVERROW PRODUCT` (parent-brand attribution since Averrow is the parent).
 - **Footer pillars:** Averrow uses `DETECT · ANALYZE · CORRELATE · RESPOND`. FarmTrack uses `PROJECTIONS · CAPTURE · TRANSPORT · QA`.
-- **OAuth `return_to`:** points to each product's main interior route (`/v2/observatory` for Averrow, `/` for FarmTrack).
+- **OAuth `return_to`:** points to each product's main interior route (`/v2/` for Averrow, which lands on the Home / Command Center; `/` for FarmTrack).
 
 ### Forbidden deltas
 

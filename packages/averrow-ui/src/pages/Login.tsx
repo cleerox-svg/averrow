@@ -57,7 +57,7 @@ export function Login() {
     setPasskeySupported(isPasskeySupported());
     if (!conditionalStarted.current && isPasskeySupported()) {
       conditionalStarted.current = true;
-      startConditionalUI('/v2/observatory');
+      startConditionalUI('/v2/');
     }
   }, []);
 
@@ -67,7 +67,7 @@ export function Login() {
     try {
       const ok = await signInWithPasskey({
         email: email.trim() || undefined,
-        returnTo: '/v2/observatory',
+        returnTo: '/v2/',
       });
       if (!ok) {
         // User dismissed the OS prompt — silent return.
@@ -90,7 +90,7 @@ export function Login() {
     try {
       const res = await api.post<{ message?: string; expires_in_minutes?: number; error?: string }>(
         '/api/auth/magic-link/request',
-        { email: trimmed, return_to: '/v2/observatory' },
+        { email: trimmed, return_to: '/v2/' },
       );
       if (res.success === false) {
         setMagicLink({ kind: 'error', message: res.error || 'Request failed.' });

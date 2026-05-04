@@ -156,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [checkAuth, setUser]);
 
   const login = () => {
-    window.location.href = '/api/auth/login?return_to=/v2/observatory';
+    window.location.href = '/api/auth/login?return_to=/v2/';
   };
 
   const logout = () => {

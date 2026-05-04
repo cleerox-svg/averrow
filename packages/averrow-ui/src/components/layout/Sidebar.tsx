@@ -123,6 +123,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     {
       label: 'INTELLIGENCE',
       items: [
+        { label: 'Home',         path: '/',             icon: LayoutDashboard },
         { label: 'Observatory',  path: '/observatory',  icon: Globe },
         { label: 'Observatory v3', path: '/observatory-v3', icon: Globe },
         { label: 'Brands',       path: '/brands',       icon: Shield },

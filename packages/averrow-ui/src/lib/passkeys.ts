@@ -143,7 +143,7 @@ export async function signInWithPasskey(opts: SignInOptions = {}): Promise<boole
     {
       response: assertResp,
       challenge_key,
-      return_to: opts.returnTo ?? '/v2/observatory',
+      return_to: opts.returnTo ?? '/v2/',
     },
   );
   if (!finish.success || !finish.data) {
