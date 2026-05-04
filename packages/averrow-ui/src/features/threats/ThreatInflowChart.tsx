@@ -212,17 +212,18 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
         </ResponsiveContainer>
       )}
 
-      {/* Legend — totals per series. Grid on desktop, horizontal scroll
-          on mobile. Mirrors the original layout. */}
+      {/* Legend — totals per series. Single column on narrow vertical
+          mobile (so the name + count of each row line up consistently),
+          auto-fill grid on wider widths. */}
       {data && (
         <div
-          className="flex md:grid md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] max-md:overflow-x-auto"
-          style={{ marginTop: 10, gap: 6, paddingBottom: 4 }}
+          className="grid grid-cols-1 md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]"
+          style={{ marginTop: 10, gap: 6 }}
         >
           {data.series.map((s) => (
             <div
               key={s.threat_type}
-              className="flex items-center gap-1.5 max-md:px-1.5 max-md:py-1 max-md:border max-md:border-white/10 max-md:rounded-md max-md:flex-shrink-0"
+              className="flex items-center gap-1.5 max-md:px-1.5 max-md:py-1 max-md:border max-md:border-white/10 max-md:rounded-md"
               style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}
             >
               <span
