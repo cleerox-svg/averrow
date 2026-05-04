@@ -125,7 +125,11 @@ export async function renderStatusPage(env: Env): Promise<string> {
     "Real-time uptime for Averrow's threat intelligence platform — feeds, agents, and processing.",
     `
 <style>
-.status-shell { max-width: 760px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+/* Top padding clears the fixed marketing nav (~64px) — same pattern
+   the /platform and /security pages use. box-sizing keeps the inner
+   max-width math honest when the viewport is narrower than 760px. */
+.status-shell { max-width: 760px; margin: 0 auto; padding: 6rem 1.5rem 4rem; box-sizing: border-box; width: 100%; }
+.status-shell, .status-shell * { box-sizing: border-box; }
 .status-title { font-family: var(--font-display); font-size: clamp(28px, 4vw, 40px); font-weight: 700; margin: 0 0 0.25rem; color: var(--text-primary); }
 .status-sub { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 2rem; }
 
@@ -155,9 +159,22 @@ export async function renderStatusPage(env: Env): Promise<string> {
 [data-theme="light"] .status-bar { opacity: 0.9; }
 
 @media (max-width: 600px) {
-  .status-shell { padding: 2rem 1rem 3rem; }
-  .status-bars { gap: 2px; height: 28px; }
-  .status-banner-headline { font-size: 18px; }
+  .status-shell { padding: 5rem 12px 3rem; max-width: 100%; }
+  .status-row { padding: 14px 14px; margin-bottom: 10px; border-radius: 10px; }
+  .status-bars { gap: 2px; height: 26px; }
+  .status-banner-headline { font-size: 17px; }
+  .status-banner { padding: 14px 14px; }
+  .status-row-foot { font-size: 10px; }
+  .status-title { font-size: 24px; }
+  .status-row-pill { font-size: 9px; padding: 3px 8px; }
+}
+
+/* Sub-360px (small Android phones / iPhone SE in landscape preview) —
+   give the rows breathing room so the day labels don't truncate. */
+@media (max-width: 360px) {
+  .status-shell { padding: 5rem 8px 2.5rem; }
+  .status-row { padding: 12px 10px; }
+  .status-banner { padding: 12px 12px; }
 }
 </style>
 
@@ -170,7 +187,6 @@ export async function renderStatusPage(env: Env): Promise<string> {
 
   <div class="status-meta">
     Last checked: <span id="status-last-checked">${lastChecked}</span>
-    &middot; <a href="/api/v1/public/platform-status">JSON</a>
   </div>
 </div>
 
