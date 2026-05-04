@@ -243,6 +243,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/providers/stats` | User | Provider statistics |
 | GET | `/api/providers/worst` | User | Worst providers (most threats) |
 | GET | `/api/providers/improving` | User | Improving providers |
+| GET | `/api/providers/movers` | User | 7-day movers (rising / falling by active threat delta) |
 | GET | `/api/providers/:id` | User | Get provider detail |
 | GET | `/api/providers/:id/threats` | User | Provider's threats |
 | GET | `/api/providers/:id/brands` | User | Brands affected by provider |

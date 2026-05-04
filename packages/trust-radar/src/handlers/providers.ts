@@ -2,7 +2,94 @@
 // Averrow — Provider Intelligence API Endpoints
 
 import { json } from "../lib/cors";
+import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
+import { newTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
+
+// GET /api/providers/movers
+//
+// Mirrors handleBrandMovers (handlers/brands.ts) for hosting providers
+// — top 5 providers by largest positive delta in active threat count
+// over the last 7 days ("rising") and top 5 by largest negative delta
+// ("falling").
+//
+// Source: daily_snapshots(date, entity_type='provider', entity_id,
+// active_threats), populated daily by generateDailySnapshots(). Uses
+// MAX(date) as the today anchor so the query keeps working if the
+// daily snapshot job hasn't run yet.
+//
+// Distinct from /api/providers/worst (sorts by current absolute count)
+// and /api/providers/improving (compares raw 7d-vs-14d threat creation).
+// This endpoint is the apples-to-apples counterpart of /api/brands/movers.
+export async function handleProviderMovers(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const cacheKey = "provider_movers:v1";
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) {
+      recordD1Reads(env, "provider_movers", newTally());
+      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
+    }
+
+    const tally = newTally();
+
+    const rows = await session.prepare(`
+      WITH anchor AS (
+        SELECT MAX(date) AS today_date
+        FROM daily_snapshots
+        WHERE entity_type = 'provider'
+      ),
+      today_snap AS (
+        SELECT entity_id AS provider_id, active_threats AS today_count
+        FROM daily_snapshots, anchor
+        WHERE entity_type = 'provider' AND date = anchor.today_date
+      ),
+      week_ago_snap AS (
+        SELECT entity_id AS provider_id, active_threats AS week_ago_count
+        FROM daily_snapshots, anchor
+        WHERE entity_type = 'provider' AND date = date(anchor.today_date, '-7 days')
+      )
+      SELECT
+        hp.id, hp.name, hp.asn, hp.country, hp.reputation_score,
+        hp.active_threat_count,
+        COALESCE(t.today_count, 0) AS today_count,
+        COALESCE(w.week_ago_count, 0) AS week_ago_count,
+        COALESCE(t.today_count, 0) - COALESCE(w.week_ago_count, 0) AS delta_7d
+      FROM hosting_providers hp
+      LEFT JOIN today_snap t     ON t.provider_id = hp.id
+      LEFT JOIN week_ago_snap w  ON w.provider_id = hp.id
+      WHERE COALESCE(t.today_count, 0) + COALESCE(w.week_ago_count, 0) > 0
+    `).all<{
+      id: string; name: string; asn: string | null;
+      country: string | null; reputation_score: number | null;
+      active_threat_count: number;
+      today_count: number; week_ago_count: number; delta_7d: number;
+    }>();
+    tally.queries += 1;
+
+    const all = rows.results ?? [];
+    const rising = all
+      .filter(r => r.delta_7d > 0)
+      .sort((a, b) => b.delta_7d - a.delta_7d)
+      .slice(0, 5);
+    const falling = all
+      .filter(r => r.delta_7d < 0)
+      .sort((a, b) => a.delta_7d - b.delta_7d)
+      .slice(0, 5);
+
+    const data = {
+      success: true,
+      data: { rising, falling },
+    };
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
+    recordD1Reads(env, "provider_movers", tally);
+    return attachBookmark(json(data, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
 
 // GET /api/providers/stats (top providers by threat count)
 export async function handleProviderStats(request: Request, env: Env): Promise<Response> {

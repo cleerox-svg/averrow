@@ -33,7 +33,7 @@ import {
   handleListEmailAuth, handleListCloudIncidents, handleTrustScoreHistory,
 } from "../handlers/intel";
 import {
-  handleProviderStats, handleListProviders, handleWorstProviders, handleImprovingProviders,
+  handleProviderStats, handleListProviders, handleWorstProviders, handleImprovingProviders, handleProviderMovers,
   handleGetProvider, handleProviderDrilldown, handleProviderBrands,
   handleProviderTimeline, handleProviderLocations,
   handleProviderIntelligence, handleListProvidersV2, handleListClusters, handleProviderClusters,
@@ -343,6 +343,13 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleWorstProviders(request, env);
+  });
+  // /api/providers/movers must be defined before /api/providers/:id
+  // below so itty-router doesn't intercept "movers" as the :id param.
+  router.get("/api/providers/movers", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleProviderMovers(request, env);
   });
   router.get("/api/providers/improving", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);
