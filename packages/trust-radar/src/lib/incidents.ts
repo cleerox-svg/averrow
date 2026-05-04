@@ -323,6 +323,165 @@ export async function getIncident(env: Env, id: string): Promise<IncidentRow | n
   return row ?? null;
 }
 
+// ─── Telemetry merge (read-time) ─────────────────────────────────
+//
+// Pulls failed agent_runs and feed_pull_history rows scoped to an
+// incident's affected_components and time window. These are NOT
+// written to incident_updates — we synthesise virtual rows on every
+// detail load instead, so:
+//   - the historical record stays clean (no row explosion during a
+//     long incident)
+//   - the timeline always reflects the current truth (e.g. a post-
+//     resolution failure pull becomes visible if the operator
+//     reopens the incident)
+//   - dedup against existing real updates is trivial (skip any
+//     event_ref already present)
+//
+// Cap at TELEMETRY_LIMIT total events per incident so a multi-day
+// incident with many failed pulls doesn't drown the editorial
+// timeline. Operators see the most recent N; the underlying tables
+// are still queryable directly.
+
+const TELEMETRY_LIMIT = 50;
+
+export interface SyntheticTelemetryRow extends IncidentUpdateRow {
+  /** Marker so the UI can render telemetry events distinctly from
+   *  stored system updates if it wants to. */
+  synthetic: true;
+}
+
+interface FeedPullEvent {
+  id: string;
+  feed_name: string;
+  status: string;
+  records_ingested: number | null;
+  error_message: string | null;
+  started_at: string;
+}
+
+interface AgentRunEvent {
+  id: string;
+  agent_id: string;
+  status: string;
+  records_processed: number | null;
+  error_message: string | null;
+  started_at: string;
+}
+
+function parseAffectedComponentsLocal(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Truncate noisy stack traces / curly-brace blobs so the timeline
+ *  stays one-line-per-event scannable. */
+function truncateMessage(s: string | null, max: number): string {
+  if (!s) return "";
+  const cleaned = s.replace(/\s+/g, " ").trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+}
+
+export async function loadTelemetryEvents(
+  env: Env,
+  incident: IncidentRow,
+  existingEventRefs: Set<string>,
+): Promise<SyntheticTelemetryRow[]> {
+  const components = parseAffectedComponentsLocal(incident.affected_components);
+  if (components.length === 0) return [];
+
+  const feedNames = components
+    .filter((c) => c.startsWith("feed:"))
+    .map((c) => c.slice(5))
+    .filter((n) => n.length > 0);
+  const agentIds = components
+    .filter((c) => c.startsWith("agent:"))
+    .map((c) => c.slice(6))
+    .filter((n) => n.length > 0);
+
+  // Window: incident's lifecycle. detected_at falls back to created_at;
+  // resolved_at falls back to "now". Keeps live incidents updating as
+  // the symptom continues.
+  const windowStart = incident.detected_at ?? incident.created_at;
+  const windowEnd = incident.resolved_at ?? new Date().toISOString().replace("T", " ").slice(0, 19);
+
+  const events: SyntheticTelemetryRow[] = [];
+
+  // Per-feed failed/partial pulls
+  for (const feedName of feedNames) {
+    if (events.length >= TELEMETRY_LIMIT) break;
+    const rows = await env.DB.prepare(
+      `SELECT id, feed_name, status, records_ingested, error_message, started_at
+         FROM feed_pull_history
+        WHERE feed_name = ?
+          AND status IN ('failed', 'partial')
+          AND started_at BETWEEN ? AND ?
+        ORDER BY started_at DESC
+        LIMIT ?`,
+    ).bind(feedName, windowStart, windowEnd, TELEMETRY_LIMIT - events.length)
+      .all<FeedPullEvent>();
+    for (const r of rows.results) {
+      const eventRef = `feed_pull:${r.id}`;
+      if (existingEventRefs.has(eventRef)) continue;
+      const errSnippet = truncateMessage(r.error_message, 140);
+      events.push({
+        id: `telemetry:${eventRef}`,
+        incident_id: incident.id,
+        kind: "system",
+        status: null,
+        message: `feed_pull · ${r.feed_name} · ${r.status}${errSnippet ? `: ${errSnippet}` : ""}`,
+        visibility: "internal",
+        event_ref: eventRef,
+        event_type: "feed_pull",
+        created_at: r.started_at,
+        created_by: null,
+        synthetic: true,
+      });
+    }
+  }
+
+  // Per-agent failed/partial runs
+  for (const agentId of agentIds) {
+    if (events.length >= TELEMETRY_LIMIT) break;
+    const rows = await env.DB.prepare(
+      `SELECT id, agent_id, status, records_processed, error_message, started_at
+         FROM agent_runs
+        WHERE agent_id = ?
+          AND status IN ('failed', 'partial', 'killed')
+          AND started_at BETWEEN ? AND ?
+        ORDER BY started_at DESC
+        LIMIT ?`,
+    ).bind(agentId, windowStart, windowEnd, TELEMETRY_LIMIT - events.length)
+      .all<AgentRunEvent>();
+    for (const r of rows.results) {
+      const eventRef = `agent_run:${r.id}`;
+      if (existingEventRefs.has(eventRef)) continue;
+      const errSnippet = truncateMessage(r.error_message, 140);
+      events.push({
+        id: `telemetry:${eventRef}`,
+        incident_id: incident.id,
+        kind: "system",
+        status: null,
+        message: `agent_run · ${r.agent_id} · ${r.status}${errSnippet ? `: ${errSnippet}` : ""}`,
+        visibility: "internal",
+        event_ref: eventRef,
+        event_type: "agent_run",
+        created_at: r.started_at,
+        created_by: null,
+        synthetic: true,
+      });
+    }
+  }
+
+  return events;
+}
+
+
+
 export async function listIncidentUpdates(
   env: Env,
   incidentId: string,

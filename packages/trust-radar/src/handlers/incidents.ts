@@ -19,6 +19,7 @@ import {
   appendSystemUpdate,
   transitionStatus,
   toPublicShape,
+  loadTelemetryEvents,
   type IncidentRow,
   type IncidentStatus,
   type IncidentSeverity,
@@ -82,11 +83,32 @@ export async function handleGetIncident(request: Request, env: Env, id: string):
   if (!incident) return json({ success: false, error: "not found" }, 404, origin);
 
   const updates = await listIncidentUpdates(env, id);
+
+  // Read-time merge: pull failed feed_pull_history + agent_runs rows
+  // scoped to the incident's components and time window. Telemetry
+  // events are NOT written to incident_updates — they're synthesised
+  // every load so the historical record stays clean and a long
+  // incident doesn't explode the update count. Dedup against any
+  // event_refs already on existing updates so the auto-create
+  // notification entry doesn't double-render.
+  const existingRefs = new Set(
+    updates.map((u) => u.event_ref).filter((r): r is string => !!r),
+  );
+  const telemetry = await loadTelemetryEvents(env, incident, existingRefs).catch(() => []);
+
+  // Merge the two streams chronologically. Stored updates have a real
+  // id; synthetic rows carry the `synthetic: true` marker so the UI
+  // can render them distinctly.
+  const merged = [...updates, ...telemetry].sort((a, b) =>
+    a.created_at.localeCompare(b.created_at),
+  );
+
   return json({
     success: true,
     data: {
       incident: rowToAdminShape(incident),
-      updates,
+      updates: merged,
+      telemetry_count: telemetry.length,
     },
   }, 200, origin);
 }

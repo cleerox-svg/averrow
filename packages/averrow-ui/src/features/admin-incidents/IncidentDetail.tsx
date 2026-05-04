@@ -275,15 +275,35 @@ export function AdminIncidentDetail() {
 
       {/* Timeline */}
       <Card style={{ padding: 14 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 12, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-          Timeline ({updates.length})
+        <div style={{
+          fontFamily: 'var(--font-mono)', fontSize: 10,
+          color: 'var(--text-tertiary)', marginBottom: 12,
+          letterSpacing: '0.08em', textTransform: 'uppercase',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span>Timeline ({updates.length})</span>
+          {(data.telemetry_count ?? 0) > 0 && (
+            <span style={{ color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: '0.02em', fontSize: 10 }}>
+              {data.telemetry_count} live telemetry events
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {updates.length === 0 ? (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)' }}>
               No updates yet.
             </div>
-          ) : updates.map((u) => (
+          ) : updates.map((u) => {
+            // Three glyph buckets:
+            //   ↯  synthetic telemetry (read-time merge of raw events)
+            //   ·  stored system update (auto-create, status transition,
+            //      auto-resolve sweep)
+            //   ✎  operator-written
+            const glyph = u.synthetic ? '↯' : u.kind === 'system' ? '·' : '✎';
+            const glyphColor = u.synthetic
+              ? 'var(--blue, #0A8AB5)'
+              : u.kind === 'system' ? 'var(--text-tertiary)' : 'var(--amber)';
+            return (
             <div
               key={u.id}
               style={{
@@ -291,15 +311,16 @@ export function AdminIncidentDetail() {
                 gap: 10,
                 padding: '8px 0',
                 borderBottom: '1px dashed rgba(255,255,255,0.06)',
+                opacity: u.synthetic ? 0.85 : 1,
               }}
             >
               <span style={{
                 width: 16, flexShrink: 0,
                 fontFamily: 'var(--font-mono)', fontSize: 12,
-                color: u.kind === 'system' ? 'var(--text-tertiary)' : 'var(--amber)',
+                color: glyphColor,
                 textAlign: 'center',
               }}>
-                {u.kind === 'system' ? '·' : '✎'}
+                {glyph}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
@@ -332,7 +353,8 @@ export function AdminIncidentDetail() {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
     </div>

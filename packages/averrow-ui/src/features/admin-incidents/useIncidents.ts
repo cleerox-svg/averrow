@@ -47,6 +47,10 @@ export interface IncidentUpdate {
   event_type: string | null;
   created_at: string;
   created_by: string | null;
+  /** True for telemetry events synthesised at read time
+   *  (not stored in incident_updates). Renders with a distinct
+   *  glyph so operators can tell editorial vs raw signal apart. */
+  synthetic?: boolean;
 }
 
 export function useIncidents(opts: { onlyOpen?: boolean } = {}) {
@@ -66,7 +70,11 @@ export function useIncident(id: string | undefined) {
     queryKey: ['incidents', 'detail', id],
     queryFn: async () => {
       if (!id) return null;
-      const res = await api.get<{ incident: Incident; updates: IncidentUpdate[] }>(`/api/admin/incidents/${id}`);
+      const res = await api.get<{
+        incident: Incident;
+        updates: IncidentUpdate[];
+        telemetry_count?: number;
+      }>(`/api/admin/incidents/${id}`);
       return res.data ?? null;
     },
     enabled: !!id,
