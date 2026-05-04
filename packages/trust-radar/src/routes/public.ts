@@ -9,6 +9,7 @@ import { renderPlatformPage } from "../templates/platform";
 import { renderAboutPage } from "../templates/about";
 import { renderPricingPage } from "../templates/pricing";
 import { renderSecurityPage } from "../templates/security";
+import { renderStatusPage } from "../templates/status";
 import { renderBlogPage } from "../templates/blog";
 import { renderBlogPost1 } from "../templates/blog-post-1";
 import { renderBlogPost2 } from "../templates/blog-post-2";
@@ -164,6 +165,22 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.get("/about", htmlPage(renderAboutPage));
   router.get("/pricing", htmlPage(renderPricingPage));
   router.get("/security", htmlPage(renderSecurityPage));
+
+  // ─── Public platform status page ──────────────────────────────────
+  // Server-renders the 30-day uptime rollup and a small inline script
+  // re-fetches /api/v1/public/platform-status every 60s. No auth.
+  // Cache headers shorter than the marketing pages — operators want
+  // fresh data here, and the worker-side 60s KV cache absorbs the
+  // load. CDN may revalidate after 30s.
+  router.get("/status", async (_request: Request, env: Env) => {
+    const html = await renderStatusPage(env);
+    return new Response(html, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=30, s-maxage=60",
+      },
+    });
+  });
   router.get("/blog", htmlPage(renderBlogPage));
   router.get("/blog/email-security-posture-brand-defense", htmlPage(renderBlogPost1));
   router.get("/blog/cost-brand-impersonation-mid-market", htmlPage(renderBlogPost2));
