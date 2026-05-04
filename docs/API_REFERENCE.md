@@ -33,6 +33,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/brand-scan/public/:id` | Get public scan results |
 | GET | `/api/stats/public` | Public platform statistics |
 | POST | `/api/contact` | Contact form submission |
+| GET | `/status` | Public platform status page (HTML). Server-rendered 30-day uptime rollup with per-day bars per category (Feeds / Agents / Processing). Inline script polls `/api/v1/public/platform-status` every 60s for live updates. |
 
 ## Public API v1
 
