@@ -212,10 +212,22 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     ).run();
     created++;
 
+    // ── Per-channel delivery audit (migration 0131) ─────────────────
+    // The in_app row above always succeeds at this point (the INSERT
+    // would have thrown otherwise). Record it so the delivery audit
+    // can prove a notification reached at least one channel.
+    await recordDelivery(env, notificationId, uid, "in_app", "succeeded", null);
+
     // ── Push delivery — best-effort, never fails the in-app write ──
     // Inline await is fine: dispatchPush parallelizes per-device sends
     // and each one has a 5s timeout (see lib/push.ts).
-    if (await shouldSendPush(opts, pref)) {
+    const pushAllowed = await shouldSendPush(opts, pref);
+    if (pushAllowed) {
+      // Mark the attempt synchronously so the audit can see "push
+      // attempted" even if the worker is killed before dispatchPush
+      // resolves. dispatchPush's own per-device telemetry lives in
+      // push_devices / push_delivery_log.
+      await recordDelivery(env, notificationId, uid, "push", "attempted", null);
       dispatchPush(env, uid, {
         title: opts.title,
         body: opts.message,
@@ -224,7 +236,22 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
         notificationId,
         severity: opts.severity,
         type: opts.type,
-      }).catch(() => { /* swallow — in-app row is the source of truth */ });
+      }).then(
+        () => recordDelivery(env, notificationId, uid, "push", "succeeded", null),
+        (err: unknown) => {
+          const reason = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+          return recordDelivery(env, notificationId, uid, "push", "failed", reason);
+        },
+      ).catch(() => { /* swallow — in-app row is the source of truth */ });
+    } else {
+      // Capture the reason a notification skipped the push channel so
+      // the audit can distinguish "user opted out" from "delivery broke".
+      const reason = !pref
+        ? "no preferences row"
+        : pref.push_notifications !== 1
+          ? "push_notifications opt-out"
+          : "quiet hours / DND";
+      await recordDelivery(env, notificationId, uid, "push", "skipped", reason);
     }
   }
   return created;
@@ -260,4 +287,39 @@ function getRateKey(opts: CreateNotificationOpts): string | null {
   if (m.feed_name) return `"feed_name":"${m.feed_name}"`;
   if (m.agent_id) return `"agent_id":"${m.agent_id}"`;
   return null;
+}
+
+/** Per-channel delivery audit. Failures here must never break the
+ *  notification flow — wrap and swallow. Migration 0131. */
+async function recordDelivery(
+  env: Env,
+  notificationId: string,
+  userId: string,
+  channel: "in_app" | "push" | "email",
+  status: "attempted" | "succeeded" | "failed" | "skipped",
+  reason: string | null,
+): Promise<void> {
+  try {
+    const completedAt = status === "attempted" ? null : new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO notification_deliveries
+         (id, notification_id, user_id, channel, status, reason, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (notification_id, user_id, channel)
+       DO UPDATE SET status = excluded.status,
+                     reason = excluded.reason,
+                     completed_at = excluded.completed_at`,
+    ).bind(
+      crypto.randomUUID(),
+      notificationId,
+      userId,
+      channel,
+      status,
+      reason,
+      completedAt,
+    ).run();
+  } catch {
+    // Audit table missing or transient D1 error — never fatal. The
+    // in-app row is the source of truth.
+  }
 }

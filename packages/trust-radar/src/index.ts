@@ -395,6 +395,14 @@ export default {
           const { handlePlatformDiagnostics } = await import('./handlers/diagnostics');
           return handlePlatformDiagnostics(request, env);
         }
+        if (url.pathname === '/api/internal/platform-status') {
+          const { handlePlatformStatus } = await import('./handlers/platform-status');
+          return handlePlatformStatus(request, env);
+        }
+        if (url.pathname === '/api/internal/notification-delivery-audit') {
+          const { handleNotificationDeliveryAudit } = await import('./handlers/notification-delivery-audit');
+          return handleNotificationDeliveryAudit(request, env);
+        }
         if (url.pathname === '/api/internal/cartographer-health') {
           const { handleCartographerHealth } = await import('./handlers/cartographer-health');
           return handleCartographerHealth(request, env);
