@@ -68,15 +68,18 @@ function dayKey(d: Date): string {
 }
 
 /** Build a list of YYYY-MM-DD strings, oldest first, length=days, ending YESTERDAY (UTC). */
-function buildDaySeries(days: number, now: Date = new Date()): string[] {
+export function buildDaySeries(days: number, now: Date = new Date()): string[] {
   const out: string[] = [];
-  // Start at yesterday so we don't include the partial current UTC day in
-  // the historical roll-up. "Right now" is captured by `realtime` instead.
+  // The partial current UTC day is captured by `realtime`, not the daily
+  // roll-up — including it makes today's row show "outage" for any cron-
+  // driven category (e.g. processing) until ~21:00 UTC, because navigator's
+  // expected 288 runs/day haven't accumulated yet. Push BEFORE incrementing
+  // so the last entry is yesterday, not today.
   const cursor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   cursor.setUTCDate(cursor.getUTCDate() - days);
   for (let i = 0; i < days; i++) {
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
     out.push(dayKey(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return out;
 }
