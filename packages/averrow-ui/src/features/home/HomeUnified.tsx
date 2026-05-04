@@ -22,6 +22,7 @@ import { ThreatPulse } from './sections/ThreatPulse';
 import { BrandMovers } from './sections/BrandMovers';
 import { DailyBriefing } from './sections/DailyBriefing';
 import { LiveActivity } from './sections/LiveActivity';
+import { ModuleHub } from './sections/ModuleHub';
 
 const SHELL_STYLE: React.CSSProperties = {
   containerType: 'inline-size' as React.CSSProperties['containerType'],
@@ -41,6 +42,7 @@ export function HomeUnified() {
       <DailyBriefing />
       <LiveActivity />
       <BrandMovers />
+      <ModuleHub />
     </div>
   );
 }
