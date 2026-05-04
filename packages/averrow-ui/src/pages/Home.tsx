@@ -386,7 +386,7 @@ function HomeDashboard() {
                         {cleaned.slice(0, 280)}
                         {cleaned.length > 280 && (
                           <button
-                            onClick={() => navigate('/intelligence')}
+                            onClick={() => navigate('/trends')}
                             style={{
                               background: 'none', border: 'none',
                               color: 'var(--amber)', cursor: 'pointer',
