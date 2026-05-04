@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useMobile } from '@/components/mobile';
 import { MobileCommandCenter } from '@/components/mobile/MobileCommandCenter';
+import { HomeUnified, useHomeFlag } from '@/features/home';
 import { useObservatoryStats } from '@/hooks/useObservatory';
 import { useAlertStats } from '@/hooks/useAlerts';
 import { useAgents } from '@/hooks/useAgents';
@@ -81,8 +82,22 @@ function formatTimeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-// ── Home entry (mobile dispatch) ───────────────────────────────────────
+// ── Home entry ─────────────────────────────────────────────────────────
+//
+// Three render paths today:
+//   1. Feature flag opt-in (?home=v2 / localStorage) → unified shell
+//      from features/home — the in-progress responsive Command Center
+//      that will replace this dispatch entirely at Phase 7 cutover.
+//   2. Mobile (viewport < 768px) → MobileCommandCenter, unchanged.
+//   3. Desktop (default) → HomeDashboard below, unchanged.
+//
+// Once HomeUnified reaches feature parity (per the Phase plan in
+// RESTRUCTURE_SPEC.md), the flag check goes away and HomeUnified
+// becomes the sole renderer for both mobile and desktop.
 export function Home() {
+  const useUnifiedHome = useHomeFlag();
+  if (useUnifiedHome) return <HomeUnified />;
+
   const isMobile = useMobile();
   if (isMobile) return <MobileCommandCenter />;
   return <HomeDashboard />;
