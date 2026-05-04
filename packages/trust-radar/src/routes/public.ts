@@ -181,6 +181,22 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
       },
     });
   });
+  // Public incident archive — full history (newest first, grouped
+  // by month). /status itself only shows the five most recent
+  // resolved; this is the long-tail. Must be registered BEFORE the
+  // permalink below so itty-router doesn't treat "incidents" as an
+  // :id parameter.
+  router.get("/status/incidents", async (_request: Request, env: Env) => {
+    const { renderIncidentArchivePage } = await import("../templates/incident-archive");
+    const html = await renderIncidentArchivePage(env);
+    return new Response(html, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=60, s-maxage=120",
+      },
+    });
+  });
+
   // Public incident permalink — server-rendered, mirrors the
   // /api/v1/public/incidents visibility gate (lib/incidents.toPublicShape).
   // Returns a 404 shell when the incident is missing, internal-only,

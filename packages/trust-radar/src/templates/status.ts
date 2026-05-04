@@ -161,6 +161,9 @@ function renderIncidentsSection(incidents: PublicIncident[]): string {
   <h2 class="incidents-section-title">Recent Incidents</h2>
   <div class="incidents-list">
     ${incidents.map(renderIncidentCard).join("")}
+  </div>
+  <div class="incidents-archive-link">
+    <a href="/status/incidents">View full incident history →</a>
   </div>`;
 }
 
@@ -255,6 +258,8 @@ export async function renderStatusPage(env: Env): Promise<string> {
 
 /* ── Incidents section ─────────────────────────────────────────── */
 .incidents-section-title { font-family: var(--font-display); font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 2rem 0 0.75rem; letter-spacing: -0.01em; }
+.incidents-archive-link { margin-top: 12px; text-align: right; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
+.incidents-archive-link a { color: var(--accent, var(--amber, #E5A832)); text-decoration: none; border-bottom: 1px dashed currentColor; }
 .incidents-list { display: flex; flex-direction: column; gap: 8px; }
 .incident-card { background: var(--bg-card, rgba(22,30,48,0.65)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(8px); }
 .incident-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
