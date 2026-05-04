@@ -136,11 +136,23 @@ export const geoipRefreshAgent: AgentModule = {
   color: '#10b981',
   trigger: 'scheduled',
   requiresApproval: false,
-  // 4-hour stall window: a full refresh of the City dataset can run
-  // ~30-90 minutes depending on D1 write contention. This is the
-  // outer envelope; individual phases mark themselves complete in
-  // agent_outputs as they finish.
-  stallThresholdMinutes: 240,
+  // FC's recovery sweeper re-dispatches any agent whose lastRunAge
+  // exceeds stallThresholdMinutes (per AGENT_STANDARD §3 / flightControl
+  // line 159: "Choose ≈ intended interval × 1.2"). The orchestrator
+  // gates this agent on Sunday hour=2 (weekly, see cron/orchestrator.ts
+  // line 207), so the intended interval is 7 days. 12100 = 7d × 1.2 +
+  // small buffer — same value used by auto-seeder, which has the
+  // identical Sunday-only weekly cadence.
+  //
+  // History (2026-05-04): this was set to 240 (4h) under the mistaken
+  // belief that stallThresholdMinutes was a per-RUN runtime ceiling.
+  // FC's interpretation is "time since last run that triggers spurious
+  // recovery" — at 240 min, FC re-fired this agent every 5 hours
+  // (visible in agent_runs as 5 dispatches/day). Each dispatch hits
+  // MaxMind's `.sha256` probe + Workflow download, exhausting the
+  // free-tier daily quota. MaxMind sent a "Daily GeoIP Database
+  // Download Limit Reached" email; root cause was this misconfig.
+  stallThresholdMinutes: 12100,
   parallelMax: 1,
   // No AI surface — pure data plumbing.
   costGuard: 'exempt',
