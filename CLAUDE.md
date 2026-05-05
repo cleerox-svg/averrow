@@ -386,6 +386,13 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 - `hosting_providers.active_threat_count`, `hosting_providers.total_threat_count` — use instead of JOIN to threats
 - `hosting_providers.trend_7d`, `hosting_providers.trend_30d` — use instead of 14-day window GROUP BY
 
+Phase 2 of the D1 spend-reduction track migrated the providers list
+(`handleListProviders`, `handleWorstProviders`, `handleImprovingProviders`)
+and the dashboard `top-brands` query to read from these pre-computed
+columns + cubes. Direct `GROUP BY hosting_provider_id` or `GROUP BY
+target_brand_id` over the threats table is a code-review red flag —
+swap to the pre-computed column or the matching cube.
+
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard

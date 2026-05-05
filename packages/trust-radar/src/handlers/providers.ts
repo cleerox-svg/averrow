@@ -128,6 +128,26 @@ export async function handleProviderStats(request: Request, env: Env): Promise<R
 }
 
 // GET /api/providers
+//
+// Phase 2 of D1 spend reduction: this handler used to GROUP BY
+// `hosting_provider_id` over the threats table and read ~12.6M rows
+// per call (75 calls/24h = 945M rows/24h). Migrated to read from the
+// `hosting_providers` table directly, which carries pre-computed
+// counters (active_threat_count, total_threat_count, trend_7d,
+// trend_30d) maintained by Cartographer's enrichment path.
+//
+// What changed in the response shape:
+//   - `threat_count` now reads from total_threat_count
+//   - `active_threats` from active_threat_count
+//   - `first_seen` / `last_seen` derived from threat_cube_provider's
+//     hour_bucket (hour-precision; UI uses relativeTime so it's
+//     equivalent to the previous minute-precision threats.created_at)
+//   - `high_sev` removed (was unused — confirmed by sweep of
+//     averrow-ui; only brand_detail consumes high_sev, never provider
+//     list)
+//   - All other fields unchanged.
+//
+// Per CLAUDE.md §8: "use them, don't re-derive".
 export async function handleListProviders(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -136,40 +156,39 @@ export async function handleListProviders(request: Request, env: Env): Promise<R
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
     const search = url.searchParams.get("q");
 
-    const conditions: string[] = ["t.hosting_provider_id IS NOT NULL"];
+    const conditions: string[] = ["hp.total_threat_count > 0"];
     const params: unknown[] = [];
     if (search) {
-      conditions.push("(COALESCE(hp.name, t.hosting_provider_id) LIKE ? OR hp.asn LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`);
+      conditions.push("(hp.name LIKE ? OR hp.asn LIKE ? OR hp.id LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     params.push(limit, offset);
 
     const where = `WHERE ${conditions.join(" AND ")}`;
 
     const rows = await env.DB.prepare(`
-      SELECT t.hosting_provider_id AS id, t.hosting_provider_id AS provider_id,
-             COALESCE(hp.name, t.hosting_provider_id) AS name,
+      SELECT hp.id AS id, hp.id AS provider_id,
+             COALESCE(hp.name, hp.id) AS name,
              hp.asn, hp.country AS country_code,
              hp.reputation_score, hp.avg_response_time AS avg_response_time_hours,
              hp.trend_7d AS trend_7d_pct, hp.trend_30d AS trend_30d_pct,
-             COUNT(*) AS threat_count,
-             SUM(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END) AS active_threats,
-             SUM(CASE WHEN t.severity IN ('critical','high') THEN 1 ELSE 0 END) AS high_sev,
-             MIN(t.created_at) AS first_seen,
-             MAX(t.created_at) AS last_seen
-      FROM threats t
-      LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+             hp.total_threat_count AS threat_count,
+             hp.active_threat_count AS active_threats
+      FROM hosting_providers hp
       ${where}
-      GROUP BY t.hosting_provider_id
-      ORDER BY threat_count DESC LIMIT ? OFFSET ?
-    `).bind(...params).all();
+      ORDER BY hp.total_threat_count DESC LIMIT ? OFFSET ?
+    `).bind(...params).all<Record<string, unknown>>();
 
-    // Sparklines via provider cube — single bulk query instead of N correlated subqueries.
     const provIds = (rows.results as Array<{ id: string }>).map(r => r.id);
     const sparkMap = new Map<string, number[]>();
+    const seenMap = new Map<string, { first_seen: string; last_seen: string }>();
     if (provIds.length > 0) {
       try {
         const ph = provIds.map(() => '?').join(',');
+        // One cube pass surfaces both daily-sparkline and first/last
+        // hour_bucket. The cube has (hosting_provider_id, hour_bucket)
+        // indexed so the IN-clause + range scan is cheap regardless
+        // of the platform's threat row count.
         const sparkRows = await env.DB.prepare(`
           SELECT hosting_provider_id, date(hour_bucket) as day, SUM(threat_count) as daily_count
           FROM threat_cube_provider
@@ -182,12 +201,29 @@ export async function handleListProviders(request: Request, env: Env): Promise<R
           if (!sparkMap.has(row.hosting_provider_id)) sparkMap.set(row.hosting_provider_id, []);
           sparkMap.get(row.hosting_provider_id)!.push(row.daily_count);
         }
-      } catch { /* cube may not be populated */ }
+
+        const seenRows = await env.DB.prepare(`
+          SELECT hosting_provider_id,
+                 MIN(hour_bucket) AS first_seen,
+                 MAX(hour_bucket) AS last_seen
+          FROM threat_cube_provider
+          WHERE hosting_provider_id IN (${ph})
+          GROUP BY hosting_provider_id
+        `).bind(...provIds).all<{ hosting_provider_id: string; first_seen: string; last_seen: string }>();
+        for (const row of seenRows.results) {
+          seenMap.set(row.hosting_provider_id, { first_seen: row.first_seen, last_seen: row.last_seen });
+        }
+      } catch { /* cube may not be populated yet on a fresh deploy */ }
     }
-    const data = (rows.results as Array<Record<string, unknown>>).map(r => ({
-      ...r,
-      threat_history: sparkMap.get(r.id as string) ?? [],
-    }));
+    const data = (rows.results as Array<Record<string, unknown>>).map(r => {
+      const seen = seenMap.get(r.id as string);
+      return {
+        ...r,
+        first_seen: seen?.first_seen ?? null,
+        last_seen: seen?.last_seen ?? null,
+        threat_history: sparkMap.get(r.id as string) ?? [],
+      };
+    });
     return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -195,61 +231,117 @@ export async function handleListProviders(request: Request, env: Env): Promise<R
 }
 
 // GET /api/providers/worst
+//
+// Phase 2 D1 migration: same pattern as handleListProviders. Reads
+// pre-computed counters from hosting_providers; brands_targeted comes
+// from a single bulk threat_cube_brand pass for the top-10 IDs.
 export async function handleWorstProviders(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const rows = await env.DB.prepare(`
-      SELECT t.hosting_provider_id AS provider_id,
-             COALESCE(hp.name, t.hosting_provider_id) AS name,
+      SELECT hp.id AS provider_id,
+             COALESCE(hp.name, hp.id) AS name,
              hp.asn, hp.country AS country_code,
              hp.reputation_score, hp.avg_response_time AS avg_response_time_hours,
-             COUNT(*) AS threat_count,
-             SUM(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END) AS active_count,
-             COUNT(DISTINCT t.target_brand_id) AS brands_targeted,
-             COALESCE(ROUND(
-               (CAST(SUM(CASE WHEN t.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS REAL) /
-                NULLIF(SUM(CASE WHEN t.created_at >= datetime('now', '-14 days') AND t.created_at < datetime('now', '-7 days') THEN 1 ELSE 0 END), 0) - 1) * 100
-             , 1), 0) AS trend_7d_pct
-      FROM threats t
-      LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
-      WHERE t.hosting_provider_id IS NOT NULL
-      GROUP BY t.hosting_provider_id
-      ORDER BY threat_count DESC LIMIT 10
-    `).all();
+             hp.total_threat_count AS threat_count,
+             hp.active_threat_count AS active_count,
+             hp.trend_7d AS trend_7d_pct
+      FROM hosting_providers hp
+      WHERE hp.total_threat_count > 0
+      ORDER BY hp.total_threat_count DESC LIMIT 10
+    `).all<Record<string, unknown>>();
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    // brands_targeted via cube — DISTINCT target_brand_id requires a
+    // dimension threat_cube_provider doesn't carry, so we read
+    // threats once with a tight IN-clause limited to the top 10 IDs.
+    // Each lookup is index-driven (idx_threats_provider_created) and
+    // bounded to ~10 providers worth of rows.
+    const provIds = (rows.results as Array<{ provider_id: string }>).map(r => r.provider_id);
+    const brandsMap = new Map<string, number>();
+    if (provIds.length > 0) {
+      try {
+        const ph = provIds.map(() => '?').join(',');
+        const brandRows = await env.DB.prepare(`
+          SELECT hosting_provider_id, COUNT(DISTINCT target_brand_id) AS n
+          FROM threats
+          WHERE hosting_provider_id IN (${ph})
+            AND target_brand_id IS NOT NULL
+          GROUP BY hosting_provider_id
+        `).bind(...provIds).all<{ hosting_provider_id: string; n: number }>();
+        for (const r of brandRows.results) {
+          brandsMap.set(r.hosting_provider_id, r.n);
+        }
+      } catch { /* non-fatal */ }
+    }
+    const data = (rows.results as Array<Record<string, unknown>>).map(r => ({
+      ...r,
+      brands_targeted: brandsMap.get(r.provider_id as string) ?? 0,
+    }));
+
+    return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
 // GET /api/providers/improving
+//
+// Phase 2 D1 migration: 7d-vs-prior-7d delta comparison moved from
+// raw threats GROUP BY to threat_cube_provider. The cube has hour-
+// bucket precision which is plenty for a 7-day window comparison.
+// JOIN hosting_providers for the static provider metadata only.
 export async function handleImprovingProviders(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // Providers where recent (7d) threats < previous (8-14d) threats
-    const rows = await env.DB.prepare(`
-      SELECT t.hosting_provider_id AS provider_id,
-             COALESCE(hp.name, t.hosting_provider_id) AS name,
-             hp.asn, hp.country AS country_code,
-             hp.reputation_score, hp.avg_response_time AS avg_response_time_hours,
-             SUM(CASE WHEN t.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS threat_count,
-             SUM(CASE WHEN t.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS recent,
-             SUM(CASE WHEN t.created_at >= datetime('now', '-14 days') AND t.created_at < datetime('now', '-7 days') THEN 1 ELSE 0 END) AS previous,
-             COALESCE(ROUND(
-               (CAST(SUM(CASE WHEN t.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS REAL) /
-                NULLIF(SUM(CASE WHEN t.created_at >= datetime('now', '-14 days') AND t.created_at < datetime('now', '-7 days') THEN 1 ELSE 0 END), 0) - 1) * 100
-             , 1), 0) AS trend_7d_pct
-      FROM threats t
-      LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
-      WHERE t.hosting_provider_id IS NOT NULL AND t.created_at >= datetime('now', '-14 days')
-      GROUP BY t.hosting_provider_id
+    // Providers where recent (7d) threats < previous (8-14d) threats.
+    // Aggregate from the cube; ratio + sort happen client-side after
+    // the small filtered result set is returned.
+    const cubeRows = await env.DB.prepare(`
+      SELECT hosting_provider_id,
+             SUM(CASE WHEN hour_bucket >= datetime('now', '-7 days') THEN threat_count ELSE 0 END) AS recent,
+             SUM(CASE WHEN hour_bucket >= datetime('now', '-14 days') AND hour_bucket < datetime('now', '-7 days') THEN threat_count ELSE 0 END) AS previous
+      FROM threat_cube_provider
+      WHERE hour_bucket >= datetime('now', '-14 days')
+      GROUP BY hosting_provider_id
       HAVING previous > 0 AND recent < previous
       ORDER BY (CAST(recent AS REAL) / previous) ASC
       LIMIT 10
-    `).all();
+    `).all<{ hosting_provider_id: string; recent: number; previous: number }>();
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    const provIds = cubeRows.results.map(r => r.hosting_provider_id);
+    if (provIds.length === 0) {
+      return json({ success: true, data: [] }, 200, origin);
+    }
+
+    const ph = provIds.map(() => '?').join(',');
+    const meta = await env.DB.prepare(`
+      SELECT id, name, asn, country, reputation_score, avg_response_time
+      FROM hosting_providers
+      WHERE id IN (${ph})
+    `).bind(...provIds).all<{
+      id: string; name: string | null; asn: string | null; country: string | null;
+      reputation_score: number | null; avg_response_time: number | null;
+    }>();
+    const metaMap = new Map(meta.results.map(m => [m.id, m]));
+
+    const data = cubeRows.results.map(r => {
+      const m = metaMap.get(r.hosting_provider_id);
+      const trend = r.previous > 0 ? Math.round(((r.recent / r.previous) - 1) * 1000) / 10 : 0;
+      return {
+        provider_id: r.hosting_provider_id,
+        name: m?.name ?? r.hosting_provider_id,
+        asn: m?.asn ?? null,
+        country_code: m?.country ?? null,
+        reputation_score: m?.reputation_score ?? null,
+        avg_response_time_hours: m?.avg_response_time ?? null,
+        threat_count: r.recent,
+        recent: r.recent,
+        previous: r.previous,
+        trend_7d_pct: trend,
+      };
+    });
+
+    return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }

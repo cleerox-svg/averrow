@@ -136,9 +136,27 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
       GROUP BY b.id ORDER BY cnt DESC LIMIT 1
     `).first<{ name: string; cnt: number }>();
 
+    // Phase 2 D1 migration: read from threat_cube_status instead of
+    // GROUP BY scanning the full threats table. Both the per-type
+    // SUM and the all-types total come from the same cube — a single
+    // index-driven query that's O(distinct(threat_type)) regardless
+    // of platform threat count. Pre-migration this was 30.8M rows
+    // read across 68 calls/24h.
     const topType = await session.prepare(`
-      SELECT threat_type, COUNT(*) AS cnt, ROUND(COUNT(*) * 100.0 / MAX(1, (SELECT COUNT(*) FROM threats)), 1) AS pct
-      FROM threats GROUP BY threat_type ORDER BY cnt DESC LIMIT 1
+      WITH type_totals AS (
+        SELECT threat_type, SUM(threat_count) AS cnt
+        FROM threat_cube_status
+        GROUP BY threat_type
+      ),
+      grand AS (
+        SELECT MAX(1, SUM(cnt)) AS total FROM type_totals
+      )
+      SELECT tt.threat_type,
+             tt.cnt,
+             ROUND(tt.cnt * 100.0 / grand.total, 1) AS pct
+      FROM type_totals tt, grand
+      ORDER BY tt.cnt DESC
+      LIMIT 1
     `).first<{ threat_type: string; cnt: number; pct: number }>();
 
     const data = {
@@ -342,23 +360,36 @@ export async function handleTopTargetedBrands(request: Request, env: Env): Promi
     else if (period === "90d") since = "datetime('now', '-90 days')";
     else if (period === "1y") since = "datetime('now', '-1 year')";
 
+    // Phase 2 D1 migration: top-brands now derives the period
+    // threat_count from threat_cube_brand instead of GROUP BY-ing
+    // the threats table. Pre-migration this query was the
+    // `dashboard_top_brands` D1 read offender — 12.5M rows / 96
+    // calls. The cube has (target_brand_id, hour_bucket) indexed so
+    // both the inner aggregate and the JOIN to brands stay
+    // index-driven. Hour-precision is sufficient for "last 7d/30d/
+    // 90d/1y" windows.
     const rows = await session.prepare(`
+      WITH brand_threats AS (
+        SELECT target_brand_id, SUM(threat_count) AS cnt
+        FROM threat_cube_brand
+        WHERE hour_bucket >= ${since}
+        GROUP BY target_brand_id
+      )
       SELECT b.id, b.name, b.sector, b.canonical_domain,
              b.official_handles, b.email_security_grade,
              b.exposure_score,
              b.social_risk_score,
-             COUNT(t.id) AS threat_count,
+             bt.cnt AS threat_count,
              COALESCE(sp_imp.imp_count, 0) AS social_impersonation_count
-      FROM brands b
-      JOIN threats t ON t.target_brand_id = b.id AND t.created_at >= ${since}
+      FROM brand_threats bt
+      JOIN brands b ON b.id = bt.target_brand_id
       LEFT JOIN (
         SELECT brand_id, COUNT(*) AS imp_count
         FROM social_profiles
         WHERE classification = 'impersonation' AND status = 'active'
         GROUP BY brand_id
       ) sp_imp ON sp_imp.brand_id = b.id
-      GROUP BY b.id
-      ORDER BY threat_count DESC
+      ORDER BY bt.cnt DESC
       LIMIT ?
     `).bind(limit).all();
 
