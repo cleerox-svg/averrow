@@ -199,6 +199,7 @@ new_classes = ["CertStreamMonitor"]
 # this only affects the per-invocation cap.
 [limits]
 subrequests = 50_000
+cpu_ms = 300_000
 
 # ─── Environment variables ────────────────────────────────────
 [vars]
