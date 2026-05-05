@@ -71,10 +71,16 @@ export function HomeHeader() {
       <style>{`
         .home-header {
           display: flex;
-          flex-direction: column;
-          gap: 16px;
+          flex-direction: row;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
           padding: 22px 24px 18px;
           border-bottom: 1px solid var(--border-base);
+        }
+        .home-header-greeting {
+          flex: 1;
+          min-width: 0;
         }
         .home-header-eyebrow {
           font-family: var(--font-mono);
@@ -104,6 +110,7 @@ export function HomeHeader() {
           display: flex;
           align-items: center;
           gap: 10px;
+          flex-shrink: 0;
         }
         .home-header-live {
           display: flex;
@@ -161,18 +168,11 @@ export function HomeHeader() {
           .home-header-live-ping { animation: none; }
         }
 
-        /* On wider containers, lay greeting + controls side by side. */
+        /* Wider containers get more breathing room around the band. */
         @container home (min-width: 480px) {
-          .home-header {
-            flex-direction: row;
-            align-items: flex-start;
-            justify-content: space-between;
-            padding: 24px 32px 20px;
-          }
+          .home-header { padding: 24px 32px 20px; }
           .home-header-title { font-size: 26px; }
-          .home-header-controls {
-            padding-top: 4px;
-          }
+          .home-header-controls { padding-top: 4px; }
         }
       `}</style>
     </header>
