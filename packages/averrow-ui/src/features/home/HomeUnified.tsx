@@ -16,6 +16,7 @@
 // internal layout.
 
 import { HomeHeader } from './sections/HomeHeader';
+import { MilestoneBanner } from './sections/MilestoneBanner';
 import { StatusRow } from './sections/StatusRow';
 import { StatGrid } from './sections/StatGrid';
 import { ThreatPulse } from './sections/ThreatPulse';
@@ -37,6 +38,7 @@ export function HomeUnified() {
   return (
     <div style={SHELL_STYLE}>
       <HomeHeader />
+      <MilestoneBanner />
       <StatusRow />
       <StatGrid />
       <ThreatPulse />

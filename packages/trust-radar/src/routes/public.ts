@@ -328,6 +328,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     return handlePublicIncidents(request, env);
   });
 
+  // Latest platform milestone — feeds the Home celebration banner.
+  // Public because it's a marketing-grade stat (e.g. "1,000,000 threats
+  // ingested") and we want it visible without auth on the public-facing
+  // pages too. KV-cache hint set in the handler.
+  router.get("/api/v1/public/milestones/latest", async (request: Request, env: Env) => {
+    const { handleLatestMilestone } = await import("../handlers/milestones");
+    return handleLatestMilestone(request, env);
+  });
+
   // ─── React app — serve v2/index.html for all /v2/* routes ────────
   router.get("/v2/*", async (request: Request, env: Env) => {
     const url = new URL(request.url);
