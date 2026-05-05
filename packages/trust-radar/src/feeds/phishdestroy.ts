@@ -32,14 +32,24 @@ import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "..
 
 const BATCH_CHUNK = 50;
 const MAX_DOMAINS_PER_RUN = 5_000;
+// Bound the input array before validating. PhishDestroy's snapshot is
+// ~144K domains and our shape-validation pass rate is ~2.4%, so the
+// MAX_DOMAINS_PER_RUN break below was dead code in practice — every
+// pull iterated the full payload (~14s of CPU) and frequently got
+// reaped mid-run. Slicing to MAX_INPUT_DOMAINS upfront caps CPU at
+// ~5s. PhishDestroy's destroylist is published newest-first, so the
+// first 50K covers the recent threat surface; the long tail is older
+// domains we've almost always already ingested.
+const MAX_INPUT_DOMAINS = 50_000;
 
 export const phishdestroy: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const res = await fetch(ctx.feedUrl);
     if (!res.ok) throw new Error(`PhishDestroy HTTP ${res.status}`);
 
-    const domains = (await res.json()) as unknown;
-    if (!Array.isArray(domains)) throw new Error("PhishDestroy: expected JSON array");
+    const raw = (await res.json()) as unknown;
+    if (!Array.isArray(raw)) throw new Error("PhishDestroy: expected JSON array");
+    const domains = raw.slice(0, MAX_INPUT_DOMAINS);
 
     // Trim, validate, dedupe within the payload before touching D1.
     // A single-pass walk through the input is O(n) and runs entirely
