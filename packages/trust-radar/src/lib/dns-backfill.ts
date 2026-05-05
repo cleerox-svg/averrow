@@ -114,17 +114,35 @@ export async function runDomainGeoBackfillBatch(
     // variables ceiling (200 placeholders trigger `too many SQL
     // variables` per a 2026-05-04 production probe). Matches the
     // chunking pattern used by Step 3a/3b below.
+    //
+    // Each chunk dispatches TWO statements (ip_address IS NULL and
+    // ip_address = '') in a single db.batch() rather than one
+    // statement with `(ip_address IS NULL OR ip_address = '')`. The
+    // OR variant defeated SQLite's partial-index planner — observed
+    // 60K rows read per execution (47M / 24h, 788 calls) where the
+    // theoretical lower bound is ~300 rows. Splitting lets each
+    // branch match `idx_threats_dns_backfill_select`'s partial WHERE
+    // unambiguously so the planner uses it for both branches.
+    // Phase 4 of the D1 spend-reduction track.
     const PRE_STAMP_CHUNK = 50;
     try {
       for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
         const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
         const placeholders = chunk.map(() => '?').join(',');
-        await env.DB.prepare(`
-          UPDATE threats
-          SET attempted_resolve_at = datetime('now')
-          WHERE malicious_domain IN (${placeholders})
-            AND (ip_address IS NULL OR ip_address = '')
-        `).bind(...chunk).run();
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE threats
+            SET attempted_resolve_at = datetime('now')
+            WHERE malicious_domain IN (${placeholders})
+              AND ip_address IS NULL
+          `).bind(...chunk),
+          env.DB.prepare(`
+            UPDATE threats
+            SET attempted_resolve_at = datetime('now')
+            WHERE malicious_domain IN (${placeholders})
+              AND ip_address = ''
+          `).bind(...chunk),
+        ]);
       }
     } catch (err) {
       // If the pre-stamp fails (D1 transient), bail out cleanly.

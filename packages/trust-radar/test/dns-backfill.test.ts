@@ -45,10 +45,19 @@ function makeEnv(opts: {
   const calls: CapturedRun[] = [];
   const selectDomains = opts.selectDomains ?? ["a.test", "b.test", "c.test"];
 
+  // Pre-stamp throw matches BOTH split branches (ip_address IS NULL
+  // and ip_address = '') so the test still simulates a pre-stamp
+  // failure regardless of which branch the batch reached first.
+  const isPreStampSql = (sql: string): boolean =>
+    /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(sql) &&
+    !/enrichment_attempts/.test(sql);
+
   const prepare = (sql: string) => ({
     bind: (...bindArgs: unknown[]) => ({
+      sql,
+      bindArgs,
       run: async () => {
-        if (opts.preStampThrows && /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(sql) && !/enrichment_attempts/.test(sql)) {
+        if (opts.preStampThrows && isPreStampSql(sql)) {
           throw new Error("simulated pre-stamp D1 failure");
         }
         calls.push({ sql, bindArgs, order: runOrder++, ts: Date.now() });
@@ -65,9 +74,21 @@ function makeEnv(opts: {
   const env = {
     DB: {
       prepare,
-      async batch(stmts: unknown[]) {
-        calls.push({ sql: "BATCH", bindArgs: [stmts.length], order: runOrder++, ts: Date.now() });
-        return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
+      async batch(stmts: Array<{ sql: string; bindArgs: unknown[] }>) {
+        // Surface each statement as its own call so existing tests'
+        // find-by-SQL-shape assertions keep working after the
+        // pre-stamp UPDATE was split into two batched statements
+        // (Phase 4 of D1 spend reduction: rewriting the OR predicate
+        // so the partial index applies cleanly).
+        const results: Array<{ success: true; meta: { changes: number } }> = [];
+        for (const stmt of stmts) {
+          if (opts.preStampThrows && isPreStampSql(stmt.sql)) {
+            throw new Error("simulated pre-stamp D1 failure");
+          }
+          calls.push({ sql: stmt.sql, bindArgs: stmt.bindArgs, order: runOrder++, ts: Date.now() });
+          results.push({ success: true, meta: { changes: stmt.bindArgs.length } });
+        }
+        return results;
       },
     },
   } as unknown as Env;
@@ -146,25 +167,34 @@ describe("dns-backfill pre-stamp claim", () => {
     // unchunked pre-stamp threw on every navigator tick, returning
     // empty without resolving anything. Chunk size 50 mirrors the
     // existing Step 3a/3b chunks.
+    //
+    // Phase 4 split each chunk into TWO statements (ip_address IS NULL
+    // and ip_address = '') so the partial index applies cleanly.
+    // 200 domains / 50 = 4 chunks × 2 branches = 8 pre-stamp records.
     const domains = Array.from({ length: 200 }, (_, i) => `d${i}.test`);
     vi.spyOn(resolverModule, "resolveDomain").mockResolvedValue({ kind: "transient" });
 
     const { env, calls } = makeEnv({ selectDomains: domains });
     await runDomainGeoBackfillBatch(env, { batchSize: 200, timeoutMs: 30_000 });
 
-    // Find every pre-stamp UPDATE (the one that sets only attempted_resolve_at,
-    // no enrichment_attempts).
+    // Find every pre-stamp UPDATE (sets only attempted_resolve_at, no
+    // enrichment_attempts).
     const preStamps = calls.filter((c) =>
       /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
       !/enrichment_attempts/.test(c.sql),
     );
 
-    // 200 / 50 = 4 chunks. No chunk binds more than 50 variables.
-    expect(preStamps.length).toBe(4);
+    expect(preStamps.length).toBe(8);
     for (const c of preStamps) {
       expect(c.bindArgs.length).toBeLessThanOrEqual(50);
       expect(c.bindArgs.length).toBeGreaterThan(0);
     }
+
+    // Each chunk should produce one IS NULL branch and one = '' branch.
+    const isNullBranches = preStamps.filter((c) => /AND ip_address IS NULL/.test(c.sql));
+    const isEmptyBranches = preStamps.filter((c) => /AND ip_address = ''/.test(c.sql));
+    expect(isNullBranches.length).toBe(4);
+    expect(isEmptyBranches.length).toBe(4);
   });
 
   it("guards the transient-bump against exceeding the cap", async () => {
