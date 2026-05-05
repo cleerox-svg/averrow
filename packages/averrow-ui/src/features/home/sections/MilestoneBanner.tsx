@@ -41,7 +41,8 @@ function relativeTime(iso: string): string {
 
 function metricLabel(metric: string): string {
   switch (metric) {
-    case 'threats_ingested': return 'threats ingested';
+    case 'total_ingested':   return 'total ingested';
+    case 'threats_ingested': return 'threats ingested'; // legacy — kept for back-compat
     default:                 return metric.replace(/_/g, ' ');
   }
 }

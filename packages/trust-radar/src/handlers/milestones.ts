@@ -9,7 +9,7 @@
 // so polling clients can hit cache freely.
 
 import { json } from "../lib/cors";
-import { getLatestThreatMilestone } from "../lib/platform-milestones";
+import { getLatestMilestone } from "../lib/platform-milestones";
 import type { Env } from "../types";
 
 export async function handleLatestMilestone(
@@ -18,7 +18,7 @@ export async function handleLatestMilestone(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const milestone = await getLatestThreatMilestone(env.DB);
+    const milestone = await getLatestMilestone(env.DB);
     return json(
       { success: true, data: milestone },
       200,

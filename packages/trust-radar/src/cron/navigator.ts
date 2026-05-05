@@ -23,7 +23,10 @@
 
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
-import { checkAndFireThreatMilestones } from '../lib/platform-milestones';
+import {
+  checkAndFireThreatMilestones,
+  checkAndFireIngestionMilestones,
+} from '../lib/platform-milestones';
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour } from '../lib/cube-builder';
@@ -481,27 +484,38 @@ export const navigatorAgent: AgentModule = {
     const agentOutputs: AgentOutputEntry[] = [];
 
     // Platform milestones (best-effort — never blocks the agent return).
-    // Cheap: one COUNT(*) on threats + a SELECT-all on platform_milestones,
-    // both indexed. Fires the celebration banner via the public endpoint
-    // /api/v1/public/milestones/latest when a new threshold is crossed.
-    let milestoneResult: { threats_total: number; fired: number[] } = {
-      threats_total: 0, fired: [],
-    };
+    // Cheap: two aggregate queries + a few SELECTs on the milestone
+    // table, all indexed. Fires the celebration banner via the public
+    // endpoint /api/v1/public/milestones/latest when a new threshold
+    // is crossed under EITHER metric.
+    let threatMilestones = { metric: 'threats_ingested', current: 0, fired: [] as number[] };
+    let ingestMilestones = { metric: 'total_ingested',   current: 0, fired: [] as number[] };
     try {
-      milestoneResult = await checkAndFireThreatMilestones(ctx.env.DB, ctx.runId);
-      if (milestoneResult.fired.length > 0) {
-        agentOutputs.push({
-          type: 'diagnostic',
-          summary: `milestone(s) crossed: ${milestoneResult.fired.join(', ')} (total ${milestoneResult.threats_total})`,
-          severity: 'info',
-          details: {
-            milestones_fired: milestoneResult.fired,
-            threats_total: milestoneResult.threats_total,
-          },
-        });
-      }
+      threatMilestones = await checkAndFireThreatMilestones(ctx.env.DB, ctx.runId);
     } catch (err) {
-      console.error('[navigator] milestone check failed:', err);
+      console.error('[navigator] threat milestone check failed:', err);
+    }
+    try {
+      ingestMilestones = await checkAndFireIngestionMilestones(ctx.env.DB, ctx.runId);
+    } catch (err) {
+      console.error('[navigator] ingestion milestone check failed:', err);
+    }
+    const allFired = [
+      ...threatMilestones.fired.map((v) => `threats_ingested=${v}`),
+      ...ingestMilestones.fired.map((v) => `total_ingested=${v}`),
+    ];
+    if (allFired.length > 0) {
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `milestone(s) crossed: ${allFired.join(', ')}`,
+        severity: 'info',
+        details: {
+          threats_ingested_current: threatMilestones.current,
+          threats_ingested_fired:   threatMilestones.fired,
+          total_ingested_current:   ingestMilestones.current,
+          total_ingested_fired:     ingestMilestones.fired,
+        },
+      });
     }
     if (result.errorMessage) {
       agentOutputs.push({
@@ -554,8 +568,10 @@ export const navigatorAgent: AgentModule = {
         itemsEnriched: result.itemsEnriched,
         cubeRows: result.cubeRows,
         cubeErrors: result.cubeErrors.length,
-        milestones_fired: milestoneResult.fired,
-        threats_total: milestoneResult.threats_total,
+        threats_ingested_fired: threatMilestones.fired,
+        total_ingested_fired:   ingestMilestones.fired,
+        threats_ingested_current: threatMilestones.current,
+        total_ingested_current:   ingestMilestones.current,
       },
       agentOutputs,
     };
