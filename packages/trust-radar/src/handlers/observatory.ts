@@ -512,9 +512,15 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
 //
 // Phase 5 partial swap:
 //   - threats_mapped → threat_cube_geo (SUM(threat_count)). Note: the cube
-//     only stores rows with lat/lng, so this value is now strictly the count
-//     of geolocated active threats (which is what the "mapped" label already
-//     implies). Active threats with NULL lat/lng no longer contribute here.
+//     only stores rows with lat/lng, so this value is strictly the count
+//     of geolocated active threats — active threats with NULL lat/lng do
+//     not contribute. When GeoIP coverage degrades (empty MMDB, ip-api
+//     misses, etc.) this number drifts toward zero even though ingest is
+//     healthy. Pair with `threats_total` to surface coverage as a ratio.
+//   - threats_total → threat_cube_status (SUM(threat_count)). Every
+//     ingested threat lands here regardless of geo. `geo_coverage_pct`
+//     is mapped/total — operators see a coverage drop immediately
+//     instead of a slow-bleeding tile.
 //   - countries       → threat_cube_geo (COUNT(DISTINCT country_code))
 //   - active_campaigns → unchanged (queries campaigns table, not threats)
 //   - brands_monitored → stays on raw threats. The cube has no
@@ -544,10 +550,18 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
     }
 
     const tally = newTally();
-    const [threats, countries, campaigns, brands] = await Promise.all([
+    const [threats, threatsTotal, countries, campaigns, brands] = await Promise.all([
       session.prepare(
         `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
       ).bind(windowStart, ...sf.params).first<{ n: number }>(),
+      // Total threats over the same window — sourced from threat_cube_status
+      // which has no lat/lng requirement. The ratio of (mapped / total)
+      // surfaces geo-enrichment coverage on the home tile and lets the
+      // operator notice GeoIP regressions before the mapped count drifts
+      // toward zero unexplained.
+      session.prepare(
+        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ?`
+      ).bind(windowStart).first<{ n: number }>(),
       session.prepare(
         `SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
       ).bind(windowStart, ...sf.params).first<{ n: number }>(),
@@ -559,15 +573,21 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       ).bind(windowStart, ...sf.params).first<{ n: number }>(),
     ]);
     // .first() doesn't expose meta — count queries but not rows_read.
-    // All four reads are now cube-served (geo cube × 2, campaigns table,
-    // brand cube). DISTINCT target_brand_id moved from threats →
-    // threat_cube_brand to kill the last full-table-scan path.
-    tally.queries += 4;
+    // All five reads are now cube-served (geo cube × 2, status cube,
+    // campaigns table, brand cube). DISTINCT target_brand_id moved from
+    // threats → threat_cube_brand to kill the last full-table-scan path.
+    tally.queries += 5;
+
+    const mapped = threats?.n ?? 0;
+    const total = threatsTotal?.n ?? 0;
+    const coveragePct = total > 0 ? Math.round((mapped / total) * 100) : null;
 
     const data = {
       success: true,
       data: {
-        threats_mapped: threats?.n ?? 0,
+        threats_mapped: mapped,
+        threats_total: total,
+        geo_coverage_pct: coveragePct,
         countries: countries?.n ?? 0,
         active_campaigns: campaigns?.n ?? 0,
         brands_monitored: brands?.n ?? 0,

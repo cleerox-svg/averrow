@@ -51,9 +51,13 @@ export function StatGrid() {
     <section className="home-stat-grid-section">
       <div className="home-stat-grid">
         <StatTile
-          label="Threats · 7d"
+          label="Mapped · 7d"
           value={obsStats?.threats_mapped ?? 0}
-          sub={`${obsStats?.countries ?? 0} countries`}
+          sub={
+            obsStats && obsStats.threats_total > 0
+              ? `${obsStats.geo_coverage_pct ?? 0}% of ${obsStats.threats_total.toLocaleString()} ingested`
+              : `${obsStats?.countries ?? 0} countries`
+          }
           accent={M.RED}
           onClick={() => navigate('/threats')}
         />

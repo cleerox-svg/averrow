@@ -16,6 +16,10 @@ export interface ThreatPoint {
 
 export interface ObservatoryStats {
   threats_mapped: number;
+  /** All threats ingested in the same window (no lat/lng requirement). */
+  threats_total: number;
+  /** Integer percentage; null when threats_total is 0. */
+  geo_coverage_pct: number | null;
   countries: number;
   active_campaigns: number;
   brands_monitored: number;

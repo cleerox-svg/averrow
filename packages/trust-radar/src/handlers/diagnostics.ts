@@ -383,6 +383,43 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         AND enrichment_attempts >= 5
     `).first<{ n: number }>();
 
+    // Geo-enrichment coverage — mapped vs total threats per window. The
+    // home tile reads `threats_mapped` from threat_cube_geo (lat/lng
+    // required); `threats_total` reads from threat_cube_status (no geo
+    // requirement). The ratio tells operators when the home tile is
+    // bleeding because of geo regressions (empty MMDB, ip-api outages,
+    // exhausted enrichment_attempts) rather than actual ingest decline.
+    //
+    // Windows are picked to mirror the home tile (`7d`) plus a near-term
+    // (`24h`) and a longer trend (`30d`) for sanity checks. All three
+    // queries hit the cubes — no raw threats scans.
+    const geoCoverageWindows: Array<{ key: '24h' | '7d' | '30d'; sqlOffset: string }> = [
+      { key: '24h', sqlOffset: "datetime('now', '-24 hours')" },
+      { key: '7d',  sqlOffset: "datetime('now', '-7 days')" },
+      { key: '30d', sqlOffset: "datetime('now', '-30 days')" },
+    ];
+    const geoCoverageP = Promise.all(
+      geoCoverageWindows.map(async (w) => {
+        const [mapped, total] = await Promise.all([
+          env.DB.prepare(
+            `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
+          ).first<{ n: number }>(),
+          env.DB.prepare(
+            `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
+          ).first<{ n: number }>(),
+        ]);
+        const m = mapped?.n ?? 0;
+        const t = total?.n ?? 0;
+        return {
+          window: w.key,
+          mapped: m,
+          total: t,
+          unmapped: Math.max(0, t - m),
+          coverage_pct: t > 0 ? Math.round((m / t) * 1000) / 10 : null,
+        };
+      })
+    );
+
     // Per-feed × per-type breakdown of the exhausted pile. Without
     // this, "cartographer_exhausted: 1,402" is opaque — operators
     // can't tell whether it's a feed regression (one feed dumping
@@ -619,12 +656,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // ── Execute all in parallel ─────────────────────────────────────
     const [
       clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
+      geoCoverage,
       feedHealth, feedStatus, feedErrors,
       agentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
+      geoCoverageP,
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
@@ -844,7 +883,25 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 5,
+          endpoint_version: 6,
+        },
+
+        geo_coverage: {
+          // Per-window mapped/total/coverage_pct. The home tile's "Threats · 7d"
+          // reads `mapped` for the 7d window; if `coverage_pct` drops noticeably
+          // (>15pt below the 30d baseline), the GeoIP enrichment path is degraded
+          // even when ingest is healthy.
+          windows: geoCoverage,
+          // Convenience flag — true when 7d coverage is below 50% AND the 30d
+          // baseline was above 70%. Surfaces "we used to map 80%, now we're
+          // mapping 40%" without needing to compare windows manually.
+          degraded: (() => {
+            const w7  = geoCoverage.find((w) => w.window === '7d');
+            const w30 = geoCoverage.find((w) => w.window === '30d');
+            if (!w7 || !w30) return false;
+            if (w7.coverage_pct === null || w30.coverage_pct === null) return false;
+            return w7.coverage_pct < 50 && w30.coverage_pct > 70;
+          })(),
         },
 
         enrichment_pipeline: {
