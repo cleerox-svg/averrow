@@ -52,6 +52,7 @@ import { socialAiAssessorAgent } from "./social-ai-assessor";
 import { geoCampaignAssessmentAgent } from "./geo-campaign-assessment";
 import { evidenceAssemblerAgent } from "./evidence-assembler";
 import { geoipRefreshAgent } from "./geoip-refresh";
+import { attributorAgent } from "./attributor";
 
 // TrustBot is a utility module for the /api/trustbot/chat endpoint — not a scheduled/event agent
 export { trustbotAgent } from "./trustbot";
@@ -95,4 +96,5 @@ export const agentModules: Record<string, AgentModule> = {
   "geo_campaign_assessment": geoCampaignAssessmentAgent,
   "evidence_assembler": evidenceAssemblerAgent,
   "geoip_refresh": geoipRefreshAgent,
+  "attributor": attributorAgent,
 };

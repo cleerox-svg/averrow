@@ -851,6 +851,26 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     }
   }
 
+  // Attributor — Phase C of the Threat Actors rebuild. Classifies
+  // NEXUS clusters by responsible threat actor via Haiku, then writes
+  // threat_attributions rows so the Threat Actors page surfaces real
+  // cluster→actor links instead of static seed data.
+  //
+  // Dispatched at hour % 4 === 1 so it runs the cron tick AFTER NEXUS
+  // (which writes/refreshes clusters at hour % 4 === 0). This gives
+  // any new clusters a one-hour settling window before the attributor
+  // tries to classify them. Bounded by CLUSTER_BATCH per run.
+  if (hour % 4 === 1) {
+    try {
+      const mod = allAgents["attributor"];
+      if (mod) {
+        await executeAgent(env, mod, {}, "cron", "scheduled");
+      }
+    } catch (err) {
+      logger.error('attributor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   // Sparrow (takedown agent) — every 6 hours (0, 6, 12, 18).
   // Inline await for the same reason as strategist above — ctx.waitUntil
   // silently dropped runs when the orchestrator invocation was killed

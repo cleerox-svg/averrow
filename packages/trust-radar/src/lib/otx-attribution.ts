@@ -125,7 +125,13 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'blackcat':        'ALPHV',
 };
 
-function canonicalActorName(s: string): string | null {
+/**
+ * Canonicalize a free-form actor name or alias against the registry.
+ * Returns the canonical name (e.g. "APT28") or null if unrecognized.
+ * Exported so other attribution paths (NEXUS, news/RSS) share the same
+ * alias table.
+ */
+export function canonicalActorName(s: string): string | null {
   const key = s.toLowerCase().trim();
   if (!key) return null;
   if (ALIAS_TO_CANONICAL[key]) return ALIAS_TO_CANONICAL[key];
@@ -160,6 +166,89 @@ export function extractActorFromPulse(pulse: OtxPulse): string | null {
 export function actorIdFor(canonicalName: string): string {
   const slug = canonicalName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
   return `ta_${slug || 'unknown'}`;
+}
+
+export type AttributionSource = 'otx' | 'nexus' | 'manual' | 'news';
+
+/**
+ * Generic actor upsert by raw name. Used by both OTX (pulse adversary)
+ * and NEXUS (Haiku-classified cluster). Canonicalizes the input name,
+ * falls back to the raw string if unknown so first-seen actors don't
+ * get silently dropped. Returns the actor id, or null if the name is
+ * blank.
+ */
+export async function upsertActorByName(
+  db: D1Database,
+  rawName: string,
+  source: AttributionSource,
+  countryCode: string | null = null,
+): Promise<string | null> {
+  const trimmed = (rawName || '').trim();
+  if (!trimmed) return null;
+  const actorName = canonicalActorName(trimmed) ?? trimmed;
+  const id = actorIdFor(actorName);
+
+  // INSERT new actors with the calling source as provenance. On conflict
+  // bump only the freshness columns — never overwrite country/status/
+  // description/source on existing rows since the reference taxonomy or
+  // a higher-confidence source may have populated them.
+  await db
+    .prepare(`
+      INSERT INTO threat_actors
+        (id, name, status, source, country_code, first_seen, last_seen, updated_at)
+      VALUES (?, ?, 'active', ?, ?, datetime('now'), datetime('now'), datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        last_seen  = datetime('now'),
+        updated_at = datetime('now')
+    `)
+    .bind(id, actorName, source, countryCode)
+    .run();
+
+  return id;
+}
+
+/**
+ * Generic threat → actor attribution record. Used by NEXUS (cluster
+ * attribution) and any future writer. OTX has its own helper
+ * (recordOtxAttribution) that carries the pulse-specific metadata.
+ *
+ * Idempotent on the deterministic `id` parameter — pass a stable id
+ * derived from your source's record (e.g. `tat_nexus_${clusterId}_${threatId}`)
+ * so repeated runs don't duplicate rows.
+ */
+export async function recordAttribution(
+  db: D1Database,
+  args: {
+    id: string;
+    threatId: string;
+    actorId: string;
+    source: AttributionSource;
+    sourcePulseId?: string | null;
+    sourcePulseName?: string | null;
+    actorNameRaw?: string | null;
+    confidence?: 'confirmed' | 'high' | 'medium' | 'low';
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  await db
+    .prepare(`
+      INSERT OR IGNORE INTO threat_attributions
+        (id, threat_id, actor_id, source, source_pulse_id, source_pulse_name,
+         actor_name_raw, confidence, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .bind(
+      args.id.slice(0, 100),
+      args.threatId,
+      args.actorId,
+      args.source,
+      args.sourcePulseId ?? null,
+      args.sourcePulseName ?? null,
+      args.actorNameRaw ?? null,
+      args.confidence ?? 'medium',
+      args.metadata ? JSON.stringify(args.metadata) : null,
+    )
+    .run();
 }
 
 /**
