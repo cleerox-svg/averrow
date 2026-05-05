@@ -213,12 +213,13 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
         </ResponsiveContainer>
       )}
 
-      {/* Legend — totals per series. Single column on narrow vertical
-          mobile (so the name + count of each row line up consistently),
-          auto-fill grid on wider widths. */}
+      {/* Legend — totals per series. Two columns on narrow vertical
+          mobile (six series fit as a 3×2 grid, half the height of a
+          single column so the chart's X-axis labels can't crash into
+          the first row), auto-fill grid on wider widths. */}
       {data && (
         <div
-          className="grid grid-cols-1 md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]"
+          className="grid grid-cols-2 md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]"
           style={{ marginTop: 16, gap: 6 }}
         >
           {data.series.map((s) => (
