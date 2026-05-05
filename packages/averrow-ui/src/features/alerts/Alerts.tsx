@@ -627,10 +627,15 @@ export function Alerts() {
       <FilterBar
         search={{ value: search, onChange: setSearch, placeholder: 'Search alerts...' }}
         filters={[
+          // Migration 0120 normalized alerts.severity to lowercase. The
+          // filter values must match the DB shape — passing 'CRITICAL'
+          // here returned zero rows because `WHERE severity='CRITICAL'`
+          // never matched stored values like 'critical'. Lowercased
+          // 2026-05-05 alongside the auto-triage rollout.
           { value: 'all',      label: 'All',      count: stats?.total },
-          { value: 'CRITICAL', label: 'Critical', count: stats?.critical },
-          { value: 'HIGH',     label: 'High',     count: stats?.high },
-          { value: 'MEDIUM',   label: 'Medium',   count: stats?.medium },
+          { value: 'critical', label: 'Critical', count: stats?.critical },
+          { value: 'high',     label: 'High',     count: stats?.high },
+          { value: 'medium',   label: 'Medium',   count: stats?.medium },
         ]}
         active={filters.severity ?? 'all'}
         onChange={v => setFilter('severity', v)}
