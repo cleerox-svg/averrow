@@ -76,17 +76,18 @@ DELETE FROM threat_actor_targets;
 DELETE FROM geopolitical_campaigns
  WHERE id = 'iran-irgc-2026';
 
--- ─── 6. Drop ghost manual brands ────────────────────────────────────
--- Migration 0024 seeded ~190 manual brands (HSBC, Barclays, …) with
--- threat_count=0. ~100 of those never attracted any activity AND
--- are not user-monitored. They show up on the Brands page as filler.
--- We delete only the ones with zero relationships anywhere.
-DELETE FROM brands
- WHERE source = 'manual'
-   AND threat_count = 0
-   AND last_threat_seen IS NULL
-   AND id NOT IN (SELECT brand_id FROM monitored_brands)
-   AND id NOT IN (SELECT target_brand_id FROM threats
-                    WHERE target_brand_id IS NOT NULL)
-   AND canonical_domain NOT IN (SELECT domain FROM brand_profiles
-                                  WHERE domain IS NOT NULL);
+-- ─── 6. Ghost manual brands deferred ───────────────────────────────
+-- The original draft of this migration also dropped ~75 inert manual
+-- brands (HSBC, Barclays, etc. seeded by 0024 with threat_count=0).
+-- That delete tripped a FOREIGN KEY constraint — many tables created
+-- after 0024 added non-cascading FKs to brands.id (email_security_*,
+-- dmarc_reports, takedown_requests, sales_leads, threat_signals,
+-- social_mentions, ...) and at least one of the seeded brands has a
+-- row in one of those tables.
+--
+-- The DELETE is wrapped in a transaction by wrangler, so the FK
+-- failure rolled back the entire migration on the first deploy
+-- attempt. Splitting brands into its own subsequent migration so
+-- this one applies cleanly. That follow-up will enumerate the
+-- non-cascading reference tables and exclude any brand referenced
+-- by them.
