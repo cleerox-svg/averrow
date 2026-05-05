@@ -365,6 +365,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/alerts/bulk-acknowledge` | User | Bulk acknowledge alerts |
 | POST | `/api/alerts/bulk-takedown` | User | Bulk create takedown requests from alerts |
 | POST | `/api/admin/alerts/backfill-triage?limit=500&offset=0&threshold=0.5` | Admin | Auto-triage pass over `new` alerts. Dispatches by alert family: threat-sourced (VT/GSB/GreyNoise/SecLookup clean), social_impersonation (handle in official_handles or score < threshold), app_store_impersonation (developer in official_apps OR developer name normalizes to brand name OR score < threshold). Returns `{scanned, dismissed, kept, no_threat, by_type}`. **Use `offset` to advance through the queue across calls** — without it, batches with 0 dismissals will re-scan the same alerts forever. |
+| POST | `/api/admin/alerts/run-ai-judge?limit=50&offset=0` | Admin | Tier 3 — runs Haiku second-opinion on `new` alerts that haven't been AI-judged yet (`ai_assessment IS NULL`). Stamps verdict + reasoning into `ai_assessment`. Auto-dismisses only when verdict='likely_safe' AND confidence >= 90. Returns `{scanned, judged, dismissed, kept, failed, by_verdict}`. ~$0.001 per alert. Idempotent. |
 
 ## Notifications
 

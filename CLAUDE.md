@@ -437,6 +437,31 @@ function alongside the existing three, add a case to
 real-time hook. Don't add a second classifier elsewhere; the
 rules should stay in one place.
 
+### Alert AI judge (`lib/alert-ai-judge.ts`) — Tier 3
+
+For alerts that survive rule-based triage (the residual queue
+after Tier 1 + 1.5 + 1.6), `runAlertJudgeBackfill` calls Haiku
+once per alert with the alert + brand context. The model returns
+`{ verdict: 'active_threat' | 'likely_safe' | 'needs_human',
+confidence: 0-100, reasoning: string }` which gets stamped into
+`alerts.ai_assessment`.
+
+Auto-dismiss only fires on `verdict='likely_safe' AND
+confidence >= AUTO_DISMISS_CONFIDENCE_FLOOR` (currently 90).
+Lower-confidence likely_safes and any other verdict leave the
+alert in 'new' for human review with the AI note attached.
+
+Operators run `POST /api/admin/alerts/run-ai-judge?limit=50` to
+process residual alerts in batches. Bounded at 200/call. Cost
+is ~$0.001/alert via Haiku. Idempotent — alerts with
+`ai_assessment` already set are skipped.
+
+The judge does NOT run automatically on alert creation. It's
+explicitly a backfill / on-demand tool because rule-based
+triage is the cheap path and AI cost is real. If demand grows,
+wire `judgeAlertWithAI` into `createAlert`'s post-rule path
+behind a feature flag.
+
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard

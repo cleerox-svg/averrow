@@ -593,6 +593,39 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // as `false_positive` with the rule-name in resolution_notes.
   // Operators run repeatedly until `scanned < limit` (queue drained).
   // See lib/alert-triage.ts for the rule definition.
+  // Tier 3 — AI second-opinion on alerts that survived rule-based
+  // triage. Calls Haiku once per alert, stamps the verdict +
+  // reasoning into ai_assessment, and auto-dismisses only when the
+  // AI says `likely_safe` with confidence >= 90. Bounded batch
+  // size keeps AI cost predictable. Idempotent — alerts with
+  // ai_assessment already set are skipped, so re-running is a
+  // no-op for already-judged alerts. See lib/alert-ai-judge.ts.
+  router.post("/api/admin/alerts/run-ai-judge", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get('limit');
+    const offsetParam = url.searchParams.get('offset');
+    const limit = limitParam ? Math.max(1, Math.min(200, parseInt(limitParam, 10))) : 50;
+    const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0;
+
+    try {
+      const { runAlertJudgeBackfill } = await import("../lib/alert-ai-judge");
+      const result = await runAlertJudgeBackfill(env, { limit, offset });
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
+
   router.post("/api/admin/alerts/backfill-triage", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
