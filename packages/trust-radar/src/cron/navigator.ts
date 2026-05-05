@@ -23,6 +23,7 @@
 
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
+import { checkAndFireThreatMilestones } from '../lib/platform-milestones';
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour } from '../lib/cube-builder';
@@ -478,6 +479,30 @@ export const navigatorAgent: AgentModule = {
     // documented in Phase 2.3 / cube_healer migration; lifted in
     // Phase 4 when AgentResult gains a `partial: boolean` field).
     const agentOutputs: AgentOutputEntry[] = [];
+
+    // Platform milestones (best-effort — never blocks the agent return).
+    // Cheap: one COUNT(*) on threats + a SELECT-all on platform_milestones,
+    // both indexed. Fires the celebration banner via the public endpoint
+    // /api/v1/public/milestones/latest when a new threshold is crossed.
+    let milestoneResult: { threats_total: number; fired: number[] } = {
+      threats_total: 0, fired: [],
+    };
+    try {
+      milestoneResult = await checkAndFireThreatMilestones(ctx.env.DB, ctx.runId);
+      if (milestoneResult.fired.length > 0) {
+        agentOutputs.push({
+          type: 'diagnostic',
+          summary: `milestone(s) crossed: ${milestoneResult.fired.join(', ')} (total ${milestoneResult.threats_total})`,
+          severity: 'info',
+          details: {
+            milestones_fired: milestoneResult.fired,
+            threats_total: milestoneResult.threats_total,
+          },
+        });
+      }
+    } catch (err) {
+      console.error('[navigator] milestone check failed:', err);
+    }
     if (result.errorMessage) {
       agentOutputs.push({
         type: 'diagnostic',
@@ -529,6 +554,8 @@ export const navigatorAgent: AgentModule = {
         itemsEnriched: result.itemsEnriched,
         cubeRows: result.cubeRows,
         cubeErrors: result.cubeErrors.length,
+        milestones_fired: milestoneResult.fired,
+        threats_total: milestoneResult.threats_total,
       },
       agentOutputs,
     };

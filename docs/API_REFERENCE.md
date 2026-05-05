@@ -50,6 +50,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/v1/public/monitor` | Monitor request |
 | GET | `/api/v1/public/email-security/:domain` | Public email security check |
 | GET | `/api/v1/public/platform-status` | Platform uptime rollup (no auth) — feeds Home banner + Phase 3 public status page. Same payload as `/api/admin/platform-status`. KV-cached 60s. |
+| GET | `/api/v1/public/milestones/latest` | Most recently fired platform milestone (e.g. "1,000,000 threats ingested"). Drives the Home celebration banner. Public, polled every 5 min by clients. |
 | GET | `/api/v1/public/incidents` | Public incidents feed for `/status`. Returns only rows with `visibility='public'` AND `public_title` set. Stripped to `id`, `title`, `details`, `status`, `severity`, `affected_components`, `started_at`, `resolved_at`, `updates[]`. Internal title/description never exposed. |
 
 ## Dashboard
