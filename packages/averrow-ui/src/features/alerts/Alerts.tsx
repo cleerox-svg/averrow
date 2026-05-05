@@ -74,6 +74,34 @@ function severityToBadge(s: string): Severity {
   return 'low'; // defensive fallback for legacy rows
 }
 
+// ── AI verdict parsing ─────────────────────────────────────────
+//
+// alerts.ai_assessment is stamped by the Tier 3 judge as
+//   "[AI {verdict} @{confidence}%] {reasoning}"
+// The list view surfaces a colored badge from the parsed verdict so
+// operators can sort/scan the residual queue faster. Returns null
+// when the field is missing or doesn't match the stamped shape
+// (e.g. legacy AI assessments from other agents).
+type AiVerdict = 'active_threat' | 'likely_safe' | 'needs_human';
+
+interface ParsedAiAssessment {
+  verdict: AiVerdict;
+  confidence: number;
+}
+
+function parseAiAssessment(raw: string | null): ParsedAiAssessment | null {
+  if (!raw) return null;
+  const m = raw.match(/^\[AI (active_threat|likely_safe|needs_human) @(\d+)%\]/);
+  if (!m) return null;
+  return { verdict: m[1] as AiVerdict, confidence: parseInt(m[2], 10) };
+}
+
+const AI_VERDICT_STYLE: Record<AiVerdict, { label: string; color: string; bg: string }> = {
+  active_threat: { label: 'AI: Threat',      color: '#f87171', bg: 'rgba(239,68,68,0.12)' },
+  needs_human:   { label: 'AI: Review',      color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
+  likely_safe:   { label: 'AI: Likely Safe', color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+};
+
 // ── Filter Pills ────────────────────────────────────────────────
 
 interface PillGroupProps {
@@ -251,6 +279,25 @@ function BrandGroupCard({
 
                   {/* Severity badge */}
                   <Badge severity={sev}>{alert.severity}</Badge>
+
+                  {/* AI verdict badge — visible when Tier 3 judge has
+                      stamped a verdict on this alert. Lets operators
+                      scan the residual queue at a glance instead of
+                      opening every row. */}
+                  {(() => {
+                    const v = parseAiAssessment(alert.ai_assessment);
+                    if (!v) return null;
+                    const s = AI_VERDICT_STYLE[v.verdict];
+                    return (
+                      <span
+                        className="font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
+                        style={{ background: s.bg, color: s.color }}
+                        title={`AI confidence ${v.confidence}%`}
+                      >
+                        {s.label}
+                      </span>
+                    );
+                  })()}
 
                   {/* Status */}
                   <span className={cn(
@@ -567,6 +614,12 @@ export function Alerts() {
   const [filters, setFilters] = useState<AlertFilters>({ limit: 200 });
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [search, setSearch] = useState('');
+  // AI verdict filter is client-side: ai_assessment isn't an indexed
+  // column on alerts, and the API doesn't accept a verdict param yet.
+  // Operating on the (limited) returned set is the right scope for
+  // now — operator usually filters by status+severity first which
+  // already narrows hard.
+  const [aiVerdictFilter, setAiVerdictFilter] = useState<'all' | AiVerdict | 'unjudged'>('all');
 
   const { data: statsData, isLoading: statsLoading } = useAlertStats();
   const { data: alertsData, isLoading: alertsLoading } = useAlerts({
@@ -578,7 +631,13 @@ export function Alerts() {
   const bulkAck = useBulkAcknowledge();
   const bulkTakedown = useBulkTakedown();
 
-  const alerts = Array.isArray(alertsData?.alerts) ? alertsData.alerts : [];
+  const rawAlerts = Array.isArray(alertsData?.alerts) ? alertsData.alerts : [];
+  const alerts = rawAlerts.filter(a => {
+    if (aiVerdictFilter === 'all') return true;
+    const v = parseAiAssessment(a.ai_assessment);
+    if (aiVerdictFilter === 'unjudged') return v === null;
+    return v?.verdict === aiVerdictFilter;
+  });
   const stats = statsData && typeof statsData.total === 'number' ? statsData : undefined;
 
   const groups = useMemo(() => groupByBrand(alerts), [alerts]);
@@ -676,6 +735,27 @@ export function Alerts() {
             selected={filters.alert_type ?? 'all'}
             onChange={v => setFilter('alert_type', v)}
           />
+          {/* AI Verdict — Tier 3 Haiku judge stamps a verdict +
+              confidence on each alert it judges. Operators filter by
+              this to scan AI-flagged threats first, ambiguous cases
+              second, and skip alerts the AI judged as likely safe
+              (those auto-dismiss at confidence >=90 anyway). The
+              `unjudged` option surfaces alerts that haven't gone
+              through the judge yet — useful right after running
+              `/api/admin/alerts/run-ai-judge`. Filter is applied
+              client-side over the page's returned set. */}
+          <PillGroup
+            label="AI Verdict"
+            options={[
+              { value: 'all',           label: 'All' },
+              { value: 'active_threat', label: 'AI: Threat' },
+              { value: 'needs_human',   label: 'AI: Review' },
+              { value: 'likely_safe',   label: 'AI: Likely Safe' },
+              { value: 'unjudged',      label: 'Unjudged' },
+            ]}
+            selected={aiVerdictFilter}
+            onChange={v => setAiVerdictFilter(v as 'all' | AiVerdict | 'unjudged')}
+          />
         </div>
       </FilterBar>
 
@@ -704,7 +784,18 @@ export function Alerts() {
                 group={group}
                 selectedAlertId={selectedAlert?.id ?? null}
                 onSelectAlert={a => setSelectedAlert(prev => prev?.id === a.id ? null : a)}
-                onAcknowledgeAll={() => bulkAck.mutate({ brand_id: group.brand_id })}
+                onAcknowledgeAll={() => {
+                  // Acknowledge only the alerts visible in this group
+                  // (post-filter). Sending alert_ids[] respects the
+                  // active AI verdict + status filters; sending
+                  // brand_id alone would ignore them and ack
+                  // every 'new' alert for the brand. Operators
+                  // expect filter-aware bulk actions.
+                  const ids = group.alerts
+                    .filter(a => a.status === 'new')
+                    .map(a => a.id);
+                  if (ids.length > 0) bulkAck.mutate({ alert_ids: ids });
+                }}
                 onCreateTakedowns={() => bulkTakedown.mutate({ brand_id: group.brand_id })}
                 isAcknowledging={bulkAck.isPending}
                 isCreatingTakedowns={bulkTakedown.isPending}
