@@ -658,6 +658,14 @@ export function Alerts() {
             options={[
               { value: 'all', label: 'All' },
               { value: 'social_impersonation', label: 'Social' },
+              // App Store impersonation alerts are the largest single
+              // family in the operator queue (1,938 of 2,631 in the
+              // 2026-05-05 snapshot) — the original pill list omitted
+              // them so the queue was filterable as 'All' or 'Social'
+              // but never 'App Store' specifically. Added here so
+              // operators can isolate the app-store family for bulk
+              // triage actions.
+              { value: 'app_store_impersonation', label: 'App Store' },
               { value: 'phishing_detected', label: 'Phishing' },
               { value: 'lookalike_domain_active', label: 'Lookalike' },
               { value: 'bimi_removed', label: 'BIMI Removed' },
