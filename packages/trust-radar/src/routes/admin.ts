@@ -585,6 +585,37 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleBackfillBrandMatch(request, env);
   });
+  // Tier 1 alert auto-triage backfill — drains the queue of 'new'
+  // alerts that meet the conservative auto-dismiss criteria
+  // (vt_checked + vt_malicious=0, gsb_checked + gsb_flagged=0,
+  // greynoise=benign-or-null, seclookup<30). Idempotent: each call
+  // processes up to `?limit=N` alerts (default 500) and stamps them
+  // as `false_positive` with the rule-name in resolution_notes.
+  // Operators run repeatedly until `scanned < limit` (queue drained).
+  // See lib/alert-triage.ts for the rule definition.
+  router.post("/api/admin/alerts/backfill-triage", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get('limit');
+    const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10))) : 500;
+
+    try {
+      const { runAlertTriageBackfill } = await import("../lib/alert-triage");
+      const result = await runAlertTriageBackfill(env.DB, { limit });
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
   router.post("/api/admin/backfill-brand-enrichment", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

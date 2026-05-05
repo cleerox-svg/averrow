@@ -393,6 +393,26 @@ columns + cubes. Direct `GROUP BY hosting_provider_id` or `GROUP BY
 target_brand_id` over the threats table is a code-review red flag —
 swap to the pre-computed column or the matching cube.
 
+### Alert auto-triage (`lib/alert-triage.ts`)
+
+When a threat-sourced alert is created, `createAlert` consults the
+underlying threat's enrichment snapshot and auto-marks the alert as
+`false_positive` if every reputation source has cleared the IOC:
+VT consulted with zero malicious detections, GSB consulted with no
+flag, GreyNoise either benign or not consulted, SecLookup risk
+score either null or below 30. The decision function is pure
+(`decideAutoTriage`) and unit-tested — replace, don't bypass.
+
+Operators run `POST /api/admin/alerts/backfill-triage?limit=500` to
+sweep existing 'new' alerts; the endpoint is idempotent and can be
+called repeatedly until `scanned < limit`. Each dismissal stamps
+the rule reason into `resolution_notes` so the action is auditable
+and reversible.
+
+To loosen or tighten the rule, edit `decideAutoTriage` and update
+`test/alert-triage.test.ts` to match the new gates. Don't add a
+second classifier elsewhere; the rule should stay in one place.
+
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard

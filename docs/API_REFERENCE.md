@@ -364,6 +364,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | PATCH | `/api/alerts/:id` | User | Update alert status |
 | POST | `/api/alerts/bulk-acknowledge` | User | Bulk acknowledge alerts |
 | POST | `/api/alerts/bulk-takedown` | User | Bulk create takedown requests from alerts |
+| POST | `/api/admin/alerts/backfill-triage?limit=500` | Admin | Tier 1 auto-triage pass — dismisses `new` alerts whose underlying threat is clean across VT, GSB, GreyNoise, and SecLookup. Returns `{scanned, dismissed, kept, no_threat}`. Idempotent; run repeatedly until `scanned < limit`. |
 
 ## Notifications
 
