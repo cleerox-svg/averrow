@@ -328,6 +328,52 @@ export async function handleGetThreatActor(request: Request, env: Env, id: strin
       linkedThreats = result?.n ?? 0;
     }
 
+    // Recent attribution timeline — last 12 rows from threat_attributions
+    // for this actor across all sources (OTX / NEXUS / news). Drives the
+    // detail page's "Recent Activity" section.
+    const recentAttributions = await safeQueryAll(env.DB,
+      env.DB.prepare(`
+        SELECT id, threat_id, source, source_pulse_name, confidence,
+               actor_name_raw, observed_at
+        FROM threat_attributions
+        WHERE actor_id = ?
+        ORDER BY observed_at DESC
+        LIMIT 12
+      `).bind(id)
+    );
+
+    // News articles that mentioned this actor — pulls from news_articles
+    // by JSON-matching the extracted actors[] array. Phase D's news-watcher
+    // writes the raw extraction blob; we filter client-side here on the
+    // actor's name + aliases. Cap at 5 most-recent geopolitical-flagged
+    // articles for the detail-page sidebar.
+    const aliasesRaw = (actor as Record<string, unknown>).aliases as string | null;
+    const actorNames = [
+      (actor as Record<string, unknown>).name as string,
+      ...(aliasesRaw ? safeParseJsonArray(aliasesRaw) : []),
+    ].filter(Boolean);
+
+    let newsMentions: unknown[] = [];
+    if (actorNames.length > 0) {
+      // SQLite has no native JSON-array-contains; the extraction JSON
+      // stores actors as a quoted string within the blob, so a LIKE
+      // match on the name (with quote padding) is reliable enough.
+      // Build a single OR of LIKEs against extracted.
+      const likeClauses = actorNames.map(() => `extracted LIKE ?`).join(" OR ");
+      const likeBinds = actorNames.map((n) => `%"${n}"%`);
+      const articles = await safeQueryAll(env.DB,
+        env.DB.prepare(`
+          SELECT id, source_feed, article_url, title, excerpt,
+                 published_at, ingested_at, is_geopolitical
+          FROM news_articles
+          WHERE extract_status = 'ok' AND (${likeClauses})
+          ORDER BY ingested_at DESC
+          LIMIT 5
+        `).bind(...likeBinds)
+      );
+      newsMentions = articles.results;
+    }
+
     return json({
       success: true,
       data: {
@@ -335,10 +381,21 @@ export async function handleGetThreatActor(request: Request, env: Env, id: strin
         infrastructure: infrastructure.results,
         targets: targets.results,
         linked_threat_count: linkedThreats,
+        recent_attributions: recentAttributions.results,
+        news_mentions: newsMentions,
       },
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "Failed to get threat actor" }, 500, origin);
+  }
+}
+
+function safeParseJsonArray(s: string): string[] {
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
   }
 }
 
