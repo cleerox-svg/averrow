@@ -600,6 +600,41 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // size keeps AI cost predictable. Idempotent — alerts with
   // ai_assessment already set are skipped, so re-running is a
   // no-op for already-judged alerts. See lib/alert-ai-judge.ts.
+  // Reconcile bell notifications against recently auto-dismissed
+  // alerts. The two tables aren't FK-linked so this is a
+  // brand_id + time-window heuristic; clears notifications where
+  // their underlying alert has been auto-triaged. See
+  // lib/notification-cleanup.ts for the correlation strategy.
+  router.post("/api/admin/notifications/cleanup-dismissed", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+
+    const url = new URL(request.url);
+    const lookbackParam = url.searchParams.get('lookback_hours');
+    const windowParam = url.searchParams.get('window_minutes');
+    const limitParam = url.searchParams.get('limit');
+
+    const opts: { lookbackHours?: number; windowMinutes?: number; limit?: number } = {};
+    if (lookbackParam) opts.lookbackHours = Math.max(1, Math.min(720, parseInt(lookbackParam, 10)));
+    if (windowParam) opts.windowMinutes = Math.max(1, Math.min(1440, parseInt(windowParam, 10)));
+    if (limitParam) opts.limit = Math.max(1, Math.min(2000, parseInt(limitParam, 10)));
+
+    try {
+      const { reconcileNotificationsForDismissedAlerts } = await import("../lib/notification-cleanup");
+      const result = await reconcileNotificationsForDismissedAlerts(env.DB, opts);
+      return new Response(JSON.stringify({ success: true, data: result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
+
   router.post("/api/admin/alerts/run-ai-judge", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
