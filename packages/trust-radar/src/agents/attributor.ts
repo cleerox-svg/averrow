@@ -122,7 +122,12 @@ export const attributorAgent: AgentModule = {
 
     const guard = await checkCostGuard(env, false);
     if (guard) {
-      return { status: "partial", recordsProcessed: 0, message: `cost guard: ${guard}` };
+      return {
+        itemsProcessed: 0,
+        itemsCreated: 0,
+        itemsUpdated: 0,
+        output: { skipped: true, reason: `cost guard: ${guard}` },
+      };
     }
 
     // Pull pending clusters: status='active', actor_id IS NULL, and either
@@ -141,12 +146,18 @@ export const attributorAgent: AgentModule = {
 
     const clusters = pending.results ?? [];
     if (clusters.length === 0) {
-      return { status: "success", recordsProcessed: 0, message: "no pending clusters" };
+      return {
+        itemsProcessed: 0,
+        itemsCreated: 0,
+        itemsUpdated: 0,
+        output: { pending_clusters: 0 },
+      };
     }
 
     let attributed = 0;
     let unresolved = 0;
     let errors = 0;
+    let attributionRowsWritten = 0;
 
     for (const cluster of clusters) {
       try {
@@ -218,6 +229,7 @@ export const attributorAgent: AgentModule = {
               attack_types: safeParseArray(cluster.attack_types),
             },
           });
+          attributionRowsWritten++;
         }
 
         attributed++;
@@ -228,9 +240,15 @@ export const attributorAgent: AgentModule = {
     }
 
     return {
-      status: errors > 0 ? "partial" : "success",
-      recordsProcessed: clusters.length,
-      message: `attributed=${attributed}, unresolved=${unresolved}, errors=${errors}`,
+      itemsProcessed: clusters.length,
+      itemsCreated: attributionRowsWritten,
+      itemsUpdated: attributed,
+      output: {
+        attributed_clusters: attributed,
+        unresolved_clusters: unresolved,
+        errors,
+        attribution_rows_written: attributionRowsWritten,
+      },
     };
   },
 };
