@@ -108,6 +108,11 @@ export async function loadThreatSnapshotForAlert(
 export const DEFAULT_IMPERSONATION_DISMISS_THRESHOLD = 0.5;
 
 export interface BrandAllowlist {
+  /** Brand display name (`brands.name`). Used for the brand-name
+   *  match shortcut on app-store impersonation alerts where
+   *  `details.developer_name` reduces to the brand name after
+   *  stripping common company suffixes (Inc., Corp., Ltd., etc.). */
+  name: string | null;
   /** brands.official_handles parsed: {"twitter":"@acme","linkedin":"acmecorp",...} */
   official_handles: Record<string, string> | null;
   /** brands.official_apps parsed: array of OfficialApp records */
@@ -193,11 +198,67 @@ export interface AppStoreImpersonationDetails {
 }
 
 /**
+ * Strip common company suffixes (Inc., Corp., Ltd., LLC, Co., GmbH,
+ * Pty, etc.) and collapse whitespace so a developer_name like
+ * "Adobe Inc." compares equal to a brand name like "Adobe".
+ *
+ * Conservative: only strips trailing tokens, never prefixes; never
+ * removes words from inside the name. "Adobe Free Inc." stays as
+ * "Adobe Free" (not "Adobe") so it doesn't accidentally match
+ * "Adobe".
+ */
+export function normalizeCompanyName(raw: string): string {
+  // Common corporate suffixes (lowercase, with and without trailing dot).
+  const SUFFIX_TOKENS = new Set([
+    'inc', 'inc.', 'incorporated',
+    'corp', 'corp.', 'corporation',
+    'ltd', 'ltd.', 'limited',
+    'llc', 'llc.',
+    'co', 'co.', 'company',
+    'plc', 'plc.',
+    'gmbh', 'gmbh.',
+    'ag', 'ag.',
+    'sa', 'sa.', 's.a.',
+    'srl', 'srl.', 's.r.l.',
+    'bv', 'bv.', 'b.v.',
+    'pty', 'pty.',
+    'oy', 'oy.',
+    'kk', 'kk.', 'k.k.',
+  ]);
+  // Lowercase + trim once, then strip trailing punctuation.
+  let s = raw.trim().toLowerCase().replace(/\s+/g, ' ');
+  // Strip trailing comma+suffix patterns iteratively (handles
+  // "Adobe Systems, Inc."). Compare each candidate suffix in two
+  // forms — as-is and with internal dots removed — so "s.a", "s.a.",
+  // and "sa" all collapse to the same SUFFIX_TOKENS hit.
+  for (;;) {
+    const stripped = s.replace(/[,.\s]+$/, '');
+    const tokens = stripped.split(' ');
+    const last = tokens[tokens.length - 1];
+    if (last) {
+      const lastNoDots = last.replace(/\./g, '');
+      if (SUFFIX_TOKENS.has(last) || SUFFIX_TOKENS.has(lastNoDots)) {
+        tokens.pop();
+        s = tokens.join(' ').replace(/[,.\s]+$/, '');
+        continue;
+      }
+    }
+    s = stripped;
+    break;
+  }
+  return s;
+}
+
+/**
  * Decide auto-triage for an app_store_impersonation alert.
  *
  *   Rule B (always-safe): app's bundle_id, app_id, developer_id, OR
  *     developer_name matches an entry in the brand's official_apps
- *     allowlist for the same store → dismiss.
+ *     allowlist for the same store → dismiss. Also matches when
+ *     `details.developer_name` reduces to `brand.name` after
+ *     stripping common company suffixes (handles the very common
+ *     case where a brand publishes apps under a "<BrandName> Inc."
+ *     developer account but hasn't populated official_apps).
  *   Rule A (low-confidence): impersonation_score below threshold →
  *     dismiss.
  */
@@ -236,6 +297,20 @@ export function decideAppStoreImpersonationTriage(
     }
   }
 
+  // Rule B+ — developer_name reduces to the brand's own name after
+  // stripping company suffixes. Catches the "Adobe Inc." vs
+  // brand_name "Adobe" case where the customer hasn't populated
+  // official_apps. Conservative: only matches when the suffix-
+  // stripped developer name equals the brand name exactly. Doesn't
+  // do contains/prefix matching, so "Adobe Free Inc." (which
+  // normalizes to "adobe free") does NOT match brand "Adobe".
+  if (
+    allowlist.name && details.developer_name &&
+    normalizeCompanyName(details.developer_name) === normalizeCompanyName(allowlist.name)
+  ) {
+    return { action: 'dismiss', reason: 'auto: developer name matches brand name (suffix-normalized)' };
+  }
+
   // Rule A — score below the dismiss threshold.
   const score = typeof details.impersonation_score === 'number' ? details.impersonation_score : 1;
   if (score < threshold) {
@@ -251,7 +326,7 @@ export function decideAppStoreImpersonationTriage(
  * Bulk-load `official_handles` + `official_apps` for a set of
  * brand_ids in one query. Returns a Map keyed by brand_id with
  * parsed JSON. Brands without rows or with malformed JSON yield
- * an empty allowlist `{ official_handles: null, official_apps: null }`.
+ * an empty allowlist `{ name: null, official_handles: null, official_apps: null }`.
  */
 export async function loadBrandAllowlists(
   db: D1Database,
@@ -265,11 +340,12 @@ export async function loadBrandAllowlists(
   const uniqueIds = Array.from(new Set(brandIds));
   const placeholders = uniqueIds.map(() => '?').join(',');
   const rows = await db.prepare(`
-    SELECT id, official_handles, official_apps
+    SELECT id, name, official_handles, official_apps
     FROM brands
     WHERE id IN (${placeholders})
   `).bind(...uniqueIds).all<{
     id: string;
+    name: string | null;
     official_handles: string | null;
     official_apps: string | null;
   }>();
@@ -296,7 +372,7 @@ export async function loadBrandAllowlists(
       } catch { /* malformed JSON — treat as empty */ }
     }
 
-    result.set(row.id, { official_handles: handles, official_apps: apps });
+    result.set(row.id, { name: row.name, official_handles: handles, official_apps: apps });
   }
   return result;
 }
@@ -338,20 +414,30 @@ interface AlertRow {
  */
 export async function runAlertTriageBackfill(
   db: D1Database,
-  opts?: { limit?: number; impersonationThreshold?: number },
+  opts?: { limit?: number; offset?: number; impersonationThreshold?: number },
 ): Promise<BackfillResult> {
   const limit = Math.min(1000, opts?.limit ?? 500);
+  const offset = Math.max(0, opts?.offset ?? 0);
   const threshold = opts?.impersonationThreshold ?? DEFAULT_IMPERSONATION_DISMISS_THRESHOLD;
 
-  // Pull ALL 'new' alerts in this batch — not just threat-sourced —
+  // Pull ALL 'new' alerts in this window — not just threat-sourced —
   // so we can apply the alert_type-specific rule to each.
+  //
+  // OFFSET-paginated rather than re-querying status='new' from the
+  // beginning each call. If a batch dismisses 0 alerts, the next
+  // call MUST advance past the just-scanned set; otherwise the same
+  // 500 alerts come back forever and the operator's loop never
+  // exits. (Production caught this on the first backfill run —
+  // 125K "kept" before manual intervention because nothing in the
+  // queue was dismissing under the original Tier 1.5 rules and the
+  // SQL had no progress marker.)
   const rows = await db.prepare(`
     SELECT id, brand_id, source_type, source_id, alert_type, details
     FROM alerts
     WHERE status = 'new'
     ORDER BY created_at ASC
-    LIMIT ?
-  `).bind(limit).all<AlertRow>();
+    LIMIT ? OFFSET ?
+  `).bind(limit, offset).all<AlertRow>();
 
   // Pre-load brand allowlists for the impersonation alerts in the
   // batch (one bulk query keeps it cheap regardless of batch size).
@@ -387,11 +473,11 @@ export async function runAlertTriageBackfill(
       decision = decideThreatAutoTriage(snapshot);
     } else if (alert.alert_type === 'social_impersonation') {
       const details = parseDetails<SocialImpersonationDetails>(alert.details);
-      const allow = allowlists.get(alert.brand_id) ?? { official_handles: null, official_apps: null };
+      const allow = allowlists.get(alert.brand_id) ?? { name: null, official_handles: null, official_apps: null };
       decision = decideSocialImpersonationTriage(details, allow, threshold);
     } else if (alert.alert_type === 'app_store_impersonation') {
       const details = parseDetails<AppStoreImpersonationDetails>(alert.details);
-      const allow = allowlists.get(alert.brand_id) ?? { official_handles: null, official_apps: null };
+      const allow = allowlists.get(alert.brand_id) ?? { name: null, official_handles: null, official_apps: null };
       decision = decideAppStoreImpersonationTriage(details, allow, threshold);
     }
 

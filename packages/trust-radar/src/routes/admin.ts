@@ -599,11 +599,15 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
 
     const url = new URL(request.url);
     const limitParam = url.searchParams.get('limit');
+    const offsetParam = url.searchParams.get('offset');
+    const thresholdParam = url.searchParams.get('threshold');
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10))) : 500;
+    const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0;
+    const impersonationThreshold = thresholdParam ? Number(thresholdParam) : undefined;
 
     try {
       const { runAlertTriageBackfill } = await import("../lib/alert-triage");
-      const result = await runAlertTriageBackfill(env.DB, { limit });
+      const result = await runAlertTriageBackfill(env.DB, { limit, offset, impersonationThreshold });
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

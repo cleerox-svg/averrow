@@ -4,6 +4,7 @@ import {
   decideSocialImpersonationTriage,
   decideAppStoreImpersonationTriage,
   normalizeHandle,
+  normalizeCompanyName,
   type ThreatTriageSnapshot,
   type BrandAllowlist,
 } from "../src/lib/alert-triage";
@@ -144,7 +145,7 @@ describe("decideAutoTriage — null safety", () => {
 
 // ─── Tier 1.5: Social impersonation ──────────────────────────────
 
-const emptyAllowlist: BrandAllowlist = { official_handles: null, official_apps: null };
+const emptyAllowlist: BrandAllowlist = { name: null, official_handles: null, official_apps: null };
 
 describe("normalizeHandle", () => {
   it("strips leading @ and lowercases", () => {
@@ -160,6 +161,7 @@ describe("normalizeHandle", () => {
 describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
   it("dismisses when handle matches the brand's official handle for the platform", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: { twitter: '@acme' },
       official_apps: null,
     };
@@ -173,6 +175,7 @@ describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
 
   it("matches case-insensitively + tolerates @ prefix variations", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: { instagram: 'AcmeCorp' },
       official_apps: null,
     };
@@ -185,6 +188,7 @@ describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
 
   it("does NOT dismiss when handle differs from official", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: { twitter: '@acme' },
       official_apps: null,
     };
@@ -197,6 +201,7 @@ describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
 
   it("does NOT match across platforms", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: { twitter: '@acme' },
       official_apps: null,
     };
@@ -255,6 +260,7 @@ describe("decideSocialImpersonationTriage — Rule A (low score)", () => {
 describe("decideAppStoreImpersonationTriage — Rule B (allowlist match)", () => {
   it("dismisses when bundle_id matches", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: null,
       official_apps: [{ platform: 'ios', bundle_id: 'com.acme.app' }],
     };
@@ -268,6 +274,7 @@ describe("decideAppStoreImpersonationTriage — Rule B (allowlist match)", () =>
 
   it("dismisses when developer_name matches case-insensitively", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: null,
       official_apps: [{ platform: 'ios', developer_name: 'Acme Inc' }],
     };
@@ -280,6 +287,7 @@ describe("decideAppStoreImpersonationTriage — Rule B (allowlist match)", () =>
 
   it("does NOT match when allowlist platform differs from alert store", () => {
     const allow: BrandAllowlist = {
+      name: null,
       official_handles: null,
       official_apps: [{ platform: 'google_play', bundle_id: 'com.acme.app' }],
     };
@@ -313,5 +321,139 @@ describe("decideAppStoreImpersonationTriage — Rule A (low score)", () => {
     const d = decideAppStoreImpersonationTriage(null, emptyAllowlist);
     expect(d.action).toBe('keep');
     expect(d.reason).toBe('app_store_details_missing');
+  });
+});
+
+// ─── Tier 1.6: brand-name developer match (Rule B+) ──────────────
+
+describe("normalizeCompanyName", () => {
+  it("strips trailing 'Inc.' suffix", () => {
+    expect(normalizeCompanyName("Adobe Inc.")).toBe("adobe");
+  });
+  it("strips multiple trailing suffixes (Systems, Inc.)", () => {
+    expect(normalizeCompanyName("Adobe Systems, Inc.")).toBe("adobe systems");
+  });
+  it("preserves middle words (does not strip from inside)", () => {
+    expect(normalizeCompanyName("Adobe Free Inc.")).toBe("adobe free");
+  });
+  it("handles 'Corp.', 'Corporation', 'Limited', 'LLC'", () => {
+    expect(normalizeCompanyName("Acme Corp.")).toBe("acme");
+    expect(normalizeCompanyName("Acme Corporation")).toBe("acme");
+    expect(normalizeCompanyName("Acme Limited")).toBe("acme");
+    expect(normalizeCompanyName("Acme LLC")).toBe("acme");
+  });
+  it("handles GmbH / AG / SA international suffixes", () => {
+    expect(normalizeCompanyName("Beispiel GmbH")).toBe("beispiel");
+    expect(normalizeCompanyName("Industrias S.A.")).toBe("industrias");
+  });
+  it("collapses extra whitespace and lowercases", () => {
+    expect(normalizeCompanyName("  Adobe   Inc.  ")).toBe("adobe");
+  });
+  it("returns brand-only names unchanged (lowercased)", () => {
+    expect(normalizeCompanyName("Adobe")).toBe("adobe");
+  });
+});
+
+describe("decideAppStoreImpersonationTriage — Rule B+ (brand-name developer match)", () => {
+  it("dismisses when developer_name normalizes to brand.name", () => {
+    const allow: BrandAllowlist = {
+      name: 'Adobe',
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        developer_name: 'Adobe Inc.',
+        impersonation_score: 0.93,
+      },
+      allow,
+    );
+    expect(d.action).toBe('dismiss');
+    expect(d.reason).toContain('developer name matches brand name');
+  });
+
+  it("dismisses when both have suffixes that normalize away (Adobe Systems, Inc. vs Adobe Systems)", () => {
+    const allow: BrandAllowlist = {
+      name: 'Adobe Systems',
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        developer_name: 'Adobe Systems, Inc.',
+        impersonation_score: 0.95,
+      },
+      allow,
+    );
+    expect(d.action).toBe('dismiss');
+  });
+
+  it("does NOT dismiss when normalized names differ (Adobe Free Inc. vs Adobe)", () => {
+    const allow: BrandAllowlist = {
+      name: 'Adobe',
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        developer_name: 'Adobe Free Inc.',
+        impersonation_score: 0.95,
+      },
+      allow,
+    );
+    expect(d.action).toBe('keep');
+  });
+
+  it("falls through to score gate when no name match (high score keeps)", () => {
+    const allow: BrandAllowlist = {
+      name: 'Adobe',
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        developer_name: 'Phisher Co.',
+        impersonation_score: 0.85,
+      },
+      allow,
+    );
+    expect(d.action).toBe('keep');
+  });
+
+  it("does not fire Rule B+ when allowlist.name is null (no brand context)", () => {
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        developer_name: 'Adobe Inc.',
+        impersonation_score: 0.93,
+      },
+      allow,
+    );
+    expect(d.action).toBe('keep');
+  });
+
+  it("does not fire Rule B+ when developer_name is missing", () => {
+    const allow: BrandAllowlist = {
+      name: 'Adobe',
+      official_handles: null,
+      official_apps: null,
+    };
+    const d = decideAppStoreImpersonationTriage(
+      {
+        store: 'ios',
+        impersonation_score: 0.93,
+      },
+      allow,
+    );
+    expect(d.action).toBe('keep');
   });
 });

@@ -112,7 +112,7 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
       params.alertType === 'app_store_impersonation'
     ) {
       const allowlists = await triage.loadBrandAllowlists(db, [params.brandId]);
-      const allow = allowlists.get(params.brandId) ?? { official_handles: null, official_apps: null };
+      const allow = allowlists.get(params.brandId) ?? { name: null, official_handles: null, official_apps: null };
       if (params.alertType === 'social_impersonation') {
         decision = triage.decideSocialImpersonationTriage(params.details ?? null, allow);
       } else {

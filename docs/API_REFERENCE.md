@@ -364,7 +364,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | PATCH | `/api/alerts/:id` | User | Update alert status |
 | POST | `/api/alerts/bulk-acknowledge` | User | Bulk acknowledge alerts |
 | POST | `/api/alerts/bulk-takedown` | User | Bulk create takedown requests from alerts |
-| POST | `/api/admin/alerts/backfill-triage?limit=500` | Admin | Tier 1 auto-triage pass — dismisses `new` alerts whose underlying threat is clean across VT, GSB, GreyNoise, and SecLookup. Returns `{scanned, dismissed, kept, no_threat}`. Idempotent; run repeatedly until `scanned < limit`. |
+| POST | `/api/admin/alerts/backfill-triage?limit=500&offset=0&threshold=0.5` | Admin | Auto-triage pass over `new` alerts. Dispatches by alert family: threat-sourced (VT/GSB/GreyNoise/SecLookup clean), social_impersonation (handle in official_handles or score < threshold), app_store_impersonation (developer in official_apps OR developer name normalizes to brand name OR score < threshold). Returns `{scanned, dismissed, kept, no_threat, by_type}`. **Use `offset` to advance through the queue across calls** — without it, batches with 0 dismissals will re-scan the same alerts forever. |
 
 ## Notifications
 
