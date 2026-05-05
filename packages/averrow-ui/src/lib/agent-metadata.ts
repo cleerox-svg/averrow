@@ -15,6 +15,7 @@ export type AgentId =
   | 'observer'
   | 'nexus'
   | 'attributor'
+  | 'news_watcher'
   | 'sparrow'
   | 'strategist'
   | 'pathfinder'
@@ -110,6 +111,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#9333ea',
     category: 'intelligence',
     pipelinePosition: 11,
+  },
+  news_watcher: {
+    id: 'news_watcher',
+    displayName: 'News Watcher',
+    codename: null,
+    subtitle: 'Polls threat-intel RSS feeds (CISA, Mandiant, Microsoft) — extracts actors + geopolitical context via Haiku',
+    color: '#3CB878',
+    category: 'intelligence',
+    pipelinePosition: 38,
   },
   analyst: {
     id: 'analyst',

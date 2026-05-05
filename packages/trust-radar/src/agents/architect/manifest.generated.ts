@@ -83,7 +83,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 256,
-      "last_modified": "2026-05-05T02:37:48.920Z"
+      "last_modified": "2026-05-05T02:42:28.944Z"
     },
     {
       "name": "auto-seeder",
@@ -371,6 +371,27 @@ export const REPO_MANIFEST: RepoInventory = {
       "ai_models_referenced": [],
       "loc": 487,
       "last_modified": "2026-05-04T16:57:44.383Z"
+    },
+    {
+      "name": "news-watcher",
+      "path": "packages/trust-radar/src/agents/news-watcher.ts",
+      "entrypoint": "newsWatcherAgent",
+      "triggers": [
+        "cron"
+      ],
+      "reads": [
+        "DB",
+        "geopolitical_campaigns",
+        "news_articles"
+      ],
+      "writes": [
+        "SET",
+        "geopolitical_campaigns",
+        "news_articles"
+      ],
+      "ai_models_referenced": [],
+      "loc": 314,
+      "last_modified": "2026-05-05T02:48:01.424Z"
     },
     {
       "name": "nexus",
@@ -1047,6 +1068,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "geoip-refresh",
         "lookalike-scanner",
         "narrator",
+        "news-watcher",
         "nexus",
         "notification_narrator",
         "observer",
@@ -1072,6 +1094,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "geoip-refresh",
         "lookalike-scanner",
         "narrator",
+        "news-watcher",
         "nexus",
         "notification_narrator",
         "observer",
@@ -1097,6 +1120,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "geoip-refresh",
         "lookalike-scanner",
         "narrator",
+        "news-watcher",
         "nexus",
         "notification_narrator",
         "observer",
@@ -1128,7 +1152,7 @@ export const REPO_MANIFEST: RepoInventory = {
     }
   ],
   "totals": {
-    "agents": 37,
+    "agents": 38,
     "feeds": 40,
     "crons": 3,
     "workers": 1

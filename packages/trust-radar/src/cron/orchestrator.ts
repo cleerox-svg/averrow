@@ -871,6 +871,27 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     }
   }
 
+  // News Watcher — Phase D of the Threat Actors rebuild. Polls a
+  // configured set of threat-intel RSS / Atom feeds (CISA, Microsoft
+  // Threat Intel, Mandiant), extracts actor + geopolitical context
+  // via Haiku, and writes news_articles + threat_actors upserts +
+  // geopolitical_campaigns rows.
+  //
+  // Dispatched at hour % 6 === 2 — jittered off NEXUS (% 4 === 0),
+  // Attributor (% 4 === 1), and Sparrow / Strategist (% 6 === 0)
+  // so we don't pile Haiku throughput on the same tick. Bounded by
+  // ARTICLES_PER_RUN per run.
+  if (hour % 6 === 2) {
+    try {
+      const mod = allAgents["news_watcher"];
+      if (mod) {
+        await executeAgent(env, mod, {}, "cron", "scheduled");
+      }
+    } catch (err) {
+      logger.error('news_watcher_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   // Sparrow (takedown agent) — every 6 hours (0, 6, 12, 18).
   // Inline await for the same reason as strategist above — ctx.waitUntil
   // silently dropped runs when the orchestrator invocation was killed

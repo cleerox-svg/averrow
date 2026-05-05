@@ -82,6 +82,18 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <circle cx="18" cy="20" r="2" fill="currentColor" opacity="0.3"/>
     </svg>
   ),
+  // News Watcher — broadcast / wave motif: stacked arcs radiating
+  // outward from a single source point at the bottom-left, capturing
+  // "RSS feeds beaming into a watcher".
+  news_watcher: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      <circle cx="9" cy="27" r="2.2" fill="currentColor"/>
+      <path d="M 11 27 A 6 6 0 0 1 9 21" stroke="currentColor" strokeWidth="1.4" opacity="0.85"/>
+      <path d="M 14 27 A 9 9 0 0 1 9 18" stroke="currentColor" strokeWidth="1.3" opacity="0.6"/>
+      <path d="M 17 27 A 12 12 0 0 1 9 15" stroke="currentColor" strokeWidth="1.2" opacity="0.4"/>
+      <path d="M 20 27 A 15 15 0 0 1 9 12" stroke="currentColor" strokeWidth="1.1" opacity="0.25"/>
+    </svg>
+  ),
   // Attributor — converging arcs on a fingerprint point.
   // Visualizes "many signals → one identity" — exactly what the agent
   // does when it classifies a NEXUS cluster as a named threat actor.

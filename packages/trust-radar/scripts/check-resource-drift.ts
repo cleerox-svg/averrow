@@ -101,6 +101,7 @@ const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
   geoip_refresh: "geoip-refresh",
   honeypot_generator: "honeypot-generator",
   lookalike_scanner: "lookalike-scanner",
+  news_watcher: "news-watcher",
   public_trust_check: "public-trust-check",
   qualified_report: "qualified-report",
   scan_report: "scan-report",

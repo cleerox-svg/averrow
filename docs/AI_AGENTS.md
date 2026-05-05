@@ -221,6 +221,29 @@ For unresolved clusters: stamps `attribution_attempted_at = now()` so the agent 
 
 ---
 
+### News Watcher (`news_watcher`)
+
+| Property | Value |
+|----------|-------|
+| **File** | `packages/trust-radar/src/agents/news-watcher.ts` |
+| **Trigger** | Scheduled — every 6 hours at `hour % 6 === 2` |
+| **Purpose** | Ingest threat-intel RSS feeds; extract actors + geopolitical context |
+
+News Watcher is Phase D of the Threat Actors rebuild. Polls a configured set of public threat-intel RSS / Atom feeds (CISA advisories, Microsoft Threat Intelligence blog, Mandiant / Google Cloud blog), dedups by article URL via the `news_articles` table, and asks Haiku to extract per-article structured intel: named threat actors, target countries (ISO-2), target sectors, severity, and whether the article describes geopolitical / state-sponsored activity.
+
+For each new article:
+
+1. **Insert** a `news_articles` row (idempotent on `article_url`) with the extraction status (`ok` / `no_actors` / `failed`) and the JSON output.
+2. **Upsert** each extracted actor in `threat_actors` (`source='news'`) — bumps `last_seen` on existing rows, creates new rows for first-seen names.
+3. **When `is_geopolitical` is true**, create or update a `geopolitical_campaigns` row keyed by a stable hash of the campaign label (or sorted actor names). Subsequent articles dedup-append to the row's `threat_actors`, `target_countries`, and `target_sectors` JSON arrays.
+
+Bounded: at most 30 new articles per run (`ARTICLES_PER_RUN`). Most cycles see ≤ 5 truly new articles thanks to URL dedup, so the cap rarely bites.
+
+**Inputs:** `news_articles` (read for dedup), three external RSS endpoints
+**Outputs:** `news_articles` rows, `threat_actors` upserts, `geopolitical_campaigns` upserts
+
+---
+
 ### Narrator
 
 | Property | Value |
