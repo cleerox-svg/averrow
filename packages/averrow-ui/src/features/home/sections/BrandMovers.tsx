@@ -48,7 +48,12 @@ function MoverList({ title, rows, accent, accentDim, formatDelta, emptyLabel }: 
                 onClick={() => navigate(`/brands/${row.id}`)}
                 aria-label={`${row.name} — ${formatDelta(row.delta_7d)} threats over 7 days`}
               >
-                <BrandAvatar name={row.name} color={accent} dimColor={accentDim} />
+                <BrandAvatar
+                  name={row.name}
+                  color={accent}
+                  dimColor={accentDim}
+                  faviconUrl={row.logo_url}
+                />
                 <div className="home-mover-row-text">
                   <div className="home-mover-row-name">{row.name}</div>
                   <div className="home-mover-row-domain">{row.canonical_domain}</div>

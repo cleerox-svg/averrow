@@ -398,6 +398,40 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 - Use read replicas (`getReadSession`) for all read-heavy list/stats handlers
 - Parallelize list + stats queries in the same handler via `Promise.all()`
 
+### Counter cache for COUNT(*) queries — use `cachedCount`, never raw SELECT
+Bare `SELECT COUNT(*) FROM threats` (and similar single-integer aggregates)
+must go through `lib/cached-count.ts` instead of hitting D1 directly.
+Each cache hit shaves a full-table scan off the threats table without
+consuming a D1 read.
+
+```typescript
+import { cachedCount } from '@/lib/cached-count';
+
+const total = await cachedCount(env, 'count.threats.total', 60,
+  () => env.DB.prepare('SELECT COUNT(*) AS n FROM threats')
+    .first<{ n: number }>().then(r => r?.n ?? 0));
+```
+
+Rules:
+- Key namespace: prefix with `count.` so the kill-switch convention is
+  uniform (`count.threats.*`, `count.alerts.*`, etc.).
+- TTL: 60-300s for fast-changing tables (threats, alerts), up to 3600s
+  for slow-changing references (brands, providers, feed_configs).
+- Pass `0` as TTL to bypass cache entirely — useful kill-switch without
+  a code change. The helper still calls `compute()` and emits a
+  `bypass` stat so we can audit the override after the fact.
+- Hit/miss rate is surfaced under `cached_count` in
+  `/api/internal/platform-diagnostics`. After deploy, hit_rate >70% is
+  the steady-state expectation; under that, TTLs are too short.
+- Direct `SELECT COUNT(*) FROM threats` is a code-review red flag.
+  Either swap to `cachedCount` or use a cube/pre-computed column when
+  the dimension exists (see "OLAP Cubes" and "Pre-computed columns"
+  above).
+- The legacy `getOrComputeMetric` helper in `lib/system-metrics.ts`
+  used a D1-backed cache (`system_metrics` table) — every cache lookup
+  spent a D1 read on the freshness check. New code should use
+  `cachedCount` instead; it stores in KV so cache lookups are free.
+
 ### Key tables:
 ```
 brands                    ← Brand registry (9,652+ brands)

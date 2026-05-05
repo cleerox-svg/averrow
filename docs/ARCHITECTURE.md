@@ -212,6 +212,40 @@ The Navigator agent (every 5 minutes) pre-warms KV caches by calling handler fun
 - **Phase B** (if CPU budget allows): Dashboard overview + top-brands, Agents list, Operations list + stats (5 endpoints)
 - **Phase C** (if CPU budget allows): Brands list + stats, Threat Actors list + stats, Breaches, ATO events, Email auth, Cloud incidents (8 endpoints)
 
+### Counter cache (`lib/cached-count.ts`)
+
+Bare `SELECT COUNT(*) FROM <table>` queries against the threats table
+were among the top D1 read offenders (~130M rows/24h across the top 5
+patterns). Phase 1 of the D1 spend-reduction track moves these counts
+into KV via `cachedCount`:
+
+```typescript
+import { cachedCount } from '../lib/cached-count';
+
+const total = await cachedCount(env, 'count.threats.total', 60,
+  () => env.DB.prepare('SELECT COUNT(*) AS n FROM threats')
+    .first<{ n: number }>().then(r => r?.n ?? 0));
+```
+
+Properties:
+- KV-backed — cache lookups don't count against the D1 budget.
+- TTL is per-call so callers pick a freshness budget appropriate to
+  the underlying drift rate (60-300s for hot counters; up to 3600s for
+  near-static references).
+- Falls through to `compute()` on any KV failure — never crashes,
+  never returns stale-or-wrong.
+- Setting `ttlSeconds = 0` is the kill-switch: bypasses cache without
+  a code change.
+- Hit/miss/bypass observed via a fixed-size KV ring; surfaced as
+  `cached_count.hit_rate` in `/api/internal/platform-diagnostics`.
+  Steady-state expectation is >70% hit rate once warm.
+
+This replaces the legacy `getOrComputeMetric` helper in
+`lib/system-metrics.ts` for COUNT-shaped reads. The system_metrics
+table remains as the underlying counter store for milestone tracking
+and other use cases that need persistent integer values, but it is no
+longer the cache layer for query results.
+
 ## SPA Frontend Serving
 
 The Worker serves the frontend SPA using Cloudflare Workers Static Assets:

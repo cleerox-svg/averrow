@@ -8,6 +8,7 @@
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { getBudgetDiagnostics, fetchD1TopQueries } from "../lib/d1-budget";
+import { getCachedCountStats } from "../lib/cached-count";
 import type { Env } from "../types";
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
@@ -661,6 +662,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       agentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries,
+      cachedCountStats,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -668,6 +670,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       agentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
       d1BudgetStateP, d1TopQueriesP,
+      getCachedCountStats(env),
     ]);
 
     // ── Build backlog trend map ─────────────────────────────────────
@@ -883,7 +886,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 6,
+          endpoint_version: 7,
         },
 
         geo_coverage: {
@@ -1010,6 +1013,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // which step dominates the FC duration (currently ~4 min
         // post-#948; target <60s).
         fc_tick_timings: await getFcTickTimings(env.DB),
+
+        // KV-backed counter cache hit/miss ratio over the recent ring
+        // window. Surfaces whether the Phase 1 cachedCount migration
+        // is actually reducing D1 spend (hit_rate >70% expected once
+        // the cache is warm). hit_rate is null until the ring has any
+        // observed hit/miss outcomes. See `lib/cached-count.ts`.
+        cached_count: cachedCountStats,
 
         // D1 row-read tracking against the 25B/month plan ceiling.
         // setup_required: true when CF_API_TOKEN / CF_ACCOUNT_ID aren't

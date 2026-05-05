@@ -12,7 +12,7 @@ import { estimateCost } from "../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { fuzzyMatchBrand } from "../lib/brandDetect";
-import { getOrComputeMetric } from "../lib/system-metrics";
+import { cachedCount } from "../lib/cached-count";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { BudgetManager } from "../lib/budgetManager";
 import {
@@ -347,15 +347,18 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
-  // Route per-query COUNTs through system_metrics so KV cache misses don't
-  // translate into ~10 full-table scans against 174K-row threats. 15-min TTL
-  // is fine — dashboard tolerates several-minute staleness on these counters.
-  const cachedCount = async (key: string, ttl: number, sql: string): Promise<{ n: number }> => {
-    const m = await getOrComputeMetric(env.DB, key, ttl, async () => {
+  // Route per-query COUNTs through the shared KV-backed cachedCount helper
+  // so every cache hit shaves a full-table scan off the threats table
+  // without spending a D1 read on the cache lookup itself. 15-min TTL is
+  // fine — dashboard tolerates several-minute staleness on these counters.
+  // Migrated from system_metrics-backed getOrComputeMetric (D1) to KV in
+  // the Phase 1 D1 spend-reduction sweep.
+  const adminCachedCount = async (key: string, ttl: number, sql: string): Promise<{ n: number }> => {
+    const n = await cachedCount(env, key, ttl, async () => {
       const r = await env.DB.prepare(sql).first<{ n: number }>();
       return r?.n ?? 0;
     });
-    return { n: m.value };
+    return { n };
   };
 
   const [users, threatsTotal, threatsActive, sessions, sentinelBacklog, analystBacklog, cartoBacklog, strategistBacklog, observerLastRun, aiAttrPending, trancoCount] = await Promise.all([
@@ -368,21 +371,21 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
        FROM users`,
     ).first<{ total: number; super_admins: number; admins: number; analysts: number; clients: number; active: number }>(),
-    cachedCount('admin.threats_total', 900, "SELECT COUNT(*) AS n FROM threats"),
-    cachedCount('admin.threats_active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
+    adminCachedCount('admin.threats_total', 900, "SELECT COUNT(*) AS n FROM threats"),
+    adminCachedCount('admin.threats_active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
     env.DB.prepare(
       "SELECT COUNT(*) AS active_sessions FROM sessions WHERE expires_at > datetime('now') AND revoked_at IS NULL",
     ).first<{ active_sessions: number }>(),
     // Agent backlogs — cached individually
-    cachedCount('admin.sentinel_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND created_at > datetime('now', '-1 hour')"),
-    cachedCount('admin.analyst_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND severity IS NULL"),
-    cachedCount('admin.cartographer_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND ip_address IS NOT NULL AND lat IS NULL"),
-    cachedCount('admin.strategist_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND campaign_id IS NULL AND threat_type IN ('phishing','typosquatting')"),
+    adminCachedCount('admin.sentinel_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND created_at > datetime('now', '-1 hour')"),
+    adminCachedCount('admin.analyst_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND severity IS NULL"),
+    adminCachedCount('admin.cartographer_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND ip_address IS NOT NULL AND lat IS NULL"),
+    adminCachedCount('admin.strategist_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND campaign_id IS NULL AND threat_type IN ('phishing','typosquatting')"),
     env.DB.prepare(
       "SELECT MAX(created_at) AS last_run FROM agent_outputs WHERE agent_id = 'observer' AND type != 'diagnostic'",
     ).first<{ last_run: string | null }>().catch(() => null),
-    cachedCount('admin.ai_attr_pending', 900, "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')").catch(() => null),
-    cachedCount('admin.brands_total', 3600, "SELECT COUNT(*) AS n FROM brands").catch(() => null),
+    adminCachedCount('admin.ai_attr_pending', 900, "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')").catch(() => null),
+    adminCachedCount('admin.brands_total', 3600, "SELECT COUNT(*) AS n FROM brands").catch(() => null),
   ]);
 
   const threats = { total: threatsTotal.n, active_threats: threatsActive.n };
