@@ -391,7 +391,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 314,
-      "last_modified": "2026-05-05T02:48:01.424Z"
+      "last_modified": "2026-05-05T02:51:23.620Z"
     },
     {
       "name": "nexus",

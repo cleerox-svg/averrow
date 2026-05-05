@@ -297,6 +297,138 @@ export function ThreatActorDetail() {
           )}
         </div>
       )}
+
+      {/* Recent Activity — unified attribution timeline.
+          Pulls from threat_attributions across all sources (OTX
+          pulses, NEXUS clusters, news mentions). Replaces the
+          static seed-data feel with real cross-source activity
+          per actor. */}
+      {actor.recent_attributions && actor.recent_attributions.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+            Recent Activity ({actor.recent_attributions.length})
+          </h2>
+          <ul className="space-y-2">
+            {actor.recent_attributions.map((att) => {
+              const sourceColor =
+                att.source === 'otx'    ? 'var(--blue)' :
+                att.source === 'nexus'  ? 'var(--amber)' :
+                att.source === 'news'   ? 'var(--green)' :
+                'var(--text-tertiary)';
+              const ago = relativeTime(att.observed_at);
+              return (
+                <li
+                  key={att.id}
+                  className="flex items-start gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
+                >
+                  <span
+                    className="mt-1 flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider"
+                    style={{
+                      color: sourceColor,
+                      borderColor: sourceColor,
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      background: `${sourceColor}10`,
+                    }}
+                  >
+                    {att.source}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12px] text-white/85 truncate">
+                      {att.source_pulse_name ?? att.actor_name_raw ?? `Threat ${att.threat_id.slice(0, 16)}…`}
+                    </div>
+                    <div className="text-[10px] font-mono text-white/40 mt-0.5">
+                      {ago} · confidence {att.confidence}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* News Mentions — articles from the news-watcher feed (Phase D)
+          that named this actor. Five most recent geopolitical-flagged
+          items first; click opens the source article in a new tab. */}
+      {actor.news_mentions && actor.news_mentions.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+            News Mentions ({actor.news_mentions.length})
+          </h2>
+          <ul className="space-y-2">
+            {actor.news_mentions.map((m) => (
+              <li key={m.id}>
+                <a
+                  href={m.article_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-amber/30 transition-all"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-1">
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-amber">
+                      {m.source_feed}
+                    </span>
+                    {m.is_geopolitical === 1 && (
+                      <span className="rounded bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-red-400">
+                        Geopolitical
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[12px] font-semibold text-white/90 line-clamp-2">
+                    {m.title}
+                  </div>
+                  {m.excerpt && (
+                    <div className="text-[10px] text-white/40 mt-1 line-clamp-2 font-mono">
+                      {m.excerpt}
+                    </div>
+                  )}
+                  <div className="text-[10px] font-mono text-white/30 mt-1.5">
+                    {relativeTime(m.published_at ?? m.ingested_at)}
+                  </div>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Honest empty-state — when we have no attribution data at all,
+          tell the operator what we're waiting for instead of leaving
+          a blank page. Reference actors (the seven IR APTs from
+          migration 0093) sit in this state until OTX, NEXUS, or
+          news-watcher writes their first attribution row. */}
+      {(!actor.recent_attributions || actor.recent_attributions.length === 0) &&
+       (!actor.news_mentions || actor.news_mentions.length === 0) &&
+       (!actor.infrastructure || actor.infrastructure.length === 0) && (
+        <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.015] p-6 text-center">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-2">
+            No observations yet
+          </div>
+          <p className="text-[12px] text-white/55 max-w-md mx-auto">
+            This actor is in the reference taxonomy but no OTX pulse,
+            NEXUS cluster, or news article has named them recently.
+            Activity will surface here automatically once any of the
+            attribution writers (OTX, NEXUS, news-watcher) sees them.
+          </p>
+        </div>
+      )}
     </div>
   );
+}
+
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return 'unknown';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return 'unknown';
+  const diffMs = Date.now() - t;
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
 }

@@ -33,6 +33,27 @@ interface ThreatActorStats {
   targeted_brands: number;
 }
 
+export interface RecentAttribution {
+  id: string;
+  threat_id: string;
+  source: 'otx' | 'nexus' | 'manual' | 'news';
+  source_pulse_name: string | null;
+  confidence: 'confirmed' | 'high' | 'medium' | 'low';
+  actor_name_raw: string | null;
+  observed_at: string;
+}
+
+export interface NewsMention {
+  id: string;
+  source_feed: string;
+  article_url: string;
+  title: string;
+  excerpt: string | null;
+  published_at: string | null;
+  ingested_at: string;
+  is_geopolitical: number;
+}
+
 interface ThreatActorDetail extends ThreatActor {
   infrastructure: Array<{
     id: string;
@@ -52,6 +73,8 @@ interface ThreatActorDetail extends ThreatActor {
     context: string | null;
   }>;
   linked_threat_count: number;
+  recent_attributions: RecentAttribution[];
+  news_mentions: NewsMention[];
 }
 
 export function useThreatActors(options?: { country?: string; status?: string; affiliation?: string }) {
