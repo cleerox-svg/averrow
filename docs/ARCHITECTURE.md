@@ -246,6 +246,31 @@ table remains as the underlying counter store for milestone tracking
 and other use cases that need persistent integer values, but it is no
 longer the cache layer for query results.
 
+### JSON value cache (`lib/cached-value.ts`)
+
+Sister helper to `cachedCount` for structured results — arrays of
+rows, multi-column aggregates, paginated handler responses. Same
+TTL/fallthrough/observability semantics, but `T` can be any JSON-
+serializable shape:
+
+```typescript
+import { cachedValue } from '../lib/cached-value';
+
+const lastOutputs = await cachedValue<Array<{ agent_id: string; ts: string }>>(
+  env, 'agents.last_output_per_agent', 60,
+  async () => {
+    const res = await env.DB.prepare(
+      `SELECT agent_id, MAX(created_at) AS ts FROM agent_outputs
+       WHERE created_at >= datetime('now', '-30 days') GROUP BY agent_id`
+    ).all<{ agent_id: string; ts: string }>();
+    return res.results;
+  });
+```
+
+Hit/miss/bypass observations feed the same `cached_count.hit_rate`
+ring in `/api/internal/platform-diagnostics` so a single number
+covers both helpers.
+
 ## SPA Frontend Serving
 
 The Worker serves the frontend SPA using Cloudflare Workers Static Assets:

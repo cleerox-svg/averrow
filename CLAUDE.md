@@ -432,6 +432,25 @@ Rules:
   spent a D1 read on the freshness check. New code should use
   `cachedCount` instead; it stores in KV so cache lookups are free.
 
+For structured results (arrays of rows, multi-column aggregates,
+nested objects), use `cachedValue<T>` from `lib/cached-value.ts` —
+same TTL/fallthrough/observability semantics as `cachedCount` but
+the cached value can be any JSON-serializable shape:
+
+```typescript
+import { cachedValue } from '@/lib/cached-value';
+
+const series = await cachedValue<Array<{ day: string; count: number }>>(
+  env, 'agents.daily_runs', 300,
+  async () => {
+    const r = await env.DB.prepare('...').all<{ day: string; count: number }>();
+    return r.results;
+  });
+```
+
+Hit/miss for both helpers feeds the same `cached_count.hit_rate` ring
+in `/api/internal/platform-diagnostics`.
+
 ### Key tables:
 ```
 brands                    ← Brand registry (9,652+ brands)

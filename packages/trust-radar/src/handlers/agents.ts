@@ -105,9 +105,19 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
        GROUP BY agent_id, hour`
     ).all<{ agent_id: string; hour: number; cnt: number }>(),
 
+    // Bound to the last 30 days so the index range scan stays cheap
+    // as agent_outputs grows. Operationally, an agent that hasn't
+    // produced any output in 30 days is either disabled or broken —
+    // showing a stale "last seen" timestamp from months ago doesn't
+    // help triage. Phase 3 of the D1 spend-reduction track:
+    // pre-bounded the query was reading ~143K rows/call (full table
+    // scan); with the time filter idx_agent_outputs_agent
+    // (agent_id, created_at DESC) becomes index-only over a bounded
+    // window.
     env.DB.prepare(
       `SELECT agent_id, MAX(created_at) as last_output_at
        FROM agent_outputs
+       WHERE created_at >= datetime('now', '-30 days')
        GROUP BY agent_id`
     ).all<{ agent_id: string; last_output_at: string }>(),
 
