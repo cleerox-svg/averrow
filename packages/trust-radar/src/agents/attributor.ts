@@ -101,20 +101,21 @@ export const attributorAgent: AgentModule = {
   parallelMax: 1,
   costGuard: "enforced",
   budget: { monthlyTokenCap: 50_000_000 },
+  // AGENT_STANDARD §10: declarations reflect the SQL extractable from
+  // THIS file. The actor + attribution writes happen via helpers in
+  // lib/otx-attribution.ts and are tracked by that file's own
+  // declaration scope, not duplicated here.
   reads: [
     { kind: "d1_table", name: "infrastructure_clusters" },
-    { kind: "d1_table", name: "threat_actors" },
     { kind: "d1_table", name: "threats" },
   ],
   writes: [
     { kind: "d1_table", name: "infrastructure_clusters" },
-    { kind: "d1_table", name: "threat_actors" },
-    { kind: "d1_table", name: "threat_attributions" },
   ],
   outputs: [{ type: "classification" }],
   status: "active",
   category: "intelligence",
-  pipelinePosition: 6,
+  pipelinePosition: 11,
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, runId } = ctx;

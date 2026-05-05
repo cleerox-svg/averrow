@@ -14,6 +14,7 @@ export type AgentId =
   | 'cartographer'
   | 'observer'
   | 'nexus'
+  | 'attributor'
   | 'sparrow'
   | 'strategist'
   | 'pathfinder'
@@ -100,6 +101,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#00D4FF',
     category: 'intelligence',
     pipelinePosition: 4,
+  },
+  attributor: {
+    id: 'attributor',
+    displayName: 'Attributor',
+    codename: null,
+    subtitle: 'Classifies NEXUS clusters by responsible threat actor — Haiku names the APT/cybercrime group',
+    color: '#9333ea',
+    category: 'intelligence',
+    pipelinePosition: 11,
   },
   analyst: {
     id: 'analyst',

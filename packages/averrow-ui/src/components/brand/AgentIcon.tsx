@@ -82,6 +82,20 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <circle cx="18" cy="20" r="2" fill="currentColor" opacity="0.3"/>
     </svg>
   ),
+  // Attributor — converging arcs on a fingerprint point.
+  // Visualizes "many signals → one identity" — exactly what the agent
+  // does when it classifies a NEXUS cluster as a named threat actor.
+  attributor: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      <path d="M 18 28 Q 6 22 6 12" stroke="currentColor" strokeWidth="1.3" opacity="0.85"/>
+      <path d="M 18 28 Q 11 22 11 14" stroke="currentColor" strokeWidth="1.2" opacity="0.6"/>
+      <path d="M 18 28 Q 16 22 16 16" stroke="currentColor" strokeWidth="1.1" opacity="0.45"/>
+      <path d="M 18 28 Q 25 22 25 14" stroke="currentColor" strokeWidth="1.2" opacity="0.6"/>
+      <path d="M 18 28 Q 30 22 30 12" stroke="currentColor" strokeWidth="1.3" opacity="0.85"/>
+      <circle cx="18" cy="28" r="2.5" fill="currentColor"/>
+      <circle cx="18" cy="28" r="4.5" stroke="currentColor" strokeWidth="0.8" opacity="0.4"/>
+    </svg>
+  ),
   flight_control: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
       <circle cx="18" cy="18" r="14" stroke="currentColor" strokeWidth="1" opacity="0.2"/>

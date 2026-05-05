@@ -200,6 +200,27 @@ Nexus correlates shared infrastructure (IPs, ASNs, certificates, registrars, nam
 
 ---
 
+### Attributor
+
+| Property | Value |
+|----------|-------|
+| **File** | `packages/trust-radar/src/agents/attributor.ts` |
+| **Trigger** | Scheduled — every 4 hours at `hour % 4 === 1` (one tick after Nexus) |
+| **Purpose** | Classifies Nexus infrastructure clusters by responsible threat actor |
+
+Attributor (codename `ATTRIBUTOR`) is Phase C of the Threat Actors rebuild. For each active `infrastructure_clusters` row that doesn't yet have an `actor_id`, it summarizes the cluster's distinguishing signals (ASNs, countries, attack types, top targeted brands, agent notes) and asks Haiku for the canonical APT / cybercrime group name — or `unknown` if the signals are too generic.
+
+For resolved clusters: upserts the actor in `threat_actors` (`source='nexus'`), caches the cluster→actor mapping on `infrastructure_clusters.actor_id`, and writes a `threat_attributions` row (`source='nexus'`) for every threat in the cluster. The unified attribution table means the Threat Actors page reads one shape regardless of source (OTX pulses, Nexus clusters, news/RSS — Phase D).
+
+For unresolved clusters: stamps `attribution_attempted_at = now()` so the agent doesn't re-pay the AI cost for at least 7 days (configurable via `RETRY_COOLDOWN_DAYS`).
+
+**Bounded:** at most 25 clusters per run (`CLUSTER_BATCH`), prioritizing by `threat_count DESC, last_seen DESC`. Worst-case cost: 150 Haiku calls/day at 6 runs.
+
+**Inputs:** `infrastructure_clusters` (where `actor_id IS NULL`), `threats`
+**Outputs:** `threat_actors` upserts, `threat_attributions` rows, `infrastructure_clusters.actor_id` writes
+
+---
+
 ### Narrator
 
 | Property | Value |
