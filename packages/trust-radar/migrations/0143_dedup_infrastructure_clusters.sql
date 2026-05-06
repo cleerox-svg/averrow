@@ -17,12 +17,18 @@
 --   2. Repointing threats.cluster_id to the canonical id.
 --   3. Deleting the non-canonical rows.
 --
--- The remaining UUID-id rows continue to coexist with the new
--- deterministic-id rows the agent inserts going forward; they're
--- still valid history. A future migration can rename them once the
--- deterministic format has been live long enough to verify.
+-- D1's migration runner executes statements via separate API calls,
+-- so CREATE TEMP TABLE doesn't persist across statements. Use a
+-- regular table instead, dropped at the end.
 
-CREATE TEMP TABLE cluster_dedup AS
+DROP TABLE IF EXISTS _cluster_dedup_0143;
+
+CREATE TABLE _cluster_dedup_0143 (
+  old_id       TEXT,
+  canonical_id TEXT
+);
+
+INSERT INTO _cluster_dedup_0143 (old_id, canonical_id)
 WITH ranked AS (
   SELECT
     id,
@@ -40,20 +46,19 @@ SELECT
   src.id AS old_id,
   dst.id AS canonical_id
 FROM ranked src
-JOIN ranked dst
-  ON dst.cluster_name = src.cluster_name AND dst.rn = 1
+JOIN ranked dst ON dst.cluster_name = src.cluster_name AND dst.rn = 1
 WHERE src.rn > 1;
 
 -- Repoint threats.cluster_id from non-canonical to canonical.
 UPDATE threats
 SET cluster_id = (
-  SELECT canonical_id FROM cluster_dedup
+  SELECT canonical_id FROM _cluster_dedup_0143
   WHERE old_id = threats.cluster_id
 )
-WHERE cluster_id IN (SELECT old_id FROM cluster_dedup);
+WHERE cluster_id IN (SELECT old_id FROM _cluster_dedup_0143);
 
--- Drop the duplicate rows.
+-- Drop the duplicate cluster rows.
 DELETE FROM infrastructure_clusters
-WHERE id IN (SELECT old_id FROM cluster_dedup);
+WHERE id IN (SELECT old_id FROM _cluster_dedup_0143);
 
-DROP TABLE cluster_dedup;
+DROP TABLE _cluster_dedup_0143;
