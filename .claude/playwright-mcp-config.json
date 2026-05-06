@@ -13,7 +13,8 @@
       ]
     },
     "contextOptions": {
-      "ignoreHTTPSErrors": true
+      "ignoreHTTPSErrors": true,
+      "storageState": ".claude/playwright-storage-state.json"
     }
   }
 }

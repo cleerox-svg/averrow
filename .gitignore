@@ -32,6 +32,7 @@ htmlcov/
 .dev.vars
 .claude/settings.local.json
 .claude/plans/
+.claude/playwright-storage-state.json
 .playwright-mcp/
 
 # Editor
