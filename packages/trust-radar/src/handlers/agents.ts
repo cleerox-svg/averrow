@@ -59,10 +59,14 @@ const NAVIGATOR_DEF = {
 
 // ─── List all agent definitions + their latest run ──────────────
 export const handleListAgents = handler(async (_request, env, ctx) => {
-  // KV cache: 8 parallel queries — cache for 5 minutes. v2 prefix
-  // invalidates pre-recent_ticks payloads stored under v1 so the UI
-  // doesn't get a JSON shape missing the new field.
-  const cacheKey = 'agents_list:v2';
+  // KV cache: 8 parallel queries — cache for 5 minutes. v3 prefix
+  // invalidates two prior shapes:
+  //   v1 — pre-recent_ticks (no new field at all)
+  //   v2 — recent_ticks present but emitted with `trigger` GROUP BY
+  //         on a column that doesn't exist on agent_runs, so the
+  //         handler 500'd and the response was never cached. The
+  //         bump is belt-and-suspenders.
+  const cacheKey = 'agents_list:v3';
   const cached = await env.CACHE.get(cacheKey);
   if (cached) {
     recordD1Reads(env, "agents_list", newTally());
@@ -108,42 +112,39 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     ).all<{ agent_id: string; hour: number; cnt: number }>(),
 
     // Recent ticks for the run-status-blocks 2D timeline. We bucket by
-    // hour and group by trigger so multiple cron firings inside the
-    // same hour (Navigator runs 12×/h) collapse to one tile while
-    // Flight-Control scale-ups (cartographer/analyst, see
-    // flightControl.scaleAgents) show up as additional stacked tiles.
-    //
-    // worst_rank lets the UI render a single representative status
-    // per (bucket, trigger): running > failed > partial > success >
-    // anything else. This keeps a partial cron failure visible even
-    // if the next minute's cron run succeeded.
+    // hour and group by status so a (bucket, status) tile is emitted
+    // for every distinct outcome inside the hour. The earlier shape
+    // tried to GROUP BY a `trigger` column — that column doesn't
+    // exist on agent_runs (origin/scaler info is held only in
+    // ctx.input, not persisted), so the query threw 'no such column'
+    // and the entire handler 500'd. Without trigger info we recover
+    // the parallelism signal a different way: COUNT(*) per
+    // (agent_id, bucket, status) tells the frontend how many parallel
+    // instances landed in that hour, capped to 3 stacked blocks at
+    // render time. For non-scaling agents (Navigator at 12×/h) the
+    // count is large but the visual is still intuitive.
     env.DB.prepare(
       `SELECT agent_id,
               strftime('%Y-%m-%d %H:00:00', started_at) AS bucket,
-              trigger,
+              status,
               COUNT(*) AS n,
-              MAX(CASE status
-                    WHEN 'running' THEN 4
-                    WHEN 'failed'  THEN 3
-                    WHEN 'partial' THEN 2
-                    WHEN 'success' THEN 1
-                    ELSE 0 END) AS worst_rank,
               AVG(duration_ms) AS avg_duration_ms
          FROM agent_runs
         WHERE started_at >= datetime('now', '-5 hours')
-        GROUP BY agent_id, bucket, trigger
+        GROUP BY agent_id, bucket, status
         ORDER BY agent_id, bucket DESC,
-                 CASE trigger
-                   WHEN 'cron'           THEN 1
-                   WHEN 'flight_control' THEN 2
-                   ELSE                       3
+                 CASE status
+                   WHEN 'running' THEN 1
+                   WHEN 'failed'  THEN 2
+                   WHEN 'partial' THEN 3
+                   WHEN 'success' THEN 4
+                   ELSE                5
                  END`
     ).all<{
       agent_id: string;
       bucket: string;
-      trigger: string;
+      status: string;
       n: number;
-      worst_rank: number;
       avg_duration_ms: number | null;
     }>(),
 
@@ -212,21 +213,31 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   //     bucket: string;            // 'YYYY-MM-DD HH:00:00' UTC
   //     instances: Array<{
   //       status: 'success' | 'failed' | 'partial' | 'running' | 'idle';
-  //       trigger: string;         // 'cron' | 'flight_control' | 'event' | …
-  //       count: number;           // collapsed runs in this (bucket,trigger)
+  //       trigger: string;         // unused — agent_runs has no
+  //                                // trigger column. Kept in the
+  //                                // shape for forward compat with
+  //                                // a future migration; populated
+  //                                // as 'unknown' for now.
+  //       count: number;           // runs collapsed at this (bucket,status)
   //       avg_duration_ms: number | null;
   //     }>;
   //   }>
   //
-  // The frontend renders one column per tick, one stacked block per
-  // instance (capped at 3). Cartographer/analyst FC scale-ups land
-  // here as extra `flight_control`-triggered instances on top of the
-  // baseline `cron` row. Everything else stays single-block as today.
-  const RANK_TO_STATUS = ['idle', 'success', 'partial', 'failed', 'running'] as const;
+  // Rendering: one column per tick, one block per instance (capped
+  // at 3). Cartographer/analyst FC scale-ups show up as multiple
+  // 'success' rows in the same bucket because each parallel
+  // instance writes its own agent_runs row — the count of those
+  // rows IS the parallelism signal even without a trigger column.
+  const STATUS_TO_NORMALIZED: Record<string, 'success' | 'failed' | 'partial' | 'running' | 'idle'> = {
+    success: 'success',
+    failed:  'failed',
+    partial: 'partial',
+    running: 'running',
+  };
   const TICKS_PER_AGENT = 5;
   const MAX_INSTANCES_PER_TICK = 3;
   type TickInstance = {
-    status: typeof RANK_TO_STATUS[number];
+    status: 'success' | 'failed' | 'partial' | 'running' | 'idle';
     trigger: string;
     count: number;
     avg_duration_ms: number | null;
@@ -246,8 +257,8 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     }
     if (arr.length >= MAX_INSTANCES_PER_TICK) continue;
     arr.push({
-      status: RANK_TO_STATUS[row.worst_rank] ?? 'idle',
-      trigger: row.trigger,
+      status: STATUS_TO_NORMALIZED[row.status] ?? 'idle',
+      trigger: 'unknown',
       count: row.n,
       avg_duration_ms: row.avg_duration_ms,
     });
