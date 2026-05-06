@@ -119,9 +119,15 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
 
       {latestBriefing?.summary && (
         <p className="text-white/60 text-sm leading-relaxed mb-4">
-          {latestBriefing.summary.length > 280
-            ? latestBriefing.summary.slice(0, 280) + '...'
-            : latestBriefing.summary}
+          {(() => {
+            // Briefings arrive as markdown — strip bold markers so the
+            // panel preview doesn't show literal `**` asterisks. Full
+            // briefing modal still renders through ReportPanel's parser.
+            const plain = latestBriefing.summary
+              .replace(/\*\*(.+?)\*\*/g, '$1')
+              .replace(/\*(.+?)\*/g, '$1');
+            return plain.length > 280 ? plain.slice(0, 280) + '...' : plain;
+          })()}
         </p>
       )}
 
