@@ -56,6 +56,7 @@ const MORE_SECTIONS = [
     items: [
       { icon: '🤖', label: 'Agents',    path: '/agents' },
       { icon: '📡', label: 'Feeds',     path: '/feeds' },
+      { icon: '📈', label: 'Metrics',   path: '/admin/metrics' },
       { icon: '📊', label: 'Dashboard', path: '/admin' },
       { icon: '👥', label: 'Team',      path: '/admin/users' },
       { icon: '📋', label: 'Audit Log', path: '/admin/audit' },
