@@ -80,3 +80,53 @@ export function useD1Budget() {
     refetchInterval: 60_000,
   });
 }
+
+// ─── AI Spend Trend ──────────────────────────────────────────────
+
+export interface AiSpendWindowTotals {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface AiSpendByAgent {
+  agent_id: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface AiSpendDaily {
+  day: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface AiSpendPayload {
+  windows: {
+    '24h': AiSpendWindowTotals;
+    '7d':  AiSpendWindowTotals;
+    '30d': AiSpendWindowTotals;
+  };
+  by_agent_30d: AiSpendByAgent[];
+  daily_30d:    AiSpendDaily[];
+  generated_at: string;
+}
+
+export function useAiSpend() {
+  return useQuery({
+    queryKey: ['metrics-ai-spend'],
+    queryFn: async () => {
+      const res = await api.get<AiSpendPayload>('/api/admin/metrics/ai-spend');
+      return res.data ?? null;
+    },
+    placeholderData: keepPreviousData,
+    // Backend caches at 5 min — AI spend trend is stable, no
+    // need to poll faster.
+    refetchInterval: 300_000,
+  });
+}

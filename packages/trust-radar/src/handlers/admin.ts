@@ -2673,3 +2673,116 @@ export async function handleD1Budget(request: Request, env: Env): Promise<Respon
   await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 60 });
   return json(body, 200, origin);
 }
+
+// ─── AI Spend Trend (Metrics page section 3) ────────────────────
+//
+// GET /api/admin/metrics/ai-spend
+//
+// Powers the AI Spend section on /admin/metrics. Aggregates
+// budget_ledger over three rolling windows (24h / 7d / 30d) plus
+// a 30-day daily series for the bar chart and the per-agent
+// breakdown for the selected window.
+//
+// Cached at 5 min in KV — budget_ledger rolls forward minute by
+// minute but the operator cares about trend, not real-time. The
+// existing `useApiUsage` hook (Agents top-bar) keeps polling its
+// own endpoint at 60s for the live "tokens today" header tile.
+//
+// Returns:
+//   windows:      { '24h' | '7d' | '30d' → totals }
+//   by_agent_30d: top 20 agents by cost in the last 30d
+//   daily_30d:    30 daily buckets, oldest → newest
+export async function handleMetricsAiSpend(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+
+  const cacheKey = "metrics_ai_spend:v1";
+  const cached = await env.CACHE.get(cacheKey);
+  if (cached) return json(JSON.parse(cached), 200, origin);
+
+  // Three windowed totals + per-agent breakdown (30d) + daily
+  // series (30d). All run in parallel against the same indexed
+  // table; each bounded by created_at.
+  const [w24h, w7d, w30d, byAgent30d, daily30d] = await Promise.all([
+    env.DB.prepare(`
+      SELECT COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-1 day')
+    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
+
+    env.DB.prepare(`
+      SELECT COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-7 days')
+    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
+
+    env.DB.prepare(`
+      SELECT COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-30 days')
+    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
+
+    env.DB.prepare(`
+      SELECT agent_id,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-30 days')
+       GROUP BY agent_id
+       ORDER BY cost_usd DESC
+       LIMIT 20
+    `).all<{
+      agent_id: string;
+      calls: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+    }>(),
+
+    env.DB.prepare(`
+      SELECT date(created_at) AS day,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-30 days')
+       GROUP BY day
+       ORDER BY day ASC
+    `).all<{
+      day: string;
+      calls: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+    }>(),
+  ]);
+
+  const data = {
+    windows: {
+      "24h": w24h ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+      "7d":  w7d  ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+      "30d": w30d ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+    },
+    by_agent_30d: byAgent30d.results,
+    daily_30d:    daily30d.results,
+    generated_at: new Date().toISOString(),
+  };
+
+  const body = { success: true, data };
+  await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 300 });
+  return json(body, 200, origin);
+}
