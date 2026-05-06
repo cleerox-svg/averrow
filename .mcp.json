@@ -6,6 +6,22 @@
       "headers": {
         "Authorization": "Bearer ${AVERROW_MCP_TOKEN}"
       }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest", "--isolated", "--headless"]
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["-y", "shadcn@latest", "mcp"]
+    },
+    "figma-dev-mode": {
+      "type": "http",
+      "url": "http://127.0.0.1:3845/mcp"
     }
   }
 }
