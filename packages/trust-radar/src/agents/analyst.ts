@@ -10,6 +10,7 @@ import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from ".
 import { inferBrand } from "../lib/haiku";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { correlateBrandThreats } from "../brand-threat-correlator";
+import { resolveMasterBrandName } from "../lib/threatScoring";
 import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, incrementBrandThreatCount } from "../db/brands";
@@ -252,8 +253,15 @@ export const analystAgent: AgentModule = {
       if (result.tokens_used) totalTokens += result.tokens_used;
       if (result.model) model = result.model;
 
-      // Find or create the brand
-      const matchedBrand = result.data.brand_name;
+      // Find or create the brand. Run the raw Haiku name through the
+      // master-brand alias resolver so sub-brands like "Amazonses"
+      // (Amazon SES) or "Cloudfront" (AWS CloudFront) fold into the
+      // correct master brand instead of creating a new vanity row.
+      // See audit C10 (2026-05-06).
+      const matchedBrand = resolveMasterBrandName(
+        result.data.brand_name,
+        threat.malicious_domain,
+      );
       let brandId = await env.DB.prepare(
         "SELECT id FROM brands WHERE LOWER(name) = LOWER(?)"
       ).bind(matchedBrand).first<{ id: string }>();

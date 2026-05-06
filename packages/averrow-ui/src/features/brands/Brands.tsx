@@ -620,7 +620,7 @@ function BrandCard({
             textTransform: 'uppercase',
             marginTop:   2,
           }}>
-            threats
+            threats · all-time
           </div>
         </div>
       </div>

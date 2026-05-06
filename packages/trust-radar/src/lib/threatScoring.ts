@@ -138,6 +138,54 @@ export function isKnownBrandDomain(domain: string): string | null {
 }
 
 /**
+ * Master-brand alias resolver.
+ *
+ * Haiku occasionally returns sub-brand or service-name strings when
+ * tagging threats — e.g. "Amazonses" for an Amazon SES phishing URL,
+ * "Cloudfront" for an `*.cloudfront.net` lookalike, "Outlook" for an
+ * O365 spoof. These aren't brands the customer wants in their inbox;
+ * they should fold into the master brand (Amazon, Microsoft, etc.).
+ *
+ * Resolution order:
+ *   1. If the raw name matches a master-brand key directly → use it.
+ *   2. If the raw name matches the leading label of any known
+ *      brand-owned domain (e.g. "amazonses" → "amazonses.com" in
+ *      amazon's list) → use the master brand.
+ *   3. If a domain was supplied, try `isKnownBrandDomain(domain)`.
+ *   4. Otherwise return the original name unchanged.
+ *
+ * Returns a Title-Case display name (e.g. "Amazon").
+ */
+export function resolveMasterBrandName(
+  rawName: string,
+  domain?: string | null,
+): string {
+  if (!rawName || !rawName.trim()) return rawName;
+  const stem = rawName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  if (KNOWN_BRAND_DOMAINS[stem]) {
+    return titleCase(stem);
+  }
+
+  for (const [master, domains] of Object.entries(KNOWN_BRAND_DOMAINS)) {
+    if (master === stem) continue;
+    for (const owned of domains) {
+      // "amazonses" matches the leading label of "amazonses.com"
+      const head = owned.split(".")[0]?.toLowerCase();
+      if (head && head === stem) return titleCase(master);
+    }
+  }
+
+  if (domain) {
+    const matched = isKnownBrandDomain(domain);
+    if (matched) return titleCase(matched);
+  }
+
+  return rawName;
+}
+
+/**
  * Calculate suspicion score for a domain suspected of typosquatting.
  * Higher = more suspicious. Only flag if >= 30.
  */

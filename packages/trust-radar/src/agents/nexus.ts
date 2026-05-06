@@ -81,7 +81,13 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
       (cluster.threats > 100 ? 20 : cluster.threats > 50 ? 10 : 5)
     );
 
-    const clusterId = crypto.randomUUID();
+    // Deterministic id derived from the cluster's natural key
+    // (asn + threat_type, the GROUP BY of the SELECT above). Earlier
+    // versions used `crypto.randomUUID()` which produced a fresh row
+    // on every NEXUS run — audit C3 (2026-05-06) found 6 near-identical
+    // "CA AS13335 malware distribution cluster" rows surfacing in the
+    // Campaigns view as a result.
+    const clusterId = `cluster_asn_${slugifyKey(cluster.asn)}_${slugifyKey(cluster.threat_type)}`;
     const clusterName = generateClusterName(cluster);
 
     try {
@@ -91,7 +97,16 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
           campaign_ids, hosting_provider_ids, threat_count, confidence_score,
           first_detected, last_seen, status, agent_notes
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO NOTHING
+        ON CONFLICT(id) DO UPDATE SET
+          cluster_name = excluded.cluster_name,
+          countries = excluded.countries,
+          brand_ids = excluded.brand_ids,
+          hosting_provider_ids = excluded.hosting_provider_ids,
+          threat_count = excluded.threat_count,
+          confidence_score = excluded.confidence_score,
+          last_seen = excluded.last_seen,
+          status = excluded.status,
+          agent_notes = excluded.agent_notes
       `).bind(
         clusterId,
         clusterName,
@@ -274,7 +289,9 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     }>();
 
     for (const cluster of devClusters.results) {
-      const clusterId = crypto.randomUUID();
+      // Deterministic id keyed on (store, dev_key) so re-runs update
+      // the same row. See audit C3 + the asn cluster site above.
+      const clusterId = `cluster_dev_${slugifyKey(cluster.store)}_${slugifyKey(cluster.dev_key)}`;
       const devLabel = cluster.developer_name ?? cluster.dev_key;
       const clusterName = `${cluster.store} dev "${devLabel}" (${cluster.brands} brands targeted)`;
 
@@ -291,7 +308,13 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
             campaign_ids, hosting_provider_ids, threat_count, confidence_score,
             first_detected, last_seen, status, agent_notes
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
-          ON CONFLICT(id) DO NOTHING
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
         `).bind(
           clusterId,
           clusterName,
@@ -380,7 +403,9 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     }>();
 
     for (const cluster of actorClusters.results) {
-      const clusterId = crypto.randomUUID();
+      // Deterministic id keyed on (source, actor_key). See asn cluster
+      // comment above — audit C3.
+      const clusterId = `cluster_actor_${slugifyKey(cluster.source)}_${slugifyKey(cluster.actor_key)}`;
       const actorLabel = cluster.source_author
         ?? cluster.source_channel
         ?? cluster.actor_key;
@@ -398,7 +423,13 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
             campaign_ids, hosting_provider_ids, threat_count, confidence_score,
             first_detected, last_seen, status, agent_notes
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
-          ON CONFLICT(id) DO NOTHING
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
         `).bind(
           clusterId,
           clusterName,
@@ -492,6 +523,19 @@ function generateClusterName(cluster: { countries?: string | null; threat_type?:
   const asnRaw = cluster.asn ?? '';
   const asn = asnRaw.replace(/^AS\d+\s*/, '').trim() || asnRaw;
   return `${country} ${asn} ${type} cluster`.trim();
+}
+
+// Sanitize a natural-key part for use inside a deterministic cluster
+// id. Keeps lowercase alphanumerics + dashes; collapses everything
+// else to underscores; bounds length to keep id strings reasonable.
+function slugifyKey(value: string | null | undefined): string {
+  if (!value) return 'unknown';
+  return value
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'unknown';
 }
 
 // ─── Agent Module Definition ──────────────────────────────────────

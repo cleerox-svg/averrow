@@ -38,9 +38,12 @@ export function StatGrid() {
   useBrands({ view: 'top', limit: 1 });
 
   const agents       = Array.isArray(agentData) ? agentData : [];
-  const agentsOnline = agents.filter(
-    a => a.status === 'healthy' || a.status === 'running' || a.status === 'active',
-  ).length;
+  // Match the Agents page's "operational" definition (status !== 'error')
+  // so the Home tile and /v2/agents agree on the same number. The
+  // earlier "actively running" filter (healthy/running/active only)
+  // produced a smaller count that disagreed with the Agents page header
+  // — audit C4 (2026-05-06).
+  const agentsOnline = agents.filter(a => a.status !== 'error').length;
 
   const criticalCount = alertStats?.critical ?? 0;
   const feedActive    = feedStats?.active ?? 0;

@@ -19,6 +19,17 @@ import {
 
 /* ─── Helpers ─── */
 
+// Single source of truth for "this feed needs attention" — three
+// surfaces (NEEDS ATTENTION tile, AttentionBanner, FeedHealthStrip
+// warning dots) all use this so they always agree on the count.
+//
+// A feed only counts as needing attention once it's actually been
+// polled — a freshly enabled feed with 0 pulls is still warming up,
+// not broken.
+function needsAttention(f: FeedOverview): boolean {
+  return Boolean(f.enabled) && f.total_pulls > 10 && f.total_ingested === 0;
+}
+
 function humanizeCron(cron: string): string {
   const map: Record<string, string> = {
     '*/5 * * * *':   'Every 5 minutes',
@@ -315,20 +326,20 @@ function HeaderStats({ feeds }: { feeds: FeedOverview[] }) {
   const active = feeds.filter(f => f.enabled).length;
   const disabled = feeds.filter(f => !f.enabled).length;
   const totalIngested = feeds.reduce((s, f) => s + f.total_ingested, 0);
-  const needsAttention = feeds.filter(f => f.enabled && f.total_ingested === 0).length;
+  const attentionCount = feeds.filter(needsAttention).length;
 
   return (
     <StatGrid cols={4}>
       <StatCard label="Active Feeds"    value={active}        accentColor="var(--green)" />
       <StatCard label="Total Ingested"  value={totalIngested} accentColor="var(--amber)" />
-      <StatCard label="Needs Attention" value={needsAttention} accentColor={needsAttention > 0 ? 'var(--sev-medium)' : undefined} />
+      <StatCard label="Needs Attention" value={attentionCount} accentColor={attentionCount > 0 ? 'var(--sev-medium)' : undefined} />
       <StatCard label="Disabled"        value={disabled} />
     </StatGrid>
   );
 }
 
 function AttentionBanner({ feeds }: { feeds: FeedOverview[] }) {
-  const attentionFeeds = feeds.filter(f => f.enabled && f.total_pulls > 10 && f.total_ingested === 0);
+  const attentionFeeds = feeds.filter(needsAttention);
   if (attentionFeeds.length === 0) return null;
 
   const names = attentionFeeds.map(f => {
@@ -354,8 +365,12 @@ function AttentionBanner({ feeds }: { feeds: FeedOverview[] }) {
 }
 
 function FeedHealthStrip({ feeds }: { feeds: FeedOverview[] }) {
+  // "warning" matches the NEEDS ATTENTION tile + banner exactly (tried
+  // and failed). Feeds enabled-but-not-yet-pulled fall into "warmup"
+  // and render as neutral dots — they shouldn't trip the warning count.
   const healthy = feeds.filter(f => f.enabled && f.total_ingested > 0);
-  const warning = feeds.filter(f => f.enabled && f.total_ingested === 0);
+  const warning = feeds.filter(needsAttention);
+  const warmup = feeds.filter(f => f.enabled && f.total_pulls <= 10 && f.total_ingested === 0);
   const disabled = feeds.filter(f => !f.enabled);
 
   return (
@@ -367,7 +382,10 @@ function FeedHealthStrip({ feeds }: { feeds: FeedOverview[] }) {
             <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-green-400" title={f.display_name} />
           ))}
           {warning.map(f => (
-            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" title={f.display_name} />
+            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" title={`${f.display_name} (needs attention)`} />
+          ))}
+          {warmup.map(f => (
+            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-blue-400/40" title={`${f.display_name} (warming up)`} />
           ))}
           {disabled.map(f => (
             <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full border border-white/20 bg-transparent" title={f.display_name} />
@@ -376,6 +394,9 @@ function FeedHealthStrip({ feeds }: { feeds: FeedOverview[] }) {
         <div className="flex items-center gap-3 ml-auto text-[10px] font-mono text-white/40">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> {healthy.length} healthy</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> {warning.length} warning</span>
+          {warmup.length > 0 && (
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400/40 inline-block" /> {warmup.length} warming up</span>
+          )}
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full border border-white/20 inline-block" /> {disabled.length} disabled</span>
         </div>
       </div>
