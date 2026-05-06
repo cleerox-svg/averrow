@@ -15,6 +15,7 @@ import {
   PipelineAutomationSection,
 } from './metrics/PipelineAutomation';
 import { D1BudgetSection } from './metrics/D1Budget';
+import { AiSpendSection } from './metrics/AiSpend';
 
 export function Metrics() {
   const { data: agents = [] } = useAgents();
@@ -32,11 +33,8 @@ export function Metrics() {
       {/* 2. D1 Budget */}
       <D1BudgetSection />
 
-      {/* 3. AI Spend Trend — placeholder, follow-up PR. */}
-      <SectionPlaceholder
-        title="AI Spend"
-        subtitle="Tokens + cost over 24h / 7d / 30d. Per-agent breakdown — Cartographer, Sentinel, Analyst, Alert AI Judge are the usual heavy hitters."
-      />
+      {/* 3. AI Spend Trend */}
+      <AiSpendSection />
 
       {/* 4. Geo Coverage Trend — placeholder, follow-up PR. */}
       <SectionPlaceholder
