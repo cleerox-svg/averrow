@@ -44,10 +44,23 @@ describe('StatCard', () => {
     expect(trendEl).toHaveClass('text-white/55');
   });
 
-  it('applies accent color border', () => {
-    const { container } = render(<StatCard label="Test" value={0} accentColor="#C83C3C" />);
+  it('applies accent color border for non-zero values', () => {
+    // value > 0 → accentColor passes through to the border-left.
+    const { container } = render(<StatCard label="Test" value={42} accentColor="#C83C3C" />);
     const card = container.querySelector('[data-testid="stat-card"]')!;
     expect(card).toHaveStyle({ borderLeftColor: '#C83C3C' });
+    expect(card).toHaveClass('border-l-[3px]');
+  });
+
+  it('overrides accent to neutral slate when value is 0 (zero-state rule)', () => {
+    // Audit M2: "0 ALERTS" / "0 ERRORS" should render calm, not in
+    // alert red. resolveStatAccent collapses to M.NEUTRAL (#5a6a85)
+    // regardless of caller-provided accentColor.
+    const { container } = render(<StatCard label="Test" value={0} accentColor="#C83C3C" />);
+    const card = container.querySelector('[data-testid="stat-card"]')!;
+    expect(card).toHaveStyle({ borderLeftColor: '#5a6a85' });
+    // Border-left treatment still applies (the accent prop was given);
+    // only the color resolves to neutral.
     expect(card).toHaveClass('border-l-[3px]');
   });
 
