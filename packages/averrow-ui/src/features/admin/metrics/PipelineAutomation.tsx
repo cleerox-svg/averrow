@@ -23,6 +23,22 @@ import {
 } from 'recharts';
 import { Card } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
+import type { VerdictTag } from '@/components/ui/Badge';
+
+/**
+ * Map a verdict label string (e.g. "CLEAR", "DRAINING") from the
+ * pipeline-status API to the Badge.verdict tag (Bundle C session 1).
+ * Returns undefined for unknown labels — caller falls back to the
+ * legacy status+label rendering so unknown shapes still render.
+ */
+function labelToVerdict(label?: string): VerdictTag | undefined {
+  const v = label?.toLowerCase();
+  if (
+    v === 'clear' || v === 'draining' || v === 'steady' ||
+    v === 'growing' || v === 'stale' || v === 'updated' || v === 'stable'
+  ) return v;
+  return undefined;
+}
 import { useGeoipRefresh } from '@/hooks/useGeoipRefresh';
 import { usePipelineStatus, usePipelineDetail } from '@/hooks/useAgents';
 import type { Agent, PipelineEntry } from '@/hooks/useAgents';
@@ -247,7 +263,12 @@ function PipelineDetailSheet({
                 >
                   {detail.count != null ? detail.count.toLocaleString() : '—'}
                 </span>
-                <Badge status={detail.verdict.tone} label={detail.verdict.label} size="xs" />
+                {(() => {
+                  const v = labelToVerdict(detail.verdict.label);
+                  return v
+                    ? <Badge verdict={v} size="xs" />
+                    : <Badge status={detail.verdict.tone} label={detail.verdict.label} size="xs" />;
+                })()}
                 {detail.drained_last_hour != null && detail.drained_last_hour !== 0 && (
                   <span
                     className="font-mono text-[10px]"
@@ -440,14 +461,19 @@ function PipelineDetailSheet({
 const PIPELINE_LEGEND_KEY = 'seen-pipeline-legend-v1';
 function PipelineLegendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   if (!open) return null;
-  const rows: Array<{ label: string; tone: 'success' | 'failed' | 'inactive' | 'pending'; meaning: string }> = [
-    { label: 'CLEAR',    tone: 'success',  meaning: 'No items in this backlog right now.' },
-    { label: 'DRAINING', tone: 'success',  meaning: 'Backlog shrank since the last measurement — pipeline is keeping up.' },
-    { label: 'STEADY',   tone: 'inactive', meaning: 'Backlog is flat — inflow ≈ throughput.' },
-    { label: 'GROWING',  tone: 'failed',   meaning: 'Backlog grew since the last measurement — pipeline is falling behind.' },
-    { label: 'STALE',    tone: 'pending',  meaning: 'No measurement in the last cycle. Watch for the next data point.' },
-    { label: 'UPDATED',  tone: 'success',  meaning: 'Reference dataset (e.g. GeoIP) was refreshed since last check.' },
-    { label: 'STABLE',   tone: 'inactive', meaning: 'Reference dataset is loaded and unchanged — healthy steady state.' },
+  // Use the dedicated Badge.verdict tags from the design system
+  // (Bundle C session 1) — gives each pipeline state its own
+  // semantic color rather than reusing BadgeStatus tones with
+  // overridden labels. R8 migration.
+  type VerdictKey = 'clear' | 'draining' | 'steady' | 'growing' | 'stale' | 'updated' | 'stable';
+  const rows: Array<{ verdict: VerdictKey; meaning: string }> = [
+    { verdict: 'clear',    meaning: 'No items in this backlog right now.' },
+    { verdict: 'draining', meaning: 'Backlog shrank since the last measurement — pipeline is keeping up.' },
+    { verdict: 'steady',   meaning: 'Backlog is flat — inflow ≈ throughput.' },
+    { verdict: 'growing',  meaning: 'Backlog grew since the last measurement — pipeline is falling behind.' },
+    { verdict: 'stale',    meaning: 'No measurement in the last cycle. Watch for the next data point.' },
+    { verdict: 'updated',  meaning: 'Reference dataset (e.g. GeoIP) was refreshed since last check.' },
+    { verdict: 'stable',   meaning: 'Reference dataset is loaded and unchanged — healthy steady state.' },
   ];
   return (
     <div
@@ -494,8 +520,8 @@ function PipelineLegendModal({ open, onClose }: { open: boolean; onClose: () => 
           </p>
           <div className="space-y-1.5 mb-4">
             {rows.map((r) => (
-              <div key={r.label} className="flex items-center gap-3">
-                <Badge status={r.tone} label={r.label} size="xs" />
+              <div key={r.verdict} className="flex items-center gap-3">
+                <Badge verdict={r.verdict} size="xs" />
                 <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
                   {r.meaning}
                 </span>
@@ -629,7 +655,12 @@ export function PipelineAutomationSection({ agents }: { agents: Agent[] }) {
                     {p.count.toLocaleString()}
                   </span>
                   {p.verdict ? (
-                    <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />
+                    (() => {
+                      const v = labelToVerdict(p.verdict.label);
+                      return v
+                        ? <Badge verdict={v} size="xs" />
+                        : <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />;
+                    })()
                   ) : p.trend !== null && p.trend !== 0 ? (
                     <span
                       className="font-mono text-[10px] font-bold"
