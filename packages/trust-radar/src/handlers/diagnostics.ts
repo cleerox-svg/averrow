@@ -70,7 +70,7 @@ async function getFcTickTimings(db: D1Database): Promise<{
   }
 }
 
-async function fetchD1Metrics(env: Env, databaseId: string): Promise<D1Metrics> {
+export async function fetchD1Metrics(env: Env, databaseId: string): Promise<D1Metrics> {
   const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
   const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
 
@@ -218,7 +218,7 @@ interface D1EndpointAttribution {
   avg_rows_per_request: number;
 }
 
-async function fetchD1EndpointAttribution(env: Env): Promise<{
+export async function fetchD1EndpointAttribution(env: Env): Promise<{
   by_endpoint: D1EndpointAttribution[];
   setup_required: boolean;
   setup_instructions?: string;

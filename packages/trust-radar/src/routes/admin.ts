@@ -14,6 +14,7 @@ import {
   handleCubeBackfill,
   handlePipelineStatus,
   handlePipelineDetail,
+  handleD1Budget,
 } from "../handlers/admin";
 import { handleListSessionEvents, handleForceLogout } from "../handlers/sessions";
 import { handleCreateInvite, handleListInvites, handleRevokeInvite } from "../handlers/invites";
@@ -78,6 +79,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       return handlePipelineDetail(request, env, request.params["id"] ?? "");
     },
   );
+  // Metrics page — D1 Budget section.
+  router.get("/api/admin/metrics/d1-budget", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleD1Budget(request, env);
+  });
   router.get("/api/admin/health", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

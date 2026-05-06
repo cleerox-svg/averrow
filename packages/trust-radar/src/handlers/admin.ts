@@ -2607,3 +2607,69 @@ export async function handleCubeBackfill(request: Request, env: Env): Promise<Re
     },
   });
 }
+
+// ─── D1 Budget (Metrics page section 2) ─────────────────────────
+//
+// GET /api/admin/metrics/d1-budget
+//
+// Powers the D1 Budget section on the new /admin/metrics page.
+// Reuses the helpers that already serve /api/internal/platform-
+// diagnostics — no new GraphQL / AE queries, just a focused
+// payload tailored to the section's UI.
+//
+// Returns:
+//   - budget_state         — daily-budget % + threshold state
+//                            (ok / warn / skip / unknown)
+//   - metrics_24h          — rows_read_24h, rows_written_24h, query
+//                            counts, monthly projection vs CF's
+//                            25B-rows/month plan ceiling
+//   - top_queries          — top 10 queries by rows_read in the
+//                            last 24h (query_sample, rows_read,
+//                            query_count, avg_rows_per_query)
+//   - attribution          — top 10 endpoints by rows_read with
+//                            request counts
+//
+// Cached at the edge for 60s. The CF-side aggregations move
+// every minute or so; tighter than that wastes GraphQL calls.
+export async function handleD1Budget(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+
+  const cacheKey = "metrics_d1_budget:v1";
+  const cached = await env.CACHE.get(cacheKey);
+  if (cached) {
+    return json(JSON.parse(cached), 200, origin);
+  }
+
+  // Reuse the diagnostics helpers (already exported from
+  // handlers/diagnostics.ts) so the section stays in sync with
+  // platform-diagnostics output. No duplication.
+  const { fetchD1Metrics, fetchD1EndpointAttribution } = await import("./diagnostics");
+  const { getBudgetDiagnostics, fetchD1TopQueries } = await import("../lib/d1-budget");
+
+  const D1_DATABASE_ID = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
+
+  const [budget, metrics, attribution, topQueries] = await Promise.all([
+    getBudgetDiagnostics(env),
+    fetchD1Metrics(env, D1_DATABASE_ID),
+    fetchD1EndpointAttribution(env),
+    fetchD1TopQueries(env),
+  ]);
+
+  const data = {
+    budget_state: budget,
+    metrics_24h: metrics,
+    top_queries: topQueries.queries.slice(0, 10),
+    top_queries_error: topQueries.error ?? null,
+    attribution: {
+      by_endpoint: attribution.by_endpoint.slice(0, 10),
+      setup_required: attribution.setup_required,
+      setup_instructions: attribution.setup_instructions ?? null,
+      error: attribution.error ?? null,
+    },
+    generated_at: new Date().toISOString(),
+  };
+
+  const body = { success: true, data };
+  await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 60 });
+  return json(body, 200, origin);
+}

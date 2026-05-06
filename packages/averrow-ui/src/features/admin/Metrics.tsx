@@ -14,6 +14,7 @@ import { Card } from '@/design-system/components';
 import {
   PipelineAutomationSection,
 } from './metrics/PipelineAutomation';
+import { D1BudgetSection } from './metrics/D1Budget';
 
 export function Metrics() {
   const { data: agents = [] } = useAgents();
@@ -28,11 +29,8 @@ export function Metrics() {
       {/* 1. Pipeline Automation — moved from Agents-Monitor. */}
       <PipelineAutomationSection agents={agents} />
 
-      {/* 2. D1 Budget — placeholder, follow-up PR. */}
-      <SectionPlaceholder
-        title="D1 Budget"
-        subtitle="Daily row-read consumption vs Cloudflare's 25B-rows/month plan ceiling. Shows current %, top D1-hot endpoints, and 24h spend curve."
-      />
+      {/* 2. D1 Budget */}
+      <D1BudgetSection />
 
       {/* 3. AI Spend Trend — placeholder, follow-up PR. */}
       <SectionPlaceholder
