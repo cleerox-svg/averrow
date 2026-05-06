@@ -38,6 +38,11 @@ interface EnricherJobResult {
   enriched: number;
   durationMs: number;
   error: string | null;
+  /** How many inner iterations the job ran (1 for single-shot jobs;
+   *  >=1 for looped jobs that drained until empty or wall-clock cap).
+   *  Surfaced in agent_outputs so the operator can see whether the
+   *  recovery loop actually fired during a tick. */
+  iterations: number;
 }
 
 async function runEnricherJob(
@@ -71,6 +76,7 @@ async function runEnricherJob(
         enriched: 0,
         durationMs,
         error: json.error ?? 'unknown',
+        iterations: 1,
       };
     }
 
@@ -82,7 +88,7 @@ async function runEnricherJob(
       json.data?.resolved ??
       json.data?.classified ??
       0;
-    return { job, ok: true, processed, enriched, durationMs, error: null };
+    return { job, ok: true, processed, enriched, durationMs, error: null, iterations: 1 };
   } catch (err) {
     const durationMs = Date.now() - start;
     return {
@@ -92,8 +98,68 @@ async function runEnricherJob(
       enriched: 0,
       durationMs,
       error: err instanceof Error ? err.message : String(err),
+      iterations: 1,
     };
   }
+}
+
+/**
+ * Runs `runEnricherJob` in a loop within a wall-clock budget so a
+ * deep backlog can drain in a single tick instead of waiting for
+ * the next cron firing. Exit conditions, in order:
+ *
+ *   1. Wall-clock budget exhausted     (caps tick duration)
+ *   2. Handler returned ok=false       (preserve error, stop trying)
+ *   3. Handler reported processed=0    (nothing left to do, OR a
+ *                                       paused gate / empty queue)
+ *
+ * Used by `domain_geo` because the backlog is non-AI and the
+ * single-shot 250-batch was draining at 250/hour vs ~1k+/hour
+ * inflow — the backlog grew by attrition. Looping with a 12-min
+ * budget yields ~24 batches per tick (~6,000 domains/hour),
+ * comfortably ahead of inflow even during catch-up. The other
+ * enricher steps (brand_logo_hq, brand_sector_rdap) stay single-
+ * shot — brand_sector_rdap makes Haiku calls and a loop would
+ * inflate AI cost; brand_logo_hq is rate-limited externally
+ * (Clearbit + ipinfo) so looping doesn't help.
+ */
+async function runEnricherJobLooped(
+  env: Env,
+  job: EnricherJob,
+  handler: (req: Request, env: Env) => Promise<Response>,
+  path: string,
+  walltimeMs: number,
+): Promise<EnricherJobResult> {
+  const start = Date.now();
+  let totalProcessed = 0;
+  let totalEnriched = 0;
+  let lastErr: string | null = null;
+  let iterations = 0;
+
+  while (Date.now() - start < walltimeMs) {
+    const r = await runEnricherJob(env, job, handler, path);
+    iterations++;
+    totalProcessed += r.processed;
+    totalEnriched += r.enriched;
+    if (!r.ok) {
+      lastErr = r.error;
+      break;
+    }
+    // processed=0 means the handler couldn't make progress this
+    // call — either the queue is empty or a gate (paused, budget)
+    // is blocking. Either way, more iterations won't help.
+    if (r.processed === 0) break;
+  }
+
+  return {
+    job,
+    ok: lastErr === null,
+    processed: totalProcessed,
+    enriched: totalEnriched,
+    durationMs: Date.now() - start,
+    error: lastErr,
+    iterations,
+  };
 }
 
 // ─── Agent module ───────────────────────────────────────────────
@@ -140,15 +206,24 @@ export const enricherAgent: AgentModule = {
     const { env } = ctx;
     // Order matters:
     //   1. domain_geo first — biggest backlog, cheapest per-row work.
+    //      Looped with a 12-min walltime cap so a deep backlog drains
+    //      within the tick instead of waiting an hour per 250-batch.
+    //      Diagnostic 2026-05-06 showed 24K drainable, exit rate 250/h
+    //      vs ~1k+/h inflow — backlog was growing. Loop yields
+    //      ~24 batches/tick (~6k domains/h), well ahead of inflow.
     //   2. brand_logo_hq next — Clearbit HEAD + DNS + ipinfo lookups.
     //   3. brand_sector_rdap last — most expensive (Haiku + RDAP);
     //      if we run out of subrequests this is the cheapest job to skip.
     //
     // Each job is fully isolated — a failure in one never blocks the
     // next, matching the legacy runEnricher() behaviour.
+    const DOMAIN_GEO_WALLTIME_MS = 12 * 60_000;
     const jobs: EnricherJobResult[] = [];
     jobs.push(
-      await runEnricherJob(env, 'domain_geo', handleBackfillDomainGeo, '/api/admin/backfill-domain-geo'),
+      await runEnricherJobLooped(
+        env, 'domain_geo', handleBackfillDomainGeo, '/api/admin/backfill-domain-geo',
+        DOMAIN_GEO_WALLTIME_MS,
+      ),
     );
     jobs.push(
       await runEnricherJob(env, 'brand_logo_hq', handleBackfillBrandEnrichment, '/api/admin/backfill-brand-enrichment'),
@@ -170,18 +245,20 @@ export const enricherAgent: AgentModule = {
           type: 'diagnostic',
           summary: `enricher.${j.job} failed: ${j.error ?? 'unknown'}`,
           severity: 'high',
-          details: { job: j.job, error: j.error, durationMs: j.durationMs },
+          details: { job: j.job, error: j.error, durationMs: j.durationMs, iterations: j.iterations },
         });
       } else if (j.processed > 0) {
+        const itPart = j.iterations > 1 ? ` × ${j.iterations} iter` : '';
         agentOutputs.push({
           type: 'insight',
-          summary: `enricher.${j.job} processed=${j.processed} enriched=${j.enriched} (${j.durationMs}ms)`,
+          summary: `enricher.${j.job} processed=${j.processed} enriched=${j.enriched}${itPart} (${j.durationMs}ms)`,
           severity: 'info',
           details: {
             job: j.job,
             processed: j.processed,
             enriched: j.enriched,
             durationMs: j.durationMs,
+            iterations: j.iterations,
           },
         });
       }
