@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useAgents, useAgentDetail, useAgentHealth, useAgentOutputsByName, useApiUsage, useDashboardStats, usePipelineStatus } from '@/hooks/useAgents';
@@ -805,8 +805,111 @@ function GeoipRefreshAction() {
   );
 }
 
+// ─── Pipeline legend (one-shot onboarding modal) ────────────────────
+//
+// Explains the card encoding to a first-time operator:
+//   - what the big number is
+//   - what the verdict pill colors mean
+//   - that you can tap a card for details (when γ ships)
+//
+// Auto-shows the first time an authenticated user lands on this view,
+// then stays dismissible behind the (i) header icon. Stored in
+// localStorage so the same operator doesn't see it twice across
+// devices unless they explicitly clear storage.
+const PIPELINE_LEGEND_KEY = 'seen-pipeline-legend-v1';
+function PipelineLegendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  const rows: Array<{ label: string; tone: 'success' | 'failed' | 'inactive' | 'pending'; meaning: string }> = [
+    { label: 'CLEAR',    tone: 'success',  meaning: 'No items in this backlog right now.' },
+    { label: 'DRAINING', tone: 'success',  meaning: 'Backlog shrank since the last measurement — pipeline is keeping up.' },
+    { label: 'STEADY',   tone: 'inactive', meaning: 'Backlog is flat — inflow ≈ throughput.' },
+    { label: 'GROWING',  tone: 'failed',   meaning: 'Backlog grew since the last measurement — pipeline is falling behind.' },
+    { label: 'STALE',    tone: 'pending',  meaning: 'No measurement in the last cycle. Watch for the next data point.' },
+    { label: 'UPDATED',  tone: 'success',  meaning: 'Reference dataset (e.g. GeoIP) was refreshed since last check.' },
+    { label: 'STABLE',   tone: 'inactive', meaning: 'Reference dataset is loaded and unchanged — healthy steady state.' },
+  ];
+  return (
+    <div
+      role="dialog"
+      aria-label="Pipeline Automation legend"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl max-w-md w-full"
+        style={{
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-base)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.7)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5">
+          <div className="flex items-start justify-between mb-3">
+            <span
+              className="font-mono text-[10px] font-bold uppercase tracking-[0.22em]"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              Pipeline Automation · Legend
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="font-mono text-[11px] px-2 py-1 rounded hover:bg-white/[0.06]"
+              style={{ color: 'var(--text-tertiary)' }}
+              aria-label="Close legend"
+            >
+              ✕
+            </button>
+          </div>
+          <p
+            className="font-mono text-[11px] leading-relaxed mb-4"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Each card is one enrichment pipeline. The big number is the
+            current backlog (or row count for reference datasets). The
+            verdict pill tells you health at a glance:
+          </p>
+          <div className="space-y-1.5 mb-4">
+            {rows.map((r) => (
+              <div key={r.label} className="flex items-center gap-3">
+                <Badge status={r.tone} label={r.label} size="xs" />
+                <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  {r.meaning}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p
+            className="font-mono text-[10px] leading-relaxed"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            The colored top border on each card mirrors the verdict tone
+            so you can scan the grid for trouble spots. Tap a card for
+            owning agent + last-run details.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PipelineStrip({ agents }: { agents: Agent[] }) {
   const { data: pipelines } = usePipelineStatus(agents);
+  const [legendOpen, setLegendOpen] = useState(false);
+
+  // Auto-open legend the very first time. We don't show it on every
+  // mount — that's annoying — just once per device per `localStorage`
+  // marker. Crash-safe in case the user has localStorage disabled.
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(PIPELINE_LEGEND_KEY)) {
+        setLegendOpen(true);
+        localStorage.setItem(PIPELINE_LEGEND_KEY, '1');
+      }
+    } catch { /* private mode / disabled storage — silently skip */ }
+  }, []);
 
   const items = Array.isArray(pipelines) ? pipelines : [];
 
@@ -821,7 +924,23 @@ function PipelineStrip({ agents }: { agents: Agent[] }) {
 
   return (
     <Card style={{ padding: '16px' }}>
-      <div className="section-label font-mono font-bold mb-3">Pipeline Automation</div>
+      <PipelineLegendModal open={legendOpen} onClose={() => setLegendOpen(false)} />
+      <div className="flex items-center gap-2 mb-3">
+        <span className="section-label font-mono font-bold">Pipeline Automation</span>
+        <button
+          type="button"
+          onClick={() => setLegendOpen(true)}
+          className="font-mono text-[10px] w-4 h-4 rounded-full inline-flex items-center justify-center transition-colors hover:bg-white/[0.08]"
+          style={{
+            color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-base)',
+          }}
+          aria-label="What do these cards mean?"
+          title="What do these cards mean?"
+        >
+          i
+        </button>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {items.map((p: PipelineEntry) => {
           const agentData = agents.find(a => a.name === p.agent);
@@ -848,8 +967,8 @@ function PipelineStrip({ agents }: { agents: Agent[] }) {
             >
               <div className="p-3">
                 {/* Header: label + agent badge */}
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-mono text-[10px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                     {p.label}
                   </span>
                   <Badge
@@ -860,7 +979,23 @@ function PipelineStrip({ agents }: { agents: Agent[] }) {
                   />
                 </div>
 
-                {/* Count + trend */}
+                {/* Plain-English subtitle — what does this pipeline DO?
+                    Hidden when the (older v2-cached) payload doesn't
+                    carry one, so we don't render an empty line during
+                    the cache-bump window. */}
+                {p.description ? (
+                  <div
+                    className="font-mono text-[9px] leading-snug mb-2 line-clamp-2"
+                    style={{ color: 'var(--text-tertiary)' }}
+                    title={p.description}
+                  >
+                    {p.description}
+                  </div>
+                ) : null}
+
+                {/* Count + verdict pill. Verdict replaces the cryptic
+                    `↓ 2,424` trend text — the absolute delta still
+                    appears as muted supporting detail underneath. */}
                 <div className="flex items-baseline gap-2 mb-1.5">
                   <span
                     className="font-display text-lg font-bold"
@@ -868,20 +1003,28 @@ function PipelineStrip({ agents }: { agents: Agent[] }) {
                   >
                     {p.count.toLocaleString()}
                   </span>
-                  {p.trend !== null && p.trend !== 0 && (
+                  {p.verdict ? (
+                    <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />
+                  ) : p.trend !== null && p.trend !== 0 ? (
+                    // Fallback during cache-bump window only.
                     <span
                       className="font-mono text-[10px] font-bold"
                       style={{ color: trendColor(p.trend_direction) }}
                     >
                       {trendArrow(p.trend_direction)} {Math.abs(p.trend).toLocaleString()}
                     </span>
-                  )}
-                  {p.trend === 0 && (
-                    <span className="font-mono text-[9px]" style={{ color: 'var(--sev-medium)' }}>
-                      → steady
-                    </span>
-                  )}
+                  ) : null}
                 </div>
+
+                {/* Supporting delta (signed change since last measurement). */}
+                {p.trend !== null && p.trend !== 0 ? (
+                  <div
+                    className="font-mono text-[9px] mb-1"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {trendArrow(p.trend_direction)} {Math.abs(p.trend).toLocaleString()} since last cycle
+                  </div>
+                ) : null}
 
                 {/* Schedule + last run */}
                 <div className="font-mono text-[8px] space-y-0.5" style={{ color: 'var(--text-muted)' }}>

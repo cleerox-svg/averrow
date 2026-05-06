@@ -426,18 +426,35 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
 // (DNS resolvers, third-party threat-intel APIs, etc.). Surfaced
 // in the Pipeline Automation card so operators can see the off-
 // platform dependencies for each pipeline.
+//
+// `description` is a one-line plain-English subtitle rendered under
+// the pipeline label on the Agents-Monitor card. It answers "what
+// does this pipeline DO?" so an operator who hasn't read the agent
+// docs can still triage. Keep these tight (≤80 chars).
 type PipelineMeta = {
   label: string;
+  description: string;
   agent: string;
   schedule: string;
   endpoints?: Array<{ name: string; url: string }>;
 };
 
 const PIPELINE_META: Record<string, PipelineMeta> = {
-  cartographer:  { label: 'Geo Enrichment',     agent: 'cartographer', schedule: 'hourly' },
-  analyst:       { label: 'Brand Matching',      agent: 'analyst',     schedule: 'hourly' },
-  domain_geo:    {
+  cartographer: {
+    label: 'Geo Enrichment',
+    description: 'IPs awaiting country / lat-lng / ASN resolution.',
+    agent: 'cartographer',
+    schedule: 'hourly',
+  },
+  analyst: {
+    label: 'Brand Matching',
+    description: 'Threats awaiting brand attribution via Haiku scoring.',
+    agent: 'analyst',
+    schedule: 'hourly',
+  },
+  domain_geo: {
     label: 'DNS Resolution',
+    description: 'Domains awaiting A-record resolution to source IP.',
     agent: 'navigator',
     schedule: '5 min',
     endpoints: [
@@ -446,21 +463,104 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
       { name: 'Quad9 DNS',          url: 'https://dns.quad9.net:5053' },
     ],
   },
-  brand_enrich:  { label: 'Brand Enrichment',    agent: 'enricher',    schedule: 'hourly' },
-  surbl:         { label: 'SURBL',               agent: 'surbl',       schedule: 'hourly' },
-  virustotal:    { label: 'VirusTotal',          agent: 'virustotal',  schedule: 'hourly' },
-  gsb:           { label: 'Safe Browsing',       agent: 'gsb',         schedule: 'hourly' },
-  dbl:           { label: 'Spamhaus DBL',        agent: 'dbl',         schedule: 'hourly' },
-  abuseipdb:     { label: 'AbuseIPDB',           agent: 'abuseipdb',   schedule: 'hourly' },
-  pdns:          { label: 'Passive DNS',         agent: 'pdns',        schedule: 'hourly' },
-  greynoise:     { label: 'GreyNoise',           agent: 'greynoise',   schedule: 'hourly' },
-  seclookup:     { label: 'SecLookup',           agent: 'seclookup',   schedule: 'hourly' },
+  brand_enrich: {
+    label: 'Brand Enrichment',
+    description: 'Brands awaiting favicon / HQ geo / exposure-score backfill.',
+    agent: 'enricher',
+    schedule: 'hourly',
+  },
+  surbl: {
+    label: 'SURBL',
+    description: 'SURBL spam-URL blocklist lookup queue.',
+    agent: 'surbl',
+    schedule: 'hourly',
+  },
+  virustotal: {
+    label: 'VirusTotal',
+    description: 'Domains awaiting VirusTotal verdict (4 req/min on free tier).',
+    agent: 'virustotal',
+    schedule: 'hourly',
+  },
+  gsb: {
+    label: 'Safe Browsing',
+    description: 'Google Safe Browsing lookups for malicious URLs.',
+    agent: 'gsb',
+    schedule: 'hourly',
+  },
+  dbl: {
+    label: 'Spamhaus DBL',
+    description: 'Spamhaus Domain Block List reputation lookups.',
+    agent: 'dbl',
+    schedule: 'hourly',
+  },
+  abuseipdb: {
+    label: 'AbuseIPDB',
+    description: 'Malicious IPs awaiting AbuseIPDB reputation (1k req/day cap).',
+    agent: 'abuseipdb',
+    schedule: 'hourly',
+  },
+  pdns: {
+    label: 'Passive DNS',
+    description: 'Historical DNS-records lookup queue.',
+    agent: 'pdns',
+    schedule: 'hourly',
+  },
+  greynoise: {
+    label: 'GreyNoise',
+    description: 'Internet-noise classification (filters scanners / honeypot traffic).',
+    agent: 'greynoise',
+    schedule: 'hourly',
+  },
+  seclookup: {
+    label: 'SecLookup',
+    description: 'Domain reputation enrichment queue.',
+    agent: 'seclookup',
+    schedule: 'hourly',
+  },
 };
+
+/**
+ * Verdict pill displayed on each Pipeline Automation card. Replaces
+ * the cryptic `↓ 2,424` trend text with a one-word health label.
+ *
+ * The semantics differ for reference datasets (geoip — more rows is
+ * good, "up" → UPDATED) vs backlogs (everything else — fewer rows
+ * is good, "down" → DRAINING). Computed server-side so the UI just
+ * renders what's there and we keep the encoding rule in one place.
+ */
+type VerdictTone = 'success' | 'warning' | 'failed' | 'pending' | 'inactive';
+type Verdict = { label: string; tone: VerdictTone };
+
+function computeBacklogVerdict(
+  count: number,
+  trendDirection: 'up' | 'down' | 'flat' | 'unknown',
+): Verdict {
+  if (count === 0) return { label: 'CLEAR', tone: 'success' };
+  switch (trendDirection) {
+    case 'down':    return { label: 'DRAINING', tone: 'success' };
+    case 'up':      return { label: 'GROWING',  tone: 'failed'  };
+    case 'flat':    return { label: 'STEADY',   tone: 'inactive' };
+    case 'unknown': return { label: 'STALE',    tone: 'pending' };
+  }
+}
+
+function computeReferenceDatasetVerdict(
+  count: number,
+  configured: boolean,
+  rowsWritten: number,
+): Verdict {
+  if (!configured)  return { label: 'SETUP',   tone: 'pending'  };
+  if (count === 0)  return { label: 'EMPTY',   tone: 'failed'   };
+  if (rowsWritten > 0) return { label: 'UPDATED', tone: 'success' };
+  return { label: 'STABLE', tone: 'inactive' };
+}
 
 export async function handlePipelineStatus(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "pipeline_status_v2";
+  // v3 prefix invalidates pre-verdict / pre-description payloads so
+  // the UI doesn't render the new pill / subtitle slots empty.
+  const cacheKey = "pipeline_status_v3";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -505,16 +605,20 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
     const prevCount = previous?.count ?? null;
     const trend = prevCount !== null ? count - prevCount : null;
 
+    const trendDirection: 'up' | 'down' | 'flat' | 'unknown' =
+      trend === null ? 'unknown' : trend < 0 ? 'down' : trend > 0 ? 'up' : 'flat';
     return {
       id: name,
       label: meta.label,
+      description: meta.description,
       agent: meta.agent,
       schedule: meta.schedule,
       endpoints: meta.endpoints ?? null,
       count,
       prev_count: prevCount,
       trend,                               // negative = draining, positive = growing, null = no data
-      trend_direction: trend === null ? 'unknown' : trend < 0 ? 'down' : trend > 0 ? 'up' : 'flat',
+      trend_direction: trendDirection,
+      verdict: computeBacklogVerdict(count, trendDirection),
       last_measured_at: latest?.recorded_at ?? null,
       agent_last_run_at: agentRun?.last_run_at ?? null,
       agent_last_status: agentRun?.status ?? null,
@@ -541,6 +645,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
     pipelines.push({
       id: 'geoip',
       label: 'GeoIP Database',
+      description: 'MaxMind GeoLite2 IP→geo range table. Refreshed weekly.',
       agent: 'geoip_refresh',
       schedule: 'monthly',
       endpoints: [
@@ -558,6 +663,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
         : rowCount === 0
           ? 'flat'
           : (rowsWritten > 0 ? 'up' : 'flat'),
+      verdict: computeReferenceDatasetVerdict(rowCount, geoipStatus.configured, rowsWritten),
       last_measured_at: geoipStatus.last_refresh_at,
       agent_last_run_at: geoipAgentRun?.last_run_at ?? null,
       agent_last_status: geoipStatus.last_refresh_status ?? geoipAgentRun?.status ?? null,
@@ -570,6 +676,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
     pipelines.push({
       id: 'geoip',
       label: 'GeoIP Database',
+      description: 'MaxMind GeoLite2 IP→geo range table. Refreshed weekly.',
       agent: 'geoip_refresh',
       schedule: 'monthly',
       endpoints: [{ name: 'MaxMind GeoLite2', url: 'https://download.maxmind.com' }],
@@ -577,6 +684,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
       prev_count: null,
       trend: null,
       trend_direction: 'unknown',
+      verdict: { label: 'SETUP', tone: 'pending' },
       last_measured_at: null,
       agent_last_run_at: null,
       agent_last_status: 'unconfigured',

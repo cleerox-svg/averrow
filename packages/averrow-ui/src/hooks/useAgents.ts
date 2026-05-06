@@ -111,9 +111,24 @@ export interface PipelineStatus {
   schedule: string;
 }
 
+export interface PipelineVerdict {
+  /** Short uppercase label rendered as a pill, e.g. 'DRAINING',
+   *  'GROWING', 'STEADY', 'STALE', 'CLEAR', 'UPDATED', 'STABLE',
+   *  'EMPTY', 'SETUP'. Computed server-side so the encoding rule
+   *  (backlog vs reference dataset) lives in one place. */
+  label: string;
+  /** Maps to Badge `status` so the pill picks up the existing
+   *  design-system tones — green / amber / red / muted. */
+  tone: 'success' | 'warning' | 'failed' | 'pending' | 'inactive';
+}
+
 export interface PipelineEntry {
   id: string;
   label: string;
+  /** One-line plain-English subtitle ("what does this pipeline do?")
+   *  surfaced under the label on the Agents-Monitor card. Optional —
+   *  older v2 cache payloads don't include it. */
+  description?: string;
   agent: string;
   schedule: string;
   /** External HTTP endpoints this pipeline calls (DNS resolvers,
@@ -124,6 +139,10 @@ export interface PipelineEntry {
   prev_count: number | null;
   trend: number | null;
   trend_direction: 'up' | 'down' | 'flat' | 'unknown';
+  /** One-word health verdict that replaces the cryptic trend-arrow
+   *  text on the card. Computed server-side. Optional during the
+   *  cache-bump window (older payloads stored under v2). */
+  verdict?: PipelineVerdict;
   last_measured_at: string | null;
   agent_last_run_at: string | null;
   agent_last_status: string | null;
