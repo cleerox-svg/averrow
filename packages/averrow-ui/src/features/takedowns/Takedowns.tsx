@@ -13,6 +13,7 @@ import {
   PageHeader,
   Badge,
   Button,
+  PriorityBar,
 } from '@/design-system/components';
 import type { BadgeStatus, Severity } from '@/design-system/components';
 import { ReportPanel } from '@/components/ui/ReportPanel';
@@ -239,29 +240,27 @@ function TakedownCard({
           </p>
         )}
 
-        {/* Priority bar + meta */}
+        {/* Priority bar + meta — uses the shared PriorityBar primitive
+            (Bundle C session 1). Preserves the original "high above 70,
+            amber otherwise" two-color rule via explicit `color`
+            override so this row's threshold stays consistent across
+            takedowns; auto-derived 4-color (green/amber/orange/red)
+            isn't quite right for takedowns where low-priority items
+            still warrant attention. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>
             <div style={{
-              fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
+              fontSize: 8, color: 'var(--text-muted)',
               letterSpacing: '0.12em', marginBottom: 4,
             }}>
               PRIORITY {priority}/100
             </div>
-            <div style={{
-              height: 4, borderRadius: 99,
-              background: 'rgba(255,255,255,0.06)',
-              overflow: 'hidden',
-            }}>
-              <div style={{
-                height: '100%', borderRadius: 99, width: `${priority}%`,
-                background: isHigh
-                  ? 'linear-gradient(90deg, var(--red-dim), var(--red))'
-                  : 'linear-gradient(90deg, var(--amber-dim), var(--amber))',
-                boxShadow: `0 0 8px ${isHigh ? 'var(--red-glow)' : 'var(--amber-glow)'}`,
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
+            <PriorityBar
+              value={priority}
+              max={100}
+              size="sm"
+              color={isHigh ? 'red' : 'amber'}
+            />
           </div>
           <div style={{
             fontSize: 9, fontFamily: 'var(--font-mono)',
