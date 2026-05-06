@@ -28,6 +28,7 @@ import {
 } from "../lib/platform-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { parseCronIntervalMs } from "../lib/feedRunner";
+import { cachedCount } from "../lib/cached-count";
 import { getOrComputeMetric } from "../lib/system-metrics";
 
 // TTLs for backlog counters. "Monitoring" backlogs (the broad _checked
@@ -475,11 +476,19 @@ export const flightControlAgent: AgentModule = {
     // activity-log line; the super_admin notification fires only on
     // the genuine stuck-pile metric.
     try {
-      const stuckRow = await db.prepare(
-        `SELECT COUNT(*) AS n FROM threats
-          WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL`
-      ).first<{ n: number }>();
-      const stuckCount = stuckRow?.n ?? 0;
+      // FC ticks every hour via the orchestrator and was full-
+      // scanning threats every tick. Wrap in cachedCount with a 5-
+      // min TTL — short enough that the stuck-pile threshold check
+      // stays meaningful, long enough that consecutive ticks
+      // within 5 min hit cache. ~24 ticks/day × 230K rows/query =
+      // ~5.5M rows/day eliminated.
+      const stuckCount = await cachedCount(env, 'count.threats.enriched_no_geo', 300, async () => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS n FROM threats
+            WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL`
+        ).first<{ n: number }>();
+        return row?.n ?? 0;
+      });
       const STUCK_THRESHOLD = 100;
       if (stuckCount >= STUCK_THRESHOLD) {
         await emitPlatformNotification(env, 'platform_enrichment_stuck_pile',

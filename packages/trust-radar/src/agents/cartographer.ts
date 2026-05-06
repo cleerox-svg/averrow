@@ -24,6 +24,7 @@ import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
+import { cachedCount } from "../lib/cached-count";
 // Alert-type registry — single source of truth for alert_type column
 // values. Importing the key here means any future rename of the
 // 'geopolitical_threat' string changes in one place; the CHECK
@@ -544,11 +545,28 @@ export const cartographerAgent: AgentModule = {
       avg_response_time: number | null; trend_7d: number; trend_30d: number;
     }>();
 
-    // Diagnostic: count total providers and threats with hosting_provider_id
-    const totalProviders = await env.DB.prepare("SELECT COUNT(*) as n FROM hosting_providers").first<{ n: number }>();
-    const threatsWithProvider = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NOT NULL").first<{ n: number }>();
-    const threatsWithoutProvider = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
-    const threatsTotal = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE status = 'active'").first<{ n: number }>();
+    // Diagnostic counts — used for cartographer's per-run summary
+    // logging only, never to drive logic. Wrap in cachedCount (5
+    // min TTL) so we don't full-scan threats every cartographer
+    // tick (~38/day × 4 queries × ~230K rows/query = 35M rows/day
+    // eliminated). Hosting-providers count gets the same treatment
+    // for parity even though that table is small.
+    const totalProviders = { n: await cachedCount(env, 'count.hosting_providers.total', 300, async () => {
+      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM hosting_providers").first<{ n: number }>();
+      return row?.n ?? 0;
+    }) };
+    const threatsWithProvider = { n: await cachedCount(env, 'count.threats.with_provider', 300, async () => {
+      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NOT NULL").first<{ n: number }>();
+      return row?.n ?? 0;
+    }) };
+    const threatsWithoutProvider = { n: await cachedCount(env, 'count.threats.without_provider', 300, async () => {
+      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
+      return row?.n ?? 0;
+    }) };
+    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', 300, async () => {
+      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE status = 'active'").first<{ n: number }>();
+      return row?.n ?? 0;
+    }) };
 
     let haikuSuccessCount = 0;
     let haikuFailCount = 0;

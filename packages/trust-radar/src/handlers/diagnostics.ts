@@ -816,16 +816,27 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           ORDER BY generated_at DESC LIMIT 10`
       ).all<{ generated_at: string; trigger: string; emailed: number; report_date: string }>();
       // Pull the most recent failed attempt's report_data and
-      // surface email_error / email_recipient. Stored by the
-      // sendBriefingEmail caller per #946 follow-up.
+      // surface email_error / email_recipient — but ONLY if no
+      // successful email has landed since. Stickiness fix: pre-
+      // change, a single past failure stayed visible forever in
+      // diagnostics (`most_recent_error: API key is invalid`)
+      // even after the next refresh succeeded, leading operators
+      // to think the issue was still active. Now the error clears
+      // automatically once a later success row exists.
       const lastFailed = await env.DB.prepare(
-        `SELECT report_data FROM threat_briefings
+        `SELECT generated_at, report_data
+           FROM threat_briefings
           WHERE emailed = 0
           ORDER BY generated_at DESC LIMIT 1`
-      ).first<{ report_data: string | null }>();
+      ).first<{ generated_at: string; report_data: string | null }>();
       let mostRecentError: string | null = null;
       let mostRecentRecipient: string | null = null;
-      if (lastFailed?.report_data) {
+      const lastFailedAfterLastSuccess =
+        !!lastFailed?.generated_at &&
+        (!emailedRow?.most_recent_emailed ||
+          Date.parse(lastFailed.generated_at.replace(' ', 'T') + 'Z')
+          > Date.parse(emailedRow.most_recent_emailed.replace(' ', 'T') + 'Z'));
+      if (lastFailedAfterLastSuccess && lastFailed?.report_data) {
         try {
           const parsed = JSON.parse(lastFailed.report_data) as {
             email_error?: string; email_recipient?: string;

@@ -1093,10 +1093,12 @@ export async function handleBackfillClassifications(request: Request, env: Env):
   const origin = request.headers.get("Origin");
 
   try {
-    const totalRow = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM threats WHERE confidence_score IS NULL"
-    ).first<{ n: number }>();
-    const total = totalRow?.n ?? 0;
+    const total = await cachedCount(env, 'count.threats.null_confidence', 60, async () => {
+      const totalRow = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM threats WHERE confidence_score IS NULL"
+      ).first<{ n: number }>();
+      return totalRow?.n ?? 0;
+    });
 
     if (total === 0) {
       return json({ success: true, data: { message: "No unclassified threats", total: 0, classified: 0 } }, 200, origin);
@@ -1173,10 +1175,12 @@ export async function handleBackfillSaasTechniques(request: Request, env: Env): 
   const origin = request.headers.get("Origin");
 
   try {
-    const totalRow = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM threats WHERE saas_technique_id IS NULL"
-    ).first<{ n: number }>();
-    const totalPending = totalRow?.n ?? 0;
+    const totalPending = await cachedCount(env, 'count.threats.null_saas_technique', 60, async () => {
+      const totalRow = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM threats WHERE saas_technique_id IS NULL"
+      ).first<{ n: number }>();
+      return totalRow?.n ?? 0;
+    });
 
     if (totalPending === 0) {
       return json({
@@ -1233,11 +1237,15 @@ export async function handleBackfillGeo(request: Request, env: Env): Promise<Res
   const origin = request.headers.get("Origin");
 
   try {
-    // Count total pending before starting
-    const totalRow = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM threats WHERE ip_address IS NOT NULL AND country_code IS NULL ${PRIVATE_IP_SQL_FILTER}`
-    ).first<{ n: number }>();
-    const totalPending = totalRow?.n ?? 0;
+    // Count total pending before starting. cachedCount @ 60s so
+    // an operator mashing "Refresh" on the backfill page doesn't
+    // burn 230K rows × clicks.
+    const totalPending = await cachedCount(env, 'count.threats.null_country_with_ip', 60, async () => {
+      const totalRow = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM threats WHERE ip_address IS NOT NULL AND country_code IS NULL ${PRIVATE_IP_SQL_FILTER}`
+      ).first<{ n: number }>();
+      return totalRow?.n ?? 0;
+    });
 
     if (totalPending === 0) {
       return json({ success: true, data: { message: "No threats need geo enrichment", total: 0, enriched: 0, remaining: 0 } }, 200, origin);
@@ -1628,10 +1636,12 @@ export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number
   const brands = brandRows.results;
   if (brands.length === 0) return { matched: 0, checked: 0, pending: 0 };
 
-  const pendingRow = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)",
-  ).first<{ n: number }>();
-  const totalPending = pendingRow?.n ?? 0;
+  const totalPending = await cachedCount(env, 'count.threats.unattributed_with_ioc', 60, async () => {
+    const pendingRow = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)",
+    ).first<{ n: number }>();
+    return pendingRow?.n ?? 0;
+  });
 
   if (totalPending === 0) return { matched: 0, checked: 0, pending: 0 };
 

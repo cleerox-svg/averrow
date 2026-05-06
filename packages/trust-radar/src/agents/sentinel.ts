@@ -16,7 +16,7 @@ import { classifyThreat } from "../lib/haiku";
 import { callAnthropicJSON } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
-import { getOrComputeMetric } from "../lib/system-metrics";
+import { cachedCount } from "../lib/cached-count";
 
 // ─── Homoglyph & brand-squatting detection ──────────────────────
 
@@ -133,20 +133,23 @@ export const sentinelAgent: AgentModule = {
       threat_type: string; target_brand_id: string | null;
     }>();
 
-    // Also check total threat count for context. Both counts are diagnostic
-    // only — cache via system_metrics (15-min TTL) so we don't full-scan the
-    // 174K-row threats table on every Sentinel tick (~24/day, ~4.4M
-    // rows_read/day eliminated by this cache).
-    const totalMetric = await getOrComputeMetric(env.DB, 'threats.total', 900, async () => {
+    // Both counts are diagnostic only — cache via cachedCount (KV-
+    // backed) so we don't full-scan the 174K-row threats table on
+    // every Sentinel tick (~24/day, ~4.4M rows_read/day eliminated
+    // by this cache). 15-min TTL.
+    //
+    // Pre-fix this used `getOrComputeMetric` which writes a freshness
+    // row to the system_metrics table on every check — that itself
+    // burned a D1 read. cachedCount stores in KV, so cache lookups
+    // cost zero D1 reads.
+    const totalCount = { n: await cachedCount(env, 'count.threats.total', 900, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats").first<{ n: number }>();
       return row?.n ?? 0;
-    });
-    const nullMetric = await getOrComputeMetric(env.DB, 'threats.null_confidence', 900, async () => {
+    }) };
+    const nullCount = { n: await cachedCount(env, 'count.threats.null_confidence', 900, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE confidence_score IS NULL").first<{ n: number }>();
       return row?.n ?? 0;
-    });
-    const totalCount = { n: totalMetric.value };
-    const nullCount = { n: nullMetric.value };
+    }) };
 
     let itemsProcessed = 0;
     let itemsUpdated = 0;
