@@ -18,9 +18,41 @@ export const M = {
   BLUE_DIM:  '#065A78',
   GREEN:     '#3CB878',
   GREEN_DIM: '#1A6B3C',
+  /**
+   * Neutral accent — used for stat-card "zero state" so a count of 0
+   * doesn't render in alert red. Calm slate. See `resolveStatAccent`.
+   */
+  NEUTRAL:   '#5a6a85',
 } as const;
 
 export type AccentColorKey = keyof typeof M;
+
+/**
+ * Stat-card zero-state rule (audit M2, 2026-05-06).
+ *
+ * When a stat-card's primary value is numerically 0, its accent
+ * color resolves to `M.NEUTRAL` regardless of the caller's prop.
+ * Kills the red-on-zero anti-pattern: "0 ALERTS" should look calm,
+ * not alarming. "0 ERRORS" is good news, not a warning.
+ *
+ * Non-zero values pass through the caller's accent unchanged.
+ *
+ * Both numeric (`value: 0`) and string-formatted (`value: "0"`,
+ * `"0%"`, `"0,000"`) zeros are recognized. Non-numeric strings
+ * (`"—"`, `"N/A"`, `"--"`) keep the caller's accent — those are
+ * "data missing" states, semantically distinct from "zero".
+ */
+export function resolveStatAccent(
+  value: number | string | null | undefined,
+  accent: string,
+): string {
+  if (value === null || value === undefined) return accent;
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : Number(String(value).replace(/[\s,%]/g, ''));
+  return Number.isFinite(numeric) && numeric === 0 ? M.NEUTRAL : accent;
+}
 
 export const SEV: Record<string, {
   dot: string;

@@ -559,8 +559,22 @@ Status reflects what's landed in `packages/averrow-ui/` on `master`. Use this as
 | R8 — Apply DataRow + FilterBar to all pages | 🟡 In progress | Cross-cutting — verify per-page audit before marking complete |
 | R9 — Remove old tokens | ⏳ Not started | Old CSS classes (`glass-card`, `badge-glass`, etc.) still present in `index.css` until R9 runs |
 | R10 — Observatory chrome + Mobile polish | ⏳ Not started | Observatory tab chrome + `MobileCommandCenter` refresh pending |
+| R-Bundle-C-Primitives — 6 spec amendments from 2026-05-06 audit | ✅ Landed (session 1) | `StatCard` + `StatTile` zero-state rule (`resolveStatAccent` in `design-system/tokens.ts`); `Badge.context` + `Badge.verdict` types (NEXUS / PIVOT / ACCELERATING / QUIET / WORSENING / IMPROVING; CLEAR / DRAINING / STEADY / GROWING / STALE / UPDATED / STABLE); new `PriorityBar` and `StateMachineButtons` components; `EmptyState` semantic-alias variants (success / empty-list / data-unavailable / configure-me) |
 
 When a session lands, update this table in the same commit — do not wait for a batch "docs update" pass.
+
+### Bundle C amendments — 6 spec updates from 2026-05-06 audit
+
+These primitives were promoted to the design system after the 2026-05-06 UI audit (`docs/UI_AUDIT_2026-05-06.md`) found them re-implemented inline on multiple surfaces. Each amendment was authorized by the operator under "if you need to change patterns because the concept is better and more best practice or visually stunning then let's do that across the platform and update the UI guidance plans."
+
+1. **StatCard zero-state rule** — `resolveStatAccent(value, accent)` in `design-system/tokens.ts`. When `value === 0`, accent resolves to `M.NEUTRAL` (slate `#5a6a85`) regardless of caller. Wired in `StatCard.SimpleStatCard` and `StatTile`. Kills the red-on-zero anti-pattern (audit M2). String values are coerced — `"0"`, `"0,000"`, `"0%"` all neutralize; `"—"` / `"N/A"` keep the caller's accent (data-missing ≠ zero).
+2. **`Badge.context`** — promotes the inline NEXUS / PIVOT / ACCELERATING / QUIET / WORSENING / IMPROVING tags from Provider cards. Reusable on Threat Actor cards, Campaign cards, infrastructure cluster rows.
+3. **`Badge.verdict`** — promotes the pipeline verdict pills from Metrics: CLEAR / DRAINING / STEADY / GROWING / STALE / UPDATED / STABLE. Reusable on any monitor / health-probe surface.
+4. **`PriorityBar`** — promotes the Takedown card's priority bar (0–100 with auto color derivation: green<30 / amber<60 / orange<80 / red≥80). Reusable on Alerts, Leads, scoring rows. `showLabel` toggles the inline `Priority N/M` caption.
+5. **`StateMachineButtons<T>`** — promotes the Incident detail's INVESTIGATING / IDENTIFIED / MONITORING / RESOLVED row. Generic over the state type so the same primitive drives Takedown state, Alert state, or future workflow surfaces. `reachable?` prop disables transitions the caller deems invalid.
+6. **`EmptyState` semantic-alias variants** — adds `success` / `empty-list` / `data-unavailable` / `configure-me` as semantic aliases for the existing `clean` / `error` / `locked` visual variants. Same render, more readable call sites.
+
+Subsequent R8 page migrations (Alerts → Threats → Takedowns → Brands → Campaigns → Providers → Feeds → Agents → Admin → Leads) replace inline ad-hoc implementations with the unified primitives.
 
 
 

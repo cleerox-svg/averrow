@@ -1,6 +1,34 @@
 import { ReactNode } from 'react';
 
-type EmptyVariant = 'clean' | 'scanning' | 'error' | 'locked';
+/**
+ * EmptyState variant semantics. The original four (clean / scanning
+ * / error / locked) describe the visual treatment; the aliases that
+ * follow are the audit's preferred semantic names — pick whichever
+ * reads more naturally at the call site.
+ *
+ * - clean | success | empty-list   — calm "nothing here / all done"
+ *                                    (green bell, target icon, etc.)
+ * - scanning                        — in-progress / waiting on data
+ * - error | data-unavailable        — something's wrong / unreachable
+ * - locked | configure-me           — feature requires setup or
+ *                                    permission
+ */
+export type EmptyVariant =
+  | 'clean' | 'success' | 'empty-list'
+  | 'scanning'
+  | 'error' | 'data-unavailable'
+  | 'locked' | 'configure-me';
+
+const VARIANT_ALIAS: Record<EmptyVariant, 'clean' | 'scanning' | 'error' | 'locked'> = {
+  clean:              'clean',
+  success:            'clean',
+  'empty-list':       'clean',
+  scanning:           'scanning',
+  error:              'error',
+  'data-unavailable': 'error',
+  locked:             'locked',
+  'configure-me':     'locked',
+};
 
 interface EmptyStateAction {
   label: string;
@@ -22,7 +50,9 @@ interface EmptyStateProps {
   compact?: boolean;
 }
 
-const variantStyles: Record<EmptyVariant, {
+type ResolvedVariant = 'clean' | 'scanning' | 'error' | 'locked';
+
+const variantStyles: Record<ResolvedVariant, {
   iconBg: string;
   iconColor: string;
   titleColor: string;
@@ -65,7 +95,7 @@ export function EmptyState({
   variant = 'clean',
   compact = false,
 }: EmptyStateProps) {
-  const styles = variantStyles[variant];
+  const styles = variantStyles[VARIANT_ALIAS[variant]];
   const displayTitle = title ?? message;
   const displaySubtitle = subtitle ?? description;
 

@@ -9,12 +9,20 @@
 // the shared design system as part of the unified Home work.
 
 import { useCountUp } from '@/design-system/hooks/useCountUp';
+import { resolveStatAccent } from '@/design-system/tokens';
 
 export interface StatTileProps {
   label:     string;
   value:     number | string;
   sub?:      string;
-  /** Hex color used for the number text, accent dot, and radial halo. */
+  /**
+   * Hex color used for the number text, accent dot, and radial halo.
+   *
+   * Note: when `value` is numerically 0, this is overridden to the
+   * neutral slate (`M.NEUTRAL`) regardless. Kills the red-on-zero
+   * anti-pattern: "0 ALERTS" renders calm, not alarming.
+   * See `resolveStatAccent`. Audit M2 (2026-05-06).
+   */
   accent:    string;
   /** When > 0, renders a red count badge in the top-right corner. */
   critical?: number;
@@ -25,10 +33,11 @@ export function StatTile({
   label,
   value,
   sub,
-  accent,
+  accent: rawAccent,
   critical,
   onClick,
 }: StatTileProps) {
+  const accent = resolveStatAccent(value, rawAccent);
   const counted = useCountUp(typeof value === 'number' ? value : 0);
   const display = typeof value === 'number' ? counted.toLocaleString() : value;
   const isCrit  = (critical ?? 0) > 0;

@@ -6,6 +6,7 @@ import React from 'react';
 import type { ReactNode, CSSProperties } from 'react';
 import { GlowNumber } from './GlowNumber';
 import { cn } from '@/lib/cn';
+import { resolveStatAccent } from '@/design-system/tokens';
 
 function accentFromColor(color?: string): string {
   if (!color) return '#E5A832';
@@ -27,7 +28,10 @@ interface SimpleStatCardProps {
 function SimpleStatCard({
   label, value, sublabel, trend, trendDirection, accentColor, className, onClick,
 }: SimpleStatCardProps) {
-  const accent = accentFromColor(accentColor);
+  // Zero-state rule: when value is numerically 0, render with the
+  // neutral slate accent regardless of the caller's accentColor.
+  // See `resolveStatAccent` for the semantics. Audit M2 (2026-05-06).
+  const accent = resolveStatAccent(value, accentFromColor(accentColor));
 
   const containerStyle: CSSProperties = {
     padding: '16px 20px',
@@ -42,7 +46,7 @@ function SimpleStatCard({
     ...(accentColor && {
       borderLeftWidth: '3px',
       borderLeftStyle: 'solid',
-      borderLeftColor: accentColor,
+      borderLeftColor: accent,
     }),
   };
 
