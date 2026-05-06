@@ -13,6 +13,41 @@ export type BadgeStatus =
   | 'running' | 'healthy' | 'degraded' | 'failed'
   | 'success' | 'warning';
 
+/**
+ * Context tags — describe a row's trend / behavior, distinct from
+ * severity (threat scoring) and status (run state). Promoted from
+ * the Provider cards' inline NEXUS/PIVOT/ACCELERATING tags so the
+ * same vocabulary can render consistently on Threat Actor cards,
+ * Campaign cards, infrastructure cluster rows, and any future
+ * monitoring surface that needs trend signals.
+ *
+ * - nexus        — correlated with a NEXUS infrastructure cluster
+ * - pivot        — went silent recently (>80% activity drop)
+ * - accelerating — 7d trend > 1.5× 30d average
+ * - quiet        — no recent activity but still tracked
+ * - worsening    — trend deteriorating
+ * - improving    — trend improving
+ */
+export type ContextTag =
+  | 'nexus' | 'pivot' | 'accelerating' | 'quiet' | 'worsening' | 'improving';
+
+/**
+ * Verdict tags — describe a pipeline / queue / health probe's
+ * current state. Promoted from the Metrics page's pipeline cards
+ * so any monitoring surface can render the same vocabulary.
+ *
+ * - clear    — no items in this backlog right now
+ * - draining — backlog shrank since last measurement (keeping up)
+ * - steady   — backlog flat (inflow ≈ throughput)
+ * - growing  — backlog grew since last measurement (falling behind)
+ * - stale    — no measurement in the last cycle
+ * - updated  — reference dataset refreshed since last check
+ * - stable   — reference dataset loaded and unchanged
+ */
+export type VerdictTag =
+  | 'clear' | 'draining' | 'steady' | 'growing'
+  | 'stale' | 'updated' | 'stable';
+
 export type LegacyVariant =
   | 'critical' | 'high' | 'medium' | 'low'
   | 'success' | 'info' | 'default';
@@ -22,6 +57,8 @@ export type BadgeSize = 'xs' | 'sm' | 'md';
 export interface BadgeProps {
   severity?: Severity;
   status?:   BadgeStatus;
+  context?:  ContextTag;
+  verdict?:  VerdictTag;
   size?:     BadgeSize;
   pulse?:    boolean;
   label?:    string;
@@ -70,6 +107,109 @@ const SEV: Record<Severity, {
   },
 };
 
+const CTX: Record<ContextTag, {
+  bg: string; border: string; text: string; dot?: string; label: string;
+}> = {
+  nexus: {
+    // Cyan — correlated with NEXUS infrastructure cluster.
+    bg:     'rgba(0,212,255,0.10)',
+    border: 'rgba(0,212,255,0.30)',
+    text:   '#7aeaff',
+    dot:    '#00d4ff',
+    label:  'NEXUS',
+  },
+  pivot: {
+    // Red — went silent recently. Visually echoes critical without
+    // claiming severity.
+    bg:     'var(--sev-critical-bg)',
+    border: 'var(--sev-critical-border)',
+    text:   '#fca5a5',
+    dot:    'var(--sev-critical)',
+    label:  'PIVOT',
+  },
+  accelerating: {
+    // Amber — high activity vs. baseline.
+    bg:     'var(--sev-medium-bg)',
+    border: 'var(--sev-medium-border)',
+    text:   '#fcd34d',
+    dot:    'var(--sev-medium)',
+    label:  'ACCEL',
+  },
+  quiet: {
+    // Muted neutral — no recent activity, still tracked.
+    bg:     'rgba(255,255,255,0.04)',
+    border: 'var(--border-base)',
+    text:   'var(--text-tertiary)',
+    label:  'QUIET',
+  },
+  worsening: {
+    bg:     'var(--sev-critical-bg)',
+    border: 'var(--sev-critical-border)',
+    text:   '#fca5a5',
+    dot:    'var(--sev-critical)',
+    label:  'WORSENING',
+  },
+  improving: {
+    bg:     'var(--sev-info-bg)',
+    border: 'var(--sev-info-border)',
+    text:   '#86efac',
+    dot:    'var(--sev-info)',
+    label:  'IMPROVING',
+  },
+};
+
+const VERDICT: Record<VerdictTag, {
+  bg: string; border: string; text: string; dot?: string; label: string;
+}> = {
+  clear: {
+    bg:     'var(--sev-info-bg)',
+    border: 'var(--sev-info-border)',
+    text:   '#86efac',
+    label:  'CLEAR',
+  },
+  draining: {
+    bg:     'var(--sev-info-bg)',
+    border: 'var(--sev-info-border)',
+    text:   '#86efac',
+    dot:    'var(--sev-info)',
+    label:  'DRAINING',
+  },
+  steady: {
+    bg:     'var(--sev-medium-bg)',
+    border: 'var(--sev-medium-border)',
+    text:   '#fcd34d',
+    label:  'STEADY',
+  },
+  growing: {
+    bg:     'var(--sev-critical-bg)',
+    border: 'var(--sev-critical-border)',
+    text:   '#fca5a5',
+    dot:    'var(--sev-critical)',
+    label:  'GROWING',
+  },
+  stale: {
+    bg:     'var(--sev-medium-bg)',
+    border: 'var(--sev-medium-border)',
+    text:   '#fcd34d',
+    label:  'STALE',
+  },
+  updated: {
+    // Blue — reference data refreshed (informational, not severity).
+    bg:     'var(--blue-glow)',
+    border: 'var(--blue-border)',
+    text:   '#93c5fd',
+    dot:    'var(--blue)',
+    label:  'UPDATED',
+  },
+  stable: {
+    // Cyan — loaded and unchanged. Calmer than blue/updated.
+    bg:     'rgba(0,212,255,0.07)',
+    border: 'rgba(0,212,255,0.20)',
+    text:   '#7aeaff',
+    label:  'STABLE',
+  },
+};
+
 const STATUS: Record<BadgeStatus, {
   bg: string; border: string; text: string; dot?: string;
 }> = {
@@ -104,6 +244,8 @@ const SIZE: Record<BadgeSize, { fontSize: number; padding: string; radius: numbe
 export function Badge({
   severity,
   status,
+  context,
+  verdict,
   variant,
   size    = 'sm',
   pulse   = false,
@@ -120,6 +262,10 @@ export function Badge({
     cfg = { ...s, dot: s.dot };
   } else if (status) {
     cfg = STATUS[status];
+  } else if (context) {
+    cfg = CTX[context];
+  } else if (verdict) {
+    cfg = VERDICT[verdict];
   } else if (variant && variant !== 'default') {
     const mapped = LEGACY_MAP[variant];
     if (mapped && mapped !== 'default') {
@@ -136,7 +282,17 @@ export function Badge({
     };
   }
 
-  const displayText = label ?? (children ?? (severity ? severity : (status ?? (variant && variant !== 'default' ? variant : ''))));
+  // Prefer caller-provided label/children, then the config's label
+  // (config labels are pretty-cased — "NEXUS", "Critical" — vs the
+  // raw lowercase key from severity/status/context/verdict).
+  const displayText = label
+    ?? children
+    ?? cfg.label
+    ?? severity
+    ?? status
+    ?? context
+    ?? verdict
+    ?? (variant && variant !== 'default' ? variant : '');
   const showDot = pulse && cfg.dot;
 
   return (

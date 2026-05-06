@@ -16,7 +16,14 @@ export { Button } from '../../components/ui/Button';
 export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui/Button';
 
 export { Badge } from '../../components/ui/Badge';
-export type { BadgeProps, Severity, BadgeStatus, BadgeSize } from '../../components/ui/Badge';
+export type {
+  BadgeProps,
+  Severity,
+  BadgeStatus,
+  BadgeSize,
+  ContextTag,
+  VerdictTag,
+} from '../../components/ui/Badge';
 
 export { Avatar } from '../../components/ui/Avatar';
 export type { AvatarProps, AvatarSeverity } from '../../components/ui/Avatar';
@@ -50,6 +57,15 @@ export type { MetricTileProps } from '../../components/ui/MetricTile';
 export { DataRow, SeverityDot } from '../../components/ui/DataRow';
 export type { DataRowProps, SeverityDotProps } from '../../components/ui/DataRow';
 
+export { PriorityBar } from '../../components/ui/PriorityBar';
+export type { PriorityBarProps, PriorityBarColor } from '../../components/ui/PriorityBar';
+
+export { StateMachineButtons } from '../../components/ui/StateMachineButtons';
+export type {
+  StateMachineButtonsProps,
+  StateMachineState,
+} from '../../components/ui/StateMachineButtons';
+
 export { GlowNumber } from '../../components/ui/GlowNumber';
 export type { GlowNumberProps, GlowSize, GlowFormat } from '../../components/ui/GlowNumber';
 
@@ -79,6 +95,7 @@ export { Select } from '../../components/ui/Select';
 
 // ── Feedback ───────────────────────────────────────────────────────────────
 export { EmptyState } from '../../components/ui/EmptyState';
+export type { EmptyVariant } from '../../components/ui/EmptyState';
 
 export { Skeleton } from '../../components/ui/Skeleton';
 
