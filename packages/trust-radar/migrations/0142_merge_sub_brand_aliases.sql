@@ -16,14 +16,20 @@
 -- Consumer-facing sub-brands like Outlook, Instagram, WhatsApp,
 -- YouTube keep their own rows — they have independent brand identity
 -- to customers. The list below is intentionally conservative.
+--
+-- D1's migration runner executes statements via separate API calls,
+-- so CREATE TEMP TABLE doesn't persist across statements. Use
+-- regular tables instead, dropped at the end.
 
--- alias_name → master_name mapping. Names match the Title-cased form
--- analyst.ts produces (`brand_<name>` id is derived by lowercase).
-CREATE TEMP TABLE brand_alias_map (
+DROP TABLE IF EXISTS _brand_alias_map_0142;
+DROP TABLE IF EXISTS _brand_dedup_0142;
+
+CREATE TABLE _brand_alias_map_0142 (
   alias_lower  TEXT NOT NULL,
   master_lower TEXT NOT NULL
 );
-INSERT INTO brand_alias_map VALUES
+
+INSERT INTO _brand_alias_map_0142 (alias_lower, master_lower) VALUES
   ('amazonses',         'amazon'),
   ('amazonaws',         'amazon'),
   ('cloudfront',        'amazon'),
@@ -44,59 +50,63 @@ INSERT INTO brand_alias_map VALUES
   ('paypalobjects',     'paypal'),
   ('braintreegateway',  'paypal');
 
--- Build alias_brand_id → master_brand_id mapping. Only emit a row
--- when BOTH the alias brand and the master brand exist; otherwise
--- there's no merge to perform.
-CREATE TEMP TABLE brand_dedup AS
+CREATE TABLE _brand_dedup_0142 (
+  alias_id  TEXT,
+  master_id TEXT
+);
+
+-- Only emit rows when BOTH alias and master brands exist.
+INSERT INTO _brand_dedup_0142 (alias_id, master_id)
 SELECT
   alias.id  AS alias_id,
   master.id AS master_id
-FROM brand_alias_map m
+FROM _brand_alias_map_0142 m
 JOIN brands alias  ON LOWER(alias.name)  = m.alias_lower
 JOIN brands master ON LOWER(master.name) = m.master_lower
 WHERE alias.id != master.id;
 
--- Repoint every FK that holds target_brand_id.
+-- Repoint threats.target_brand_id.
 UPDATE threats
 SET target_brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = threats.target_brand_id
+  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = threats.target_brand_id
 )
-WHERE target_brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE target_brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
 
--- threat_cube_brand's PK includes target_brand_id, so UPDATE-ing
--- collides with any pre-existing master-id row for the same
--- (hour_bucket, threat_type, severity, source_feed). Drop the
--- alias rows; cube-healer (cron 12 */6 * * *) rebuilds 30 days of
--- brand cubes from threats every 6 hours, picking up the now-master
--- target_brand_id naturally on the next rebuild.
+-- threat_cube_brand's PK includes target_brand_id; UPDATE collides
+-- with pre-existing master-id rows. Drop the alias rows instead.
+-- cube-healer (cron 12 */6 * * *) rebuilds 30 days of brand cubes
+-- from threats every 6 hours, picking up the now-master id naturally.
 DELETE FROM threat_cube_brand
-WHERE target_brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE target_brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
 
 -- takedown_requests + alerts use `brand_id` (not target_brand_id);
--- threats + threat_cube_brand use `target_brand_id`. See migration
--- 0043 (brand_id type fix) for the takedown_requests + org_brands
--- column shape.
+-- see 0029_alerts.sql + 0039_takedown_requests.sql.
 UPDATE takedown_requests
 SET brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = takedown_requests.brand_id
+  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = takedown_requests.brand_id
 )
-WHERE brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
 
 UPDATE alerts
 SET brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = alerts.brand_id
+  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = alerts.brand_id
 )
-WHERE brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
 
--- org_brands has its own brand_id column.
+-- org_brands.brand_id is TEXT post-0043 (was INTEGER, fixed there).
 UPDATE org_brands
 SET brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = org_brands.brand_id
+  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = org_brands.brand_id
 )
-WHERE brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
 
--- Delete the now-orphaned alias brands.
-DELETE FROM brands WHERE id IN (SELECT alias_id FROM brand_dedup);
+-- Delete the now-orphaned alias brands. D1 doesn't enforce FKs, so
+-- references in tables we didn't repoint (sales_leads,
+-- email_security_posture, threat_signals_and_assessments) become
+-- dangling — acceptable since those surfaces don't render brand
+-- names without joining brands.id (which now returns nothing for
+-- the alias).
+DELETE FROM brands WHERE id IN (SELECT alias_id FROM _brand_dedup_0142);
 
-DROP TABLE brand_dedup;
-DROP TABLE brand_alias_map;
+DROP TABLE _brand_dedup_0142;
+DROP TABLE _brand_alias_map_0142;
