@@ -2,111 +2,206 @@
 --
 -- Audit 2026-05-06 (audit C10) caught "AMAZONSES" rendered as a
 -- standalone brand on a Takedowns card. Amazon SES is AWS email
--- infrastructure, not a brand. Same problem in the wild for other
--- service / CDN sub-domains that Haiku occasionally tags as brands:
--- cloudfront.net, googleapis.com, gstatic.com, mzstatic.com,
--- nflxvideo.net, etc.
+-- infrastructure, not a brand. Same problem possible for other
+-- service / CDN sub-domains that Haiku occasionally tags as brands.
 --
 -- analyst.ts now runs `resolveMasterBrandName()` before INSERT so
--- new threats fold correctly. This migration cleans up the existing
--- alias rows by repointing threats / takedowns / etc. to the master
--- and deleting the alias.
+-- new threats fold correctly. This migration cleans up existing
+-- alias brand rows by repointing FKs (threats / takedowns / alerts /
+-- org_brands) to the master and deleting the alias.
+--
+-- D1 CONSTRAINTS that shape this file:
+--   1. CREATE TEMP TABLE doesn't persist across statements (each
+--      statement is a separate API call). Use no temp tables here.
+--   2. Each statement has a tight CPU budget. The earlier "single
+--      big UPDATE on threats with IN-subquery" hit code 7429
+--      (D1 DB exceeded its CPU time limit). Split into per-alias
+--      UPDATEs scoped to ONE alias_id at a time so each statement
+--      does an indexed lookup on threats(target_brand_id) for
+--      a single value rather than scanning a multi-value IN list.
+--
+-- Pattern per alias (alias_lower, master_lower):
+--   UPDATE threats SET target_brand_id = master.id
+--     WHERE target_brand_id = alias.id AND EXISTS(master);
+--   DELETE FROM threat_cube_brand WHERE target_brand_id = alias.id;
+--   UPDATE takedown_requests / alerts / org_brands similarly;
+--   DELETE FROM brands WHERE id = alias.id;
+--
+-- The EXISTS guard prevents writing target_brand_id = NULL when
+-- the master brand row doesn't exist (alerts.brand_id is NOT NULL
+-- declared). Each block is a no-op if the alias doesn't exist in
+-- production — safe to keep the full conservative list.
 --
 -- Only INFRASTRUCTURE / SERVICE sub-brands are merged here.
--- Consumer-facing sub-brands like Outlook, Instagram, WhatsApp,
--- YouTube keep their own rows — they have independent brand identity
--- to customers. The list below is intentionally conservative.
---
--- D1's migration runner executes statements via separate API calls,
--- so CREATE TEMP TABLE doesn't persist across statements. Use
--- regular tables instead, dropped at the end.
+-- Consumer-facing sub-brands (Outlook, Instagram, WhatsApp,
+-- YouTube) keep their own rows.
 
-DROP TABLE IF EXISTS _brand_alias_map_0142;
-DROP TABLE IF EXISTS _brand_dedup_0142;
-
-CREATE TABLE _brand_alias_map_0142 (
-  alias_lower  TEXT NOT NULL,
-  master_lower TEXT NOT NULL
-);
-
-INSERT INTO _brand_alias_map_0142 (alias_lower, master_lower) VALUES
-  ('amazonses',         'amazon'),
-  ('amazonaws',         'amazon'),
-  ('cloudfront',        'amazon'),
-  ('googleapis',        'google'),
-  ('gstatic',           'google'),
-  ('googleusercontent', 'google'),
-  ('googlesyndication', 'google'),
-  ('googleadservices',  'google'),
-  ('google-analytics',  'google'),
-  ('mzstatic',          'apple'),
-  ('apple-dns',         'apple'),
-  ('fbcdn',             'facebook'),
-  ('nflxvideo',         'netflix'),
-  ('nflximg',           'netflix'),
-  ('nflxext',           'netflix'),
-  ('nflxso',            'netflix'),
-  ('rbxcdn',            'roblox'),
-  ('paypalobjects',     'paypal'),
-  ('braintreegateway',  'paypal');
-
-CREATE TABLE _brand_dedup_0142 (
-  alias_id  TEXT,
-  master_id TEXT
-);
-
--- Only emit rows when BOTH alias and master brands exist.
-INSERT INTO _brand_dedup_0142 (alias_id, master_id)
-SELECT
-  alias.id  AS alias_id,
-  master.id AS master_id
-FROM _brand_alias_map_0142 m
-JOIN brands alias  ON LOWER(alias.name)  = m.alias_lower
-JOIN brands master ON LOWER(master.name) = m.master_lower
-WHERE alias.id != master.id;
-
--- Repoint threats.target_brand_id.
-UPDATE threats
-SET target_brand_id = (
-  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = threats.target_brand_id
-)
-WHERE target_brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
-
--- threat_cube_brand's PK includes target_brand_id; UPDATE collides
--- with pre-existing master-id rows. Drop the alias rows instead.
--- cube-healer (cron 12 */6 * * *) rebuilds 30 days of brand cubes
--- from threats every 6 hours, picking up the now-master id naturally.
+-- ─── amazonses → amazon ────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonses' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
 DELETE FROM threat_cube_brand
-WHERE target_brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonses' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonses' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonses' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonses' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+DELETE FROM brands WHERE LOWER(name) = 'amazonses';
 
--- takedown_requests + alerts use `brand_id` (not target_brand_id);
--- see 0029_alerts.sql + 0039_takedown_requests.sql.
-UPDATE takedown_requests
-SET brand_id = (
-  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = takedown_requests.brand_id
-)
-WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
+-- ─── amazonaws → amazon ────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonaws' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonaws' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonaws' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonaws' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazonaws' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+DELETE FROM brands WHERE LOWER(name) = 'amazonaws';
 
-UPDATE alerts
-SET brand_id = (
-  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = alerts.brand_id
-)
-WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
+-- ─── cloudfront → amazon ───────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'cloudfront' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'cloudfront' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'cloudfront' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'cloudfront' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'amazon' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'cloudfront' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'amazon');
+DELETE FROM brands WHERE LOWER(name) = 'cloudfront';
 
--- org_brands.brand_id is TEXT post-0043 (was INTEGER, fixed there).
-UPDATE org_brands
-SET brand_id = (
-  SELECT master_id FROM _brand_dedup_0142 WHERE alias_id = org_brands.brand_id
-)
-WHERE brand_id IN (SELECT alias_id FROM _brand_dedup_0142);
+-- ─── googleapis → google ───────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleapis' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleapis' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleapis' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleapis' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleapis' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM brands WHERE LOWER(name) = 'googleapis';
 
--- Delete the now-orphaned alias brands. D1 doesn't enforce FKs, so
--- references in tables we didn't repoint (sales_leads,
--- email_security_posture, threat_signals_and_assessments) become
--- dangling — acceptable since those surfaces don't render brand
--- names without joining brands.id (which now returns nothing for
--- the alias).
-DELETE FROM brands WHERE id IN (SELECT alias_id FROM _brand_dedup_0142);
+-- ─── gstatic → google ──────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'gstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'gstatic' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'gstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'gstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'gstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM brands WHERE LOWER(name) = 'gstatic';
 
-DROP TABLE _brand_dedup_0142;
-DROP TABLE _brand_alias_map_0142;
+-- ─── googleusercontent → google ────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleusercontent' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleusercontent' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleusercontent' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleusercontent' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'google' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'googleusercontent' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'google');
+DELETE FROM brands WHERE LOWER(name) = 'googleusercontent';
+
+-- ─── mzstatic → apple ──────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'apple' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'mzstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'apple');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'mzstatic' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'apple' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'mzstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'apple');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'apple' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'mzstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'apple');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'apple' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'mzstatic' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'apple');
+DELETE FROM brands WHERE LOWER(name) = 'mzstatic';
+
+-- ─── fbcdn → facebook ──────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'facebook' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'fbcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'facebook');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'fbcdn' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'facebook' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'fbcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'facebook');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'facebook' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'fbcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'facebook');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'facebook' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'fbcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'facebook');
+DELETE FROM brands WHERE LOWER(name) = 'fbcdn';
+
+-- ─── rbxcdn → roblox ───────────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'roblox' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'rbxcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'roblox');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'rbxcdn' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'roblox' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'rbxcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'roblox');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'roblox' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'rbxcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'roblox');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'roblox' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'rbxcdn' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'roblox');
+DELETE FROM brands WHERE LOWER(name) = 'rbxcdn';
+
+-- ─── paypalobjects → paypal ────────────────────────────────────
+UPDATE threats SET target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypal' LIMIT 1)
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypalobjects' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'paypal');
+DELETE FROM threat_cube_brand
+  WHERE target_brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypalobjects' LIMIT 1);
+UPDATE takedown_requests SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypal' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypalobjects' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'paypal');
+UPDATE alerts SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypal' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypalobjects' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'paypal');
+UPDATE org_brands SET brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypal' LIMIT 1)
+  WHERE brand_id = (SELECT id FROM brands WHERE LOWER(name) = 'paypalobjects' LIMIT 1)
+    AND EXISTS (SELECT 1 FROM brands WHERE LOWER(name) = 'paypal');
+DELETE FROM brands WHERE LOWER(name) = 'paypalobjects';
