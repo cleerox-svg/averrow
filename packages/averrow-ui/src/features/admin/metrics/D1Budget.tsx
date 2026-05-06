@@ -8,6 +8,7 @@
 import { Card } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import { useD1Budget } from '@/hooks/useMetrics';
+import { MetricsTile, type MetricsTone } from './MetricsTile';
 
 export function D1BudgetSection() {
   const { data, isLoading, isError } = useD1Budget();
@@ -110,7 +111,7 @@ function Meter({
   label: string;
   sublabel: string;
   pct: number | null;
-  tone: 'success' | 'warning' | 'failed' | 'inactive';
+  tone: MetricsTone;
   toneLabel: string;
   footnote: string;
 }) {
@@ -121,19 +122,11 @@ function Meter({
         : tone === 'success' ? 'var(--sev-info)'
           : 'var(--text-muted)';
   return (
-    <div
-      className="rounded-md p-3"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border-base)' }}
+    <MetricsTile
+      label={label}
+      tone={tone}
+      badge={<Badge status={badgeStatusFor(tone)} label={toneLabel} size="xs" />}
     >
-      <div className="flex items-center justify-between mb-1">
-        <span
-          className="font-mono text-[9px] uppercase tracking-[0.18em]"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          {label}
-        </span>
-        <Badge status={tone} label={toneLabel} size="xs" />
-      </div>
       <div className="flex items-baseline gap-2 mb-1.5">
         <span className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
           {pct != null ? `${pct}%` : '—'}
@@ -160,7 +153,7 @@ function Meter({
           {footnote}
         </span>
       ) : null}
-    </div>
+    </MetricsTile>
   );
 }
 
@@ -299,6 +292,14 @@ function Section({
       )}
     </div>
   );
+}
+
+function badgeStatusFor(tone: MetricsTone): 'success' | 'warning' | 'failed' | 'pending' | 'inactive' {
+  if (tone === 'failed')   return 'failed';
+  if (tone === 'warning')  return 'warning';
+  if (tone === 'success')  return 'success';
+  if (tone === 'info')     return 'success';
+  return 'inactive';
 }
 
 function formatBig(n: number): string {

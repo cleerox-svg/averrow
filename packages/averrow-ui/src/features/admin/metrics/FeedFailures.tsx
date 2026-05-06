@@ -13,6 +13,7 @@ import { Card } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import { useFeedFailures, type FeedFailurePayload, type FeedFailureRow } from '@/hooks/useMetrics';
 import { relativeTime } from '@/lib/time';
+import { MetricsTile } from './MetricsTile';
 
 export function FeedFailuresSection() {
   const { data, isLoading, isError } = useFeedFailures();
@@ -56,34 +57,31 @@ function Totals({ data }: { data: FeedFailurePayload }) {
   const ratePct = t.total_pulls > 0
     ? Math.round((t.total_failed / t.total_pulls) * 100)
     : 0;
-  const tiles = [
-    { label: 'Pulls (24h)',     value: t.total_pulls.toLocaleString() },
-    { label: 'Failures',        value: t.total_failed.toLocaleString() },
-    { label: 'Failure rate',    value: `${ratePct}%` },
-    { label: 'Records ingested', value: formatBig(t.total_records) },
-    { label: 'Active feeds',    value: t.feeds_active.toLocaleString() },
+  // Failure rate carries the threshold tone (≥30% red, ≥10% amber);
+  // active-feeds tile turns green when >0 (positive signal); the
+  // remaining tiles stay neutral so the eye lands on the failure
+  // rate first.
+  const failureTone: import('./MetricsTile').MetricsTone =
+    ratePct >= 30 ? 'failed' : ratePct >= 10 ? 'warning' : 'success';
+  const tiles: Array<{
+    label: string;
+    value: string;
+    tone: import('./MetricsTile').MetricsTone;
+  }> = [
+    { label: 'Pulls (24h)',     value: t.total_pulls.toLocaleString(),    tone: 'default' },
+    { label: 'Failures',        value: t.total_failed.toLocaleString(),   tone: t.total_failed > 0 ? 'failed' : 'default' },
+    { label: 'Failure rate',    value: `${ratePct}%`,                     tone: failureTone },
+    { label: 'Records ingested', value: formatBig(t.total_records),       tone: 'default' },
+    { label: 'Active feeds',    value: t.feeds_active.toLocaleString(),   tone: t.feeds_active > 0 ? 'success' : 'default' },
   ];
   return (
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
       {tiles.map((tile) => (
-        <div
-          key={tile.label}
-          className="rounded-md p-3"
-          style={{
-            background: 'rgba(255,255,255,0.025)',
-            border: '1px solid var(--border-base)',
-          }}
-        >
-          <div
-            className="font-mono text-[9px] uppercase tracking-[0.18em] mb-0.5"
-            style={{ color: 'var(--text-tertiary)' }}
-          >
-            {tile.label}
-          </div>
+        <MetricsTile key={tile.label} label={tile.label} tone={tile.tone}>
           <div className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
             {tile.value}
           </div>
-        </div>
+        </MetricsTile>
       ))}
     </div>
   );

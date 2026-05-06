@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { Card } from '@/design-system/components';
 import { useAiSpend, type AiSpendPayload } from '@/hooks/useMetrics';
+import { MetricsTile } from './MetricsTile';
 
 type Window = '24h' | '7d' | '30d';
 const WINDOWS: Window[] = ['24h', '7d', '30d'];
@@ -84,29 +85,24 @@ function WindowToggle({
 
 function Totals({ data, window }: { data: AiSpendPayload; window: Window }) {
   const w = data.windows[window];
-  const tiles = [
-    { label: 'Total cost',    value: `$${w.cost_usd.toFixed(2)}`,                 sub: 'USD'    },
-    { label: 'Calls',         value: w.calls.toLocaleString(),                    sub: '' },
-    { label: 'Input tokens',  value: formatBig(w.input_tokens),                   sub: '' },
-    { label: 'Output tokens', value: formatBig(w.output_tokens),                  sub: '' },
+  // Cost tile gets the amber-info accent (matches the daily-cost
+  // bars below); other tiles stay neutral so the "where am I
+  // spending?" answer pops.
+  const tiles: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    tone: import('./MetricsTile').MetricsTone;
+  }> = [
+    { label: 'Total cost',    value: `$${w.cost_usd.toFixed(2)}`,    sub: 'USD', tone: 'info'    },
+    { label: 'Calls',         value: w.calls.toLocaleString(),       sub: '',    tone: 'default' },
+    { label: 'Input tokens',  value: formatBig(w.input_tokens),      sub: '',    tone: 'default' },
+    { label: 'Output tokens', value: formatBig(w.output_tokens),     sub: '',    tone: 'default' },
   ];
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
       {tiles.map((t) => (
-        <div
-          key={t.label}
-          className="rounded-md p-3"
-          style={{
-            background: 'rgba(255,255,255,0.025)',
-            border: '1px solid var(--border-base)',
-          }}
-        >
-          <div
-            className="font-mono text-[9px] uppercase tracking-[0.18em] mb-0.5"
-            style={{ color: 'var(--text-tertiary)' }}
-          >
-            {t.label}
-          </div>
+        <MetricsTile key={t.label} label={t.label} tone={t.tone}>
           <div className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
             {t.value}
           </div>
@@ -115,7 +111,7 @@ function Totals({ data, window }: { data: AiSpendPayload; window: Window }) {
               {t.sub}
             </div>
           ) : null}
-        </div>
+        </MetricsTile>
       ))}
     </div>
   );

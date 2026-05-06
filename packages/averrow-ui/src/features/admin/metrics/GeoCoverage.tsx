@@ -12,6 +12,7 @@ import {
 import { Card } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import { useGeoCoverage, type GeoCoveragePayload, type GeoCoverageWindow } from '@/hooks/useMetrics';
+import { MetricsTile } from './MetricsTile';
 
 export function GeoCoverageSection() {
   const { data, isLoading, isError } = useGeoCoverage();
@@ -60,23 +61,12 @@ function CoverageWindows({ windows }: { windows: GeoCoverageWindow[] }) {
               : pct >= 50 ? { tone: 'warning'  as const, label: 'DEGRADED'  }
                 : { tone: 'failed'  as const, label: 'IMPAIRED' };
         return (
-          <div
+          <MetricsTile
             key={w.window}
-            className="rounded-md p-3"
-            style={{
-              background: 'rgba(255,255,255,0.025)',
-              border: '1px solid var(--border-base)',
-            }}
+            label={w.window}
+            tone={verdict.tone}
+            badge={<Badge status={verdict.tone} label={verdict.label} size="xs" />}
           >
-            <div className="flex items-center justify-between mb-1">
-              <span
-                className="font-mono text-[9px] uppercase tracking-[0.18em]"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                {w.window}
-              </span>
-              <Badge status={verdict.tone} label={verdict.label} size="xs" />
-            </div>
             <div className="flex items-baseline gap-2 mb-1.5">
               <span className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
                 {pct != null ? `${pct}%` : '—'}
@@ -102,7 +92,7 @@ function CoverageWindows({ windows }: { windows: GeoCoverageWindow[] }) {
                 }}
               />
             </div>
-          </div>
+          </MetricsTile>
         );
       })}
     </div>
