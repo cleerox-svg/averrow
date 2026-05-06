@@ -490,47 +490,48 @@ export const flightControlAgent: AgentModule = {
         );
       }
     } catch { /* notification failures never break FC */ }
+    // Collect enrichment backlog warnings into a single D1 batch
+    // instead of awaiting 7 sequential INSERTs. Pre-fix this phase
+    // was 4s on the 14s FC tick; with one batch round-trip it
+    // drops to ~50-200ms.
+    const enrichmentLogStmts: D1PreparedStatement[] = [];
     if (backlogs.vtUnchecked > 500) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `VT enrichment backlog: ${backlogs.vtUnchecked} high-severity threats unchecked`,
-        { backlog: 'virustotal', count: backlogs.vtUnchecked }
-      );
+        { backlog: 'virustotal', count: backlogs.vtUnchecked }));
     }
     if (backlogs.gsbUnchecked > 1000) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `GSB enrichment backlog: ${backlogs.gsbUnchecked} URLs/domains unchecked`,
-        { backlog: 'google_safe_browsing', count: backlogs.gsbUnchecked }
-      );
+        { backlog: 'google_safe_browsing', count: backlogs.gsbUnchecked }));
     }
     if (backlogs.dblUnchecked > 1000) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `DBL enrichment backlog: ${backlogs.dblUnchecked} domains unchecked`,
-        { backlog: 'spamhaus_dbl', count: backlogs.dblUnchecked }
-      );
+        { backlog: 'spamhaus_dbl', count: backlogs.dblUnchecked }));
     }
     if (backlogs.abuseipdbUnchecked > 500) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `AbuseIPDB enrichment backlog: ${backlogs.abuseipdbUnchecked} IPs unchecked`,
-        { backlog: 'abuseipdb', count: backlogs.abuseipdbUnchecked }
-      );
+        { backlog: 'abuseipdb', count: backlogs.abuseipdbUnchecked }));
     }
     if (backlogs.pdnsUnchecked > 200) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `PDNS enrichment backlog: ${backlogs.pdnsUnchecked} domains unchecked`,
-        { backlog: 'circl_pdns', count: backlogs.pdnsUnchecked }
-      );
+        { backlog: 'circl_pdns', count: backlogs.pdnsUnchecked }));
     }
     if (backlogs.greynoiseUnchecked > 100) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `GreyNoise enrichment backlog: ${backlogs.greynoiseUnchecked} high-severity IPs unchecked`,
-        { backlog: 'greynoise', count: backlogs.greynoiseUnchecked }
-      );
+        { backlog: 'greynoise', count: backlogs.greynoiseUnchecked }));
     }
     if (backlogs.seclookupUnchecked > 1000) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
         `SecLookup enrichment backlog: ${backlogs.seclookupUnchecked} threats unchecked`,
-        { backlog: 'seclookup', count: backlogs.seclookupUnchecked }
-      );
+        { backlog: 'seclookup', count: backlogs.seclookupUnchecked }));
+    }
+    if (enrichmentLogStmts.length > 0) {
+      try { await db.batch(enrichmentLogStmts); } catch { /* never break FC */ }
     }
 
     mark('enrichment_warnings');
@@ -1574,50 +1575,60 @@ async function recoverStalledAgents(
   // returns in seconds while recoveries run in the background.
   const execCtx = ctx.input?._executionCtx as ExecutionContext | undefined;
 
+  // Collect orphan-clear UPDATEs and recovery log INSERTs across
+  // all stalled agents into one batch. Pre-fix each stalled agent
+  // serialized 1 UPDATE + 1 INSERT; with N stalled agents that's
+  // 2N sequential D1 round-trips. Single batch is one round-trip.
+  const recoveryStmts: D1PreparedStatement[] = [];
+  const toRecover: Array<{ agentId: string; mod: typeof agentModules[string] }> = [];
+
   for (const agent of health) {
     if (!agent.is_stalled) continue;
 
     const mod = agentModules[agent.agent_id];
     if (!mod) continue;
-    // Skip manual + api agents — see #948 / #941. The is_stalled
-    // flag uses lastRunAge > thresholdMs and doesn't distinguish
-    // trigger type, so without this guard FC tries to re-fire every
-    // sync agent that hasn't been called in a while.
+    // Skip manual + api agents — see #948 / #941.
     if (mod.trigger === 'manual' || mod.trigger === 'api') continue;
 
     // Force-fail orphaned 'running' rows before re-dispatching.
     // A Worker timeout / unhandled exception leaves the row in
-    // 'running' state forever. Without this update the orphaned
-    // row stays the latest started_at for that agent and keeps
-    // tripping is_stalled every FC tick (because its lastRunAge
-    // grows without bound), masking whether the recovery run
-    // itself succeeded. Mark it 'failed' with a clear reason so
-    // the new recovery run becomes the latest started_at on the
-    // next tick.
+    // 'running' state forever; without this UPDATE-to-failed,
+    // the orphan stays the latest started_at and re-trips
+    // is_stalled every FC tick. Marked 'failed' so the recovery
+    // run becomes the latest started_at on the next tick.
     if (agent.last_run_status === 'running' && agent.last_run_at) {
-      try {
-        await db.prepare(`
-          UPDATE agent_runs
-          SET status = 'failed',
-              completed_at = datetime('now'),
-              error_message = 'auto-failed by flight_control after stall threshold exceeded'
-          WHERE agent_id = ?
-            AND started_at = ?
-            AND status = 'running'
-        `).bind(agent.agent_id, agent.last_run_at).run();
-      } catch { /* non-fatal — recovery still proceeds */ }
+      recoveryStmts.push(db.prepare(`
+        UPDATE agent_runs
+           SET status = 'failed',
+               completed_at = datetime('now'),
+               error_message = 'auto-failed by flight_control after stall threshold exceeded'
+         WHERE agent_id = ?
+           AND started_at = ?
+           AND status = 'running'
+      `).bind(agent.agent_id, agent.last_run_at));
     }
 
-    await logActivity(db, 'flight_control', 'warning', 'recovery',
+    recoveryStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'recovery',
       `Recovering stalled agent: ${agent.agent_id} (last run: ${agent.last_run_at ?? 'never'})`,
       { agent: agent.agent_id, last_run: agent.last_run_at, status: agent.last_run_status }
-    );
+    ));
 
+    toRecover.push({ agentId: agent.agent_id, mod });
+  }
+
+  // One batched flush for all the orphan-clear + log writes.
+  if (recoveryStmts.length > 0) {
+    try { await db.batch(recoveryStmts); } catch { /* per-row failures don't block recoveries */ }
+  }
+
+  // Dispatch the actual recovery executions. Fire-and-forget via
+  // ctx.waitUntil so FC returns in seconds while the recoveries
+  // run in the background.
+  for (const { mod } of toRecover) {
     const promise = executeAgent(env, mod, { trigger: 'flight_control_recovery' }, 'flight_control', 'event');
     if (execCtx) {
       execCtx.waitUntil(promise.catch(() => { /* logged by agentRunner */ }));
     } else {
-      // Fallback for manual triggers (no ExecutionContext available).
       try { await promise; } catch { /* logged by agentRunner */ }
     }
     recoveries++;
@@ -1627,6 +1638,16 @@ async function recoverStalledAgents(
 }
 
 // ─── Activity Logging ────────────────────────────────────────────
+//
+// Each FC tick was firing ~7 logActivity calls inside
+// enrichment_warnings + (UPDATE + logActivity) per stalled agent
+// inside recover_stalled — all sequential awaits. With ~50-200ms
+// per D1 round-trip plus tail latency, those phases were both
+// clocking 4s each (28% of the 14s tick on /admin/metrics).
+//
+// Fix: expose a non-awaiting "build a prepared statement" variant
+// alongside the awaiting helper, collect statements in each phase,
+// and flush via `db.batch()` once.
 
 async function logActivity(
   db: D1Database,
@@ -1637,7 +1658,23 @@ async function logActivity(
   metadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    await db.prepare(`
+    await logActivityStmt(db, agentId, severity, eventType, message, metadata).run();
+  } catch {
+    // Don't let activity logging failures break Flight Control
+  }
+}
+
+/** Same INSERT as logActivity but returns the bound statement so
+ *  the caller can batch multiple writes via `db.batch([…])`. */
+function logActivityStmt(
+  db: D1Database,
+  agentId: string,
+  severity: 'info' | 'warning' | 'critical',
+  eventType: string,
+  message: string,
+  metadata: Record<string, unknown>
+): D1PreparedStatement {
+  return db.prepare(`
       INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
       VALUES (?, ?, ?, ?, ?, ?)
     `).bind(
@@ -1647,10 +1684,7 @@ async function logActivity(
       message,
       JSON.stringify(metadata),
       severity
-    ).run();
-  } catch {
-    // Don't let activity logging failures break Flight Control
-  }
+    );
 }
 
 /**
