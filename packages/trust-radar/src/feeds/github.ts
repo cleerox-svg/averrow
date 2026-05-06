@@ -62,9 +62,29 @@ interface BrandRow {
   canonical_domain: string | null;
 }
 
+// Per-run sizing.
+//
+// History: BRANDS_PER_RUN was 10 + DELAY_BETWEEN_CALLS_MS was 3000.
+// That meant up to 10 × 2 search calls × 3s = 60s of forced delays
+// plus per-call API time (~2s each) before advisory monitoring even
+// started. Cloudflare Workers' cron-handler wall-clock budget for
+// the orchestrator slot is bounded — the worker was dying mid-run,
+// rows stayed `status='partial'`, and the navigator reaper marked
+// them failed 15 min later. The 64% failure rate on /admin/metrics
+// (Feed Failures tab) was every single one of those reaps.
+//
+// New budget: 4 brands × 2 searches × (2.1s delay + ~2s API) ≈ 33s
+// worst case in the loop, plus 1 advisory call (~2s) and bookkeeping.
+// The hard wall-clock guard below breaks out cleanly if we get close
+// to the budget regardless, so successful work always gets stamped.
 const MAX_SEARCH_CALLS_PER_RUN = 25;
-const BRANDS_PER_RUN = 10;
-const DELAY_BETWEEN_CALLS_MS = 3000; // Stay well under 30/min
+const BRANDS_PER_RUN = 4;
+// Just over GitHub's 30 search/min rate limit (60s / 30 = 2.0s + 100ms safety).
+const DELAY_BETWEEN_CALLS_MS = 2100;
+// Wall-clock budget for the whole ingest. When elapsed exceeds this,
+// the loop exits with whatever's been processed so far — reaper
+// never fires.
+const WALLTIME_BUDGET_MS = 25_000;
 
 // ─── Feed Module ─────────────────────────────────────────────────
 
@@ -76,6 +96,8 @@ export const github: FeedModule = {
     let itemsDuplicate = 0;
     let itemsError = 0;
     let apiCalls = 0;
+    const startedAt = Date.now();
+    const walltimeExceeded = () => Date.now() - startedAt >= WALLTIME_BUDGET_MS;
 
     // Check for GitHub token
     const token = env.GITHUB_FEED_TOKEN;
@@ -102,6 +124,14 @@ export const github: FeedModule = {
     // 2. Code leak detection per brand
     for (const brand of brands.results) {
       if (apiCalls >= MAX_SEARCH_CALLS_PER_RUN) break;
+      // Wall-clock guard. When we're close to the budget, exit the
+      // loop cleanly so the success/failure stamp lands and the
+      // reaper never fires. Whatever brands we didn't reach get
+      // picked up next run via `github_brand_offset` rotation.
+      if (walltimeExceeded()) {
+        console.log(`[github] walltime budget reached after ${apiCalls} calls — exiting loop early`);
+        break;
+      }
 
       // Search for domain references in code
       if (brand.canonical_domain) {
@@ -121,7 +151,7 @@ export const github: FeedModule = {
       }
 
       // Search for credential leaks
-      if (apiCalls < MAX_SEARCH_CALLS_PER_RUN && brand.canonical_domain) {
+      if (apiCalls < MAX_SEARCH_CALLS_PER_RUN && brand.canonical_domain && !walltimeExceeded()) {
         try {
           const query = `"${brand.canonical_domain}" api_key OR api_secret OR password OR token`;
           const results = await searchGitHubCode(token, query, env);
@@ -139,8 +169,8 @@ export const github: FeedModule = {
       }
     }
 
-    // 3. Security advisory monitoring
-    if (apiCalls < MAX_SEARCH_CALLS_PER_RUN) {
+    // 3. Security advisory monitoring — only if we still have budget.
+    if (apiCalls < MAX_SEARCH_CALLS_PER_RUN && !walltimeExceeded()) {
       try {
         const advisories = await fetchSecurityAdvisories(token, env);
         apiCalls++;
@@ -177,7 +207,8 @@ export const github: FeedModule = {
       }
     }
 
-    console.log(`[github] Complete: fetched=${itemsFetched} new=${itemsNew} dup=${itemsDuplicate} errors=${itemsError} api_calls=${apiCalls}`);
+    const elapsedMs = Date.now() - startedAt;
+    console.log(`[github] Complete: fetched=${itemsFetched} new=${itemsNew} dup=${itemsDuplicate} errors=${itemsError} api_calls=${apiCalls} elapsed_ms=${elapsedMs}`);
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
   },
