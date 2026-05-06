@@ -52,7 +52,12 @@ function MoverList({ title, rows, accent, accentDim, formatDelta, emptyLabel }: 
                   name={row.name}
                   color={accent}
                   dimColor={accentDim}
-                  faviconUrl={row.logo_url}
+                  faviconUrl={
+                    row.logo_url ??
+                    (row.canonical_domain
+                      ? `https://www.google.com/s2/favicons?domain=${row.canonical_domain}&sz=64`
+                      : null)
+                  }
                 />
                 <div className="home-mover-row-text">
                   <div className="home-mover-row-name">{row.name}</div>

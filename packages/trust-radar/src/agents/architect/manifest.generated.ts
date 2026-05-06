@@ -936,8 +936,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/trust-radar/src/feeds/phishdestroy.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 128,
-      "last_modified": "2026-05-04T21:22:54.763Z"
+      "loc": 138,
+      "last_modified": "2026-05-06T02:14:17.980Z"
     },
     {
       "name": "phishtank",
@@ -1130,6 +1130,32 @@ export const REPO_MANIFEST: RepoInventory = {
         "sparrow",
         "strategist"
       ]
+    },
+    {
+      "pattern": "13 13 * * *",
+      "handler_path": "packages/trust-radar/src/index.ts",
+      "agents_invoked": [
+        "analyst",
+        "appStoreMonitor",
+        "attributor",
+        "auto-seeder",
+        "cartographer",
+        "cube-healer",
+        "darkWebMonitor",
+        "flightControl",
+        "geoip-refresh",
+        "lookalike-scanner",
+        "narrator",
+        "news-watcher",
+        "nexus",
+        "notification_narrator",
+        "observer",
+        "seed-strategist",
+        "socialDiscovery",
+        "socialMonitor",
+        "sparrow",
+        "strategist"
+      ]
     }
   ],
   "workers": [
@@ -1154,7 +1180,7 @@ export const REPO_MANIFEST: RepoInventory = {
   "totals": {
     "agents": 38,
     "feeds": 40,
-    "crons": 3,
+    "crons": 4,
     "workers": 1
   }
 };

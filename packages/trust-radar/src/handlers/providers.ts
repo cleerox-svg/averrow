@@ -8,28 +8,30 @@ import type { Env } from "../types";
 
 // GET /api/providers/movers
 //
-// Mirrors handleBrandMovers (handlers/brands.ts) for hosting providers
-// — top 5 providers by largest positive delta in active threat count
-// over the last 7 days ("rising") and top 5 by largest negative delta
-// ("falling").
+// Mirrors handleBrandMovers for hosting providers — top 5 by largest
+// positive 7-day inflow delta ("rising") and top 5 by largest
+// negative ("falling").
 //
-// Source: daily_snapshots(date, entity_type='provider', entity_id,
-// active_threats), populated daily by generateDailySnapshots(). Uses
-// MAX(date) as the today anchor so the query keeps working if the
-// daily snapshot job hasn't run yet.
+// Source: threat_cube_provider, comparing two adjacent 7-day windows
+// of new threat inflow (this_week vs last_week). See handleBrandMovers
+// for the full reasoning — short version: the active-threat count
+// barely moves down in practice, so an active-count delta was empty
+// by construction. Inflow naturally falls when a provider stops
+// hosting fresh attack infra.
 //
-// Distinct from /api/providers/worst (sorts by current absolute count)
-// and /api/providers/improving (compares raw 7d-vs-14d threat creation).
-// This endpoint is the apples-to-apples counterpart of /api/brands/movers.
+// Distinct from /api/providers/worst (current absolute count) and
+// /api/providers/improving (raw 7d-vs-14d threat creation ratio).
+// This endpoint stays the apples-to-apples counterpart of
+// /api/brands/movers.
 export async function handleProviderMovers(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    // v2 cache prefix — see brand_movers for the full reasoning. Same
-    // gap-tolerance fix applied here so the Provider Movers "Cooling
-    // Down" list isn't permanently empty.
-    const cacheKey = "provider_movers:v2";
+    // v3 cache prefix — invalidates v1/v2 payloads built against
+    // daily_snapshots.active_threats (which never decreases, so
+    // Cooling Down was always empty regardless of the anchor logic).
+    const cacheKey = "provider_movers:v3";
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       recordD1Reads(env, "provider_movers", newTally());
@@ -39,37 +41,27 @@ export async function handleProviderMovers(request: Request, env: Env): Promise<
     const tally = newTally();
 
     const rows = await session.prepare(`
-      WITH anchor AS (
-        SELECT MAX(date) AS today_date
-        FROM daily_snapshots
-        WHERE entity_type = 'provider'
-      ),
-      week_ago_anchor AS (
-        SELECT MAX(date) AS week_ago_date
-        FROM daily_snapshots, anchor
-        WHERE entity_type = 'provider'
-          AND date <= date(anchor.today_date, '-7 days')
-      ),
-      today_snap AS (
-        SELECT entity_id AS provider_id, active_threats AS today_count
-        FROM daily_snapshots, anchor
-        WHERE entity_type = 'provider' AND date = anchor.today_date
-      ),
-      week_ago_snap AS (
-        SELECT entity_id AS provider_id, active_threats AS week_ago_count
-        FROM daily_snapshots, week_ago_anchor
-        WHERE entity_type = 'provider' AND date = week_ago_anchor.week_ago_date
+      WITH inflow AS (
+        SELECT
+          hosting_provider_id AS provider_id,
+          SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
+                   THEN threat_count ELSE 0 END) AS this_week,
+          SUM(CASE WHEN hour_bucket >= datetime('now','-14 days')
+                    AND hour_bucket <  datetime('now','-7 days')
+                   THEN threat_count ELSE 0 END) AS last_week
+        FROM threat_cube_provider
+        WHERE hour_bucket >= datetime('now','-14 days')
+        GROUP BY hosting_provider_id
       )
       SELECT
         hp.id, hp.name, hp.asn, hp.country, hp.reputation_score,
         hp.active_threat_count,
-        COALESCE(t.today_count, 0) AS today_count,
-        COALESCE(w.week_ago_count, 0) AS week_ago_count,
-        COALESCE(t.today_count, 0) - COALESCE(w.week_ago_count, 0) AS delta_7d
-      FROM hosting_providers hp
-      LEFT JOIN today_snap t     ON t.provider_id = hp.id
-      LEFT JOIN week_ago_snap w  ON w.provider_id = hp.id
-      WHERE COALESCE(t.today_count, 0) + COALESCE(w.week_ago_count, 0) > 0
+        i.this_week AS today_count,
+        i.last_week AS week_ago_count,
+        i.this_week - i.last_week AS delta_7d
+      FROM inflow i
+      JOIN hosting_providers hp ON hp.id = i.provider_id
+      WHERE i.this_week + i.last_week > 0
     `).all<{
       id: string; name: string; asn: string | null;
       country: string | null; reputation_score: number | null;

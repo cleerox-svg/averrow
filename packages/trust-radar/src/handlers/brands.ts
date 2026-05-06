@@ -22,28 +22,35 @@ import type { OrgScope } from "../middleware/auth";
 // GET /api/brands/movers
 //
 // "Brand Movers" data for the unified Home — top 5 brands with the
-// largest positive delta in active threat count over the last 7 days
-// ("rising"), and top 5 with the largest negative delta ("falling").
+// largest positive 7-day inflow delta ("rising") and top 5 with the
+// largest negative ("falling").
 //
-// Source: daily_snapshots(date, entity_type='brand', entity_id, active_threats).
-// Anchored on MAX(date) rather than date('now') so the query keeps
-// working if the daily snapshot job hasn't run yet today (the table
-// is rebuilt at 00:00 UTC by generateDailySnapshots() each day).
+// Source: threat_cube_brand. We compare two adjacent 7-day windows
+// of *new threat inflow* (this_week vs last_week). Inflow is the
+// right metric here because the platform's active-threat count is
+// monotonically non-decreasing in practice (very few threats ever
+// transition status='active' → 'remediated'), so a delta of
+// active_threats over time was always ≥ 0 — the Cooling Down list
+// was empty by construction. Inflow naturally falls when a brand
+// stops attracting new attacks.
 //
-// Both lists are computed in a single round-trip: one CTE pair builds
-// today/-7d active_threats per brand, then we LEFT JOIN brands and
-// run two filters (delta > 0 / delta < 0) over the same projected
-// rows. Cached in KV for 5 min — daily-grain data, no need for finer.
+// Cube semantics: threat_cube_brand.threat_count is the number of
+// new threats created in that hour bucket (cube-builder.ts:271 —
+// `WHERE created_at >= ?2 AND created_at < ?3 AND status='active'`),
+// so SUM(threat_count) over a window IS the inflow over that window.
+//
+// Cube + brands JOIN is one round-trip; the two windows are split
+// from the same SUM with conditional aggregation. Cached in KV for
+// 5 min.
 export async function handleBrandMovers(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    // v2 cache prefix — invalidates stale cached payloads from the
-    // pre-fix week_ago anchor that was matching against gaps in
-    // daily_snapshots (so every brand showed delta_7d >= 0 → no
-    // "Cooling Down" rows).
-    const cacheKey = "brand_movers:v2";
+    // v3 cache prefix — invalidates v1/v2 payloads built against
+    // daily_snapshots.active_threats (which never decreases, so
+    // Cooling Down was always empty regardless of the anchor logic).
+    const cacheKey = "brand_movers:v3";
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       recordD1Reads(env, "brand_movers", newTally());
@@ -52,48 +59,28 @@ export async function handleBrandMovers(request: Request, env: Env): Promise<Res
 
     const tally = newTally();
 
-    // Single SQL — projects (brand row + today_count + week_ago_count + delta_7d)
-    // for every brand that had non-zero active threats on either anchor day.
-    // We then split rising/falling client-side from the same row set so we
-    // only pay one round-trip.
-    //
-    // week_ago_anchor uses MAX(date) WHERE date <= today-7 instead of
-    // strict equality. daily_snapshots has gaps on days the cron misses
-    // (e.g. 2026-04-28, 04-29, 05-04 currently missing) — without this
-    // tolerance the comparison falls through to 0 and every brand looks
-    // like it's "Heating Up", leaving the Cooling Down list empty.
     const rows = await session.prepare(`
-      WITH anchor AS (
-        SELECT MAX(date) AS today_date
-        FROM daily_snapshots
-        WHERE entity_type = 'brand'
-      ),
-      week_ago_anchor AS (
-        SELECT MAX(date) AS week_ago_date
-        FROM daily_snapshots, anchor
-        WHERE entity_type = 'brand'
-          AND date <= date(anchor.today_date, '-7 days')
-      ),
-      today_snap AS (
-        SELECT entity_id AS brand_id, active_threats AS today_count
-        FROM daily_snapshots, anchor
-        WHERE entity_type = 'brand' AND date = anchor.today_date
-      ),
-      week_ago_snap AS (
-        SELECT entity_id AS brand_id, active_threats AS week_ago_count
-        FROM daily_snapshots, week_ago_anchor
-        WHERE entity_type = 'brand' AND date = week_ago_anchor.week_ago_date
+      WITH inflow AS (
+        SELECT
+          target_brand_id AS brand_id,
+          SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
+                   THEN threat_count ELSE 0 END) AS this_week,
+          SUM(CASE WHEN hour_bucket >= datetime('now','-14 days')
+                    AND hour_bucket <  datetime('now','-7 days')
+                   THEN threat_count ELSE 0 END) AS last_week
+        FROM threat_cube_brand
+        WHERE hour_bucket >= datetime('now','-14 days')
+        GROUP BY target_brand_id
       )
       SELECT
         b.id, b.name, b.canonical_domain, b.logo_url, b.email_security_grade,
         b.threat_count,
-        COALESCE(t.today_count, 0) AS today_count,
-        COALESCE(w.week_ago_count, 0) AS week_ago_count,
-        COALESCE(t.today_count, 0) - COALESCE(w.week_ago_count, 0) AS delta_7d
-      FROM brands b
-      LEFT JOIN today_snap t     ON t.brand_id = b.id
-      LEFT JOIN week_ago_snap w  ON w.brand_id = b.id
-      WHERE COALESCE(t.today_count, 0) + COALESCE(w.week_ago_count, 0) > 0
+        i.this_week AS today_count,
+        i.last_week AS week_ago_count,
+        i.this_week - i.last_week AS delta_7d
+      FROM inflow i
+      JOIN brands b ON b.id = i.brand_id
+      WHERE i.this_week + i.last_week > 0
     `).all<{
       id: string; name: string; canonical_domain: string;
       logo_url: string | null; email_security_grade: string | null;
