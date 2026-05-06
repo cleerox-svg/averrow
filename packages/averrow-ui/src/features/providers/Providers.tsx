@@ -83,15 +83,21 @@ function getClusterStatus(c: Cluster): ProviderStatus {
 // ─── Status Badge Component ──────────────────────────────────
 
 function StatusBadge({ status }: { status: ProviderStatus }) {
+  // Bundle C R8 migration: use the Badge.context tags (NEXUS-style
+  // trend signals) instead of overloading `status` with custom labels.
+  // Notable semantic fix: PIVOT was rendering with status="running"
+  // (blue) — misleading because "went silent recently" should read
+  // as critical/red, not as a healthy run state. Badge.context.pivot
+  // is dedicated red.
   switch (status) {
     case 'accelerating':
-      return <Badge status="warning" label="ACCELERATING" />;
+      return <Badge context="accelerating" />;
     case 'pivot':
-      return <Badge status="running" label="PIVOT" />;
+      return <Badge context="pivot" />;
     case 'active':
       return <Badge status="active" label="ACTIVE" />;
     case 'quiet':
-      return <Badge status="inactive" label="QUIET" />;
+      return <Badge context="quiet" />;
   }
 }
 
@@ -261,7 +267,7 @@ function ProviderCardUnified({
 
         {/* Badges stack (NEXUS + status) */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-          {nexusLinked && <Badge status="running" label="NEXUS" size="xs" />}
+          {nexusLinked && <Badge context="nexus" size="xs" />}
           <StatusBadge status={status} />
         </div>
       </div>
@@ -378,7 +384,7 @@ function ProviderCardClassic({
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {nexusLinked && (
-            <Badge status="running" label="NEXUS" size="xs" />
+            <Badge context="nexus" size="xs" />
           )}
           <StatusBadge status={status} />
         </div>
