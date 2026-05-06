@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { StatCard, Card, StatGrid, FilterBar, PageHeader, DataRow } from '@/components/ui';
+import { SeverityDot } from '@/components/ui/DataRow';
 import { Badge } from '@/components/ui/Badge';
 import type { Severity } from '@/components/ui/Badge';
 import {
@@ -223,20 +224,13 @@ function BrandGroupCard({
                   onClick={() => onSelectAlert(alert)}
                   className={cn('flex items-center gap-3', isSelected && 'bg-afterburner-muted')}
                 >
-                  {/* Severity dot — driven by tokens, post-0120 lowercase. */}
-                  <span
-                    className={cn(
-                      'w-2 h-2 rounded-full flex-shrink-0',
-                      alert.severity === 'critical' && 'dot-pulse-red',
-                      alert.severity === 'high' && 'dot-pulse-amber',
-                    )}
-                    style={{
-                      background:
-                        alert.severity === 'critical' ? 'var(--sev-critical)' :
-                        alert.severity === 'high'     ? 'var(--sev-high)'     :
-                        alert.severity === 'medium'   ? 'var(--sev-medium)'   :
-                                                         'var(--sev-low)',
-                    }}
+                  {/* Severity dot — uses the shared design-system
+                      primitive so the dot color + pulse semantics
+                      stay consistent across pages. R8 migration. */}
+                  <SeverityDot
+                    severity={sev}
+                    size={8}
+                    pulse={alert.severity === 'critical' || alert.severity === 'high'}
                   />
 
                   {/* Handle + platform */}
@@ -299,16 +293,19 @@ function BrandGroupCard({
                     );
                   })()}
 
-                  {/* Status */}
-                  <span className={cn(
-                    'font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded',
-                    alert.status === 'new' && 'bg-[#fb923c]/15 text-[#fb923c]',
-                    alert.status === 'acknowledged' && 'bg-afterburner-muted text-[#E5A832]',
-                    alert.status === 'resolved' && 'bg-[#4ade80]/15 text-[#4ade80]',
-                    alert.status === 'false_positive' && 'bg-white/5 text-white/40',
-                  )}>
-                    {alert.status === 'false_positive' ? 'dismissed' : alert.status}
-                  </span>
+                  {/* Status — shared Badge primitive. R8 migration:
+                      replaces an inline pill that had its own color
+                      mapping. */}
+                  <Badge
+                    status={
+                      alert.status === 'new'           ? 'pending'  :
+                      alert.status === 'acknowledged'  ? 'warning'  :
+                      alert.status === 'resolved'      ? 'success'  :
+                                                         'inactive'
+                    }
+                    label={alert.status === 'false_positive' ? 'dismissed' : alert.status}
+                    size="sm"
+                  />
 
                   {/* Time */}
                   <span className="font-mono text-[10px] text-white/50 tabular-nums w-14 text-right flex-shrink-0">
@@ -695,6 +692,10 @@ export function Alerts() {
           { value: 'critical', label: 'Critical', count: stats?.critical },
           { value: 'high',     label: 'High',     count: stats?.high },
           { value: 'medium',   label: 'Medium',   count: stats?.medium },
+          // Low tier was missing from the original filter — audit H7
+          // (2026-05-06) flagged the inconsistent severity scale vs.
+          // /v2/threats which has all 5 tiers.
+          { value: 'low',      label: 'Low',      count: stats?.low },
         ]}
         active={filters.severity ?? 'all'}
         onChange={v => setFilter('severity', v)}
@@ -774,7 +775,7 @@ export function Alerts() {
               icon={<Bell />}
               title="No alerts match your filters"
               subtitle="All alerts have been acknowledged. You're up to date."
-              variant="clean"
+              variant="success"
             />
           )}
 
