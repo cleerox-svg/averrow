@@ -69,17 +69,21 @@ SET target_brand_id = (
 )
 WHERE target_brand_id IN (SELECT alias_id FROM brand_dedup);
 
+-- takedown_requests + alerts use `brand_id` (not target_brand_id);
+-- threats + threat_cube_brand use `target_brand_id`. See migration
+-- 0043 (brand_id type fix) for the takedown_requests + org_brands
+-- column shape.
 UPDATE takedown_requests
-SET target_brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = takedown_requests.target_brand_id
+SET brand_id = (
+  SELECT master_id FROM brand_dedup WHERE alias_id = takedown_requests.brand_id
 )
-WHERE target_brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE brand_id IN (SELECT alias_id FROM brand_dedup);
 
 UPDATE alerts
-SET target_brand_id = (
-  SELECT master_id FROM brand_dedup WHERE alias_id = alerts.target_brand_id
+SET brand_id = (
+  SELECT master_id FROM brand_dedup WHERE alias_id = alerts.brand_id
 )
-WHERE target_brand_id IN (SELECT alias_id FROM brand_dedup);
+WHERE brand_id IN (SELECT alias_id FROM brand_dedup);
 
 -- org_brands has its own brand_id column.
 UPDATE org_brands

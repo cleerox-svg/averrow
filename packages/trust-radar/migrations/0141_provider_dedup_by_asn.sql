@@ -64,14 +64,11 @@ SET hosting_provider_id = (
 )
 WHERE hosting_provider_id IN (SELECT old_id FROM provider_dedup);
 
--- Repoint infrastructure_clusters if the FK exists. NEXUS clusters
--- can carry a hosting_provider_id reference for the dominant provider.
-UPDATE infrastructure_clusters
-SET hosting_provider_id = (
-  SELECT canonical_id FROM provider_dedup
-  WHERE old_id = infrastructure_clusters.hosting_provider_id
-)
-WHERE hosting_provider_id IN (SELECT old_id FROM provider_dedup);
+-- infrastructure_clusters stores `hosting_provider_ids` as a JSON
+-- array snapshot, not a singular FK column. Rewriting JSON in SQLite
+-- in-place is brittle, and NEXUS regenerates the snapshot on every
+-- run via ON CONFLICT DO UPDATE, so we leave the cluster snapshots
+-- alone — the next NEXUS cycle reflects the canonical ids.
 
 -- Drop the now-orphaned duplicates.
 DELETE FROM hosting_providers
