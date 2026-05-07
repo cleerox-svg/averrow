@@ -44,6 +44,9 @@ import {
 import {
   handleGetTrademarkModuleSummary, handleGetBrandTrademarkFindings,
 } from "../handlers/tenantTrademarkModule";
+import {
+  handleGetThreatActorModuleSummary, handleGetThreatActorDetail,
+} from "../handlers/tenantThreatActorModule";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -347,6 +350,23 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request, env,
       request.params["orgId"] ?? "",
       request.params["brandId"] ?? "",
+      ctx,
+    );
+  });
+
+  // ─── Module surfaces — Threat-Actor Intelligence (v3 Phase B) ──
+  router.get("/api/orgs/:orgId/modules/threat-actor", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetThreatActorModuleSummary(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/threat-actor/actors/:actorId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetThreatActorDetail(
+      request, env,
+      request.params["orgId"] ?? "",
+      request.params["actorId"] ?? "",
       ctx,
     );
   });

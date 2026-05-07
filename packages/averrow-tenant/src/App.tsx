@@ -18,6 +18,8 @@ import { BrandDarkWebFindings } from '@/features/dark-web/BrandDarkWebFindings';
 import { AbuseMailbox } from '@/features/abuse-mailbox/AbuseMailbox';
 import { Trademark } from '@/features/trademark/Trademark';
 import { BrandTrademarkFindings } from '@/features/trademark/BrandTrademarkFindings';
+import { ThreatActor } from '@/features/threat-actor/ThreatActor';
+import { ThreatActorDetail } from '@/features/threat-actor/ThreatActorDetail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,7 +59,9 @@ export function App() {
               {/* Trademark Infringement — Phase B sprint 7 */}
               <Route path="modules/trademark"                    element={<Trademark />} />
               <Route path="modules/trademark/brands/:brandId"    element={<BrandTrademarkFindings />} />
-              <Route path="modules/threat-actor"  element={<ModulePlaceholder moduleKey="threat_actor" />} />
+              {/* Threat-Actor Intelligence — Phase B sprint 8 */}
+              <Route path="modules/threat-actor"                 element={<ThreatActor />} />
+              <Route path="modules/threat-actor/actors/:actorId" element={<ThreatActorDetail />} />
 
               <Route path="settings" element={<Settings />} />
               <Route path="settings/takedown-authorization" element={<TakedownAuthorizationPage />} />
