@@ -15,6 +15,7 @@ import { AppStore } from '@/features/app-store/AppStore';
 import { BrandAppStoreFindings } from '@/features/app-store/BrandAppStoreFindings';
 import { DarkWeb } from '@/features/dark-web/DarkWeb';
 import { BrandDarkWebFindings } from '@/features/dark-web/BrandDarkWebFindings';
+import { AbuseMailbox } from '@/features/abuse-mailbox/AbuseMailbox';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,7 +50,8 @@ export function App() {
               {/* Dark Web Monitoring — Phase B sprint 5 */}
               <Route path="modules/dark-web"                     element={<DarkWeb />} />
               <Route path="modules/dark-web/brands/:brandId"     element={<BrandDarkWebFindings />} />
-              <Route path="modules/abuse-mailbox" element={<ModulePlaceholder moduleKey="abuse_mailbox" />} />
+              {/* Abuse Mailbox — Phase B sprint 6 */}
+              <Route path="modules/abuse-mailbox"                element={<AbuseMailbox />} />
               <Route path="modules/trademark"     element={<ModulePlaceholder moduleKey="trademark" />} />
               <Route path="modules/threat-actor"  element={<ModulePlaceholder moduleKey="threat_actor" />} />
 

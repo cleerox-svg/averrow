@@ -38,6 +38,9 @@ import {
 import {
   handleGetDarkWebModuleSummary, handleGetBrandDarkWebFindings,
 } from "../handlers/tenantDarkWebModule";
+import {
+  handleGetAbuseMailboxModuleSummary, handleListAbuseInboxMessages,
+} from "../handlers/tenantAbuseMailboxModule";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -314,6 +317,18 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request.params["brandId"] ?? "",
       ctx,
     );
+  });
+
+  // ─── Module surfaces — Abuse Mailbox (v3 Phase B) ──────────────
+  router.get("/api/orgs/:orgId/modules/abuse-mailbox", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetAbuseMailboxModuleSummary(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/abuse-mailbox/messages", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListAbuseInboxMessages(request, env, request.params["orgId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────
