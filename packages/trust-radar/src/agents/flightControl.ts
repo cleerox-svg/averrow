@@ -15,6 +15,7 @@ import type { Env } from "../types";
 import { BudgetManager, fetchAnthropicUsageReport } from "../lib/budgetManager";
 import type { BudgetStatus, AgentBudgetLimits, ThrottleLevel } from "../lib/budgetManager";
 import { createNotification } from "../lib/notifications";
+import { transitionStatus as transitionIncidentStatus } from "../lib/incidents";
 import {
   emitPlatformNotification,
   renderPlatformAgentStalled,
@@ -206,6 +207,10 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "feed_configs" },
     { kind: "d1_table", name: "feed_pull_history" },
     { kind: "d1_table", name: "feed_status" },
+    // N6c briefing-silent self-monitor reads any open
+    // auto:platform_briefing_silent incident so it can auto-resolve
+    // it on heal. Bundle F (2026-05-07).
+    { kind: "d1_table", name: "incidents" },
     { kind: "d1_table", name: "push_subscriptions" },
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "threat_briefings" },
@@ -220,6 +225,12 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "agent_activity_log" },
     { kind: "d1_table", name: "agent_runs" },
     { kind: "d1_table", name: "backlog_history" },
+    // N6c briefing-silent self-monitor writes a resolution row to
+    // incident_updates when auto-resolving. The parent `incidents`
+    // row is also updated, but via `lib/incidents.transitionStatus`
+    // (a shared helper) so it's declared by that module's caller
+    // chain rather than directly here. Bundle F (2026-05-07).
+    { kind: "d1_table", name: "incident_updates" },
     { kind: "d1_table", name: "push_subscriptions" },
     // Layer C of the GeoIP self-heal scheme: FC supervisor force-
     // fails geo_ip_refresh_log rows that escaped both the workflow
@@ -733,6 +744,33 @@ export const flightControlAgent: AgentModule = {
             expected_within_hours: 24,
           })
         );
+      } else {
+        // Briefing pipeline is healthy — auto-resolve any still-open
+        // platform_briefing_silent incident. Without this the incident
+        // sits in `monitoring` state forever and operators have to
+        // remember to close it manually. The notification system
+        // already debounces re-fires via group_key dedup, so the
+        // inverse (auto-resolve on heal) is the symmetric move.
+        // Bundle F (2026-05-07) audit C12 follow-up.
+        try {
+          const openIncident = await db.prepare(
+            `SELECT id FROM incidents
+               WHERE source = 'auto:platform_briefing_silent'
+                 AND status != 'resolved'
+               ORDER BY created_at DESC
+               LIMIT 1`
+          ).first<{ id: string }>();
+          if (openIncident?.id) {
+            await db.prepare(
+              `INSERT INTO incident_updates (incident_id, message, status, created_at)
+               VALUES (?, ?, 'resolved', datetime('now'))`
+            ).bind(
+              openIncident.id,
+              `Auto-resolved by Flight Control: briefing pipeline healthy (last successful briefing ${hoursSince}h ago, threshold 36h).`
+            ).run();
+            await transitionIncidentStatus(env, openIncident.id, 'resolved');
+          }
+        } catch { /* incident resolution failures never break FC */ }
       }
     } catch { /* notification failures never break FC */ }
 
