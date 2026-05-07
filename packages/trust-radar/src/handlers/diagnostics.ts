@@ -654,6 +654,25 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     const d1BudgetStateP = getBudgetDiagnostics(env);
     const d1TopQueriesP = fetchD1TopQueries(env, 20);
 
+    // ─── 9. Module entitlements (v3 Phase A) ────────────────────────
+    // Per-module count of orgs in each status. With 7 modules and a
+    // small number of orgs this is a tiny scan; revisit when org
+    // count > 1000 (we'd materialize into a daily snapshot).
+    const moduleEntitlementsP = env.DB.prepare(`
+      SELECT module_key,
+        SUM(CASE WHEN status = 'active'    THEN 1 ELSE 0 END) AS active_orgs,
+        SUM(CASE WHEN status = 'trial'     THEN 1 ELSE 0 END) AS trial_orgs,
+        SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) AS suspended_orgs
+      FROM org_modules
+      GROUP BY module_key
+      ORDER BY module_key
+    `).all<{
+      module_key: string;
+      active_orgs: number;
+      trial_orgs: number;
+      suspended_orgs: number;
+    }>();
+
     // ── Execute all in parallel ─────────────────────────────────────
     const [
       clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
@@ -663,6 +682,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries,
       cachedCountStats,
+      moduleEntitlements,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -671,6 +691,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
       d1BudgetStateP, d1TopQueriesP,
       getCachedCountStats(env),
+      moduleEntitlementsP,
     ]);
 
     // ── Build backlog trend map ─────────────────────────────────────
@@ -993,6 +1014,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         },
 
         platform_totals: totals,
+
+        // v3 Phase A — module entitlements summary across the platform.
+        // One row per module; counts are how many orgs sit in each
+        // status. Empty list pre-seeding (no orgs entitled to anything
+        // yet) is the correct steady state until averrow-tenant
+        // onboarding lands in Phase A sprint 2.
+        modules: {
+          per_module: moduleEntitlements.results,
+          total_entitlements: moduleEntitlements.results.reduce(
+            (s, r) => s + r.active_orgs + r.trial_orgs + r.suspended_orgs,
+            0,
+          ),
+        },
 
         // What FC + agents have alerted operators about in the
         // requested window. One row per (type, group_key) so the
