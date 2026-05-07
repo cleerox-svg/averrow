@@ -2,6 +2,7 @@
 // Drop-in replacement. Same import path, backward-compatible API.
 // Three visual variants: pills (default), underline, bar.
 
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 
 export interface Tab {
@@ -30,63 +31,7 @@ export function Tabs({
 }: TabsProps) {
 
   if (variant === 'underline') {
-    return (
-      <div
-        className={cn(className)}
-        style={{
-          display:      'flex',
-          gap:          4,
-          overflowX:    'auto',
-          ...(sticky ? {
-            position:             'sticky',
-            top:                  0,
-            zIndex:               10,
-            background:           'linear-gradient(180deg, var(--bg-page) 0%, rgba(6,10,20,0.90) 100%)',
-            backdropFilter:       'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            borderBottom:         '1px solid var(--border-base)',
-            paddingBottom:        0,
-          } : {}),
-        }}
-      >
-        {tabs.map(tab => {
-          const active = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onChange(tab.id)}
-              style={{
-                flexShrink:    0,
-                padding:       '12px 16px',
-                fontSize:      11,
-                fontWeight:    700,
-                fontFamily:    'system-ui, -apple-system, sans-serif',
-                background:    'none',
-                border:        'none',
-                borderBottom:  `2px solid ${active ? 'var(--amber)' : 'transparent'}`,
-                color:         active ? 'var(--amber)' : 'var(--text-tertiary)',
-                cursor:        'pointer',
-                outline:       'none',
-                transition:    'var(--transition-fast)',
-                textShadow:    active ? '0 0 10px var(--amber-glow)' : 'none',
-                whiteSpace:    'nowrap',
-              }}
-            >
-              {tab.label}
-              {tab.count !== undefined && (
-                <span style={{
-                  marginLeft:  6,
-                  fontSize:    10,
-                  color:       active ? 'rgba(229,168,50,0.70)' : 'var(--text-muted)',
-                }}>
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    );
+    return <UnderlineTabs tabs={tabs} activeTab={activeTab} onChange={onChange} sticky={sticky} className={className} />;
   }
 
   if (variant === 'bar') {
@@ -140,7 +85,7 @@ export function Tabs({
     );
   }
 
-  // Default: pills variant
+  // Default: pills variant — fall through
   return (
     <div className={cn('flex flex-wrap gap-2', className)}>
       {tabs.map(tab => {
@@ -196,6 +141,135 @@ export function Tabs({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ── Underline variant with scroll-affordance fades ──────────────────────────
+// On narrow viewports the underline tab strip overflows horizontally; without
+// a fade users can't tell there's more. We track scroll position and fade in
+// a soft gradient on whichever edge has more content past it. Pure CSS
+// alternative (mask-image) would also fade the active underline, so we use
+// an absolute overlay that sits above the scroll container instead.
+function UnderlineTabs({
+  tabs,
+  activeTab,
+  onChange,
+  sticky,
+  className,
+}: Omit<TabsProps, 'variant'>) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    function update() {
+      if (!el) return;
+      const max = el.scrollWidth - el.clientWidth;
+      setEdges({
+        left:  el.scrollLeft > 1,
+        right: max > 1 && el.scrollLeft < max - 1,
+      });
+    }
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, [tabs.length]);
+
+  return (
+    <div
+      className={cn('relative', className)}
+      style={sticky ? {
+        position:             'sticky',
+        top:                  0,
+        zIndex:               10,
+        background:           'linear-gradient(180deg, var(--bg-page) 0%, rgba(6,10,20,0.90) 100%)',
+        backdropFilter:       'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderBottom:         '1px solid var(--border-base)',
+      } : undefined}
+    >
+      <div
+        ref={scrollRef}
+        style={{
+          display:      'flex',
+          gap:          4,
+          overflowX:    'auto',
+          scrollbarWidth: 'none',
+        }}
+      >
+        {tabs.map(tab => {
+          const active = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onChange(tab.id)}
+              style={{
+                flexShrink:    0,
+                padding:       '12px 16px',
+                fontSize:      11,
+                fontWeight:    700,
+                fontFamily:    'system-ui, -apple-system, sans-serif',
+                background:    'none',
+                border:        'none',
+                borderBottom:  `2px solid ${active ? 'var(--amber)' : 'transparent'}`,
+                color:         active ? 'var(--amber)' : 'var(--text-tertiary)',
+                cursor:        'pointer',
+                outline:       'none',
+                transition:    'var(--transition-fast)',
+                textShadow:    active ? '0 0 10px var(--amber-glow)' : 'none',
+                whiteSpace:    'nowrap',
+              }}
+            >
+              {tab.label}
+              {tab.count !== undefined && (
+                <span style={{
+                  marginLeft:  6,
+                  fontSize:    10,
+                  color:       active ? 'rgba(229,168,50,0.70)' : 'var(--text-muted)',
+                }}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {/* Edge fades — pointer-events:none so they don't block scroll */}
+      {edges.left && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: 24,
+            pointerEvents: 'none',
+            background: 'linear-gradient(90deg, var(--bg-page) 0%, rgba(6,10,20,0) 100%)',
+          }}
+        />
+      )}
+      {edges.right && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            right: 0,
+            width: 24,
+            pointerEvents: 'none',
+            background: 'linear-gradient(270deg, var(--bg-page) 0%, rgba(6,10,20,0) 100%)',
+          }}
+        />
+      )}
     </div>
   );
 }

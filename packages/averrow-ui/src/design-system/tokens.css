@@ -127,3 +127,66 @@
   --card-rim:    inset 0 1px 0 rgba(255, 255, 255, 0.80), inset 0 -1px 0 rgba(0, 0, 0, 0.06);
   --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 }
+
+/* ── DetailStatCard layout (used by Brand Detail hero) ───────────────
+   Default: side-by-side metric + children (wide cards).
+   < 220px container width: stack metric above children so the big
+   number doesn't crowd the severity-count rows (Audit Rsp5).
+   ───────────────────────────────────────────────────────────────── */
+.detail-stat-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.detail-stat-children {
+  flex: 1;
+  min-width: 0;
+}
+.detail-stat-divider {
+  width: 1px;
+  align-self: stretch;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.12) 30%, rgba(255, 255, 255, 0.12) 70%, transparent);
+  flex-shrink: 0;
+}
+.detail-stat-metric {
+  text-align: right;
+  flex-shrink: 0;
+}
+.detail-stat-metric-value {
+  font-size: 32px;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  color: #E5A832;
+  letter-spacing: -1px;
+  line-height: 1;
+  text-shadow: 0 0 20px rgba(229, 168, 50, 0.40);
+}
+.detail-stat-metric-label {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.25);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+@container (max-width: 220px) {
+  .detail-stat-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .detail-stat-divider {
+    width: auto;
+    height: 1px;
+    align-self: stretch;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12) 30%, rgba(255, 255, 255, 0.12) 70%, transparent);
+  }
+  .detail-stat-metric {
+    text-align: left;
+    order: -1;
+  }
+  .detail-stat-metric-value {
+    font-size: 26px;
+  }
+}

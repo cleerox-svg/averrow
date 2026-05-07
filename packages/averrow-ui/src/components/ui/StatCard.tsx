@@ -132,10 +132,13 @@ interface DetailStatCardProps {
 function DetailStatCard({
   title, children, metric, metricLabel, className, onClick,
 }: DetailStatCardProps) {
+  // Container-query: when the card is narrow (e.g. 2-col mobile grid), stack
+  // the metric block above the children so the big number doesn't crowd the
+  // severity-count rows. Audit Rsp5 (2026-05-06).
   return (
     <div
       data-testid="stat-card"
-      className={cn('rounded-xl transition-all', className)}
+      className={cn('detail-stat-card rounded-xl transition-all', className)}
       onClick={onClick}
       style={{
         padding: '14px 16px',
@@ -145,6 +148,7 @@ function DetailStatCard({
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid rgba(229,168,50,0.15)',
         boxShadow: '0 0 20px rgba(229,168,50,0.05), inset 0 1px 0 rgba(255,255,255,0.04)',
+        containerType: 'inline-size',
       }}
     >
       <div style={{
@@ -155,30 +159,14 @@ function DetailStatCard({
         {title}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+      <div className="detail-stat-row">
+        <div className="detail-stat-children">{children}</div>
 
-        <div style={{
-          width: 1, alignSelf: 'stretch',
-          background: 'linear-gradient(180deg, transparent, rgba(255,255,255,0.12) 30%, rgba(255,255,255,0.12) 70%, transparent)',
-          flexShrink: 0,
-        }} />
+        <div className="detail-stat-divider" />
 
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{
-            fontSize: 32, fontWeight: 900, fontFamily: 'var(--font-mono)',
-            color: '#E5A832', letterSpacing: -1, lineHeight: 1,
-            textShadow: '0 0 20px rgba(229,168,50,0.40)',
-          }}>
-            {metric}
-          </div>
-          <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.16em', color: 'rgba(255,255,255,0.25)',
-            textTransform: 'uppercase', marginTop: 4,
-          }}>
-            {metricLabel}
-          </div>
+        <div className="detail-stat-metric">
+          <div className="detail-stat-metric-value">{metric}</div>
+          <div className="detail-stat-metric-label">{metricLabel}</div>
         </div>
       </div>
     </div>

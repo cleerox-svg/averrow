@@ -46,8 +46,16 @@ export function Shell() {
           }}
         >
           <div style={{
-            padding: (!isFullScreen && !isMobile) ? '16px 24px' : undefined,
-            // Mobile: pages handle their own padding
+            padding: isFullScreen
+              ? undefined
+              // Home page on mobile renders its own full-bleed sections;
+              // every other route gets a baseline horizontal pad so page
+              // headings (e.g. Brands' h1) don't clip at 375px.
+              : (isHome && isMobile)
+                ? undefined
+                : isMobile
+                  ? '12px 16px'
+                  : '16px 24px',
           }}>
             {/* Self-gates to /, /agents, /feeds and only renders when
                 an unread platform_* notification exists that hasn't

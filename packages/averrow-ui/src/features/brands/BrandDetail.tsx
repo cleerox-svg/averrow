@@ -829,7 +829,7 @@ export function BrandDetail() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Hero: Exposure + 3 stat cards */}
-          <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-3" style={{
+          <div className="relative grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-4 gap-3" style={{
             background: 'radial-gradient(ellipse 60% 40% at 50% 0%, rgba(229,168,50,0.06) 0%, transparent 70%)'
           }}>
             <ExposureIndexCard brand={brand} threats={threats} />
