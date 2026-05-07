@@ -88,8 +88,12 @@ function makeDb(results: DbAllResults) {
           return { success: true };
         },
         all: async <T>() => allFor<T>(sql),
+        // first() is used by the takedown_authorizations lookup added
+        // when the modules endpoint started surfacing the authorization
+        // summary. Always returns null in this mock — the modules
+        // endpoint tolerates a null authorization (renders signed=false).
+        first: async <T>() => null as T | null,
       }),
-      // Un-bound path — listMetricDefinitions calls .prepare(...).all() directly
       all: async <T>() => allFor<T>(sql),
     };
   }
@@ -155,7 +159,13 @@ describe("handleListTenantModules", () => {
 
     const res = await handleListTenantModules(makeRequest(), env, "42", ORG_42_MEMBER);
     expect(res.status).toBe(200);
-    const body = await res.json() as { success: boolean; data: { modules: Array<{ module_key: string; status: string; metrics: Array<{ metric_key: string; value_this_month: number }> }> } };
+    const body = await res.json() as {
+      success: boolean;
+      data: {
+        modules: Array<{ module_key: string; status: string; metrics: Array<{ metric_key: string; value_this_month: number }> }>;
+        takedown_authorization: { signed: boolean };
+      };
+    };
     expect(body.success).toBe(true);
     // 7 modules in total — one per MODULE_KEYS row
     expect(body.data.modules).toHaveLength(7);
@@ -165,6 +175,9 @@ describe("handleListTenantModules", () => {
     const social = body.data.modules.find((m) => m.module_key === "social");
     expect(social?.status).toBe("not_entitled");
     expect(social?.metrics[0]?.value_this_month).toBe(0);
+    // No authorization in mock → signed:false summary lights up the
+    // tenant client's "sign authorization" CTA on the takedowns page.
+    expect(body.data.takedown_authorization.signed).toBe(false);
   });
 
   it("super_admin can read any org's modules", async () => {
