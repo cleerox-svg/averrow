@@ -20,6 +20,9 @@ import {
 import {
   handleCreateTakedown, handleListTakedowns, handleGetTakedown, handleUpdateTakedown,
 } from "../handlers/takedowns";
+import {
+  handleListTenantModules, handleAdminModuleAction,
+} from "../handlers/tenantModules";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -194,6 +197,20 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateTakedown(request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx);
+  });
+
+  // ─── Modules (v3 Phase A) ─────────────────────────────────────
+  // Tenant read: list of modules + per-module monthly usage
+  router.get("/api/orgs/:orgId/modules", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListTenantModules(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  // Super-admin activate / suspend — eventually called by Stripe webhook too
+  router.post("/api/admin/orgs/:orgId/modules", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminModuleAction(request, env, request.params["orgId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────
