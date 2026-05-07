@@ -8,6 +8,8 @@ import {
   Tabs,
   EmptyState,
   PageHeader,
+  Input,
+  Select,
 } from '@/design-system/components';
 import { MemberInviteSheet } from '@/features/admin/components/MemberInviteSheet';
 import { IntegrationCard } from '@/features/admin/components/IntegrationCard';
@@ -243,10 +245,19 @@ function BrandsTab({ brands, maxBrands }: {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-white/40 font-mono">{brands.length} / {maxBrands} brands</div>
-        <Button variant="secondary" size="sm" disabled={brands.length >= maxBrands}>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled
+          title="Member self-serve brand assignment isn't wired yet — contact support to add a brand."
+        >
           Add Brand
         </Button>
       </div>
+      <p className="text-[10px] font-mono text-white/40 -mt-2">
+        Member-side brand add lands in v3. Today: super-admins assign brands via{' '}
+        <span style={{ color: 'var(--amber)' }}>/admin/organizations</span>.
+      </p>
 
       {brands.length === 0 ? (
         <EmptyState message="No brands assigned" description="Add brands to start monitoring threats for your organization." />
@@ -326,16 +337,17 @@ function MembersTab({ members, invites, onInvite }: {
                   <td className="py-3 pr-4 font-medium text-white/90">{m.user_name}</td>
                   <td className="py-3 pr-4 text-white/55 font-mono">{m.email}</td>
                   <td className="py-3 pr-4">
-                    <select
+                    <Select
                       value={m.role}
                       onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
-                      className="bg-transparent border border-white/10 rounded px-1.5 py-0.5 text-[10px] font-mono opacity-70"
-                    >
-                      <option value="owner">Owner</option>
-                      <option value="admin">Admin</option>
-                      <option value="analyst">Analyst</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
+                      className="px-2 py-1 text-[11px]"
+                      options={[
+                        { value: 'owner',   label: 'Owner' },
+                        { value: 'admin',   label: 'Admin' },
+                        { value: 'analyst', label: 'Analyst' },
+                        { value: 'viewer',  label: 'Viewer' },
+                      ]}
+                    />
                   </td>
                   <td className="py-3 pr-4 text-white/55 hidden sm:table-cell">
                     {m.last_active_at ? new Date(m.last_active_at).toLocaleDateString() : 'never'}
@@ -525,8 +537,11 @@ function ApiKeysTab({ apiKeys, onCreate }: {
 // ═══════════════════════════════════════════════════════════════
 
 function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
-  const [name, setName] = useState(orgName || 'LRX Enterprises');
-  const [email, setEmail] = useState('cleerox@gmail.com');
+  // Hardcoded fallbacks ('LRX Enterprises', 'cleerox@gmail.com', 'lrx-enterprises')
+  // were demo-mode artifacts; removed so non-org-1 tenants don't see other
+  // tenants' names. If a field is empty the input is just empty.
+  const [name, setName] = useState(orgName ?? '');
+  const [email, setEmail] = useState('');
   const updateOrg = useUpdateOrg();
 
   return (
@@ -540,16 +555,16 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
               Organization Name
             </label>
             <div className="flex gap-2">
-              <input
+              <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm flex-1"
+                className="flex-1"
               />
               <Button
                 variant="secondary"
                 size="md"
                 onClick={() => updateOrg.mutate({ name })}
-                disabled={updateOrg.isPending}
+                disabled={updateOrg.isPending || !name.trim()}
               >
                 Save
               </Button>
@@ -561,20 +576,32 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
               Billing Email
             </label>
             <div className="flex gap-2">
-              <input
+              <Input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm flex-1"
+                placeholder="billing@yourcompany.com"
+                className="flex-1"
               />
-              <Button variant="secondary" size="md" disabled>Save</Button>
+              <Button
+                variant="secondary"
+                size="md"
+                disabled
+                title="Self-serve billing email isn't wired yet — contact support."
+              >
+                Save
+              </Button>
             </div>
+            <p className="mt-1 text-[10px] font-mono text-white/40">
+              Self-serve billing email arrives with v3 (Phase D / Stripe wiring).
+            </p>
           </div>
 
           <div>
             <label className="block text-[11px] text-white/55 font-mono uppercase tracking-wide mb-1">
               Slug
             </label>
-            <div className="text-sm text-white/40 font-mono">{slug || 'lrx-enterprises'} (read-only)</div>
+            <div className="text-sm text-white/40 font-mono">{slug || '—'} (read-only)</div>
           </div>
         </div>
       </Card>
@@ -595,19 +622,39 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
             <span className="text-white/55 font-mono">Status</span>
             <span className="text-white/55">Not configured</span>
           </div>
-          <Button variant="secondary" size="sm" className="mt-2" disabled>
-            Enable SCIM — Coming Soon
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-2"
+            disabled
+            title="SCIM lands in v3 Phase 5 alongside SSO server-side flow."
+          >
+            Enable SCIM
           </Button>
+          <p className="mt-1 text-[10px] font-mono text-white/40">
+            Auto-provisioning + de-provisioning via SCIM lands in v3 Phase 5.
+          </p>
         </div>
       </Card>
 
       {/* Danger Zone */}
       <Card hover={false} className="border-accent/20">
         <SectionLabel className="mb-3 text-accent">Danger Zone</SectionLabel>
-        <Button variant="danger" size="sm" disabled title="Contact support to delete your organization">
+        <Button
+          variant="danger"
+          size="sm"
+          disabled
+          title="Self-serve org deletion isn't wired — email support@averrow.com to delete."
+        >
           Delete Organization
         </Button>
-        <p className="text-[10px] text-white/50 mt-2">Contact support to delete your organization.</p>
+        <p className="mt-2 text-[10px] font-mono text-white/50">
+          Self-serve deletion isn't wired yet. Email{' '}
+          <a href="mailto:support@averrow.com" style={{ color: 'var(--amber)' }}>
+            support@averrow.com
+          </a>
+          {' '}to delete your organization.
+        </p>
       </Card>
     </div>
   );

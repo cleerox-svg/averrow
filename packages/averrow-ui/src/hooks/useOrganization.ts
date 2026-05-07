@@ -1,5 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+
+// Resolve the current user's org ID from auth context.
+// Previously this file hardcoded `ORG_ID = '1'` from a single-tenant
+// demo era; that broke every org that wasn't id=1 with 403s on every
+// request. Now reads from `user.organization.id`. Super-admins not
+// belonging to an org get null and the queries no-op.
+function useOrgId(): string | null {
+  const { user } = useAuth();
+  return user?.organization?.id ? String(user.organization.id) : null;
+}
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -100,89 +111,105 @@ export interface SsoConfig {
   oidc_discovery_url: string | null;
 }
 
-// ─── Org ID — hardcoded to 1 for now (single-tenant demo) ──
-
-const ORG_ID = '1';
-
 // ─── Queries ────────────────────────────────────────────────
 
 export function useOrg() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org', ORG_ID],
+    queryKey: ['org', orgId],
     queryFn: async () => {
-      const res = await api.get<Org>(`/api/orgs/${ORG_ID}`);
+      const res = await api.get<Org>(`/api/orgs/${orgId}`);
       return res.data ?? null;
     },
+    enabled: !!orgId,
   });
 }
 
 export function useOrgMembers() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-members', ORG_ID],
+    queryKey: ['org-members', orgId],
     queryFn: async () => {
-      const res = await api.get<OrgMember[]>(`/api/orgs/${ORG_ID}/members`);
+      const res = await api.get<OrgMember[]>(`/api/orgs/${orgId}/members`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
 
 export function useOrgBrands() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-brands', ORG_ID],
+    queryKey: ['org-brands', orgId],
     queryFn: async () => {
-      const res = await api.get<OrgBrand[]>(`/api/orgs/${ORG_ID}/brands`);
+      const res = await api.get<OrgBrand[]>(`/api/orgs/${orgId}/brands`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
 
 export function useOrgInvites() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-invites', ORG_ID],
+    queryKey: ['org-invites', orgId],
     queryFn: async () => {
-      const res = await api.get<OrgInvite[]>(`/api/orgs/${ORG_ID}/invites`);
+      const res = await api.get<OrgInvite[]>(`/api/orgs/${orgId}/invites`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
 
 export function useOrgApiKeys() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-api-keys', ORG_ID],
+    queryKey: ['org-api-keys', orgId],
     queryFn: async () => {
-      const res = await api.get<ApiKey[]>(`/api/orgs/${ORG_ID}/api-keys`);
+      const res = await api.get<ApiKey[]>(`/api/orgs/${orgId}/api-keys`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
 
 export function useOrgIntegrations() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-integrations', ORG_ID],
+    queryKey: ['org-integrations', orgId],
     queryFn: async () => {
-      const res = await api.get<Integration[]>(`/api/orgs/${ORG_ID}/integrations`);
+      const res = await api.get<Integration[]>(`/api/orgs/${orgId}/integrations`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
 
 export function useWebhookConfig() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-webhook', ORG_ID],
+    queryKey: ['org-webhook', orgId],
     queryFn: async () => {
-      const res = await api.get<WebhookConfig>(`/api/orgs/${ORG_ID}/webhook`);
+      const res = await api.get<WebhookConfig>(`/api/orgs/${orgId}/webhook`);
       return res.data ?? null;
     },
+    enabled: !!orgId,
   });
 }
 
 // ─── Mutations ──────────────────────────────────────────────
 
+function requireOrgId(orgId: string | null): string {
+  if (!orgId) throw new Error('No active organization for current user');
+  return orgId;
+}
+
 export function useInviteMember() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { email: string; org_role: string }) => {
-      return api.post(`/api/orgs/${ORG_ID}/invite`, payload);
+      return api.post(`/api/orgs/${requireOrgId(orgId)}/invite`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-invites'] });
@@ -193,9 +220,10 @@ export function useInviteMember() {
 
 export function useUpdateMemberRole() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      return api.patch(`/api/orgs/${ORG_ID}/members/${userId}`, { role });
+      return api.patch(`/api/orgs/${requireOrgId(orgId)}/members/${userId}`, { role });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-members'] });
@@ -205,9 +233,10 @@ export function useUpdateMemberRole() {
 
 export function useRemoveMember() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (userId: string) => {
-      return api.delete(`/api/orgs/${ORG_ID}/members/${userId}`);
+      return api.delete(`/api/orgs/${requireOrgId(orgId)}/members/${userId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-members'] });
@@ -217,9 +246,10 @@ export function useRemoveMember() {
 
 export function useRevokeInvite() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (inviteId: string) => {
-      return api.delete(`/api/orgs/${ORG_ID}/invites/${inviteId}`);
+      return api.delete(`/api/orgs/${requireOrgId(orgId)}/invites/${inviteId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-invites'] });
@@ -229,9 +259,10 @@ export function useRevokeInvite() {
 
 export function useAssignBrand() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { brand_id: string; is_primary?: boolean }) => {
-      return api.post(`/api/orgs/${ORG_ID}/brands`, payload);
+      return api.post(`/api/orgs/${requireOrgId(orgId)}/brands`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-brands'] });
@@ -242,9 +273,10 @@ export function useAssignBrand() {
 
 export function useRemoveBrand() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (brandId: string) => {
-      return api.delete(`/api/orgs/${ORG_ID}/brands/${brandId}`);
+      return api.delete(`/api/orgs/${requireOrgId(orgId)}/brands/${brandId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-brands'] });
@@ -255,10 +287,11 @@ export function useRemoveBrand() {
 
 export function useCreateApiKey() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { name: string; scopes: string[]; expires_at?: string }) => {
       return api.post<{ key: string; prefix: string; name: string; scopes: string[] }>(
-        `/api/orgs/${ORG_ID}/api-keys`,
+        `/api/orgs/${requireOrgId(orgId)}/api-keys`,
         payload,
       );
     },
@@ -270,9 +303,10 @@ export function useCreateApiKey() {
 
 export function useRevokeApiKey() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (keyId: string) => {
-      return api.delete(`/api/orgs/${ORG_ID}/api-keys/${keyId}`);
+      return api.delete(`/api/orgs/${requireOrgId(orgId)}/api-keys/${keyId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-api-keys'] });
@@ -282,9 +316,10 @@ export function useRevokeApiKey() {
 
 export function useCreateIntegration() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { type: string; category: string; name: string; config?: Record<string, unknown> }) => {
-      return api.post(`/api/orgs/${ORG_ID}/integrations`, payload);
+      return api.post(`/api/orgs/${requireOrgId(orgId)}/integrations`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-integrations'] });
@@ -294,9 +329,10 @@ export function useCreateIntegration() {
 
 export function useDeleteIntegration() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (integrationId: string) => {
-      return api.delete(`/api/orgs/${ORG_ID}/integrations/${integrationId}`);
+      return api.delete(`/api/orgs/${requireOrgId(orgId)}/integrations/${integrationId}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-integrations'] });
@@ -305,18 +341,20 @@ export function useDeleteIntegration() {
 }
 
 export function useTestIntegration() {
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (integrationId: string) => {
-      return api.post(`/api/orgs/${ORG_ID}/integrations/${integrationId}/test`);
+      return api.post(`/api/orgs/${requireOrgId(orgId)}/integrations/${integrationId}/test`);
     },
   });
 }
 
 export function useUpdateWebhook() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { webhook_url?: string; webhook_events?: string[] }) => {
-      return api.patch(`/api/orgs/${ORG_ID}/webhook`, payload);
+      return api.patch(`/api/orgs/${requireOrgId(orgId)}/webhook`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-webhook'] });
@@ -326,9 +364,10 @@ export function useUpdateWebhook() {
 
 export function useRegenerateWebhookSecret() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async () => {
-      return api.post<{ webhook_secret: string }>(`/api/orgs/${ORG_ID}/webhook/regenerate-secret`);
+      return api.post<{ webhook_secret: string }>(`/api/orgs/${requireOrgId(orgId)}/webhook/regenerate-secret`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-webhook'] });
@@ -337,18 +376,20 @@ export function useRegenerateWebhookSecret() {
 }
 
 export function useTestWebhook() {
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async () => {
-      return api.post(`/api/orgs/${ORG_ID}/webhook/test`);
+      return api.post(`/api/orgs/${requireOrgId(orgId)}/webhook/test`);
     },
   });
 }
 
 export function useUpdateOrg() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: { name?: string }) => {
-      return api.patch(`/api/admin/organizations/${ORG_ID}`, payload);
+      return api.patch(`/api/admin/organizations/${requireOrgId(orgId)}`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org'] });
@@ -359,17 +400,20 @@ export function useUpdateOrg() {
 // ─── SSO ───────────────────────────────────────────────────
 
 export function useSsoConfig() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-sso', ORG_ID],
+    queryKey: ['org-sso', orgId],
     queryFn: async () => {
-      const res = await api.get<SsoConfig>(`/api/orgs/${ORG_ID}/sso`);
+      const res = await api.get<SsoConfig>(`/api/orgs/${orgId}/sso`);
       return res.data ?? null;
     },
+    enabled: !!orgId,
   });
 }
 
 export function useUpdateSsoConfig() {
   const qc = useQueryClient();
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async (payload: {
       protocol: string;
@@ -380,7 +424,7 @@ export function useUpdateSsoConfig() {
       oidc_client_secret?: string;
       oidc_discovery_url?: string;
     }) => {
-      return api.put(`/api/orgs/${ORG_ID}/sso`, payload);
+      return api.put(`/api/orgs/${requireOrgId(orgId)}/sso`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org-sso'] });
@@ -389,9 +433,10 @@ export function useUpdateSsoConfig() {
 }
 
 export function useTestSsoConnection() {
+  const orgId = useOrgId();
   return useMutation({
     mutationFn: async () => {
-      return api.post<{ success: boolean; error?: string }>(`/api/orgs/${ORG_ID}/sso/test`);
+      return api.post<{ success: boolean; error?: string }>(`/api/orgs/${requireOrgId(orgId)}/sso/test`);
     },
   });
 }
@@ -399,11 +444,13 @@ export function useTestSsoConnection() {
 // ─── Webhook Deliveries ────────────────────────────────────
 
 export function useWebhookDeliveries() {
+  const orgId = useOrgId();
   return useQuery({
-    queryKey: ['org-webhook-deliveries', ORG_ID],
+    queryKey: ['org-webhook-deliveries', orgId],
     queryFn: async () => {
-      const res = await api.get<WebhookDelivery[]>(`/api/orgs/${ORG_ID}/webhook/deliveries`);
+      const res = await api.get<WebhookDelivery[]>(`/api/orgs/${orgId}/webhook/deliveries`);
       return res.data ?? [];
     },
+    enabled: !!orgId,
   });
 }
