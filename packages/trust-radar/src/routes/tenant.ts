@@ -29,6 +29,9 @@ import {
 import {
   handleGetDomainModuleSummary, handleGetBrandDomainFindings,
 } from "../handlers/tenantDomainModule";
+import {
+  handleGetSocialModuleSummary, handleGetBrandSocialFindings,
+} from "../handlers/tenantSocialModule";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -249,6 +252,23 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetBrandDomainFindings(
+      request, env,
+      request.params["orgId"] ?? "",
+      request.params["brandId"] ?? "",
+      ctx,
+    );
+  });
+
+  // ─── Module surfaces — Social Media Impersonation (v3 Phase B) ─
+  router.get("/api/orgs/:orgId/modules/social", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetSocialModuleSummary(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/social/brands/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetBrandSocialFindings(
       request, env,
       request.params["orgId"] ?? "",
       request.params["brandId"] ?? "",
