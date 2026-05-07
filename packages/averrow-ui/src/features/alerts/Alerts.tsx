@@ -673,7 +673,7 @@ export function Alerts() {
 
       {stats && stats.new_count > 0 && (
         <Card variant="critical" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="w-2.5 h-2.5 rounded-full dot-pulse-red flex-shrink-0" style={{ background: 'var(--sev-critical)' }} />
+          <SeverityDot severity="critical" size={10} pulse />
           <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
             {stats.new_count} unacknowledged {stats.high > 0 ? 'HIGH' : ''} severity alert{stats.new_count !== 1 ? 's' : ''} require review
           </span>

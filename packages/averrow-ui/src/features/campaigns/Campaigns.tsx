@@ -51,9 +51,16 @@ type OpStatus = 'accelerating' | 'pivot' | 'active' | 'dormant';
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase() as OpStatus;
+  // Bundle C R8 migration: use the Badge.context tags instead of
+  // overloading `status` with custom labels. Notable semantic fix:
+  // PIVOT was previously rendered as `status="active"` which is the
+  // healthy GREEN color. But "pivot" means "infrastructure went
+  // silent recently \u2014 possibly evading takedowns" \u2014 that should
+  // read as critical/red, not as green/healthy. Badge.context.pivot
+  // is dedicated red. Same fix as Providers (#1085).
   switch (s) {
-    case 'accelerating': return <Badge status="warning"  label="Accelerating" size="xs" />;
-    case 'pivot':        return <Badge status="active"   label="\u2192 Pivot" size="xs" />;
+    case 'accelerating': return <Badge context="accelerating" size="xs" />;
+    case 'pivot':        return <Badge context="pivot" size="xs" />;
     case 'active':       return <Badge status="active"   label="Active" size="xs" />;
     default:             return <Badge status="inactive" label="Dormant" size="xs" />;
   }
