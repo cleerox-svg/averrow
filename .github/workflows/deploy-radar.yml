@@ -21,6 +21,7 @@ on:
     paths:
       - "packages/trust-radar/**"
       - "packages/averrow-ui/**"
+      - "packages/averrow-tenant/**"
       - ".github/workflows/deploy-radar.yml"
   workflow_dispatch:
 
@@ -71,8 +72,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build React UI
+      - name: Build React UI (averrow-ui — staff /v2)
         working-directory: packages/averrow-ui
+        run: pnpm run build
+
+      - name: Build React UI (averrow-tenant — customer /tenant)
+        working-directory: packages/averrow-tenant
         run: pnpm run build
 
       - name: Run DB migrations (production)
