@@ -41,6 +41,9 @@ import {
 import {
   handleGetAbuseMailboxModuleSummary, handleListAbuseInboxMessages,
 } from "../handlers/tenantAbuseMailboxModule";
+import {
+  handleGetTrademarkModuleSummary, handleGetBrandTrademarkFindings,
+} from "../handlers/tenantTrademarkModule";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -329,6 +332,23 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListAbuseInboxMessages(request, env, request.params["orgId"] ?? "", ctx);
+  });
+
+  // ─── Module surfaces — Trademark Infringement (v3 Phase B) ─────
+  router.get("/api/orgs/:orgId/modules/trademark", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetTrademarkModuleSummary(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/trademark/brands/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetBrandTrademarkFindings(
+      request, env,
+      request.params["orgId"] ?? "",
+      request.params["brandId"] ?? "",
+      ctx,
+    );
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────
