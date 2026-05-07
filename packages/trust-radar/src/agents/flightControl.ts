@@ -207,6 +207,10 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "feed_configs" },
     { kind: "d1_table", name: "feed_pull_history" },
     { kind: "d1_table", name: "feed_status" },
+    // N6c briefing-silent self-monitor reads any open
+    // auto:platform_briefing_silent incident so it can auto-resolve
+    // it on heal. Bundle F (2026-05-07).
+    { kind: "d1_table", name: "incidents" },
     { kind: "d1_table", name: "push_subscriptions" },
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "threat_briefings" },
@@ -221,6 +225,12 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "agent_activity_log" },
     { kind: "d1_table", name: "agent_runs" },
     { kind: "d1_table", name: "backlog_history" },
+    // N6c briefing-silent self-monitor writes a resolution row to
+    // incident_updates when auto-resolving. The parent `incidents`
+    // row is also updated, but via `lib/incidents.transitionStatus`
+    // (a shared helper) so it's declared by that module's caller
+    // chain rather than directly here. Bundle F (2026-05-07).
+    { kind: "d1_table", name: "incident_updates" },
     { kind: "d1_table", name: "push_subscriptions" },
     // Layer C of the GeoIP self-heal scheme: FC supervisor force-
     // fails geo_ip_refresh_log rows that escaped both the workflow
