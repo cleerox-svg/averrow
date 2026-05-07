@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useAuditLog } from '@/hooks/useAuditLog';
 import type { AuditEntry } from '@/hooks/useAuditLog';
 import { Button, Input } from '@/design-system/components';
+import { formatDate } from '@/lib/time';
 
 /* ─── Glass styles ────────────────────────────────────────────────── */
 
@@ -49,7 +50,7 @@ function relativeTime(ts: string): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return new Date(then).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDate(then, 'short');
 }
 
 function formatTimestamp(ts: string): string {

@@ -748,7 +748,6 @@ export function Providers() {
         <StatCard
           label="Providers Tracked"
           value={intelLoading ? '—' : (intelligence?.total_providers ?? 0).toLocaleString()}
-          accentColor="var(--blue)"
           sublabel={`${intelligence?.total_clusters ?? 0} clusters`}
         />
         <StatCard

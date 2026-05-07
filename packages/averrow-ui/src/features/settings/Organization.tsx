@@ -188,9 +188,24 @@ function OverviewTab({ brandCount, maxBrands, memberCount, maxMembers, integrati
           <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-positive" /> API access</li>
           <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-positive" /> Priority support</li>
         </ul>
-        <Button variant="ghost" size="sm" className="mt-4 text-white/40" disabled>
-          Manage Billing
-        </Button>
+        <div className="mt-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-white/40"
+            disabled
+            title="Self-serve billing isn't wired yet — contact support to make plan changes."
+          >
+            Manage Billing
+          </Button>
+          <p className="mt-1.5 text-[10px] font-mono text-white/40">
+            Self-serve billing coming soon. Email{' '}
+            <a href="mailto:billing@averrow.com" style={{ color: 'var(--amber)' }}>
+              billing@averrow.com
+            </a>
+            {' '}to change plans.
+          </p>
+        </div>
       </Card>
     </div>
   );

@@ -59,13 +59,17 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 const TIMELINE_PERIODS = ['24h', '7d', '30d', '90d'] as const;
 
+// Tab labels mirror the v3 module taxonomy where each maps —
+// "App Stores" (not "Apps"), "Email Security", "Dark Web", "Social Media",
+// "Trademark" — so the brand-detail tabs match what customers will see in
+// averrow-tenant. Audit L3.
 const BRAND_TABS = [
   { id: 'overview',      label: 'Overview' },
   { id: 'threats',       label: 'Threats' },
   { id: 'typosquats',    label: 'Typosquats' },
   { id: 'email',         label: 'Email Security' },
-  { id: 'social',        label: 'Social' },
-  { id: 'apps',          label: 'Apps' },
+  { id: 'social',        label: 'Social Media' },
+  { id: 'apps',          label: 'App Stores' },
   { id: 'dark-web',      label: 'Dark Web' },
   { id: 'intelligence',  label: 'Intelligence' },
 ] as const;
@@ -444,11 +448,11 @@ function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec:
       }
     >
       <div className="space-y-1">
-        {/* Protocol progress bar */}
+        {/* Protocol progress bar \u2014 grade letter only shown in header above
+            (M6 audit: was duplicating the GRADE pillar's letter here). */}
         <div className="mb-3">
           <div className="flex justify-between text-[10px] font-mono text-white/30 mb-1">
-            <span>{passing} of {totalChecks} protocols</span>
-            <span className={gradeClass}>{grade || '\u2014'}</span>
+            <span>{passing} of {totalChecks} protocols passing</span>
           </div>
           <div className="h-1 bg-white/10 rounded-full overflow-hidden">
             <div
@@ -495,12 +499,14 @@ function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec:
         {/* BIMI Grade — distinct from the overall Email Grade in the
             card header. The header grade scores SPF/DKIM/DMARC/MX
             enforcement; this one scores BIMI + VMC adoption on top.
-            See email-security.ts:404 for the BIMI scoring scheme. */}
+            See email-security.ts:404 for the BIMI scoring scheme.
+            Visually subordinate per M6: smaller badge size keeps the
+            header GRADE as the primary signal. */}
         <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
           <span className="text-white/40 text-[10px] font-mono uppercase tracking-wider">
-            BIMI Grade
+            BIMI/VMC sub-grade
           </span>
-          <BIMIGradeBadge grade={bimiGrade} size="lg" tooltip />
+          <BIMIGradeBadge grade={bimiGrade} size="sm" tooltip />
         </div>
 
         {/* BIMI SVG preview */}

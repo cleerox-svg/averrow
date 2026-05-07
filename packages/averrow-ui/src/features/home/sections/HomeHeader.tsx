@@ -14,6 +14,7 @@ import { useAuth } from '@/lib/auth';
 import { parseInitials, SELF_AVATAR_COLOR } from '@/lib/avatar';
 import { NotificationBell } from '@/components/NotificationBell';
 import { M } from '@/design-system/tokens';
+import { formatDate } from '@/lib/time';
 
 function greetingFor(date: Date): string {
   const h = date.getHours();
@@ -26,13 +27,18 @@ export function HomeHeader() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const firstName  = (user?.display_name ?? user?.name ?? '').trim().split(/\s+/)[0] || 'there';
+  // Service-account JWTs surface display_name = 'MCP' / 'service' / etc.
+  // Greeting "Good evening, MCP" reads bot-ish — fall back to "there" when
+  // the role identifies the user as a service account. Audit L1.
+  const isServiceAccount = user?.role === 'service_account';
+  const fullName   = (user?.display_name ?? user?.name ?? '').trim();
+  const firstName  = !isServiceAccount && fullName
+    ? (fullName.split(/\s+/)[0] || 'there')
+    : 'there';
   const initials   = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const today      = new Date();
   const greeting   = greetingFor(today);
-  const dateLabel  = today.toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-  });
+  const dateLabel  = formatDate(today, 'long');
 
   return (
     <header className="home-header">
