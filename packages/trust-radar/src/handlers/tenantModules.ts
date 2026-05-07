@@ -31,6 +31,7 @@ import {
   type UsageMetricDef,
   type UsageRollupRow,
 } from "../lib/module-usage";
+import { getActiveAuthorization } from "../lib/takedown-authorizations";
 
 // ─── Shared org-access guard ──────────────────────────────────
 // Super-admins bypass; members must belong to the org id in the URL.
@@ -66,12 +67,13 @@ export async function handleListTenantModules(
     return json({ success: false, error: "Invalid organization id" }, 400, origin);
   }
 
-  // Three reads, one round-trip — entitlements + defs + usage all
-  // KV-cached so the hot path is mostly KV.
-  const [enabled, defs, usage] = await Promise.all([
+  // Four reads, one round-trip — entitlements + defs + usage +
+  // takedown authorization all KV-cached so the hot path is mostly KV.
+  const [enabled, defs, usage, authorization] = await Promise.all([
     listEnabledModules(env, orgIdNum),
     listMetricDefinitions(env),
     getMonthlyUsageAcrossModules(env, orgIdNum),
+    getActiveAuthorization(env, orgIdNum),
   ]);
 
   const enabledByKey = new Map<ModuleKey, OrgModule>();
@@ -100,11 +102,27 @@ export async function handleListTenantModules(
     };
   });
 
+  // Compact authorization summary — the tenant client only needs to
+  // know "is takedown automation usable, and which modules does the
+  // signed scope cover" to decide whether to show CTAs vs badges.
+  // Full record (signer, IP, agreement_version, etc.) is on the
+  // dedicated /takedown-authorization endpoint.
+  const authorizationSummary = authorization
+    ? {
+        signed:                 true,
+        agreement_version:      authorization.agreement_version,
+        signed_at:              authorization.signed_at,
+        modules_covered:        authorization.scope.modules,
+        max_takedowns_per_month: authorization.scope.max_takedowns_per_month,
+      }
+    : { signed: false };
+
   return json({
     success: true,
     data: {
       org_id: orgIdNum,
       modules: surface,
+      takedown_authorization: authorizationSummary,
     },
   }, 200, origin);
 }
