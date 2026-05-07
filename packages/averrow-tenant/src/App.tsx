@@ -5,7 +5,8 @@ import { Shell } from '@/layout/Shell';
 import { Modules } from '@/features/modules/Modules';
 import { ModulePlaceholder } from '@/features/modules/ModulePlaceholder';
 import { Settings, TakedownAuthorizationPage } from '@/features/settings/Settings';
-import { Notifications, Alerts } from '@/features/notifications/Notifications';
+import { Alerts } from '@/features/alerts/Alerts';
+import { Notifications } from '@/features/notifications/NotificationsInbox';
 import { Domain } from '@/features/domain/Domain';
 import { BrandDomainFindings } from '@/features/domain/BrandDomainFindings';
 
