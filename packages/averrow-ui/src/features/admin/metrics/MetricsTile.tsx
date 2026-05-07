@@ -1,6 +1,8 @@
-// MetricsTile — shared glass-card shell used by every Metrics tab
+// MetricsTile — shared Card shell used by every Metrics tab
 // (D1 Budget, AI Spend, Geo Coverage, Feed Failures) so they
 // inherit the same finish as the Pipelines tab.
+// Originally documented as "glass-card shell"; the design-system
+// Card primitive replaced glass-card during R2 of the restructure.
 //
 // The visual grammar:
 //   - 3px colored top border for at-a-glance verdict scanning
