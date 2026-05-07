@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useBrands, useBrandStats, useToggleMonitor, useAddBrand } from '@/hooks/useBrands';
 import type { Brand } from '@/hooks/useBrands';
 import { LiveFeedCard } from './components/LiveFeedCard';
@@ -500,7 +500,6 @@ function BrandCard({
   brand: Brand;
   onToggleMonitor: (id: string) => void;
 }) {
-  const navigate  = useNavigate();
   const tc        = brand.threat_count ?? 0;
   const sev       = cardSeverity(tc);
   const accent    = severityAccent(sev);
@@ -526,8 +525,10 @@ function BrandCard({
     : [];
 
   return (
-    <div
-      onClick={() => navigate(`/brands/${brand.id}`)}
+    // <Link> instead of <div onClick> — keyboard nav, middle-click new
+    // tab, and screen readers all work for free. Audit H1.
+    <Link
+      to={`/brands/${brand.id}`}
       style={{
         background:   'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',
         backdropFilter: 'blur(20px)',
@@ -541,16 +542,19 @@ function BrandCard({
         overflow:     'hidden',
         transition:   'var(--transition-fast)',
         boxShadow:    'var(--card-shadow), inset 0 1px 0 var(--border-strong)',
+        textDecoration: 'none',
+        color:        'inherit',
+        display:      'block',
       }}
       onMouseEnter={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = `${accent}60`;
-        (e.currentTarget as HTMLDivElement).style.boxShadow =
+        (e.currentTarget as HTMLAnchorElement).style.borderColor = `${accent}60`;
+        (e.currentTarget as HTMLAnchorElement).style.boxShadow =
           `var(--card-shadow), inset 0 1px 0 var(--border-strong), 0 0 20px ${accent}12`;
       }}
       onMouseLeave={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-base)';
-        (e.currentTarget as HTMLDivElement).style.borderLeftColor = accent;
-        (e.currentTarget as HTMLDivElement).style.boxShadow =
+        (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border-base)';
+        (e.currentTarget as HTMLAnchorElement).style.borderLeftColor = accent;
+        (e.currentTarget as HTMLAnchorElement).style.boxShadow =
           'var(--card-shadow), inset 0 1px 0 var(--border-strong)';
       }}
     >
@@ -762,7 +766,7 @@ function BrandCard({
           </span>
         </div>
       )}
-    </div>
+    </Link>
   );
 }
 

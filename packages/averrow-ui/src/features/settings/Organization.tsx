@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Card,
   SectionLabel,
@@ -64,7 +64,18 @@ const TABS = [
 // ─── Main Page ──────────────────────────────────────────────
 
 export function Organization() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const initialTab = TABS.some(t => t.id === tabFromUrl) ? tabFromUrl! : 'overview';
+  const [activeTab, setActiveTabState] = useState(initialTab);
+  const setActiveTab = (id: string) => {
+    setActiveTabState(id);
+    // Keep URL in sync so back/forward + bookmarks land on the same
+    // tab and the Sidebar can deep-link via `?tab=members`. Audit H9.
+    const next = new URLSearchParams(searchParams);
+    if (id === 'overview') next.delete('tab'); else next.set('tab', id);
+    setSearchParams(next, { replace: true });
+  };
   const [showInvite, setShowInvite] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [connectIntegration, setConnectIntegration] = useState<IntegrationDef | null>(null);
