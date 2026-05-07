@@ -139,6 +139,9 @@ export default function App() {
         <Route path="threat-actors" element={lazyRoute(<ThreatActors />)} />
         <Route path="threat-actors/:actorId" element={lazyRoute(<ThreatActorDetail />)} />
         <Route path="trends" element={lazyRoute(<Trends />)} />
+        {/* Alias — sidebar entry says "Intelligence"; keep /intelligence
+            navigable for bookmarks. Audit H8. */}
+        <Route path="intelligence" element={lazyRoute(<Trends />)} />
         <Route path="agents" element={lazyRoute(<Agents />)} />
         <Route path="agents/approvals" element={lazyRoute(<AgentApprovals />)} />
         <Route path="agents/:id/review" element={lazyRoute(<AgentReview />)} />

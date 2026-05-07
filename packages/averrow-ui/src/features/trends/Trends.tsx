@@ -443,7 +443,7 @@ function TrendsContent() {
     <div className="animate-fade-in space-y-6">
       {/* Header + Time Filter */}
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Platform Intelligence</h1>
+        <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Intelligence</h1>
         <div className="flex gap-1.5">
           {WINDOWS.map((w) => (
             <Button

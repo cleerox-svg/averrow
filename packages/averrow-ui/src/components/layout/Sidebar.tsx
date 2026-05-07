@@ -160,7 +160,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         { label: 'Feeds',        path: '/feeds',             icon: Rss },
         { label: 'Metrics',      path: '/admin/metrics',     icon: BarChart3 },
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard },
-        { label: 'Team', path: '/admin/users',       icon: Users },
+        { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
         ...(isSuperAdmin ? [{ label: 'Organizations', path: '/admin/organizations', icon: Building2 }] : []),
         { label: 'Audit Log',    path: '/admin/audit',       icon: ClipboardList },
         ...(isSuperAdmin ? [{ label: 'Push Config', path: '/admin/push', icon: BellRing }] : []),
@@ -212,12 +212,16 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               const prefixActive = item.matchPrefixes?.some(p =>
                 location.pathname === p || location.pathname.startsWith(p + '/'),
               );
+              // `end` is only safe for the root path. Every other entry should
+              // stay active on its child URLs (e.g. `/admin/incidents/:id`,
+              // `/brands/:id`) — H2 audit fix.
+              const exactMatch = item.path === '/';
               return (
                 <NavLink
                   key={item.label}
                   to={item.path}
                   onClick={onNavigate}
-                  end
+                  end={exactMatch}
                   style={({ isActive }) => ((isActive || prefixActive) ? NAV_ACTIVE_STYLE : NAV_INACTIVE_STYLE)}
                 >
                   {({ isActive }) => {
