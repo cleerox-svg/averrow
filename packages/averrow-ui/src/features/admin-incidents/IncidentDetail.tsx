@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card, PageHeader, Badge, Button } from '@/components/ui';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StateMachineButtons } from '@/design-system/components';
 import {
   useIncident, useAppendIncidentUpdate, useTransitionIncident, usePromoteIncident,
   useEditUpdatePublicCopy,
@@ -148,31 +149,27 @@ export function AdminIncidentDetail() {
         )}
       </div>
 
-      {/* Status transition row — quick one-click moves */}
+      {/* Status transition row — quick one-click moves.
+          R8 migration: replaced an inline map of buttons (with per-
+          status color highlighting on the current state) with the
+          shared StateMachineButtons primitive (Bundle C session 1).
+          The visual trade-off: current state now always renders in
+          amber rather than using the per-status color (red for
+          investigating, orange for identified, etc.). The current-
+          state severity is still conveyed elsewhere on the page via
+          the Severity Badge in the header, so we don't lose
+          information — we gain platform-wide consistency. */}
       <Card style={{ padding: 14 }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           Quick transition
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {STATUSES.map((s) => (
-            <button
-              key={s}
-              onClick={() => transition.mutate(s)}
-              disabled={incident.status === s || transition.isPending}
-              style={{
-                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                letterSpacing: '0.08em', textTransform: 'uppercase',
-                padding: '6px 12px', borderRadius: 6,
-                border: 'none', cursor: incident.status === s ? 'default' : 'pointer',
-                background: incident.status === s ? STATUS_PILL_BG[s] : 'rgba(255,255,255,0.04)',
-                color: incident.status === s ? STATUS_PILL_TEXT[s] : 'var(--text-secondary)',
-                opacity: incident.status === s ? 1 : 0.85,
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <StateMachineButtons<IncidentStatus>
+          states={STATUSES.map((s) => ({ value: s, label: s }))}
+          current={incident.status}
+          onTransition={(next) => transition.mutate(next)}
+          busy={transition.isPending}
+          size="sm"
+        />
       </Card>
 
       {/* Append-update form */}
