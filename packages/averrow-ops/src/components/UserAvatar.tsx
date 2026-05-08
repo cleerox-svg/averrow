@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Building2, Key, LogOut, Sun, Moon } from 'lucide-react';
+import { User, Bell, Building2, Key, LogOut, Sun, Moon, UserPlus } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useIsMobile } from '@/hooks/useWindowWidth';
 import { useTheme } from '@/design-system/hooks';
@@ -89,7 +89,15 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
 
       <div className="border-t border-white/5 py-1">
         <button
-          onClick={() => { logout(); onClose(); }}
+          onClick={() => { void logout(); onClose(); }}
+          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-white/5 transition-colors touch-target"
+          title="Sign out then sign in as a different user"
+        >
+          <UserPlus size={15} className="text-white/40 flex-shrink-0" />
+          <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>Switch account</span>
+        </button>
+        <button
+          onClick={() => { void logout(); onClose(); }}
           className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[#C83C3C]/10 transition-colors touch-target"
         >
           <LogOut size={15} className="text-[#C83C3C]/70 flex-shrink-0" />

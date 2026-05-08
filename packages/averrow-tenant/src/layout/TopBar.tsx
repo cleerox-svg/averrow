@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, LogOut, UserCircle, Settings as SettingsIcon } from 'lucide-react';
+import { ChevronDown, LogOut, UserCircle, Settings as SettingsIcon, UserPlus } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 // Tenant TopBar — header with org context + clickable user avatar.
@@ -124,6 +124,17 @@ export function TopBar() {
             </div>
 
             <div className="py-1 border-t border-white/[0.06]">
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={busy}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-white/85 hover:bg-white/[0.04] disabled:opacity-60"
+                role="menuitem"
+                title="Sign out then sign in as a different user"
+              >
+                <UserPlus size={15} />
+                <span>Switch account</span>
+              </button>
               <button
                 type="button"
                 onClick={handleLogout}
