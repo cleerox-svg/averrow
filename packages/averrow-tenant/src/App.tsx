@@ -5,6 +5,7 @@ import { Shell } from '@/layout/Shell';
 import { Modules } from '@/features/modules/Modules';
 import { ModulePlaceholder } from '@/features/modules/ModulePlaceholder';
 import { Settings, TakedownAuthorizationPage } from '@/features/settings/Settings';
+import { Billing } from '@/features/billing/Billing';
 import { Alerts } from '@/features/alerts/Alerts';
 import { Notifications } from '@/features/notifications/NotificationsInbox';
 import { Domain } from '@/features/domain/Domain';
@@ -71,6 +72,7 @@ export function App() {
 
               <Route path="settings" element={<Settings />} />
               <Route path="settings/takedown-authorization" element={<TakedownAuthorizationPage />} />
+              <Route path="settings/billing" element={<Billing />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

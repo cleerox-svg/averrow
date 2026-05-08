@@ -50,6 +50,7 @@ import {
 import {
   handleListTenantTakedowns, handleGetTenantTakedownDetail,
 } from "../handlers/tenantTakedowns";
+import { handleGetTenantBilling } from "../handlers/tenantBilling";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -389,6 +390,13 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request.params["takedownId"] ?? "",
       ctx,
     );
+  });
+
+  // ─── Billing — tenant-facing read (v3 Phase D Stripe sprint 5) ──
+  router.get("/api/orgs/:orgId/billing", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetTenantBilling(request, env, request.params["orgId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────

@@ -22,10 +22,22 @@ export function Settings() {
         </Link>
       </section>
 
+      <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-white/90">Billing</h2>
+          <p className="text-[11px] text-white/55 mt-1 max-w-md">
+            Plan, monthly total, active modules, and trial / billing status.
+          </p>
+        </div>
+        <Link to="/settings/billing" className="text-[11px] font-mono text-amber hover:underline">
+          View →
+        </Link>
+      </section>
+
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
         <h2 className="text-sm font-semibold text-white/90 mb-2">More settings</h2>
         <p className="text-[12px] text-white/45 leading-relaxed">
-          Members, API keys, webhooks, SSO, integrations, billing — porting from{' '}
+          Members, API keys, webhooks, SSO, integrations — porting from{' '}
           <code className="text-white/55">/v2/admin/users</code> in Phase B. For now, those still live in averrow-ops.
         </p>
       </section>
