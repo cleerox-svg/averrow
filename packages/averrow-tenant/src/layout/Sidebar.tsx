@@ -6,8 +6,9 @@
 // once that lands in Phase B).
 
 import { NavLink } from 'react-router-dom';
-import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Send, type LucideIcon } from 'lucide-react';
+import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Send, Sun, Moon, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
+import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
 
 const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
@@ -36,15 +37,27 @@ const NAV_ACTIVE   = 'bg-amber/[0.10] text-amber border border-amber/[0.20]';
 
 export function Sidebar() {
   const { data, isLoading } = useTenantModules();
+  const { theme, toggle: toggleTheme } = useTheme();
 
   const active = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial');
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
 
   return (
     <aside className="w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]">
-      <div className="px-4 py-4 border-b border-white/[0.05]">
-        <div className="text-[18px] font-bold text-white">AVERROW</div>
-        <div className="text-[10px] uppercase tracking-[0.18em] text-amber font-mono mt-0.5">Tenant</div>
+      <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[18px] font-bold text-white/95">AVERROW</div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-amber font-mono mt-0.5">Tenant</div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="p-1.5 rounded text-white/55 hover:text-white/95 hover:bg-white/[0.06] transition-colors"
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
