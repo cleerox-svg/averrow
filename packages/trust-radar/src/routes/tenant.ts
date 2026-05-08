@@ -47,6 +47,9 @@ import {
 import {
   handleGetThreatActorModuleSummary, handleGetThreatActorDetail,
 } from "../handlers/tenantThreatActorModule";
+import {
+  handleListTenantTakedowns, handleGetTenantTakedownDetail,
+} from "../handlers/tenantTakedowns";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -367,6 +370,23 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request, env,
       request.params["orgId"] ?? "",
       request.params["actorId"] ?? "",
+      ctx,
+    );
+  });
+
+  // ─── Takedowns — tenant-facing list + detail (v3 Phase C) ──────
+  router.get("/api/orgs/:orgId/takedowns", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListTenantTakedowns(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/takedowns/:takedownId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetTenantTakedownDetail(
+      request, env,
+      request.params["orgId"] ?? "",
+      request.params["takedownId"] ?? "",
       ctx,
     );
   });

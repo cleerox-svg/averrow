@@ -20,6 +20,8 @@ import { Trademark } from '@/features/trademark/Trademark';
 import { BrandTrademarkFindings } from '@/features/trademark/BrandTrademarkFindings';
 import { ThreatActor } from '@/features/threat-actor/ThreatActor';
 import { ThreatActorDetail } from '@/features/threat-actor/ThreatActorDetail';
+import { Takedowns } from '@/features/takedowns/Takedowns';
+import { TakedownDetail } from '@/features/takedowns/TakedownDetail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +42,10 @@ export function App() {
               <Route index element={<Modules />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="notifications" element={<Notifications />} />
+
+              {/* Takedowns — Phase C sprint 4 */}
+              <Route path="takedowns"                element={<Takedowns />} />
+              <Route path="takedowns/:takedownId"    element={<TakedownDetail />} />
 
               {/* Domain Monitoring — first per-module surface (Phase B sprint 1) */}
               <Route path="modules/domain"                    element={<Domain />} />
