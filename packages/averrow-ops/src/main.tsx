@@ -5,8 +5,16 @@ import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
 import { ToastProvider } from '@/components/ui/Toast';
 import { registerServiceWorker } from '@/lib/pwa';
+import { bootstrapTheme } from '@/design-system/hooks/useTheme';
 import App from '@/App';
 import '@/index.css';
+
+// Apply persisted theme synchronously, before React mounts. Without
+// this the page renders in default dark until UserAvatar (or
+// another useTheme consumer) mounts, then snaps to the persisted
+// theme — visible flash. bootstrapTheme reads localStorage and
+// sets data-theme on <html> in one shot.
+bootstrapTheme();
 
 const queryClient = new QueryClient({
   defaultOptions: {

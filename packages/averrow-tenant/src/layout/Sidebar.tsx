@@ -10,6 +10,7 @@ import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Be
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
+import { AverrowLogo } from './AverrowLogo';
 
 const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   domain:        Globe,
@@ -45,10 +46,7 @@ export function Sidebar() {
   return (
     <aside className="w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]">
       <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
-        <div>
-          <div className="text-[18px] font-bold text-white/95">AVERROW</div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-amber font-mono mt-0.5">Tenant</div>
-        </div>
+        <AverrowLogo />
         <button
           type="button"
           onClick={toggleTheme}
