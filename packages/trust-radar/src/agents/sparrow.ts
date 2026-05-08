@@ -32,9 +32,11 @@ export const sparrowAgent: AgentModule = {
     { kind: "d1_table", name: "org_brands" },
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "social_profiles" },
+    { kind: "d1_table", name: "takedown_authorizations" },
     { kind: "d1_table", name: "takedown_evidence" },
     { kind: "d1_table", name: "takedown_providers" },
     { kind: "d1_table", name: "takedown_requests" },
+    { kind: "d1_table", name: "takedown_submissions" },
     { kind: "d1_table", name: "url_scan_results" },
   ],
   writes: [
@@ -361,10 +363,27 @@ export const sparrowAgent: AgentModule = {
       console.error('[Sparrow] Phase G error:', err instanceof Error ? err.message : String(err));
     }
 
+    // ── Phase H: SLA-breach follow-ups ────────────────────────────
+    let followupsFired = 0;
+    try {
+      const phaseH = await runPhaseHAutoFollowup(env);
+      followupsFired = phaseH.followups;
+      if (followupsFired > 0) {
+        outputs.push({
+          type: "insight",
+          summary: `Fired ${followupsFired} SLA-breach follow-up(s)`,
+          severity: "info",
+          details: { followups: followupsFired, skipped: phaseH.skipped },
+        });
+      }
+    } catch (err) {
+      console.error('[Sparrow] Phase H error:', err instanceof Error ? err.message : String(err));
+    }
+
     return {
       itemsProcessed,
       itemsCreated: itemsCreated + socialEvidenceAttached,
-      itemsUpdated: providersResolved + domainsVerified + autoSubmitted,
+      itemsUpdated: providersResolved + domainsVerified + autoSubmitted + followupsFired,
       output: {
         captures_scanned: scanResults.captures_processed,
         urls_scanned: scanResults.urls_scanned,
@@ -380,6 +399,7 @@ export const sparrowAgent: AgentModule = {
         takedown_domains_resurrected: domainsResurrected,
         auto_submitted: autoSubmitted,
         auto_submit_skipped: autoSubmitSkipped,
+        followups_fired: followupsFired,
       },
       agentOutputs: outputs,
     };
@@ -917,4 +937,170 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
   }
 
   return { submitted, skipped };
+}
+
+// ─── Phase H: SLA-Breach Follow-Ups ─────────────────────────────────
+//
+// Picks up to PHASE_H_BATCH takedowns where:
+//   - status = 'submitted' AND submitted_at IS NOT NULL
+//   - the org's takedown_authorizations.scope_json carries a non-null
+//     auto_followup_breached_sla_hours
+//   - submitted_at + N hours < now (SLA breached)
+//   - no follow-up has been recorded since the last submission attempt
+//     (dedup against repeat fires)
+//   - module_key still authorized + entitled (defensive — same gates
+//     as Phase G; an org may have revoked since the original submit)
+//
+// For each match we call followupDraftSubmitter.submitFollowup() and
+// write a takedown_submissions row with submitter_kind='followup_email_draft'.
+// We do NOT advance takedown_requests.status — the takedown stays
+// 'submitted' until the provider acks (or Phase F flips it to 'taken_down'
+// after a domain check), regardless of how many follow-ups we send.
+
+const PHASE_H_BATCH = 10;
+
+interface PhaseHRow {
+  id:                     string;
+  org_id:                 number;
+  brand_id:               string;
+  module_key:             string;
+  target_type:            string;
+  target_value:           string;
+  target_url:             string | null;
+  evidence_summary:       string;
+  evidence_detail:        string | null;
+  provider_name:          string | null;
+  provider_abuse_contact: string | null;
+  provider_method:        string | null;
+  severity:               string;
+  submitted_at:           string;
+  scope_json:             string;
+  prior_ticket_id:        string | null;
+}
+
+async function runPhaseHAutoFollowup(env: Env): Promise<{ followups: number; skipped: number }> {
+  // Find breached takedowns by joining each row to the org's active
+  // authorization, extracting the SLA hours from scope_json, and
+  // excluding rows that already have a follow-up since the last
+  // submission attempt.
+  //
+  // Inlined (no CTE) because the static SQL extractor in
+  // scripts/build-architect-manifest.ts treats `FROM <name>` as a
+  // table reference, and a CTE alias would show up as a phantom
+  // table in the drift gate.
+  const candidates = await env.DB.prepare(
+    `SELECT
+       tr.id, tr.org_id, tr.brand_id, tr.module_key,
+       tr.target_type, tr.target_value, tr.target_url,
+       tr.evidence_summary, tr.evidence_detail,
+       tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
+       tr.severity, tr.submitted_at,
+       ta.scope_json,
+       (SELECT ts.ticket_id FROM takedown_submissions ts
+         WHERE ts.takedown_id = tr.id AND ts.ticket_id IS NOT NULL
+         ORDER BY ts.attempted_at DESC LIMIT 1) AS prior_ticket_id
+     FROM takedown_requests tr
+     JOIN takedown_authorizations ta ON ta.org_id = tr.org_id AND ta.status = 'active'
+     WHERE tr.status       = 'submitted'
+       AND tr.submitted_at IS NOT NULL
+       AND tr.org_id       IS NOT NULL
+       AND tr.module_key   IS NOT NULL
+       AND json_extract(ta.scope_json, '$.auto_followup_breached_sla_hours') IS NOT NULL
+       AND datetime(
+             tr.submitted_at,
+             '+' || CAST(json_extract(ta.scope_json, '$.auto_followup_breached_sla_hours') AS INTEGER) || ' hours'
+           ) < datetime('now')
+       AND NOT EXISTS (
+         SELECT 1 FROM takedown_submissions ts
+         WHERE ts.takedown_id = tr.id
+           AND ts.submitter_kind LIKE 'followup_%'
+           AND ts.attempted_at > tr.submitted_at
+       )
+     ORDER BY tr.submitted_at ASC
+     LIMIT ?`,
+  ).bind(PHASE_H_BATCH).all<PhaseHRow>();
+
+  let followups = 0;
+  let skipped   = 0;
+
+  const { isModuleAuthorized } = await import("../lib/takedown-authorizations");
+  const { isModuleEnabled }    = await import("../lib/entitlements");
+  const { followupDraftSubmitter, recordSubmissionAttempt } = await import("../lib/takedown-submitters");
+  type ModuleKey = Parameters<typeof isModuleAuthorized>[2];
+
+  for (const row of candidates.results ?? []) {
+    try {
+      const modKey = row.module_key as ModuleKey;
+
+      // Defensive re-check: the org may have revoked authorization since
+      // the original submit. Don't pile on follow-ups for a takedown the
+      // customer has revoked consent for.
+      const [enabled, authorized] = await Promise.all([
+        isModuleEnabled(env, row.org_id, modKey),
+        isModuleAuthorized(env, row.org_id, modKey),
+      ]);
+      if (!enabled || !authorized) { skipped++; continue; }
+
+      const providerRow = row.provider_name
+        ? await env.DB.prepare(
+            `SELECT id, provider_name, provider_type, abuse_email, abuse_url,
+                    abuse_api_url, abuse_api_type, auto_submit_enabled
+             FROM takedown_providers
+             WHERE provider_name = ?
+             LIMIT 1`,
+          ).bind(row.provider_name).first<{
+            id:                  number;
+            provider_name:       string;
+            provider_type:       string;
+            abuse_email:         string | null;
+            abuse_url:           string | null;
+            abuse_api_url:       string | null;
+            abuse_api_type:      string | null;
+            auto_submit_enabled: number;
+          }>()
+        : null;
+
+      if (!providerRow) { skipped++; continue; }
+
+      // Compute hoursElapsed for the email body. SQLite already verified
+      // SLA breach in the CTE so this should be > sla_hours.
+      const submittedAt = new Date(row.submitted_at);
+      const hoursElapsed = Math.max(
+        0,
+        Math.floor((Date.now() - submittedAt.getTime()) / (60 * 60 * 1000)),
+      );
+
+      const result = await followupDraftSubmitter.submitFollowup(
+        {
+          id:                     row.id,
+          org_id:                 row.org_id,
+          brand_id:               row.brand_id,
+          module_key:             modKey,
+          target_type:            row.target_type,
+          target_value:           row.target_value,
+          target_url:             row.target_url,
+          evidence_summary:       row.evidence_summary,
+          evidence_detail:        row.evidence_detail,
+          provider_name:          row.provider_name,
+          provider_abuse_contact: row.provider_abuse_contact,
+          provider_method:        row.provider_method,
+          severity:               row.severity,
+        },
+        providerRow,
+        {
+          originalSubmittedAt: row.submitted_at,
+          priorTicketId:       row.prior_ticket_id,
+          hoursElapsed,
+        },
+      );
+
+      await recordSubmissionAttempt(env, row.id, providerRow.id, result);
+      followups++;
+    } catch (err) {
+      console.error(`[Sparrow] Phase H follow-up failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+      skipped++;
+    }
+  }
+
+  return { followups, skipped };
 }

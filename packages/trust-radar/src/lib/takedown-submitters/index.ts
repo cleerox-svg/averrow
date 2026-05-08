@@ -20,6 +20,7 @@
 
 import type { Env } from "../../types";
 import { emailDraftSubmitter } from "./email-draft";
+import { followupDraftSubmitter } from "./followup-draft";
 import type {
   ProviderRecord,
   SubmissionResult,
@@ -83,6 +84,23 @@ export async function dispatchSubmission(
     }
   }
 
+  const submissionId = await recordSubmissionAttempt(env, takedown.id, provider.id, result);
+  return { result, submission_id: submissionId };
+}
+
+/**
+ * Persist a single submission attempt to takedown_submissions.
+ *
+ * Used by dispatchSubmission() and by Phase H follow-up logic that
+ * dispatches a follow-up submitter (followup-draft) directly without
+ * going through the priority chain.
+ */
+export async function recordSubmissionAttempt(
+  env:         Env,
+  takedownId:  string,
+  providerId:  number | null,
+  result:      SubmissionResult,
+): Promise<string> {
   const submissionId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO takedown_submissions (
@@ -93,8 +111,8 @@ export async function dispatchSubmission(
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
   ).bind(
     submissionId,
-    takedown.id,
-    provider.id,
+    takedownId,
+    providerId,
     result.submitter_kind,
     result.submitter_target ?? null,
     result.request_summary  ?? null,
@@ -106,9 +124,9 @@ export async function dispatchSubmission(
     result.error_message    ?? null,
     result.duration_ms      ?? null,
   ).run();
-
-  return { result, submission_id: submissionId };
+  return submissionId;
 }
 
 export { emailDraftSubmitter } from "./email-draft";
+export { followupDraftSubmitter, type FollowupContext } from "./followup-draft";
 export type { Submitter, SubmissionResult, TakedownRecord, ProviderRecord } from "./types";

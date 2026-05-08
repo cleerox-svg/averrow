@@ -643,9 +643,11 @@ export const REPO_MANIFEST: RepoInventory = {
         "org_brands",
         "social_mentions",
         "social_profiles",
+        "takedown_authorizations",
         "takedown_evidence",
         "takedown_providers",
         "takedown_requests",
+        "takedown_submissions",
         "url_scan_results"
       ],
       "writes": [
@@ -654,8 +656,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "url_scan_results"
       ],
       "ai_models_referenced": [],
-      "loc": 921,
-      "last_modified": "2026-05-08T00:48:58.621Z"
+      "loc": 1107,
+      "last_modified": "2026-05-08T00:56:00.661Z"
     },
     {
       "name": "strategist",
