@@ -10,7 +10,7 @@
 // Sprint 2 of the Phase D Stripe track. Edit forms (PATCH for plans
 // / modules + override-create form) land in sprint 3.
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export interface PricingPlan {
@@ -104,5 +104,53 @@ export function formatCents(cents: number): string {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: dollars >= 100 ? 0 : 2,
+  });
+}
+
+// ─── Mutations ──────────────────────────────────────────────────
+
+export interface CreateOverrideInput {
+  override_type:      OverrideType;
+  plan_id?:           string;
+  module_key?:        string;
+  custom_price_cents?: number;
+  discount_pct?:      number;
+  reason:             string;
+  effective_until?:   string | null;
+}
+
+export function useCreatePricingOverride(orgId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateOverrideInput) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await api.post<{ id: string }>(
+        `/api/admin/customers/${orgId}/pricing-overrides`,
+        input,
+      );
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Override create failed');
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-customer-pricing', orgId] });
+    },
+  });
+}
+
+export function useRevokePricingOverride(orgId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (overrideId: string) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await api.patch<{ id: string; revoked: boolean }>(
+        `/api/admin/customers/${orgId}/pricing-overrides/${overrideId}`,
+        {},
+      );
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Override revoke failed');
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-customer-pricing', orgId] });
+    },
   });
 }
