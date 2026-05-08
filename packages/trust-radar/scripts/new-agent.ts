@@ -464,9 +464,9 @@ patchResults.push(patchAgentRegistry(args.snakeName, kebab, snakeToCamel(args.sn
 // regex → graceful failure that leaves the operator a clear message.
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
-const UI_METADATA_PATH = resolve(REPO_ROOT, "packages/averrow-ui/src/lib/agent-metadata.ts");
-const UI_AGENTS_PAGE_PATH = resolve(REPO_ROOT, "packages/averrow-ui/src/features/agents/Agents.tsx");
-const UI_ICON_PATH = resolve(REPO_ROOT, "packages/averrow-ui/src/components/brand/AgentIcon.tsx");
+const UI_METADATA_PATH = resolve(REPO_ROOT, "packages/averrow-ops/src/lib/agent-metadata.ts");
+const UI_AGENTS_PAGE_PATH = resolve(REPO_ROOT, "packages/averrow-ops/src/features/agents/Agents.tsx");
+const UI_ICON_PATH = resolve(REPO_ROOT, "packages/averrow-ops/src/components/brand/AgentIcon.tsx");
 const AGENTS_DOC_PATH = resolve(REPO_ROOT, "docs/AI_AGENTS.md");
 
 /** Pick the next-available pipelinePosition by reading the current

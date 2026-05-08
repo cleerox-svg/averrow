@@ -2,11 +2,12 @@ name: Deploy — Trust Radar (trustradar.ca)
 
 # Canonical production deploy for Trust Radar / Averrow.
 #
-# Builds the averrow-ui React SPA before wrangler deploy so the
-# /v2/* assets land in packages/trust-radar/public/v2/ before the
-# worker bundle is shipped. That directory is gitignored — without
-# this build step the deployed worker has no SPA assets and every
-# /v2/* path returns 404 (ERR_INVALID_RESPONSE).
+# Builds the averrow-ops React SPA (formerly averrow-ui, rebadged
+# in v3 Phase D2) before wrangler deploy so the /v2/* assets land
+# in packages/trust-radar/public/v2/ before the worker bundle is
+# shipped. That directory is gitignored — without this build step
+# the deployed worker has no SPA assets and every /v2/* path
+# returns 404 (ERR_INVALID_RESPONSE).
 #
 # A separate Cloudflare Workers Build Git integration exists; this
 # workflow is the source of truth for production deploys.
@@ -20,7 +21,7 @@ on:
     branches: [master, main]
     paths:
       - "packages/trust-radar/**"
-      - "packages/averrow-ui/**"
+      - "packages/averrow-ops/**"
       - "packages/averrow-tenant/**"
       - ".github/workflows/deploy-radar.yml"
   workflow_dispatch:
@@ -72,8 +73,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build React UI (averrow-ui — staff /v2)
-        working-directory: packages/averrow-ui
+      - name: Build React UI (averrow-ops — staff /v2)
+        working-directory: packages/averrow-ops
         run: pnpm run build
 
       - name: Build React UI (averrow-tenant — customer /tenant)

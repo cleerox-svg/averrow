@@ -79,5 +79,5 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run React UI tests
-        working-directory: packages/averrow-ui
+        working-directory: packages/averrow-ops
         run: pnpm test
