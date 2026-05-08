@@ -62,3 +62,21 @@ export async function apiPost<T, B = unknown>(path: string, body: B): Promise<Ap
   }
   return res.json() as Promise<ApiSuccess<T>>;
 }
+
+export async function apiPatch<T, B = unknown>(path: string, body: B): Promise<ApiSuccess<T>> {
+  const token = getToken();
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let parsed: ApiError | null = null;
+    try { parsed = await res.json() as ApiError; } catch { /* non-json */ }
+    throw new Error(parsed?.error ?? `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<ApiSuccess<T>>;
+}

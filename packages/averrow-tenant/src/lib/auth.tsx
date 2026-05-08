@@ -6,7 +6,7 @@
 // the parent worker — averrow-tenant only renders authenticated UI).
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { apiGet, getToken, setToken } from './api';
+import { apiGet, apiPost, getToken, setToken } from './api';
 
 export interface UserOrganization {
   id:    number;
@@ -29,7 +29,7 @@ interface AuthContextShape {
   user:    User | null;
   loading: boolean;
   error:   string | null;
-  logout:  () => void;
+  logout:  () => Promise<void>;
   isSuperAdmin: boolean;
   /** True once we know the user has an organization bound. */
   hasOrg:  boolean;
@@ -53,9 +53,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const logout = () => {
+  const logout = async () => {
+    // Hit the backend so the refresh cookie + session row are
+    // revoked. Best-effort — a network failure here still proceeds
+    // with the local teardown so the user isn't trapped on the
+    // shell.
+    try {
+      await apiPost('/api/auth/logout', {});
+    } catch {
+      /* swallow */
+    }
     setToken(null);
     setUser(null);
+    // Hard-navigate so the next session bootstrap (token-less)
+    // hits the parent worker's session-aware login redirect.
+    window.location.href = '/';
   };
 
   const ctx: AuthContextShape = {

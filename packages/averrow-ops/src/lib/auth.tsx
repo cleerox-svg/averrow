@@ -34,7 +34,7 @@ interface AuthState {
   isSuperAdmin: boolean;
   isBrandAdmin: boolean;
   login: () => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   /** Re-fetch /api/auth/me. Call after profile edits or passkey changes. */
   refreshUser: () => Promise<void>;
 }
@@ -183,7 +183,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = '/api/auth/login?return_to=/v2/';
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // Hit the backend so the refresh-token cookie + sessions row are
+    // revoked. Without this, calling /api/auth/refresh after logout
+    // would silently mint a fresh access token, defeating the
+    // logout. Backend handler at handlers/auth.ts:handleLogout.
+    //
+    // Best-effort: a network error here still proceeds with local
+    // teardown — we don't want to leave the user trapped on the
+    // shell because of a transient backend hiccup.
+    try {
+      await api.post('/api/auth/logout', {});
+    } catch {
+      /* swallow — local teardown still runs */
+    }
     api.clearTokens();
     setUser(null);
     saveCachedUser(null);
