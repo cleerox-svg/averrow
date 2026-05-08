@@ -640,6 +640,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "app_store_listings",
         "brands",
         "dark_web_mentions",
+        "org_brands",
         "social_mentions",
         "social_profiles",
         "takedown_evidence",
@@ -653,8 +654,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "url_scan_results"
       ],
       "ai_models_referenced": [],
-      "loc": 745,
-      "last_modified": "2026-05-04T17:56:39.966Z"
+      "loc": 921,
+      "last_modified": "2026-05-08T00:48:58.621Z"
     },
     {
       "name": "strategist",
