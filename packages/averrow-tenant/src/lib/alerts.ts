@@ -64,8 +64,19 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
   return useQuery<AlertsResponse>({
     queryKey: ['tenant-alerts', orgId, params.toString()],
     queryFn: async () => {
-      const res = await apiGet<AlertsResponse>(`/api/orgs/${orgId}/alerts?${params}`);
-      return res.data;
+      // Handler returns { success, data: Alert[], total, severity_breakdown }
+      // — total + severity_breakdown live at the response ROOT, not inside
+      // data. We pivot here to the AlertsResponse shape the page expects.
+      const res = await apiGet<Alert[]>(`/api/orgs/${orgId}/alerts?${params}`) as unknown as {
+        data:                Alert[];
+        total:               number;
+        severity_breakdown:  SeverityBreakdown[];
+      };
+      return {
+        alerts:              res.data ?? [],
+        total:               res.total ?? 0,
+        severity_breakdown:  res.severity_breakdown ?? [],
+      };
     },
     enabled: hasOrg && !!orgId,
     staleTime: 30_000,

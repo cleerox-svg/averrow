@@ -33,8 +33,18 @@ export function useTenantNotifications() {
   return useQuery<NotificationsResponse>({
     queryKey: ['tenant-notifications', user?.id],
     queryFn: async () => {
-      const res = await apiGet<NotificationsResponse>(`/api/notifications`);
-      return res.data;
+      // Handler returns { success, data: Notification[], unread_count, next_cursor }
+      // — unread_count + next_cursor live at the response root, NOT inside
+      // data. Mirror averrow-ops's hook (src/hooks/useNotifications.ts)
+      // which does the same shape pivot.
+      const res = await apiGet<Notification[]>(`/api/notifications`) as unknown as {
+        data:         Notification[];
+        unread_count: number;
+      };
+      return {
+        notifications: res.data ?? [],
+        unread_count:  res.unread_count ?? 0,
+      };
     },
     enabled: !!user,
     staleTime: 30_000,

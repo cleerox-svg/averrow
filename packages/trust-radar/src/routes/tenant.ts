@@ -18,7 +18,7 @@ import {
   handleGetMonitoringConfig, handleUpdateMonitoringConfig,
 } from "../handlers/tenantData";
 import {
-  handleCreateTakedown, handleListTakedowns, handleGetTakedown, handleUpdateTakedown,
+  handleCreateTakedown, handleUpdateTakedown,
 } from "../handlers/takedowns";
 import {
   handleListTenantModules, handleAdminModuleAction,
@@ -210,25 +210,27 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Takedown Requests (org-scoped) ──────────────────────────────
+  //
+  // GET list + detail are registered farther down (under "Takedowns —
+  // tenant-facing list + detail") via handleListTenantTakedowns +
+  // handleGetTenantTakedownDetail. Those return the totals-rollup
+  // shape the tenant page expects. itty-router takes the first
+  // matching registration, so duplicate GETs HERE would shadow the
+  // newer handlers and tenant pages would render blank against the
+  // legacy shape — exactly the bug we just hit.
+  //
+  // POST + PATCH stay here because /v2 (averrow-ops) consumes the
+  // legacy create + update handlers and they don't need the tenant
+  // totals envelope.
   router.post("/api/orgs/:orgId/takedowns", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreateTakedown(request, env, request.params["orgId"] ?? "", ctx);
   });
-  router.get("/api/orgs/:orgId/takedowns", async (request: Request & { params: Record<string, string> }, env: Env) => {
+  router.patch("/api/orgs/:orgId/takedowns/:takedownId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleListTakedowns(request, env, request.params["orgId"] ?? "", ctx);
-  });
-  router.get("/api/orgs/:orgId/takedowns/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleGetTakedown(request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx);
-  });
-  router.patch("/api/orgs/:orgId/takedowns/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleUpdateTakedown(request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx);
+    return handleUpdateTakedown(request, env, request.params["orgId"] ?? "", request.params["takedownId"] ?? "", ctx);
   });
 
   // ─── Modules (v3 Phase A) ─────────────────────────────────────
