@@ -466,7 +466,15 @@ export async function issueSession(
 
   await audit(env, { action: "login", userId, details: { method }, request });
 
-  const returnTo = returnToPath || '/observatory';
+  // Phase D D2c rebadge gate (server-side backstop): customer-tenant
+  // users (role='client') route to /tenant/ regardless of what
+  // returnToPath was. The averrow-ops auth bootstrap ALSO redirects
+  // these users client-side; this is the worker-side belt to the
+  // SPA's suspenders so a client never lands inside /v2/.
+  const rawReturnTo = returnToPath || '/observatory';
+  const returnTo = (role === 'client' && rawReturnTo.startsWith('/v2'))
+    ? '/tenant/'
+    : rawReturnTo;
 
   if (mode === 'json') {
     // For AJAX callers (passkeys.ts on the SPA): JSON envelope, refresh

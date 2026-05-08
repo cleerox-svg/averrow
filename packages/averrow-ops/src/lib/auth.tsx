@@ -61,16 +61,30 @@ function saveCachedUser(user: User | null) {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // Phase D D2c rebadge gate: redirect cached customer-tenant
+  // users out of /v2 before any rendering happens. The /api/auth/me
+  // round-trip below also enforces the gate, but covering the
+  // cache hydrate path here avoids a flash of staff shell for
+  // customers who previously visited /v2.
+  const cachedAtBoot = (() => {
+    if (typeof window === 'undefined') return null;
+    const cached = loadCachedUser();
+    if (cached?.role === 'client' && api.getToken()) {
+      window.location.href = '/tenant/';
+      return null;
+    }
+    return cached;
+  })();
+
   // Hydrate from cache so the shell can render without a blank screen.
   // The cached user is validated in the background via /api/auth/me.
   // If validation fails the api.onAuthError handler clears state and redirects.
   const [user, setUserState] = useState<User | null>(() => {
-    const cached = loadCachedUser();
-    return cached && api.getToken() ? cached : null;
+    return cachedAtBoot && api.getToken() ? cachedAtBoot : null;
   });
   const [loading, setLoading] = useState(() => {
     // Skip the blocking loading screen if we already have something to show
-    return !(loadCachedUser() && api.getToken());
+    return !(cachedAtBoot && api.getToken());
   });
 
   const setUser = useCallback((u: User | null) => {
@@ -134,6 +148,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await api.get<User>('/api/auth/me');
       if (res.success && res.data) {
+        // Phase D D2c rebadge gate: averrow-ops is staff-only. A
+        // role='client' user (any customer) belongs at /tenant/, not
+        // here. Hard-redirect before setUser so we don't even
+        // briefly render the staff shell with their identity. The
+        // worker-side login redirect is the matching backstop in
+        // packages/trust-radar/src/handlers/auth.ts.
+        if (res.data.role === 'client') {
+          window.location.href = '/tenant/';
+          return;
+        }
         setUser(res.data);
       } else {
         setUser(null);

@@ -113,6 +113,22 @@ export async function requireSuperAdmin(request: Request, env: Env): Promise<Aut
   return requireRole("super_admin")(request, env);
 }
 
+/**
+ * Shorthand: require any Averrow staff role (super_admin, admin,
+ * analyst). Anchors the v3 Phase D D2c rebadge gate — staff-only
+ * back-office routes use this guard so customer-tenant users
+ * (role='client') get a 403 instead of inadvertent ops access.
+ *
+ * For per-route adoption: replace `requireAuth` with `requireStaff`
+ * on any route that should not be reachable by customers. Tenant
+ * data routes already enforce org_id scoping in their handlers; the
+ * staff guard is the additional protection for genuinely cross-
+ * tenant or admin-only surfaces.
+ */
+export async function requireStaff(request: Request, env: Env): Promise<AuthContext | Response> {
+  return requireRole("analyst")(request, env);
+}
+
 export function isAuthContext(val: AuthContext | Response): val is AuthContext {
   return !(val instanceof Response);
 }
