@@ -341,10 +341,29 @@ export const sparrowAgent: AgentModule = {
       });
     }
 
+    // ── Phase G: Auto-submit drafts where authorized ──────────────
+    let autoSubmitted = 0;
+    let autoSubmitSkipped = 0;
+    try {
+      const phaseG = await runPhaseGAutoSubmit(env);
+      autoSubmitted     = phaseG.submitted;
+      autoSubmitSkipped = phaseG.skipped;
+      if (autoSubmitted > 0) {
+        outputs.push({
+          type: "insight",
+          summary: `Auto-submitted ${autoSubmitted} takedown draft(s) via the dispatcher`,
+          severity: "info",
+          details: { submitted: autoSubmitted, skipped: autoSubmitSkipped },
+        });
+      }
+    } catch (err) {
+      console.error('[Sparrow] Phase G error:', err instanceof Error ? err.message : String(err));
+    }
+
     return {
       itemsProcessed,
       itemsCreated: itemsCreated + socialEvidenceAttached,
-      itemsUpdated: providersResolved + domainsVerified,
+      itemsUpdated: providersResolved + domainsVerified + autoSubmitted,
       output: {
         captures_scanned: scanResults.captures_processed,
         urls_scanned: scanResults.urls_scanned,
@@ -358,6 +377,8 @@ export const sparrowAgent: AgentModule = {
         providers_resolved: providersResolved,
         takedown_domains_verified: domainsVerified,
         takedown_domains_resurrected: domainsResurrected,
+        auto_submitted: autoSubmitted,
+        auto_submit_skipped: autoSubmitSkipped,
       },
       agentOutputs: outputs,
     };
@@ -742,3 +763,135 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<number> {
 
 // Need Env type for helper functions
 import type { Env } from "../types";
+
+// ─── Phase G: Auto-Submit Authorized Drafts ─────────────────────────
+//
+// Picks up to PHASE_G_BATCH takedowns where:
+//   - status = 'draft'
+//   - module_key + provider_name resolved (Phase E filled these in)
+//   - org_id is set (SOC-initiated takedowns with no org are skipped here;
+//     ops handles those manually)
+//   - the org has signed an active takedown_authorizations covering the
+//     module_key
+//   - the matching takedown_providers row has auto_submit_enabled = 1
+//
+// Each match is dispatched via lib/takedown-submitters/. On any
+// non-failed outcome the takedown's status flips to 'submitted'
+// and submitted_at is stamped. On 'failed' the status stays 'draft'
+// so the next tick (or ops manually) can retry.
+
+const PHASE_G_BATCH = 10;
+
+interface PhaseGRow {
+  id:                     string;
+  org_id:                 number | null;
+  brand_id:               string;
+  module_key:             string | null;
+  target_type:            string;
+  target_value:           string;
+  target_url:             string | null;
+  evidence_summary:       string;
+  evidence_detail:        string | null;
+  provider_name:          string | null;
+  provider_abuse_contact: string | null;
+  provider_method:        string | null;
+  severity:               string;
+}
+
+async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipped: number }> {
+  const candidates = await env.DB.prepare(
+    `SELECT tr.id, tr.org_id, tr.brand_id, tr.module_key,
+            tr.target_type, tr.target_value, tr.target_url,
+            tr.evidence_summary, tr.evidence_detail,
+            tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
+            tr.severity
+     FROM takedown_requests tr
+     WHERE tr.status = 'draft'
+       AND tr.org_id IS NOT NULL
+       AND tr.module_key IS NOT NULL
+       AND tr.provider_name IS NOT NULL
+     ORDER BY tr.priority_score DESC, tr.created_at ASC
+     LIMIT ?`,
+  ).bind(PHASE_G_BATCH).all<PhaseGRow>();
+
+  let submitted = 0;
+  let skipped   = 0;
+
+  const { isModuleAuthorized } = await import("../lib/takedown-authorizations");
+  const { dispatchSubmission } = await import("../lib/takedown-submitters");
+  const { isModuleEnabled }    = await import("../lib/entitlements");
+  type ModuleKey = Parameters<typeof isModuleAuthorized>[2];
+
+  for (const row of candidates.results ?? []) {
+    try {
+      const orgId   = row.org_id;
+      const modKey  = row.module_key as ModuleKey | null;
+      if (orgId === null || modKey === null) { skipped++; continue; }
+
+      // Both gates: entitlement (org_modules) AND consent (takedown_authorizations).
+      const [enabled, authorized] = await Promise.all([
+        isModuleEnabled(env, orgId, modKey),
+        isModuleAuthorized(env, orgId, modKey),
+      ]);
+      if (!enabled || !authorized) { skipped++; continue; }
+
+      const providerRow = await env.DB.prepare(
+        `SELECT id, provider_name, provider_type, abuse_email, abuse_url,
+                abuse_api_url, abuse_api_type, auto_submit_enabled
+         FROM takedown_providers
+         WHERE provider_name = ?
+         LIMIT 1`,
+      ).bind(row.provider_name as string).first<{
+        id:                  number;
+        provider_name:       string;
+        provider_type:       string;
+        abuse_email:         string | null;
+        abuse_url:           string | null;
+        abuse_api_url:       string | null;
+        abuse_api_type:      string | null;
+        auto_submit_enabled: number;
+      }>();
+
+      if (!providerRow || providerRow.auto_submit_enabled !== 1) { skipped++; continue; }
+
+      const { result } = await dispatchSubmission(
+        env,
+        {
+          id:                     row.id,
+          org_id:                 orgId,
+          brand_id:               row.brand_id,
+          module_key:             modKey,
+          target_type:            row.target_type,
+          target_value:           row.target_value,
+          target_url:             row.target_url,
+          evidence_summary:       row.evidence_summary,
+          evidence_detail:        row.evidence_detail,
+          provider_name:          row.provider_name,
+          provider_abuse_contact: row.provider_abuse_contact,
+          provider_method:        row.provider_method,
+          severity:               row.severity,
+        },
+        providerRow,
+      );
+
+      if (result.outcome === "failed" || result.outcome === "rejected") {
+        skipped++;
+        continue;
+      }
+
+      await env.DB.prepare(
+        `UPDATE takedown_requests
+         SET status = 'submitted',
+             submitted_at = datetime('now'),
+             updated_at   = datetime('now')
+         WHERE id = ? AND status = 'draft'`,
+      ).bind(row.id).run();
+      submitted++;
+    } catch (err) {
+      console.error(`[Sparrow] Phase G dispatch failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+      skipped++;
+    }
+  }
+
+  return { submitted, skipped };
+}
