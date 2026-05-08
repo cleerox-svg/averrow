@@ -21,6 +21,11 @@ import {
   formatCents,
   type OrgPricingSummary, type OverrideType, type OrgPricingOverride,
 } from '@/hooks/useAdminPricing';
+import {
+  useCustomerModules, useActivateModule, useSuspendModule,
+  MODULE_LABELS,
+  type CustomerModule, type ModuleStatus,
+} from '@/hooks/useAdminCustomerModules';
 import { CreateOrgSheet } from './components/CreateOrgSheet';
 
 // ─── Plan config ────────────────────────────────────────────
@@ -170,6 +175,7 @@ function OrgListRow({ org, onClick }: { org: AdminOrg; onClick: () => void }) {
 const DETAIL_TABS = [
   { id: 'members', label: 'Members' },
   { id: 'brands', label: 'Brands' },
+  { id: 'modules', label: 'Modules' },
   { id: 'pricing', label: 'Pricing' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'api-keys', label: 'API Keys' },
@@ -223,6 +229,7 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
       {/* Tab Content */}
       {activeTab === 'members' && <DetailMembersTab orgId={orgId} members={org.members ?? []} />}
       {activeTab === 'brands' && <DetailBrandsTab orgId={orgId} brands={org.brands ?? []} maxBrands={org.max_brands} />}
+      {activeTab === 'modules' && <DetailModulesTab orgId={orgId} />}
       {activeTab === 'pricing' && <DetailPricingTab orgId={orgId} />}
       {activeTab === 'integrations' && <DetailIntegrationsTab orgId={orgId} />}
       {activeTab === 'api-keys' && <DetailApiKeysTab orgId={orgId} />}
@@ -989,6 +996,196 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
       </form>
     </Card>
   );
+}
+
+// ─── Modules Tab ─────────────────────────────────────────────
+//
+// Per-customer module-entitlement management (operator-flagged
+// gap during the Customers page workflow review). Wraps
+// /api/orgs/:orgId/modules + the super_admin POST endpoint so
+// staff can activate / start a trial / suspend any of the 7
+// canonical modules without going to Stripe.
+//
+// In production, Stripe webhook keeps this in sync with the
+// customer's subscription. Manual edits here are for design
+// partners, free pilots, troubleshooting, and gap fills before
+// Stripe products are wired.
+
+function DetailModulesTab({ orgId }: { orgId: string }) {
+  const { data, isLoading, error } = useCustomerModules(orgId);
+
+  if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading modules…</div>;
+  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load modules: {error.message}</p></Card>;
+  if (!data)     return null;
+
+  const activeCount    = data.modules.filter((m) => m.status === 'active' || m.status === 'trial').length;
+  const totalCount     = data.modules.length;
+  const trialCount     = data.modules.filter((m) => m.status === 'trial').length;
+  const suspendedCount = data.modules.filter((m) => m.status === 'suspended').length;
+
+  return (
+    <div className="space-y-4">
+      <Card hover={false}>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <SectionLabel className="mb-1">Module entitlements</SectionLabel>
+            <p className="text-[12px] text-[color:var(--text-secondary)]">
+              {activeCount} of {totalCount} active
+              {trialCount > 0     && <> · {trialCount} on trial</>}
+              {suspendedCount > 0 && <> · {suspendedCount} suspended</>}
+            </p>
+          </div>
+          <div className="text-[11px] text-[color:var(--text-tertiary)] font-mono">
+            Stripe webhook keeps these synced in production.
+          </div>
+        </div>
+      </Card>
+
+      <div className="space-y-2">
+        {data.modules.map((m) => (
+          <ModuleRow key={m.module_key} orgId={orgId} module={m} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ModuleRow({ orgId, module: m }: { orgId: string; module: CustomerModule }) {
+  const activate = useActivateModule(orgId);
+  const suspend  = useSuspendModule(orgId);
+  const [showTrial, setShowTrial] = useState(false);
+  const [trialDays, setTrialDays] = useState('14');
+
+  const error = activate.error ?? suspend.error;
+
+  const handleActivate = () => {
+    activate.mutate({ module_key: m.module_key });
+  };
+
+  const handleStartTrial = () => {
+    if (!trialDays || Number(trialDays) <= 0) return;
+    const trialEndsAt = new Date(Date.now() + Number(trialDays) * 24 * 60 * 60 * 1000)
+      .toISOString().replace('T', ' ').slice(0, 19);
+    activate.mutate(
+      { module_key: m.module_key, trial_ends_at: trialEndsAt },
+      { onSuccess: () => setShowTrial(false) },
+    );
+  };
+
+  const handleSuspend = () => {
+    suspend.mutate({ module_key: m.module_key });
+  };
+
+  const tone = statusBadgeTone(m.status);
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">
+              {MODULE_LABELS[m.module_key] ?? m.module_key}
+            </h3>
+            <Badge variant={tone}>{m.status.replace('_', ' ')}</Badge>
+          </div>
+          <div className="flex items-center gap-3 mt-1 flex-wrap">
+            <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">key: {m.module_key}</span>
+            {m.activated_at && (
+              <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">
+                activated {formatDateShort(m.activated_at)}
+              </span>
+            )}
+            {m.trial_ends_at && (
+              <span className="text-[11px] font-mono text-amber/85">
+                trial ends {formatDateShort(m.trial_ends_at)}
+              </span>
+            )}
+            {m.suspended_at && (
+              <span className="text-[11px] font-mono text-accent/85">
+                suspended {formatDateShort(m.suspended_at)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {m.status === 'not_entitled' && (
+            <>
+              <Button variant="primary" size="sm" onClick={handleActivate} disabled={activate.isPending}>
+                {activate.isPending ? 'Saving…' : 'Activate'}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setShowTrial(true)} disabled={activate.isPending}>
+                Start trial
+              </Button>
+            </>
+          )}
+          {m.status === 'trial' && (
+            <>
+              <Button variant="primary" size="sm" onClick={handleActivate} disabled={activate.isPending}>
+                {activate.isPending ? 'Saving…' : 'Convert to active'}
+              </Button>
+              <Button variant="danger" size="sm" onClick={handleSuspend} disabled={suspend.isPending}>
+                Suspend
+              </Button>
+            </>
+          )}
+          {m.status === 'active' && (
+            <Button variant="danger" size="sm" onClick={handleSuspend} disabled={suspend.isPending}>
+              {suspend.isPending ? 'Suspending…' : 'Suspend'}
+            </Button>
+          )}
+          {m.status === 'suspended' && (
+            <Button variant="primary" size="sm" onClick={handleActivate} disabled={activate.isPending}>
+              {activate.isPending ? 'Saving…' : 'Re-activate'}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {showTrial && (
+        <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-end gap-2 flex-wrap">
+          <div>
+            <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+              Trial length (days)
+            </label>
+            <Input
+              type="number"
+              min="1"
+              max="365"
+              value={trialDays}
+              onChange={(e) => setTrialDays(e.target.value)}
+              className="w-32"
+            />
+          </div>
+          <Button variant="primary" size="sm" onClick={handleStartTrial} disabled={activate.isPending}>
+            {activate.isPending ? 'Saving…' : 'Start trial'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setShowTrial(false)} disabled={activate.isPending}>
+            Cancel
+          </Button>
+        </div>
+      )}
+
+      {error && (
+        <p className="text-[12px] text-accent mt-2">
+          {error instanceof Error ? error.message : String(error)}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function statusBadgeTone(status: ModuleStatus): 'success' | 'medium' | 'critical' | 'default' {
+  if (status === 'active')       return 'success';
+  if (status === 'trial')        return 'medium';
+  if (status === 'suspended')    return 'critical';
+  return 'default';
+}
+
+function formatDateShort(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export default SuperAdminOrgs;
