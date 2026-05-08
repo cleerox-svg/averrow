@@ -15,6 +15,7 @@ import {
   useBrandSearch,
 } from '@/hooks/useAdminOrgs';
 import type { AdminOrg, BrandSearchResult, CreateOrgPayload } from '@/hooks/useAdminOrgs';
+import { useCustomerPricing, formatCents, type OrgPricingSummary } from '@/hooks/useAdminPricing';
 import { CreateOrgSheet } from './components/CreateOrgSheet';
 
 // ─── Plan config ────────────────────────────────────────────
@@ -164,6 +165,7 @@ function OrgListRow({ org, onClick }: { org: AdminOrg; onClick: () => void }) {
 const DETAIL_TABS = [
   { id: 'members', label: 'Members' },
   { id: 'brands', label: 'Brands' },
+  { id: 'pricing', label: 'Pricing' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'api-keys', label: 'API Keys' },
   { id: 'settings', label: 'Settings' },
@@ -216,6 +218,7 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
       {/* Tab Content */}
       {activeTab === 'members' && <DetailMembersTab orgId={orgId} members={org.members ?? []} />}
       {activeTab === 'brands' && <DetailBrandsTab orgId={orgId} brands={org.brands ?? []} maxBrands={org.max_brands} />}
+      {activeTab === 'pricing' && <DetailPricingTab orgId={orgId} />}
       {activeTab === 'integrations' && <DetailIntegrationsTab orgId={orgId} />}
       {activeTab === 'api-keys' && <DetailApiKeysTab orgId={orgId} />}
       {activeTab === 'settings' && <DetailSettingsTab orgId={orgId} org={org} />}
@@ -534,6 +537,216 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
         </p>
       </Card>
     </div>
+  );
+}
+
+// ─── Pricing Tab ─────────────────────────────────────────────
+//
+// Sprint 2: read-only display of the customer's effective pricing
+// (plan baseline + a-la-carte modules + active overrides → monthly
+// total). Edit forms (override-create, plan/module-price PATCH)
+// land in sprint 3.
+
+function DetailPricingTab({ orgId }: { orgId: string }) {
+  const { data, isLoading, error } = useCustomerPricing(orgId);
+
+  if (isLoading) {
+    return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading pricing…</div>;
+  }
+  if (error) {
+    return (
+      <Card hover={false} className="border-accent/20">
+        <p className="text-sm text-accent">Couldn't load pricing: {error.message}</p>
+      </Card>
+    );
+  }
+  if (!data) return null;
+
+  return (
+    <div className="space-y-4">
+      <PricingHeadline summary={data} />
+      <PlanCard summary={data} />
+      {data.per_module_subscriptions.length > 0 && <ModuleAddOnsCard summary={data} />}
+      <OverridesCard summary={data} />
+    </div>
+  );
+}
+
+function PricingHeadline({ summary }: { summary: OrgPricingSummary }) {
+  const billingTone =
+    summary.billing_status === 'active'   ? 'success'  :
+    summary.billing_status === 'trialing' ? 'medium'   :
+    summary.billing_status === 'past_due' || summary.billing_status === 'cancelled' ? 'critical' :
+                                            'default';
+  return (
+    <Card hover={false}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <SectionLabel className="mb-1">Effective monthly</SectionLabel>
+          <div className="text-3xl font-bold text-[color:var(--text-primary)] tabular-nums">
+            {formatCents(summary.effective_monthly_total_cents)}
+          </div>
+          <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1">
+            after {summary.active_overrides.length} override{summary.active_overrides.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <div className="text-right">
+          <SectionLabel className="mb-1">Billing</SectionLabel>
+          <Badge variant={billingTone}>{summary.billing_status}</Badge>
+          {summary.trial_ends_at && (
+            <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-2">
+              trial ends {new Date(summary.trial_ends_at).toLocaleDateString()}
+            </p>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function PlanCard({ summary }: { summary: OrgPricingSummary }) {
+  if (!summary.plan) {
+    return (
+      <Card hover={false} className="border-accent/20">
+        <SectionLabel className="mb-2">Plan</SectionLabel>
+        <p className="text-sm text-[color:var(--text-secondary)]">
+          No plan assigned. Customer is on the unbilled track — assign a plan via
+          the Settings tab once Stripe sprint 3 lands the subscription create flow.
+        </p>
+      </Card>
+    );
+  }
+
+  const tierOverride = summary.active_overrides.find((o) => o.override_type === 'tier_price');
+  const baseline     = summary.plan.monthly_price_cents;
+  const overridden   = tierOverride?.custom_price_cents ?? baseline;
+  const isOverridden = tierOverride !== undefined;
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <SectionLabel className="mb-1">Plan</SectionLabel>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
+              {summary.plan.display_name}
+            </h3>
+            {!summary.plan.is_active && <Badge variant="default">retired</Badge>}
+          </div>
+          {summary.plan.description && (
+            <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">
+              {summary.plan.description}
+            </p>
+          )}
+        </div>
+        <div className="text-right">
+          <SectionLabel className="mb-1">Monthly</SectionLabel>
+          <div className="tabular-nums font-mono">
+            {isOverridden ? (
+              <>
+                <span className="line-through text-[color:var(--text-tertiary)] text-sm mr-2">
+                  {formatCents(baseline)}
+                </span>
+                <span className="text-[color:var(--text-primary)] font-semibold">
+                  {formatCents(overridden)}
+                </span>
+              </>
+            ) : (
+              <span className="text-[color:var(--text-primary)] font-semibold">
+                {formatCents(baseline)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 pt-4 border-t border-white/[0.06]">
+        <SectionLabel className="mb-2">Included modules</SectionLabel>
+        <div className="flex flex-wrap gap-1.5">
+          {summary.plan.included_modules.map((m) => (
+            <span
+              key={m}
+              className="text-[11px] font-mono text-[color:var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5"
+            >
+              {m}
+            </span>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ModuleAddOnsCard({ summary }: { summary: OrgPricingSummary }) {
+  const moduleOverrides = summary.active_overrides.filter((o) => o.override_type === 'module_price');
+  return (
+    <Card hover={false}>
+      <SectionLabel className="mb-3">Module add-ons (à-la-carte)</SectionLabel>
+      <div className="space-y-2">
+        {summary.per_module_subscriptions.map((m) => {
+          const override     = moduleOverrides.find((o) => o.module_key === m.module_key);
+          const isOverridden = override !== undefined;
+          const effective    = override?.custom_price_cents ?? m.price_cents;
+          return (
+            <div key={m.module_key} className="flex items-center justify-between gap-3 py-1.5 border-b border-white/[0.04] last:border-b-0">
+              <span className="text-sm text-[color:var(--text-primary)] font-mono">{m.module_key}</span>
+              <div className="tabular-nums font-mono">
+                {isOverridden ? (
+                  <>
+                    <span className="line-through text-[color:var(--text-tertiary)] text-xs mr-2">
+                      {formatCents(m.price_cents)}
+                    </span>
+                    <span className="text-[color:var(--text-primary)]">{formatCents(effective)}</span>
+                  </>
+                ) : (
+                  <span className="text-[color:var(--text-primary)]">{formatCents(m.price_cents)}</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function OverridesCard({ summary }: { summary: OrgPricingSummary }) {
+  if (summary.active_overrides.length === 0) {
+    return (
+      <Card hover={false}>
+        <SectionLabel className="mb-2">Active overrides</SectionLabel>
+        <p className="text-sm text-[color:var(--text-secondary)]">
+          None. List prices apply.
+        </p>
+      </Card>
+    );
+  }
+  return (
+    <Card hover={false}>
+      <SectionLabel className="mb-3">Active overrides ({summary.active_overrides.length})</SectionLabel>
+      <div className="space-y-3">
+        {summary.active_overrides.map((o) => (
+          <div key={o.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <Badge variant={o.override_type === 'discount_percent' ? 'success' : 'medium'}>
+                {o.override_type}
+              </Badge>
+              {o.plan_id    && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">plan: {o.plan_id}</span>}
+              {o.module_key && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">module: {o.module_key}</span>}
+            </div>
+            <div className="text-sm font-mono text-[color:var(--text-primary)]">
+              {o.override_type === 'discount_percent'
+                ? `${o.discount_pct}% off`
+                : formatCents(o.custom_price_cents ?? 0)}
+            </div>
+            <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">{o.reason}</p>
+            <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">
+              from {new Date(o.effective_from).toLocaleDateString()}
+              {o.effective_until && ` until ${new Date(o.effective_until).toLocaleDateString()}`}
+            </p>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

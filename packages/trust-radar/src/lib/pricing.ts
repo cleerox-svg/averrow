@@ -274,3 +274,176 @@ export async function getOrgPricingSummary(
     billing_status:                orgRow?.billing_status ?? "unbilled",
   };
 }
+
+// ─── Write-side helpers ─────────────────────────────────────────
+
+export interface UpdatePlanInput {
+  display_name?:        string;
+  monthly_price_cents?: number;
+  trial_days?:          number;
+  included_modules?:    ModuleKey[];
+  stripe_price_id?:     string | null;
+  description?:         string | null;
+  is_active?:           boolean;
+  sort_order?:          number;
+}
+
+/**
+ * Patch a pricing_plans row. Only the fields explicitly provided are
+ * updated; missing fields stay as-is. Returns the refreshed plan or
+ * null if the id didn't match.
+ */
+export async function updatePricingPlan(
+  env:    Env,
+  planId: string,
+  patch:  UpdatePlanInput,
+): Promise<PricingPlan | null> {
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (patch.display_name        !== undefined) { sets.push("display_name = ?");        binds.push(patch.display_name); }
+  if (patch.monthly_price_cents !== undefined) { sets.push("monthly_price_cents = ?"); binds.push(patch.monthly_price_cents); }
+  if (patch.trial_days          !== undefined) { sets.push("trial_days = ?");          binds.push(patch.trial_days); }
+  if (patch.included_modules    !== undefined) { sets.push("included_modules = ?");    binds.push(JSON.stringify(patch.included_modules)); }
+  if (patch.stripe_price_id     !== undefined) { sets.push("stripe_price_id = ?");     binds.push(patch.stripe_price_id); }
+  if (patch.description         !== undefined) { sets.push("description = ?");         binds.push(patch.description); }
+  if (patch.is_active           !== undefined) { sets.push("is_active = ?");           binds.push(patch.is_active ? 1 : 0); }
+  if (patch.sort_order          !== undefined) { sets.push("sort_order = ?");          binds.push(patch.sort_order); }
+
+  if (sets.length === 0) {
+    // Nothing to update — return current state.
+    return getPricingPlan(env, planId);
+  }
+
+  sets.push("updated_at = datetime('now')");
+  binds.push(planId);
+
+  await env.DB.prepare(
+    `UPDATE pricing_plans SET ${sets.join(", ")} WHERE id = ?`,
+  ).bind(...binds).run();
+
+  return getPricingPlan(env, planId);
+}
+
+export interface UpdateModulePriceInput {
+  display_name?:        string;
+  monthly_price_cents?: number;
+  stripe_price_id?:     string | null;
+  is_active?:           boolean;
+}
+
+export async function updateModulePrice(
+  env:       Env,
+  moduleKey: ModuleKey,
+  patch:     UpdateModulePriceInput,
+): Promise<ModulePrice | null> {
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (patch.display_name        !== undefined) { sets.push("display_name = ?");        binds.push(patch.display_name); }
+  if (patch.monthly_price_cents !== undefined) { sets.push("monthly_price_cents = ?"); binds.push(patch.monthly_price_cents); }
+  if (patch.stripe_price_id     !== undefined) { sets.push("stripe_price_id = ?");     binds.push(patch.stripe_price_id); }
+  if (patch.is_active           !== undefined) { sets.push("is_active = ?");           binds.push(patch.is_active ? 1 : 0); }
+
+  if (sets.length > 0) {
+    sets.push("updated_at = datetime('now')");
+    binds.push(moduleKey);
+    await env.DB.prepare(
+      `UPDATE module_prices SET ${sets.join(", ")} WHERE module_key = ?`,
+    ).bind(...binds).run();
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT module_key, display_name, monthly_price_cents,
+            stripe_price_id, is_active
+     FROM module_prices WHERE module_key = ?`,
+  ).bind(moduleKey).first<{
+    module_key:          string;
+    display_name:        string;
+    monthly_price_cents: number;
+    stripe_price_id:     string | null;
+    is_active:           number;
+  }>();
+  if (!row) return null;
+  return {
+    module_key:          row.module_key as ModuleKey,
+    display_name:        row.display_name,
+    monthly_price_cents: row.monthly_price_cents,
+    stripe_price_id:     row.stripe_price_id,
+    is_active:           row.is_active === 1,
+  };
+}
+
+export interface CreateOverrideInput {
+  org_id:             number;
+  override_type:      OverrideType;
+  plan_id?:           string | null;
+  module_key?:        ModuleKey | null;
+  custom_price_cents?: number | null;
+  discount_pct?:      number | null;
+  reason:             string;
+  set_by_user_id?:    string | null;
+  effective_until?:   string | null;
+}
+
+/**
+ * Append a new override row. Append-only — rows are never deleted.
+ * Revoke flow uses revokePricingOverride() which stamps
+ * effective_until on the existing row.
+ *
+ * Returns the new override id.
+ */
+export async function createPricingOverride(
+  env:   Env,
+  input: CreateOverrideInput,
+): Promise<string> {
+  // Validate the override shape per type.
+  if (input.override_type === "tier_price") {
+    if (!input.plan_id) throw new Error("tier_price override requires plan_id");
+    if (input.custom_price_cents == null) throw new Error("tier_price override requires custom_price_cents");
+  } else if (input.override_type === "module_price") {
+    if (!input.module_key) throw new Error("module_price override requires module_key");
+    if (input.custom_price_cents == null) throw new Error("module_price override requires custom_price_cents");
+  } else if (input.override_type === "discount_percent") {
+    if (input.discount_pct == null) throw new Error("discount_percent override requires discount_pct");
+    if (input.discount_pct < 0 || input.discount_pct > 100) {
+      throw new Error("discount_pct must be between 0 and 100");
+    }
+  }
+
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO org_pricing_overrides (
+       id, org_id, override_type, plan_id, module_key,
+       custom_price_cents, discount_pct, reason, set_by_user_id,
+       effective_from, effective_until, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'), datetime('now'))`,
+  ).bind(
+    id,
+    input.org_id,
+    input.override_type,
+    input.plan_id          ?? null,
+    input.module_key       ?? null,
+    input.custom_price_cents ?? null,
+    input.discount_pct     ?? null,
+    input.reason,
+    input.set_by_user_id   ?? null,
+    input.effective_until  ?? null,
+  ).run();
+  return id;
+}
+
+/**
+ * Revoke an active override by stamping effective_until = now. Idempotent
+ * — re-revoking is a no-op against an already-revoked row.
+ */
+export async function revokePricingOverride(
+  env:        Env,
+  overrideId: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE org_pricing_overrides
+     SET effective_until = datetime('now'),
+         updated_at = datetime('now')
+     WHERE id = ?
+       AND (effective_until IS NULL OR effective_until > datetime('now'))`,
+  ).bind(overrideId).run();
+}
