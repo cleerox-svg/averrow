@@ -154,3 +154,64 @@ export function useRevokePricingOverride(orgId: string | null) {
     },
   });
 }
+
+// Global pricing-config mutations (sprint 3b).
+// These edit the BASELINE prices, not per-customer. Affect every
+// new subscription + every getOrgPricingSummary read until an
+// override is layered on per-org.
+
+export interface UpdatePlanInput {
+  display_name?:        string;
+  monthly_price_cents?: number;
+  trial_days?:          number;
+  included_modules?:    string[];
+  stripe_price_id?:     string | null;
+  description?:         string | null;
+  is_active?:           boolean;
+  sort_order?:          number;
+}
+
+export interface UpdateModulePriceInput {
+  display_name?:        string;
+  monthly_price_cents?: number;
+  stripe_price_id?:     string | null;
+  is_active?:           boolean;
+}
+
+export function useUpdatePricingPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { planId: string; patch: UpdatePlanInput }) => {
+      const res = await api.patch<{ plan: PricingPlan }>(
+        `/api/admin/pricing/plans/${input.planId}`,
+        input.patch,
+      );
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Plan update failed');
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-pricing-plans'] });
+      // Customer pricing summaries depend on plan baseline → invalidate
+      // them too so any open Customer pricing tab shows the new price.
+      void qc.invalidateQueries({ queryKey: ['admin-customer-pricing'] });
+    },
+  });
+}
+
+export function useUpdateModulePrice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { moduleKey: string; patch: UpdateModulePriceInput }) => {
+      const res = await api.patch<{ module: ModulePrice }>(
+        `/api/admin/pricing/modules/${input.moduleKey}`,
+        input.patch,
+      );
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Module price update failed');
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-module-prices'] });
+      void qc.invalidateQueries({ queryKey: ['admin-customer-pricing'] });
+    },
+  });
+}

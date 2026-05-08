@@ -28,6 +28,7 @@ const Feeds = React.lazy(() => import('@/features/feeds/Feeds').then(m => ({ def
 const AdminDashboard = React.lazy(() => import('@/features/admin/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const Organization = React.lazy(() => import('@/features/settings/Organization').then(m => ({ default: m.Organization })));
 const SuperAdminOrgs = React.lazy(() => import('@/features/admin/SuperAdminOrgs').then(m => ({ default: m.SuperAdminOrgs })));
+const PricingConfig = React.lazy(() => import('@/features/admin/PricingConfig').then(m => ({ default: m.PricingConfig })));
 const AdminAudit = React.lazy(() => import('@/features/admin/AdminAudit').then(m => ({ default: m.AdminAudit })));
 const Metrics = React.lazy(() => import('@/features/admin/Metrics').then(m => ({ default: m.Metrics })));
 const AdminIncidents = React.lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
@@ -159,6 +160,7 @@ export default function App() {
             Keep /admin/organizations as an alias so saved bookmarks resolve. */}
         <Route path="admin/customers" element={lazyRoute(<SuperAdminOrgs />)} />
         <Route path="admin/organizations" element={lazyRoute(<SuperAdminOrgs />)} />
+        <Route path="admin/pricing" element={lazyRoute(<PricingConfig />)} />
         <Route path="admin/audit" element={lazyRoute(<AdminAudit />)} />
         <Route path="admin/incidents" element={lazyRoute(<AdminIncidents />)} />
         <Route path="admin/incidents/:id" element={lazyRoute(<AdminIncidentDetail />)} />

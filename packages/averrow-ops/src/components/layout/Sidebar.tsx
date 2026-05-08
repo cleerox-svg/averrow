@@ -4,7 +4,7 @@ import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
   Gavel, Bell, Inbox, Target, Siren,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
-  Smartphone, EyeOff, BellRing, BarChart3,
+  Smartphone, EyeOff, BellRing, BarChart3, DollarSign,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -142,6 +142,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard },
         { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
         ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),
+        ...(isSuperAdmin ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
         { label: 'Audit Log',    path: '/admin/audit',       icon: ClipboardList },
         ...(isSuperAdmin ? [{ label: 'Push Config', path: '/admin/push', icon: BellRing }] : []),
       ],
