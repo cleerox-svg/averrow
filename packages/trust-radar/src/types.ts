@@ -43,6 +43,8 @@ export interface Env {
   ABUSECH_AUTH_KEY: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_API_KEY?: string;
   // Cloudflare Radar
   CF_ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
