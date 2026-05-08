@@ -418,15 +418,17 @@ async function createTakedownsFromMaliciousUrls(env: Env): Promise<number> {
     const domain = result.domain as string;
 
     const takedownId = crypto.randomUUID();
+    const owningOrgId = await resolveOwningOrgId(env, result.brand_id as string | null);
     await env.DB.prepare(`
       INSERT INTO takedown_requests (
-        id, org_id, brand_id, target_type, target_value, target_url,
+        id, org_id, brand_id, module_key, target_type, target_value, target_url,
         source_type, source_id, evidence_summary, evidence_detail,
         provider_name, provider_abuse_contact, provider_method,
         status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, NULL, ?, 'url', ?, ?, 'url_scan', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'url_scan', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
     `).bind(
       takedownId,
+      owningOrgId,
       result.brand_id as string | null,
       domain,
       url,
@@ -505,15 +507,17 @@ async function createTakedownsFromImpersonations(env: Env): Promise<number> {
       || `Account @${handle} on ${platform} is impersonating ${brandName}.`;
 
     const takedownId = crypto.randomUUID();
+    const owningOrgId = await resolveOwningOrgId(env, profile.brand_id as string);
     await env.DB.prepare(`
       INSERT INTO takedown_requests (
-        id, org_id, brand_id, target_type, target_value, target_platform, target_url,
+        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
         source_type, source_id, evidence_summary, evidence_detail,
         provider_name, provider_abuse_contact, provider_method,
         status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, NULL, ?, 'social_profile', ?, ?, ?, 'social_profile', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'social', 'social_profile', ?, ?, ?, 'social_profile', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
     `).bind(
       takedownId,
+      owningOrgId,
       profile.brand_id as string,
       `@${handle}`,
       platform,
@@ -607,15 +611,17 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<numb
       ?? `App "${appName}" on ${store} by "${devName}" is impersonating ${brandName}${bundleId ? ` (bundle ID: ${bundleId})` : ""}. Impersonation score: ${Math.round(score * 100)}%.`;
 
     const takedownId = crypto.randomUUID();
+    const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
     await env.DB.prepare(`
       INSERT INTO takedown_requests (
-        id, org_id, brand_id, target_type, target_value, target_platform, target_url,
+        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
         source_type, source_id, evidence_summary, evidence_detail,
         provider_name, provider_abuse_contact, provider_method,
         status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, NULL, ?, 'mobile_app', ?, ?, ?, 'app_store', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'app_store', 'mobile_app', ?, ?, ?, 'app_store', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
     `).bind(
       takedownId,
+      owningOrgId,
       row.brand_id as string,
       bundleId ?? appName,
       store,
@@ -710,15 +716,17 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<number> {
       ?? `Confirmed ${source} mention of ${brandName} via ${matchType} match.${snippet ? `\n\nExcerpt:\n${snippet}` : ""}`;
 
     const takedownId = crypto.randomUUID();
+    const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
     await env.DB.prepare(`
       INSERT INTO takedown_requests (
-        id, org_id, brand_id, target_type, target_value, target_platform, target_url,
+        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
         source_type, source_id, evidence_summary, evidence_detail,
         provider_name, provider_abuse_contact, provider_method,
         status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, NULL, ?, 'paste', ?, ?, ?, 'dark_web_mention', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'dark_web', 'paste', ?, ?, ?, 'dark_web_mention', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
     `).bind(
       takedownId,
+      owningOrgId,
       row.brand_id as string,
       sourceUrl,
       source,
@@ -763,6 +771,20 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<number> {
 
 // Need Env type for helper functions
 import type { Env } from "../types";
+
+// Resolve the primary org owning a brand. Returns null when the brand
+// isn't bound to any org (cross-cutting threats with no tenant
+// owner — these stay SOC-initiated and Phase G skips them).
+async function resolveOwningOrgId(env: Env, brandId: string | null): Promise<number | null> {
+  if (!brandId) return null;
+  const row = await env.DB.prepare(
+    `SELECT org_id FROM org_brands
+     WHERE brand_id = ?
+     ORDER BY is_primary DESC
+     LIMIT 1`,
+  ).bind(brandId).first<{ org_id: number }>();
+  return row ? row.org_id : null;
+}
 
 // ─── Phase G: Auto-Submit Authorized Drafts ─────────────────────────
 //
