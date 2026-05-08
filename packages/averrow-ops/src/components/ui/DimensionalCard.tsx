@@ -29,29 +29,32 @@ export function DimensionalCard({
   style = {},
   onClick,
 }: DimensionalCardProps) {
+  // Light-theme aware. --bg-card / --bg-card-deep / --border-base
+  // flip via tokens.css; accent colors stay constant. Critical
+  // (red gradient) variant keeps its red but tuned shadows lighten.
   const cfg = {
     base: {
-      bg: 'linear-gradient(160deg,rgba(22,30,48,0.85),rgba(12,18,32,0.95))',
-      border: 'rgba(255,255,255,0.09)',
-      rim: 'rgba(255,255,255,0.14)',
-      shadow: '0 8px 32px rgba(0,0,0,0.6)',
-      inner: 'inset 0 1px 0 rgba(255,255,255,0.10),inset 0 -1px 0 rgba(0,0,0,0.3)',
+      bg: 'linear-gradient(160deg,var(--bg-card),var(--bg-card-deep))',
+      border: 'var(--border-base)',
+      rim: 'var(--border-strong)',
+      shadow: '0 8px 32px rgba(0,0,0,0.30)',
+      inner: 'inset 0 1px 0 var(--border-strong),inset 0 -1px 0 var(--border-base)',
     },
     stat: {
       bg: accentColor
-        ? `linear-gradient(150deg,rgba(22,30,48,0.90),${accentColor}18 70%,rgba(12,18,32,0.98))`
-        : 'linear-gradient(160deg,rgba(22,30,48,0.85),rgba(12,18,32,0.95))',
-      border: accentColor ? `${accentColor}30` : 'rgba(255,255,255,0.09)',
-      rim:    accentColor ? `${accentColor}40` : 'rgba(255,255,255,0.14)',
-      shadow: `0 8px 32px rgba(0,0,0,0.6)${accentColor ? `,0 0 20px ${accentColor}18` : ''}`,
-      inner:  `inset 0 1px 0 ${accentColor ? accentColor + '30' : 'rgba(255,255,255,0.10)'},inset 0 -1px 0 rgba(0,0,0,0.3)`,
+        ? `linear-gradient(150deg,var(--bg-card),${accentColor}18 70%,var(--bg-card-deep))`
+        : 'linear-gradient(160deg,var(--bg-card),var(--bg-card-deep))',
+      border: accentColor ? `${accentColor}30` : 'var(--border-base)',
+      rim:    accentColor ? `${accentColor}40` : 'var(--border-strong)',
+      shadow: `0 8px 32px rgba(0,0,0,0.30)${accentColor ? `,0 0 20px ${accentColor}18` : ''}`,
+      inner:  `inset 0 1px 0 ${accentColor ? accentColor + '30' : 'var(--border-strong)'},inset 0 -1px 0 var(--border-base)`,
     },
     critical: {
       bg: 'linear-gradient(150deg,rgba(40,12,12,0.95),rgba(15,8,8,0.98))',
       border: 'rgba(239,68,68,0.35)',
       rim: 'rgba(239,68,68,0.45)',
-      shadow: '0 8px 32px rgba(0,0,0,0.6),0 0 24px rgba(239,68,68,0.15)',
-      inner: 'inset 0 1px 0 rgba(239,68,68,0.30),inset 0 -1px 0 rgba(0,0,0,0.4)',
+      shadow: '0 8px 32px rgba(0,0,0,0.30),0 0 24px rgba(239,68,68,0.15)',
+      inner: 'inset 0 1px 0 rgba(239,68,68,0.30),inset 0 -1px 0 rgba(0,0,0,0.20)',
     },
   }[variant];
 

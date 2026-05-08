@@ -51,7 +51,10 @@ export function StatTile({
         position: 'relative',
         padding: '16px 14px',
         borderRadius: 16,
-        background: `linear-gradient(150deg, rgba(22,30,48,0.90), ${accent}18 70%, rgba(12,18,32,0.98))`,
+        // Theme-flippable: --bg-card and --bg-card-deep adapt to light
+        // mode via tokens.css. The accent tint stays constant either
+        // way (accents constant across themes per design rule).
+        background: `linear-gradient(150deg, var(--bg-card), ${accent}18 70%, var(--bg-card-deep))`,
         border: `1px solid ${accent}30`,
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
@@ -59,10 +62,10 @@ export function StatTile({
         cursor: onClick ? 'pointer' : 'default',
         userSelect: 'none',
         boxShadow: [
-          '0 8px 32px rgba(0,0,0,0.6)',
+          '0 8px 32px rgba(0,0,0,0.3)',
           `0 0 20px ${accent}18`,
           `inset 0 1px 0 ${accent}30`,
-          'inset 0 -1px 0 rgba(0,0,0,0.3)',
+          'inset 0 -1px 0 var(--border-base)',
         ].join(','),
       }}
     >
@@ -85,7 +88,7 @@ export function StatTile({
           position: 'absolute',
           bottom: 0, left: 0, right: 0,
           height: 1,
-          background: 'rgba(0,0,0,0.5)',
+          background: 'var(--border-strong)',
           pointerEvents: 'none',
           zIndex: 2,
         }}
@@ -143,7 +146,7 @@ export function StatTile({
         <div style={{
           fontSize: 9, fontFamily: 'monospace',
           letterSpacing: '0.20em',
-          color: 'rgba(255,255,255,0.50)',
+          color: 'var(--text-tertiary)',
           marginTop: 7,
           textTransform: 'uppercase',
         }}>
@@ -152,7 +155,7 @@ export function StatTile({
         {sub && (
           <div style={{
             fontSize: 10,
-            color: 'rgba(255,255,255,0.30)',
+            color: 'var(--text-muted)',
             marginTop: 3,
           }}>
             {sub}

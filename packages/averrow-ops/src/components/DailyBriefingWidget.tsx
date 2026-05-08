@@ -4,13 +4,16 @@ import { api } from '@/lib/api';
 import { Loader2 } from 'lucide-react';
 
 // ─── Inline style replacements for retired design tokens ────────
+//
+// Theme-flippable via CSS custom properties. tokens.css defines
+// --bg-card / --border-base for both dark + light modes.
 const glassCardStyle: CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid rgba(255,255,255,0.07)',
+  border: '1px solid var(--border-base)',
   borderRadius: '0.75rem',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+  boxShadow: '0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)',
 };
 const cockpitBg: CSSProperties = { background: 'var(--bg-page)' };
 const textPrimary: CSSProperties = { color: 'var(--text-primary)' };
