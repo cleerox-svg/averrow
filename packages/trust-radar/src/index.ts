@@ -22,6 +22,7 @@ import { registerThreatRoutes } from "./routes/threats";
 import { registerInvestigationRoutes } from "./routes/investigations";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerTenantRoutes } from "./routes/tenant";
+import { registerStripeRoutes } from "./routes/stripe";
 import { registerAgentRoutes } from "./routes/agents";
 import { registerSpamTrapRoutes } from "./routes/spam-trap";
 import { registerEmailSecurityRoutes } from "./routes/email-security";
@@ -87,6 +88,7 @@ registerSparrowRoutes(router);
 registerThreatActorRoutes(router);
 registerEmailSecurityRoutes(router);
 registerTenantRoutes(router);
+registerStripeRoutes(router);
 registerAdminRoutes(router);
 // Public routes + SPA fallback must be last
 registerPublicRoutes(router);
