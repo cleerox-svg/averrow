@@ -47,7 +47,7 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 ## TARGET ARCHITECTURE
 
 ```
-packages/averrow-ui/src/
+packages/averrow-ops/src/
 │
 ├── design-system/                    ← SINGLE source of truth for all visuals
 │   ├── tokens.css                    ← CSS custom properties. Dark/light/themes here.
@@ -545,7 +545,7 @@ Commit after each session. Keep master green throughout.
 
 ### Session completion tracker
 
-Status reflects what's landed in `packages/averrow-ui/` on `master`. Use this as the source of truth for which session to start next — individual session sub-headings below stay immutable so their specs remain readable.
+Status reflects what's landed in `packages/averrow-ops/` on `master`. Use this as the source of truth for which session to start next — individual session sub-headings below stay immutable so their specs remain readable.
 
 | Session | Status | Evidence / notes |
 |---------|--------|------------------|

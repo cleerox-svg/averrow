@@ -13,9 +13,9 @@
  *   - AgentCategory + AgentStatus + AgentOutputType unions
  *
  * What this script adds (cross-file rules):
- *   1. agentModules registry ↔ averrow-ui AGENT_METADATA parity
+ *   1. agentModules registry ↔ averrow-ops AGENT_METADATA parity
  *   2. AGENT_METADATA ↔ AgentIcon.tsx icon presence
- *   3. AGENT_METADATA membership in averrow-ui AGENT_GROUPS
+ *   3. AGENT_METADATA membership in averrow-ops AGENT_GROUPS
  *   4. pipelinePosition uniqueness across all modules
  *   5. costGuard='exempt' agents have inline justification comments
  *   6. Each registered agent appears in docs/AI_AGENTS.md

@@ -144,7 +144,7 @@ export async function handleProviderStats(request: Request, env: Env): Promise<R
 //     hour_bucket (hour-precision; UI uses relativeTime so it's
 //     equivalent to the previous minute-precision threats.created_at)
 //   - `high_sev` removed (was unused — confirmed by sweep of
-//     averrow-ui; only brand_detail consumes high_sev, never provider
+//     averrow-ops; only brand_detail consumes high_sev, never provider
 //     list)
 //   - All other fields unchanged.
 //

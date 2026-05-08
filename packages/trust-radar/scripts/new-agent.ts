@@ -9,7 +9,7 @@
  *
  * Phase 5.3a scope: write the module file ONLY.
  * Phase 5.3b adds: AgentName union + agents/index.ts registry patches
- * Phase 5.3c adds: averrow-ui metadata + AGENT_GROUPS + AgentIcon
+ * Phase 5.3c adds: averrow-ops metadata + AGENT_GROUPS + AgentIcon
  *                  placeholder + docs/AI_AGENTS.md row patches.
  *
  * Author flow today (5.3a):
@@ -485,7 +485,7 @@ function nextPipelinePosition(metadataSrc: string): number {
 }
 
 function patchAgentMetadata(args: ScaffoldArgs): PatchResult {
-  const file = "averrow-ui/src/lib/agent-metadata.ts";
+  const file = "averrow-ops/src/lib/agent-metadata.ts";
   let src: string;
   try { src = readFileSync(UI_METADATA_PATH, "utf8"); }
   catch (err) { return { file, status: "failed", detail: `read failed: ${err instanceof Error ? err.message : String(err)}` }; }
@@ -529,7 +529,7 @@ function patchAgentMetadata(args: ScaffoldArgs): PatchResult {
 }
 
 function patchAgentGroups(args: ScaffoldArgs): PatchResult {
-  const file = "averrow-ui/src/features/agents/Agents.tsx";
+  const file = "averrow-ops/src/features/agents/Agents.tsx";
   let src: string;
   try { src = readFileSync(UI_AGENTS_PAGE_PATH, "utf8"); }
   catch (err) { return { file, status: "failed", detail: `read failed: ${err instanceof Error ? err.message : String(err)}` }; }
@@ -573,7 +573,7 @@ function patchAgentGroups(args: ScaffoldArgs): PatchResult {
 }
 
 function patchAgentIcon(args: ScaffoldArgs): PatchResult {
-  const file = "averrow-ui/src/components/brand/AgentIcon.tsx";
+  const file = "averrow-ops/src/components/brand/AgentIcon.tsx";
   let src: string;
   try { src = readFileSync(UI_ICON_PATH, "utf8"); }
   catch (err) { return { file, status: "failed", detail: `read failed: ${err instanceof Error ? err.message : String(err)}` }; }
@@ -675,9 +675,9 @@ console.log(
     "",
     "Next steps:",
     `  1. Open ${outPath}, replace the TODO blocks with the agent's logic.`,
-    `  2. Replace the placeholder SVG in averrow-ui/src/components/brand/AgentIcon.tsx`,
+    `  2. Replace the placeholder SVG in averrow-ops/src/components/brand/AgentIcon.tsx`,
     `     (the scaffolder inserted a circle + ? — pick a real glyph).`,
-    `  3. Tighten the AGENT_METADATA subtitle in averrow-ui/src/lib/agent-metadata.ts.`,
+    `  3. Tighten the AGENT_METADATA subtitle in averrow-ops/src/lib/agent-metadata.ts.`,
     `  4. Replace the TODO row in docs/AI_AGENTS.md with a real description.`,
     "",
     "  5. Run pnpm audit:agent-standard — should exit 0 now (or list any",

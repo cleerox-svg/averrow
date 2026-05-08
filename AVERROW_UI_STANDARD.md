@@ -162,7 +162,7 @@ const GRADE = {
 Four variants. Every card in the platform is one of these.
 
 ```tsx
-// packages/averrow-ui/src/components/ui/DeepCard.tsx
+// packages/averrow-ops/src/components/ui/DeepCard.tsx
 
 type DeepVariant = 'base' | 'elevated' | 'active' | 'critical';
 
@@ -283,7 +283,7 @@ Used for: brand initials, user avatar, threat actor, org logo placeholders.
 This is what makes the "CL" button and brand avatars look physical.
 
 ```tsx
-// packages/averrow-ui/src/components/ui/DimensionalAvatar.tsx
+// packages/averrow-ops/src/components/ui/DimensionalAvatar.tsx
 
 interface DimensionalAvatarProps {
   name: string;          // uses first character
@@ -346,7 +346,7 @@ export function DimensionalAvatar({
 Replaces all flat severity badges platform-wide.
 
 ```tsx
-// packages/averrow-ui/src/components/ui/SeverityChip.tsx
+// packages/averrow-ops/src/components/ui/SeverityChip.tsx
 
 type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
@@ -403,7 +403,7 @@ export function SeverityChip({ severity, size = 'sm', pulse = false }: SeverityC
 Used for: all stat tile numbers, threat counts, key metrics.
 
 ```tsx
-// packages/averrow-ui/src/components/ui/GlowNumber.tsx
+// packages/averrow-ops/src/components/ui/GlowNumber.tsx
 import { useCountUp } from '@/hooks/useCountUp';
 
 interface GlowNumberProps {
@@ -457,7 +457,7 @@ export function GlowNumber({
 Used everywhere a section needs a label: "BRANDS AT RISK", "LATEST INTEL", etc.
 
 ```tsx
-// packages/averrow-ui/src/components/ui/SectionLabel.tsx
+// packages/averrow-ops/src/components/ui/SectionLabel.tsx
 
 interface SectionLabelProps {
   label: string;
@@ -515,7 +515,7 @@ export function SectionLabel({
 ### 6. DimensionalButton — Primary and secondary buttons
 
 ```tsx
-// packages/averrow-ui/src/components/ui/DimensionalButton.tsx
+// packages/averrow-ops/src/components/ui/DimensionalButton.tsx
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -617,7 +617,7 @@ export function DimensionalButton({
 ### 7. LiveIndicator — Pulsing live status dot
 
 ```tsx
-// packages/averrow-ui/src/components/ui/LiveIndicator.tsx
+// packages/averrow-ops/src/components/ui/LiveIndicator.tsx
 // Already built in Phase 8a — ensure it matches this spec
 
 export function LiveIndicator({
@@ -656,7 +656,7 @@ export function LiveIndicator({
 ### 8. DeepBackground — Page atmosphere layer
 
 ```tsx
-// packages/averrow-ui/src/components/ui/DeepBackground.tsx
+// packages/averrow-ops/src/components/ui/DeepBackground.tsx
 // Already built in Phase 8a — this is the locked spec
 
 export function DeepBackground() {
@@ -825,10 +825,10 @@ NEVER use:          text-white/20 or below on readable content
 Every future UI session starts with:
 
 ```bash
-cat packages/averrow-ui/src/components/ui/DeepCard.tsx
-cat packages/averrow-ui/src/components/ui/DimensionalAvatar.tsx
-cat packages/averrow-ui/src/components/ui/SeverityChip.tsx
-cat packages/averrow-ui/src/components/ui/DimensionalButton.tsx
+cat packages/averrow-ops/src/components/ui/DeepCard.tsx
+cat packages/averrow-ops/src/components/ui/DimensionalAvatar.tsx
+cat packages/averrow-ops/src/components/ui/SeverityChip.tsx
+cat packages/averrow-ops/src/components/ui/DimensionalButton.tsx
 ```
 
 Then the prompt says:

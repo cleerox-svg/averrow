@@ -1,7 +1,7 @@
 // Tenant Notifications API client.
 //
 // User-scoped (not org-scoped). Hits /api/notifications which is the
-// canonical notifications inbox already powering averrow-ui's bell.
+// canonical notifications inbox already powering averrow-ops's bell.
 
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from './api';

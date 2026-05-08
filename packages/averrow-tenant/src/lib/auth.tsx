@@ -1,7 +1,7 @@
 // averrow-tenant — auth context.
 //
 // Reads `/api/auth/me` once on mount, hydrates a User shape from the
-// existing trust-radar backend. Mirrors averrow-ui's lib/auth.tsx.
+// existing trust-radar backend. Mirrors averrow-ops's lib/auth.tsx.
 // Logged-out state shows a redirect to the login flow (handled by
 // the parent worker — averrow-tenant only renders authenticated UI).
 

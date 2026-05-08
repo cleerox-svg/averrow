@@ -1,7 +1,7 @@
 // Tenant Notifications inbox.
 //
 // Backed by GET /api/notifications (user-scoped, not org-scoped).
-// Same backend that powers averrow-ui's notification bell.
+// Same backend that powers averrow-ops's notification bell.
 //
 // Phase B sprint 2 — viewer-only. Mark-read / snooze / done
 // mutations port in subsequent sprints.

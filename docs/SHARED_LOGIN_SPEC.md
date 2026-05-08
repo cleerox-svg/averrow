@@ -140,7 +140,7 @@ this doc and ping the sibling platform.
 
 ### Implementation
 
-`packages/averrow-ui/src/lib/avatar.ts` is the source of truth. Both
+`packages/averrow-ops/src/lib/avatar.ts` is the source of truth. Both
 platforms should share an identical file (re-pasted, since the
 platforms are independent repos for now).
 

@@ -527,7 +527,7 @@ selection. All references are to `packages/trust-radar/src/`.
 | Auto-takedown | Sparrow scans URLs → auto-creates takedowns → Evidence Assembler builds provider-ready abuse reports → resolves providers | `agents/sparrow.ts`, `agents/evidence-assembler.ts` |
 | Notifications | 4-state inbox, per-channel severity floors, group_key dedup, push action buttons, AI digest envelope | `lib/notifications.ts`, `agents/notification_narrator.ts` |
 | Multi-tenant | Org / brand / user model with RBAC, audience routing, per-brand subscriptions | `migrations/0027_organizations*.sql`, `notification_subscriptions` |
-| Reporting / dashboards | Observatory (real-time threat globe), Brand Detail, Operations, Threat Actors, Intelligence views | `packages/averrow-ui/src/features/*` |
+| Reporting / dashboards | Observatory (real-time threat globe), Brand Detail, Operations, Threat Actors, Intelligence views | `packages/averrow-ops/src/features/*` |
 | Auto-onboard | One-domain → tenant ready: DNS / BIMI / social discovery / app-store search / dark-web baseline auto-built. (Architecturally present; UX polish pending.) | brand-enricher + social_discovery + lookalike-scanner pipeline |
 
 ### 7.3 Intelligence layer

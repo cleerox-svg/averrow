@@ -71,7 +71,7 @@ Every column `brand_profiles` carried is now either on `brands` (canonical, shar
 | `packages/trust-radar/src/agents/narrator.ts` | Read-only ownership lookup | 1 declared `reads:` entry + 1 SELECT for alert→brand-owner resolution |
 | `packages/trust-radar/src/agents/architect/manifest.generated.ts` | Auto-generated agent manifest | 2 mentions (downstream of the agent declarations above) |
 
-UI: zero references. The averrow-ui side already uses `org_brands` exclusively.
+UI: zero references. The averrow-ops side already uses `org_brands` exclusively.
 
 ---
 
