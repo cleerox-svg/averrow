@@ -50,7 +50,11 @@ import {
 import {
   handleListTenantTakedowns, handleGetTenantTakedownDetail,
 } from "../handlers/tenantTakedowns";
-import { handleGetTenantBilling } from "../handlers/tenantBilling";
+import {
+  handleGetTenantBilling,
+  handleCreateCheckoutSession,
+  handleCreatePortalSession,
+} from "../handlers/tenantBilling";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -397,6 +401,18 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetTenantBilling(request, env, request.params["orgId"] ?? "", ctx);
+  });
+
+  // ─── Billing — Checkout + portal redirect (v3 Phase D sprint 6) ──
+  router.post("/api/orgs/:orgId/billing/checkout-session", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreateCheckoutSession(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/billing/portal-session", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreatePortalSession(request, env, request.params["orgId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────

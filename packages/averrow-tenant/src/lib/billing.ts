@@ -6,8 +6,8 @@
 //
 // v3 Phase D Stripe sprint 5.
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from './api';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { apiGet, apiPost } from './api';
 import { useAuth } from './auth';
 
 export interface BillingPlan {
@@ -73,3 +73,35 @@ export const BILLING_STATUS_LABELS: Record<string, string> = {
   past_due:  'Past due',
   cancelled: 'Cancelled',
 };
+
+// ─── Checkout + portal mutations (sprint 6) ─────────────────────
+
+export function useCheckoutSession() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useMutation({
+    mutationFn: async (input: { plan_id: string; return_path?: string }) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await apiPost<{ url: string; session_id: string }>(
+        `/api/orgs/${orgId}/billing/checkout-session`,
+        input,
+      );
+      return res.data;
+    },
+  });
+}
+
+export function usePortalSession() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useMutation({
+    mutationFn: async (input: { return_path?: string } = {}) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await apiPost<{ url: string }>(
+        `/api/orgs/${orgId}/billing/portal-session`,
+        input,
+      );
+      return res.data;
+    },
+  });
+}
