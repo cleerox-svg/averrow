@@ -65,12 +65,12 @@ Sources walked:
 - `packages/trust-radar/src/handlers/notifications.ts` (LIST / read endpoints)
 - `packages/trust-radar/migrations/0018_notifications.sql` (schema)
 - `packages/trust-radar/migrations/0107_notifications_schema_check.sql` (type CHECK constraint)
-- `packages/shared/src/notification-events.ts` (declared type registry; deleted in earlier rebase, now in averrow-ui)
-- `packages/averrow-ui/src/lib/notification-events.ts` (current registry)
-- `packages/averrow-ui/src/components/NotificationBell.tsx` (bell + dropdown)
-- `packages/averrow-ui/src/features/settings/Notifications.tsx` (all-notifications page)
-- `packages/averrow-ui/src/features/settings/NotificationPreferences.tsx` (settings)
-- `packages/averrow-ui/src/hooks/useNotifications.ts` (TanStack hooks)
+- `packages/shared/src/notification-events.ts` (declared type registry; deleted in earlier rebase, now in averrow-ops)
+- `packages/averrow-ops/src/lib/notification-events.ts` (current registry)
+- `packages/averrow-ops/src/components/NotificationBell.tsx` (bell + dropdown)
+- `packages/averrow-ops/src/features/settings/Notifications.tsx` (all-notifications page)
+- `packages/averrow-ops/src/features/settings/NotificationPreferences.tsx` (settings)
+- `packages/averrow-ops/src/hooks/useNotifications.ts` (TanStack hooks)
 - All call sites of `createNotification()` across the worker — 18 in total.
 
 Industry research (§6) draws on Linear, GitHub, Slack, PagerDuty,

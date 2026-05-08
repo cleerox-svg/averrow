@@ -1,6 +1,6 @@
 // Theme switching for averrow-tenant.
 //
-// Mirrors averrow-ui/src/design-system/hooks/useTheme.ts so the
+// Mirrors averrow-ops/src/design-system/hooks/useTheme.ts so the
 // preference key stays compatible (averrow-theme in localStorage)
 // — staff who switch between back-office and tenant sessions on
 // the same browser get a consistent theme.

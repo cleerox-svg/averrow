@@ -7,14 +7,14 @@ Each entry: what, why, where the work lives, who flagged it.
 
 **Flagged:** 2026-05-07 by operator, mid Phase B sprint 5.
 
-**Problem.** Dark mode has been the design focus across averrow-ui
+**Problem.** Dark mode has been the design focus across averrow-ops
 and the new averrow-tenant surface. Light mode has not received
 the same attention and is inconsistent across pages — token
 overrides, severity colors, hover states, and component
 backgrounds drift between routes.
 
 **Scope of audit.**
-- Walk every route in averrow-ui (existing /v2 surface) and
+- Walk every route in averrow-ops (existing /v2 surface) and
   averrow-tenant (new /tenant/ surface) under
   `[data-theme='light']` and capture screenshots for diff.
 - Verify the design-system token contract: every `--bg-*` and

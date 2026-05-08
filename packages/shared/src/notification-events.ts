@@ -5,7 +5,7 @@
  * (`packages/trust-radar/src/lib/notifications.ts`), the preference
  * handlers (`packages/trust-radar/src/handlers/notifications.ts`), and
  * the UI matrix
- * (`packages/averrow-ui/src/features/settings/NotificationPreferences.tsx`)
+ * (`packages/averrow-ops/src/features/settings/NotificationPreferences.tsx`)
  * all derive their event list, dedup windows, default state, and labels
  * from this module.
  *

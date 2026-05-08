@@ -33,7 +33,7 @@ import type {
 // ─── Constants ────────────────────────────────────────────────────
 
 // ARCHITECT's inventory is scoped to the trust-radar Worker package.
-// Other packages in the monorepo (imprsn8, averrow-ui, …) are separate
+// Other packages in the monorepo (imprsn8, averrow-ops, averrow-tenant, …) are separate
 // products and must never appear in this bundle.
 const TRUST_RADAR_PACKAGE_SEGMENTS = ["packages", "trust-radar"];
 

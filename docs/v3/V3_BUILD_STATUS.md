@@ -195,12 +195,12 @@ grep across `src/`:
 - 8 `border-white/X` opacities
 
 Plus Tailwind config now references `var(--bg-page)` etc., a
-`useTheme` hook (mirrored from averrow-ui's pattern), and a
+`useTheme` hook (mirrored from averrow-ops's pattern), and a
 Sun/Moon toggle in the sidebar.
 
 ### D2 — averrow-ui → averrow-ops rename (PR #1124)
 
-Mechanical rename: `git mv packages/averrow-ui packages/averrow-ops`
+Mechanical rename: `git mv packages/averrow-ops packages/averrow-ops`
 + package.json + CI/deploy workflows + scripts that hard-coded
 the path. `/v2/*` URL stayed the same so bookmarks work.
 
@@ -283,7 +283,7 @@ The rebadge is shippable.
   This was the planned next sprint when the session ended.
 - **Doc sweep** — many `*.md` files (`CLAUDE.md`, `README.md`,
   `RESTRUCTURE_SPEC.md`, `AVERROW_UI_STANDARD.md`) and code
-  comments still reference `averrow-ui` in prose; update to
+  comments still reference `averrow-ops` in prose; update to
   `averrow-ops`.
 - **Outbound SMTP** for the email-draft submitter — currently
   records intent; Phase D should wire real send.

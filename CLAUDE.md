@@ -22,7 +22,7 @@ If the task touches login, profile, push, biometric, or PWA install:
 
 ```bash
 # Always check for TODOs before starting
-grep -rn "TODO\|FIXME\|HACK" packages/averrow-ui/src/ --include="*.tsx" | head -20
+grep -rn "TODO\|FIXME\|HACK" packages/averrow-ops/src/ --include="*.tsx" | head -20
 ```
 
 ---
@@ -41,7 +41,8 @@ grep -rn "TODO\|FIXME\|HACK" packages/averrow-ui/src/ --include="*.tsx" | head -
 │   │   │   ├── lib/              ← Shared utilities
 │   │   │   └── index.ts          ← Worker entry point
 │   │   └── wrangler.toml
-│   ├── averrow-ui/               ← React frontend (the live platform)
+│   ├── averrow-ops/              ← Staff back-office React SPA (rebadged from averrow-ui in v3 D2; serves /v2/*)
+│   ├── averrow-tenant/           ← Customer-facing React SPA (serves /tenant/*)
 │   │   ├── src/
 │   │   │   ├── design-system/    ← [RESTRUCTURE TARGET] tokens + primitives
 │   │   │   ├── features/         ← [RESTRUCTURE TARGET] domain-driven features
@@ -212,7 +213,7 @@ import {
 
 ### User avatars — initials only, never Google profile picture
 
-Source-of-truth helpers in `packages/averrow-ui/src/lib/avatar.ts`:
+Source-of-truth helpers in `packages/averrow-ops/src/lib/avatar.ts`:
 
 ```typescript
 import { parseInitials, colorForUserId, SELF_AVATAR_COLOR } from '@/lib/avatar';
@@ -553,7 +554,7 @@ org_members               ← Org membership + roles
 
 ```bash
 # After every session:
-cd packages/averrow-ui && npx tsc --noEmit
+cd packages/averrow-ops && npx tsc --noEmit
 git add -A
 git commit -m "type(scope): description"
 git push origin HEAD
@@ -653,7 +654,7 @@ for browser access.
 
 ## 12. Session Checklist (Before Marking Complete)
 
-- [ ] `npx tsc --noEmit` passes in `packages/averrow-ui`
+- [ ] `npx tsc --noEmit` passes in `packages/averrow-ops`
 - [ ] No old SPA files touched (`public/`, `app.js`, `styles.css`)
 - [ ] New API endpoints added to `docs/API_REFERENCE.md`
 - [ ] New agent logic follows `agent_runs` + `agent_events` pattern

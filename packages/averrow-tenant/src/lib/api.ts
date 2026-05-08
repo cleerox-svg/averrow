@@ -1,6 +1,6 @@
 // averrow-tenant — minimal API client.
 //
-// Matches averrow-ui's lib/api.ts JWT pattern: token in localStorage
+// Matches averrow-ops's lib/api.ts JWT pattern: token in localStorage
 // under `averrow_token`, sent as Authorization: Bearer. Fetches go to
 // the same backend (`packages/trust-radar`); proxied via vite.config.ts
 // in dev and via worker route in prod.

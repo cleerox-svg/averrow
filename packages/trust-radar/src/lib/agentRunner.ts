@@ -262,7 +262,7 @@ export interface AgentModule {
 
   // ── Presentation (AGENT_STANDARD §3, §7) ────────────────────────
   /** Drives the Agents page group / FC card mesh bucketing. Phase 4.5
-   *  ports this from averrow-ui's agent-metadata.ts so the backend is
+   *  ports this from averrow-ops's agent-metadata.ts so the backend is
    *  the single source of truth; Phase 5 will surface it via the
    *  agents API and the UI fetches instead of reading a hardcoded
    *  registry. */

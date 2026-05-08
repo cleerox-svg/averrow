@@ -24,7 +24,8 @@ Averrow monitors the internet for brand impersonation, phishing infrastructure, 
 trust-radar/                         ← repo name kept for git history
 ├── packages/
 │   ├── trust-radar/                 ← Averrow Worker (backend) — internal name
-│   ├── averrow-ui/                  ← Averrow React frontend (the live platform)
+│   ├── averrow-ops/                 ← Staff back-office React SPA (rebadged from averrow-ui; serves /v2/*)
+│   ├── averrow-tenant/              ← Customer-facing React SPA (serves /tenant/*)
 │   ├── averrow-mcp/                 ← MCP server exposing platform diagnostics to Claude Code
 │   └── imprsn8/                     ← Sibling product (pending extraction to its own repo)
 ├── docs/                            ← Platform documentation
@@ -104,7 +105,7 @@ pnpm lint           # Lint every package
 
 # Single package
 pnpm --filter trust-radar dev
-pnpm --filter averrow-ui build
+pnpm --filter averrow-ops build
 
 # Deploy manually (normally auto-deploys on push to master)
 pnpm deploy:radar

@@ -883,7 +883,7 @@ Total scope: ~25 PRs over 2-3 weeks. Each PR is small, reversible, and ships beh
 
 To resolve before Phase 1 starts:
 
-1. **Zod vs hand-rolled validators?** Zod is the obvious choice (already used in averrow-ui) but adds a dependency to the worker. Cost-of-validation matters for sync agents on hot paths.
+1. **Zod vs hand-rolled validators?** Zod is the obvious choice (already used in averrow-ops) but adds a dependency to the worker. Cost-of-validation matters for sync agents on hot paths.
 2. **Where does the deployment review screen live?** New page under `/agents/<name>/review`, or extend the existing `/agents` detail panel? The latter is faster but less discoverable.
 3. **Per-run approval UI** — push notification with inline action buttons, or push-to-screen? Inline is the right UX but PWA action buttons have iOS limitations.
 4. **Single FC vs domain-split FCs?** Today one FC supervises 19 agents; with §11's per-agent budgets the single-FC model probably scales. Phase 5 verdict.

@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 // averrow-tenant inherits the Averrow design language but does NOT
-// share averrow-ui's frozen widgets (ThreatMap, ExposureGauge, etc.).
+// share averrow-ops's frozen widgets (ThreatMap, ExposureGauge, etc.).
 // Eventually the design-system primitives port into this package via
 // a workspace import; for now we redeclare the minimum.
 //

@@ -107,7 +107,7 @@ export interface PlatformBriefingSilentVars {
 
 // ─── Renderers (every one returns audience='super_admin') ────────────
 //
-// Link targets must match real routes in averrow-ui/src/App.tsx:
+// Link targets must match real routes in averrow-ops/src/App.tsx:
 //   /agents (NOT /admin/agents)
 //   /feeds  (NOT /admin/feeds)
 //   /admin  (admin dashboard — covers diagnostics, budget for now;

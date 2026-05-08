@@ -203,9 +203,9 @@ The `/admin/architect` page is the minimal surface:
 - Failed runs show the truncated error message inline
 
 The page lives at
-[`packages/averrow-ui/src/features/admin/Architect.tsx`](../../packages/averrow-ui/src/features/admin/Architect.tsx)
+[`packages/averrow-ops/src/features/admin/Architect.tsx`](../../packages/averrow-ops/src/features/admin/Architect.tsx)
 and uses the thin typed client at
-[`packages/averrow-ui/src/api/architectApi.ts`](../../packages/averrow-ui/src/api/architectApi.ts).
+[`packages/averrow-ops/src/api/architectApi.ts`](../../packages/averrow-ops/src/api/architectApi.ts).
 
 This surface is intentionally minimal — it lets an operator kick a run
 and confirm the bundle landed. Phase 5 is where the richer dashboard
@@ -232,7 +232,7 @@ packages/trust-radar/
             ├── data-layer.ts         # collectDataLayerInventory(env)
             └── ops.ts                # collectOpsTelemetry(env)
 
-packages/averrow-ui/src/
+packages/averrow-ops/src/
 ├── api/
 │   └── architectApi.ts               # Typed client — startArchitectRun, listArchitectRuns, getArchitectRun
 └── features/admin/
