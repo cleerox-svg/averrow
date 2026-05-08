@@ -52,7 +52,7 @@ function TokenUsageSummary({ data }: { data: TokenUsageEntry[] }) {
   const totalTokens = data.reduce((sum, d) => sum + d.total_tokens, 0);
 
   return (
-    <div className="rounded-xl p-5 mb-6" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+    <div className="rounded-xl p-5 mb-6" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)' }}>
       <div className="font-mono text-[9px] text-white/40 uppercase tracking-widest mb-4">
         Token Usage (All Time)
       </div>
@@ -150,7 +150,7 @@ function RunDetail({ run }: { run: AgentRun }) {
           {run.status === 'failed' && run.error_message && (
             <div className="sm:col-span-2 lg:col-span-3">
               <span className="font-mono text-white/40 block mb-1">Error</span>
-              <div className="rounded-lg px-3 py-2 font-mono text-[11px] text-[#f87171]" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(239,68,68,0.30)', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+              <div className="rounded-lg px-3 py-2 font-mono text-[11px] text-[#f87171]" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(239,68,68,0.30)', boxShadow:'0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)' }}>
                 {run.error_message}
               </div>
             </div>
@@ -278,7 +278,7 @@ export function HistoryView() {
       </div>
 
       {/* Run Log Table */}
-      <div className="rounded-xl overflow-hidden" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+      <div className="rounded-xl overflow-hidden" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)' }}>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>

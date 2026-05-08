@@ -46,11 +46,11 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
-      background:   'linear-gradient(160deg, rgba(22,30,48,0.97), rgba(12,18,32,0.99))',
+      background:   'linear-gradient(160deg, var(--bg-card), var(--bg-card-deep))',
       border:       '1px solid var(--border-strong)',
       borderRadius: 10,
       padding:      '10px 14px',
-      boxShadow:    '0 8px 32px rgba(0,0,0,0.70), inset 0 1px 0 rgba(255,255,255,0.09)',
+      boxShadow:    '0 8px 32px rgba(0,0,0,0.30), inset 0 1px 0 var(--border-base)',
     }}>
       <div style={{
         fontSize: 10, fontFamily: 'var(--font-mono)',

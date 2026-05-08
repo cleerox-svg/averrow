@@ -49,9 +49,9 @@ export function Dropdown({ open, onClose, children, width = 380, className = '' 
         background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255,255,255,0.07)',
+        border: '1px solid var(--border-base)',
         borderRadius: '0.75rem',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)',
       }}
     >
       {children}

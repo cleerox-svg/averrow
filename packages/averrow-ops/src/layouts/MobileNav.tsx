@@ -208,11 +208,11 @@ export function MobileNav() {
                     style={{
                       padding:      '14px',
                       borderRadius: 12,
-                      background:   'linear-gradient(160deg, rgba(22,30,48,0.85), rgba(12,18,32,0.95))',
-                      border:       '1px solid rgba(255,255,255,0.09)',
+                      background:   'linear-gradient(160deg, var(--bg-card), var(--bg-card-deep))',
+                      border:       '1px solid var(--border-base)',
                       boxShadow: [
-                        'inset 0 1px 0 rgba(255,255,255,0.12)',
-                        'inset 0 -1px 0 rgba(0,0,0,0.40)',
+                        'inset 0 1px 0 var(--border-strong)',
+                        'inset 0 -1px 0 var(--border-base)',
                       ].join(', '),
                       display:    'flex',
                       alignItems: 'center',

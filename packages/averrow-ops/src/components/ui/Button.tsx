@@ -30,13 +30,13 @@ const VARIANT_STYLES: Record<ButtonVariant, React.CSSProperties> = {
     ].join(', '),
   },
   secondary: {
-    background: 'linear-gradient(160deg, rgba(22,30,48,0.90), rgba(12,18,32,0.98))',
+    background: 'linear-gradient(160deg, var(--bg-card), var(--bg-card-deep))',
     border:     '1px solid var(--border-strong)',
     color:      'var(--text-secondary)',
     boxShadow: [
-      '0 4px 16px rgba(0, 0, 0, 0.40)',
-      'inset 0 1px 0 var(--border-strong)',
-      'inset 0 -1px 0 rgba(0, 0, 0, 0.30)',
+      '0 4px 16px rgba(0, 0, 0, 0.20)',
+      'inset 0 1px 0 var(--border-base)',
+      'inset 0 -1px 0 var(--border-base)',
     ].join(', '),
   },
   danger: {
