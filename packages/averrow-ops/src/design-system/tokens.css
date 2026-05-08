@@ -225,6 +225,22 @@
 [data-theme="light"] .text-white\/10         { color: rgba(15,20,35,0.18); }
 [data-theme="light"] .text-white\/\[0\.15\]  { color: rgba(15,20,35,0.20); }
 
+/* text-[rgba(255,255,255,X)] arbitrary-value form — Tailwind generates
+   different class names from the standard text-white/X tokens (the
+   value gets baked into the selector after CSS-escaping the brackets,
+   parens, commas, and dots), so the rules above don't catch them.
+   These eight opacities are every distinct value found across
+   packages/averrow-ops/src/ for the arbitrary-value pattern. Audit
+   pass 2026-05-08. */
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.92\)\] { color: rgba(15,20,35,0.92); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.83\)\] { color: rgba(15,20,35,0.83); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.74\)\] { color: rgba(15,20,35,0.74); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.64\)\] { color: rgba(15,20,35,0.64); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.60\)\] { color: rgba(15,20,35,0.60); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.42\)\] { color: rgba(15,20,35,0.50); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.36\)\] { color: rgba(15,20,35,0.42); }
+[data-theme="light"] .text-\[rgba\(255\,255\,255\,0\.30\)\] { color: rgba(15,20,35,0.36); }
+
 /* bg-white/X */
 [data-theme="light"] .bg-white\/30           { background-color: rgba(15,20,35,0.10); }
 [data-theme="light"] .bg-white\/20           { background-color: rgba(15,20,35,0.08); }
