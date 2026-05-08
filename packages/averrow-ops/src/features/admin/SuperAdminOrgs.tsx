@@ -15,7 +15,12 @@ import {
   useBrandSearch,
 } from '@/hooks/useAdminOrgs';
 import type { AdminOrg, BrandSearchResult, CreateOrgPayload } from '@/hooks/useAdminOrgs';
-import { useCustomerPricing, formatCents, type OrgPricingSummary } from '@/hooks/useAdminPricing';
+import {
+  useCustomerPricing, usePricingPlans, useModulePrices,
+  useCreatePricingOverride, useRevokePricingOverride,
+  formatCents,
+  type OrgPricingSummary, type OverrideType, type OrgPricingOverride,
+} from '@/hooks/useAdminPricing';
 import { CreateOrgSheet } from './components/CreateOrgSheet';
 
 // ─── Plan config ────────────────────────────────────────────
@@ -567,7 +572,8 @@ function DetailPricingTab({ orgId }: { orgId: string }) {
       <PricingHeadline summary={data} />
       <PlanCard summary={data} />
       {data.per_module_subscriptions.length > 0 && <ModuleAddOnsCard summary={data} />}
-      <OverridesCard summary={data} />
+      <OverridesCard summary={data} orgId={orgId} />
+      <OverrideCreateCard orgId={orgId} />
     </div>
   );
 }
@@ -709,7 +715,7 @@ function ModuleAddOnsCard({ summary }: { summary: OrgPricingSummary }) {
   );
 }
 
-function OverridesCard({ summary }: { summary: OrgPricingSummary }) {
+function OverridesCard({ summary, orgId }: { summary: OrgPricingSummary; orgId: string }) {
   if (summary.active_overrides.length === 0) {
     return (
       <Card hover={false}>
@@ -725,27 +731,262 @@ function OverridesCard({ summary }: { summary: OrgPricingSummary }) {
       <SectionLabel className="mb-3">Active overrides ({summary.active_overrides.length})</SectionLabel>
       <div className="space-y-3">
         {summary.active_overrides.map((o) => (
-          <div key={o.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <Badge variant={o.override_type === 'discount_percent' ? 'success' : 'medium'}>
-                {o.override_type}
-              </Badge>
-              {o.plan_id    && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">plan: {o.plan_id}</span>}
-              {o.module_key && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">module: {o.module_key}</span>}
-            </div>
-            <div className="text-sm font-mono text-[color:var(--text-primary)]">
-              {o.override_type === 'discount_percent'
-                ? `${o.discount_pct}% off`
-                : formatCents(o.custom_price_cents ?? 0)}
-            </div>
-            <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">{o.reason}</p>
-            <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">
-              from {new Date(o.effective_from).toLocaleDateString()}
-              {o.effective_until && ` until ${new Date(o.effective_until).toLocaleDateString()}`}
-            </p>
-          </div>
+          <OverrideRow key={o.id} override={o} orgId={orgId} />
         ))}
       </div>
+    </Card>
+  );
+}
+
+function OverrideRow({ override: o, orgId }: { override: OrgPricingOverride; orgId: string }) {
+  const revoke = useRevokePricingOverride(orgId);
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant={o.override_type === 'discount_percent' ? 'success' : 'medium'}>
+            {o.override_type}
+          </Badge>
+          {o.plan_id    && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">plan: {o.plan_id}</span>}
+          {o.module_key && <span className="text-[11px] font-mono text-[color:var(--text-tertiary)]">module: {o.module_key}</span>}
+        </div>
+        {confirming ? (
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                revoke.mutate(o.id, {
+                  onSettled: () => setConfirming(false),
+                });
+              }}
+              disabled={revoke.isPending}
+            >
+              {revoke.isPending ? 'Revoking…' : 'Confirm revoke'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirming(false)}
+              disabled={revoke.isPending}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Revoke
+          </Button>
+        )}
+      </div>
+      <div className="text-sm font-mono text-[color:var(--text-primary)]">
+        {o.override_type === 'discount_percent'
+          ? `${o.discount_pct}% off`
+          : formatCents(o.custom_price_cents ?? 0)}
+      </div>
+      <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">{o.reason}</p>
+      <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">
+        from {new Date(o.effective_from).toLocaleDateString()}
+        {o.effective_until && ` until ${new Date(o.effective_until).toLocaleDateString()}`}
+      </p>
+      {revoke.error && (
+        <p className="text-[12px] text-accent mt-2">Revoke failed: {String(revoke.error)}</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Override Create Form ────────────────────────────────────────
+
+function OverrideCreateCard({ orgId }: { orgId: string }) {
+  const { data: plans } = usePricingPlans();
+  const { data: modules } = useModulePrices();
+  const create = useCreatePricingOverride(orgId);
+
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<OverrideType>('discount_percent');
+  const [planId, setPlanId] = useState('');
+  const [moduleKey, setModuleKey] = useState('');
+  const [priceDollars, setPriceDollars] = useState('');
+  const [discountPct, setDiscountPct] = useState('');
+  const [reason, setReason] = useState('');
+
+  const reset = () => {
+    setType('discount_percent');
+    setPlanId('');
+    setModuleKey('');
+    setPriceDollars('');
+    setDiscountPct('');
+    setReason('');
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reason.trim()) return;
+    const input: Parameters<typeof create.mutateAsync>[0] = {
+      override_type: type,
+      reason: reason.trim(),
+    };
+    if (type === 'tier_price') {
+      if (!planId || !priceDollars) return;
+      input.plan_id = planId;
+      input.custom_price_cents = Math.round(Number(priceDollars) * 100);
+    } else if (type === 'module_price') {
+      if (!moduleKey || !priceDollars) return;
+      input.module_key = moduleKey;
+      input.custom_price_cents = Math.round(Number(priceDollars) * 100);
+    } else if (type === 'discount_percent') {
+      if (!discountPct) return;
+      input.discount_pct = Number(discountPct);
+    }
+    try {
+      await create.mutateAsync(input);
+      reset();
+      setOpen(false);
+    } catch {
+      // Error rendered inline via create.error below
+    }
+  };
+
+  if (!open) {
+    return (
+      <Card hover={false}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <SectionLabel className="mb-1">New override</SectionLabel>
+            <p className="text-[12px] text-[color:var(--text-secondary)]">
+              Discount, custom tier price, or per-module rate. Append-only — the audit trail keeps every change.
+            </p>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
+            Add override
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card hover={false}>
+      <SectionLabel className="mb-3">Create override</SectionLabel>
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+            Type
+          </label>
+          <Select value={type} onChange={(e) => setType(e.target.value as OverrideType)} className="w-full">
+            <option value="discount_percent">Discount %</option>
+            <option value="tier_price">Custom tier price</option>
+            <option value="module_price">Custom module price</option>
+          </Select>
+        </div>
+
+        {type === 'tier_price' && (
+          <div>
+            <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+              Plan
+            </label>
+            <Select value={planId} onChange={(e) => setPlanId(e.target.value)} className="w-full" required>
+              <option value="">Select a plan…</option>
+              {(plans?.plans ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.display_name} ({formatCents(p.monthly_price_cents)} list)</option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        {type === 'module_price' && (
+          <div>
+            <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+              Module
+            </label>
+            <Select value={moduleKey} onChange={(e) => setModuleKey(e.target.value)} className="w-full" required>
+              <option value="">Select a module…</option>
+              {(modules?.modules ?? []).map((m) => (
+                <option key={m.module_key} value={m.module_key}>
+                  {m.display_name} ({formatCents(m.monthly_price_cents)} list)
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        {type !== 'discount_percent' && (
+          <div>
+            <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+              Custom price (USD/month)
+            </label>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={priceDollars}
+              onChange={(e) => setPriceDollars(e.target.value)}
+              placeholder="e.g. 1199.00"
+              className="w-full"
+              required
+            />
+          </div>
+        )}
+
+        {type === 'discount_percent' && (
+          <div>
+            <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+              Discount % (0–100)
+            </label>
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              step="0.5"
+              value={discountPct}
+              onChange={(e) => setDiscountPct(e.target.value)}
+              placeholder="e.g. 15"
+              className="w-full"
+              required
+            />
+          </div>
+        )}
+
+        <div>
+          <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+            Reason (recorded in audit trail)
+          </label>
+          <Input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Annual prepay discount, Enterprise deal Q3"
+            className="w-full"
+            required
+          />
+        </div>
+
+        {create.error && (
+          <p className="text-[12px] text-accent">
+            Couldn't create: {create.error instanceof Error ? create.error.message : String(create.error)}
+          </p>
+        )}
+
+        <div className="flex items-center gap-2">
+          <Button variant="primary" type="submit" disabled={create.isPending}>
+            {create.isPending ? 'Saving…' : 'Add override'}
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => { reset(); setOpen(false); }}
+            disabled={create.isPending}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
     </Card>
   );
 }
