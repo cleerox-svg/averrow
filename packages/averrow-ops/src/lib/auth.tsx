@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api } from './api';
+import { clearLastSignInMethod } from './lastSignInMethod';
 
 interface UserOrganization {
   id: number;
@@ -60,31 +61,79 @@ function saveCachedUser(user: User | null) {
   } catch {}
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Phase D D2c rebadge gate: redirect cached customer-tenant
-  // users out of /v2 before any rendering happens. The /api/auth/me
-  // round-trip below also enforces the gate, but covering the
-  // cache hydrate path here avoids a flash of staff shell for
-  // customers who previously visited /v2.
-  const cachedAtBoot = (() => {
-    if (typeof window === 'undefined') return null;
-    const cached = loadCachedUser();
-    if (cached?.role === 'client' && api.getToken()) {
-      window.location.href = '/tenant/';
-      return null;
-    }
-    return cached;
-  })();
+/**
+ * Phase D D2c rebadge gate — averrow-ops is staff-only. A
+ * role='client' user (any customer) belongs at /tenant/, not here.
+ * Hard-redirects so we don't even briefly render the staff shell
+ * with their identity. Worker-side login redirect is the matching
+ * backstop in packages/trust-radar/src/handlers/auth.ts.
+ *
+ * Single helper used by both the cache-hydrate path AND the
+ * post-/me check path. Audit #5 — was previously two duplicated
+ * code paths.
+ */
+function redirectClientToTenant(user: { role: string } | null): boolean {
+  if (user?.role === 'client') {
+    window.location.href = '/tenant/';
+    return true;
+  }
+  return false;
+}
 
-  // Hydrate from cache so the shell can render without a blank screen.
-  // The cached user is validated in the background via /api/auth/me.
-  // If validation fails the api.onAuthError handler clears state and redirects.
+/**
+ * Read tokens from URL — accepts both the canonical hash form
+ * (`#token=…`) used by OAuth + magic-link + passkey callbacks AND
+ * the legacy query form (`?access_token=…&refresh_token=…`) for
+ * backwards compatibility with older email links. Audit #6 — was
+ * previously two parallel branches; now a single normalize step.
+ *
+ * Returns null when no tokens are present in the URL.
+ */
+interface TokenPayload {
+  accessToken:  string;
+  refreshToken: string;
+  returnTo:     string | null;
+  source:       'hash' | 'query';
+}
+
+function readTokensFromUrl(): TokenPayload | null {
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const hashToken  = hashParams.get('token');
+  if (hashToken) {
+    return {
+      accessToken:  hashToken,
+      refreshToken: hashParams.get('refresh_token') ?? '',
+      returnTo:     hashParams.get('return_to'),
+      source:       'hash',
+    };
+  }
+  const queryParams = new URLSearchParams(window.location.search);
+  const queryToken  = queryParams.get('access_token');
+  if (queryToken) {
+    return {
+      accessToken:  queryToken,
+      refreshToken: queryParams.get('refresh_token') ?? '',
+      returnTo:     null,
+      source:       'query',
+    };
+  }
+  return null;
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // Hydrate from cache so the shell can render without a blank
+  // screen. The cached user is validated in the background via
+  // /api/auth/me. Audit #8 — previous IIFE re-ran on every render
+  // and had a side-effect (window.location.href) baked into the
+  // useState initializer. Now: pure read in useState, redirect in
+  // useEffect. The redirect is gated by `api.getToken()` to avoid
+  // looping during the initial token-less boot.
   const [user, setUserState] = useState<User | null>(() => {
-    return cachedAtBoot && api.getToken() ? cachedAtBoot : null;
+    const cached = typeof window === 'undefined' ? null : loadCachedUser();
+    return cached && api.getToken() ? cached : null;
   });
   const [loading, setLoading] = useState(() => {
-    // Skip the blocking loading screen if we already have something to show
-    return !(cachedAtBoot && api.getToken());
+    return !(loadCachedUser() && api.getToken());
   });
 
   const setUser = useCallback((u: User | null) => {
@@ -93,31 +142,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const checkAuth = useCallback(async () => {
-    // Check URL for OAuth callback tokens (hash fragment from server redirect)
-    const hashParams = new URLSearchParams(window.location.hash.slice(1));
-    const accessToken = hashParams.get('token');
-    const refreshToken = hashParams.get('refresh_token');
-
-    // Also check query params for backwards compatibility
-    const queryParams = new URLSearchParams(window.location.search);
-    const accessTokenQuery = queryParams.get('access_token');
-    const refreshTokenQuery = queryParams.get('refresh_token');
-
-    if (accessToken) {
-      api.setTokens(accessToken, refreshToken ?? '');
-      const returnTo = hashParams.get('return_to');
-      if (returnTo && returnTo.startsWith('/v2')) {
-        window.history.replaceState({}, '', returnTo);
+    // 1. Pull tokens from the URL if this is an OAuth/magic-link/
+    //    passkey callback. Single normalized read for both hash and
+    //    legacy query forms (audit #6).
+    const fromUrl = readTokensFromUrl();
+    if (fromUrl) {
+      api.setTokens(fromUrl.accessToken, fromUrl.refreshToken);
+      // Hash callbacks may include a return_to pointing inside /v2;
+      // restore it so the URL bar matches the real route. Other
+      // sources just strip the param noise.
+      if (fromUrl.source === 'hash' && fromUrl.returnTo && fromUrl.returnTo.startsWith('/v2')) {
+        window.history.replaceState({}, '', fromUrl.returnTo);
       } else {
         window.history.replaceState({}, '', window.location.pathname);
       }
-    } else if (accessTokenQuery && refreshTokenQuery) {
-      api.setTokens(accessTokenQuery, refreshTokenQuery);
-      window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // If no token from hash, try cookie-based refresh — but with a hard
-    // timeout so a slow backend can't blank the screen indefinitely.
+    // 2. No token from URL — try refreshing via the HTTP-only
+    //    cookie. Hard timeout so a slow backend can't blank the
+    //    screen indefinitely.
     if (!api.getToken()) {
       try {
         const refreshRes = await fetch('/api/auth/refresh', {
@@ -127,12 +170,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           signal: AbortSignal.timeout(3000),
         });
         if (refreshRes.ok) {
-          const data = await refreshRes.json() as any;
+          const data = await refreshRes.json() as { data?: { token?: string } };
           if (data.data?.token) {
             api.setTokens(data.data.token, '');
           }
         }
-      } catch {}
+      } catch { /* swallow */ }
     }
 
     if (!api.getToken()) {
@@ -141,31 +184,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // We have a token. If we already hydrated from cache, the shell is
-    // already painting — this just refreshes the user record in the
-    // background. If we did not hydrate from cache, this is the first
-    // time we'll have a user object, so loading must clear after.
+    // 3. Validate via /api/auth/me. Client-role users get redirected
+    //    to /tenant/ (staff-only gate).
     try {
       const res = await api.get<User>('/api/auth/me');
       if (res.success && res.data) {
-        // Phase D D2c rebadge gate: averrow-ops is staff-only. A
-        // role='client' user (any customer) belongs at /tenant/, not
-        // here. Hard-redirect before setUser so we don't even
-        // briefly render the staff shell with their identity. The
-        // worker-side login redirect is the matching backstop in
-        // packages/trust-radar/src/handlers/auth.ts.
-        if (res.data.role === 'client') {
-          window.location.href = '/tenant/';
-          return;
-        }
+        if (redirectClientToTenant(res.data)) return;
         setUser(res.data);
       } else {
         setUser(null);
         api.clearTokens();
       }
     } catch {
-      // api.onAuthError already handles 401 cleanup; swallow other errors
-      // so a transient network blip doesn't log the user out.
+      // api.onAuthError already handles 401 cleanup; swallow other
+      // errors so a transient network blip doesn't log the user out.
     } finally {
       setLoading(false);
     }
@@ -176,6 +208,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       api.clearTokens();
     });
+    // Hydrate-path client-role redirect (audit #5+#8 consolidation).
+    // The cached user might say role='client' if a customer visited
+    // /v2 previously — bounce them before checkAuth runs.
+    const cached = loadCachedUser();
+    if (api.getToken() && redirectClientToTenant(cached)) return;
     checkAuth();
   }, [checkAuth, setUser]);
 
@@ -184,14 +221,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    // Hit the backend so the refresh-token cookie + sessions row are
-    // revoked. Without this, calling /api/auth/refresh after logout
-    // would silently mint a fresh access token, defeating the
-    // logout. Backend handler at handlers/auth.ts:handleLogout.
-    //
-    // Best-effort: a network error here still proceeds with local
-    // teardown — we don't want to leave the user trapped on the
-    // shell because of a transient backend hiccup.
+    // Hit the backend so the refresh-token cookie + sessions row
+    // are revoked. Best-effort: a network error here still proceeds
+    // with local teardown so the user isn't trapped on the shell.
     try {
       await api.post('/api/auth/logout', {});
     } catch {
@@ -200,6 +232,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     api.clearTokens();
     setUser(null);
     saveCachedUser(null);
+    // Clear the per-device "last sign-in method" hint so the next
+    // visitor on this device sees the first-time login view.
+    clearLastSignInMethod();
     window.location.href = '/';
   };
 

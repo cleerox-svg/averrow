@@ -86,10 +86,43 @@ this doc and ping the sibling platform.
 
 ### Forbidden deltas
 
-- Reordering or removing auth options. Passkey-Google-magic is the canonical sequence.
+- Removing auth options. All three (passkey, Google, magic-link) must always be reachable.
 - Replacing the magic-link helper copy.
 - Showing the Google profile picture anywhere. Initials only — see §3.
 - Adding extra auth options without updating this spec.
+
+### Adaptive primary CTA (added 2026-05)
+
+The Login page now picks the **primary** auth method based on a
+per-device `localStorage` hint (`averrow.lastSignInMethod` /
+`farmtrack.lastSignInMethod`) recorded the moment a user clicks
+their chosen method. The hint is one of `passkey | google |
+magic-link`, and is cleared on logout.
+
+| Hint state | Primary | Secondary | Notes |
+|---|---|---|---|
+| _null_ (first-time) | Google (amber) | magic-link below divider | **No standalone passkey button.** Conditional UI still runs in the email autofill so registered passkeys appear there silently. We don't push first-timers toward a "Sign in with passkey" CTA they have no passkey for. |
+| `passkey` | Passkey (green) | "Other ways to sign in →" disclosure | Welcome-back pill above the button: _"Welcome back · sign in with passkey"_. |
+| `google` | Google (amber) | "Other ways to sign in →" disclosure | Welcome-back pill: _"Welcome back · sign in with Google"_. |
+| `magic-link` | Email field + amber "Send link" | "Other ways" exposes Google + passkey above divider | Top-button block hidden by default. |
+| Sign-in error (`?error=…`) | Full menu (every supported method) | — | `showAll` is forced; user picks again. |
+
+When the user clicks **Other ways to sign in →**, every supported
+method becomes visible at once (passkey ⊕ Google as primary +
+secondary; the magic-link block stays below the divider regardless).
+
+Rationale: the previous always-on three-button menu showed a green
+"Sign in with passkey" CTA to brand-new visitors who had no
+registered passkey. Clicking it took them to a "no passkey found"
+OS prompt — confusing first-time UX. The new flow matches the
+pattern Google / Microsoft / GitHub use: invisible conditional UI
+on first visit, last-used method as primary on return visits, full
+menu always one click away.
+
+This deviation from the original "passkey → Google → magic-link"
+fixed order is intentional. **FarmTrack must mirror this behavior**
+to keep parity. The button styling (green passkey, amber Google,
+neutral Send-link) is unchanged.
 
 ---
 
