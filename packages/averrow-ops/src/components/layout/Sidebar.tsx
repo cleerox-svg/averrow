@@ -101,33 +101,13 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     return () => clearInterval(interval);
   }, []);
 
-  const BRAND_ADMIN_SECTIONS: NavSection[] = [
-    {
-      label: 'INTELLIGENCE',
-      items: [
-        { label: 'Dashboard',   path: '/',              icon: LayoutDashboard },
-        { label: 'Brands',      path: '/brands',        icon: Shield },
-        { label: 'Threats',     path: '/threats',        icon: Crosshair },
-        { label: 'Apps',        path: '/apps',          icon: Smartphone },
-        { label: 'Dark Web',    path: '/dark-web',      icon: EyeOff },
-      ],
-    },
-    {
-      label: 'RESPONSE',
-      items: [
-        { label: 'Takedowns',   path: '/admin/takedowns',  icon: Gavel },
-        { label: 'Alerts',      path: '/alerts',           icon: Bell, badge: alertCount },
-      ],
-    },
-    {
-      label: 'SETTINGS',
-      items: [
-        { label: 'Organization', path: '/admin/users',  icon: Users },
-      ],
-    },
-  ];
-
-  const SUPER_ADMIN_SECTIONS: NavSection[] = [
+  // Phase D D2b: averrow-ops is now staff-only. The brand-admin
+  // sidebar that used to live here was just a thin customer
+  // experience inside the staff app — that surface lives at
+  // /tenant/ now (averrow-tenant package). Server-side RBAC
+  // tightening lands in D2c so brand_admin users never reach
+  // these routes; until then the trim is sidebar-only.
+  const OPS_SECTIONS: NavSection[] = [
     {
       label: 'INTELLIGENCE',
       items: [
@@ -168,7 +148,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     },
   ];
 
-  const NAV_SECTIONS = isBrandAdmin ? BRAND_ADMIN_SECTIONS : SUPER_ADMIN_SECTIONS;
+  const NAV_SECTIONS = OPS_SECTIONS;
 
   return (
     <aside className="w-56 h-full flex flex-col" style={SIDEBAR_CONTAINER_STYLE}>
