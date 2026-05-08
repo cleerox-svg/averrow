@@ -10,10 +10,12 @@
 //
 // v3 Phase D Stripe sprint 5.
 
-import { Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, CheckCircle2, CreditCard, Clock } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, AlertTriangle, CheckCircle2, CreditCard, Clock, ExternalLink } from 'lucide-react';
 import {
   useBillingSummary,
+  useCheckoutSession,
+  usePortalSession,
   formatCents,
   BILLING_STATUS_LABELS,
   type BillingSummary,
@@ -22,6 +24,8 @@ import {
 
 export function Billing() {
   const { data, isLoading, error } = useBillingSummary();
+  const [searchParams] = useSearchParams();
+  const checkoutResult = searchParams.get('checkout'); // 'success' | 'cancelled' | null
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -33,10 +37,27 @@ export function Billing() {
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Settings</div>
         <h1 className="text-[28px] font-bold text-white tracking-tight">Billing</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Your current plan, monthly total, and active modules. Plan changes
-          and payment method updates land in a follow-up sprint.
+          Your current plan, monthly total, and active modules.
         </p>
       </header>
+
+      {checkoutResult === 'success' && (
+        <div className="rounded-xl border border-green/[0.30] bg-green/[0.06] p-4 flex items-start gap-3">
+          <CheckCircle2 className="text-green flex-shrink-0 mt-0.5" size={18} />
+          <div>
+            <p className="text-sm text-green">Subscription started successfully.</p>
+            <p className="text-[12px] text-white/55 mt-1">
+              Stripe will fire a webhook to activate your modules. Refresh this page in a few seconds if you don't see the change yet.
+            </p>
+          </div>
+        </div>
+      )}
+      {checkoutResult === 'cancelled' && (
+        <div className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4 flex items-start gap-3">
+          <AlertTriangle className="text-amber flex-shrink-0 mt-0.5" size={18} />
+          <p className="text-sm text-amber/85">Checkout cancelled. No changes were made.</p>
+        </div>
+      )}
 
       {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading billing…</div>}
       {error && (
@@ -51,10 +72,101 @@ export function Billing() {
           <StatusCard summary={data} />
           <PlanCard summary={data} />
           {data.per_module_subscriptions.length > 0 && <ModulesCard summary={data} />}
-          <NextStepsCard summary={data} />
+          <ManageBillingCard summary={data} />
+          {data.active_overrides.length > 0 && <AdjustmentsCard summary={data} />}
         </>
       )}
     </div>
+  );
+}
+
+// ─── Manage billing (Checkout + portal) ────────────────────────
+
+function ManageBillingCard({ summary }: { summary: BillingSummary }) {
+  const checkout = useCheckoutSession();
+  const portal   = usePortalSession();
+
+  const startCheckout = async (planId: string) => {
+    try {
+      const result = await checkout.mutateAsync({ plan_id: planId });
+      window.location.href = result.url;
+    } catch {
+      // surfaced inline below
+    }
+  };
+
+  const openPortal = async () => {
+    try {
+      const result = await portal.mutateAsync({});
+      window.location.href = result.url;
+    } catch {
+      // surfaced inline below
+    }
+  };
+
+  // Customer already has a Stripe subscription → "Manage billing"
+  // (portal flow handles plan changes, payment method, invoices,
+  // cancellation).
+  if (summary.billing_status === 'active' || summary.billing_status === 'trialing' ||
+      summary.billing_status === 'past_due' || summary.billing_status === 'cancelled') {
+    return (
+      <section className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-semibold text-white/90">Manage billing</h2>
+            <p className="text-[12px] text-white/55 mt-1 max-w-md">
+              Update payment method, change plan, view invoices, or cancel — all in Stripe's secure customer portal.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={openPortal}
+            disabled={portal.isPending}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+          >
+            {portal.isPending ? 'Opening…' : <>Manage in Stripe <ExternalLink size={14} /></>}
+          </button>
+        </div>
+        {portal.error && (
+          <p className="text-[12px] text-sev-critical mt-2">
+            {portal.error instanceof Error ? portal.error.message : String(portal.error)}
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  // Unbilled — offer to start a subscription. We don't have a plan
+  // picker yet (sprint 7); for now, the customer signs up via
+  // /scan + a sales conversation, and an internal admin sets the
+  // plan_id. Show the support email as the next step.
+  return (
+    <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-5">
+      <h2 className="text-sm font-semibold text-amber/95 mb-1">Start your subscription</h2>
+      <p className="text-[12px] text-white/65 mt-1 max-w-md leading-relaxed">
+        You're not on a billed plan yet. Once your trial is approved, click the button below to subscribe.
+      </p>
+      {summary.plan?.id && summary.plan.is_active && (
+        <button
+          type="button"
+          onClick={() => startCheckout(summary.plan!.id)}
+          disabled={checkout.isPending}
+          className="inline-flex items-center gap-1.5 mt-3 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+        >
+          {checkout.isPending ? 'Opening Stripe…' : <>Subscribe — {summary.plan.display_name} <ExternalLink size={14} /></>}
+        </button>
+      )}
+      {!summary.plan && (
+        <p className="text-[12px] text-white/55 mt-3">
+          Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to choose a plan.
+        </p>
+      )}
+      {checkout.error && (
+        <p className="text-[12px] text-sev-critical mt-2">
+          {checkout.error instanceof Error ? checkout.error.message : String(checkout.error)}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -226,37 +338,25 @@ function ModulesCard({ summary }: { summary: BillingSummary }) {
   );
 }
 
-function NextStepsCard({ summary }: { summary: BillingSummary }) {
-  const showAdjustments = summary.active_overrides.length > 0;
+function AdjustmentsCard({ summary }: { summary: BillingSummary }) {
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
-      <h2 className="text-sm font-semibold text-white/90 mb-2">Plan changes</h2>
-      <p className="text-[12px] text-white/55 leading-relaxed">
-        Plan upgrades, downgrades, and payment-method updates are coming
-        soon. Until then, contact{' '}
-        <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a>{' '}
-        for any change to your plan or billing.
-      </p>
-      {showAdjustments && (
-        <div className="mt-4 pt-4 border-t border-white/[0.06]">
-          <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-2">
-            Active pricing adjustments
-          </h3>
-          <ul className="space-y-1.5">
-            {summary.active_overrides.map((o) => (
-              <li key={o.id} className="text-[12px] text-white/65">
-                <span className="font-mono text-amber/80">
-                  {o.override_type === 'discount_percent'
-                    ? `${o.discount_pct}% off`
-                    : formatCents(o.custom_price_cents ?? 0)}
-                </span>
-                {' — '}
-                {o.reason}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-2">
+        Active pricing adjustments
+      </h3>
+      <ul className="space-y-1.5">
+        {summary.active_overrides.map((o) => (
+          <li key={o.id} className="text-[12px] text-white/65">
+            <span className="font-mono text-amber/80">
+              {o.override_type === 'discount_percent'
+                ? `${o.discount_pct}% off`
+                : formatCents(o.custom_price_cents ?? 0)}
+            </span>
+            {' — '}
+            {o.reason}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
