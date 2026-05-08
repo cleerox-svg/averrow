@@ -118,6 +118,17 @@ export default {
       return;
     }
 
+    // Abuse Mailbox: customer-tenant aliases like
+    // verify-acme@averrow.com or report-acme@averrow.com.
+    // Resolved per-org via org_abuse_aliases.
+    const localPart = (to.split("@")[0] ?? "").toLowerCase();
+    if (localPart.startsWith("verify-") || localPart.startsWith("verify_") ||
+        localPart.startsWith("report-") || localPart.startsWith("abuse-")) {
+      const { handleAbuseMailboxEmail } = await import("./handlers/abuseMailboxEmail");
+      ctx.waitUntil(handleAbuseMailboxEmail(message, env));
+      return;
+    }
+
     ctx.waitUntil(handleSpamTrapEmail(message as unknown as EmailMessage, env));
   },
 
