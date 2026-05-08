@@ -6,8 +6,9 @@ plan) and `PHASE_0_CLOSEOUT.md` (the pre-build audit).
 
 ## TL;DR
 
-**18 PRs merged in one continuous session**, covering the full
-v3 customer-tenant build:
+**28 PRs merged in one continuous session**, covering the full
+v3 customer-tenant build PLUS the Phase D launch story PLUS the
+full Stripe billing loop PLUS the Abuse Mailbox Email Worker:
 
 - **Phase A foundation** — already in (org_modules, org_usage_daily,
   takedown_authorizations, averrow-tenant skeleton).
@@ -51,6 +52,16 @@ module. Staff retain full ops surface.
 | 1125 | feat(v3-phase-d): light/dark theme parity for averrow-ops (D2d) | D2d |
 | 1126 | feat(v3-phase-d): trim averrow-ops sidebar of brand-admin entries (D2b) | D2b |
 | 1127 | feat(v3-phase-d): RBAC gate keeps customer-tenant users out of /v2 (D2c) | D2c |
+| 1128 | docs(v3): session status — first wrap-up doc | docs |
+| 1129 | chore(docs): sweep averrow-ui → averrow-ops references (post-D2) | doc-sweep |
+| 1130 | feat(v3-phase-d): /scan onboarding UI + pricing schema (Stripe sprint 1) | D-onboarding + Stripe S1 |
+| 1131 | feat(v3-phase-d): pricing PATCH endpoints + Customers pricing tab (Stripe sprint 2) | Stripe S2 |
+| 1132 | feat(v3-phase-d): per-customer override edit forms (Stripe sprint 3a) | Stripe S3a |
+| 1133 | feat(v3-phase-d): /admin/pricing global edit page (Stripe sprint 3b) | Stripe S3b |
+| 1134 | feat(v3-phase-d): Stripe webhook handler + subscription lifecycle (Stripe sprint 4) | Stripe S4 |
+| 1135 | feat(v3-phase-d): tenant billing UI (Stripe sprint 5) | Stripe S5 |
+| 1136 | feat(v3-phase-d): Stripe Checkout + customer portal redirect (Stripe sprint 6) | Stripe S6 |
+| 1137 | feat(v3-phase-b-followup): wire Email Worker for Abuse Mailbox | B6 scanner |
 
 ## Phase A — foundation (carried in from before this session)
 
@@ -321,4 +332,99 @@ These need your direction before engineering can proceed:
 - `docs/v3/PHASE_B_FOLLOWUPS.md` (operator notes)
 - `CLAUDE.md` standing instructions
 - `RESTRUCTURE_SPEC.md` if touching design system
+
+---
+
+# Post-doc-revision additions (PRs #1128–#1137)
+
+## /scan customer-acquisition funnel (PR #1130, part 1)
+
+`packages/trust-radar/public/scan/index.html` — single-file static
+landing page served at `averrow.com/scan`. Visitor types domain →
+hits `/api/brand-scan/public` → renders trust score + risk pill +
+lookalike count + threat-feed mention indicator → conversion form
+posts to `/api/leads` and writes a `scan_leads` row. Deep-link
+support via `?domain=...`. ~280 lines, no build step.
+
+## Stripe billing — full loop, 6 sprints (PRs #1130–#1136)
+
+The full sign-up → trial → bill → see → manage flow:
+
+| Sprint | What landed |
+|---|---|
+| 1 | DB schema (`pricing_plans` / `module_prices` / `org_pricing_overrides` + 5 columns on `organizations`); seed data for the 3 tiers + 7 modules; `Customers` rename in averrow-ops sidebar (was "Organizations") |
+| 2 | super_admin PATCH endpoints + read-only Pricing tab in averrow-ops Customer detail |
+| 3a | Per-customer override edit form (3 override types) + revoke button with two-step confirm |
+| 3b | `/admin/pricing` global edit page for tier + module baselines |
+| 4 | Stripe webhook handler with HMAC-SHA256 signature verification; `customer.subscription.created/updated/deleted` + `invoice.payment_failed/succeeded` event handlers; idempotency table; full subscription lifecycle → `org_modules` state sync |
+| 5 | `/tenant/settings/billing` read-only summary (plan, modules, overrides, status, trial end) |
+| 6 | Stripe Checkout (`POST /api/orgs/:orgId/billing/checkout-session`) + customer portal (`POST /api/orgs/:orgId/billing/portal-session`); minimal Stripe API client (no SDK dep); Subscribe + Manage in Stripe buttons on Billing page; success/cancel banners |
+
+**Pricing config lives in the DB**, not env vars or hardcoded.
+Super_admins edit baseline tier + module prices in
+`/admin/pricing` and per-customer overrides in
+`/admin/customers/<org>/pricing`. Stripe handles the billing
+event; trust-radar is the source of truth for what each org's
+effective price IS.
+
+**Test mode**: code ships without `STRIPE_API_KEY` /
+`STRIPE_WEBHOOK_SECRET`; both endpoints return 503 until the
+operator sets the secrets and creates Stripe Products / Prices
+in the dashboard. Stripe CLI for local testing supported.
+
+**Stripe end-to-end test guide** lives in chat history of this
+session — capture into `docs/v3/STRIPE_TESTING.md` as a
+follow-up if the operator wants it as a permanent doc.
+
+## Abuse Mailbox Email Worker (PR #1137)
+
+Lights up B6's empty-state UI. Cloudflare Email Routing forwards
+`verify-*@averrow.com` (and `report-*` / `abuse-*`) to the
+Worker's `email()` handler. Local-part router branches to a new
+`handleAbuseMailboxEmail` that:
+
+- Resolves to-address → `org_abuse_aliases` (case-insensitive)
+- Parses headers + body
+- Extracts the *original* suspicious email metadata via regex
+  sweep over the four most common forward markers (Outlook /
+  Gmail / Apple Mail / raw-headers-injected)
+- Counts URLs + attachments
+- Inserts `abuse_inbox_messages` with `classification='pending'`,
+  `severity='LOW'`, `status='new'`
+
+Bounded scans (64KB) so big messages don't blow CPU.
+
+**Operator follow-ups for Abuse Mailbox to fully work:**
+- Provision per-org aliases in `org_abuse_aliases`
+- Configure Cloudflare Email Routing DNS / catch-all
+- Wire the AI classification pass (Haiku via existing
+  `lib/anthropic.ts`)
+- Wire outbound SMTP for ack + determination emails
+
+## Engineering backlog (post-merge)
+
+| Item | Effort | Notes |
+|---|---|---|
+| AI classification for Abuse Mailbox | Small | Reads `abuse_inbox_messages` rows where `classification='pending'`, calls Haiku, updates the row. Cron-driven. |
+| Outbound SMTP for ack + determination emails | Medium | Cloudflare Email Routing has an outbound API; needs sending domain configured |
+| Image-hash crawler for Trademark (B7) | Large | pHash sweeps + vision-LLM verification + asset upload UI for customers + R2 storage |
+| Dark Web source expansion | Medium | HIBP / Flare / DarkOwl / Telegram — each is its own integration |
+| Per-route `requireStaff` sweep | Small | Defensive audit; `requireStaff()` helper landed in D2c |
+| Full-platform light/dark audit (Wave 2) | Medium | `/scan` landing, worker-rendered pages, email templates, observatory WebGL chrome |
+| Outbound SMTP for email-draft submitter (Phase C) | Medium | Currently records intent in `takedown_submissions`; ops sends manually |
+| Plan picker UI on `/scan` landing | Small | Today the lead form is the conversion handoff; a plan picker would shorten that loop |
+| Sales-side invite flow (Checkout link generator) | Small | super_admin can pre-create a Stripe Checkout for a prospect |
+| Annual billing toggle | Small | Adds `pricing_plans.annual_price_cents` + a toggle in the pricing config |
+| Usage-based takedown overage | Medium | Adds metered Stripe billing for takedowns over the monthly cap |
+
+## Operator-decision items (still)
+
+- **Customer authorization legal model** — DMCA-agent vs MSA-clause
+  vs hybrid. Engineering can build either.
+- **Design-partner soak** — operational; pick 1–2 partners and run
+  for 2–3 weeks before public launch.
+- **Email Routing DNS setup** for `averrow.com` (per-tenant alias
+  catch-all rule)
+- **Stripe Products / Prices** creation + price-ID assignment via
+  `/admin/pricing`
 
