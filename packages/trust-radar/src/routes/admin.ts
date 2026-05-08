@@ -54,6 +54,8 @@ import { handleD1Health } from "../handlers/d1-health";
 import { handleGenerateQualifiedReport } from "../handlers/qualifiedReport";
 import {
   handleListPricingPlans, handleListModulePrices, handleGetCustomerPricing,
+  handleUpdatePricingPlan, handleUpdateModulePrice,
+  handleCreatePricingOverride, handleRevokePricingOverride,
 } from "../handlers/adminPricing";
 import { handleSendLeadOutreach, handleConvertLeadToTenant } from "../handlers/leadConversion";
 import {
@@ -351,6 +353,31 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListModulePrices(request, env, ctx);
+  });
+  router.patch("/api/admin/pricing/plans/:planId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUpdatePricingPlan(request, env, request.params["planId"] ?? "", ctx);
+  });
+  router.patch("/api/admin/pricing/modules/:moduleKey", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUpdateModulePrice(request, env, request.params["moduleKey"] ?? "", ctx);
+  });
+  router.post("/api/admin/customers/:orgId/pricing-overrides", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreatePricingOverride(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.patch("/api/admin/customers/:orgId/pricing-overrides/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRevokePricingOverride(
+      request, env,
+      request.params["orgId"] ?? "",
+      request.params["id"] ?? "",
+      ctx,
+    );
   });
   router.get("/api/admin/brands/search", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
