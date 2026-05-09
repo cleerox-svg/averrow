@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useUnreadCount } from '@/hooks/useNotifications';
 import { useAuth } from '@/lib/auth';
-import { useObservatoryVersion } from '@/design-system/hooks';
+import { useObservatoryVersion, useVersionToggle } from '@/design-system/hooks';
 import { LogOut } from 'lucide-react';
 
 const AMBER   = '#E5A832';
@@ -30,7 +30,7 @@ function buildNavItems(observatoryPath: string): NavItem[] {
   ];
 }
 
-function buildMoreSections(observatoryPath: string) {
+function buildMoreSections(observatoryPath: string, agentsPath: string) {
   return [
   {
     label: 'Intelligence',
@@ -58,7 +58,7 @@ function buildMoreSections(observatoryPath: string) {
   {
     label: 'Platform',
     items: [
-      { icon: '🤖', label: 'Agents',    path: '/agents' },
+      { icon: '🤖', label: 'Agents',    path: agentsPath },
       { icon: '📡', label: 'Feeds',     path: '/feeds' },
       { icon: '📈', label: 'Metrics',   path: '/admin/metrics' },
       { icon: '📊', label: 'Dashboard', path: '/admin' },
@@ -82,6 +82,7 @@ export function MobileNav() {
   const { isSuperAdmin, logout } = useAuth();
   const { data: unreadData } = useUnreadCount();
   const { path: observatoryPath } = useObservatoryVersion();
+  const { path: agentsPath } = useVersionToggle('agents');
   const [showMore, setShowMore]   = useState(false);
 
   const NAV_ITEMS = buildNavItems(observatoryPath);
@@ -109,7 +110,7 @@ export function MobileNav() {
   }
 
   // Add Organizations for super admins only
-  const sections = buildMoreSections(observatoryPath).map(s =>
+  const sections = buildMoreSections(observatoryPath, agentsPath).map(s =>
     s.label === 'Platform' && isSuperAdmin
       ? {
           ...s,

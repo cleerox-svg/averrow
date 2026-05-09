@@ -19,6 +19,7 @@ const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').the
 const Apps = React.lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = React.lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
 const Agents = React.lazy(() => import('@/features/agents/Agents').then(m => ({ default: m.Agents })));
+const AgentsV3 = React.lazy(() => import('@/features/agents-v3/AgentsV3').then(m => ({ default: m.AgentsV3 })));
 const AgentApprovals = React.lazy(() => import('@/features/agents/AgentApprovals').then(m => ({ default: m.AgentApprovals })));
 const AgentReview = React.lazy(() => import('@/features/agents/AgentReview').then(m => ({ default: m.AgentReview })));
 const Takedowns = React.lazy(() => import('@/features/takedowns/Takedowns').then(m => ({ default: m.Takedowns })));
@@ -144,6 +145,7 @@ export default function App() {
             navigable for bookmarks. Audit H8. */}
         <Route path="intelligence" element={lazyRoute(<Trends />)} />
         <Route path="agents" element={lazyRoute(<Agents />)} />
+        <Route path="agents-v3" element={lazyRoute(<AgentsV3 />)} />
         <Route path="agents/approvals" element={lazyRoute(<AgentApprovals />)} />
         <Route path="agents/:id/review" element={lazyRoute(<AgentReview />)} />
         <Route path="agents/architect" element={lazyRoute(<ArchitectDetail />)} />
