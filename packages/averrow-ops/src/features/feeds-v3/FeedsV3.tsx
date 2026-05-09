@@ -19,17 +19,19 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFeeds, useFeedStats, useFeedHistory } from '@/hooks/useFeeds';
 import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
+import { useAdminAction } from '@/hooks/useAdminAction';
 import {
-  Card, StatCard, StatGrid, PageHeader,
+  Card, StatCard, StatGrid, PageHeader, Button,
 } from '@/design-system/components';
 import { VersionToggle } from '@/components/ui/VersionToggle';
 import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock } from 'lucide-react';
+import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
 
 // Same humanizer used by /feeds — keep them in sync if the v2 list
 // gains new entries. (We could lift to a shared util once a third
@@ -221,6 +223,77 @@ function PreviewBanner() {
   );
 }
 
+// Compact action button — idle / confirming (✓ / ✕) / loading /
+// success / error states. Mirrors v2's RetryButton + UnpauseButton
+// UX (tap → confirm → tap to fire). e.stopPropagation everywhere
+// so clicks don't bubble to the card's onSelect (which would
+// expand/collapse the card).
+function FeedActionButton({
+  feedName, action, label, icon, tone, queryKey,
+}: {
+  feedName: string;
+  action:   'trigger' | 'pause' | 'unpause';
+  label:    string;
+  icon:     React.ReactNode;
+  tone:     'amber' | 'green' | 'sev-high';
+  queryKey: string;
+}) {
+  const queryClient = useQueryClient();
+  const a = useAdminAction(`/api/feeds/${feedName}/${action}`, () => {
+    setTimeout(() => queryClient.invalidateQueries({ queryKey: [queryKey] }), 500);
+  });
+  const color =
+    tone === 'amber'    ? 'var(--amber)' :
+    tone === 'green'    ? 'var(--green)' :
+                          'var(--sev-high)';
+
+  if (a.state === 'idle') {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={(e) => { e.stopPropagation(); a.confirm(); }}
+        icon={icon}
+        style={{ color }}
+      >
+        {label}
+      </Button>
+    );
+  }
+  if (a.state === 'confirming') {
+    return (
+      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <Button type="button" variant="ghost" size="sm" onClick={a.execute} icon={<Check size={12} />} style={{ color: 'var(--green)' }}>
+          {''}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={a.cancel} icon={<X size={12} />}>
+          {''}
+        </Button>
+      </div>
+    );
+  }
+  if (a.state === 'loading') {
+    return (
+      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color }} onClick={(e) => e.stopPropagation()}>
+        <Loader2 size={12} className="animate-spin" />
+      </span>
+    );
+  }
+  if (a.state === 'success') {
+    return (
+      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: 'var(--green)' }} onClick={(e) => e.stopPropagation()}>
+        <Check size={12} />
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-[10px]" style={{ color: 'var(--sev-high)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
+      <X size={12} className="inline" />
+    </span>
+  );
+}
+
 function FeedCardV3({
   feed, isSelected, onSelect,
 }: {
@@ -336,6 +409,40 @@ function FeedCardV3({
           {pattern.reason}
         </div>
       )}
+
+      {/* Inline actions — Trigger always available; Pause shows when
+          the feed is currently running; Resume shows when paused
+          (auto- or manual-paused). All buttons stopPropagation so a
+          click doesn't bubble to the card's expand/collapse handler. */}
+      <div className="flex items-center gap-1 pt-1 border-t" style={{ borderColor: 'var(--border-base)' }}>
+        <FeedActionButton
+          feedName={feed.feed_name}
+          action="trigger"
+          label="Trigger"
+          icon={<RotateCw size={12} />}
+          tone="amber"
+          queryKey="feeds-overview"
+        />
+        {Boolean(feed.enabled) && !feed.paused_reason ? (
+          <FeedActionButton
+            feedName={feed.feed_name}
+            action="pause"
+            label="Pause"
+            icon={<Pause size={12} />}
+            tone="sev-high"
+            queryKey="feeds-overview"
+          />
+        ) : (
+          <FeedActionButton
+            feedName={feed.feed_name}
+            action="unpause"
+            label="Resume"
+            icon={<Play size={12} />}
+            tone="green"
+            queryKey="feeds-overview"
+          />
+        )}
+      </div>
     </Card>
   );
 }

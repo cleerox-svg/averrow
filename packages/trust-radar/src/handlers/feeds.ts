@@ -160,6 +160,10 @@ export async function handleTriggerFeed(request: Request, env: Env, feedName: st
     // Use runFeed() so feed_status and feed_pull_history are properly updated
     const result = await runFeed(env, config, mod);
 
+    // Bust the feeds_overview cache so the UI sees the new pull
+    // immediately (was stale up to 5 min after PR #1178 added KV).
+    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+
     return json({ success: true, data: result }, 200, origin);
   } catch (err) {
     console.error(`[triggerFeed] "${feedName}" threw:`, err);
@@ -172,6 +176,7 @@ export async function handleTriggerAll(request: Request, env: Env): Promise<Resp
   const origin = request.headers.get("Origin");
   try {
     const result = await runAllFeeds(env, feedModules);
+    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
     return json({ success: true, data: result }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -397,9 +402,47 @@ export async function handleUnpauseFeed(request: Request, env: Env, feedName: st
       ).bind(feedName),
     ]);
 
+    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+
     return json({ success: true, data: { feed_name: feedName } }, 200, origin);
   } catch (err) {
     console.error(`[unpauseFeed] "${feedName}" threw:`, err);
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+// ─── Manually pause a feed ──────────────────────────────────────
+//
+// Counterpart to handleUnpauseFeed. Sets enabled=0 +
+// paused_reason='manual'. Does NOT touch feed_status — preserves
+// the failure history so an operator's manual pause doesn't
+// pretend the feed was healthy.
+//
+// The feed runner skips disabled feeds, so this is the kill-switch
+// for noisy or known-broken sources without retiring the config row.
+export async function handlePauseFeed(request: Request, env: Env, feedName: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT feed_name FROM feed_configs WHERE feed_name = ?"
+    ).bind(feedName).first();
+    if (!existing) return json({ success: false, error: "Feed not found" }, 404, origin);
+
+    await env.DB.prepare(
+      `UPDATE feed_configs
+         SET enabled = 0,
+             paused_reason = 'manual',
+             updated_at = datetime('now')
+         WHERE feed_name = ?`
+    ).bind(feedName).run();
+
+    // Bust the feeds_overview cache so the UI reflects the new state
+    // without a stale-cache window.
+    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+
+    return json({ success: true, data: { feed_name: feedName } }, 200, origin);
+  } catch (err) {
+    console.error(`[pauseFeed] "${feedName}" threw:`, err);
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
