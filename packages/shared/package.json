@@ -12,7 +12,9 @@
     "./profile": "./src/profile/index.ts",
     "./login": "./src/login/index.ts",
     "./auth": "./src/auth/index.ts",
-    "./passkeys": "./src/passkeys/index.ts"
+    "./passkeys": "./src/passkeys/index.ts",
+    "./theme": "./src/theme/index.ts",
+    "./theme.css": "./src/theme/tokens.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
