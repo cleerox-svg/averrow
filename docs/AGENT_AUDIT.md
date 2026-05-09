@@ -1,8 +1,9 @@
 # Agent Audit — Phase 1
 
-**Status:** draft
-**Date:** 2026-04-29
-**Window:** 7 days (run stats), 24 hours (AI cost)
+**Status:** Phase 2 + Phase 3 ✅ done · Phase 4 + Phase 5 in progress
+**Original audit date:** 2026-04-29
+**Last refresh:** 2026-05-09
+**Window:** 7 days (run stats), 24 hours (AI cost) — original snapshot
 **Standard:** see [`AGENT_STANDARD.md`](./AGENT_STANDARD.md)
 
 The first concrete read of the platform's agent mesh against the Phase
@@ -10,6 +11,28 @@ The first concrete read of the platform's agent mesh against the Phase
 compliance state, verdict.
 
 This audit is read-only. Phases 2-5 act on the verdicts.
+
+---
+
+## Status check — 2026-05-09 refresh
+
+The 2026-04-29 audit drove a sequence of cleanup PRs across 2026-04
+and 2026-05. Current state vs. the original §8 plan:
+
+| Phase | Original estimate | Status |
+|---|---|---|
+| Phase 2 — structural compliance (5-7 PRs) | ~2 sessions | **✅ Complete.** All 4 hidden agents (`seed_strategist`, `cube_healer`, `navigator`, `enricher`) registered in `agentModules`. `architect` retired with proper retirement comment + source kept per `AGENT_STANDARD §20.1`. `pathfinder` cron demoted (`docs/v3/PATHFINDER_CRON_DECISION.md`). `curator` + `watchdog` kept after addendum review. |
+| Phase 3 — sync agent migration (8-10 PRs) | ~1 week | **✅ Complete for the original 15.** All agents listed in §5 are now first-class entries in `agentModules` (`public_trust_check`, `qualified_report`, `brand_analysis`, `brand_report`, `brand_deep_scan`, `honeypot_generator`, `brand_enricher`, `lookalike_scanner`, `admin_classify`, `url_scan`, `scan_report`, `social_ai_assessor`, `geo_campaign_assessment`, `evidence_assembler`, plus the extracted `attributor`). `news_watcher` shipped post-audit and is also registered. |
+| Phase 4 — guardrails retrofit (5-6 PRs) | ~3 sessions | **🟡 In progress.** Resource declarations, output schemas, per-agent budgets, and tests still ✗ across the matrix. No agent has Zod output validation yet. Largest remaining item from §6.7. |
+| Phase 5 — platform features (4-5 PRs) | ~3 sessions | **🟡 In progress.** Approval workflow UI exists (`features/agents/AgentApprovals.tsx`). Per-agent budget enforcement still pending §11. The "Agent config UI uplift" sub-item is now partially shipping via `/agents-v3` (live behind `VersionToggle('agents')`) — see iteration history in PRs #1163, #1164, #1165. |
+
+**Per-agent fact sheets in §3-§4 below preserve the 2026-04-29
+snapshot intentionally** — they remain useful as a "what did the
+mesh look like before cleanup" record. Re-running diagnostics for
+fresh numbers is a separate task (ping the `/api/internal/platform-diagnostics?hours=168`
+endpoint and update those tables in a follow-on refresh).
+
+---
 
 ## Headline findings
 
@@ -272,19 +295,27 @@ The compliance work splits naturally across Phases 2-4:
 
 Ranked by impact ÷ effort. Each is a small PR.
 
-### Phase 2 — structural compliance (5-7 PRs, ~2 sessions)
+### Phase 2 — structural compliance ✅ DONE (2026-05-09)
 
-1. **Register `seed_strategist` in `agentModules`** — one-line fix. Closes a real defect (FC blind to it).
-2. **Decommission `architect`** — remove from registry, mark `retired`, archive R2 bucket. ~3 file changes.
-3. **Migrate `cube_healer` to `AgentModule` + `executeAgent()`** — keep dedicated cron, swap the runner. Medium PR.
-4. **Migrate `navigator` to `AgentModule` + `executeAgent()`** — same pattern as cube_healer.
-5. **Surface `enricher`** — either migrate to `agent_runs` or document `agent_activity_log` as its home + add to the Agents page.
-6. **Demote `pathfinder` to manual trigger** — remove its hourly cron gate, keep the agent for on-demand admin invocation.
-7. **Investigate or retire `curator` and `watchdog`** — pull recent outputs, decide. Likely retire both; consolidate watchdog's stall-detection into FC if anything's salvageable.
+1. ✅ **Register `seed_strategist` in `agentModules`** — done. Closes the defect where FC was blind to it.
+2. ✅ **Decommission `architect`** — removed from `agentModules`, source retained per `AGENT_STANDARD §20.1` (registry comment documents the retirement).
+3. ✅ **Migrate `cube_healer` to `AgentModule`** — wrapped + registered. Dedicated cron preserved.
+4. ✅ **Migrate `navigator` to `AgentModule`** — wrapped + registered. Same pattern as cube_healer.
+5. ✅ **Surface `enricher`** — registered in `agentModules`, surfaced on the Agents page.
+6. ✅ **Demote `pathfinder` to manual trigger** — done. See `docs/v3/PATHFINDER_CRON_DECISION.md` for the operator-decision context.
+7. ✅ **Investigate `curator` and `watchdog`** — both KEPT after code-level review reversed the lean-retire verdicts. See changelog 2026-04-29 (later) for the addendum that corrected the misclassifications. Metadata subtitles updated.
 
-### Phase 3 — sync agent migration (8-10 PRs, ~1 week)
+### Phase 3 — sync agent migration ✅ DONE for original 15 (2026-05-09)
 
-Per §5 ordering recommendation. First PR establishes the `runSyncAgent()` helper + the prompt-injection defense pattern via `public-trust-check`. Subsequent PRs migrate agents in batches.
+All 15 sync agents called out in §5 are now first-class `agentModules` entries:
+`public_trust_check`, `qualified_report`, `brand_analysis`, `brand_report`,
+`brand_deep_scan`, `honeypot_generator`, `brand_enricher`, `lookalike_scanner`,
+`admin_classify`, `url_scan`, `scan_report`, `social_ai_assessor`,
+`geo_campaign_assessment`, `evidence_assembler`, plus the extracted `attributor`.
+
+`news_watcher` shipped post-audit and is also registered. Phase 3 ordering
+recommendation in §5 was followed — `public_trust_check` landed first,
+establishing the `runSyncAgent()` pattern + prompt-injection defense.
 
 ### Phase 4 — guardrails retrofit (5-6 PRs, ~3 sessions)
 
@@ -312,6 +343,26 @@ The architect manifest's static-analysis gives us auto-population for `reads`/`w
   - **Output preview** carousel showing the last 5 `agent_outputs.summary` rows so the operator can spot-check quality without needing a separate tool. (Closes the "Output content review" gap deferred from this audit.)
   - **Failure-pattern alert** when partial-rate or kill-rate exceeds the §16 SLO. Mostly addresses the social_monitor + flight_control cases flagged in §6.2.
 
+**🟡 In progress (2026-05-09):** the Agent config UI uplift is shipping
+behind a `VersionToggle('agents')` at `/agents-v3`. Three iterations
+landed (PRs #1163, #1164, #1165):
+
+- **iter 1** (#1163) — toggle infrastructure (generic `useVersionToggle`
+  + `VersionToggle` component) + `/agents-v3` shell
+- **iter 2** (#1164) — failure-pattern badge (derived from existing
+  Agent payload), 24h activity sparkline, click-to-expand detail panel
+  with output preview + 7d health
+- **iter 3** (#1165) — Flight Control rendered as a SUPERVISOR section
+  at top, workers grouped by `AGENT_METADATA.category`, ← upstream / →
+  downstream connectivity chips on every card, real compliance signals
+  (2/4 honest), Network View placeholder footer
+
+**Still pending behind the toggle:**
+- Per-agent cost gauge — needs §11 budget block
+- Resource-graph chip set — needs §22 static-analysis manifest
+- Compliance Schemas + Budget chips — flip to ✓ when Phase 4 ships
+- Interactive Network View visualisation (placeholder card live; impl pending)
+
 ### Total estimate
 
 - 22-29 PRs across Phases 2-5
@@ -337,4 +388,27 @@ The architect manifest's static-analysis gives us auto-population for `reads`/`w
   - **curator** — the audit's "vague mandate" assessment was wrong. The agent runs three concrete jobs: email security scanning for unscanned brands, safe-domain false-positive cleanup, and social profile discovery for high-threat brands. Records-processed metric mismatch hid the work — it does scans, not threat-row INSERTs. **KEPT.** Metadata subtitle updated.
   - **watchdog** — the audit's "overlaps with FC stall-recovery" assessment was completely wrong. Watchdog has nothing to do with uptime — it's a Haiku-powered social-mention threat classifier that escalates high/critical findings to the threats table. The metadata subtitle ("Uptime Monitoring & Alert Escalation") was misleading and matched a stale role. **KEPT.** Metadata subtitle + category updated (`ops` → `intelligence`).
   - **Lesson for Phase 1 methodology**: structural signal alone (run count, records processed, descriptive metadata) was insufficient to issue retirement verdicts. Future phases should always pair the structural read with a brief code-level inspection before any `Decommission` row goes in.
+- 2026-05-09: **Phase 2 + Phase 3 status refresh.** All 7 Phase 2 actions
+  closed (4 hidden agents registered, architect retired, pathfinder
+  demoted, curator/watchdog kept per addendum). All 15 Phase 3 sync
+  agents from §5 are now first-class `agentModules` entries. Agent
+  config UI uplift (Phase 5.6) shipping behind `VersionToggle('agents')`
+  at `/agents-v3` — three iterations landed:
+  - **#1163** — generic version-toggle infrastructure + `/agents-v3` shell
+  - **#1164** — failure-pattern badge + 24h activity sparkline +
+    click-to-expand detail with output preview + 7d health
+  - **#1165** — Supervisor section at top + worker grouping by category
+    + connectivity chips (← upstream / → downstream from
+    `TRIGGER_CHAIN` constant) + real compliance signals + Network View
+    placeholder footer (impl pending)
+
+  **Per-agent fact sheets in §3-§4 deliberately preserve the
+  2026-04-29 snapshot** — they're the historical record. Re-running
+  diagnostics for fresh numbers is a separate task (`/api/internal/platform-diagnostics?hours=168`).
+
+  **Still queued:** Phase 4 (resource decls + output schemas + per-agent
+  budgets + tests for every agent) and the remaining Phase 5 items
+  (per-run approval inline notification, per-agent budget enforcement,
+  scaffolder, audit script + CI gate, interactive Network View
+  visualisation).
 
