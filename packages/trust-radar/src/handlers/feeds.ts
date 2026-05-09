@@ -261,41 +261,98 @@ export async function handleFeedQuota(request: Request, env: Env): Promise<Respo
 }
 
 // ─── Feeds overview with aggregated pull stats ─────────────────
+//
+// KV cache: 2 parallel queries — cache for 5 minutes. v1 prefix
+// is the first cached version of this handler; bump if the
+// response shape changes. Rides the same Navigator pre-warm
+// pattern as /api/agents (see CLAUDE.md §8).
 export async function handleFeedsOverview(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
+  const cacheKey = 'feeds_overview:v1';
   try {
-    const rows = await env.DB.prepare(`
-      SELECT
-        fc.feed_name,
-        fc.display_name,
-        fc.description,
-        fc.source_url,
-        fc.enabled,
-        fc.schedule_cron,
-        fc.batch_size,
-        fc.rate_limit,
-        fc.filters,
-        fc.retry_count,
-        fc.retry_delay_seconds,
-        fc.paused_reason,
-        fc.consecutive_failure_threshold,
-        fs.consecutive_failures,
-        fs.last_error,
-        COUNT(fph.id) as total_pulls,
-        COALESCE(SUM(fph.records_ingested), 0) as total_ingested,
-        COALESCE(SUM(fph.records_rejected), 0) as total_rejected,
-        SUM(CASE WHEN fph.status='success' THEN 1 ELSE 0 END) as successes,
-        SUM(CASE WHEN fph.status='error' THEN 1 ELSE 0 END) as errors,
-        MAX(fph.started_at) as last_run,
-        MAX(fph.completed_at) as last_completed
-      FROM feed_configs fc
-      LEFT JOIN feed_status fs ON fs.feed_name = fc.feed_name
-      LEFT JOIN feed_pull_history fph ON fph.feed_name = fc.feed_name
-      GROUP BY fc.feed_name
-      ORDER BY total_ingested DESC
-    `).all();
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) return json(JSON.parse(cached), 200, origin);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    // Bug fix: status='error' never matched the CHECK constraint
+    // (schema only allows 'success'/'partial'/'failed'), so the
+    // `errors` field in the response has been 0 forever. Switched
+    // to status='failed' to count actual failed pulls.
+    const [rowsResult, hourlyResult] = await Promise.all([
+      env.DB.prepare(`
+        SELECT
+          fc.feed_name,
+          fc.display_name,
+          fc.description,
+          fc.source_url,
+          fc.enabled,
+          fc.schedule_cron,
+          fc.batch_size,
+          fc.rate_limit,
+          fc.filters,
+          fc.retry_count,
+          fc.retry_delay_seconds,
+          fc.paused_reason,
+          fc.consecutive_failure_threshold,
+          fs.consecutive_failures,
+          fs.last_error,
+          COUNT(fph.id) as total_pulls,
+          COALESCE(SUM(fph.records_ingested), 0) as total_ingested,
+          COALESCE(SUM(fph.records_rejected), 0) as total_rejected,
+          SUM(CASE WHEN fph.status='success' THEN 1 ELSE 0 END) as successes,
+          SUM(CASE WHEN fph.status='failed'  THEN 1 ELSE 0 END) as errors,
+          MAX(fph.started_at) as last_run,
+          MAX(fph.completed_at) as last_completed
+        FROM feed_configs fc
+        LEFT JOIN feed_status fs ON fs.feed_name = fc.feed_name
+        LEFT JOIN feed_pull_history fph ON fph.feed_name = fc.feed_name
+        GROUP BY fc.feed_name
+        ORDER BY total_ingested DESC
+      `).all(),
+
+      // Hourly buckets for the per-card sparkline. 24h window keeps
+      // the index range scan cheap (idx_feed_pulls_feed). One row
+      // per (feed_name, hour) bucket; frontend rebuilds 24-element
+      // arrays from these.
+      env.DB.prepare(`
+        SELECT
+          feed_name,
+          CAST(strftime('%H', started_at) AS INTEGER) AS hour,
+          COUNT(*) AS pulls,
+          COALESCE(SUM(records_ingested), 0) AS ingested,
+          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS errors
+        FROM feed_pull_history
+        WHERE started_at >= datetime('now', '-1 day')
+        GROUP BY feed_name, hour
+      `).all<{ feed_name: string; hour: number; pulls: number; ingested: number; errors: number }>(),
+    ]);
+
+    // Build per-feed 24-element arrays, indexed so position 0 is
+    // 24h ago and position 23 is the current hour. Same convention
+    // /api/agents uses for activity[].
+    const currentHour = new Date().getUTCHours();
+    const pullsMap    = new Map<string, number[]>();
+    const ingestedMap = new Map<string, number[]>();
+    const errorsMap   = new Map<string, number[]>();
+    for (const row of hourlyResult.results) {
+      if (!pullsMap.has(row.feed_name))    pullsMap.set(row.feed_name,    new Array(24).fill(0));
+      if (!ingestedMap.has(row.feed_name)) ingestedMap.set(row.feed_name, new Array(24).fill(0));
+      if (!errorsMap.has(row.feed_name))   errorsMap.set(row.feed_name,   new Array(24).fill(0));
+      const idx = (row.hour - currentHour + 24) % 24;
+      pullsMap.get(row.feed_name)![idx]    = row.pulls    ?? 0;
+      ingestedMap.get(row.feed_name)![idx] = row.ingested ?? 0;
+      errorsMap.get(row.feed_name)![idx]   = row.errors   ?? 0;
+    }
+
+    const data = (rowsResult.results as Record<string, unknown>[]).map(r => ({
+      ...r,
+      pulls_per_hour:    pullsMap.get(r.feed_name as string)    ?? new Array(24).fill(0),
+      ingested_per_hour: ingestedMap.get(r.feed_name as string) ?? new Array(24).fill(0),
+      errors_per_hour:   errorsMap.get(r.feed_name as string)   ?? new Array(24).fill(0),
+    }));
+
+    const responseData = { success: true, data };
+    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 300 });
+    return json(responseData, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }

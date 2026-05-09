@@ -33,6 +33,13 @@ export interface FeedOverview {
   errors: number;
   last_run: string | null;
   last_completed: string | null;
+  /** 24-element hourly arrays (oldest → newest). Added 2026-05 so
+   *  cards can render a multi-series sparkline without per-feed
+   *  history fan-out. Optional because older cached responses
+   *  won't include them. */
+  pulls_per_hour?: number[];
+  ingested_per_hour?: number[];
+  errors_per_hour?: number[];
 }
 
 export interface FeedPullRecord {

@@ -110,6 +110,85 @@ function failurePatternFor(f: FeedOverview): FailurePattern {
   return null;
 }
 
+// Multi-series compact area chart for feed cards. Hand-rolled SVG
+// (no Recharts) so 40+ cards stay cheap. Three series share the
+// same y-scale so they're comparable. Same visual identity as the
+// agents-v3 CardHealthChart pattern. Errors series only renders
+// when the feed actually has errors in the 24h window.
+function FeedCardSparkline({
+  pulls, ingested, errors, runsColor, width = 120, height = 40,
+}: {
+  pulls:     number[];
+  ingested?: number[];
+  errors?:   number[];
+  runsColor: string;
+  width?:    number;
+  height?:   number;
+}) {
+  if (!pulls || pulls.length === 0) return null;
+  const N = pulls.length;
+  const peak = Math.max(
+    ...pulls,
+    ...(ingested ?? []),
+    ...(errors   ?? []),
+    1,
+  );
+  const stepX = N > 1 ? width / (N - 1) : width;
+
+  function paths(series: number[]) {
+    const points = series.map((v, i) => {
+      const x = i * stepX;
+      const y = height - (v / peak) * (height - 2) - 1;
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const area = `${line} L ${(N - 1) * stepX} ${height} L 0 ${height} Z`;
+    return { line, area };
+  }
+
+  const seed = Math.random().toString(36).slice(2, 9);
+  const gradPulls    = `feed-pulls-${seed}`;
+  const gradIngested = `feed-ing-${seed}`;
+  const gradErrors   = `feed-err-${seed}`;
+
+  const pullsP    = paths(pulls);
+  const ingestedP = ingested && ingested.some(v => v > 0) ? paths(ingested) : null;
+  const errorsP   = errors   && errors.some(v => v > 0)   ? paths(errors)   : null;
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradPulls} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={runsColor} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={runsColor} stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradIngested} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+          <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradErrors} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.40} />
+          <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={pullsP.area} fill={`url(#${gradPulls})`} />
+      <path d={pullsP.line} stroke={runsColor} strokeWidth={1.3} fill="none" strokeLinejoin="round" />
+      {ingestedP && (
+        <>
+          <path d={ingestedP.area} fill={`url(#${gradIngested})`} />
+          <path d={ingestedP.line} stroke="#22D3EE" strokeWidth={1.1} fill="none" strokeLinejoin="round" opacity={0.85} />
+        </>
+      )}
+      {errorsP && (
+        <>
+          <path d={errorsP.area} fill={`url(#${gradErrors})`} />
+          <path d={errorsP.line} stroke="var(--sev-high)" strokeWidth={1.1} fill="none" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 function isDecommissionCandidate(f: FeedOverview): boolean {
   if (!f.last_completed) return false;
   const ageMs = Date.now() - new Date(f.last_completed).getTime();
@@ -210,29 +289,46 @@ function FeedCardV3({
         />
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
-        <div>
-          <div style={{ color: 'var(--text-muted)' }}>PULLS</div>
-          <div className="text-base" style={{ color: 'var(--text-primary)' }}>
-            {feed.total_pulls.toLocaleString()}
+      {/* Stats row + sparkline */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>PULLS</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {feed.total_pulls.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>INGESTED</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {feed.total_ingested.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>ERROR %</div>
+            <div
+              className="text-base"
+              style={{ color: errorPct > 20 ? 'var(--sev-high)' : 'var(--text-primary)' }}
+            >
+              {errorPct}%
+            </div>
           </div>
         </div>
-        <div>
-          <div style={{ color: 'var(--text-muted)' }}>INGESTED</div>
-          <div className="text-base" style={{ color: 'var(--text-primary)' }}>
-            {feed.total_ingested.toLocaleString()}
+        {feed.pulls_per_hour && feed.pulls_per_hour.length > 0 && (
+          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+            <FeedCardSparkline
+              pulls={feed.pulls_per_hour}
+              ingested={feed.ingested_per_hour}
+              errors={feed.errors_per_hour}
+              runsColor={pattern ? 'var(--sev-high)' : 'var(--blue)'}
+              width={120}
+              height={36}
+            />
+            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+              24h · pulls · ingested
+            </div>
           </div>
-        </div>
-        <div>
-          <div style={{ color: 'var(--text-muted)' }}>ERROR %</div>
-          <div
-            className="text-base"
-            style={{ color: errorPct > 20 ? 'var(--sev-high)' : 'var(--text-primary)' }}
-          >
-            {errorPct}%
-          </div>
-        </div>
+        )}
       </div>
 
       {pattern && (
