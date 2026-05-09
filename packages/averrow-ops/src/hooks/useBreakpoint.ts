@@ -12,8 +12,13 @@ export function useBreakpoint() {
   }, []);
 
   return {
-    isMobile: width < 768,
-    isTablet: width >= 768 && width < 1024,
+    // Audit P3: bumped from 768 → 900 so horizontal phones
+    // (~770-820 landscape) get the mobile shell + drawer chrome
+    // instead of cramming desktop sidebar + docked panel into the
+    // viewport. Observatory's mobile branch already implements
+    // drawer-style panel behavior (mobile tab bar above ticker).
+    isMobile: width < 900,
+    isTablet: width >= 900 && width < 1024,
     isDesktop: width >= 1024,
     isWide: width >= 1440,
     width,

@@ -1,10 +1,13 @@
 // Averrow Design System — useBreakpoint hook
 // Single responsive breakpoint hook for the platform.
-// Mobile: < 768px. Desktop: >= 768px.
+// Mobile: < 900px. Desktop: >= 900px.
+// (Bumped from 768 → 900 in Audit P3 — horizontal phones in
+// landscape clock 770-820, the old threshold left them with
+// desktop chrome cramped into a phone viewport.)
 
 import { useState, useEffect } from 'react';
 
-const MOBILE_BREAKPOINT = 768;
+const MOBILE_BREAKPOINT = 900;
 
 export function useBreakpoint() {
   const [isMobile, setIsMobile] = useState(() => {
