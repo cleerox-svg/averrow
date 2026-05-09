@@ -59,14 +59,15 @@ const NAVIGATOR_DEF = {
 
 // ─── List all agent definitions + their latest run ──────────────
 export const handleListAgents = handler(async (_request, env, ctx) => {
-  // KV cache: 8 parallel queries — cache for 5 minutes. v3 prefix
-  // invalidates two prior shapes:
+  // KV cache: 8 parallel queries — cache for 5 minutes. v4 prefix
+  // invalidates prior shapes:
   //   v1 — pre-recent_ticks (no new field at all)
   //   v2 — recent_ticks present but emitted with `trigger` GROUP BY
   //         on a column that doesn't exist on agent_runs, so the
-  //         handler 500'd and the response was never cached. The
-  //         bump is belt-and-suspenders.
-  const cacheKey = 'agents_list:v3';
+  //         handler 500'd and the response was never cached.
+  //   v3 — pre outputs_per_hour / errors_per_hour. Cards on /agents-v3
+  //         could only render single-series sparklines.
+  const cacheKey = 'agents_list:v4';
   const cached = await env.CACHE.get(cacheKey);
   if (cached) {
     recordD1Reads(env, "agents_list", newTally());
@@ -74,7 +75,7 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   }
   const tally = newTally();
 
-  const [latestRuns, runStats24h, outputStats24h, hourlyActivity, recentTickRows, lastOutputTimes, avgDurations, agentConfigs] = await Promise.all([
+  const [latestRuns, runStats24h, outputStats24h, hourlyActivity, hourlyOutputs, recentTickRows, lastOutputTimes, avgDurations, agentConfigs] = await Promise.all([
     env.DB.prepare(
       `SELECT agent_id, status, started_at, completed_at, duration_ms, error_message
        FROM agent_runs
@@ -102,12 +103,30 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
        GROUP BY agent_id`
     ).all<{ agent_id: string; outputs_24h: number }>(),
 
+    // hourlyActivity — runs + errors per (agent, hour) bucket. Used
+    // by the cards' 24h area chart (multi-series). Errors are derived
+    // here so cards don't have to fire a separate handleAgentHealth
+    // call per agent (~40 D1 reads avoided per page load).
     env.DB.prepare(
       `SELECT agent_id,
               CAST(strftime('%H', started_at) AS INTEGER) AS hour,
-              COUNT(*) AS cnt
+              COUNT(*) AS cnt,
+              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS errors
        FROM agent_runs
        WHERE started_at >= datetime('now', '-1 day')
+       GROUP BY agent_id, hour`
+    ).all<{ agent_id: string; hour: number; cnt: number; errors: number }>(),
+
+    // hourlyOutputs — outputs per (agent, hour) bucket. Separate
+    // table so it can't be folded into hourlyActivity. Same 24h
+    // window + bounded-index pattern as the existing aggregation
+    // against agent_outputs.
+    env.DB.prepare(
+      `SELECT agent_id,
+              CAST(strftime('%H', created_at) AS INTEGER) AS hour,
+              COUNT(*) AS cnt
+       FROM agent_outputs
+       WHERE created_at >= datetime('now', '-1 day')
        GROUP BY agent_id, hour`
     ).all<{ agent_id: string; hour: number; cnt: number }>(),
 
@@ -196,14 +215,21 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   const avgDurMap = new Map(avgDurations.results.map((r) => [r.agent_id, r.avg_duration_ms]));
   const configMap = new Map(agentConfigs.results.map((r) => [r.agent_id, r]));
 
-  const activityMap = new Map<string, number[]>();
+  const activityMap       = new Map<string, number[]>();
+  const errorsPerHourMap  = new Map<string, number[]>();
+  const outputsPerHourMap = new Map<string, number[]>();
   const currentHour = new Date().getUTCHours();
   for (const row of hourlyActivity.results) {
-    if (!activityMap.has(row.agent_id)) {
-      activityMap.set(row.agent_id, new Array(24).fill(0));
-    }
+    if (!activityMap.has(row.agent_id))      activityMap.set(row.agent_id, new Array(24).fill(0));
+    if (!errorsPerHourMap.has(row.agent_id)) errorsPerHourMap.set(row.agent_id, new Array(24).fill(0));
     const idx = (row.hour - currentHour + 24) % 24;
-    activityMap.get(row.agent_id)![idx] = row.cnt;
+    activityMap.get(row.agent_id)![idx]      = row.cnt;
+    errorsPerHourMap.get(row.agent_id)![idx] = row.errors ?? 0;
+  }
+  for (const row of hourlyOutputs.results) {
+    if (!outputsPerHourMap.has(row.agent_id)) outputsPerHourMap.set(row.agent_id, new Array(24).fill(0));
+    const idx = (row.hour - currentHour + 24) % 24;
+    outputsPerHourMap.get(row.agent_id)![idx] = row.cnt;
   }
 
   // ─── Build recent_ticks per agent (last 5 hour buckets) ───────────
@@ -302,7 +328,12 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       jobs_24h: stats?.jobs_24h ?? 0,
       outputs_24h: outputMap.get(def.name) ?? 0,
       error_count_24h: stats?.error_count_24h ?? 0,
-      activity: activityMap.get(def.name) ?? new Array(24).fill(0),
+      activity:         activityMap.get(def.name)       ?? new Array(24).fill(0),
+      // Hourly arrays for the multi-series card chart (mirrors
+      // useAgentHealth's per-hour shape but rides this handler's
+      // KV cache, so cards don't fan out 40 D1 reads).
+      outputs_per_hour: outputsPerHourMap.get(def.name)  ?? new Array(24).fill(0),
+      errors_per_hour:  errorsPerHourMap.get(def.name)   ?? new Array(24).fill(0),
       recent_ticks: recentTicksFor(def.name),
       last_run_at: latestRun?.started_at ?? null,
       last_run_status: latestRun?.status ?? null,
@@ -334,11 +365,16 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   const navJobs = NAVIGATOR_IDS.reduce((sum, id) => sum + (statsMap.get(id)?.jobs_24h ?? 0), 0);
   const navErrors = NAVIGATOR_IDS.reduce((sum, id) => sum + (statsMap.get(id)?.error_count_24h ?? 0), 0);
   const navOutputs = NAVIGATOR_IDS.reduce((sum, id) => sum + (outputMap.get(id) ?? 0), 0);
-  const navActivity = new Array(24).fill(0);
+  const navActivity       = new Array(24).fill(0);
+  const navOutputsPerHour = new Array(24).fill(0);
+  const navErrorsPerHour  = new Array(24).fill(0);
   for (const id of NAVIGATOR_IDS) {
     const arr = activityMap.get(id);
-    if (!arr) continue;
-    for (let i = 0; i < 24; i++) navActivity[i] += arr[i] ?? 0;
+    if (arr) for (let i = 0; i < 24; i++) navActivity[i] += arr[i] ?? 0;
+    const outArr = outputsPerHourMap.get(id);
+    if (outArr) for (let i = 0; i < 24; i++) navOutputsPerHour[i] += outArr[i] ?? 0;
+    const errArr = errorsPerHourMap.get(id);
+    if (errArr) for (let i = 0; i < 24; i++) navErrorsPerHour[i] += errArr[i] ?? 0;
   }
   const navLastOutput = NAVIGATOR_IDS
     .map(id => lastOutputMap.get(id))
@@ -373,7 +409,9 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     jobs_24h: navJobs,
     outputs_24h: navOutputs,
     error_count_24h: navErrors,
-    activity: navActivity,
+    activity:         navActivity,
+    outputs_per_hour: navOutputsPerHour,
+    errors_per_hour:  navErrorsPerHour,
     // Navigator's recent_ticks merges both id histories. Per-bucket
     // instance lists from the two ids get concatenated; the natural
     // dedupe is that historical 'fast_tick' rows fall outside the
@@ -414,12 +452,12 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     paused_after_n_failures: null,
   });
 
-  // 7 .all() queries, but `addToTally` would require threading `tally`
-  // through each. The agent_runs scans dominate this handler's cost
-  // (~107K rows pre-24h-scope, much less after). Approximate the
-  // tally with query count — CF's d1_top_queries_24h covers the
+  // 9 .all() queries (was 7; +1 for hourlyOutputs, +1 carved out of
+  // hourlyActivity which now also pulls error counts). Same KV-cache
+  // protection as before — Navigator's 5-min pre-warm keeps cold
+  // cache rare. tally is approximate; CF's d1_top_queries_24h has
   // exact rows_read attribution.
-  tally.queries += 7;
+  tally.queries += 9;
 
   const responseData = { success: true, data: agents };
   await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 300 });
@@ -621,9 +659,10 @@ export async function handleAgentHealth(request: Request, env: Env, agentName: s
   const origin = request.headers.get("Origin");
   try {
     const hoursBack = 24;
-    const runs: number[] = new Array(hoursBack).fill(0);
-    const errors: number[] = new Array(hoursBack).fill(0);
-    const outputs: number[] = new Array(hoursBack).fill(0);
+    const runs:        number[] = new Array(hoursBack).fill(0);
+    const errors:      number[] = new Array(hoursBack).fill(0);
+    const outputs:     number[] = new Array(hoursBack).fill(0);
+    const duration_ms: number[] = new Array(hoursBack).fill(0);
 
     // Navigator spans both 'navigator' + legacy 'fast_tick' so recent history
     // stays intact across the rename transition.
@@ -644,12 +683,16 @@ export async function handleAgentHealth(request: Request, env: Env, agentName: s
     const currentHour = new Date().getUTCHours();
     for (const row of rows.results as { hour: number; duration_ms: number; status: string; outputs_generated: number }[]) {
       const idx = (row.hour - currentHour + hoursBack + hoursBack) % hoursBack;
-      runs[idx] = (runs[idx] || 0) + (row.duration_ms || 0);
+      // Bug fix: runs[] was previously `+ row.duration_ms` (a SUM of
+      // durations, mislabelled as "runs"). Now runs[] is the true
+      // per-hour run count. Total duration moved to its own array.
+      runs[idx]        = (runs[idx]        || 0) + 1;
+      duration_ms[idx] = (duration_ms[idx] || 0) + (row.duration_ms || 0);
       if (row.status === "failed") errors[idx] = (errors[idx] ?? 0) + 1;
       outputs[idx] = (outputs[idx] ?? 0) + (row.outputs_generated || 0);
     }
 
-    return success({ runs, errors, outputs }, origin);
+    return success({ runs, errors, outputs, duration_ms }, origin);
   } catch (err) {
     return error(String(err), 500, origin);
   }

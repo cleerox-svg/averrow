@@ -35,6 +35,11 @@ export interface Agent {
   /** Hourly run counts over last 24h. Kept for any downstream chart
    *  that still expects the flat shape. */
   activity: number[];
+  /** Hourly output counts over last 24h. Added 2026-05 so the cards'
+   *  chart renders multi-series without 40 useAgentHealth fan-outs. */
+  outputs_per_hour?: number[];
+  /** Hourly error counts over last 24h. Same rationale. */
+  errors_per_hour?: number[];
   /** Newer per-tick shape that drives RunStatusBlocks (last 5 hours,
    *  oldest → newest). Empty for any agent that hasn't run in 5h. */
   recent_ticks: AgentTick[];
@@ -354,9 +359,15 @@ export interface AgentDetailResponse {
 }
 
 export interface AgentHealthResponse {
+  /** Per-hour run COUNTS (oldest → newest, length 24).
+   *  Pre-2026-05 this was actually a sum of duration_ms — see the
+   *  bug-fix in handleAgentHealth for the correction. */
   runs: number[];
   errors: number[];
   outputs: number[];
+  /** Per-hour total run duration in ms. Optional because older
+   *  cached responses won't include it. */
+  duration_ms?: number[];
 }
 
 export function useAgentDetail(agentName: string) {

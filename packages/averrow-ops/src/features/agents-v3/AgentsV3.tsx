@@ -151,46 +151,89 @@ function failurePatternFor(agent: Agent): FailurePattern {
   return null;
 }
 
-// Compact single-series area chart for cards. Same visual style as
-// the drill-down HealthChart but driven by agent.activity (the 24h
-// hourly run counts already on the main payload — no per-card
-// useAgentHealth call). If multi-series on cards is needed later,
-// add a batched /api/agents/health endpoint.
+// Multi-series compact area chart for cards. All three series
+// (runs / outputs / errors) ride on the main /api/agents payload
+// — no per-card useAgentHealth fan-out. Same visual identity as
+// the drill-down HealthChart but stripped of axes/tooltips for
+// the dense card grid. Errors series only renders when the agent
+// actually has any errors in the 24h window.
 function CardHealthChart({
-  activity, color, width = 120, height = 40,
+  runs, outputs, errors, runsColor, width = 120, height = 40,
 }: {
-  activity: number[];
-  color:    string;
-  width?:   number;
-  height?:  number;
+  runs:      number[];
+  outputs?:  number[];
+  errors?:   number[];
+  /** Tint used for the runs series — flips to sev-high when the
+   *  agent matches a failure pattern, otherwise amber. */
+  runsColor: string;
+  width?:    number;
+  height?:   number;
 }) {
-  if (!activity || activity.length === 0) return null;
-  const max = Math.max(...activity, 1);
-  const stepX = activity.length > 1 ? width / (activity.length - 1) : width;
+  if (!runs || runs.length === 0) return null;
+  const N = runs.length;
+  // Single shared y-scale across all series so they're comparable.
+  const peak = Math.max(
+    ...runs,
+    ...(outputs ?? []),
+    ...(errors  ?? []),
+    1,
+  );
+  const stepX = N > 1 ? width / (N - 1) : width;
 
-  // Build the area path (closed under) + line path (top edge only).
-  const points = activity.map((v, i) => {
-    const x = i * stepX;
-    const y = height - (v / max) * (height - 2) - 1;
-    return { x, y };
-  });
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-  const areaPath = `${linePath} L ${(activity.length - 1) * stepX} ${height} L 0 ${height} Z`;
+  function paths(series: number[]) {
+    const points = series.map((v, i) => {
+      const x = i * stepX;
+      const y = height - (v / peak) * (height - 2) - 1;
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const area = `${line} L ${(N - 1) * stepX} ${height} L 0 ${height} Z`;
+    return { line, area };
+  }
 
-  // Gradient id needs to be unique per chart instance to avoid
-  // collisions when multiple charts render in the same DOM.
-  const gradId = `card-area-grad-${Math.random().toString(36).slice(2, 9)}`;
+  // Stable per-series gradient ids — derived from a single random
+  // seed so the three gradients in this chart instance share a
+  // namespace but don't collide with other cards.
+  const seed = Math.random().toString(36).slice(2, 9);
+  const gradRuns    = `card-runs-${seed}`;
+  const gradOutputs = `card-out-${seed}`;
+  const gradErrors  = `card-err-${seed}`;
+
+  const runsP    = paths(runs);
+  const outputsP = outputs ? paths(outputs) : null;
+  const errorsP  = errors && errors.some(e => e > 0) ? paths(errors) : null;
 
   return (
     <svg width={width} height={height} className="overflow-visible">
       <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="5%"  stopColor={color} stopOpacity={0.40} />
-          <stop offset="95%" stopColor={color} stopOpacity={0} />
+        <linearGradient id={gradRuns} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={runsColor} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={runsColor} stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradOutputs} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+          <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradErrors} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.40} />
+          <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
         </linearGradient>
       </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} stroke={color} strokeWidth={1.4} fill="none" strokeLinejoin="round" />
+      {/* Runs first (broadest gradient, base layer) */}
+      <path d={runsP.area} fill={`url(#${gradRuns})`} />
+      <path d={runsP.line} stroke={runsColor} strokeWidth={1.3} fill="none" strokeLinejoin="round" />
+      {outputsP && (
+        <>
+          <path d={outputsP.area} fill={`url(#${gradOutputs})`} />
+          <path d={outputsP.line} stroke="#22D3EE" strokeWidth={1.1} fill="none" strokeLinejoin="round" opacity={0.85} />
+        </>
+      )}
+      {errorsP && (
+        <>
+          <path d={errorsP.area} fill={`url(#${gradErrors})`} />
+          <path d={errorsP.line} stroke="var(--sev-high)" strokeWidth={1.1} fill="none" strokeLinejoin="round" />
+        </>
+      )}
     </svg>
   );
 }
@@ -392,8 +435,10 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
         {agent.activity && agent.activity.length > 0 && (
           <div className="flex flex-col items-end gap-1">
             <CardHealthChart
-              activity={agent.activity}
-              color={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
+              runs={agent.activity}
+              outputs={agent.outputs_per_hour}
+              errors={agent.errors_per_hour}
+              runsColor={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
               width={120}
               height={36}
             />
