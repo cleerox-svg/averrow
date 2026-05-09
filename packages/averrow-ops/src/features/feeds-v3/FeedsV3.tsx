@@ -19,8 +19,8 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useFeeds, useFeedStats } from '@/hooks/useFeeds';
-import type { FeedOverview } from '@/hooks/useFeeds';
+import { useFeeds, useFeedStats, useFeedHistory } from '@/hooks/useFeeds';
+import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
 import {
   Card, StatCard, StatGrid, PageHeader,
 } from '@/design-system/components';
@@ -304,12 +304,103 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
               </div>
             </div>
           )}
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-            History view — coming next iteration. For now, open <Link to="/feeds" className="underline" style={{ color: 'var(--amber)' }}>V2</Link> for the per-pull table.
+          <div>
+            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              Recent pulls · last 20
+            </div>
+            <FeedHistorySection feedName={feed.feed_name} />
           </div>
         </div>
       </div>
     </Card>
+  );
+}
+
+// Recent-pulls history list rendered inside the detail panel. Lazy
+// fetch — `enabled: !!feedName` in useFeedHistory means this only
+// fires when a card actually expands. Mirrors v2's recent-runs pane
+// but with a denser layout (one line per pull, error inline below).
+function FeedHistorySection({ feedName }: { feedName: string }) {
+  const { data: history, isLoading } = useFeedHistory(feedName, 20);
+
+  if (isLoading) {
+    return (
+      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        Loading history…
+      </div>
+    );
+  }
+  if (!history || history.length === 0) {
+    return (
+      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        No pull history yet
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {history.slice(0, 20).map(record => (
+        <PullRow key={record.id} record={record} />
+      ))}
+    </div>
+  );
+}
+
+function PullRow({ record }: { record: FeedPullRecord }) {
+  const isSuccess = record.status === 'success';
+  const isPartial = record.status === 'partial';
+  const tone =
+    isSuccess ? 'var(--green)' :
+    isPartial ? 'var(--sev-medium)' :
+                'var(--sev-high)';
+  const when = new Date(record.started_at).toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  });
+  const dur = record.duration_ms != null
+    ? `${(record.duration_ms / 1000).toFixed(1)}s`
+    : '—';
+
+  return (
+    <div
+      className="rounded px-2 py-1.5"
+      style={{
+        background: 'var(--bg-input)',
+        border:     `1px solid ${isSuccess ? 'var(--border-base)' : 'var(--sev-critical-border)'}`,
+      }}
+    >
+      <div className="flex items-center gap-2 font-mono text-[10px]">
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+          style={{ background: tone }}
+        />
+        <span style={{ color: 'var(--text-tertiary)' }} className="flex-1 truncate">
+          {when}
+        </span>
+        <span style={{ color: 'var(--text-secondary)' }}>
+          {record.records_ingested.toLocaleString()}
+          {record.records_rejected > 0 && (
+            <span style={{ color: 'var(--sev-medium)' }}>
+              {' '}/ {record.records_rejected.toLocaleString()} rej
+            </span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', minWidth: 36, textAlign: 'right' }}>
+          {dur}
+        </span>
+      </div>
+      {!isSuccess && record.error_message && (
+        <div
+          className="font-mono text-[10px] mt-1 line-clamp-2"
+          style={{ color: 'var(--sev-high)' }}
+          title={record.error_message}
+        >
+          {record.error_message}
+        </div>
+      )}
+    </div>
   );
 }
 
