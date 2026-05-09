@@ -7,6 +7,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useUnreadCount } from '@/hooks/useNotifications';
 import { useAuth } from '@/lib/auth';
 import { useObservatoryVersion } from '@/design-system/hooks';
+import { LogOut } from 'lucide-react';
 
 const AMBER   = '#E5A832';
 const RED     = '#C83C3C';
@@ -68,7 +69,7 @@ function buildMoreSections(observatoryPath: string) {
   {
     label: 'Account',
     items: [
-      { icon: '👤', label: 'Profile',       path: '/profile' },
+      { icon: '👤', label: 'Profile & Settings', path: '/profile' },
       { icon: '🔔', label: 'Notifications', path: '/notifications' },
     ],
   },
@@ -78,7 +79,7 @@ function buildMoreSections(observatoryPath: string) {
 export function MobileNav() {
   const navigate      = useNavigate();
   const location      = useLocation();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, logout } = useAuth();
   const { data: unreadData } = useUnreadCount();
   const { path: observatoryPath } = useObservatoryVersion();
   const [showMore, setShowMore]   = useState(false);
@@ -129,7 +130,7 @@ export function MobileNav() {
             position:             'fixed',
             inset:                0,
             zIndex:               'var(--z-modal)' as any,
-            background:           'rgba(4,7,16,0.98)',
+            background:           'var(--bg-page)',
             backdropFilter:       'blur(24px)',
             WebkitBackdropFilter: 'blur(24px)',
             overflowY:            'auto',
@@ -147,14 +148,14 @@ export function MobileNav() {
             <div>
               <div style={{
                 fontSize: 9, fontFamily: 'var(--font-mono)',
-                letterSpacing: '0.22em', color: '#E5A832',
+                letterSpacing: '0.22em', color: 'var(--amber)',
                 marginBottom: 4,
               }}>
                 AVERROW
               </div>
               <div style={{
                 fontSize: 18, fontWeight: 900,
-                color: '#fff',
+                color: 'var(--text-primary)',
               }}>
                 All Modules
               </div>
@@ -239,7 +240,7 @@ export function MobileNav() {
           {/* Logout */}
           <div style={{ padding: '8px 16px 16px' }}>
             <button
-              onClick={() => { /* logout handled by UserAvatar */ }}
+              onClick={() => { setShowMore(false); void logout(); }}
               style={{
                 width:        '100%',
                 padding:      '13px',
@@ -253,8 +254,13 @@ export function MobileNav() {
                 letterSpacing: '0.08em',
                 textTransform: 'uppercase',
                 cursor:       'pointer',
+                display:      'flex',
+                alignItems:   'center',
+                justifyContent: 'center',
+                gap:          8,
               }}
             >
+              <LogOut size={14} />
               Logout
             </button>
           </div>
@@ -268,11 +274,11 @@ export function MobileNav() {
         left:                 0,
         right:                0,
         zIndex:               'var(--z-sidebar)' as any,
-        background:           'rgba(4,7,16,0.94)',
+        background:           'var(--bg-sidebar)',
         backdropFilter:       'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
         borderTop:            '1px solid var(--border-base)',
-        boxShadow:            '0 -8px 32px rgba(0,0,0,0.6), inset 0 1px 0 var(--border-base)',
+        boxShadow:            'var(--card-shadow), inset 0 1px 0 var(--border-base)',
         display:              'flex',
         justifyContent:       'space-around',
         alignItems:           'center',
@@ -307,7 +313,7 @@ export function MobileNav() {
                   height:       16,
                   borderRadius: '50%',
                   background:   `linear-gradient(135deg, ${RED}, ${RED_DIM})`,
-                  border:       '2px solid rgba(4,7,16,0.9)',
+                  border:       '2px solid var(--bg-sidebar)',
                   fontSize:     8,
                   fontWeight:   900,
                   color:        '#fff',

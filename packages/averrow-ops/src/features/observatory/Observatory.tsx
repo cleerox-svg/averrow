@@ -465,7 +465,7 @@ export function Observatory() {
             right: 0,
             height: 36,
             zIndex: 20,
-            background: 'rgba(4,7,16,0.94)',
+            background: 'var(--bg-card-deep)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             borderTop: '1px solid var(--border-base)',
@@ -724,7 +724,7 @@ export function Observatory() {
               right: 0,
               zIndex: 20,
               bottom: 'calc(36px + 32px)' /* stats + ticker */,
-              background: 'rgba(4,7,16,0.94)',
+              background: 'var(--bg-card-deep)',
               backdropFilter: 'blur(20px)',
               WebkitBackdropFilter: 'blur(20px)',
               borderTop: '1px solid var(--border-base)',
@@ -753,7 +753,13 @@ export function Observatory() {
 
       {/* ─── Right sidebar panel (desktop only) ─── */}
       {!isMobile && showPanel && mapMode !== 'heatmap' && (
-        <div className="absolute top-0 right-0 bottom-[84px] z-20 w-80 bg-slate-950/88 backdrop-blur-2xl border-l border-white/[0.06] shadow-[-8px_0_40px_rgba(0,0,0,0.5),inset_1px_0_0_var(--border-base)] flex flex-col overflow-hidden">
+        <div
+          className="absolute top-0 right-0 bottom-[84px] z-20 w-80 backdrop-blur-2xl border-l border-white/[0.06] flex flex-col overflow-hidden"
+          style={{
+            background: 'var(--bg-card-deep)',
+            boxShadow: 'var(--card-shadow), inset 1px 0 0 var(--border-base)',
+          }}
+        >
           <div className="flex-1 overflow-y-auto">
           {/* Mode-aware header */}
           {mapMode === 'global' && (
@@ -766,7 +772,7 @@ export function Observatory() {
               <div className="px-4 pb-3">
                 <TopBrandsList period={period} />
               </div>
-              <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />
+              <div className="h-px mx-4 my-2" style={{ background: "linear-gradient(to right, transparent, var(--border-strong) 50%, transparent)" }} />
               <div className="px-4 py-2 flex items-center gap-2">
                 <div className="h-px flex-1 bg-white/[0.08]" />
                 <span className="text-[9px] font-mono tracking-[0.2em] text-white/50 uppercase shrink-0">Hosting Providers</span>
@@ -775,7 +781,7 @@ export function Observatory() {
               <div className="px-4 pb-3">
                 <TopProvidersList period={period} />
               </div>
-              <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />
+              <div className="h-px mx-4 my-2" style={{ background: "linear-gradient(to right, transparent, var(--border-strong) 50%, transparent)" }} />
               <div className="px-4 py-2 flex items-center gap-2">
                 <div className="h-px flex-1 bg-white/[0.08]" />
                 <span className="text-[9px] font-mono tracking-[0.2em] text-white/50 uppercase shrink-0">Agent Intelligence</span>
@@ -785,7 +791,7 @@ export function Observatory() {
                 <AgentAttribution agent="Observer + Sentinel" />
                 <AgentIntelFeed />
               </div>
-              <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />
+              <div className="h-px mx-4 my-2" style={{ background: "linear-gradient(to right, transparent, var(--border-strong) 50%, transparent)" }} />
               <div className="px-4 py-2 flex items-center gap-2">
                 <div className="h-px flex-1 bg-white/[0.08]" />
                 <span className="text-[9px] font-mono tracking-[0.2em] text-white/50 uppercase shrink-0">Active Operations</span>
@@ -794,7 +800,7 @@ export function Observatory() {
               <div className="px-4 pb-3">
                 <ActiveOperationsPanel />
               </div>
-              <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />
+              <div className="h-px mx-4 my-2" style={{ background: "linear-gradient(to right, transparent, var(--border-strong) 50%, transparent)" }} />
               <div className="px-4 py-2 flex items-center gap-2">
                 <div className="h-px flex-1 bg-white/[0.08]" />
                 <span className="text-[9px] font-mono tracking-[0.2em] text-white/50 uppercase shrink-0">Live Feed</span>
