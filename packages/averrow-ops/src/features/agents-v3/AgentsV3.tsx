@@ -23,7 +23,7 @@
 //   - Per-agent cost gauge — needs §11 budget block
 //   - Resource-graph chips — needs §22 static-analysis manifest
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAgents, useAgentDetail, useAgentHealth } from '@/hooks/useAgents';
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
@@ -38,6 +38,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { relativeTime } from '@/lib/time';
 import { Bot, AlertTriangle, ChevronDown, GitBranch, Shield } from 'lucide-react';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from 'recharts';
 import { AgentNetworkView } from './components/AgentNetworkView';
 
 // ─── Hierarchy: who manages who? ───────────────────────────────────
@@ -379,27 +382,113 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
   );
 }
 
-function HealthSparkline({ name }: { name: string }) {
+// Dual-area health chart — runs + outputs over the last 24 hourly
+// buckets. Mirrors v2's drill-down chart per operator preference;
+// gives more shape than the single-bar ActivitySparkline.
+function HealthChart({ name }: { name: string }) {
   const { data, isLoading } = useAgentHealth(name);
-  if (isLoading || !data) {
-    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading 7d health…</div>;
+
+  const chartData = useMemo(() => {
+    if (!data) return [];
+    const baseHour = new Date().getUTCHours();
+    return data.runs.map((runs, i) => ({
+      hour:    `${(baseHour + i) % 24}:00`,
+      runs,
+      errors:  data.errors[i] ?? 0,
+      outputs: data.outputs[i] ?? 0,
+    }));
+  }, [data]);
+
+  if (isLoading) {
+    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading 24h health…</div>;
   }
-  const total = data.runs.reduce((a, b) => a + b, 0);
-  if (total === 0) {
-    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No runs in last 7 days</div>;
+  if (!data || chartData.length === 0) {
+    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No runs in last 24 hours</div>;
   }
+
   return (
-    <div className="flex items-end gap-3">
-      <div>
-        <div className="font-mono text-[9px] tracking-[0.15em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>7d Runs</div>
-        <ActivitySparkline data={data.runs} color="var(--amber)" width={140} height={32} />
+    <div className="w-full">
+      <ResponsiveContainer width="100%" height={180}>
+        <AreaChart data={chartData}>
+          <defs>
+            <linearGradient id="agents-v3-runsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="var(--amber)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="agents-v3-outputsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+              <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="agents-v3-errorsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis
+            dataKey="hour"
+            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            axisLine={false}
+            tickLine={false}
+            interval="preserveStartEnd"
+            minTickGap={28}
+          />
+          <YAxis hide />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'var(--bg-elevated)',
+              border:           '1px solid var(--border-base)',
+              borderRadius:     8,
+              fontSize:         11,
+              fontFamily:       'var(--font-mono)',
+              color:            'var(--text-primary)',
+            }}
+            labelStyle={{ color: 'var(--text-tertiary)' }}
+            cursor={{ stroke: 'var(--border-strong)', strokeWidth: 1 }}
+          />
+          <Area
+            type="monotone"
+            dataKey="runs"
+            stroke="var(--amber)"
+            strokeWidth={1.5}
+            fill="url(#agents-v3-runsGrad)"
+            name="Runs"
+          />
+          <Area
+            type="monotone"
+            dataKey="outputs"
+            stroke="#22D3EE"
+            strokeWidth={1.5}
+            fill="url(#agents-v3-outputsGrad)"
+            name="Outputs"
+          />
+          {data.errors.some(e => e > 0) && (
+            <Area
+              type="monotone"
+              dataKey="errors"
+              stroke="var(--sev-high)"
+              strokeWidth={1.5}
+              fill="url(#agents-v3-errorsGrad)"
+              name="Errors"
+            />
+          )}
+        </AreaChart>
+      </ResponsiveContainer>
+      <div className="flex items-center gap-3 mt-1 font-mono text-[9px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--amber)', opacity: 0.6 }} />
+          Runs
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: '#22D3EE', opacity: 0.6 }} />
+          Outputs
+        </span>
+        {data.errors.some(e => e > 0) && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--sev-high)', opacity: 0.6 }} />
+            Errors
+          </span>
+        )}
       </div>
-      {data.errors.some(e => e > 0) && (
-        <div>
-          <div className="font-mono text-[9px] tracking-[0.15em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>7d Errors</div>
-          <ActivitySparkline data={data.errors} color="var(--sev-high)" width={140} height={32} />
-        </div>
-      )}
     </div>
   );
 }
@@ -445,9 +534,9 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
         <div className="space-y-4">
           <div>
             <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              Health · 7 day window
+              Health · 24h runs · outputs · errors
             </div>
-            <HealthSparkline name={agent.name} />
+            <HealthChart name={agent.name} />
           </div>
           {detail?.stats && (
             <div className="grid grid-cols-3 gap-3">
@@ -555,9 +644,78 @@ function SupervisorSection({
   );
 }
 
+// View mode — grid (cards) vs network (mind-map). Persisted per-device
+// so the operator's preference sticks across reloads. Local to /agents-v3.
+type ViewMode = 'grid' | 'network';
+const VIEW_MODE_KEY = 'averrow.agents-v3-view-mode';
+
+function readViewMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    return v === 'network' ? 'network' : 'grid';
+  } catch {
+    return 'grid';
+  }
+}
+
+function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  const OPTIONS: Array<{ id: ViewMode; label: string }> = [
+    { id: 'grid',    label: 'Grid'    },
+    { id: 'network', label: 'Network' },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Agents view mode"
+      className="inline-flex rounded-md overflow-hidden"
+      style={{
+        border:     '1px solid var(--border-base)',
+        background: 'var(--bg-input)',
+      }}
+    >
+      {OPTIONS.map(opt => {
+        const active = opt.id === value;
+        return (
+          <button
+            key={opt.id}
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(opt.id)}
+            className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase transition-colors"
+            style={{
+              background: active ? 'var(--blue)' : 'transparent',
+              color:      active ? '#0A0F1C' : 'var(--text-secondary)',
+              fontWeight: active ? 600 : 500,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AgentsV3() {
   const { data: agents = [], isLoading } = useAgents();
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [viewMode, setViewModeState] = useState<ViewMode>(readViewMode);
+
+  function setViewMode(v: ViewMode) {
+    setViewModeState(v);
+    try { localStorage.setItem(VIEW_MODE_KEY, v); } catch {}
+  }
+
+  // Cross-tab sync: another tab flipping the toggle updates this one too.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== VIEW_MODE_KEY) return;
+      const next = e.newValue;
+      if (next === 'grid' || next === 'network') setViewModeState(next);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   if (isLoading) return <CardGridLoader count={6} />;
 
@@ -595,6 +753,7 @@ export function AgentsV3() {
         subtitle={`v3 preview · ${agents.length} agents · ${supervisors.length} supervisor`}
         actions={
           <div className="flex items-center gap-3">
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
             <VersionToggle surface="agents" ariaLabel="Agents page version" />
             <LiveIndicator />
           </div>
@@ -621,7 +780,7 @@ export function AgentsV3() {
           subtitle="No AI agents are currently registered."
           variant="error"
         />
-      ) : (
+      ) : viewMode === 'grid' ? (
         <>
           <SupervisorSection
             supervisors={supervisors}
@@ -652,14 +811,20 @@ export function AgentsV3() {
             );
           })}
         </>
-      )}
-
-      {agents.length > 0 && (
-        <NetworkSection
-          agents={agents}
-          selectedAgent={selectedAgent}
-          onSelect={handleSelect}
-        />
+      ) : (
+        <>
+          {/* Network view: detail panel renders above the network so
+              clicking a node still surfaces context without scrolling. */}
+          {selectedAgent && (() => {
+            const sel = agents.find(a => a.name === selectedAgent);
+            return sel ? <AgentDetailPanelV3 agent={sel} /> : null;
+          })()}
+          <NetworkSection
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelect={handleSelect}
+          />
+        </>
       )}
     </div>
   );
