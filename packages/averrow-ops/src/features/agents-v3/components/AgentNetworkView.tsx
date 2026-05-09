@@ -1,35 +1,14 @@
-// AgentNetworkView v3 — zoomable + pannable full-mesh map.
+// AgentNetworkView v3 — zoomable + pannable full-mesh map with
+// upstream feeds layer.
 //
-// FUTURE: feeds-to-agents layer (planned, blocked on /feeds-v3 readiness).
-//
-// Threat-intel feeds (CertStream, OTX, URLhaus, etc.) are
-// upstream of `sentinel` — they ingest raw events that Sentinel
-// classifies into the threats table. They aren't AgentModule
-// instances today, so they don't appear in the AGENT_METADATA
-// registry or the trigger-chain encoded below.
-//
-// When /feeds-v3 lands and we have a stable feed registry to read
-// from, extend this view with a "Feeds" cluster to the LEFT of
-// the Intelligence cluster, producing edges that flow:
+// Includes the threat-intel feeds cluster on the left edge (added
+// 2026-05). Each enabled feed renders as a small node; edges flow:
 //
 //   [Feed sources] → sentinel → cartographer → nexus → …
 //
-// Implementation plan:
-//   1. Read a useFeeds() hook returning { id, name, status,
-//      last_pull_at, records_ingested_24h }
-//   2. Render each feed as a smaller node (radius ~14px) with a
-//      distinct visual style (square / different fill) so they
-//      read as a different cohort vs. the AI agents
-//   3. One edge per active feed → sentinel
-//   4. Pulse edge when feed.last_pull_at is within FLY_WINDOW_MS
-//   5. Comm burst when feed pulled AND sentinel ran within
-//      BURST_WINDOW_MS (recently-ingested batch consumed)
-//   6. Position Feeds cluster x:0-80, y:200-580 — the existing
-//      Intelligence cluster shifts right by ~80px, viewBox bumps
-//      to 1360 wide
-//
-// Until that lands, the Network View represents the AI-agent
-// layer of the mesh (40 agents, no feed visibility).
+// Same live-signal vocabulary applies to feed → sentinel edges:
+// pulse when the feed pulled in the last 10 min, comm burst when
+// both feed AND sentinel ran in the last 60s.
 //
 // Iteration 2 over the trigger-chain-only first cut. Now shows ALL
 // 40 agents arranged in hand-positioned neighborhoods by category:
@@ -58,14 +37,22 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Agent } from '@/hooks/useAgents';
+import { useFeeds } from '@/hooks/useFeeds';
+import type { FeedOverview } from '@/hooks/useFeeds';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { AgentIcon } from '@/components/brand/AgentIcon';
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
-const VIEWBOX_W = 1280;
+// Negative-X origin for the feeds cluster — keeps every existing
+// agent LAYOUT entry stable. The visible viewport spans x = -120
+// to (VIEWBOX_W - 120) so feeds at x = -100..-20 land in the
+// new left margin.
+const VIEWBOX_X = -120;
+const VIEWBOX_W = 1400;
 const VIEWBOX_H = 780;
 const NODE_R    = 22;
 const ICON_SIZE = 24;
+const FEED_R    = 11;          // smaller — feeds are context, not focal
 const FLY_WINDOW_MS     = 10 * 60 * 1000; // 10-min "in flight" window
 const RUNNING_WINDOW_MS = 60 * 1000;       // 60s = "running right now"
 const BURST_WINDOW_MS   = 60 * 1000;       // 60s correlation window for bursts
@@ -155,11 +142,21 @@ const SUPERVISION_TARGETS: string[] = [
 
 // ─── Headers labelling each cluster region ────────────────────────
 const CLUSTER_HEADERS: Array<{ x: number; y: number; label: string }> = [
-  { x: 100, y: 130, label: 'Intelligence' },
-  { x: 100, y: 440, label: 'Surveillance' },
-  { x: 920, y:  90, label: 'Platform Ops' },
-  { x: 900, y: 450, label: 'Synchronous AI' },
+  { x: -100, y: 150, label: 'Feeds' },
+  { x:  100, y: 130, label: 'Intelligence' },
+  { x:  100, y: 440, label: 'Surveillance' },
+  { x:  920, y:  90, label: 'Platform Ops' },
+  { x:  900, y: 450, label: 'Synchronous AI' },
 ];
+
+// Compact human-readable status used in the feed-node tooltip.
+function humanFeedStatus(f: FeedOverview): string {
+  if (f.paused_reason === 'auto:consecutive_failures') return `Auto-paused (${f.consecutive_failures} failures)`;
+  if (f.paused_reason === 'manual') return 'Paused (manual)';
+  if (!f.enabled) return 'Disabled';
+  if ((f.consecutive_failures ?? 0) >= 3) return `Failing (${f.consecutive_failures} consecutive)`;
+  return 'Active';
+}
 
 interface AgentNetworkViewProps {
   agents:        Agent[];
@@ -174,6 +171,35 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     return m;
   }, [agents]);
 
+  // ─── Upstream feeds layer ─────────────────────────────────────
+  // Read the feed registry directly inside the network view.
+  // Only enabled feeds participate — paused / disabled feeds
+  // would clutter the picture without adding signal.
+  const { data: feedsData = [] } = useFeeds();
+  const visibleFeeds = useMemo(
+    () => feedsData.filter(f => Boolean(f.enabled)),
+    [feedsData]
+  );
+  // 2-column grid in the negative-x margin, sized to the feed count.
+  const FEED_LAYOUT = useMemo(() => {
+    const map: Record<string, NodePos> = {};
+    const COLS = 2;
+    const COL_X = [-100, -50];
+    const TOP_Y = 180;
+    const ROW_H = 38;
+    visibleFeeds.forEach((f, i) => {
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      map[f.feed_name] = { x: COL_X[col]!, y: TOP_Y + row * ROW_H };
+    });
+    return map;
+  }, [visibleFeeds]);
+  const feedByName = useMemo(() => {
+    const m = new Map<string, FeedOverview>();
+    for (const f of visibleFeeds) m.set(f.feed_name, f);
+    return m;
+  }, [visibleFeeds]);
+
   // ─── Zoom + pan via SVG viewBox manipulation ─────────────────
   // Wheel zoom centered on cursor; click-drag to pan; +/-/reset
   // controls in the top-right corner. SVG-native — text stays
@@ -181,7 +207,10 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan]   = useState({ x: 0, y: 0 });
+  // Pan default starts at VIEWBOX_X so the negative-x feeds cluster
+  // is visible on first load — without this the viewport shows
+  // viewBox 0 0 ... and the feeds would be off-screen left.
+  const [pan, setPan]   = useState({ x: VIEWBOX_X, y: 0 });
   const isPanning  = useRef(false);
   const panOrigin  = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const panMoved   = useRef(false);
@@ -255,7 +284,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
 
   function zoomIn()  { setZoom(z => clamp(z * 1.20, ZOOM_MIN, ZOOM_MAX)); }
   function zoomOut() { setZoom(z => clamp(z / 1.20, ZOOM_MIN, ZOOM_MAX)); }
-  function resetView() { setZoom(1); setPan({ x: 0, y: 0 }); }
+  function resetView() { setZoom(1); setPan({ x: VIEWBOX_X, y: 0 }); }
 
   const vbW = VIEWBOX_W / zoom;
   const vbH = VIEWBOX_H / zoom;
@@ -432,6 +461,172 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               strokeDasharray="3 4"
               opacity={supervisionOpacity(target)}
             />
+          );
+        })}
+
+        {/* Feed → Sentinel edges (upstream ingest layer) */}
+        {visibleFeeds.map(feed => {
+          const fpos = FEED_LAYOUT[feed.feed_name];
+          const tpos = LAYOUT.sentinel;
+          if (!fpos || !tpos) return null;
+          const lastCompletedMs = feed.last_completed
+            ? Date.now() - new Date(feed.last_completed).getTime()
+            : Infinity;
+          const sentinelAgent = byName.get('sentinel');
+          const sentinelRanRecently =
+            sentinelAgent?.last_run_at &&
+            Date.now() - new Date(sentinelAgent.last_run_at).getTime() < BURST_WINDOW_MS;
+          const pulsing  = lastCompletedMs < FLY_WINDOW_MS;
+          const bursting = lastCompletedMs < BURST_WINDOW_MS && sentinelRanRecently;
+          // Edges fade when the user has selected an agent that
+          // isn't sentinel (the only feed-edge target).
+          const opacity =
+            !selectedAgent      ? 0.45
+            : selectedAgent === 'sentinel' ? 1
+            :                                0.08;
+          // Curve from feed (left, small) to sentinel (right, big).
+          // Trim endpoints by node radii so arrowheads don't overlap.
+          const dx = tpos.x - fpos.x;
+          const dy = tpos.y - fpos.y;
+          const len = Math.hypot(dx, dy);
+          const ux = dx / len;
+          const uy = dy / len;
+          const x1 = fpos.x + ux * FEED_R;
+          const y1 = fpos.y + uy * FEED_R;
+          const x2 = tpos.x - ux * (NODE_R + 4);
+          const y2 = tpos.y - uy * (NODE_R + 4);
+          return (
+            <g key={`feed-edge-${feed.feed_name}`} opacity={opacity}>
+              <line
+                x1={x1} y1={y1} x2={x2} y2={y2}
+                stroke={pulsing ? 'var(--amber)' : 'var(--text-tertiary)'}
+                strokeWidth={pulsing ? 1.6 : 0.9}
+                strokeDasharray={pulsing ? undefined : '2 3'}
+                markerEnd={pulsing ? 'url(#arrow-amber)' : 'url(#arrow)'}
+              />
+              {pulsing && (
+                <line
+                  x1={x1} y1={y1} x2={x2} y2={y2}
+                  stroke="var(--amber)"
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  opacity={0.20}
+                >
+                  <animate
+                    attributeName="opacity"
+                    values="0.05; 0.40; 0.05"
+                    dur="2s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+              )}
+              {bursting && (
+                <circle r={3} fill="var(--amber)">
+                  <animateMotion
+                    dur="1.4s"
+                    repeatCount="indefinite"
+                    path={`M ${x1} ${y1} L ${x2} ${y2}`}
+                  />
+                  <animate
+                    attributeName="opacity"
+                    values="0.0; 1.0; 1.0; 0.0"
+                    keyTimes="0; 0.15; 0.85; 1"
+                    dur="1.4s"
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Feed nodes (small circles + labels in negative-x margin) */}
+        {visibleFeeds.map(feed => {
+          const pos = FEED_LAYOUT[feed.feed_name];
+          if (!pos) return null;
+          const op = !selectedAgent ? 1 : selectedAgent === 'sentinel' ? 1 : 0.30;
+          const ageMs = feed.last_completed
+            ? Date.now() - new Date(feed.last_completed).getTime()
+            : Infinity;
+          const recentlyPulled = ageMs < FLY_WINDOW_MS;
+          const failing = (feed.consecutive_failures ?? 0) >= 3;
+          const tint = failing ? 'var(--sev-high)' : 'var(--blue)';
+          const title = `${feed.display_name || feed.feed_name}\n` +
+                        `${humanFeedStatus(feed)}\n` +
+                        `${feed.total_ingested.toLocaleString()} ingested · ${feed.total_pulls.toLocaleString()} pulls`;
+          return (
+            <g
+              key={`feed-${feed.feed_name}`}
+              opacity={op}
+              transform={`translate(${pos.x},${pos.y})`}
+            >
+              <title>{title}</title>
+              {/* Failure ring */}
+              {failing && (
+                <circle
+                  r={FEED_R + 3}
+                  fill="none"
+                  stroke="var(--sev-critical)"
+                  strokeWidth={1.2}
+                  opacity={0.85}
+                />
+              )}
+              {/* Recent-pull pulse halo */}
+              {recentlyPulled && !failing && (
+                <circle
+                  r={FEED_R + 2}
+                  fill="none"
+                  stroke={tint}
+                  strokeWidth={1.2}
+                  opacity={0.6}
+                >
+                  <animate
+                    attributeName="r"
+                    values={`${FEED_R}; ${FEED_R + 6}; ${FEED_R}`}
+                    dur="1.8s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="opacity"
+                    values="0.6; 0.0; 0.6"
+                    dur="1.8s"
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              )}
+              <circle
+                r={FEED_R}
+                fill={tint}
+                fillOpacity={0.18}
+                stroke={tint}
+                strokeWidth={1.2}
+              />
+              {/* No icon — too small to render. Show first letter
+                  centered for at-a-glance identification. */}
+              <text
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontFamily="var(--font-mono)"
+                fontSize={9}
+                fontWeight={700}
+                fill={tint}
+              >
+                {(feed.display_name || feed.feed_name).slice(0, 2).toUpperCase()}
+              </text>
+              {/* Feed name to the left so it doesn't clash with the
+                  sentinel label. Truncated at 12 chars. */}
+              <text
+                x={-(FEED_R + 4)}
+                y={3}
+                textAnchor="end"
+                fontFamily="var(--font-mono)"
+                fontSize={8}
+                fill="var(--text-tertiary)"
+                style={{ letterSpacing: '0.04em' }}
+              >
+                {(feed.display_name || feed.feed_name).slice(0, 12)}
+              </text>
+            </g>
           );
         })}
 
@@ -615,6 +810,10 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--amber)' }} />
           Supervisor
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--blue)', opacity: 0.6 }} />
+          Feed (upstream)
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-6 h-px" style={{ background: 'var(--text-tertiary)' }} />
