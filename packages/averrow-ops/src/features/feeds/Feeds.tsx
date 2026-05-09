@@ -16,6 +16,7 @@ import {
   PageHeader,
   Button,
 } from '@/design-system/components';
+import { VersionToggle } from '@/components/ui/VersionToggle';
 
 /* ─── Helpers ─── */
 
@@ -911,7 +912,12 @@ export function Feeds() {
       <PageHeader
         title="Threat Feeds"
         subtitle={`${allFeeds.length} feed configurations · Threat intelligence ingestion`}
-        actions={<TriggerAllButton />}
+        actions={
+          <div className="flex items-center gap-3">
+            <VersionToggle surface="feeds" ariaLabel="Feeds page version" />
+            <TriggerAllButton />
+          </div>
+        }
       />
 
       {/* 1. Header stats */}

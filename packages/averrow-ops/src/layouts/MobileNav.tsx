@@ -30,7 +30,7 @@ function buildNavItems(observatoryPath: string): NavItem[] {
   ];
 }
 
-function buildMoreSections(observatoryPath: string, agentsPath: string) {
+function buildMoreSections(observatoryPath: string, agentsPath: string, feedsPath: string) {
   return [
   {
     label: 'Intelligence',
@@ -59,7 +59,7 @@ function buildMoreSections(observatoryPath: string, agentsPath: string) {
     label: 'Platform',
     items: [
       { icon: '🤖', label: 'Agents',    path: agentsPath },
-      { icon: '📡', label: 'Feeds',     path: '/feeds' },
+      { icon: '📡', label: 'Feeds',     path: feedsPath },
       { icon: '📈', label: 'Metrics',   path: '/admin/metrics' },
       { icon: '📊', label: 'Dashboard', path: '/admin' },
       { icon: '👥', label: 'Team',      path: '/admin/users' },
@@ -83,6 +83,7 @@ export function MobileNav() {
   const { data: unreadData } = useUnreadCount();
   const { path: observatoryPath } = useObservatoryVersion();
   const { path: agentsPath } = useVersionToggle('agents');
+  const { path: feedsPath }  = useVersionToggle('feeds');
   const [showMore, setShowMore]   = useState(false);
 
   const NAV_ITEMS = buildNavItems(observatoryPath);
@@ -110,7 +111,7 @@ export function MobileNav() {
   }
 
   // Add Organizations for super admins only
-  const sections = buildMoreSections(observatoryPath, agentsPath).map(s =>
+  const sections = buildMoreSections(observatoryPath, agentsPath, feedsPath).map(s =>
     s.label === 'Platform' && isSuperAdmin
       ? {
           ...s,

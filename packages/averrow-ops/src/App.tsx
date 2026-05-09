@@ -26,6 +26,7 @@ const Takedowns = React.lazy(() => import('@/features/takedowns/Takedowns').then
 const SpamTrap = React.lazy(() => import('@/features/spam-trap/SpamTrap').then(m => ({ default: m.SpamTrap })));
 const Alerts = React.lazy(() => import('@/features/alerts/Alerts').then(m => ({ default: m.Alerts })));
 const Feeds = React.lazy(() => import('@/features/feeds/Feeds').then(m => ({ default: m.Feeds })));
+const FeedsV3 = React.lazy(() => import('@/features/feeds-v3/FeedsV3').then(m => ({ default: m.FeedsV3 })));
 const AdminDashboard = React.lazy(() => import('@/features/admin/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const Organization = React.lazy(() => import('@/features/settings/Organization').then(m => ({ default: m.Organization })));
 const SuperAdminOrgs = React.lazy(() => import('@/features/admin/SuperAdminOrgs').then(m => ({ default: m.SuperAdminOrgs })));
@@ -152,6 +153,7 @@ export default function App() {
         <Route path="alerts" element={lazyRoute(<Alerts />)} />
         <Route path="leads" element={lazyRoute(<Leads />)} />
         <Route path="feeds" element={lazyRoute(<Feeds />)} />
+        <Route path="feeds-v3" element={lazyRoute(<FeedsV3 />)} />
         <Route path="admin" element={lazyRoute(<AdminDashboard />)} />
         <Route path="admin/metrics" element={lazyRoute(<Metrics />)} />
         <Route path="admin/scan-leads" element={<Navigate to="/leads?view=scan" replace />} />
