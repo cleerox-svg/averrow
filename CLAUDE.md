@@ -346,6 +346,58 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 - **Every new endpoint must be added to `docs/API_REFERENCE.md`**
 - Never duplicate an existing endpoint — check the reference first
 
+### RBAC — global vs org roles
+
+Two independent role systems coexist:
+
+**Global roles** (`users.role`, type `UserRole` in `src/types.ts`):
+
+```
+super_admin  level 5  — full platform access
+admin        level 4  — most platform admin actions
+analyst      level 3  — Averrow SOC: handles alerts/takedowns/incidents
+sales        level 3  — read customer data + edit pricing + send invites
+support      level 3  — read customer data + alerts (no edits)
+billing      level 3  — Stripe + pricing only
+client       level 1  — customer (lives at /tenant; never reaches /v2)
+```
+
+The four sub-roles (analyst / sales / support / billing) all sit
+at level 3 because hierarchy can't capture their differentiated
+permission sets. Use `roleHasPermission(role, permission)` from
+`lib/role-permissions.ts` when access decisions depend on WHAT
+the user can DO, not just whether they're staff.
+
+**Permission flags** (`StaffPermission`):
+`read_customers`, `edit_pricing`, `edit_alerts`, `manage_takedowns`,
+`manage_invites`, `view_billing`, `view_audit`. The matrix lives
+in `lib/role-permissions.ts` and is the single source of truth.
+
+**Middleware guards** (`src/middleware/auth.ts`):
+- `requireAuth` — any authenticated user
+- `requireStaff` — any non-client (analyst, sales, support, billing,
+  admin, super_admin)
+- `requireAdmin` — admin or super_admin
+- `requireSuperAdmin` — super_admin only
+- `requireSales` / `requireSupport` / `requireBilling` — specialty
+  sub-role guards (super_admin + admin always satisfy any sub-role
+  guard since they grant everything)
+
+**Org-level roles** (`org_members.role`) are a SEPARATE namespace:
+`viewer < analyst < admin < owner`. The string `analyst` exists in
+both — a global `analyst` is an Averrow SOC analyst, an org
+`analyst` is a customer's internal investigator. The codebase
+disambiguates by which table the role is read from. When grepping,
+context is the column name, not the value.
+
+**Adding a new global role**:
+1. Add to `UserRole` in `src/types.ts`
+2. Set its hierarchy level in `middleware/auth.ts ROLE_HIERARCHY`
+3. Add a row to `ROLE_PERMISSIONS` in `lib/role-permissions.ts`
+4. Add the literal to `VALID_ROLES` in `handlers/invites.ts`
+5. Update this section + `docs/API_REFERENCE.md` if any new
+   endpoints gate on the role
+
 ### Standard response format:
 ```typescript
 // Success

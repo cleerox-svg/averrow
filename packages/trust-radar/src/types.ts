@@ -102,7 +102,38 @@ export type FeedHealthStatus = "healthy" | "degraded" | "down" | "disabled";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 export type Grade = "A" | "B" | "C" | "D" | "F";
 
-export type UserRole = "super_admin" | "admin" | "analyst" | "client";
+/**
+ * Global user roles. NOT to be confused with org-level roles
+ * (viewer / analyst / admin / owner) which exist independently
+ * inside org_members.role for customer org membership semantics.
+ *
+ * The global `analyst` role (Averrow internal SOC analyst) is
+ * distinct from the org-level `analyst` role (a customer's
+ * internal investigator) — same string, different scope. The
+ * codebase always disambiguates by which table/column the role
+ * is read from: `users.role` = global, `org_members.role` = org.
+ *
+ * Hierarchy (for `requireRole(min)` checks) — see
+ * middleware/auth.ts ROLE_HIERARCHY:
+ *   super_admin (5) > admin (4) > {analyst, sales, support,
+ *   billing} (3) > client (1)
+ *
+ * The Averrow-staff roles (analyst, sales, support, billing) all
+ * sit at level 3 because hierarchy can't capture their
+ * differentiated permission sets — a sales user can edit pricing
+ * overrides but not handle alerts; an analyst can do the
+ * opposite. Use the `roleHasPermission` helper from
+ * lib/role-permissions.ts when permission semantics matter
+ * beyond "is this user staff or a customer".
+ */
+export type UserRole =
+  | "super_admin"   // full platform access
+  | "admin"         // platform admin (everything except super_admin-only actions)
+  | "analyst"       // Averrow SOC analyst — read intel, handle alerts/takedowns/incidents
+  | "sales"         // Averrow sales — read customer data, edit pricing overrides, send invites
+  | "support"       // Averrow customer support — read customer data + alerts, no edits
+  | "billing"       // Averrow finance — Stripe + pricing only, no customer ops access
+  | "client";       // customer (lives in /tenant; never reaches /v2)
 export type UserStatus = "active" | "suspended" | "deactivated";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 

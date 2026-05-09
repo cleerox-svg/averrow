@@ -7,7 +7,9 @@ import { sendInviteEmail } from "../lib/invite-email";
 import { audit } from "../lib/audit";
 import type { Env, UserRole } from "../types";
 
-const VALID_ROLES: UserRole[] = ["super_admin", "admin", "analyst", "client"];
+const VALID_ROLES: UserRole[] = [
+  "super_admin", "admin", "analyst", "sales", "support", "billing", "client",
+];
 const INVITE_EXPIRY_HOURS = 72;
 
 // ─── Create invitation (admin/super_admin only) ─────────────────

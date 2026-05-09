@@ -70,13 +70,26 @@ export async function requireAuth(
 }
 
 /**
- * Role hierarchy: super_admin > admin > analyst > client
+ * Role hierarchy used by `requireRole(min)` checks.
+ *
+ *   super_admin (5)
+ *   admin       (4)
+ *   {analyst, sales, support, billing} all share level (3) — the
+ *     "staff" tier. Hierarchy can't capture their differentiated
+ *     permission sets (analyst handles alerts but not pricing;
+ *     sales edits pricing but not alerts), so callers needing
+ *     finer control should use `roleHasPermission()` from
+ *     lib/role-permissions.ts.
+ *   client      (1) — customer; never satisfies a staff guard.
  */
 const ROLE_HIERARCHY: Record<UserRole, number> = {
-  super_admin: 4,
-  admin: 3,
-  analyst: 2,
-  client: 1,
+  super_admin: 5,
+  admin:       4,
+  analyst:     3,
+  sales:       3,
+  support:     3,
+  billing:     3,
+  client:      1,
 };
 
 /**
@@ -115,9 +128,10 @@ export async function requireSuperAdmin(request: Request, env: Env): Promise<Aut
 
 /**
  * Shorthand: require any Averrow staff role (super_admin, admin,
- * analyst). Anchors the v3 Phase D D2c rebadge gate — staff-only
- * back-office routes use this guard so customer-tenant users
- * (role='client') get a 403 instead of inadvertent ops access.
+ * analyst, sales, support, billing). Anchors the v3 Phase D D2c
+ * rebadge gate — staff-only back-office routes use this guard so
+ * customer-tenant users (role='client') get a 403 instead of
+ * inadvertent ops access.
  *
  * For per-route adoption: replace `requireAuth` with `requireStaff`
  * on any route that should not be reachable by customers. Tenant
@@ -126,7 +140,41 @@ export async function requireSuperAdmin(request: Request, env: Env): Promise<Aut
  * tenant or admin-only surfaces.
  */
 export async function requireStaff(request: Request, env: Env): Promise<AuthContext | Response> {
-  return requireRole("analyst")(request, env);
+  // Any role at hierarchy level 3+ qualifies — analyst, sales,
+  // support, billing, admin, super_admin. Excludes only 'client'.
+  return requireRole("analyst", "sales", "support", "billing")(request, env);
+}
+
+/**
+ * Permission-flavoured guards for the four staff sub-roles. These
+ * collapse to a single role check today but exist as named helpers
+ * so call sites read intent ("require sales access") rather than
+ * the literal role list. As permission semantics evolve into a
+ * finer-grained matrix, these functions become the single
+ * call-site each route needs to update.
+ *
+ * Convention: super_admin + admin always satisfy any specialty
+ * guard (they can do everything a sub-role can do).
+ */
+export async function requireSales(request: Request, env: Env): Promise<AuthContext | Response> {
+  const ctx = await requireAuth(request, env);
+  if (!isAuthContext(ctx)) return ctx;
+  if (ctx.role === "super_admin" || ctx.role === "admin" || ctx.role === "sales") return ctx;
+  return json({ success: false, error: "Forbidden: requires sales role or higher" }, 403, request.headers.get("Origin"));
+}
+
+export async function requireSupport(request: Request, env: Env): Promise<AuthContext | Response> {
+  const ctx = await requireAuth(request, env);
+  if (!isAuthContext(ctx)) return ctx;
+  if (ctx.role === "super_admin" || ctx.role === "admin" || ctx.role === "support" || ctx.role === "analyst") return ctx;
+  return json({ success: false, error: "Forbidden: requires support role or higher" }, 403, request.headers.get("Origin"));
+}
+
+export async function requireBilling(request: Request, env: Env): Promise<AuthContext | Response> {
+  const ctx = await requireAuth(request, env);
+  if (!isAuthContext(ctx)) return ctx;
+  if (ctx.role === "super_admin" || ctx.role === "admin" || ctx.role === "billing") return ctx;
+  return json({ success: false, error: "Forbidden: requires billing role or higher" }, 403, request.headers.get("Origin"));
 }
 
 export function isAuthContext(val: AuthContext | Response): val is AuthContext {
