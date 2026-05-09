@@ -98,6 +98,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const { path: observatoryPath } = useObservatoryVersion();
   const { path: agentsPath } = useVersionToggle('agents');
   const { path: feedsPath }  = useVersionToggle('feeds');
+  const { path: metricsPath } = useVersionToggle('metrics');
   const location = useLocation();
 
   useEffect(() => {
@@ -148,7 +149,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       items: [
         { label: 'Agents',       path: agentsPath,           icon: Cpu, matchPrefixes: ['/agents', '/agents-v3'] },
         { label: 'Feeds',        path: feedsPath,            icon: Rss, matchPrefixes: ['/feeds', '/feeds-v3'] },
-        { label: 'Metrics',      path: '/admin/metrics',     icon: BarChart3 },
+        { label: 'Metrics',      path: metricsPath,          icon: BarChart3, matchPrefixes: ['/admin/metrics', '/admin/metrics-v3'] },
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard, exact: true },
         { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
         ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),

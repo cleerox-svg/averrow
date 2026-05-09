@@ -15,6 +15,7 @@ import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAgents } from '@/hooks/useAgents';
 import { PageHeader, Tabs } from '@/design-system/components';
+import { VersionToggle } from '@/components/ui/VersionToggle';
 import {
   PipelineAutomationSection,
 } from './metrics/PipelineAutomation';
@@ -69,6 +70,7 @@ export function Metrics() {
       <PageHeader
         title="Metrics"
         subtitle="Platform operations · Pipelines · D1 budget · AI spend · Geo coverage · Feed health"
+        actions={<VersionToggle surface="metrics" ariaLabel="Metrics page version" />}
       />
 
       <Tabs
