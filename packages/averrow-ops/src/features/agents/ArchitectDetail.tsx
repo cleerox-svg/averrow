@@ -293,7 +293,7 @@ export function ArchitectDetail() {
       <Card variant="base" padding={0}>
         <div
           className="flex items-center justify-between px-5 py-3"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ borderBottom: '1px solid var(--border-base)' }}
         >
           <div
             className="font-mono text-[10px] uppercase tracking-[0.18em]"
@@ -388,9 +388,9 @@ export function ArchitectDetail() {
             <div
               className="rounded-md px-3 py-2 font-mono text-[11px]"
               style={{
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--border-base)',
                 color: 'var(--text-secondary)',
-                border: '1px solid rgba(255,255,255,0.06)',
+                border: '1px solid var(--border-base)',
               }}
             >
               {latest.output.summary}
@@ -417,8 +417,8 @@ export function ArchitectDetail() {
                     key={label}
                     className="rounded-md p-3"
                     style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      background: 'var(--border-base)',
+                      border: '1px solid var(--border-base)',
                     }}
                   >
                     <div
@@ -500,7 +500,7 @@ export function ArchitectDetail() {
               >
                 <div
                   className="flex flex-shrink-0 items-center justify-between px-5 py-3"
-                  style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+                  style={{ borderBottom: '1px solid var(--border-base)' }}
                 >
                   <div
                     className="font-mono text-[11px] uppercase tracking-[0.18em]"

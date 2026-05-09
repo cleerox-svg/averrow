@@ -31,7 +31,7 @@ export function ObservatoryVersionToggle() {
       aria-label="Observatory engine"
       className="inline-flex rounded-md overflow-hidden"
       style={{
-        border: '1px solid rgba(255,255,255,0.10)',
+        border: '1px solid var(--border-base)',
         background: 'rgba(0,0,0,0.30)',
       }}
     >

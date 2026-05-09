@@ -160,7 +160,7 @@ function FeedRow({ row }: { row: FeedFailureRow }) {
             style={{
               width: 50,
               height: 4,
-              background: 'rgba(255,255,255,0.06)',
+              background: 'var(--border-base)',
             }}
             title={`${row.consecutive_failures} consecutive failures · ${row.pct_to_auto_pause}% to auto-pause threshold (${row.threshold})`}
           >

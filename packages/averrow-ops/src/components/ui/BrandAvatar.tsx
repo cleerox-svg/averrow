@@ -51,7 +51,7 @@ export function BrandAvatar({ name, color, dimColor, faviconUrl }: BrandAvatarPr
         border: `1px solid ${color}70`,
         boxShadow: [
           '0 4px 14px rgba(0,0,0,0.70)',
-          'inset 0 1px 0 rgba(255,255,255,0.28)',
+          'inset 0 1px 0 var(--text-muted)',
           'inset 0 -1px 0 rgba(0,0,0,0.45)',
           `0 0 18px ${color}35`,
         ].join(','),

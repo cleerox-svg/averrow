@@ -570,7 +570,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
               <div
                 key={lead.id}
                 className="flex items-center justify-between py-2 px-3 rounded-lg"
-                style={{ background: 'var(--bg-page)', border: '1px solid rgba(255,255,255,0.04)' }}
+                style={{ background: 'var(--bg-page)', border: '1px solid var(--border-base)' }}
               >
                 <div className="flex items-center gap-3">
                   <span className="font-display font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>

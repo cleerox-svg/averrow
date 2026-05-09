@@ -21,7 +21,7 @@ export function ActivitySparkline({ data, color, width = 120, height = 24 }: Pro
             y={height - barHeight}
             width={Math.max(barWidth - 1, 1)}
             height={barHeight}
-            fill={val > 0 ? color : 'rgba(255,255,255,0.05)'}
+            fill={val > 0 ? color : 'var(--border-base)'}
             rx={1}
             opacity={val > 0 ? 0.8 : 0.3}
           />

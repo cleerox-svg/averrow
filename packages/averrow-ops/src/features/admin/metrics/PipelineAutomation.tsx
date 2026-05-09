@@ -290,7 +290,7 @@ function PipelineDetailSheet({
                           <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.02} />
                         </linearGradient>
                       </defs>
-                      <XAxis dataKey="t" tick={{ fontSize: 8, fill: 'rgba(255,255,255,0.30)' }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
+                      <XAxis dataKey="t" tick={{ fontSize: 8, fill: 'var(--text-muted)' }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
                       <YAxis hide />
                       <Tooltip
                         contentStyle={{
@@ -362,7 +362,7 @@ function PipelineDetailSheet({
                 <div
                   className="mt-4 p-3 rounded-md"
                   style={{
-                    background: 'rgba(255,255,255,0.025)',
+                    background: 'var(--border-base)',
                     border: '1px solid var(--border-base)',
                   }}
                 >
@@ -620,7 +620,7 @@ export function PipelineAutomationSection({ agents }: { agents: Agent[] }) {
                 WebkitBackdropFilter: 'blur(12px)',
                 border: `1px solid ${borderColor}`,
                 borderTop: `3px solid ${topBorderColor}`,
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 24px rgba(0,0,0,0.40)',
+                boxShadow: 'inset 0 1px 0 var(--border-base), 0 4px 24px rgba(0,0,0,0.40)',
               }}
               aria-label={`Open ${p.label} details`}
             >

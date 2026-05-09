@@ -172,7 +172,7 @@ export function ThreatActorDetail() {
       {/* Campaigns */}
       {campaigns.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3 flex items-center gap-2">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3 flex items-center gap-2">
             Active Campaigns
             <span className="flex-1 h-px bg-white/[0.06]" />
           </h2>
@@ -205,7 +205,7 @@ export function ThreatActorDetail() {
       {/* TTPs */}
       {ttps.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Tactics, Techniques & Procedures
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -221,7 +221,7 @@ export function ThreatActorDetail() {
       {/* Infrastructure */}
       {actor.infrastructure && actor.infrastructure.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Known Infrastructure
           </h2>
           <div className="overflow-x-auto">
@@ -261,7 +261,7 @@ export function ThreatActorDetail() {
       {/* Targeted Brands */}
       {actor.targets && actor.targets.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Targeted Brands ({actor.targets.length})
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -305,7 +305,7 @@ export function ThreatActorDetail() {
           per actor. */}
       {actor.recent_attributions && actor.recent_attributions.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Recent Activity ({actor.recent_attributions.length})
           </h2>
           <ul className="space-y-2">
@@ -353,7 +353,7 @@ export function ThreatActorDetail() {
           items first; click opens the source article in a new tab. */}
       {actor.news_mentions && actor.news_mentions.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             News Mentions ({actor.news_mentions.length})
           </h2>
           <ul className="space-y-2">

@@ -11,7 +11,7 @@ export function Table({ children, className }: { children: React.ReactNode; clas
 export function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <th
-      style={{ color: 'rgba(255,255,255,0.36)' }}
+      style={{ color: 'var(--text-tertiary)' }}
       className={cn(
       'font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left border-b border-white/[0.06]',
       className

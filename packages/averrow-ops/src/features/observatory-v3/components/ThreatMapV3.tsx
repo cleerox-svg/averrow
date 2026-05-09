@@ -703,7 +703,7 @@ function ThreatMapV3Inner({
           style={{
             left: tooltip.x + 10, top: tooltip.y + 10,
             background: 'rgba(6,10,20,0.95)',
-            border: '1px solid rgba(255,255,255,0.10)',
+            border: '1px solid var(--border-base)',
             backdropFilter: 'blur(12px)',
           }}
         >

@@ -51,7 +51,7 @@ export type MetricTileProps = NumberProps | GradeProps | LabelProps;
 
 const TILE_STYLE = {
   flex: 1,
-  background: 'rgba(255,255,255,0.04)',
+  background: 'var(--border-base)',
   borderRadius: 8,
   padding: '7px 8px',
   textAlign: 'center' as const,

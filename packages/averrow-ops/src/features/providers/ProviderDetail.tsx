@@ -59,17 +59,17 @@ export function ProviderDetail() {
   if (!provider) {
     return (
       <div className="animate-fade-in">
-        <button onClick={() => navigate('/providers')} className="font-mono text-xs text-[rgba(255,255,255,0.30)] hover:text-accent transition-colors mb-4">
+        <button onClick={() => navigate('/providers')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
           &larr; Back to Providers
         </button>
-        <Card hover={false}><p className="text-sm text-[rgba(255,255,255,0.36)]">Provider not found</p></Card>
+        <Card hover={false}><p className="text-sm text-[var(--text-tertiary)]">Provider not found</p></Card>
       </div>
     );
   }
 
   return (
     <div className="animate-fade-in space-y-6">
-      <button onClick={() => navigate('/providers')} className="font-mono text-xs text-[rgba(255,255,255,0.30)] hover:text-accent transition-colors">
+      <button onClick={() => navigate('/providers')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
         &larr; Back to Providers
       </button>
 
@@ -114,7 +114,7 @@ export function ProviderDetail() {
               {threats.map(threat => (
                 <tr key={threat.id} className="data-row">
                   <Td>
-                    <span className="font-mono text-xs text-[rgba(255,255,255,0.83)] break-all">
+                    <span className="font-mono text-xs text-[var(--text-primary)] break-all">
                       {threat.malicious_url || threat.malicious_domain || threat.ip_address || '—'}
                     </span>
                   </Td>
@@ -125,7 +125,7 @@ export function ProviderDetail() {
                     <span className="font-display font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{threat.brand_name}</span>
                   </Td>
                   <Td>
-                    <span className="font-mono text-xs text-[rgba(255,255,255,0.30)]">{relativeTime(threat.first_seen)}</span>
+                    <span className="font-mono text-xs text-[var(--text-muted)]">{relativeTime(threat.first_seen)}</span>
                   </Td>
                   <Td>
                     <Badge variant={statusVariant(threat.status)}>{threat.status}</Badge>
@@ -153,7 +153,7 @@ export function ProviderDetail() {
               <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="font-mono text-xs text-[rgba(255,255,255,0.30)] hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="font-mono text-xs text-[var(--text-muted)] hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 &larr; Previous
               </button>
@@ -163,7 +163,7 @@ export function ProviderDetail() {
               <button
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
-                className="font-mono text-xs text-[rgba(255,255,255,0.30)] hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="font-mono text-xs text-[var(--text-muted)] hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 Next &rarr;
               </button>
@@ -182,8 +182,8 @@ export function ProviderDetail() {
                   return (
                     <div key={b.brand_id ?? b.brand_name} className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-[rgba(255,255,255,0.74)] truncate">{b.brand_name ?? 'Unknown'}</span>
-                        <span className="font-mono text-xs text-[rgba(255,255,255,0.30)]">{b.count}</span>
+                        <span className="text-sm text-[var(--text-secondary)] truncate">{b.brand_name ?? 'Unknown'}</span>
+                        <span className="font-mono text-xs text-[var(--text-muted)]">{b.count}</span>
                       </div>
                       <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
                         <div
@@ -208,8 +208,8 @@ export function ProviderDetail() {
                   return (
                     <div key={t.threat_type} className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-[rgba(255,255,255,0.74)] truncate">{t.threat_type.replace(/_/g, ' ')}</span>
-                        <span className="font-mono text-xs text-[rgba(255,255,255,0.30)]">{t.count}</span>
+                        <span className="text-sm text-[var(--text-secondary)] truncate">{t.threat_type.replace(/_/g, ' ')}</span>
+                        <span className="font-mono text-xs text-[var(--text-muted)]">{t.count}</span>
                       </div>
                       <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
                         <div

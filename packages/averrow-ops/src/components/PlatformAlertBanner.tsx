@@ -84,9 +84,9 @@ const PALETTE: Record<Notification['severity'], PaletteEntry> = {
     glow: 'rgba(96,165,250,0.9)',
   },
   info: {
-    bg: 'rgba(255,255,255,0.05)',
-    border: 'rgba(255,255,255,0.15)',
-    text: 'rgba(255,255,255,0.85)',
+    bg: 'var(--border-base)',
+    border: 'var(--border-strong)',
+    text: 'var(--text-primary)',
     dot: '#9ca3af',
     glow: 'rgba(156,163,175,0.6)',
   },

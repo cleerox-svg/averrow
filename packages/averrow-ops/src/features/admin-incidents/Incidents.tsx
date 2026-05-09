@@ -18,7 +18,7 @@ const STATUS_PILL_BG: Record<IncidentStatus, string> = {
   identified:    'rgba(251,146,60,0.10)',
   monitoring:    'rgba(251,191,36,0.10)',
   resolved:      'rgba(34,197,94,0.10)',
-  postmortem:    'rgba(255,255,255,0.05)',
+  postmortem:    'var(--border-base)',
 };
 
 const STATUS_PILL_TEXT: Record<IncidentStatus, string> = {
@@ -78,7 +78,7 @@ export function AdminIncidents() {
                 alignItems: 'center',
                 gap: 14,
                 padding: '14px 18px',
-                borderBottom: '1px solid var(--border-base, rgba(255,255,255,0.05))',
+                borderBottom: '1px solid var(--border-base, var(--border-base))',
                 textDecoration: 'none',
                 color: 'inherit',
               }}

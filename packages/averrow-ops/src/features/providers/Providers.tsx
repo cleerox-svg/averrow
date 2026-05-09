@@ -235,7 +235,7 @@ function ProviderCardUnified({
           <div style={{
             width: 38, height: 38, borderRadius: 10,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(255,255,255,0.06)',
+            background: 'var(--border-base)',
             border: '1px solid var(--border-base)',
             fontSize: 20, lineHeight: 1,
           }}>
@@ -311,7 +311,7 @@ function ProviderCardUnified({
         </div>
       ) : (
         <div style={{
-          height: 36, background: 'rgba(255,255,255,0.02)', borderRadius: 6,
+          height: 36, background: 'var(--border-base)', borderRadius: 6,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
@@ -436,7 +436,7 @@ function ProviderCardClassic({
         ) : (
           <div style={{
             height: 32,
-            background: 'rgba(255,255,255,0.02)',
+            background: 'var(--border-base)',
             borderRadius: 6,
             display: 'flex',
             alignItems: 'center',
@@ -590,7 +590,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#0D1520',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    border: '1px solid var(--border-base)',
                     borderRadius: '8px',
                     fontSize: '11px',
                     fontFamily: 'JetBrains Mono, monospace',
@@ -808,7 +808,7 @@ export function Providers() {
                     onClick={() => setSortBy(s.id)}
                     className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
                     style={{
-                      background: sortBy === s.id ? 'rgba(255,255,255,0.10)' : 'transparent',
+                      background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
                       color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
                     }}
                   >

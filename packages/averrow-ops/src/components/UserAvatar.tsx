@@ -50,7 +50,7 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
           style={{
             background: SELF_AVATAR_COLOR,
             color: 'var(--text-on-amber, #0A0F1E)',
-            border: '1px solid rgba(255,255,255,0.20)',
+            border: '1px solid var(--border-strong)',
           }}
         >
           {initials}
@@ -122,7 +122,7 @@ export function UserAvatar() {
         style={{
           background: SELF_AVATAR_COLOR,
           color: 'var(--text-on-amber, #0A0F1E)',
-          border: '1px solid rgba(255,255,255,0.20)',
+          border: '1px solid var(--border-strong)',
         }}
         aria-label="User menu"
       >

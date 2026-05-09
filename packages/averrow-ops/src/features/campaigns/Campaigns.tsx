@@ -312,7 +312,7 @@ function OperationCard({
       ) : (
         <div style={{
           height: 28,
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--border-base)',
           borderRadius: 6,
           display: 'flex',
           alignItems: 'center',
@@ -464,7 +464,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#0D1520',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    border: '1px solid var(--border-base)',
                     borderRadius: '8px',
                     fontSize: '11px',
                     fontFamily: 'IBM Plex Mono, monospace',
@@ -931,9 +931,9 @@ export function Campaigns() {
                   onClick={() => setSortBy(s.id)}
                   className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
                   style={{
-                    background: sortBy === s.id ? 'rgba(255,255,255,0.10)' : 'transparent',
+                    background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
                     color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    border: '1px solid var(--border-base)',
                   }}
                 >
                   {s.label}

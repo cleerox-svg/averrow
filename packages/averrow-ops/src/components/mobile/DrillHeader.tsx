@@ -10,12 +10,12 @@ export function DrillHeader({ title, badge, onBack }: DrillHeaderProps) {
       <button
         type="button"
         onClick={onBack}
-        className="bg-transparent text-[rgba(255,255,255,0.60)] text-base cursor-pointer p-0 leading-none"
+        className="bg-transparent text-[var(--text-secondary)] text-base cursor-pointer p-0 leading-none"
         aria-label="Go back"
       >
         ←
       </button>
-      <span className="text-xs font-mono font-bold tracking-wider text-[rgba(255,255,255,0.92)]">
+      <span className="text-xs font-mono font-bold tracking-wider text-[var(--text-primary)]">
         {title}
       </span>
       {badge && (

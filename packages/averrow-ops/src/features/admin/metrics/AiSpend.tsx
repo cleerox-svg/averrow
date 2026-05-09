@@ -146,7 +146,7 @@ function DailyChart({ data }: { data: AiSpendPayload }) {
           <BarChart data={series} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
             <XAxis
               dataKey="day"
-              tick={{ fontSize: 8, fill: 'rgba(255,255,255,0.30)' }}
+              tick={{ fontSize: 8, fill: 'var(--text-muted)' }}
               interval="preserveStartEnd"
               axisLine={false}
               tickLine={false}
@@ -217,7 +217,7 @@ function PerAgentTable({ data }: { data: AiSpendPayload }) {
                 style={{
                   width: 60,
                   height: 4,
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--border-base)',
                 }}
               >
                 <div

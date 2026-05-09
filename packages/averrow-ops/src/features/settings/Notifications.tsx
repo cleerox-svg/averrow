@@ -505,7 +505,7 @@ function NotificationRow({
         borderLeft: isUnread
           ? `2px solid var(--sev-${sev}-border, var(--sev-info-border))`
           : '2px solid transparent',
-        background: isUnread ? 'rgba(255,255,255,0.02)' : 'transparent',
+        background: isUnread ? 'var(--border-base)' : 'transparent',
         opacity: isDone ? 0.55 : isSnoozed ? 0.75 : 1,
       }}
     >

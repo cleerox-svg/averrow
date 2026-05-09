@@ -63,7 +63,7 @@ export function SecurityShield({ spf, dkim, dmarc, grade }: SecurityShieldProps)
         <svg width="80" height="96" viewBox="0 0 80 96" fill="none">
           {/* Shield outline */}
           <path d="M40 4L72 20V52C72 72 56 88 40 92C24 88 8 72 8 52V20L40 4Z"
-            fill="#0E1A2B" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
+            fill="#0E1A2B" stroke="var(--border-base)" strokeWidth="1.5" />
 
           {/* SPF layer (top) */}
           <rect x="16" y="22" width="48" height="18" rx="4"

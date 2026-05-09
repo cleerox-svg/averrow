@@ -45,7 +45,7 @@ function CategoryRow({ rollup }: CategoryRowProps) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '10px 14px',
-      borderTop: '1px solid rgba(255,255,255,0.04)',
+      borderTop: '1px solid var(--border-base)',
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
@@ -122,7 +122,7 @@ export function PlatformStatusFlyout() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: 10,
           background: 'var(--bg-card, rgba(22,30,48,0.65))',
-          border: '1px solid var(--border-base, rgba(255,255,255,0.08))',
+          border: '1px solid var(--border-base, var(--border-base))',
           borderRadius: 12,
           color: 'inherit',
           cursor: 'pointer',
@@ -130,7 +130,7 @@ export function PlatformStatusFlyout() {
           transition: 'border-color 0.15s ease, transform 0.05s ease',
         }}
         onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(229,168,50,0.20)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-base, rgba(255,255,255,0.08))')}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-base, var(--border-base))')}
       >
         <PlatformStatusBadge variant="prominent" />
         <ChevronDown
@@ -157,7 +157,7 @@ export function PlatformStatusFlyout() {
             width: 'min(420px, calc(100vw - 64px))',
             zIndex: 60,
             background: 'rgba(20,26,38,0.97)',
-            border: '1px solid rgba(255,255,255,0.10)',
+            border: '1px solid var(--border-base)',
             borderRadius: 12,
             backdropFilter: 'blur(14px)',
             WebkitBackdropFilter: 'blur(14px)',
@@ -193,7 +193,7 @@ export function PlatformStatusFlyout() {
                 padding: '24px 14px',
                 fontFamily: 'var(--font-mono)', fontSize: 11,
                 color: 'var(--text-tertiary)', textAlign: 'center',
-                borderTop: '1px solid rgba(255,255,255,0.04)',
+                borderTop: '1px solid var(--border-base)',
               }}>
                 Loading availability…
               </div>
@@ -212,7 +212,7 @@ export function PlatformStatusFlyout() {
             style={{
               display: 'block',
               padding: '10px 14px',
-              borderTop: '1px solid rgba(255,255,255,0.06)',
+              borderTop: '1px solid var(--border-base)',
               fontFamily: 'var(--font-mono)', fontSize: 10,
               fontWeight: 700, letterSpacing: '0.10em',
               color: 'var(--amber)', textDecoration: 'none',
