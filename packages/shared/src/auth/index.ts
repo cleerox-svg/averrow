@@ -5,7 +5,7 @@
 // (role-based redirect, lastSignInMethod cleanup) flow through
 // AuthProviderConfig hooks.
 
-export { AuthProvider, useAuth } from './AuthProvider';
+export { AuthProvider, useAuth, isSafeReturnTo, isValidCachedUser } from './AuthProvider';
 export type {
   SharedAuthUser, SharedAuthState, SharedAuthUserOrganization,
   AuthHttpClient, AuthApiResponse, AuthProviderConfig,

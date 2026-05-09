@@ -397,7 +397,74 @@ diffed against the sibling repo and kept structurally identical:
 
 ---
 
-## 8. Drift checklist (run before merging into either platform)
+## 8. Security model — `@averrow/shared`
+
+The shared package carries the auth-critical surfaces (Profile,
+Login UI, Auth context, Passkeys). The architecture deliberately
+keeps the shared package side-effect-light and host-driven:
+
+### Trust contract
+- The host app (averrow-ops or averrow-tenant) owns the HTTP
+  client. The shared package only sees URLs that come back from
+  the adapter + URL-bar tokens read from `window.location`.
+- The host app owns localStorage keys (`averrow-user` /
+  `averrow-tenant-user`, `averrow-theme`,
+  `averrow.lastSignInMethod`). Different products MUST use
+  different keys to prevent state cross-leak on shared devices.
+- Backend JWT signature verification is the hard gate. Anything
+  the shared package surfaces (cached user, tokens from URL
+  hash) is treated as untrusted until /api/auth/me succeeds.
+
+### Defense-in-depth boundaries
+
+| Concern | Mitigation |
+|---|---|
+| URL hash callback tokens | `replaceState` immediately strips the hash. Hash is read once on mount, then the URL bar is rewritten (either to a validated `return_to` or to the bare path). |
+| Malicious `return_to` from URL | `isSafeReturnTo(returnTo, prefix)` requires the prefix to be followed by `/`, `?`, `#`, or end-of-string. Defends against `/v2evil/path` style attacks where `startsWith` would naively accept. Failing values fall through to `window.location.pathname`, never echoed back. |
+| Cached user shape drift / poisoning | `isValidCachedUser(value)` does runtime type checks on `id`, `email`, `name`, `role`, and the optional `organization` block. Mismatches are treated as "no cache" and the offending entry is removed from localStorage. |
+| Per-product redirect mistake | `loginPath` is a REQUIRED config field (no default). Each product's wrapper must explicitly state where the OAuth start URL goes. |
+| CSRF | Bearer tokens for all state-changing API calls. The only cookie-bearing request is `/api/auth/refresh`, which returns a new access token (not a state mutation). |
+| Token in localStorage exposure to XSS | The shared package never injects HTML, never uses `dangerouslySetInnerHTML`, never `eval`s. React's auto-escaping handles all rendered user content. CSP headers on the worker are the defense against host-app XSS. |
+| Adapter trust | `httpClient`, `passkeyAdapter`, `apiClient` are all host-supplied. By contract: a compromised host wrapper compromises everything. The shared package does NOT make raw `fetch` calls except for the cookie-refresh path. |
+| Logout cleanup | `clearLastSignInMethod()` runs in `onLogoutCleanup`. `clearTokens()` clears both access + refresh local state. The backend `/api/auth/logout` revokes the refresh-token cookie + sessions row server-side. |
+
+### Storage namespacing (host-owned)
+
+Each product MUST use distinct localStorage keys for all
+user-scoped data:
+
+| Key | averrow-ops | averrow-tenant |
+|---|---|---|
+| User cache | `averrow-user` | `averrow-tenant-user` |
+| Theme | `averrow-theme` (shared OK; same domain) | `averrow-theme` (shared OK) |
+| Last sign-in method | `averrow.lastSignInMethod` | `averrow.lastSignInMethod` |
+
+Theme + `lastSignInMethod` share keys intentionally — they're
+device-level preferences that should survive product switches
+on the same browser. User cache is per-product so a customer's
+session doesn't leak into the staff shell (or vice versa).
+
+### Security helpers (public API)
+
+```ts
+import { isSafeReturnTo, isValidCachedUser } from '@averrow/shared/auth';
+```
+
+Both are pure functions, host-callable for additional defense
+where needed. Unit-tested in
+`packages/averrow-ops/src/lib/auth-validators.test.ts`.
+
+### Reporting
+
+Security issues in the shared package are tracked on
+GitHub Issues with the `security` label and routed through the
+sibling-product owners (averrow-ops + future FarmTrack). Don't
+file public issues for unpatched vulnerabilities; email the
+on-call instead.
+
+---
+
+## 9. Drift checklist (run before merging into either platform)
 
 When changing any of the files above:
 

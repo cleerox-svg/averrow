@@ -37,6 +37,56 @@ interface TokenPayload {
   source:       'hash' | 'query';
 }
 
+/**
+ * Path-prefix check that requires a boundary character after the
+ * prefix so `'/v2evil/path'` does NOT match prefix `'/v2'`. The
+ * next character must be undefined (end of string), or one of
+ * `/`, `?`, `#` — i.e. a real path / query / fragment boundary.
+ *
+ * Without this, the post-callback `replaceState` would happily
+ * write `'/v2evil/path'` into the URL bar, which (although
+ * same-origin and not directly XSS-exploitable via replaceState)
+ * could be weaponized by future code that reads
+ * `window.location.pathname` for routing decisions. Defense in
+ * depth.
+ */
+export function isSafeReturnTo(returnTo: string, prefix: string): boolean {
+  if (!returnTo || !prefix) return false;
+  if (!returnTo.startsWith(prefix)) return false;
+  const next = returnTo.charAt(prefix.length);
+  // Empty string → end of returnTo (exact prefix match) — safe.
+  // '/' → child path. '?' → query string. '#' → fragment. All safe.
+  return next === '' || next === '/' || next === '?' || next === '#';
+}
+
+/**
+ * Defensive validation of a localStorage-cached user. Returns the
+ * value if it looks like a SharedAuthUser, null otherwise. Guards
+ * against storage poisoning by malicious extensions or stale data
+ * from a previous schema. The properties checked are the ones
+ * downstream consumers (Profile, TopBar, role guards) read; if any
+ * are missing or wrong type, we treat the cache as absent and let
+ * the network /api/auth/me round-trip refill it.
+ */
+export function isValidCachedUser(value: unknown): value is SharedAuthUser {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.id    !== 'string') return false;
+  if (typeof v.email !== 'string') return false;
+  if (typeof v.name  !== 'string') return false;
+  if (typeof v.role  !== 'string') return false;
+  if (v.organization != null) {
+    if (typeof v.organization !== 'object') return false;
+    const o = v.organization as Record<string, unknown>;
+    if (typeof o.id   !== 'number') return false;
+    if (typeof o.name !== 'string') return false;
+    if (typeof o.slug !== 'string') return false;
+    if (typeof o.plan !== 'string') return false;
+    if (typeof o.role !== 'string') return false;
+  }
+  return true;
+}
+
 function readTokensFromUrl(): TokenPayload | null {
   if (typeof window === 'undefined') return null;
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
@@ -71,7 +121,10 @@ interface AuthProviderProps {
 export function AuthProvider({ children, httpClient, config }: AuthProviderProps) {
   const {
     userCacheKey,
-    loginPath        = '/api/auth/login?return_to=/v2/',
+    // loginPath is REQUIRED — no default. Defaulting to /v2/ would
+    // silently misroute customers on a future product (FarmTrack,
+    // etc.) that forgot to override.
+    loginPath,
     logoutPath       = '/api/auth/logout',
     refreshPath      = '/api/auth/refresh',
     mePath           = '/api/auth/me',
@@ -82,14 +135,26 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     refreshMode      = 'cookie-refresh',
   } = config;
 
-  // Cache helpers — bound to the per-product key.
+  // Cache helpers — bound to the per-product key. Returns null on
+  // any parse failure OR shape mismatch (defends against poisoned
+  // localStorage from malicious browser extensions or stale entries
+  // from previous schema versions). On mismatch we also clear the
+  // bad entry so the network /api/auth/me round-trip can refill it
+  // cleanly.
   const loadCachedUser = useCallback((): SharedAuthUser | null => {
     if (typeof window === 'undefined') return null;
     try {
       const raw = localStorage.getItem(userCacheKey);
       if (!raw) return null;
-      return JSON.parse(raw) as SharedAuthUser;
+      const parsed = JSON.parse(raw);
+      if (!isValidCachedUser(parsed)) {
+        try { localStorage.removeItem(userCacheKey); } catch {}
+        return null;
+      }
+      return parsed;
     } catch {
+      // Invalid JSON. Clear so we don't keep parsing it on every render.
+      try { localStorage.removeItem(userCacheKey); } catch {}
       return null;
     }
   }, [userCacheKey]);
@@ -121,9 +186,11 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     const fromUrl = readTokensFromUrl();
     if (fromUrl && typeof window !== 'undefined') {
       httpClient.setTokens(fromUrl.accessToken, fromUrl.refreshToken);
-      if (fromUrl.source === 'hash' && fromUrl.returnTo && fromUrl.returnTo.startsWith(returnToPrefix)) {
+      if (fromUrl.source === 'hash' && fromUrl.returnTo && isSafeReturnTo(fromUrl.returnTo, returnToPrefix)) {
         window.history.replaceState({}, '', fromUrl.returnTo);
       } else {
+        // Strip the token noise from the URL bar even when returnTo
+        // is unsafe — never echo attacker-controlled values back.
         window.history.replaceState({}, '', window.location.pathname);
       }
     }
