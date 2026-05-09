@@ -33,8 +33,8 @@ import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { AgentIcon } from '@/components/brand/AgentIcon';
-import { ActivitySparkline } from '@/components/ui/ActivitySparkline';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { RunStatusBlocks } from '@/components/ui/RunStatusBlocks';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { relativeTime } from '@/lib/time';
 import { Bot, AlertTriangle, ChevronDown, GitBranch, Shield } from 'lucide-react';
@@ -149,6 +149,50 @@ function failurePatternFor(agent: Agent): FailurePattern {
     };
   }
   return null;
+}
+
+// Compact single-series area chart for cards. Same visual style as
+// the drill-down HealthChart but driven by agent.activity (the 24h
+// hourly run counts already on the main payload — no per-card
+// useAgentHealth call). If multi-series on cards is needed later,
+// add a batched /api/agents/health endpoint.
+function CardHealthChart({
+  activity, color, width = 120, height = 40,
+}: {
+  activity: number[];
+  color:    string;
+  width?:   number;
+  height?:  number;
+}) {
+  if (!activity || activity.length === 0) return null;
+  const max = Math.max(...activity, 1);
+  const stepX = activity.length > 1 ? width / (activity.length - 1) : width;
+
+  // Build the area path (closed under) + line path (top edge only).
+  const points = activity.map((v, i) => {
+    const x = i * stepX;
+    const y = height - (v / max) * (height - 2) - 1;
+    return { x, y };
+  });
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L ${(activity.length - 1) * stepX} ${height} L 0 ${height} Z`;
+
+  // Gradient id needs to be unique per chart instance to avoid
+  // collisions when multiple charts render in the same DOM.
+  const gradId = `card-area-grad-${Math.random().toString(36).slice(2, 9)}`;
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={color} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={linePath} stroke={color} strokeWidth={1.4} fill="none" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function ComplianceChip({ label, ok }: { label: string; ok: boolean }) {
@@ -346,15 +390,22 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
           </div>
         </div>
         {agent.activity && agent.activity.length > 0 && (
-          <div className="flex flex-col items-end gap-0.5">
-            <ActivitySparkline
-              data={agent.activity}
+          <div className="flex flex-col items-end gap-1">
+            <CardHealthChart
+              activity={agent.activity}
               color={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
-              width={80}
-              height={28}
+              width={120}
+              height={36}
+            />
+            {/* Multi-instance scaling — each column is an hour bucket,
+                each row is a parallel instance. Reveals Flight Control
+                scale-out (taller stacks) that the area chart flattens. */}
+            <RunStatusBlocks
+              ticks={agent.recent_ticks}
+              fallbackActivity={agent.activity}
             />
             <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
-              Runs · 24h
+              24h shape · 5h instances
             </div>
           </div>
         )}

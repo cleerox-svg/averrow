@@ -1,4 +1,35 @@
-// AgentNetworkView v2 — full-mesh interactive map with running pulse + comm bursts.
+// AgentNetworkView v3 — zoomable + pannable full-mesh map.
+//
+// FUTURE: feeds-to-agents layer (planned, blocked on /feeds-v3 readiness).
+//
+// Threat-intel feeds (CertStream, OTX, URLhaus, etc.) are
+// upstream of `sentinel` — they ingest raw events that Sentinel
+// classifies into the threats table. They aren't AgentModule
+// instances today, so they don't appear in the AGENT_METADATA
+// registry or the trigger-chain encoded below.
+//
+// When /feeds-v3 lands and we have a stable feed registry to read
+// from, extend this view with a "Feeds" cluster to the LEFT of
+// the Intelligence cluster, producing edges that flow:
+//
+//   [Feed sources] → sentinel → cartographer → nexus → …
+//
+// Implementation plan:
+//   1. Read a useFeeds() hook returning { id, name, status,
+//      last_pull_at, records_ingested_24h }
+//   2. Render each feed as a smaller node (radius ~14px) with a
+//      distinct visual style (square / different fill) so they
+//      read as a different cohort vs. the AI agents
+//   3. One edge per active feed → sentinel
+//   4. Pulse edge when feed.last_pull_at is within FLY_WINDOW_MS
+//   5. Comm burst when feed pulled AND sentinel ran within
+//      BURST_WINDOW_MS (recently-ingested batch consumed)
+//   6. Position Feeds cluster x:0-80, y:200-580 — the existing
+//      Intelligence cluster shifts right by ~80px, viewBox bumps
+//      to 1360 wide
+//
+// Until that lands, the Network View represents the AI-agent
+// layer of the mesh (40 agents, no feed visibility).
 //
 // Iteration 2 over the trigger-chain-only first cut. Now shows ALL
 // 40 agents arranged in hand-positioned neighborhoods by category:
@@ -25,10 +56,11 @@
 //
 // All visuals are pure SVG with CSS-var colors → flips with theme.
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Agent } from '@/hooks/useAgents';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { AgentIcon } from '@/components/brand/AgentIcon';
+import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 const VIEWBOX_W = 1280;
 const VIEWBOX_H = 780;
@@ -142,6 +174,92 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     return m;
   }, [agents]);
 
+  // ─── Zoom + pan via SVG viewBox manipulation ─────────────────
+  // Wheel zoom centered on cursor; click-drag to pan; +/-/reset
+  // controls in the top-right corner. SVG-native — text stays
+  // sharp at any zoom level, no new dependencies.
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 3;
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan]   = useState({ x: 0, y: 0 });
+  const isPanning  = useRef(false);
+  const panOrigin  = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const panMoved   = useRef(false);
+  const svgRef     = useRef<SVGSVGElement | null>(null);
+
+  function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Returns viewBox-space coordinates of a client-space point. Needed
+  // so wheel zoom feels anchored to the cursor (not the SVG centre).
+  const clientToSvg = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const rect = svg.getBoundingClientRect();
+    const fracX = (clientX - rect.left) / rect.width;
+    const fracY = (clientY - rect.top) / rect.height;
+    const vbW = VIEWBOX_W / zoom;
+    const vbH = VIEWBOX_H / zoom;
+    return { x: pan.x + fracX * vbW, y: pan.y + fracY * vbH };
+  }, [pan, zoom]);
+
+  const handleWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 1 / 1.10 : 1.10;
+    const nextZoom = clamp(zoom * delta, ZOOM_MIN, ZOOM_MAX);
+    if (nextZoom === zoom) return;
+    // Anchor zoom on cursor: keep the under-cursor point fixed.
+    const before = clientToSvg(e.clientX, e.clientY);
+    const ratio = zoom / nextZoom;
+    const vbW = VIEWBOX_W / nextZoom;
+    const vbH = VIEWBOX_H / nextZoom;
+    const svg = svgRef.current;
+    if (!svg) { setZoom(nextZoom); return; }
+    const rect = svg.getBoundingClientRect();
+    const fracX = (e.clientX - rect.left) / rect.width;
+    const fracY = (e.clientY - rect.top) / rect.height;
+    const nextPanX = before.x - fracX * vbW;
+    const nextPanY = before.y - fracY * vbH;
+    setZoom(nextZoom);
+    setPan({ x: nextPanX, y: nextPanY });
+    // Suppress unused-variable warning while keeping the math
+    // explicit for future contributors:
+    void ratio;
+  }, [zoom, clientToSvg]);
+
+  function handlePanStart(e: React.MouseEvent<SVGSVGElement>) {
+    if (e.button !== 0) return;           // primary button only
+    isPanning.current = true;
+    panMoved.current  = false;
+    panOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+  }
+  function handlePanMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (!isPanning.current) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const dxPx = e.clientX - panOrigin.current.x;
+    const dyPx = e.clientY - panOrigin.current.y;
+    if (Math.abs(dxPx) > 3 || Math.abs(dyPx) > 3) panMoved.current = true;
+    const dx = dxPx * (VIEWBOX_W / zoom) / rect.width;
+    const dy = dyPx * (VIEWBOX_H / zoom) / rect.height;
+    setPan({ x: panOrigin.current.panX - dx, y: panOrigin.current.panY - dy });
+  }
+  function handlePanEnd() { isPanning.current = false; }
+
+  // Suppress node click that follows a pan drag — without this any
+  // drag that happens to end over a node would also select it.
+  function handleNodeClick(name: string) {
+    if (panMoved.current) return;
+    onSelect(name);
+  }
+
+  function zoomIn()  { setZoom(z => clamp(z * 1.20, ZOOM_MIN, ZOOM_MAX)); }
+  function zoomOut() { setZoom(z => clamp(z / 1.20, ZOOM_MIN, ZOOM_MAX)); }
+  function resetView() { setZoom(1); setPan({ x: 0, y: 0 }); }
+
+  const vbW = VIEWBOX_W / zoom;
+  const vbH = VIEWBOX_H / zoom;
+
   const now = Date.now();
 
   function ranWithin(name: string, ms: number): boolean {
@@ -196,12 +314,71 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full relative">
+      {/* Zoom controls — top right, layered over the SVG */}
+      <div className="absolute top-2 right-2 z-10 flex gap-1">
+        <button
+          type="button"
+          onClick={zoomIn}
+          disabled={zoom >= ZOOM_MAX}
+          aria-label="Zoom in"
+          className="w-7 h-7 rounded grid place-items-center transition-colors disabled:opacity-40"
+          style={{
+            background: 'var(--bg-card-deep)',
+            border:     '1px solid var(--border-base)',
+            color:      'var(--text-secondary)',
+          }}
+        >
+          <ZoomIn size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={zoomOut}
+          disabled={zoom <= ZOOM_MIN}
+          aria-label="Zoom out"
+          className="w-7 h-7 rounded grid place-items-center transition-colors disabled:opacity-40"
+          style={{
+            background: 'var(--bg-card-deep)',
+            border:     '1px solid var(--border-base)',
+            color:      'var(--text-secondary)',
+          }}
+        >
+          <ZoomOut size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={resetView}
+          aria-label="Reset view"
+          className="w-7 h-7 rounded grid place-items-center transition-colors"
+          style={{
+            background: 'var(--bg-card-deep)',
+            border:     '1px solid var(--border-base)',
+            color:      'var(--text-secondary)',
+          }}
+        >
+          <Maximize2 size={14} />
+        </button>
+        <span
+          className="ml-1 px-2 grid place-items-center font-mono text-[10px]"
+          style={{ color: 'var(--text-tertiary)' }}
+        >
+          {Math.round(zoom * 100)}%
+        </span>
+      </div>
       <svg
-        viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+        ref={svgRef}
+        viewBox={`${pan.x} ${pan.y} ${vbW} ${vbH}`}
         preserveAspectRatio="xMidYMid meet"
-        className="w-full h-auto"
-        style={{ maxHeight: 760 }}
+        className="w-full h-auto select-none"
+        style={{
+          maxHeight: 760,
+          cursor:    isPanning.current ? 'grabbing' : 'grab',
+        }}
+        onWheel={handleWheel}
+        onMouseDown={handlePanStart}
+        onMouseMove={handlePanMove}
+        onMouseUp={handlePanEnd}
+        onMouseLeave={handlePanEnd}
       >
         <defs>
           <marker
@@ -339,7 +516,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               opacity={op}
               transform={`translate(${pos.x},${pos.y})`}
               style={{ cursor: 'pointer' }}
-              onClick={() => onSelect(name)}
+              onClick={() => handleNodeClick(name)}
             >
               {/* Selection halo (animated amber) */}
               {isSel && (
