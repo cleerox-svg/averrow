@@ -1,89 +1,68 @@
-// averrow-tenant — auth context.
+// /tenant auth context — wraps @averrow/shared/auth's AuthProvider
+// with product-specific deltas (tenant HTTP client adapter, no
+// role-based redirects since this IS the customer surface).
 //
-// Reads `/api/auth/me` once on mount, hydrates a User shape from the
-// existing trust-radar backend. Mirrors averrow-ops's lib/auth.tsx.
-// Logged-out state shows a redirect to the login flow (handled by
-// the parent worker — averrow-tenant only renders authenticated UI).
+// Per SHARED_LOGIN_SPEC the auth lifecycle is canonical and lives
+// in the shared package. Edit the shared component, NOT this
+// wrapper.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import {
+  AuthProvider as SharedAuthProvider,
+  useAuth,
+} from '@averrow/shared/auth';
+import type { AuthHttpClient, AuthProviderConfig, AuthApiResponse } from '@averrow/shared/auth';
 import { apiGet, apiPost, getToken, setToken } from './api';
 
-export interface UserOrganization {
-  id:    number;
-  name:  string;
-  slug:  string;
-  plan:  string;
-  role:  string;
+// Adapter: tenant's apiGet/apiPost throw on non-2xx, so wrap each
+// call to produce the AuthApiResponse envelope the shared
+// component expects.
+async function adapt<T>(p: Promise<{ success: true; data: T; total?: number }>): Promise<AuthApiResponse<T>> {
+  try {
+    const res = await p;
+    return { success: res.success, data: res.data };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Request failed' };
+  }
 }
 
-export interface User {
-  id:           string;
-  email:        string;
-  name:         string;
-  role:         string;
-  display_name?: string | null;
-  organization?: UserOrganization | null;
-}
+let authErrorCallback: (() => void) | null = null;
 
-interface AuthContextShape {
-  user:    User | null;
-  loading: boolean;
-  error:   string | null;
-  logout:  () => Promise<void>;
-  isSuperAdmin: boolean;
-  /** True once we know the user has an organization bound. */
-  hasOrg:  boolean;
-}
+const httpClient: AuthHttpClient = {
+  getToken:    () => getToken(),
+  setTokens:   (a) => setToken(a),
+  clearTokens: () => setToken(null),
+  onAuthError: (cb) => { authErrorCallback = cb; },
+  get:         <T,>(path: string) => adapt<T>(apiGet<T>(path)),
+  post:        <T,>(path: string, body?: unknown) => adapt<T>(apiPost<T>(path, body ?? {})),
+};
 
-const AuthContext = createContext<AuthContextShape | null>(null);
+// Tenant has no client-redirect gate — this IS the customer
+// surface. The cookie-based silent refresh is also unused here
+// (tenant doesn't carry a refresh cookie); skipping it keeps the
+// initial paint fast.
+const config: AuthProviderConfig = {
+  userCacheKey:   'averrow-tenant-user',
+  loginPath:      '/api/auth/login?return_to=/tenant/',
+  returnToPrefix: '/tenant',
+  refreshMode:    'token-only',
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,    setUser]    = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error,   setError]   = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!getToken()) {
-      setLoading(false);
-      return;
-    }
-    apiGet<User>('/api/auth/me')
-      .then((res) => setUser(res.data))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const logout = async () => {
-    // Hit the backend so the refresh cookie + session row are
-    // revoked. Best-effort — a network failure here still proceeds
-    // with the local teardown so the user isn't trapped on the
-    // shell.
-    try {
-      await apiPost('/api/auth/logout', {});
-    } catch {
-      /* swallow */
-    }
-    setToken(null);
-    setUser(null);
-    // Hard-navigate so the next session bootstrap (token-less)
-    // hits the parent worker's session-aware login redirect.
-    window.location.href = '/';
-  };
-
-  const ctx: AuthContextShape = {
-    user,
-    loading,
-    error,
-    logout,
-    isSuperAdmin: user?.role === 'super_admin',
-    hasOrg:       !!user?.organization,
-  };
-
-  return <AuthContext.Provider value={ctx}>{children}</AuthContext.Provider>;
+  return (
+    <SharedAuthProvider httpClient={httpClient} config={config}>
+      {children}
+    </SharedAuthProvider>
+  );
 }
 
-export function useAuth(): AuthContextShape {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
-  return ctx;
+// Re-export useAuth so consumers don't have to know about the
+// shared package shape.
+export { useAuth };
+
+// authErrorCallback hook — currently unused outside this file but
+// gives the apiGet wrapper a way to flip user state on 401 if
+// we choose to wire that in a follow-up.
+export function fireAuthError(): void {
+  authErrorCallback?.();
 }
