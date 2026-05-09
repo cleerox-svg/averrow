@@ -4,7 +4,7 @@ export function DeepBackground() {
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
       {/* Base */}
-      <div className="absolute inset-0 bg-[#060A14]" />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-page)' }} />
 
       {/* Top-left fog — teal/intel origin */}
       <div className="absolute -top-48 -left-48 w-[500px] h-[500px] rounded-full bg-[#0A2540]/30 blur-[140px]" />

@@ -156,12 +156,12 @@ export function PlatformStatusFlyout() {
             // page section. Clamps to viewport on small windows.
             width: 'min(420px, calc(100vw - 64px))',
             zIndex: 60,
-            background: 'rgba(20,26,38,0.97)',
+            background: 'var(--bg-elevated)',
             border: '1px solid var(--border-base)',
             borderRadius: 12,
             backdropFilter: 'blur(14px)',
             WebkitBackdropFilter: 'blur(14px)',
-            boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+            boxShadow: 'var(--card-shadow)',
             overflow: 'hidden',
             animation: 'platform-flyout-in 0.15s ease',
           }}
