@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
-import { useObservatoryVersion, useTheme } from '@/design-system/hooks';
+import { useObservatoryVersion, useTheme, useVersionToggle } from '@/design-system/hooks';
 
 interface NavItem {
   label: string;
@@ -92,6 +92,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const { user, logout, isSuperAdmin, isBrandAdmin } = useAuth();
   const [alertCount, setAlertCount] = useState(0);
   const { path: observatoryPath } = useObservatoryVersion();
+  const { path: agentsPath } = useVersionToggle('agents');
   const location = useLocation();
 
   useEffect(() => {
@@ -140,7 +141,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     {
       label: 'PLATFORM',
       items: [
-        { label: 'Agents',       path: '/agents',           icon: Cpu },
+        { label: 'Agents',       path: agentsPath,           icon: Cpu, matchPrefixes: ['/agents', '/agents-v3'] },
         { label: 'Feeds',        path: '/feeds',             icon: Rss },
         { label: 'Metrics',      path: '/admin/metrics',     icon: BarChart3 },
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard },

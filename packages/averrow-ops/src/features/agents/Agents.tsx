@@ -7,6 +7,7 @@ import { PipelineAutomationSummaryStrip } from '@/features/admin/metrics/Pipelin
 import { useGeoipRefresh } from '@/hooks/useGeoipRefresh';
 import type { Agent, AgentDetailResponse, AgentHealthResponse, AgentOutput, AgentTick, PipelineDetail, PipelineEntry } from '@/hooks/useAgents';
 import { Card, StatCard, StatGrid, PageHeader, Tabs } from '@/design-system/components';
+import { VersionToggle } from '@/components/ui/VersionToggle';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -898,6 +899,7 @@ export function Agents() {
         actions={
           <div className="flex items-center gap-3">
             <PendingApprovalsLink />
+            <VersionToggle surface="agents" ariaLabel="Agents page version" />
             <LiveIndicator />
           </div>
         }
