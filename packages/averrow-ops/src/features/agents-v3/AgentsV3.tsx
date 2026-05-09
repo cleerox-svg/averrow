@@ -343,12 +343,17 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
           </div>
         </div>
         {agent.activity && agent.activity.length > 0 && (
-          <ActivitySparkline
-            data={agent.activity}
-            color={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
-            width={80}
-            height={28}
-          />
+          <div className="flex flex-col items-end gap-0.5">
+            <ActivitySparkline
+              data={agent.activity}
+              color={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
+              width={80}
+              height={28}
+            />
+            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+              Runs · 24h
+            </div>
+          </div>
         )}
       </div>
 
@@ -422,9 +427,20 @@ function OutputRow({ output }: { output: AgentOutput }) {
 function AgentDetailPanelV3({ agent }: { agent: Agent }) {
   const { data: detail, isLoading } = useAgentDetail(agent.name);
   const recentOutputs = (detail?.outputs ?? []).slice(0, 5);
+  const meta = AGENT_METADATA[agent.name as AgentId];
 
   return (
     <Card variant="elevated" className="p-5 col-span-full">
+      {meta?.subtitle && (
+        <div className="mb-5 pb-4 border-b" style={{ borderColor: 'var(--border-base)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+            What it does
+          </div>
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {meta.subtitle}
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-4">
           <div>
