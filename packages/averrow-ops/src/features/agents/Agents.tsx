@@ -452,10 +452,11 @@ function AgentDetailPanel({ agent }: { agent: Agent }) {
 
   const chartData = useMemo(() => {
     if (!typedHealth) return [];
-    return typedHealth.runs.map((duration, i) => ({
+    return typedHealth.runs.map((runs, i) => ({
       hour: `${(new Date().getUTCHours() + i) % 24}:00`,
-      duration,
+      runs,
       outputs: typedHealth.outputs[i] ?? 0,
+      errors:  typedHealth.errors?.[i] ?? 0,
     }));
   }, [typedHealth]);
 
@@ -494,19 +495,23 @@ function AgentDetailPanel({ agent }: { agent: Agent }) {
         {/* Right: Health chart */}
         <div className="flex-1 min-w-0">
           <div className="font-mono text-[9px] text-white/40 uppercase tracking-widest mb-3">
-            24h Health — Duration (ms) & Outputs
+            24h Health — Runs · Outputs · Errors
           </div>
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={180}>
               <AreaChart data={chartData}>
                 <defs>
-                  <linearGradient id="durationGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#22D3EE" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+                  <linearGradient id="runsGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--amber)" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="outputsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#FB923C" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#FB923C" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#22D3EE" stopOpacity={0.30} />
+                    <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="errorsGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--sev-high)" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis
@@ -529,19 +534,27 @@ function AgentDetailPanel({ agent }: { agent: Agent }) {
                 />
                 <Area
                   type="monotone"
-                  dataKey="duration"
-                  stroke="#22D3EE"
+                  dataKey="runs"
+                  stroke="var(--amber)"
                   strokeWidth={1.5}
-                  fill="url(#durationGrad)"
-                  name="Duration (ms)"
+                  fill="url(#runsGrad)"
+                  name="Runs"
                 />
                 <Area
                   type="monotone"
                   dataKey="outputs"
-                  stroke="#FB923C"
+                  stroke="#22D3EE"
                   strokeWidth={1.5}
                   fill="url(#outputsGrad)"
                   name="Outputs"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="errors"
+                  stroke="var(--sev-high)"
+                  strokeWidth={1.5}
+                  fill="url(#errorsGrad)"
+                  name="Errors"
                 />
               </AreaChart>
             </ResponsiveContainer>
