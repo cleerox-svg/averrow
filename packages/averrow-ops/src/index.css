@@ -1,4 +1,4 @@
-@import './design-system/tokens.css';
+@import "@averrow/shared/theme.css";
 @import 'maplibre-gl/dist/maplibre-gl.css';
 
 /* Averrow Text Hierarchy — DO NOT use below these minimums on readable content:
