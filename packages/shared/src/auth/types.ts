@@ -72,9 +72,10 @@ export interface AuthProviderConfig {
    *  ops + tenant don't fight over the same slot when both apps
    *  share a domain. e.g. 'averrow-user' / 'averrow-tenant-user'. */
   userCacheKey:     string;
-  /** Path to start the OAuth login redirect. Default
-   *  `/api/auth/login?return_to=/v2/`. */
-  loginPath?:       string;
+  /** Path to start the OAuth login redirect. REQUIRED — no
+   *  default. Each product MUST set its own return_to so a future
+   *  product (FarmTrack, etc.) doesn't silently inherit /v2/. */
+  loginPath:        string;
   /** Path to POST to revoke the session on logout.
    *  Default `/api/auth/logout`. */
   logoutPath?:      string;
