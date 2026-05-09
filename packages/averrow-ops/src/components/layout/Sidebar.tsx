@@ -24,6 +24,10 @@ interface NavItem {
   // /observatory and /observatory-v3 regardless of which version
   // the user has selected).
   matchPrefixes?: string[];
+  // Force exact path match. Use for entries whose path is a prefix
+  // of sibling entries (e.g. Dashboard at `/admin` would otherwise
+  // also match `/admin/users`, `/admin/customers`, etc.).
+  exact?: boolean;
 }
 
 interface NavSection {
@@ -144,7 +148,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         { label: 'Agents',       path: agentsPath,           icon: Cpu, matchPrefixes: ['/agents', '/agents-v3'] },
         { label: 'Feeds',        path: '/feeds',             icon: Rss },
         { label: 'Metrics',      path: '/admin/metrics',     icon: BarChart3 },
-        { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard },
+        { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard, exact: true },
         { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
         ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),
         ...(isSuperAdmin ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
@@ -203,10 +207,12 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               const prefixActive = item.matchPrefixes?.some(p =>
                 location.pathname === p || location.pathname.startsWith(p + '/'),
               );
-              // `end` is only safe for the root path. Every other entry should
-              // stay active on its child URLs (e.g. `/admin/incidents/:id`,
-              // `/brands/:id`) — H2 audit fix.
-              const exactMatch = item.path === '/';
+              // `end` is needed for: (a) the root path, and (b) any entry
+              // whose path is a prefix of sibling entries (Dashboard at
+              // `/admin` shouldn't light up when you're on `/admin/users`).
+              // Every other entry should stay active on its child URLs
+              // (e.g. `/admin/incidents/:id`, `/brands/:id`) — H2 audit fix.
+              const exactMatch = item.path === '/' || item.exact === true;
               return (
                 <NavLink
                   key={item.label}
