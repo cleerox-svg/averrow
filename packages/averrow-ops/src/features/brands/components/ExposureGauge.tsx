@@ -49,7 +49,7 @@ export function ExposureGauge({ score, size = 160 }: ExposureGaugeProps) {
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="drop-shadow-lg">
             {/* Background track */}
             <circle cx={center} cy={center} r={radius} fill="none"
-              stroke="rgba(255,255,255,0.04)" strokeWidth="8" />
+              stroke="var(--border-base)" strokeWidth="8" />
 
             {/* Green zone (0-33%) */}
             <circle cx={center} cy={center} r={radius} fill="none"

@@ -28,14 +28,14 @@ export function CampaignDetail() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      <button onClick={() => navigate('/campaigns')} className="font-mono text-xs text-[rgba(255,255,255,0.30)] hover:text-accent transition-colors">
+      <button onClick={() => navigate('/campaigns')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
         &larr; Back to Operations
       </button>
       <Card hover={false}>
         <h1 className="font-display text-xl font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
           {campaign?.name || 'Campaign'}
         </h1>
-        <p className="text-sm text-[rgba(255,255,255,0.36)]">Detail view coming soon</p>
+        <p className="text-sm text-[var(--text-tertiary)]">Detail view coming soon</p>
       </Card>
 
       <Card hover={false} style={{ padding: '16px' }}>

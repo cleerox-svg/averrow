@@ -156,8 +156,8 @@ export function HomeHeader() {
           border-radius: 11px;
           background: ${SELF_AVATAR_COLOR};
           color: var(--text-on-amber, #0A0F1E);
-          border: 1px solid rgba(255,255,255,0.20);
-          box-shadow: 0 4px 14px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.30);
+          border: 1px solid var(--border-strong);
+          box-shadow: 0 4px 14px rgba(0,0,0,0.6), inset 0 1px 0 var(--text-muted), inset 0 -1px 0 rgba(0,0,0,0.30);
           display: flex;
           align-items: center;
           justify-content: center;

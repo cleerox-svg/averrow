@@ -139,7 +139,7 @@ export function MobileNav() {
           {/* Header */}
           <div style={{
             padding:       '20px 20px 16px',
-            borderBottom:  '1px solid rgba(255,255,255,0.07)',
+            borderBottom:  '1px solid var(--border-base)',
             display:       'flex',
             alignItems:    'center',
             justifyContent: 'space-between',
@@ -163,9 +163,9 @@ export function MobileNav() {
               onClick={() => setShowMore(false)}
               style={{
                 width: 36, height: 36, borderRadius: 10,
-                background: 'rgba(255,255,255,0.08)',
-                border:     '1px solid rgba(255,255,255,0.12)',
-                color:      'rgba(255,255,255,0.60)',
+                background: 'var(--border-base)',
+                border:     '1px solid var(--border-base)',
+                color:      'var(--text-secondary)',
                 fontSize:   18, cursor: 'pointer',
                 display:    'flex', alignItems: 'center', justifyContent: 'center',
               }}
@@ -184,14 +184,14 @@ export function MobileNav() {
               }}>
                 <span style={{
                   fontSize: 9, fontFamily: 'var(--font-mono)',
-                  letterSpacing: '0.22em', color: 'rgba(255,255,255,0.35)',
+                  letterSpacing: '0.22em', color: 'var(--text-tertiary)',
                   textTransform: 'uppercase', fontWeight: 700,
                 }}>
                   {section.label}
                 </span>
                 <div style={{
                   flex: 1, height: 1,
-                  background: 'linear-gradient(90deg, rgba(255,255,255,0.08), transparent)',
+                  background: 'linear-gradient(90deg, var(--border-base), transparent)',
                 }} />
               </div>
 
@@ -226,7 +226,7 @@ export function MobileNav() {
                     <span style={{
                       fontSize:   13,
                       fontWeight: 600,
-                      color:      'rgba(255,255,255,0.85)',
+                      color:      'var(--text-primary)',
                     }}>
                       {item.label}
                     </span>
@@ -271,8 +271,8 @@ export function MobileNav() {
         background:           'rgba(4,7,16,0.94)',
         backdropFilter:       'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
-        borderTop:            '1px solid rgba(255,255,255,0.08)',
-        boxShadow:            '0 -8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.07)',
+        borderTop:            '1px solid var(--border-base)',
+        boxShadow:            '0 -8px 32px rgba(0,0,0,0.6), inset 0 1px 0 var(--border-base)',
         display:              'flex',
         justifyContent:       'space-around',
         alignItems:           'center',
@@ -333,7 +333,7 @@ export function MobileNav() {
                 fontFamily:    'monospace',
                 letterSpacing: '0.08em',
                 textTransform: 'uppercase',
-                color:         active ? AMBER : 'rgba(255,255,255,0.30)',
+                color:         active ? AMBER : 'var(--text-muted)',
                 textShadow:    active ? `0 0 10px ${AMBER}60` : 'none',
                 transition:    'color 0.15s ease',
               }}>
@@ -382,7 +382,7 @@ export function MobileNav() {
             fontFamily:    'monospace',
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
-            color:         moreIsActive ? AMBER : 'rgba(255,255,255,0.30)',
+            color:         moreIsActive ? AMBER : 'var(--text-muted)',
             textShadow:    moreIsActive ? `0 0 10px ${AMBER}60` : 'none',
             transition:    'color 0.15s ease',
           }}>

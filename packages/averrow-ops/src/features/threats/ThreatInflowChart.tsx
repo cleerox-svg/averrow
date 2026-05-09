@@ -182,15 +182,15 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           <AreaChart data={chartData} margin={{ top: 10, right: 8, bottom: 16, left: -16 }}>
             <XAxis
               dataKey="bucket"
-              tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+              axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
               tickFormatter={(v: string) => formatAxisTick(v, window)}
               interval="preserveStartEnd"
               minTickGap={32}
             />
             <YAxis
-              tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
               axisLine={false}
               tickLine={false}
               width={44}
@@ -202,7 +202,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
             />
             <Tooltip
               content={<InflowTooltip window={window} />}
-              cursor={{ stroke: 'rgba(255,255,255,0.45)', strokeDasharray: '2 3' }}
+              cursor={{ stroke: 'var(--text-tertiary)', strokeDasharray: '2 3' }}
             />
             {data.series.map((s) => {
               const c = colorFor(s.threat_type);
@@ -297,7 +297,7 @@ function InflowTooltip({
     <div
       style={{
         background: 'rgba(20,26,38,0.96)',
-        border: '1px solid rgba(255,255,255,0.10)',
+        border: '1px solid var(--border-base)',
         borderRadius: 8,
         padding: '8px 10px',
         fontFamily: 'var(--font-mono)',
@@ -352,8 +352,8 @@ function WindowToggle({ value, onChange }: { value: Window; onChange: (v: Window
         // alignSelf prevents the parent flex-col from stretching this
         // pill across the full width of the card on narrow mobile.
         alignSelf: 'flex-start',
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--border-base)',
+        border: '1px solid var(--border-base)',
         borderRadius: 8,
         padding: 2,
         flexShrink: 0,

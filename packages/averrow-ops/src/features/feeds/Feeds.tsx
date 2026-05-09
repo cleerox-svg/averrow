@@ -376,7 +376,7 @@ function FeedHealthStrip({ feeds }: { feeds: FeedOverview[] }) {
   return (
     <Card style={{ padding: '16px' }}>
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">Feed Health</span>
+        <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">Feed Health</span>
         <div className="flex items-center gap-1.5 flex-wrap">
           {healthy.map(f => (
             <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-green-400" title={f.display_name} />
@@ -528,7 +528,7 @@ function FeedCard({
                   height: 3,
                   borderRadius: 99,
                   overflow: 'hidden',
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--border-base)',
                 }}
               >
                 <div
@@ -642,7 +642,7 @@ function FeedDetailPanel({ feed, category }: { feed: FeedOverview; category: Fee
           <div key={label} style={{
             display: 'flex', alignItems: 'flex-start',
             gap: 8, padding: '5px 0',
-            borderBottom: '1px solid rgba(255,255,255,0.04)',
+            borderBottom: '1px solid var(--border-base)',
           }}>
             <div style={{
               fontSize: 9, fontFamily: 'var(--font-mono)',
@@ -691,7 +691,7 @@ function FeedDetailPanel({ feed, category }: { feed: FeedOverview; category: Fee
         {retryConfig && (
           <div style={{
             marginTop: 8, padding: '6px 10px', borderRadius: 8,
-            background: 'rgba(255,255,255,0.03)',
+            background: 'var(--border-base)',
             border: '1px solid var(--border-base)',
             fontSize: 10, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)',
@@ -703,7 +703,7 @@ function FeedDetailPanel({ feed, category }: { feed: FeedOverview; category: Fee
         {feed.filters && (
           <div style={{
             marginTop: 8, padding: '6px 10px', borderRadius: 8,
-            background: 'rgba(255,255,255,0.03)',
+            background: 'var(--border-base)',
             border: '1px solid var(--border-base)',
             fontSize: 10, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)',
@@ -886,7 +886,7 @@ export function Feeds() {
       <div className="space-y-6">
         <div>
           <h1 className="text-xl font-bold font-display" style={{ color: 'var(--text-primary)' }}>Feeds</h1>
-          <p className="text-sm text-[rgba(255,255,255,0.30)] font-mono mt-1">Threat intelligence feed sources</p>
+          <p className="text-sm text-[var(--text-muted)] font-mono mt-1">Threat intelligence feed sources</p>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (

@@ -203,7 +203,7 @@ function ActorCardUnified({ actor, onClick }: { actor: ThreatActor; onClick: () 
       ) : (
         <div style={{
           height: 36, marginBottom: 10,
-          background: 'rgba(255,255,255,0.02)', borderRadius: 6,
+          background: 'var(--border-base)', borderRadius: 6,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>

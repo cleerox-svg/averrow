@@ -72,7 +72,7 @@ function TokenUsageSummary({ data }: { data: TokenUsageEntry[] }) {
             <div
               style={{
                 flex: 1,
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--border-base)',
                 border: '1px solid var(--border-base)',
                 borderRadius: 4,
                 overflow: 'hidden',

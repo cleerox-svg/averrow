@@ -124,7 +124,7 @@ function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
             'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
             selected === o.value
               ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
-              : 'bg-white/[0.03] text-[rgba(255,255,255,0.30)] border-white/[0.06] hover:border-white/15 hover:text-[rgba(255,255,255,0.42)]',
+              : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
           )}
         >
           {o.label}
@@ -265,7 +265,7 @@ function BrandGroupCard({
                   {score !== null && (
                     <span className={cn(
                       'font-mono text-[12px] font-bold tabular-nums',
-                      score >= 75 ? 'text-[#fb923c]' : 'text-[rgba(255,255,255,0.36)]',
+                      score >= 75 ? 'text-[#fb923c]' : 'text-[var(--text-tertiary)]',
                     )}>
                       {score}%
                     </span>
@@ -330,7 +330,7 @@ function BrandGroupCard({
               {showAll && remaining > 0 && (
                 <button
                   onClick={() => setShowAll(false)}
-                  className="font-mono text-[10px] font-semibold text-[rgba(255,255,255,0.30)] hover:text-[var(--text-secondary)] transition-colors"
+                  className="font-mono text-[10px] font-semibold text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
                 >
                   Show less
                 </button>
@@ -389,7 +389,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
                 alert.status === 'new' ? 'var(--sev-high-bg)' :
                 alert.status === 'acknowledged' ? 'var(--amber-glow)' :
                 alert.status === 'resolved' ? 'var(--sev-info-bg)' :
-                alert.status === 'false_positive' ? 'rgba(255,255,255,0.05)' :
+                alert.status === 'false_positive' ? 'var(--border-base)' :
                 'transparent',
               color:
                 alert.status === 'new' ? 'var(--sev-high)' :
@@ -413,7 +413,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* LEFT — Alert Details */}
         <div className="space-y-3">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.30)] mb-2">Alert Details</div>
+          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Alert Details</div>
 
           <div className="flex items-center gap-2">
             <img
@@ -458,22 +458,22 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Detected</div>
-            <span className="font-mono text-[11px] text-[rgba(255,255,255,0.64)]">{timeAgo(alert.created_at)}</span>
+            <span className="font-mono text-[11px] text-[var(--text-secondary)]">{timeAgo(alert.created_at)}</span>
           </div>
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Source</div>
-            <span className="font-mono text-[11px] text-[rgba(255,255,255,0.36)]">Social Monitor Agent</span>
+            <span className="font-mono text-[11px] text-[var(--text-tertiary)]">Social Monitor Agent</span>
           </div>
         </div>
 
         {/* CENTER — Evidence & Assessment */}
         <div className="space-y-3 border-l border-white/[0.06] pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.30)] mb-2">Evidence & Assessment</div>
+          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Evidence & Assessment</div>
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Summary</div>
-            <p className="text-[12px] text-[rgba(255,255,255,0.74)] leading-relaxed">{alert.summary}</p>
+            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.summary}</p>
           </div>
 
           {score !== null && (
@@ -495,11 +495,11 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">AI Assessment</div>
             {alert.ai_assessment ? (
               <div className="space-y-2">
-                <p className="text-[12px] text-[rgba(255,255,255,0.74)] leading-relaxed">{alert.ai_assessment}</p>
+                <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.ai_assessment}</p>
                 {alert.ai_recommendations && (
                   <div>
                     <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Recommendations</div>
-                    <p className="text-[12px] text-[rgba(255,255,255,0.42)] leading-relaxed">{alert.ai_recommendations}</p>
+                    <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">{alert.ai_recommendations}</p>
                   </div>
                 )}
               </div>
@@ -511,7 +511,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
 
         {/* RIGHT — Actions */}
         <div className="space-y-3 border-l border-white/[0.06] pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.30)] mb-2">Actions</div>
+          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
 
           <div className="flex flex-col gap-2">
             {alert.status === 'new' && (
@@ -526,7 +526,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
                 <button
                   onClick={() => onUpdate('false_positive')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[rgba(255,255,255,0.36)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
                 >
                   Dismiss
                 </button>
@@ -544,7 +544,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
                 <button
                   onClick={() => onUpdate('new')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[rgba(255,255,255,0.36)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
                 >
                   Re-open
                 </button>
@@ -554,7 +554,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[rgba(255,255,255,0.36)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
               >
                 Re-open
               </button>
@@ -563,7 +563,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[rgba(255,255,255,0.36)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
               >
                 Re-open
               </button>
@@ -595,7 +595,7 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
           {alert.status === 'resolved' && alert.resolution_notes && (
             <div className="pt-2">
               <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Resolution Notes</div>
-              <p className="text-[11px] text-[rgba(255,255,255,0.64)] leading-relaxed">{alert.resolution_notes}</p>
+              <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">{alert.resolution_notes}</p>
             </div>
           )}
         </div>

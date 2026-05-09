@@ -132,7 +132,7 @@ export function LiveActivity() {
           transition: background-color 0.12s ease;
         }
         .home-live-activity-row:hover {
-          background: rgba(255,255,255,0.03);
+          background: var(--border-base);
         }
         .home-live-activity-dot {
           width: 6px;

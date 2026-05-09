@@ -63,7 +63,7 @@ export function MetricsTile({
         WebkitBackdropFilter: 'blur(12px)',
         border: `1px solid ${TONE_BORDER_FAINT[tone]}`,
         borderTop: `3px solid ${TONE_BORDER[tone]}`,
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 24px rgba(0,0,0,0.40)',
+        boxShadow: 'inset 0 1px 0 var(--border-base), 0 4px 24px rgba(0,0,0,0.40)',
       }}
     >
       <div className="p-3">

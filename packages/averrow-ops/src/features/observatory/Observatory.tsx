@@ -419,7 +419,7 @@ export function Observatory() {
               <button
                 onClick={() => refetch()}
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
+                  background: 'var(--border-base)',
                   border: '1px solid var(--border-base)',
                   borderRadius: 6,
                   padding: '2px 6px',
@@ -559,7 +559,7 @@ export function Observatory() {
                 right: 8,
                 padding: 6,
                 borderRadius: 6,
-                background: 'rgba(255,255,255,0.05)',
+                background: 'var(--border-base)',
                 border: '1px solid var(--border-base)',
                 cursor: 'pointer',
                 color: 'var(--text-tertiary)',
@@ -628,7 +628,7 @@ export function Observatory() {
                   right: 8,
                   padding: 6,
                   borderRadius: 6,
-                  background: 'rgba(255,255,255,0.05)',
+                  background: 'var(--border-base)',
                   border: '1px solid var(--border-base)',
                   cursor: 'pointer',
                   color: 'var(--text-tertiary)',
@@ -753,7 +753,7 @@ export function Observatory() {
 
       {/* ─── Right sidebar panel (desktop only) ─── */}
       {!isMobile && showPanel && mapMode !== 'heatmap' && (
-        <div className="absolute top-0 right-0 bottom-[84px] z-20 w-80 bg-slate-950/88 backdrop-blur-2xl border-l border-white/[0.06] shadow-[-8px_0_40px_rgba(0,0,0,0.5),inset_1px_0_0_rgba(255,255,255,0.04)] flex flex-col overflow-hidden">
+        <div className="absolute top-0 right-0 bottom-[84px] z-20 w-80 bg-slate-950/88 backdrop-blur-2xl border-l border-white/[0.06] shadow-[-8px_0_40px_rgba(0,0,0,0.5),inset_1px_0_0_var(--border-base)] flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
           {/* Mode-aware header */}
           {mapMode === 'global' && (

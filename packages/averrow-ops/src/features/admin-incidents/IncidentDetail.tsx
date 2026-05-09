@@ -27,7 +27,7 @@ const STATUS_PILL_BG: Record<IncidentStatus, string> = {
   identified:    'rgba(251,146,60,0.10)',
   monitoring:    'rgba(251,191,36,0.10)',
   resolved:      'rgba(34,197,94,0.10)',
-  postmortem:    'rgba(255,255,255,0.05)',
+  postmortem:    'var(--border-base)',
 };
 
 const STATUS_PILL_TEXT: Record<IncidentStatus, string> = {
@@ -186,7 +186,7 @@ export function AdminIncidentDetail() {
             width: '100%',
             fontFamily: 'var(--font-mono)', fontSize: 13,
             background: 'rgba(0,0,0,0.20)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: '1px solid var(--border-base)',
             borderRadius: 6, padding: 10,
             color: 'var(--text-primary)', resize: 'vertical',
           }}
@@ -219,7 +219,7 @@ export function AdminIncidentDetail() {
             style={{
               fontFamily: 'var(--font-mono)', fontSize: 11,
               background: 'rgba(0,0,0,0.20)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              border: '1px solid var(--border-base)',
               borderRadius: 6, padding: '6px 10px',
               color: 'var(--text-primary)',
             }}
@@ -259,7 +259,7 @@ export function AdminIncidentDetail() {
             width: '100%',
             fontFamily: 'var(--font-mono)', fontSize: 13,
             background: 'rgba(0,0,0,0.20)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: '1px solid var(--border-base)',
             borderRadius: 6, padding: 10,
             color: 'var(--text-primary)', marginBottom: 8,
           }}
@@ -274,7 +274,7 @@ export function AdminIncidentDetail() {
             width: '100%',
             fontFamily: 'var(--font-mono)', fontSize: 13,
             background: 'rgba(0,0,0,0.20)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: '1px solid var(--border-base)',
             borderRadius: 6, padding: 10,
             color: 'var(--text-primary)', resize: 'vertical',
           }}
@@ -353,7 +353,7 @@ export function AdminIncidentDetail() {
                 display: 'flex',
                 gap: 10,
                 padding: '8px 0',
-                borderBottom: '1px dashed rgba(255,255,255,0.06)',
+                borderBottom: '1px dashed var(--border-base)',
                 opacity: u.synthetic ? 0.85 : 1,
               }}
             >

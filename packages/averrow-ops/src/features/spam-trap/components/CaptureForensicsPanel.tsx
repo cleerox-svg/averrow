@@ -10,8 +10,8 @@ const GLASS_CARD: CSSProperties = {
   background: 'rgba(15,23,42,0.50)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+  border: '1px solid var(--border-base)',
+  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -198,7 +198,7 @@ function ExpandedDetail({
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {/* LEFT — Email Intelligence */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Email Intelligence
         </div>
         <div className="space-y-1.5 text-[11px]">
@@ -226,7 +226,7 @@ function ExpandedDetail({
 
       {/* CENTER — URLs */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
           URLs
         </div>
         <div className="text-[32px] font-bold font-mono text-white leading-none">
@@ -263,7 +263,7 @@ function ExpandedDetail({
 
       {/* RIGHT — Actions */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Actions
         </div>
         <button
@@ -336,7 +336,7 @@ export function CaptureForensicsPanel() {
 
   return (
     <div className="rounded-xl p-4 min-h-[400px]" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-4">
+      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-4">
         Capture Forensics
       </div>
 

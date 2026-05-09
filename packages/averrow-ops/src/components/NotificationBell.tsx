@@ -71,7 +71,7 @@ function NotificationItem({
       className="group relative w-full px-4 py-3 transition-colors hover:bg-white/5"
       style={{
         borderLeft: isUnread ? `2px solid ${severityBorderToken(notification.severity)}` : '2px solid transparent',
-        background: isUnread ? 'rgba(255,255,255,0.03)' : 'transparent',
+        background: isUnread ? 'var(--border-base)' : 'transparent',
       }}
     >
       <div className="flex items-start gap-2">

@@ -34,7 +34,7 @@ function getDotColor(profile: SocialProfile): string {
     const override = CLASSIFICATION_COLORS[profile.classification];
     if (override) return override;
   }
-  return PLATFORM_COLORS[profile.platform.toLowerCase()] ?? 'rgba(255,255,255,0.15)';
+  return PLATFORM_COLORS[profile.platform.toLowerCase()] ?? 'var(--border-strong)';
 }
 
 function getLabel(profile: SocialProfile): string {

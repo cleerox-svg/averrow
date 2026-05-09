@@ -41,7 +41,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               'animate-slide-up px-4 py-3 rounded-lg border text-sm font-medium shadow-lg shadow-black/20 max-w-sm',
               toast.type === 'success' && 'bg-positive/10 border-positive/25 text-positive',
               toast.type === 'error' && 'bg-accent/10 border-accent/25 text-accent',
-              toast.type === 'info' && 'bg-contrail/10 border-contrail/25 text-[rgba(255,255,255,0.60)]',
+              toast.type === 'info' && 'bg-contrail/10 border-contrail/25 text-[var(--text-secondary)]',
             )}
           >
             {toast.message}

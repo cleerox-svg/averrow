@@ -128,7 +128,7 @@ export function StatTile({
           fontSize: 9, fontWeight: 800,
           color: '#fff',
           fontFamily: 'monospace',
-          boxShadow: '0 2px 8px rgba(239,68,68,0.5), inset 0 1px 0 rgba(255,255,255,0.2)',
+          boxShadow: '0 2px 8px rgba(239,68,68,0.5), inset 0 1px 0 var(--border-strong)',
           border: '1px solid rgba(239,68,68,0.5)',
         }}>
           {critical}

@@ -174,8 +174,8 @@ export function ProviderMovers() {
           transition: background-color 0.12s ease, border-color 0.12s ease;
         }
         .home-provider-movers .home-mover-row:hover {
-          background: rgba(255,255,255,0.03);
-          border-color: rgba(255,255,255,0.08);
+          background: var(--border-base);
+          border-color: var(--border-base);
         }
         .home-provider-movers .home-mover-row-text {
           flex: 1;

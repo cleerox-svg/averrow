@@ -57,7 +57,7 @@ export function SectionLabel({
             fontSize:      9,
             fontFamily:    'monospace',
             letterSpacing: '0.20em',
-            color:         'rgba(255,255,255,0.45)',
+            color:         'var(--text-tertiary)',
             textTransform: 'uppercase',
             fontWeight:    700,
           }}>
@@ -67,7 +67,7 @@ export function SectionLabel({
             <span style={{
               fontSize:   8,
               fontFamily: 'monospace',
-              color:      'rgba(255,255,255,0.22)',
+              color:      'var(--text-muted)',
               marginLeft: 10,
             }}>
               {attribution}

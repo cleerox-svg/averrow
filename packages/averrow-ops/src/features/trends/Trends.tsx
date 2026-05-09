@@ -73,7 +73,7 @@ function ChartTooltip({ active, payload, label }: {
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+    <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="font-mono mb-1" style={{ color: 'var(--text-secondary)' }}>{label}</div>
       {payload.map((p) => (
         <div key={p.name} className="flex justify-between gap-4">
@@ -94,7 +94,7 @@ function BriefingCard({ briefing, onOpen }: { briefing: IntelligenceBriefing; on
   const hasMore = (briefing.summary?.length ?? 0) > title.length;
 
   return (
-    <div className="rounded-xl p-4" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border: sev === 'critical' ? '1px solid rgba(200,60,60,0.30)' : sev === 'high' ? '1px solid rgba(229,168,50,0.30)' : '1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+    <div className="rounded-xl p-4" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border: sev === 'critical' ? '1px solid rgba(200,60,60,0.30)' : sev === 'high' ? '1px solid rgba(229,168,50,0.30)' : '1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="flex items-start gap-2">
         <span
           className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full"
@@ -210,7 +210,7 @@ function ThreatVolumeChart({ window }: { window: string }) {
               <XAxis
                 dataKey="date"
                 tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
-                axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+                axisLine={{ stroke: 'var(--border-base)' }}
                 tickLine={false}
               />
               <YAxis
@@ -281,7 +281,7 @@ function BrandRiskMomentum() {
                 return (
                   <tr key={b.brand_name} className="data-row border-t border-white/5">
                     <td className="py-2" style={{ color: 'var(--text-primary)' }}>{b.brand_name}</td>
-                    <td className="py-2 text-right font-mono" style={{ color: 'rgba(255,255,255,0.78)' }}>{thisWeek.toLocaleString()}</td>
+                    <td className="py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</td>
                     <td className="py-2 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{lastWeek.toLocaleString()}</td>
                     <td className="py-2 text-right font-mono font-semibold" style={changeGlow(isFinite(changePct) ? changePct : 0)}>
                       {displayChange}
@@ -330,7 +330,7 @@ function ProviderMomentumPanel() {
               const color = barColor(count);
               return (
                 <div key={p.provider} className="flex items-center gap-3">
-                  <div className="w-28 text-xs truncate font-mono" style={{ color: 'rgba(255,255,255,0.78)' }}>{p.provider}</div>
+                  <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>{p.provider}</div>
                   <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all"
@@ -397,7 +397,7 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
             <XAxis
               type="number"
               tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+              axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
             />
             <YAxis
@@ -413,7 +413,7 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
                 if (!active || !payload?.length) return null;
                 const item = payload[0];
                 return (
-                  <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+                  <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
                     <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{((item.value as number) ?? 0).toLocaleString()}</span>
                   </div>
                 );

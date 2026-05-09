@@ -69,7 +69,7 @@ export function StateMachineButtons<T extends string>({
         gap: z.gap,
         padding: 4,
         borderRadius: 99,
-        background: 'rgba(255,255,255,0.04)',
+        background: 'var(--border-base)',
         border: '1px solid var(--border-base)',
       }}
       role="group"
@@ -108,7 +108,7 @@ export function StateMachineButtons<T extends string>({
                 ? '1px solid var(--amber-border)'
                 : '1px solid transparent',
               boxShadow:     isCurrent
-                ? '0 4px 12px var(--amber-glow), inset 0 1px 0 rgba(255,255,255,0.30)'
+                ? '0 4px 12px var(--amber-glow), inset 0 1px 0 var(--text-muted)'
                 : 'none',
               cursor:        clickable ? 'pointer' : isCurrent ? 'default' : 'not-allowed',
               opacity:       isAllowed ? 1 : 0.4,

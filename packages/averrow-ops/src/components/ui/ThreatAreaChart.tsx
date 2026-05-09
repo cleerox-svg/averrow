@@ -115,7 +115,7 @@ export function ThreatAreaChart({
           {showGrid && (
             <CartesianGrid
               strokeDasharray="3 6"
-              stroke="rgba(255,255,255,0.05)"
+              stroke="var(--border-base)"
               horizontal={true}
               vertical={false}
             />
@@ -127,7 +127,7 @@ export function ThreatAreaChart({
               tick={{
                 fontSize: 9,
                 fontFamily: 'var(--font-mono)',
-                fill: 'rgba(255,255,255,0.30)',
+                fill: 'var(--text-muted)',
                 letterSpacing: '0.05em',
               }}
               axisLine={false}
@@ -141,7 +141,7 @@ export function ThreatAreaChart({
               tick={{
                 fontSize: 9,
                 fontFamily: 'var(--font-mono)',
-                fill: 'rgba(255,255,255,0.25)',
+                fill: 'var(--text-muted)',
               }}
               axisLine={false}
               tickLine={false}
@@ -149,7 +149,7 @@ export function ThreatAreaChart({
             />
           )}
 
-          {showTooltip && <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.10)', strokeWidth: 1 }} />}
+          {showTooltip && <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border-base)', strokeWidth: 1 }} />}
 
           {/* Second series (rendered behind) */}
           {hasSecondSeries && (

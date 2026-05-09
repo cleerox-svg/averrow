@@ -12,9 +12,9 @@ const GLASS_CARD: React.CSSProperties = {
   background: 'rgba(15,23,42,0.50)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid rgba(255,255,255,0.07)',
+  border: '1px solid var(--border-base)',
   borderRadius: '0.75rem',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
 };
 const GLASS_STAT: React.CSSProperties = {
   background: 'rgba(22,30,48,0.50)',
@@ -22,7 +22,7 @@ const GLASS_STAT: React.CSSProperties = {
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid rgba(229,168,50,0.15)',
   borderRadius: '0.75rem',
-  boxShadow: '0 0 20px rgba(229,168,50,0.05), inset 0 1px 0 rgba(255,255,255,0.04)',
+  boxShadow: '0 0 20px rgba(229,168,50,0.05), inset 0 1px 0 var(--border-base)',
 };
 
 function emailGrade(score: number | null): string {

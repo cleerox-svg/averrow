@@ -41,7 +41,7 @@ function severityAccent(sev: string): string {
 function gradeStyle(grade: string | null): {
   bg: string; color: string; border: string;
 } {
-  if (!grade) return { bg: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.35)', border: 'rgba(255,255,255,0.10)' };
+  if (!grade) return { bg: 'var(--border-base)', color: 'var(--text-tertiary)', border: 'var(--border-base)' };
   const g = grade.replace('+', '').replace('-', '');
   if (g === 'A')  return { bg: 'rgba(99,153,34,0.15)',   color: '#97C459', border: 'rgba(99,153,34,0.35)' };
   if (g === 'B')  return { bg: 'rgba(229,168,50,0.12)',  color: '#E5A832', border: 'rgba(229,168,50,0.30)' };
@@ -82,7 +82,7 @@ const GRADE_STYLES: Record<string, string> = {
 };
 
 const THREAT_TYPE_STYLES: Record<string, string> = {
-  phishing: 'text-[rgba(255,255,255,0.60)] border-contrail/30',
+  phishing: 'text-[var(--text-secondary)] border-contrail/30',
   typosquat: 'text-yellow-400 border-yellow-400/30',
   malware: 'text-amber-400 border-amber-400/30',
   c2: 'text-red-400 border-red-400/30',
@@ -251,12 +251,12 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
     color: 'var(--text-primary)',
     outline: 'none',
   };
-  const labelClass = 'block font-mono text-[10px] uppercase tracking-widest text-[rgba(255,255,255,0.36)] mb-1.5';
+  const labelClass = 'block font-mono text-[10px] uppercase tracking-widest text-[var(--text-tertiary)] mb-1.5';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)' }}>
+      <div className="relative w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
         <h2 className="font-display text-lg font-bold mb-5" style={{ color:'var(--text-primary)' }}>Monitor Brand</h2>
 
         <div className="space-y-4">
@@ -325,7 +325,7 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onClose}
-            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-white/10 text-[rgba(255,255,255,0.36)] hover:bg-white/5 transition-colors"
+            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-white/10 text-[var(--text-tertiary)] hover:bg-white/5 transition-colors"
           >
             Cancel
           </button>
@@ -415,7 +415,7 @@ function StatsRow() {
           <div style={{ marginTop: 8, position: 'relative' }}>
             <div style={{
               fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.20em',
-              color: 'rgba(255,255,255,0.40)', textTransform: 'uppercase', marginBottom: 6,
+              color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 6,
             }}>
               {c.label}
             </div>
@@ -431,7 +431,7 @@ function StatsRow() {
               <GlowNumber value={c.value} color={c.accent} size="lg" suffix={c.suffix} />
             )}
             {i !== 3 && c.sub && (
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
                 {c.sub}
               </div>
             )}
@@ -635,7 +635,7 @@ function BrandCard({
         {/* Exposure */}
         <div style={{
           flex: 1,
-          background: 'rgba(255,255,255,0.04)',
+          background: 'var(--border-base)',
           borderRadius: 8,
           padding: '7px 8px',
           textAlign: 'center',
@@ -674,7 +674,7 @@ function BrandCard({
         {/* Email grade */}
         <div style={{
           flex: 1,
-          background: 'rgba(255,255,255,0.04)',
+          background: 'var(--border-base)',
           borderRadius: 8,
           padding: '7px 8px',
           textAlign: 'center',
@@ -705,7 +705,7 @@ function BrandCard({
         {/* Social risk */}
         <div style={{
           flex: 1,
-          background: 'rgba(255,255,255,0.04)',
+          background: 'var(--border-base)',
           borderRadius: 8,
           padding: '7px 8px',
           textAlign: 'center',
@@ -755,7 +755,7 @@ function BrandCard({
       ) : (
         <div style={{
           height: 36,
-          background: 'rgba(255,255,255,0.02)',
+          background: 'var(--border-base)',
           borderRadius: 6,
           display: 'flex',
           alignItems: 'center',
@@ -939,7 +939,7 @@ export function Brands() {
                   <button
                     onClick={() => setPage(p => Math.max(1, p - 1))}
                     disabled={page === 1}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[rgba(255,255,255,0.92)] disabled:opacity-30 transition-colors"
+                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
                   >
                     Prev
                   </button>
@@ -954,7 +954,7 @@ export function Brands() {
                           'font-mono text-[11px] px-2.5 py-1 rounded border transition-colors',
                           page === p
                             ? 'border-afterburner text-[#E5A832]'
-                            : 'border-white/10 text-white/40 hover:text-[rgba(255,255,255,0.92)]',
+                            : 'border-white/10 text-white/40 hover:text-[var(--text-primary)]',
                         )}
                       >
                         {p}
@@ -964,7 +964,7 @@ export function Brands() {
                   <button
                     onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                     disabled={page >= totalPages}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[rgba(255,255,255,0.92)] disabled:opacity-30 transition-colors"
+                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
                   >
                     Next
                   </button>

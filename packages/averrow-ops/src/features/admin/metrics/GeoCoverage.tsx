@@ -77,7 +77,7 @@ function CoverageWindows({ windows }: { windows: GeoCoverageWindow[] }) {
             </div>
             <div
               className="rounded-full overflow-hidden"
-              style={{ height: 4, background: 'rgba(255,255,255,0.06)' }}
+              style={{ height: 4, background: 'var(--border-base)' }}
             >
               <div
                 style={{
@@ -131,7 +131,7 @@ function DailyTrend({ data }: { data: GeoCoveragePayload }) {
             </defs>
             <XAxis
               dataKey="day"
-              tick={{ fontSize: 8, fill: 'rgba(255,255,255,0.30)' }}
+              tick={{ fontSize: 8, fill: 'var(--text-muted)' }}
               interval="preserveStartEnd"
               axisLine={false}
               tickLine={false}

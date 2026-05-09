@@ -37,7 +37,7 @@ export function LiveIndicator({
           width:        dotSize,
           height:       dotSize,
           borderRadius: '50%',
-          background:   active ? color : 'rgba(255,255,255,0.20)',
+          background:   active ? color : 'var(--border-strong)',
           boxShadow:    active ? `0 0 ${dotSize}px ${color}90` : 'none',
         }} />
       </div>
@@ -47,7 +47,7 @@ export function LiveIndicator({
           fontFamily:    'monospace',
           letterSpacing: '0.18em',
           textTransform: 'uppercase',
-          color:         active ? 'rgba(255,255,255,0.50)' : 'rgba(255,255,255,0.25)',
+          color:         active ? 'var(--text-tertiary)' : 'var(--text-muted)',
         }}>
           {label}
         </span>

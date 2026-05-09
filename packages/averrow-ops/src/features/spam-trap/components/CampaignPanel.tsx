@@ -11,8 +11,8 @@ const GLASS_CARD: CSSProperties = {
   background: 'rgba(15,23,42,0.50)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+  border: '1px solid var(--border-base)',
+  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -94,7 +94,7 @@ function SeedStrategist() {
 
   return (
     <div className="rounded-xl p-4 space-y-3" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
         Seed Strategist
       </div>
       <button
@@ -136,7 +136,7 @@ function CaptureTimeline() {
 
   return (
     <div className="rounded-xl p-4" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)] mb-3">
+      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
         Capture Timeline (30d)
       </div>
       <div className="h-[120px]">
@@ -144,14 +144,14 @@ function CaptureTimeline() {
           <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 8, fill: 'rgba(255,255,255,0.2)' }}
+              tick={{ fontSize: 8, fill: 'var(--border-strong)' }}
               tickFormatter={(v: string) => v.slice(8)}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
-              tick={{ fontSize: 8, fill: 'rgba(255,255,255,0.2)' }}
+              tick={{ fontSize: 8, fill: 'var(--border-strong)' }}
               axisLine={false}
               tickLine={false}
               allowDecimals={false}
@@ -164,7 +164,7 @@ function CaptureTimeline() {
                 fontSize: 10,
                 fontFamily: 'JetBrains Mono, monospace',
               }}
-              labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
+              labelStyle={{ color: 'var(--text-tertiary)' }}
               itemStyle={{ color: '#E5A832' }}
             />
             <Bar dataKey="total" fill="#E5A832" radius={[2, 2, 0, 0]} />
@@ -194,7 +194,7 @@ export function CampaignPanel() {
 
   return (
     <div className="rounded-xl p-4 min-h-[400px] space-y-4" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
         Campaign Intelligence
       </div>
 

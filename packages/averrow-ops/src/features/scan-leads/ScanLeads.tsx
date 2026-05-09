@@ -75,7 +75,7 @@ export function ScanLeadsView() {
               "px-3 py-1 text-xs font-mono uppercase tracking-wider rounded-sm border transition-colors",
               statusFilter === s
                 ? "bg-[var(--amber,#E5A832)]/15 border-[var(--amber,#E5A832)] text-[var(--amber,#E5A832)]"
-                : "border-white/10 text-[var(--text-secondary,rgba(255,255,255,0.60))] hover:border-white/20",
+                : "border-white/10 text-[var(--text-secondary,var(--text-secondary))] hover:border-white/20",
             ].join(" ")}
           >
             {s.replace("_", " ")}
@@ -150,9 +150,9 @@ function ScanLeadRow({ lead }: { lead: ScanLead }) {
         <Badge severity={STATUS_BADGE[lead.status]}>{lead.status.replace("_", " ")}</Badge>
       </Td>
       <Td>
-        <div className="font-mono text-xs text-[var(--text-primary,rgba(255,255,255,0.92))]">{lead.email}</div>
+        <div className="font-mono text-xs text-[var(--text-primary,var(--text-primary))]">{lead.email}</div>
         {lead.name ? (
-          <div className="text-[10px] text-[var(--text-tertiary,rgba(255,255,255,0.40))]">{lead.name}</div>
+          <div className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))]">{lead.name}</div>
         ) : null}
       </Td>
       <Td>
@@ -165,7 +165,7 @@ function ScanLeadRow({ lead }: { lead: ScanLead }) {
       <Td>
         <FunnelStateChips lead={lead} />
       </Td>
-      <Td className="text-xs text-[var(--text-secondary,rgba(255,255,255,0.60))]">
+      <Td className="text-xs text-[var(--text-secondary,var(--text-secondary))]">
         {relativeTime(lead.created_at)}
       </Td>
       <Td>
@@ -183,13 +183,13 @@ function ScanLeadCard({ lead }: { lead: ScanLead }) {
     <div className="border border-white/5 p-3 space-y-2 bg-white/[0.02]">
       <div className="flex items-center justify-between gap-2">
         <Badge severity={STATUS_BADGE[lead.status]}>{lead.status.replace("_", " ")}</Badge>
-        <span className="text-[10px] text-[var(--text-tertiary,rgba(255,255,255,0.40))] font-mono">
+        <span className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))] font-mono">
           {relativeTime(lead.created_at)}
         </span>
       </div>
       <div>
-        <div className="font-mono text-xs text-[var(--text-primary,rgba(255,255,255,0.92))]">{lead.email}</div>
-        <div className="text-[11px] text-[var(--text-secondary,rgba(255,255,255,0.60))]">
+        <div className="font-mono text-xs text-[var(--text-primary,var(--text-primary))]">{lead.email}</div>
+        <div className="text-[11px] text-[var(--text-secondary,var(--text-secondary))]">
           {lead.name ?? "—"} · {lead.company ?? "—"}
         </div>
         <div className="font-mono text-[11px] mt-1">{lead.domain ?? "—"}</div>
@@ -219,7 +219,7 @@ function Chip({ on, children }: { on: boolean; children: React.ReactNode }) {
       style={
         on
           ? { background: "rgba(60,184,120,0.10)", color: "var(--green,#3CB878)", borderColor: "rgba(60,184,120,0.3)" }
-          : { color: "rgba(255,255,255,0.30)", borderColor: "rgba(255,255,255,0.06)" }
+          : { color: "var(--text-muted)", borderColor: "var(--border-base)" }
       }
     >
       {children}

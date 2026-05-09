@@ -267,7 +267,7 @@ function ScheduleBadge({ agent }: { agent: Agent }) {
       style={
         isIndependent
           ? { background: 'rgba(56,189,248,0.12)', color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.3)' }
-          : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }
+          : { background: 'var(--border-base)', color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }
       }
       title={isIndependent ? 'Independent cron — Flight Control monitors but does not dispatch' : 'Dispatched by Flight Control'}
     >
@@ -292,7 +292,7 @@ function CircuitBadge({ agent }: { agent: Agent }) {
     return (
       <span
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wide"
-        style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}
+        style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)', border: '1px solid var(--border-base)' }}
       >
         Paused &middot; manual
       </span>
@@ -614,7 +614,7 @@ function AgentDetailPanel({ agent }: { agent: Agent }) {
                 </defs>
                 <XAxis
                   dataKey="hour"
-                  tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono' }}
+                  tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'JetBrains Mono' }}
                   axisLine={false}
                   tickLine={false}
                   interval="preserveStartEnd"
@@ -623,12 +623,12 @@ function AgentDetailPanel({ agent }: { agent: Agent }) {
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#0D1520',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    border: '1px solid var(--border-base)',
                     borderRadius: 8,
                     fontSize: 11,
                     fontFamily: 'JetBrains Mono',
                   }}
-                  labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
+                  labelStyle={{ color: 'var(--text-tertiary)' }}
                 />
                 <Area
                   type="monotone"
@@ -721,7 +721,7 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
       </span>
       <div
         className="flex-1 h-px"
-        style={{ background: 'linear-gradient(90deg, rgba(255,255,255,0.10), transparent)' }}
+        style={{ background: 'linear-gradient(90deg, var(--border-base), transparent)' }}
       />
       <span
         className="font-mono text-[10px]"

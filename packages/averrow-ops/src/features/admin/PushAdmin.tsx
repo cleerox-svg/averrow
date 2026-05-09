@@ -343,7 +343,7 @@ function PrivateKeyRevealSheet({
         className="relative w-full sm:max-w-xl rounded-t-2xl sm:rounded-xl p-6 max-h-[90vh] overflow-y-auto"
         style={{
           background: 'var(--bg-card, #161E30)',
-          border: '1px solid var(--border-base, rgba(255,255,255,0.08))',
+          border: '1px solid var(--border-base, var(--border-base))',
           boxShadow: '0 24px 64px rgba(0,0,0,0.55)',
         }}
         role="dialog"

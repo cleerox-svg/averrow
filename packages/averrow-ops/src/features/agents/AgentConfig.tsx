@@ -96,7 +96,7 @@ function AgentRow({ agent }: { agent: Agent }) {
         <div className="flex items-center gap-3">
           <AgentIcon agent={agent.name} size={24} className="shrink-0" />
           <div>
-            <div className="font-mono text-[12px] font-bold text-[rgba(255,255,255,0.92)]">{agent.display_name}</div>
+            <div className="font-mono text-[12px] font-bold text-[var(--text-primary)]">{agent.display_name}</div>
             <div className="font-mono text-[9px] text-white/55 uppercase">{agent.description}</div>
           </div>
         </div>
@@ -104,11 +104,11 @@ function AgentRow({ agent }: { agent: Agent }) {
       <td className="py-3 px-4">
         <Badge variant={statusVariant[agent.status] || 'default'}>{agent.status}</Badge>
       </td>
-      <td className="py-3 px-4 font-mono text-[11px] text-[rgba(255,255,255,0.36)]">{agent.schedule}</td>
-      <td className="py-3 px-4 font-mono text-[11px] text-[rgba(255,255,255,0.36)]">{relativeTime(agent.last_run_at)}</td>
-      <td className="py-3 px-4 font-mono text-[11px] text-[rgba(255,255,255,0.36)]">{formatDuration(agent.avg_duration_ms)}</td>
-      <td className="py-3 px-4 font-mono text-[11px] text-[rgba(255,255,255,0.36)]">{successRate}%</td>
-      <td className="py-3 px-4 font-mono text-[11px] text-[rgba(255,255,255,0.92)]">{agent.outputs_24h}</td>
+      <td className="py-3 px-4 font-mono text-[11px] text-[var(--text-tertiary)]">{agent.schedule}</td>
+      <td className="py-3 px-4 font-mono text-[11px] text-[var(--text-tertiary)]">{relativeTime(agent.last_run_at)}</td>
+      <td className="py-3 px-4 font-mono text-[11px] text-[var(--text-tertiary)]">{formatDuration(agent.avg_duration_ms)}</td>
+      <td className="py-3 px-4 font-mono text-[11px] text-[var(--text-tertiary)]">{successRate}%</td>
+      <td className="py-3 px-4 font-mono text-[11px] text-[var(--text-primary)]">{agent.outputs_24h}</td>
       <td className="py-3 px-4">
         <TriggerButton agentId={agent.name} agentName={agent.display_name} />
       </td>
@@ -138,26 +138,26 @@ function ApiUsagePanel() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-5">
         <div>
-          <div className="font-display text-lg font-bold text-[rgba(255,255,255,0.92)]">{(usage.tokens_24h ?? 0).toLocaleString()}</div>
+          <div className="font-display text-lg font-bold text-[var(--text-primary)]">{(usage.tokens_24h ?? 0).toLocaleString()}</div>
           <div className="font-mono text-[9px] text-white/55 uppercase">Tokens 24h</div>
-          <div className="font-mono text-[10px] text-[rgba(255,255,255,0.30)] mt-0.5">{usage.estimated_cost_24h}</div>
+          <div className="font-mono text-[10px] text-[var(--text-muted)] mt-0.5">{usage.estimated_cost_24h}</div>
         </div>
         <div>
-          <div className="font-display text-lg font-bold text-[rgba(255,255,255,0.92)]">{(usage.tokens_7d ?? 0).toLocaleString()}</div>
+          <div className="font-display text-lg font-bold text-[var(--text-primary)]">{(usage.tokens_7d ?? 0).toLocaleString()}</div>
           <div className="font-mono text-[9px] text-white/55 uppercase">Tokens 7d</div>
-          <div className="font-mono text-[10px] text-[rgba(255,255,255,0.30)] mt-0.5">{usage.estimated_cost_7d}</div>
+          <div className="font-mono text-[10px] text-[var(--text-muted)] mt-0.5">{usage.estimated_cost_7d}</div>
         </div>
         <div>
-          <div className="font-display text-lg font-bold text-[rgba(255,255,255,0.92)]">{(usage.tokens_30d ?? 0).toLocaleString()}</div>
+          <div className="font-display text-lg font-bold text-[var(--text-primary)]">{(usage.tokens_30d ?? 0).toLocaleString()}</div>
           <div className="font-mono text-[9px] text-white/55 uppercase">Tokens 30d</div>
-          <div className="font-mono text-[10px] text-[rgba(255,255,255,0.30)] mt-0.5">{usage.estimated_cost_30d}</div>
+          <div className="font-mono text-[10px] text-[var(--text-muted)] mt-0.5">{usage.estimated_cost_30d}</div>
         </div>
       </div>
 
       <div className="mb-4">
         <div className="flex items-center justify-between mb-1.5">
-          <span className="font-mono text-[10px] text-[rgba(255,255,255,0.30)] uppercase">Daily Calls</span>
-          <span className="font-mono text-[10px] text-[rgba(255,255,255,0.64)]">{usage.calls_today} / {usage.daily_limit}</span>
+          <span className="font-mono text-[10px] text-[var(--text-muted)] uppercase">Daily Calls</span>
+          <span className="font-mono text-[10px] text-[var(--text-secondary)]">{usage.calls_today} / {usage.daily_limit}</span>
         </div>
         <div className="h-2 bg-white/5 rounded-full overflow-hidden">
           <div className={cn('h-full rounded-full transition-all', barColor)} style={{ width: `${usagePercent}%` }} />
@@ -166,7 +166,7 @@ function ApiUsagePanel() {
 
       <div className="flex items-center gap-2">
         <span className={cn('w-2 h-2 rounded-full', usage.api_key_configured ? 'bg-positive' : 'bg-accent')} />
-        <span className="font-mono text-[10px] text-[rgba(255,255,255,0.30)]">
+        <span className="font-mono text-[10px] text-[var(--text-muted)]">
           API Key {usage.api_key_configured ? 'Configured' : 'Not Configured'}
         </span>
       </div>
@@ -182,7 +182,7 @@ export function AgentConfig() {
 
   return (
     <div className="animate-fade-in space-y-8">
-      <h1 className="font-display text-xl font-bold text-[rgba(255,255,255,0.92)]">Agent Configuration</h1>
+      <h1 className="font-display text-xl font-bold text-[var(--text-primary)]">Agent Configuration</h1>
 
       {/* Agent Table */}
       <div>

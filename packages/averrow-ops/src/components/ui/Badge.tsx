@@ -137,7 +137,7 @@ const CTX: Record<ContextTag, {
   },
   quiet: {
     // Muted neutral — no recent activity, still tracked.
-    bg:     'rgba(255,255,255,0.04)',
+    bg:     'var(--border-base)',
     border: 'var(--border-base)',
     text:   'var(--text-tertiary)',
     label:  'QUIET',
@@ -217,8 +217,8 @@ const STATUS: Record<BadgeStatus, {
   healthy:  { bg: 'var(--sev-info-bg)',      border: 'var(--sev-info-border)',     text: '#86efac', dot: 'var(--sev-info)' },
   running:  { bg: 'var(--blue-glow)',        border: 'var(--blue-border)',         text: '#93c5fd', dot: 'var(--blue)' },
   pending:  { bg: 'rgba(251,191,36,0.08)',   border: 'rgba(251,191,36,0.25)',      text: '#fcd34d' },
-  draft:    { bg: 'rgba(255,255,255,0.05)',  border: 'var(--border-base)',         text: 'var(--text-tertiary)' },
-  inactive: { bg: 'rgba(255,255,255,0.04)',  border: 'var(--border-base)',         text: 'var(--text-muted)' },
+  draft:    { bg: 'var(--border-base)',  border: 'var(--border-base)',         text: 'var(--text-tertiary)' },
+  inactive: { bg: 'var(--border-base)',  border: 'var(--border-base)',         text: 'var(--text-muted)' },
   degraded: { bg: 'var(--sev-high-bg)',      border: 'var(--sev-high-border)',     text: '#fdba74', dot: 'var(--sev-high)' },
   failed:   { bg: 'var(--sev-critical-bg)',  border: 'var(--sev-critical-border)', text: '#fca5a5', dot: 'var(--sev-critical)' },
   success:  { bg: 'var(--sev-info-bg)',      border: 'var(--sev-info-border)',     text: '#86efac' },
@@ -276,7 +276,7 @@ export function Badge({
 
   if (!cfg) {
     cfg = {
-      bg:     'rgba(255,255,255,0.05)',
+      bg:     'var(--border-base)',
       border: 'var(--border-base)',
       text:   'var(--text-tertiary)',
     };

@@ -314,7 +314,7 @@ export function ReportPanel({
               aria-label="Close report"
               style={{
                 width: 32, height: 32, borderRadius: 8,
-                background: 'rgba(255,255,255,0.06)',
+                background: 'var(--border-base)',
                 border: '1px solid var(--border-base)',
                 color: 'var(--text-tertiary)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

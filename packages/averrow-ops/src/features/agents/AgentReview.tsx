@@ -166,7 +166,7 @@ export function AgentReview() {
                   </span>
                   <Badge {...stateBadgeProps(approval.state)} size="xs" />
                   {meta?.category && (
-                    <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}>
+                    <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-secondary)' }}>
                       {meta.category}
                     </span>
                   )}
@@ -181,7 +181,7 @@ export function AgentReview() {
                   )}
                 </div>
                 {approval.reviewer_notes && (
-                  <div className="font-mono text-[11px] italic mt-2 p-3 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)' }}>
+                  <div className="font-mono text-[11px] italic mt-2 p-3 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-secondary)' }}>
                     “{approval.reviewer_notes}”
                   </div>
                 )}
@@ -204,8 +204,8 @@ export function AgentReview() {
                 placeholder="Notes (required for reject / request changes; ≥ 5 chars)"
                 className="w-full font-mono text-[12px] p-3 rounded mb-3"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.10)',
+                  background: 'var(--border-base)',
+                  border: '1px solid var(--border-base)',
                   color: 'var(--text-primary)',
                   minHeight: '88px',
                   resize: 'vertical',
@@ -256,7 +256,7 @@ export function AgentReview() {
             ) : (
               <div className="space-y-2">
                 {bundle.recent_runs.map((run) => (
-                  <div key={run.id} className="flex items-center gap-3 font-mono text-[11px] py-2 border-b last:border-b-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  <div key={run.id} className="flex items-center gap-3 font-mono text-[11px] py-2 border-b last:border-b-0" style={{ borderColor: 'var(--border-base)' }}>
                     <Badge {...runStatusBadgeProps(run.status)} size="xs" />
                     <span style={{ color: 'var(--text-secondary)' }}>{relativeTime(run.started_at)}</span>
                     {run.duration_ms !== null && (
@@ -286,7 +286,7 @@ export function AgentReview() {
             ) : (
               <div className="space-y-2">
                 {bundle.recent_outputs.map((out) => (
-                  <div key={out.id} className="py-2 border-b last:border-b-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  <div key={out.id} className="py-2 border-b last:border-b-0" style={{ borderColor: 'var(--border-base)' }}>
                     <div className="flex items-center gap-2 font-mono text-[10px] mb-1" style={{ color: 'var(--text-tertiary)' }}>
                       <span className="uppercase tracking-wider">{out.type}</span>
                       {out.severity && <span style={{ color: 'var(--text-secondary)' }}>· {out.severity}</span>}

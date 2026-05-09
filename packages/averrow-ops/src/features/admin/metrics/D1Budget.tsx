@@ -137,7 +137,7 @@ function Meter({
       </div>
       <div
         className="rounded-full overflow-hidden mb-1"
-        style={{ height: 4, background: 'rgba(255,255,255,0.06)' }}
+        style={{ height: 4, background: 'var(--border-base)' }}
       >
         <div
           style={{

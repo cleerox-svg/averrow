@@ -79,7 +79,7 @@ const CHANNEL_COLORS: Record<string, string> = {
   contact_page: '#A78BFA',
   whois: '#fb923c',
   forum: '#4ADE80',
-  generic: 'rgba(255,255,255,0.3)',
+  generic: 'var(--text-muted)',
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -254,8 +254,8 @@ export function HoneypotNetworkPanel() {
           background: 'rgba(15,23,42,0.50)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255,255,255,0.07)',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+          border: '1px solid var(--border-base)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
         }}
       >
         <span className="text-white/40 text-sm font-mono">Unable to load seed addresses</span>
@@ -276,12 +276,12 @@ export function HoneypotNetworkPanel() {
         background: 'rgba(15,23,42,0.50)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255,255,255,0.07)',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+        border: '1px solid var(--border-base)',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
       }}
     >
       <div className="flex items-center justify-between mb-4">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[rgba(255,255,255,0.42)]">
+        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Honeypot Network
         </div>
         <div className="flex gap-1">
@@ -326,14 +326,14 @@ export function HoneypotNetworkPanel() {
                       className="h-full rounded-sm transition-all"
                       style={{
                         width: `${(seeded / maxCount) * 100}%`,
-                        backgroundColor: CHANNEL_COLORS[channel] || 'rgba(255,255,255,0.3)',
+                        backgroundColor: CHANNEL_COLORS[channel] || 'var(--text-muted)',
                         opacity: productive > 0 ? 1 : 0.35,
                       }}
                     />
                   </div>
                   <span
                     className="font-mono text-[10px] w-[44px] text-right tabular-nums"
-                    style={{ color: productive > 0 ? '#4ADE80' : 'rgba(255,255,255,0.30)' }}
+                    style={{ color: productive > 0 ? '#4ADE80' : 'var(--text-muted)' }}
                     title={`${productive} of ${seeded} addresses on this channel have caught at least once`}
                   >
                     {productive}/{seeded}
@@ -374,14 +374,14 @@ export function HoneypotNetworkPanel() {
                     className="h-full rounded-sm transition-all"
                     style={{
                       width: `${(data.seeds / maxSourceSeeds) * 100}%`,
-                      backgroundColor: SOURCE_COLORS[type] || 'rgba(255,255,255,0.3)',
+                      backgroundColor: SOURCE_COLORS[type] || 'var(--text-muted)',
                       opacity: data.productive_locations > 0 ? 1 : 0.35,
                     }}
                   />
                 </div>
                 <span
                   className="font-mono text-[10px] w-[44px] text-right tabular-nums"
-                  style={{ color: data.productive_locations > 0 ? '#4ADE80' : 'rgba(255,255,255,0.30)' }}
+                  style={{ color: data.productive_locations > 0 ? '#4ADE80' : 'var(--text-muted)' }}
                   title={`${data.productive_locations} of ${data.total_locations} locations on this source type have caught at least once`}
                 >
                   {data.productive_locations}/{data.total_locations}
@@ -400,7 +400,7 @@ export function HoneypotNetworkPanel() {
                 const accent =
                   bucket === 'caught' ? '#4ADE80'
                   : bucket === 'stale' ? '#fbbf24'
-                  : bucket === 'pending' ? 'rgba(255,255,255,0.45)'
+                  : bucket === 'pending' ? 'var(--text-tertiary)'
                   : '#f87171';
                 return (
                   <div key={bucket} className="rounded-lg border border-white/[0.06] bg-white/[0.02] overflow-hidden">
@@ -442,7 +442,7 @@ export function HoneypotNetworkPanel() {
                                 <span
                                   className="font-mono text-[10px] w-12 text-right"
                                   style={{
-                                    color: s.catches > 0 ? '#f87171' : 'rgba(255,255,255,0.20)',
+                                    color: s.catches > 0 ? '#f87171' : 'var(--border-strong)',
                                     fontWeight: s.catches > 0 ? 600 : 400,
                                   }}
                                 >
@@ -597,7 +597,7 @@ export function HoneypotNetworkPanel() {
                 const accent =
                   bucket === 'caught' ? '#4ADE80'
                   : bucket === 'stale' ? '#fbbf24'
-                  : bucket === 'pending' ? 'rgba(255,255,255,0.45)'
+                  : bucket === 'pending' ? 'var(--text-tertiary)'
                   : '#f87171';
                 return (
                   <div key={bucket} className="rounded-lg border border-white/[0.06] bg-white/[0.02] overflow-hidden">
@@ -644,7 +644,7 @@ export function HoneypotNetworkPanel() {
                                 <tr key={addr.id} className="border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02] transition-colors">
                                   <td className="py-1.5 pl-3 pr-2">
                                     <span
-                                      className="font-mono text-[11px] text-[rgba(255,255,255,0.74)] block truncate max-w-[200px]"
+                                      className="font-mono text-[11px] text-[var(--text-secondary)] block truncate max-w-[200px]"
                                       title={addr.address}
                                     >
                                       {addr.address.length > 30 ? addr.address.slice(0, 30) + '…' : addr.address}

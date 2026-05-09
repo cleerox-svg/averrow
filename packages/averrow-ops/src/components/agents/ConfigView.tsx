@@ -259,7 +259,7 @@ function CircuitBreakerSection({ agentId, agent }: { agentId: string; agent: Age
             ) : isManualPause ? (
               <span
                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)', border: '1px solid var(--border-base)' }}
               >
                 Paused &middot; manual
               </span>

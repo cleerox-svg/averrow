@@ -53,7 +53,7 @@ function formatThreatType(type: string): string {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'rgba(255,255,255,0.42)' }}>
+    <h2 className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-tertiary)' }}>
       {children}
     </h2>
   );
@@ -95,8 +95,8 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         const y = padY + chartH - (tick / maxVal) * chartH;
         return (
           <g key={tick}>
-            <line x1={padX} x2={w - padX} y1={y} y2={y} stroke="rgba(255,255,255,0.06)" />
-            <text x={padX - 6} y={y + 3} textAnchor="end" fill="rgba(255,255,255,0.3)" fontSize="8" fontFamily="monospace">
+            <line x1={padX} x2={w - padX} y1={y} y2={y} stroke="var(--border-base)" />
+            <text x={padX - 6} y={y + 3} textAnchor="end" fill="var(--text-muted)" fontSize="8" fontFamily="monospace">
               {tick}
             </text>
           </g>
@@ -116,7 +116,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         const x = padX + (i / Math.max(labels.length - 1, 1)) * chartW;
         const short = label.slice(5); // strip year prefix, show MM-DD
         return (
-          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="rgba(255,255,255,0.3)" fontSize="7" fontFamily="monospace">
+          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="var(--text-muted)" fontSize="7" fontFamily="monospace">
             {short}
           </text>
         );

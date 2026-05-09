@@ -49,10 +49,10 @@ export function Avatar({
         <div style={{
           position: 'absolute', inset: 0, borderRadius: radius,
           background: 'linear-gradient(145deg, rgba(25,35,55,0.95), rgba(10,15,28,0.98))',
-          border: `1.5px solid ${dot ? dot + '40' : 'rgba(255,255,255,0.09)'}`,
+          border: `1.5px solid ${dot ? dot + '40' : 'var(--border-base)'}`,
           boxShadow: [
             '0 4px 14px rgba(0,0,0,0.70)',
-            'inset 0 1px 0 rgba(255,255,255,0.10)',
+            'inset 0 1px 0 var(--border-base)',
             dot ? `0 0 0 3px ${dot}15` : '',
           ].filter(Boolean).join(', '),
           display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
@@ -86,7 +86,7 @@ export function Avatar({
       border: `1px solid ${color}70`,
       boxShadow: [
         `0 ${Math.round(size * 0.10)}px ${Math.round(size * 0.35)}px rgba(0,0,0,0.70)`,
-        'inset 0 1px 0 rgba(255,255,255,0.28)',
+        'inset 0 1px 0 var(--text-muted)',
         'inset 0 -1px 0 rgba(0,0,0,0.45)',
         `0 0 ${Math.round(size * 0.45)}px ${color}35`,
       ].join(', '),

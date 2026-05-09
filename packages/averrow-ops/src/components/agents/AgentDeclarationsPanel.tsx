@@ -115,7 +115,7 @@ export function AgentDeclarationsPanel({ agentId }: { agentId: string }) {
           </span>
         </div>
         {cap > 0 && (
-          <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'var(--border-base)' }}>
             <div
               className="h-full transition-all"
               style={{
@@ -133,7 +133,7 @@ export function AgentDeclarationsPanel({ agentId }: { agentId: string }) {
       </div>
 
       {/* ── Supervision ── */}
-      <div className="grid grid-cols-3 gap-3 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="grid grid-cols-3 gap-3 mb-4 pb-4" style={{ borderBottom: '1px solid var(--border-base)' }}>
         <SupervisionStat label="Stall" value={`${data.supervision.stall_threshold_minutes}m`} />
         <SupervisionStat label="Parallel" value={String(data.supervision.parallel_max)} />
         <SupervisionStat

@@ -197,7 +197,7 @@ export function DailyBriefing() {
           gap: 6px;
           padding: 6px 12px;
           border-radius: 8px;
-          background: rgba(255,255,255,0.05);
+          background: var(--border-base);
           border: 1px solid var(--border-base);
           color: var(--text-tertiary);
           font-size: 10px;
