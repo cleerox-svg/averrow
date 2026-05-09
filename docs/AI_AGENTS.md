@@ -2,6 +2,12 @@
 
 Trust Radar uses a mesh of AI agents plus infrastructure agents (Navigator, Cube Healer) powered by Claude Haiku via the Anthropic API. Agents are defined as modules in `packages/trust-radar/src/agents/` and orchestrated by the agent runner in `packages/trust-radar/src/lib/agentRunner.ts`. The registry is `packages/trust-radar/src/agents/index.ts`.
 
+**Companion docs:**
+- [`AGENT_STANDARD.md`](./AGENT_STANDARD.md) — the contract every agent must satisfy (lifecycle, resource declarations, output schemas, per-agent budgets, approval gates, tests).
+- [`AGENT_AUDIT.md`](./AGENT_AUDIT.md) — read-only audit findings against the standard. Phase 2 + Phase 3 closed (2026-05-09 refresh); Phase 4 + Phase 5 in progress.
+
+This doc is the canonical "what does each agent do" reference. For "what's the status of agent X against the standard," consult the audit. For "how do I write a new agent," consult the standard.
+
 ## Agent Infrastructure
 
 ### Agent Runner
@@ -38,6 +44,42 @@ Agents are registered in `packages/trust-radar/src/agents/index.ts`. The registr
 ### Cost Guard
 
 Non-critical agents (Observer, Strategist, Seed Strategist) check a cost guard before making API calls. This prevents runaway Anthropic API costs by tracking daily token usage.
+
+### Operator Surfaces
+
+Two operator-facing pages render the mesh, switchable in real time via the [`VersionToggle('agents')`](../packages/averrow-ops/src/components/ui/VersionToggle.tsx) in the page header. The toggle persists per-device in `localStorage` (`averrow.agents-version`) and the Sidebar / MobileNav "Agents" link follows whichever version is active.
+
+| Surface | Path | Purpose |
+|---|---|---|
+| **Agents (v2)** | `/agents` | Established Monitor / History / Config tabbed view. Wide per-agent detail panels. Default for the `'agents'` surface. |
+| **Agents (v3 preview)** | `/agents-v3` | Next-gen layout — supervisor section at top, workers grouped by category, click-to-expand details, **Network View** mind-map at the bottom. Opt-in via toggle until v3 reaches feature parity. |
+
+**`/agents-v3` surfaces (per `AGENT_AUDIT.md §8`):**
+
+- **Supervisor section** — Flight Control rendered as a first-class concept above the worker grid (`SUPERVISOR_AGENT_IDS`, currently just `flight_control`). New supervisors land by adding their id to the constant.
+- **Worker grouping** — agents bucket into 5 sections by `AGENT_METADATA.category`: Intelligence, Response, Platform Ops, Synchronous AI, Meta.
+- **Connectivity chips** — every card shows ← upstream / → downstream chips encoded from the `TRIGGER_CHAIN` constant in [`AgentsV3.tsx`](../packages/averrow-ops/src/features/agents-v3/AgentsV3.tsx). Source of truth for the chain itself is [§ Agent trigger chain in `CLAUDE.md`](../CLAUDE.md#6-agent-architecture-rules).
+- **Failure-pattern badge** — derived from existing `Agent` payload fields (`circuit_state` / `last_run_status` / `error_count_24h` ratio). Worst-first match: tripped circuit > failing > high error rate > paused. Card variant flips to `critical` for the worst signals.
+- **24h activity sparkline** — `agent.activity` array rendered via `<ActivitySparkline />`, color-flips to `var(--sev-high)` when a failure pattern is active.
+- **Click-to-expand detail panel** — fetches `useAgentDetail` + `useAgentHealth` lazily on selection. Renders 7d run/error sparklines, lifetime stats (total/success/failures), last error in a sev-bordered code block, and the last 5 outputs with summary + type + relative time + severity dot.
+- **Compliance chips** — read real signals: `Registered ✓` (entry in `AGENT_METADATA`), `Metadata ✓` (subtitle present), `Schema ✗` (Phase 4), `Budget ✗` (§11). Honest 2/4 reflects current Phase 2/3 progress.
+- **Decommission heuristic** — flags any agent whose `last_run_at` is older than 14 days. Surface count appears in the top "Failure Patterns" stat card.
+
+**Network View ([`AgentNetworkView.tsx`](../packages/averrow-ops/src/features/agents-v3/components/AgentNetworkView.tsx)):**
+
+Pure-SVG interactive mind-map of the trigger chain. No new dependencies — flips with `[data-theme]` for free via CSS-var colors.
+
+| Visual | Meaning |
+|---|---|
+| Solid arrowed edge | Trigger-chain edge (sentinel → cartographer, etc.) |
+| Dashed muted line from Flight Control | Supervision relationship |
+| Pulsing amber edge + amber arrowhead | Upstream agent's `last_run_at` within last 10 minutes — **work in flight** |
+| Red ring around node | `circuit_state='tripped'` or `last_run_status='failed'` |
+| Animated amber halo | Selected node |
+
+Clicking a node selects it in the parent `AgentsV3` `selectedAgent` state — the matching grid card's detail panel opens above the network. The 1-hop subgraph stays full opacity; non-neighbours fade to 0.20.
+
+Sync agents (handler-driven, no inter-agent edges) and the ops cluster (`cube_healer`, `navigator`, `enricher`, `geoip_refresh`) are intentionally omitted from the view — they have nothing meaningful to draw edges to. They remain visible in the worker-grid above.
 
 ---
 
