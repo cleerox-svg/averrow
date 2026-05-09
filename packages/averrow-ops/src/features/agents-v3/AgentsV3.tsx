@@ -38,6 +38,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { relativeTime } from '@/lib/time';
 import { Bot, AlertTriangle, ChevronDown, GitBranch, Shield } from 'lucide-react';
+import { AgentNetworkView } from './components/AgentNetworkView';
 
 // ─── Hierarchy: who manages who? ───────────────────────────────────
 //
@@ -230,28 +231,34 @@ function PreviewBanner() {
   );
 }
 
-function NetworkPreviewFooter() {
+function NetworkSection({
+  agents,
+  selectedAgent,
+  onSelect,
+}: {
+  agents:        Agent[];
+  selectedAgent: string | null;
+  onSelect:      (name: string) => void;
+}) {
   return (
-    <Card variant="elevated" className="p-4">
-      <div className="flex items-start gap-3">
-        <div
-          className="flex-shrink-0 w-8 h-8 rounded-md grid place-items-center"
-          style={{ background: 'var(--blue-glow)', color: 'var(--blue)' }}
-        >
-          <GitBranch size={16} />
-        </div>
-        <div className="min-w-0">
-          <div className="font-mono text-[10px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--blue)' }}>
-            Coming next · Network view
-          </div>
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Interactive mind-map of the agent mesh — every trigger edge shown,
-            with live pulses on edges currently in flight. Click an agent node to
-            spotlight its upstream/downstream subgraph.
-          </p>
-        </div>
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <GitBranch size={14} style={{ color: 'var(--blue)' }} />
+        <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          Network View
+        </span>
+        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          · trigger chain · click a node to spotlight its subgraph
+        </span>
       </div>
-    </Card>
+      <Card variant="elevated" className="p-4">
+        <AgentNetworkView
+          agents={agents}
+          selectedAgent={selectedAgent}
+          onSelect={onSelect}
+        />
+      </Card>
+    </div>
   );
 }
 
@@ -631,7 +638,13 @@ export function AgentsV3() {
         </>
       )}
 
-      <NetworkPreviewFooter />
+      {agents.length > 0 && (
+        <NetworkSection
+          agents={agents}
+          selectedAgent={selectedAgent}
+          onSelect={handleSelect}
+        />
+      )}
     </div>
   );
 }
