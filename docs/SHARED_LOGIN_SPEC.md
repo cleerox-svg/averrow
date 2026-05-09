@@ -13,6 +13,48 @@ this doc and ping the sibling platform.
 
 ## 1. Login page
 
+**The Login page is now a single canonical component shared by all
+products.** Both averrow-ops's `/v2/login` and (future) FarmTrack's
+`/login` render `<LoginPage>` from `@averrow/shared/login`. Each
+product passes branding deltas and adapter callbacks via props.
+Edit the shared component, NOT per-product wrappers.
+
+```
+packages/shared/src/login/
+  LoginPage.tsx         — composition + adaptive primary CTA
+                           state machine
+  lastSignInMethod.ts   — per-device localStorage hint helper
+                           (key namespace passed in by host)
+  types.ts              — LoginPageProps, LoginBranding,
+                           LoginApiClient, PasskeyLoginAdapter,
+                           LastSignInMethodAdapter, SignInMethod
+  index.ts              — public exports
+```
+
+Per-product wrapper:
+
+```tsx
+// packages/averrow-ops/src/pages/Login.tsx
+import { LoginPage, makeLastSignInMethodAdapter } from '@averrow/shared/login';
+
+export function Login() {
+  return (
+    <LoginPage
+      branding={{
+        brandLetters:  'AV',
+        productName:   'Averrow',
+        tagline:       'AI-First Threat Intelligence',
+        footerPillars: 'Detect · Analyze · Correlate · Respond',
+      }}
+      apiClient={...}
+      passkeyAdapter={...}
+      lastSignInMethod={makeLastSignInMethodAdapter('averrow.lastSignInMethod')}
+      returnTo="/v2/"
+    />
+  );
+}
+```
+
 ### Layout
 
 ```

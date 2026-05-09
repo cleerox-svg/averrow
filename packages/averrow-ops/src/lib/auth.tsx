@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api } from './api';
-import { clearLastSignInMethod } from './lastSignInMethod';
+import { clearLastSignInMethod as clearLastSignInMethodInStorage } from '@averrow/shared/login';
+
+const LAST_SIGNIN_METHOD_KEY = 'averrow.lastSignInMethod';
+const clearLastSignInMethod = () => clearLastSignInMethodInStorage(LAST_SIGNIN_METHOD_KEY);
 
 interface UserOrganization {
   id: number;
