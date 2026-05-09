@@ -113,6 +113,41 @@ If the call's result is consumed by a user request, it's a sync agent.
 If the result drops into D1 for a later consumer, it's scheduled. A
 single agent must not be both — split it.
 
+### Naming convention
+
+The mesh has two cohorts that get named under different rules. Pick
+the right rule when adding a new agent.
+
+| Cohort | Naming style | Examples |
+|---|---|---|
+| **Operational mesh** — autonomous, cron-scheduled or event-dispatched, "does work" without prompting | Aviation / recon codename — single distinctive word, lowercased + snake_cased in code, capitalized in `displayName` | `flight_control`, `sentinel`, `sparrow`, `mockingbird`, `outrider`, `marshal`, `sounder`, `recon`, `observer`, `pathfinder`, `nexus`, `cartographer`, `analyst`, `strategist`, `narrator`, `attributor` |
+| **Sync / utility** — handler-driven, `trigger: 'api'` or `'manual'`, called by name from a route or admin action | Verb-noun describing the operation | `brand_analysis`, `brand_report`, `brand_deep_scan`, `brand_enricher`, `public_trust_check`, `evidence_assembler`, `qualified_report`, `scan_report`, `url_scan`, `admin_classify`, `honeypot_generator`, `lookalike_scanner`, `social_ai_assessor`, `geo_campaign_assessment`, `notification_narrator` |
+| **Infrastructure** — pure-mechanical, no AI in the hot path | Functional name describing the artifact maintained | `cube_healer`, `navigator`, `enricher`, `geoip_refresh` |
+
+**Rationale.** Aviation codenames evoke field operatives — they're
+appropriate for autonomous workers operating in the wild on their
+own initiative. Verb-noun names are appropriate for utilities that
+don't act unless called. Functional names are appropriate for
+infrastructure that just keeps the lights on. Mixing the styles
+within a cohort makes the mesh harder to read at a glance.
+
+**Heritage.** The aviation theme traces to the Avro Arrow lineage
+(`CLAUDE.md §13` — kept for the operational mesh; not required
+brand-wide). New operational agents should pull from the same
+register: birds (sparrow, mockingbird), aerial reconnaissance
+(outrider, recon, sounder), command-and-control (flight_control,
+marshal, observer), or navigation/charting (cartographer,
+pathfinder, navigator). Ad-hoc names that don't fit are a
+code-review red flag — propose a register-aligned alternative.
+
+**Renaming is expensive** (touches `agent_runs` history,
+`agent_outputs`, `budget_ledger`, dashboards, alerting). Get the
+name right at registration time. If a name later becomes
+misleading (e.g. `watchdog` → "uptime monitor" → actually a social
+mention classifier per the `AGENT_AUDIT.md` 2026-04-29 addendum),
+update the metadata subtitle + category before considering a
+rename.
+
 <a id="3-agentmodule"></a>
 ## 3. The `AgentModule` interface
 
