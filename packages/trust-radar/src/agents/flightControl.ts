@@ -30,7 +30,6 @@ import {
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
-import { getOrComputeMetric } from "../lib/system-metrics";
 
 // TTLs for backlog counters. "Monitoring" backlogs (the broad _checked
 // queries that a partial index can't help with because the predicate
@@ -275,7 +274,7 @@ export const flightControlAgent: AgentModule = {
 
     // Run all reads in parallel — single round trip to D1
     const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, unscannedEmails, degradedFeeds, autoPausedFeeds, silentFeedCandidates, trippedAgents] = await Promise.all([
-      measureBacklogs(db),
+      measureBacklogs(env, db),
       getAgentHealth(db),
       getNavigatorHealth(db),
       budgetMgr.getStatus(anthropicReported),
@@ -1053,15 +1052,31 @@ export const flightControlAgent: AgentModule = {
 
 // ─── Backlog Measurement ─────────────────────────────────────────
 
-async function measureBacklogs(db: D1Database): Promise<Backlog> {
-  // Each backlog is routed through system_metrics. The TTL picks whether
-  // this is a "live" counter (short TTL, ~every tick) or a "monitoring"
-  // counter (long TTL, ~every 4th tick). The stall-detection logic below
-  // writes to backlog_history only when wasCached === false, so detection
-  // still runs on fresh samples regardless of cadence.
+async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
+  // Each backlog is cached through KV via `cachedCount`. The TTL picks
+  // whether this is a "live" counter (short TTL, ~every tick) or a
+  // "monitoring" counter (long TTL, ~every 4th tick). The stall-
+  // detection logic below writes to backlog_history only when
+  // wasCached === false, so detection still runs on fresh samples
+  // regardless of cadence.
+  //
+  // Migrated from `getOrComputeMetric` (D1-backed system_metrics
+  // table) to `cachedCount` (KV-backed) per CLAUDE.md §8 — the
+  // legacy helper spent a D1 read on every freshness check, which
+  // showed up in the diagnostic top-queries report as 11 distinct
+  // COUNT(*) hashes against the threats table burning ~150M rows /
+  // 24h even when the cache was warm. KV reads don't count against
+  // the D1 budget.
 
-  const cacheCount = (key: string, ttl: number, sql: string, suppressErrors = false) =>
-    getOrComputeMetric(db, key, ttl, async () => {
+  const cacheCount = async (
+    key: string,
+    ttl: number,
+    sql: string,
+    suppressErrors = false,
+  ): Promise<{ value: number; wasCached: boolean }> => {
+    let wasCached = true;
+    const value = await cachedCount(env, key, ttl, async () => {
+      wasCached = false;
       try {
         const r = await db.prepare(sql).first<{ count: number }>();
         return r?.count ?? 0;
@@ -1070,6 +1085,8 @@ async function measureBacklogs(db: D1Database): Promise<Backlog> {
         throw err;
       }
     });
+    return { value, wasCached };
+  };
 
   const [
     cartResult,

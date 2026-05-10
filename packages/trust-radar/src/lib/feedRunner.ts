@@ -368,13 +368,25 @@ async function autoPauseFeed(
     return;
   }
 
+  // Auth failures (HTTP 401/403) are not transient — they need operator
+  // action (rotate the API key). The 4-hour auto-recovery sweep below
+  // matches only `paused_reason = 'auto:consecutive_failures'`, so
+  // routing auth errors to a distinct reason `auto:auth_failure`
+  // keeps them paused until manually resumed. Symptom this fixes:
+  // OTX cycling through pause → recover → fail → pause every 4h
+  // because last_failure aged out of the freshness window.
+  const isAuthError = /\b(401|403)\b/.test(lastError);
+  const pausedReason = isAuthError
+    ? 'auto:auth_failure'
+    : 'auto:consecutive_failures';
+
   await env.DB.prepare(
     `UPDATE feed_configs
        SET enabled = 0,
-           paused_reason = 'auto:consecutive_failures',
+           paused_reason = ?,
            updated_at = datetime('now')
        WHERE feed_name = ? AND enabled = 1`
-  ).bind(config.feed_name).run();
+  ).bind(pausedReason, config.feed_name).run();
 
   const truncatedError = lastError.slice(0, 500);
 
@@ -382,12 +394,17 @@ async function autoPauseFeed(
     await createNotification(env, {
       type: 'feed_health',
       severity: 'critical',
-      title: `Feed auto-paused: ${config.display_name}`,
-      message: `${config.display_name} was paused after ${failureCount} consecutive failures (threshold ${threshold}). Last error: ${truncatedError}`,
+      title: isAuthError
+        ? `Feed auto-paused (auth failure): ${config.display_name}`
+        : `Feed auto-paused: ${config.display_name}`,
+      message: isAuthError
+        ? `${config.display_name} was paused after ${failureCount} consecutive HTTP 401/403 responses. The API key needs rotation; the feed will stay paused until manually resumed. Last error: ${truncatedError}`
+        : `${config.display_name} was paused after ${failureCount} consecutive failures (threshold ${threshold}). Last error: ${truncatedError}`,
       link: '/admin/feeds',
       metadata: {
         feed_name: config.feed_name,
         auto_paused: true,
+        paused_reason: pausedReason,
         consecutive_failures: failureCount,
         threshold,
         last_error: truncatedError,

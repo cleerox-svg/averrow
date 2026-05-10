@@ -78,10 +78,14 @@ function makeMockDb(state: MockState) {
 function applySideEffect(state: MockState, sql: string, args: unknown[]): void {
   // Rough SQL pattern matching — enough for the runFeed() flow.
   if (/^UPDATE feed_configs\s+SET enabled = 0/i.test(sql)) {
+    // The auto-pause UPDATE binds (paused_reason, feed_name) — the
+    // pause reason is now a parameter (auth-failure routing) rather
+    // than a literal string in the SQL, so read it from args[0].
     const feedName = String(args[args.length - 1]);
+    const pausedReason = String(args[0]);
     if (state.feed_configs[feedName]) {
       state.feed_configs[feedName]!.enabled = 0;
-      state.feed_configs[feedName]!.paused_reason = "auto:consecutive_failures";
+      state.feed_configs[feedName]!.paused_reason = pausedReason;
     }
   }
   if (/UPDATE feed_status SET\s+last_failure/i.test(sql)) {
@@ -236,10 +240,38 @@ describe("runFeed auto-pause", () => {
     expect(state.feed_configs["test_feed"]!.enabled).toBe(0);
     expect(state.feed_configs["test_feed"]!.paused_reason).toBe("auto:consecutive_failures");
 
-    // The UPDATE feed_configs statement should have fired
+    // The UPDATE feed_configs statement should have fired with the
+    // pause reason bound as the first parameter. The SQL itself uses
+    // a placeholder so auth-failure pauses can route to a distinct
+    // reason without a second statement.
     const pauseCall = calls.find((c) => /UPDATE feed_configs\s+SET enabled = 0/i.test(c.sql));
     expect(pauseCall).toBeDefined();
-    expect(pauseCall!.sql).toMatch(/paused_reason\s*=\s*'auto:consecutive_failures'/i);
+    expect(pauseCall!.sql).toMatch(/paused_reason\s*=\s*\?/i);
+    expect(pauseCall!.bindArgs[0]).toBe("auto:consecutive_failures");
+  });
+
+  it("HTTP 403/401 auth failures route to paused_reason='auto:auth_failure'", async () => {
+    const state: MockState = {
+      feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },
+      feed_status: { test_feed: { health_status: "degraded", consecutive_failures: 4 } },
+      system_config: { feed_consecutive_failure_threshold: "5" },
+    };
+    const { db, calls } = makeMockDb(state);
+    const config = makeConfig();
+    // Mirrors the OTX failure mode that motivated this routing:
+    // five consecutive HTTP 403 responses should take the feed to
+    // auth_failure (sticky — won't be auto-recovered) instead of
+    // consecutive_failures (eligible for the 4-hour recovery sweep).
+    const mod = makeFailingFeedModule("OTX HTTP 403");
+
+    await expect(runFeed(makeEnv(db), config, mod)).rejects.toThrow();
+
+    expect(state.feed_configs["test_feed"]!.enabled).toBe(0);
+    expect(state.feed_configs["test_feed"]!.paused_reason).toBe("auto:auth_failure");
+
+    const pauseCall = calls.find((c) => /UPDATE feed_configs\s+SET enabled = 0/i.test(c.sql));
+    expect(pauseCall).toBeDefined();
+    expect(pauseCall!.bindArgs[0]).toBe("auto:auth_failure");
   });
 
   it("fires exactly one critical notification on the auto-pause transition", async () => {
