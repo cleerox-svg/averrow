@@ -19,6 +19,16 @@ import { useAuth } from '@/lib/auth';
 import { useBrandStats } from '@/hooks/useBrands';
 import { useBrandMovers, type BrandMover } from '@/hooks/useBrandMovers';
 import {
+  useEmailSecurityAggregate,
+  usePressureAggregate,
+  useCompositionAggregate,
+  usePostureAggregate,
+  type EmailSecurityAggregate,
+  type PressureMover,
+  type CompositionAggregate,
+  type PostureMover,
+} from '@/hooks/useBrandAggregates';
+import {
   useBrandCandidates,
   usePromoteBrandCandidate,
   useRejectBrandCandidate,
@@ -99,6 +109,10 @@ export function BrandsV3() {
 function IntelTab({ isStaff }: { isStaff: boolean }) {
   const { data: stats, isLoading: statsLoading } = useBrandStats();
   const { data: movers, isLoading: moversLoading } = useBrandMovers();
+  const { data: emailAgg } = useEmailSecurityAggregate();
+  const { data: pressureAgg } = usePressureAggregate();
+  const { data: compositionAgg } = useCompositionAggregate();
+  const { data: postureAgg } = usePostureAggregate();
 
   return (
     <div className="space-y-5">
@@ -113,6 +127,82 @@ function IntelTab({ isStaff }: { isStaff: boolean }) {
         }
       </div>
 
+      {/* Defense panel — email-security grade distribution + DMARC mix */}
+      <PanelHeader title="Defense" subtitle="Email-security posture across the catalog" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <EmailGradeCard data={emailAgg} />
+        <DmarcEnforcementCard data={emailAgg} />
+      </div>
+
+      {/* Pressure panel — top brands by external attack signals */}
+      <PanelHeader title="Pressure" subtitle="Top brands by external attack signal" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <PressureLeaderboard
+          title="Lookalikes"
+          rows={pressureAgg?.top_lookalikes}
+          accent="#E5A832"
+          subtitle="Active typosquats"
+        />
+        <PressureLeaderboard
+          title="Social impersonations"
+          rows={pressureAgg?.top_social_imps}
+          accent="#fb923c"
+          subtitle="Suspicious or fake profiles"
+        />
+        <PressureLeaderboard
+          title="App impersonations"
+          rows={pressureAgg?.top_app_imps}
+          accent="#C83C3C"
+          subtitle="Fake mobile listings"
+        />
+        <PressureLeaderboard
+          title="Dark-web mentions"
+          rows={pressureAgg?.top_dark_web}
+          accent="#9B59B6"
+          subtitle="Confirmed paste / forum hits"
+        />
+      </div>
+
+      {/* Composition panel — what does our catalog look like */}
+      <PanelHeader title="Composition" subtitle="Catalog tier mix, source, prominence, geo" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CompositionMixCard data={compositionAgg} />
+        <GeoDistributionCard data={compositionAgg} />
+      </div>
+
+      {/* Posture panel — Brand-Health + Brand-Exposure across catalog */}
+      <PanelHeader title="Posture" subtitle="Defensive health vs offensive exposure" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ScoreBucketCard
+          title="Brand-Health distribution"
+          data={postureAgg?.health_score_buckets}
+          tone="ok"
+          subtitle={postureAgg ? `${formatNumber(postureAgg.total_scored)} brands scored` : 'Awaiting daily snapshot'}
+        />
+        <ScoreBucketCard
+          title="Brand-Exposure distribution"
+          data={postureAgg?.exposure_score_buckets}
+          tone="crit"
+          subtitle="Higher = more attack pressure"
+        />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <PostureMoversCard
+          title="Improving brands"
+          rows={postureAgg?.improving_brands}
+          tone="ok"
+          emptyMsg="No brands moving up >+5 health pts this week"
+        />
+        <PostureMoversCard
+          title="Declining brands"
+          rows={postureAgg?.declining_brands}
+          tone="crit"
+          emptyMsg="No brands moving down >-5 health pts this week"
+        />
+      </div>
+
+      {/* Existing Most-attacked / Cooling movers */}
+      <PanelHeader title="Activity" subtitle="Brands with the biggest threat-count delta this week" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <MoversCard
           title="Most attacked this week"
@@ -131,6 +221,21 @@ function IntelTab({ isStaff }: { isStaff: boolean }) {
       </div>
 
       <CatalogStatusFooter />
+    </div>
+  );
+}
+
+// ── PanelHeader ────────────────────────────────────────────────
+function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="pt-2">
+      <div className="flex items-baseline gap-3">
+        <h2 className="text-sm font-mono font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">
+          {title}
+        </h2>
+        <span className="text-[11px] text-[var(--text-muted)]">{subtitle}</span>
+      </div>
+      <div className="mt-1 h-px bg-gradient-to-r from-white/[0.10] via-white/[0.04] to-transparent" />
     </div>
   );
 }
@@ -801,6 +906,418 @@ function ReviewedRow({ c, onJumpBrand }: { c: BrandCandidate; onJumpBrand?: (bra
         </Button>
       )}
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Defense panel — email security
+// ══════════════════════════════════════════════════════════════════
+
+const GRADE_TONE: Record<string, string> = {
+  'A+': '#3CB878', 'A': '#3CB878', 'A-': '#3CB878',
+  'B+': '#0A8AB5', 'B': '#0A8AB5', 'B-': '#0A8AB5',
+  'C+': '#DCAA32', 'C': '#DCAA32', 'C-': '#DCAA32',
+  'D+': '#E8923C', 'D': '#E8923C', 'D-': '#E8923C',
+  'F':  '#C83C3C',
+};
+
+function EmailGradeCard({ data }: { data: EmailSecurityAggregate | null | undefined }) {
+  if (!data) {
+    return (
+      <Card hover={false}><SectionLabel>Email security grade</SectionLabel>
+        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
+      </Card>
+    );
+  }
+  const total = data.grade_distribution.reduce((s, r) => s + r.count, 0);
+  const max = Math.max(1, ...data.grade_distribution.map(r => r.count));
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Email security grade</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(total)} graded
+          {data.ungraded > 0 && ` · ${formatNumber(data.ungraded)} pending`}
+        </span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {data.grade_distribution.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-2">No graded brands yet</div>
+        )}
+        {data.grade_distribution.map(row => {
+          const pct = total > 0 ? (row.count / total) * 100 : 0;
+          const barW = (row.count / max) * 100;
+          const accent = GRADE_TONE[row.grade] ?? '#78A0C8';
+          return (
+            <div key={row.grade}>
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="font-bold" style={{ color: accent }}>{row.grade}</span>
+                <span className="text-[var(--text-tertiary)]">
+                  {formatNumber(row.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(1)}%)</span>
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <div className="h-full rounded-full"
+                  style={{ width: `${barW}%`, background: `linear-gradient(90deg, ${accent}, ${accent}80)` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function DmarcEnforcementCard({ data }: { data: EmailSecurityAggregate | null | undefined }) {
+  if (!data) {
+    return (
+      <Card hover={false}><SectionLabel>DMARC enforcement</SectionLabel>
+        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
+      </Card>
+    );
+  }
+  const total = data.dmarc_distribution.reduce((s, r) => s + r.count, 0);
+  const POLICY_COLORS: Record<string, string> = {
+    reject: '#3CB878', quarantine: '#0A8AB5',
+    none: '#E8923C', unspecified: '#9B59B6',
+  };
+  const enforcePct = total > 0 ? (data.dmarc_enforcing / total) * 100 : 0;
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>DMARC enforcement</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(total)} scanned
+        </span>
+      </div>
+      <div className="mt-3">
+        <div className="text-2xl font-bold" style={{ color: 'var(--green)', textShadow: '0 0 8px rgba(60,184,120,0.55)' }}>
+          {enforcePct.toFixed(0)}%
+        </div>
+        <div className="text-[11px] font-mono text-[var(--text-tertiary)]">
+          {formatNumber(data.dmarc_enforcing)} enforcing (quarantine + reject)
+        </div>
+      </div>
+      <div className="mt-4 space-y-1.5">
+        {data.dmarc_distribution.map(row => {
+          const pct = total > 0 ? (row.count / total) * 100 : 0;
+          const accent = POLICY_COLORS[row.policy] ?? '#78A0C8';
+          return (
+            <div key={row.policy} className="flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center gap-2">
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                <span className="text-[var(--text-secondary)] capitalize">{row.policy}</span>
+              </div>
+              <span className="text-[var(--text-tertiary)]">
+                {formatNumber(row.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(0)}%)</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Pressure panel — leaderboards
+// ══════════════════════════════════════════════════════════════════
+
+function PressureLeaderboard({ title, rows, accent, subtitle }: {
+  title: string;
+  rows: PressureMover[] | undefined;
+  accent: string;
+  subtitle: string;
+}) {
+  const navigate = useNavigate();
+  const top5 = (rows ?? []).slice(0, 5);
+  const max = Math.max(1, ...top5.map(r => r.count));
+
+  return (
+    <Card hover={false} style={{ minHeight: 200 }}>
+      <SectionLabel>{title}</SectionLabel>
+      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">{subtitle}</div>
+      <div className="mt-3 space-y-1.5">
+        {top5.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-3 text-center">No signal yet</div>
+        )}
+        {top5.map(b => {
+          const barW = (b.count / max) * 100;
+          return (
+            <div key={b.brand_id}
+              onClick={() => navigate(`/brands/${b.brand_id}`)}
+              className="cursor-pointer hover:bg-white/[0.03] transition-colors"
+              style={{
+                padding: '6px 8px', borderRadius: 5,
+                position: 'relative', overflow: 'hidden',
+              }}>
+              <div style={{
+                position: 'absolute', left: 0, top: 0, bottom: 0,
+                width: `${barW}%`,
+                background: `linear-gradient(90deg, ${accent}1a, transparent)`,
+              }} />
+              <div className="relative flex items-center gap-2">
+                <BrandFavicon name={b.brand_name} domain={b.canonical_domain} logoUrl={b.logo_url} size={20} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
+                </div>
+                <span className="text-xs font-bold" style={{ color: accent }}>{b.count}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Composition panel
+// ══════════════════════════════════════════════════════════════════
+
+const TIER_COLORS: Record<string, string> = {
+  customer: '#3CB878', monitored: '#E5A832', tracked: '#78A0C8',
+};
+
+function CompositionMixCard({ data }: { data: CompositionAggregate | null | undefined }) {
+  if (!data) {
+    return (
+      <Card hover={false}><SectionLabel>Catalog composition</SectionLabel>
+        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
+      </Card>
+    );
+  }
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Catalog composition</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(data.total)} total
+        </span>
+      </div>
+
+      <div className="mt-3">
+        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tier</div>
+        <StackedBar data={data.tier_mix.map(t => ({ key: t.tier, value: t.count, color: TIER_COLORS[t.tier] ?? '#78A0C8' }))} total={data.total} />
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tranco rank</div>
+        <div className="mt-1 space-y-1">
+          {data.tranco_buckets.map(b => {
+            const pct = data.total > 0 ? (b.count / data.total) * 100 : 0;
+            return (
+              <div key={b.bucket} className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-[var(--text-secondary)]">{b.bucket}</span>
+                <span className="text-[var(--text-tertiary)]">
+                  {formatNumber(b.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(0)}%)</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Source</div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {data.source_mix.slice(0, 6).map(s => (
+            <span key={s.source} style={{
+              padding: '2px 8px', borderRadius: 3,
+              background: 'rgba(255,255,255,0.04)',
+              fontSize: 10, fontFamily: 'monospace',
+              color: 'var(--text-tertiary)',
+            }}>
+              {s.source.replace(/_/g, ' ')} <span className="text-[var(--text-muted)]">{formatNumber(s.count)}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function StackedBar({ data, total }: {
+  data: Array<{ key: string; value: number; color: string }>;
+  total: number;
+}) {
+  if (total === 0) return null;
+  return (
+    <div className="mt-1">
+      <div className="flex h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+        {data.map(d => {
+          const pct = (d.value / total) * 100;
+          if (pct < 0.1) return null;
+          return (
+            <div key={d.key} title={`${d.key} ${formatNumber(d.value)}`}
+              style={{ width: `${pct}%`, background: d.color }} />
+          );
+        })}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] font-mono">
+        {data.map(d => (
+          <span key={d.key} className="flex items-center gap-1.5 text-[var(--text-tertiary)]">
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
+            <span className="capitalize">{d.key}</span>
+            <span className="text-[var(--text-muted)]">{formatNumber(d.value)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GeoDistributionCard({ data }: { data: CompositionAggregate | null | undefined }) {
+  if (!data) {
+    return (
+      <Card hover={false}><SectionLabel>Geographic distribution</SectionLabel>
+        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
+      </Card>
+    );
+  }
+  const top10 = data.hq_countries.slice(0, 10);
+  const max = Math.max(1, ...top10.map(c => c.count));
+  const totalGeo = top10.reduce((s, c) => s + c.count, 0);
+  const unknown = data.total - data.hq_countries.reduce((s, c) => s + c.count, 0);
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Geographic distribution</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          top 10 of {data.hq_countries.length}{unknown > 0 ? ` · ${formatNumber(unknown)} unknown` : ''}
+        </span>
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {top10.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-2">No HQ data resolved yet</div>
+        )}
+        {top10.map(c => {
+          const barW = (c.count / max) * 100;
+          const pct = totalGeo > 0 ? (c.count / totalGeo) * 100 : 0;
+          return (
+            <div key={c.country}>
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-[var(--text-secondary)]">{c.country}</span>
+                <span className="text-[var(--text-tertiary)]">
+                  {formatNumber(c.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(1)}%)</span>
+                </span>
+              </div>
+              <div className="mt-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <div className="h-full rounded-full"
+                  style={{ width: `${barW}%`, background: 'linear-gradient(90deg, var(--blue), var(--blue-dim))' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Posture panel
+// ══════════════════════════════════════════════════════════════════
+
+function ScoreBucketCard({ title, data, tone, subtitle }: {
+  title: string;
+  data: Array<{ bucket: string; count: number }> | undefined;
+  tone: 'ok' | 'crit';
+  subtitle: string;
+}) {
+  if (!data) {
+    return (
+      <Card hover={false}><SectionLabel>{title}</SectionLabel>
+        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Awaiting daily snapshot</div>
+      </Card>
+    );
+  }
+  const total = data.reduce((s, r) => s + r.count, 0);
+  const max = Math.max(1, ...data.map(r => r.count));
+
+  const okPalette  = ['#3CB878', '#0A8AB5', '#DCAA32', '#E8923C', '#C83C3C'];
+  const palette = tone === 'crit' ? [...okPalette].reverse() : okPalette;
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>{title}</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(total)} scored
+        </span>
+      </div>
+      <div className="mt-1 text-[10px] font-mono text-[var(--text-muted)]">{subtitle}</div>
+      <div className="mt-3 space-y-1.5">
+        {data.map((row, i) => {
+          if (row.bucket === 'unscored') return null;
+          const barW = (row.count / max) * 100;
+          const color = palette[i % palette.length];
+          return (
+            <div key={row.bucket}>
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span style={{ color }}>{row.bucket}</span>
+                <span className="text-[var(--text-tertiary)]">{formatNumber(row.count)}</span>
+              </div>
+              <div className="mt-0.5 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <div className="h-full rounded-full" style={{ width: `${barW}%`, background: `linear-gradient(90deg, ${color}, ${color}80)` }} />
+              </div>
+            </div>
+          );
+        })}
+        {data.find(r => r.bucket === 'unscored') && (
+          <div className="text-[10px] font-mono text-[var(--text-muted)] pt-1 border-t border-white/[0.04]">
+            {formatNumber(data.find(r => r.bucket === 'unscored')!.count)} not yet scored
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function PostureMoversCard({ title, rows, tone, emptyMsg }: {
+  title: string;
+  rows: PostureMover[] | undefined;
+  tone: 'ok' | 'crit';
+  emptyMsg: string;
+}) {
+  const navigate = useNavigate();
+  const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
+  const list = rows ?? [];
+
+  return (
+    <Card hover={false}>
+      <SectionLabel>{title}</SectionLabel>
+      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">
+        Brand-Health Δ vs 7 days ago
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {list.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-3 text-center">{emptyMsg}</div>
+        )}
+        {list.map(b => (
+          <div key={b.brand_id}
+            onClick={() => navigate(`/brands/${b.brand_id}`)}
+            className="cursor-pointer hover:bg-white/[0.03] transition-colors"
+            style={{
+              padding: '8px 10px', borderRadius: 6,
+              border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+            }}>
+            <div className="flex items-center gap-2">
+              <BrandFavicon name={b.brand_name} domain={b.canonical_domain} logoUrl={b.logo_url} size={22} />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
+                <div className="text-[10px] font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
+              </div>
+              <span className="text-sm font-bold flex-shrink-0" style={{ color: accent }}>
+                {b.delta > 0 ? '+' : ''}{b.delta}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
