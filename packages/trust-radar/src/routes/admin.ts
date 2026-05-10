@@ -836,6 +836,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const { handleRecomputeBrandScores } = await import("../handlers/admin");
     return handleRecomputeBrandScores(request, env);
   });
+  router.post("/api/admin/brand-firmographics/enrich", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleBackfillBrandFirmographics } = await import("../handlers/admin");
+    return handleBackfillBrandFirmographics(request, env);
+  });
   router.post("/api/admin/backfill-social-config", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

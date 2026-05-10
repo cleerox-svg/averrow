@@ -2174,6 +2174,43 @@ async function extractCsvFromZip(buffer: ArrayBuffer): Promise<string | null> {
   return null;
 }
 
+// ─── POST /api/admin/brand-firmographics/enrich ──────────────────
+// Triggers the free-source firmographic enricher (SEC EDGAR +
+// Companies House + Wikidata). Picks up to 200 monitored+customer
+// brands per call that don't yet have a firmographic row or whose
+// row is older than 90 days.
+//
+// Also serves as the per-tick handler for the `enricher` cron's
+// brand_firmographic job (dispatched via the same enricherJob
+// machinery as domain_geo / brand_logo_hq / brand_sector_rdap).
+
+export async function handleBackfillBrandFirmographics(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const { enrichFirmographicsBatch } = await import('../lib/firmographic-enricher');
+    const summary = await enrichFirmographicsBatch(env);
+    return json({
+      success: true,
+      data: {
+        processed: summary.scanned,
+        enriched:  summary.enriched,
+        no_match:  summary.no_match,
+        errors:    summary.errors,
+        duration_ms: summary.duration_ms,
+        message: `Firmographic: scanned ${summary.scanned}, enriched ${summary.enriched}, no match ${summary.no_match}, errors ${summary.errors} in ${summary.duration_ms}ms`,
+      },
+    }, 200, origin);
+  } catch (err) {
+    return json({
+      success: false,
+      error: err instanceof Error ? err.message : "Firmographic enrichment failed",
+    }, 500, origin);
+  }
+}
+
 // ─── POST /api/admin/brand-scores/recompute-all ─────────────────
 // Triggers the daily Brand Health + Brand Exposure batch on demand.
 // Useful (a) right after deploy to populate the new scores without

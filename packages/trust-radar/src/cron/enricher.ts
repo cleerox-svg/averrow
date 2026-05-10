@@ -27,9 +27,10 @@ import {
   handleBackfillDomainGeo,
   handleBackfillBrandEnrichment,
   handleBackfillBrandSector,
+  handleBackfillBrandFirmographics,
 } from '../handlers/admin';
 
-type EnricherJob = 'domain_geo' | 'brand_logo_hq' | 'brand_sector_rdap';
+type EnricherJob = 'domain_geo' | 'brand_logo_hq' | 'brand_sector_rdap' | 'brand_firmographic';
 
 interface EnricherJobResult {
   job: EnricherJob;
@@ -230,6 +231,14 @@ export const enricherAgent: AgentModule = {
     );
     jobs.push(
       await runEnricherJob(env, 'brand_sector_rdap', handleBackfillBrandSector, '/api/admin/backfill-brand-sector'),
+    );
+    // Firmographic enrichment via free public sources (SEC EDGAR +
+    // Companies House + Wikidata). Runs LAST because it has the
+    // smallest backlog (only monitored+customer brands without a
+    // recent row) and external API rate limits — if we run out of
+    // subrequests, this is the safest job to skip.
+    jobs.push(
+      await runEnricherJob(env, 'brand_firmographic', handleBackfillBrandFirmographics, '/api/admin/brand-firmographics/enrich'),
     );
 
     const totalProcessed = jobs.reduce((s, j) => s + j.processed, 0);
