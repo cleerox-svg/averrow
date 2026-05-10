@@ -75,6 +75,45 @@ function agentStatusLabel(status: string): 'active' | 'failed' | 'degraded' | 'i
   return 'inactive';
 }
 
+// Hand-rolled SVG mini sparkline for pipeline cards. Same pattern
+// as the agents-v3 CardHealthChart — single series, gradient fill,
+// no axes / tooltip / legend (those live in the expanded detail).
+// Color flips to sev-high when the pipeline's verdict is GROWING
+// so a problem reads at a glance.
+function CardSparkline({
+  values, color, width = 100, height = 28,
+}: {
+  values: number[];
+  color:  string;
+  width?: number;
+  height?: number;
+}) {
+  if (!values || values.length < 2) return null;
+  const N = values.length;
+  const peak = Math.max(...values, 1);
+  const stepX = N > 1 ? width / (N - 1) : width;
+  const points = values.map((v, i) => {
+    const x = i * stepX;
+    const y = height - (v / peak) * (height - 2) - 1;
+    return { x, y };
+  });
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L ${(N - 1) * stepX} ${height} L 0 ${height} Z`;
+  const gradId   = `pipeline-card-spark-${Math.random().toString(36).slice(2, 9)}`;
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={color} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={linePath} stroke={color} strokeWidth={1.2} fill="none" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // Explicit failure-pattern / health reason text. Returns null when
 // the verdict alone is self-explanatory (CLEAR with 0 backlog).
 function pipelineReasonFor(p: PipelineEntry): string | null {
@@ -175,19 +214,32 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
           </div>
         )}
 
-        <div className="flex items-baseline gap-2 mb-1">
-          <span
-            className="font-display text-lg font-bold"
-            style={{ color: 'var(--text-primary)', lineHeight: 1 }}
-          >
-            {p.count.toLocaleString()}
-          </span>
-          {p.verdict && (() => {
-            const v = labelToVerdict(p.verdict.label);
-            return v
-              ? <Badge verdict={v} size="xs" />
-              : <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />;
-          })()}
+        <div className="flex items-end justify-between gap-2 mb-1">
+          <div className="flex items-baseline gap-2">
+            <span
+              className="font-display text-lg font-bold"
+              style={{ color: 'var(--text-primary)', lineHeight: 1 }}
+            >
+              {p.count.toLocaleString()}
+            </span>
+            {p.verdict && (() => {
+              const v = labelToVerdict(p.verdict.label);
+              return v
+                ? <Badge verdict={v} size="xs" />
+                : <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />;
+            })()}
+          </div>
+          {/* 24h backlog mini sparkline — only renders when we have
+              ≥2 samples. Color flips to sev-high on growing trend
+              so problems read at a glance. */}
+          {p.sparkline && p.sparkline.length >= 2 && (
+            <CardSparkline
+              values={p.sparkline.map(s => s.count)}
+              color={p.trend_direction === 'up' ? 'var(--sev-high)' : 'var(--amber)'}
+              width={80}
+              height={24}
+            />
+          )}
         </div>
 
         {/* Explicit reason — what the verdict means in numbers/time */}

@@ -152,6 +152,11 @@ export interface PipelineEntry {
   agent_last_run_at: string | null;
   agent_last_status: string | null;
   agent_records_processed: number | null;
+  /** 24h backlog history (oldest → newest). Added 2026-05 so cards
+   *  can render a per-pipeline sparkline without per-card fan-out
+   *  to usePipelineDetail. Optional because older cached payloads
+   *  won't include it. */
+  sparkline?: Array<{ count: number; recorded_at: string }>;
 }
 
 export function useAgents() {

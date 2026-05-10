@@ -633,20 +633,23 @@ function computeReferenceDatasetVerdict(
 export async function handlePipelineStatus(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v3 prefix invalidates pre-verdict / pre-description payloads so
-  // the UI doesn't render the new pill / subtitle slots empty.
-  const cacheKey = "pipeline_status_v3";
+  // v4 prefix invalidates v3's pre-sparkline shape so the new
+  // per-card sparkline arrays land on first deploy.
+  const cacheKey = "pipeline_status_v4";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
-  // Read latest 2 snapshots per backlog from backlog_history (pre-computed by FC).
-  // This gives us current count + previous count for trend, with zero COUNT queries.
+  // Read 24h of snapshots per backlog from backlog_history (pre-computed by FC).
+  // ROW_NUMBER over the full window gives us current + previous for
+  // trend; the same rows feed the per-pipeline sparkline arrays
+  // returned alongside, so cards can render a 24h backlog trend
+  // without fanning out a usePipelineDetail call per pipeline.
   const [historyRows, agentRuns] = await Promise.all([
     env.DB.prepare(`
       SELECT backlog_name, count, recorded_at,
              ROW_NUMBER() OVER (PARTITION BY backlog_name ORDER BY recorded_at DESC) AS rn
       FROM backlog_history
-      WHERE recorded_at > datetime('now', '-6 hours')
+      WHERE recorded_at > datetime('now', '-1 day')
     `).all<{ backlog_name: string; count: number; recorded_at: string; rn: number }>(),
 
     // Last run per agent for "last processed" timestamp and throughput
@@ -662,10 +665,21 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
   // Build latest + previous per backlog
   const latestByName = new Map<string, { count: number; recorded_at: string }>();
   const previousByName = new Map<string, { count: number; recorded_at: string }>();
+  // Per-pipeline 24h sparkline series (oldest → newest). Same source
+  // rows the latest/previous derivation uses, just collated into
+  // an array per pipeline. ~12 samples / 24h × ~15 pipelines = ~180
+  // rows total to bucket in JS — negligible.
+  const sparklineByName = new Map<string, Array<{ count: number; recorded_at: string }>>();
   for (const row of historyRows.results) {
     if (row.rn === 1) latestByName.set(row.backlog_name, { count: row.count, recorded_at: row.recorded_at });
     if (row.rn === 2) previousByName.set(row.backlog_name, { count: row.count, recorded_at: row.recorded_at });
+    const arr = sparklineByName.get(row.backlog_name);
+    const sample = { count: row.count, recorded_at: row.recorded_at };
+    if (arr) arr.push(sample);
+    else sparklineByName.set(row.backlog_name, [sample]);
   }
+  // ROW_NUMBER ordered DESC; flip to chronological for the chart.
+  for (const arr of sparklineByName.values()) arr.reverse();
 
   // Build agent last-run map
   const agentLastRun = new Map(agentRuns.results.map(r => [r.agent_id, r]));
@@ -698,6 +712,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
       agent_last_run_at: agentRun?.last_run_at ?? null,
       agent_last_status: agentRun?.status ?? null,
       agent_records_processed: agentRun?.records_processed ?? null,
+      sparkline: sparklineByName.get(name) ?? [],
     };
   });
 
@@ -743,6 +758,10 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
       agent_last_run_at: geoipAgentRun?.last_run_at ?? null,
       agent_last_status: geoipStatus.last_refresh_status ?? geoipAgentRun?.status ?? null,
       agent_records_processed: rowsWritten,
+      // GeoIP isn't a backlog — no per-hour count history. Empty
+      // array keeps the response shape stable; the card will skip
+      // the sparkline render.
+      sparkline: [],
     });
   } catch (err) {
     console.error('[pipeline-status] geoip status error:', err);
@@ -764,6 +783,7 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
       agent_last_run_at: null,
       agent_last_status: 'unconfigured',
       agent_records_processed: null,
+      sparkline: [],
     });
   }
 
