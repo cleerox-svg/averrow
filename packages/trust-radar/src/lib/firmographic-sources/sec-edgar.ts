@@ -22,6 +22,12 @@ const USER_AGENT = 'Averrow Trust Radar firmographic-enricher (ops@averrow.com)'
 // Re-fetched at most every 7 days (Tranco-rank-style cadence).
 const TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 
+// SEC EDGAR is generally fast but the company-tickers download is
+// ~1.5MB and CIK fact files can be larger; allow a slightly more
+// generous timeout than other sources. Still well below the
+// 15-min navigator reaper threshold.
+const FETCH_TIMEOUT_MS = 10_000;
+
 interface TickerRow {
   cik_str: number;
   ticker:  string;
@@ -100,7 +106,10 @@ async function fetchTickers(): Promise<Record<string, TickerRow> | null> {
   if (_tickersCache && Date.now() - _tickersFetchedAt < TICKERS_TTL_MS) {
     return _tickersCache;
   }
-  const res = await fetch(TICKERS_URL, { headers: { 'User-Agent': USER_AGENT } });
+  const res = await fetch(TICKERS_URL, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) return null;
   const data = await res.json() as Record<string, TickerRow>;
   _tickersCache = data;
@@ -130,7 +139,10 @@ interface FactDataPoint {
 
 async function fetchCompanyFacts(cik: number): Promise<CompanyFacts | null> {
   const url = `https://data.sec.gov/api/xbrl/companyfacts/CIK${pad10(cik)}.json`;
-  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+  const res = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) return null;
   return res.json() as Promise<CompanyFacts>;
 }

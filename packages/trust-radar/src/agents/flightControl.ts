@@ -904,9 +904,17 @@ export const flightControlAgent: AgentModule = {
     if ((daysSinceCuratorRun > 6 || (unscannedEmails?.count ?? 0) > 5000) && !agentLimits.skip_curator) {
       const { curatorAgent } = await import('./curator');
       const { executeAgent } = await import('../lib/agentRunner');
-      try {
-        await executeAgent(env, curatorAgent, { trigger: 'flight_control' }, 'flight_control', 'event');
-      } catch { /* logged by agentRunner */ }
+      // Fire-and-forget via ctx.waitUntil — curator's full hygiene run
+      // can take 5–7 min. Awaiting it inline blocks the entire FC tick,
+      // which delays navigator supervision and feed-pause emit. Same
+      // pattern as scaleAgents() / recoverStalledAgents() below.
+      const curatorExecCtx = ctx.input._executionCtx as ExecutionContext | undefined;
+      const curatorPromise = executeAgent(env, curatorAgent, { trigger: 'flight_control' }, 'flight_control', 'event');
+      if (curatorExecCtx) {
+        curatorExecCtx.waitUntil(curatorPromise.catch(() => { /* logged by agentRunner */ }));
+      } else {
+        try { await curatorPromise; } catch { /* logged by agentRunner */ }
+      }
 
       await logActivity(db, 'flight_control', 'info', 'scheduling',
         'Triggered Curator weekly hygiene run', {

@@ -20,6 +20,11 @@ import { revenueToBand, employeesToBand } from './types';
 
 const SPARQL_URL = 'https://query.wikidata.org/sparql';
 const USER_AGENT = 'Averrow Trust Radar firmographic-enricher (ops@averrow.com)';
+// Wikidata SPARQL can hang on complex queries. 8s is generous —
+// most successful queries return in <2s. A hung query would
+// otherwise let the per-job loop exceed the 15-min navigator
+// reaper threshold, killing the entire enricher run.
+const FETCH_TIMEOUT_MS = 8_000;
 
 interface SparqlBinding {
   type:  string;
@@ -54,6 +59,7 @@ export const lookupWikidata: FirmographicLookup = async ({ domain }) => {
 
     const res = await fetch(`${SPARQL_URL}?query=${encodeURIComponent(sparql)}&format=json`, {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/sparql-results+json' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const data = await res.json() as SparqlResults;

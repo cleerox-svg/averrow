@@ -18,6 +18,12 @@ import type { Env } from '../../types';
 import type { FirmographicLookup, BrandFirmographics } from './types';
 import { revenueToBand, employeesToBand } from './types';
 
+// Companies House serves accounts data — typical search/profile
+// returns in <1s, but the API has occasional outages. Bound the
+// fetch so a hung upstream doesn't take the whole enricher run
+// over the 15-min navigator reaper threshold.
+const FETCH_TIMEOUT_MS = 8_000;
+
 interface SearchResult {
   items?: Array<{
     company_number: string;
@@ -49,7 +55,7 @@ export function makeCompaniesHouseLookup(env: Env): FirmographicLookup {
       // Search for the company by name. Take the first 'active' Ltd hit.
       const searchRes = await fetch(
         `https://api.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(name)}&items_per_page=5`,
-        { headers },
+        { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
       );
       if (!searchRes.ok) return null;
       const search = await searchRes.json() as SearchResult;
@@ -61,7 +67,7 @@ export function makeCompaniesHouseLookup(env: Env): FirmographicLookup {
       // Fetch full profile
       const profileRes = await fetch(
         `https://api.company-information.service.gov.uk/company/${candidate.company_number}`,
-        { headers },
+        { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
       );
       if (!profileRes.ok) return null;
       const profile = await profileRes.json() as CompanyProfile;
