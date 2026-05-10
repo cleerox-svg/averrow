@@ -1521,7 +1521,7 @@ export async function handleBackfillBrandSector(
   const origin = request.headers.get("Origin");
 
   try {
-    const { fetchRdap } = await import("../lib/brand-enricher");
+    const { fetchRdap, heuristicClassifySector } = await import("../lib/brand-enricher");
     const { runSyncAgent } = await import("../lib/agentRunner");
     const { brandEnricherAgent } = await import("../agents/brand-enricher");
     type SectorResult = { sector: string; aiSucceeded: boolean };
@@ -1533,13 +1533,20 @@ export async function handleBackfillBrandSector(
       }, 500, origin);
     }
 
+    // Skip tier='tracked' — those are mostly Tranco-imported brands
+    // with no customer interest. They get classified on-demand if
+    // promoted to monitored later. Only classify the brands that
+    // actually surface in operator workflows.
+    const tierFilter = `AND b.tier IN ('monitored','customer')`;
+
     // Count remaining (skip rows that have already failed 5 times)
     const totalRow = await env.DB.prepare(`
-      SELECT COUNT(*) as n FROM brands
-      WHERE (sector IS NULL OR sector_classified_at IS NULL)
-        AND COALESCE(sector_attempts, 0) < 5
-        AND canonical_domain IS NOT NULL
-        AND canonical_domain != ''
+      SELECT COUNT(*) as n FROM brands b
+      WHERE (b.sector IS NULL OR b.sector_classified_at IS NULL)
+        AND COALESCE(b.sector_attempts, 0) < 5
+        AND b.canonical_domain IS NOT NULL
+        AND b.canonical_domain != ''
+        ${tierFilter}
     `).first<{ n: number }>();
     const totalPending = totalRow?.n ?? 0;
 
@@ -1555,38 +1562,53 @@ export async function handleBackfillBrandSector(
       }, 200, origin);
     }
 
+    // Batch lifted from 20 → 100 per call. Loop is parallelized below
+    // (Promise.all chunks of 8) so the CPU/network load is spread,
+    // not concentrated.
     const batch = await env.DB.prepare(`
-      SELECT id, name, canonical_domain FROM brands
-      WHERE (sector IS NULL OR sector_classified_at IS NULL)
-        AND COALESCE(sector_attempts, 0) < 5
-        AND canonical_domain IS NOT NULL
-        AND canonical_domain != ''
-      LIMIT 20
+      SELECT b.id, b.name, b.canonical_domain FROM brands b
+      WHERE (b.sector IS NULL OR b.sector_classified_at IS NULL)
+        AND COALESCE(b.sector_attempts, 0) < 5
+        AND b.canonical_domain IS NOT NULL
+        AND b.canonical_domain != ''
+        ${tierFilter}
+      LIMIT 100
     `).all<{ id: string; name: string; canonical_domain: string }>();
 
-    const apiKey = env.ANTHROPIC_API_KEY;
     let classified = 0;
+    let heuristicHits = 0;
+    let aiCalls = 0;
 
-    for (const brand of batch.results) {
+    // Process the batch in parallel chunks of 8 — each chunk awaits
+    // before the next starts so we don't blow CPU/subrequest budgets.
+    const CONCURRENCY = 8;
+
+    async function classifyOne(brand: { id: string; name: string; canonical_domain: string }): Promise<void> {
       try {
-        // Run RDAP + sector classification in parallel. Phase 3.7 of
-        // agent audit: sector classification is now a sync agent.
-        const [rdap, sector] = await Promise.allSettled([
-          fetchRdap(brand.canonical_domain),
-          runSyncAgent<SectorResult>(env, brandEnricherAgent, {
+        // Heuristic-first: single regex pass covers government, education,
+        // finance, healthcare, travel, telecom, gaming, energy, media via
+        // TLD + brand-name keyword matches. Returns null on ambiguous
+        // brands so we fall through to AI for the long tail.
+        const heuristicSector = heuristicClassifySector(brand.canonical_domain, brand.name);
+
+        // RDAP runs in parallel with sector resolution either way.
+        const rdapPromise = fetchRdap(brand.canonical_domain);
+
+        let sectorVal: string | null = null;
+        if (heuristicSector) {
+          heuristicHits++;
+          sectorVal = heuristicSector;
+        } else {
+          aiCalls++;
+          const ai = await runSyncAgent<SectorResult>(env, brandEnricherAgent, {
             domain: brand.canonical_domain,
             brandName: brand.name,
-          }),
-        ]);
+          });
+          sectorVal = ai.data?.sector ?? null;
+        }
 
-        const rdapData  = rdap.status === "fulfilled" ? rdap.value : null;
-        const sectorVal = sector.status === "fulfilled" && sector.value.data
-          ? sector.value.data.sector
-          : null;
+        const rdapData = await rdapPromise.catch(() => null);
 
-        // If both RDAP and sector classification returned nothing,
-        // bump attempts counter and retry on the next tick instead of
-        // marking this row as "classified" with no actual data.
         const hasAnyData =
           sectorVal !== null ||
           rdapData?.registrar != null ||
@@ -1598,7 +1620,7 @@ export async function handleBackfillBrandSector(
           await env.DB.prepare(
             `UPDATE brands SET sector_attempts = COALESCE(sector_attempts, 0) + 1 WHERE id = ?`,
           ).bind(brand.id).run();
-          continue;
+          return;
         }
 
         await env.DB.prepare(`
@@ -1622,12 +1644,15 @@ export async function handleBackfillBrandSector(
         classified++;
       } catch (err) {
         console.error(`[backfill-brand-sector] failed for ${brand.id}:`, err);
-        // Bump attempt counter so we retry next tick instead of marking
-        // a permanently-broken row as classified.
         await env.DB.prepare(
           `UPDATE brands SET sector_attempts = COALESCE(sector_attempts, 0) + 1 WHERE id = ?`,
         ).bind(brand.id).run();
       }
+    }
+
+    for (let i = 0; i < batch.results.length; i += CONCURRENCY) {
+      const chunk = batch.results.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(classifyOne));
     }
 
     return json({
@@ -1635,6 +1660,8 @@ export async function handleBackfillBrandSector(
       data: {
         processed:  batch.results.length,
         classified,
+        heuristic_hits: heuristicHits,
+        ai_calls: aiCalls,
         remaining:  Math.max(0, totalPending - batch.results.length),
       },
     }, 200, origin);

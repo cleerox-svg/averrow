@@ -34,6 +34,62 @@ export const SECTORS = [
 
 export type Sector = (typeof SECTORS)[number];
 
+// ── Heuristic sector classifier ─────────────────────────────────
+// High-precision pre-filter: matches only obvious cases (TLDs that
+// guarantee a sector, brand names containing unambiguous tokens).
+// Returns null when ambiguous so the caller falls through to AI.
+//
+// Designed for ~30% hit rate on the Tranco top 100K, cutting AI
+// spend on the long tail without sacrificing precision (false
+// positives go straight into the brands.sector column and stay
+// there). All matches use word-boundary or TLD-suffix logic.
+export function heuristicClassifySector(domain: string, brandName: string): Sector | null {
+  const d = domain.toLowerCase();
+  const n = brandName.toLowerCase();
+
+  // ── TLD-driven (highest precision) ──
+  if (/(^|\.)gov(\.[a-z]{2,3})?$/.test(d)) return 'government';
+  if (/(^|\.)mil(\.[a-z]{2,3})?$/.test(d)) return 'government';
+  if (/(^|\.)edu(\.[a-z]{2,3})?$/.test(d)) return 'education';
+  if (/(^|\.)ac\.[a-z]{2,3}$/.test(d))     return 'education';
+
+  // ── Word-boundary token matching on brand name ──
+  const has = (re: RegExp) => re.test(n);
+
+  // Finance — banks, credit unions, insurance, payment, crypto
+  if (has(/\b(bank|banque|banco)\b/)) return 'finance';
+  if (has(/\bcredit\s*union\b/))      return 'finance';
+  if (has(/\binsurance\b/))           return 'finance';
+  if (has(/\b(crypto|coin|exchange|wallet)\b/) && has(/\b(coin|crypto|exchange|swap)\b/)) return 'finance';
+
+  // Healthcare
+  if (has(/\b(hospital|clinic|medical|pharma|pharmacy|health)\b/)) return 'healthcare';
+
+  // Education
+  if (has(/\b(university|college|academy|school)\b/)) return 'education';
+
+  // Government (non-TLD signals)
+  if (has(/\b(ministry|department\s+of|federal|municipal)\b/)) return 'government';
+
+  // Travel
+  if (has(/\b(airline|airways|airlines|hotel|airport|cruise|booking)\b/)) return 'travel';
+
+  // Telecom
+  if (has(/\b(telecom|mobile|wireless|broadband|cable\s*co)\b/)) return 'telecom';
+
+  // Gaming
+  if (has(/\b(games?|gaming|esports|playstation|xbox)\b/)) return 'gaming';
+
+  // Energy / utilities
+  if (has(/\b(energy|electric|gas\s*co|utility|power\s*co|solar)\b/)) return 'energy';
+
+  // Media
+  if (has(/\b(news|times|post|tribune|herald|press|tv|radio|broadcasting)\b/)) return 'media';
+
+  // No confident match — let AI decide
+  return null;
+}
+
 export interface BrandEnrichmentResult {
   logo_url:    string | null;
   website_url: string | null;

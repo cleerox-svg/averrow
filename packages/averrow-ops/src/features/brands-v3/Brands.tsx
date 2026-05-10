@@ -465,7 +465,13 @@ function MoversCard({ title, rows, tone, emptyMsg, loading }: {
                 background: `linear-gradient(90deg, ${accent}18, ${accent}06)`,
                 pointerEvents: 'none',
               }} />
-              <div className="relative flex items-center justify-between gap-3">
+              <div className="relative flex items-center gap-3">
+                <BrandFavicon
+                  name={b.name}
+                  domain={b.canonical_domain}
+                  logoUrl={b.logo_url}
+                  size={28}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--amber)] transition-colors">
                     {b.name}
@@ -498,6 +504,52 @@ function humanizeThreatType(t: string): string {
   return (t || '').replace(/_/g, ' ');
 }
 
+// Compact favicon avatar for Intel-tab list rows. Uses the brand's
+// stored logo_url when available, falls back to Google's S2 favicons
+// API by canonical_domain, and finally to a letter chip if both fail.
+function BrandFavicon({
+  name, domain, logoUrl, size = 24,
+}: {
+  name: string;
+  domain?: string | null;
+  logoUrl?: string | null;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const radius = Math.round(size * 0.25);
+  const src = logoUrl
+    ?? (domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : null);
+
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: radius,
+      background: 'linear-gradient(145deg, var(--bg-elevated), var(--bg-card-deep))',
+      border: '1px solid var(--border-base)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      overflow: 'hidden', flexShrink: 0,
+    }}>
+      {src && !failed ? (
+        <img
+          src={src}
+          width={Math.round(size * 0.65)}
+          height={Math.round(size * 0.65)}
+          alt={name}
+          onError={() => setFailed(true)}
+          style={{ borderRadius: 2, display: 'block' }}
+        />
+      ) : (
+        <span style={{
+          fontSize: Math.round(size * 0.4),
+          fontWeight: 800,
+          color: 'var(--text-secondary)',
+        }}>
+          {(name[0] ?? '?').toUpperCase()}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function HotProspectsTeaser() {
   const navigate = useNavigate();
   const { data } = useBrandCandidates('pending');
@@ -514,8 +566,9 @@ function HotProspectsTeaser() {
           <div key={c.id} style={{
             padding: '8px 12px', borderRadius: 6,
             border: '1px solid var(--border-base)', background: 'var(--bg-input)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            display: 'flex', alignItems: 'center', gap: 10,
           }}>
+            <BrandFavicon name={c.apex_domain} domain={c.apex_domain} size={24} />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
               <div className="text-[11px] text-[var(--text-tertiary)]">
