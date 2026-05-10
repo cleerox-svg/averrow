@@ -725,6 +725,59 @@ export async function handleGetBrand(request: Request, env: Env, brandId: string
   }
 }
 
+// GET /api/brands/:id/domains — owned-domain footprint
+// Renders the brand_domains table (PR1 migration 0155). Returns
+// apex + subdomains + redirects + regional + acquired entries.
+// Sorted: apex first, then by domain_type, then alphabetical.
+export async function handleBrandDomains(request: Request, env: Env, brandId: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const rows = await session.prepare(`
+      SELECT id, domain, domain_type, source, verified, first_seen, last_seen
+      FROM brand_domains
+      WHERE brand_id = ?
+      ORDER BY
+        CASE domain_type
+          WHEN 'apex' THEN 0
+          WHEN 'subdomain' THEN 1
+          WHEN 'regional' THEN 2
+          WHEN 'redirect' THEN 3
+          WHEN 'acquired_property' THEN 4
+          WHEN 'customer_added' THEN 5
+          ELSE 6
+        END,
+        domain ASC
+    `).bind(brandId).all();
+    return attachBookmark(json({ success: true, data: rows.results, total: rows.results.length }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
+// GET /api/brands/:id/firmographics — revenue/employees/industry/etc
+// Renders the brand_firmographics sibling (PR1 migration 0158). Returns
+// null fields where the free-source enricher couldn't find data —
+// coverage acceptance: 30-50% of brands stay sparse on these fields.
+export async function handleBrandFirmographics(request: Request, env: Env, brandId: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const row = await session.prepare(`
+      SELECT brand_id, revenue_band, employee_band, industry_naics, industry_sic,
+             founded_year, is_public, ticker, parent_company,
+             source, source_url, confidence, enriched_at, updated_at
+      FROM brand_firmographics
+      WHERE brand_id = ?
+    `).bind(brandId).first();
+    return attachBookmark(json({ success: true, data: row ?? null }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
 // GET /api/brands/:id/threats
 export async function handleBrandThreats(request: Request, env: Env, brandId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
