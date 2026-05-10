@@ -46,6 +46,22 @@ interface EnricherJobResult {
   iterations: number;
 }
 
+// Per-handler-call wall-clock cap. The inner backfill handlers
+// fan out to external services with their own per-fetch timeouts
+// (DoH for domain_geo, Clearbit/ipinfo for brand_logo_hq, Haiku
+// for brand_sector_rdap, the firmographic mix). When any of those
+// stall in a way the inner timeout doesn't cover (slow keep-alive,
+// unbounded JSON parse, missing AbortSignal), the outer
+// `await handler(req, env)` here had nothing to fall back on and
+// the entire enricher tick hung — diagnostics 16:29 UTC showed
+// enricher with 0 successes in 6h, last completion 2.5 hours
+// stale, runs reaped at the 90-min mark with no useful work
+// done. 90 s is generous enough for a legitimate batch (~50
+// brands × Haiku) and short enough that the looped domain_geo
+// path still gets several iterations in its 12-min budget even
+// in the worst case.
+const ENRICHER_HANDLER_TIMEOUT_MS = 90_000;
+
 async function runEnricherJob(
   env: Env,
   job: EnricherJob,
@@ -55,7 +71,24 @@ async function runEnricherJob(
   const start = Date.now();
   try {
     const req = new Request(`https://localhost${path}`, { method: 'POST' });
-    const res = await handler(req, env);
+    // Promise.race against a wall-clock timeout. AbortController is
+    // useless here because the handler doesn't accept a signal —
+    // the inner fetch()es do, but those signals are scoped per
+    // fetch and don't propagate up to this dispatch boundary. The
+    // race is the simplest layer to add a timeout at.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`enricher.${job} handler timed out after ${ENRICHER_HANDLER_TIMEOUT_MS}ms`)),
+        ENRICHER_HANDLER_TIMEOUT_MS,
+      );
+    });
+    let res: Response;
+    try {
+      res = await Promise.race([handler(req, env), timeoutPromise]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
     const json = (await res.json()) as {
       success: boolean;
       data?: {
