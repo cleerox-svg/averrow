@@ -22,8 +22,10 @@
 //   - Resource-graph chips — needs §22 static-analysis manifest
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAgents, useAgentDetail, useAgentHealth } from '@/hooks/useAgents';
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
+import { usePendingApprovals } from '@/hooks/useAgentApprovals';
 import { Card, StatCard, StatGrid, PageHeader } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -91,6 +93,55 @@ const COMPLIANCE_AXES = [
 //   - metadata:   AGENT_METADATA[name] has a non-default subtitle
 //   - schema:     ✗ until Phase 4 retrofit lands
 //   - budget:     ✗ until §11 per-agent budget block lands
+// Banner that surfaces pending agent-deployment approvals on the
+// Agents page. Uses the existing usePendingApprovals hook (60s
+// polling) which is already mounted by the AgentApprovals page —
+// React Query dedupes the cache so this adds zero new requests
+// when both pages are open. Kept off the Sidebar deliberately to
+// avoid amplifying API load on every authenticated session.
+function PendingApprovalsBanner() {
+  const { data } = usePendingApprovals();
+  const count = data?.pending?.length ?? 0;
+  if (count === 0) return null;
+
+  return (
+    <Link
+      to="/agents/approvals"
+      className="block group"
+      style={{
+        padding: '12px 16px', borderRadius: 8,
+        border: '1px solid var(--sev-medium-border, rgba(229,168,50,0.30))',
+        background: 'var(--sev-medium-bg, rgba(229,168,50,0.08))',
+        textDecoration: 'none',
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <Shield size={16} style={{ color: 'var(--amber)', flexShrink: 0 }} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {count === 1
+              ? '1 agent awaiting deployment review'
+              : `${count} agents awaiting deployment review`}
+          </div>
+          <div className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+            Newly-deployed agents are blocked until a super_admin approves them.
+          </div>
+        </div>
+        <span
+          className="text-[11px] font-mono uppercase tracking-wider px-2 py-1 rounded transition-colors"
+          style={{
+            background: 'var(--amber)',
+            color: '#0A0F1C',
+            fontWeight: 600,
+          }}
+        >
+          Review →
+        </span>
+      </div>
+    </Link>
+  );
+}
+
 function complianceFor(agent: Agent) {
   const meta = AGENT_METADATA[agent.name as AgentId];
   return {
@@ -824,6 +875,8 @@ export function Agents() {
           </div>
         }
       />
+
+      <PendingApprovalsBanner />
 
       <StatGrid cols={4}>
         <StatCard label="Agents Operational" value={`${operational}/${agents.length}`} accentColor="var(--green)" />
