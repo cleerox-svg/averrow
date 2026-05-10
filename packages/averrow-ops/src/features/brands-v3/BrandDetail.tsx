@@ -396,19 +396,112 @@ function RiskTab({
 // Provider escalations are part of the takedown automation track (Phase
 // C of the v3-architecture plan — `takedown_provider_apis`); for now
 // surfaced through the same takedown rows.
+// SLA threshold: if a takedown has been submitted (or in-flight) longer
+// than this without resolution, surface as breached. 7 days is a generous
+// median for the multi-provider mix; per-provider thresholds will land
+// in PR9b alongside the takedown_provider_apis SLA column from Phase C
+// of the v3-architecture plan.
+const SLA_BREACH_DAYS = 7;
+const SLA_BREACH_MS = SLA_BREACH_DAYS * 24 * 60 * 60_000;
+
+function isSlaBreached(takedown: any): boolean {
+  if (takedown.resolved_at) return false;
+  const startedAt = takedown.submitted_at ?? takedown.created_at;
+  if (!startedAt) return false;
+  return Date.now() - new Date(startedAt).getTime() > SLA_BREACH_MS;
+}
+
 function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] }) {
+  const breached = useMemo(() => takedowns.filter(isSlaBreached), [takedowns]);
+  const onTime   = useMemo(() => takedowns.filter(t => !isSlaBreached(t)), [takedowns]);
+
+  // Provider escalation grouping: surface providers with multiple
+  // open takedowns OR any breach. Sorted breach-first then by count.
+  const providerStats = useMemo(() => {
+    const map = new Map<string, { name: string; total: number; breached: number }>();
+    for (const t of takedowns) {
+      const name = t.provider_name ?? 'Unknown provider';
+      const cur = map.get(name) ?? { name, total: 0, breached: 0 };
+      cur.total++;
+      if (isSlaBreached(t)) cur.breached++;
+      map.set(name, cur);
+    }
+    return Array.from(map.values())
+      .filter(p => p.total >= 2 || p.breached > 0)
+      .sort((a, b) => (b.breached - a.breached) || (b.total - a.total));
+  }, [takedowns]);
+
   return (
     <div className="space-y-4">
+      {/* Top strip: counts that drive operator attention */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <RollupTile
+          label="Open takedowns"
+          count={takedowns.length}
+          tone={takedowns.length > 0 ? 'warn' : 'neutral'}
+        />
+        <RollupTile
+          label="SLA breached"
+          count={breached.length}
+          tone={breached.length > 0 ? 'crit' : 'neutral'}
+        />
+        <RollupTile
+          label="Provider escalations"
+          count={providerStats.length}
+          tone={providerStats.length > 0 ? 'warn' : 'neutral'}
+        />
+        <RollupTile
+          label="Open alerts"
+          count={alerts.length}
+          tone={alerts.length > 0 ? 'crit' : 'neutral'}
+        />
+      </div>
+
+      {/* Provider escalations — providers with multiple opens or any breach */}
+      {providerStats.length > 0 && (
+        <Card hover={false}>
+          <SectionLabel>Provider escalations</SectionLabel>
+          <div className="mt-2 text-[11px] font-mono text-[var(--text-tertiary)]">
+            Providers with multiple open takedowns or any SLA breach against this brand
+          </div>
+          <div className="mt-3 space-y-2">
+            {providerStats.map(p => (
+              <div key={p.name} style={{
+                padding: '8px 12px', borderRadius: 6,
+                border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}>
+                <div className="text-sm text-[var(--text-primary)]">{p.name}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-[var(--text-tertiary)]">
+                    {p.total} open
+                  </span>
+                  {p.breached > 0 && (
+                    <Badge variant="critical">{p.breached} breached</Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Open takedowns — breached first, then on-time */}
       <Card hover={false}>
-        <SectionLabel>Open takedowns</SectionLabel>
-        <div className="mt-3 text-[11px] font-mono text-[var(--text-tertiary)]">
-          {takedowns.length} pending for this brand
+        <div className="flex items-center justify-between">
+          <SectionLabel>Open takedowns</SectionLabel>
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
+            {takedowns.length} pending
+          </span>
         </div>
         <div className="mt-3 space-y-2">
           {takedowns.length === 0 && (
             <EmptyState title="No open takedowns" description="Sparrow has no drafts assembled for this brand right now." />
           )}
-          {takedowns.slice(0, 8).map((t: any) => (
+          {breached.map((t: any) => (
+            <TakedownRow key={t.id} takedown={t} breached />
+          ))}
+          {onTime.slice(0, 8 - Math.min(8, breached.length)).map((t: any) => (
             <TakedownRow key={t.id} takedown={t} />
           ))}
           {takedowns.length > 8 && (
@@ -419,10 +512,13 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
         </div>
       </Card>
 
+      {/* Open alerts — unchanged from scaffold; severity-sorted */}
       <Card hover={false}>
-        <SectionLabel>Open alerts</SectionLabel>
-        <div className="mt-3 text-[11px] font-mono text-[var(--text-tertiary)]">
-          {alerts.length} new for this brand
+        <div className="flex items-center justify-between">
+          <SectionLabel>Open alerts</SectionLabel>
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
+            {alerts.length} new
+          </span>
         </div>
         <div className="mt-3 space-y-2">
           {alerts.length === 0 && (
@@ -808,20 +904,46 @@ function RollupTile({
   );
 }
 
-function TakedownRow({ takedown }: { takedown: any }) {
+function TakedownRow({ takedown, breached = false }: { takedown: any; breached?: boolean }) {
+  const startedAt = takedown.submitted_at ?? takedown.created_at;
+  const ageHours  = startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 3_600_000) : null;
+  const ageLabel  = ageHours === null ? '' : ageHours < 24 ? `${ageHours}h` : `${Math.floor(ageHours / 24)}d`;
+  const submitted = !!takedown.submitted_at;
+
   return (
     <div style={{
       padding: '8px 12px', borderRadius: 6,
-      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      border: breached ? '1px solid var(--sev-critical-border)' : '1px solid var(--border-base)',
+      background: breached ? 'var(--sev-critical-bg)' : 'var(--bg-input)',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     }}>
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-mono text-[var(--text-primary)] truncate">{takedown.target_value}</div>
-        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-          {takedown.target_type} · {takedown.provider_name || 'no provider'} · {takedown.severity}
+        <div className="text-xs font-mono text-[var(--text-primary)] truncate">
+          {takedown.target_value}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-[var(--text-muted)]">
+          <span>{takedown.target_type}</span>
+          <span>·</span>
+          <span>{takedown.provider_name || 'no provider'}</span>
+          {takedown.provider_method && (
+            <span style={{ padding: '0 4px', borderRadius: 2, background: 'rgba(255,255,255,0.04)' }}>
+              {takedown.provider_method}
+            </span>
+          )}
+          <span>·</span>
+          <span>{takedown.severity}</span>
+          {ageLabel && (
+            <>
+              <span>·</span>
+              <span>{submitted ? 'submitted' : 'drafted'} {ageLabel} ago</span>
+            </>
+          )}
         </div>
       </div>
-      <Badge variant={takedown.status === 'pending' ? 'medium' : 'default'}>{takedown.status}</Badge>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {breached && <Badge variant="critical">SLA</Badge>}
+        <Badge variant={takedown.status === 'pending' ? 'medium' : 'default'}>{takedown.status}</Badge>
+      </div>
     </div>
   );
 }
