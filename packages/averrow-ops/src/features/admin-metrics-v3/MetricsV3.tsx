@@ -23,11 +23,11 @@ import {
 } from '@/design-system/components';
 import { VersionToggle } from '@/components/ui/VersionToggle';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
-import { GeoCoverageSection }  from '@/features/admin/metrics/GeoCoverage';
 import { FeedFailuresSection } from '@/features/admin/metrics/FeedFailures';
 import { PipelinesV3 }         from './PipelinesV3';
 import { D1BudgetV3 }          from './D1BudgetV3';
 import { AiSpendV3 }           from './AiSpendV3';
+import { GeoCoverageV3 }       from './GeoCoverageV3';
 
 type TabId =
   | 'summary'
@@ -96,7 +96,7 @@ function SummaryView({ agents }: { agents: ReturnType<typeof useAgents>['data'] 
         <AiSpendV3 />
       </SummaryBlock>
       <SummaryBlock label="Geo Coverage">
-        <GeoCoverageSection />
+        <GeoCoverageV3 />
       </SummaryBlock>
       <SummaryBlock label="Feed Failures">
         <FeedFailuresSection />
@@ -167,7 +167,7 @@ export function MetricsV3() {
       {activeTab === 'pipelines'     && <PipelinesV3 agents={agents} />}
       {activeTab === 'd1-budget'     && <D1BudgetV3 />}
       {activeTab === 'ai-spend'      && <AiSpendV3 />}
-      {activeTab === 'geo-coverage'  && <GeoCoverageSection />}
+      {activeTab === 'geo-coverage'  && <GeoCoverageV3 />}
       {activeTab === 'feed-failures' && <FeedFailuresSection />}
     </div>
   );
