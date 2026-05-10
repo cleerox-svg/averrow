@@ -509,8 +509,14 @@ ${sectionHeader("Honeypot Activity")}
   </td></tr>`).join("")}
   ${cardEnd()}` : ""}
   ${b.honeypot.suspiciousHumans.length > 0 ? `
+  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:12px 0 4px;">Recon &amp; Bait Hits (7d)</div>
   ${cardStart()}
-  ${b.honeypot.suspiciousHumans.map((h) => warningRow(`Suspicious: Human from ${h.country || "unknown"} probed ${h.page} at ${h.visited_at ? new Date(h.visited_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—"}`)).join("")}
+  ${b.honeypot.suspiciousHumans.map((h) => {
+    const label = h.reason === "bait" ? "Bait page hit" : "Recon probe";
+    const time = h.visited_at ? new Date(h.visited_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—";
+    const asn = h.asn ? ` AS${h.asn}` : "";
+    return warningRow(`${label}: ${h.country || "??"}${asn} → ${h.page} at ${time}`);
+  }).join("")}
   ${cardEnd()}` : ""}
 </td></tr>
 

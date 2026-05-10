@@ -103,6 +103,8 @@ export interface ComprehensiveBriefing {
       page: string;
       country: string;
       visited_at: string;
+      asn: string | null;
+      reason: "bait" | "probe";
     }>;
   };
   topTargetedBrands: Array<{ name: string; threats_24h: number }>;
@@ -412,11 +414,44 @@ async function fetchComprehensiveBriefing(
        ORDER BY visited_at DESC LIMIT 5`,
       [],
     ),
-    safeQuery<Array<{ page: string; country: string; visited_at: string }>>(
+    // "Suspicious humans" = non-bot UA hitting a path that is NOT part of the
+    // public honeypot surface. The legit public pages (lrxradar root/about/contact/
+    // team, robots.txt, sitemap.xml, averrow /team and /careers) are excluded so
+    // a casual browser visit doesn't flood the report. What's left is either:
+    //   - 'bait'  → /admin-portal or /internal-staff on averrow.com (deliberately
+    //               sensitive-looking; only recon hits these)
+    //   - 'probe' → recon paths the lrxradar router logs verbatim before
+    //               falling through to renderHome (e.g. lrxradar:/.env,
+    //               lrxradar:/wp-admin, lrxradar:/phpmyadmin)
+    safeQuery<
+      Array<{
+        page: string;
+        country: string;
+        visited_at: string;
+        asn: string | null;
+        reason: "bait" | "probe";
+      }>
+    >(
       db,
-      `SELECT page, country, visited_at
-       FROM honeypot_visits WHERE is_bot = 0
-       ORDER BY visited_at DESC LIMIT 3`,
+      `SELECT page, country, visited_at, asn,
+         CASE
+           WHEN page IN ('/admin-portal', '/internal-staff') THEN 'bait'
+           ELSE 'probe'
+         END AS reason
+       FROM honeypot_visits
+       WHERE is_bot = 0
+         AND page NOT IN (
+           'lrxradar:/',
+           'lrxradar:/contact',
+           'lrxradar:/about',
+           'lrxradar:/team',
+           'lrxradar:/robots.txt',
+           'lrxradar:/sitemap.xml',
+           '/team',
+           '/careers'
+         )
+         AND visited_at >= datetime('now', '-7 days')
+       ORDER BY visited_at DESC LIMIT 8`,
       [],
     ),
 

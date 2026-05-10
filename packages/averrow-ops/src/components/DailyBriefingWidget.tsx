@@ -89,7 +89,7 @@ interface BriefingBody {
     visits12h: number;
     pageBreakdown: Array<{ page: string; visits: number; bots: number }>;
     recentBots: Array<{ page: string; bot_name: string; country: string; visited_at: string }>;
-    suspiciousHumans: Array<{ page: string; country: string; visited_at: string }>;
+    suspiciousHumans: Array<{ page: string; country: string; visited_at: string; asn: string | null; reason: 'bait' | 'probe' }>;
   };
   topTargetedBrands: Array<{ name: string; threats_24h: number }>;
   brandCoverage: Array<{ sector: string; brands: number }>;
@@ -667,11 +667,17 @@ export function DailyBriefingWidget() {
           {briefing.honeypot.suspiciousHumans.length > 0 && (
             <>
               <hr className="border-white/5" />
-              {briefing.honeypot.suspiciousHumans.map((h, i) => (
-                <div key={i} className="font-mono text-[11px] text-amber-400">
-                  {'\u26A0'} Suspicious: Human from {h.country || 'unknown'} probed {h.page} at {h.visited_at ? new Date(h.visited_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—'}
-                </div>
-              ))}
+              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Recon &amp; Bait Hits (7d)</div>
+              {briefing.honeypot.suspiciousHumans.map((h, i) => {
+                const label = h.reason === 'bait' ? 'Bait page hit' : 'Recon probe';
+                const time = h.visited_at ? new Date(h.visited_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—';
+                const asn = h.asn ? ' AS' + h.asn : '';
+                return (
+                  <div key={i} className="font-mono text-[11px] text-amber-400">
+                    {'\u26A0'} {label}: {h.country || '??'}{asn} &rarr; {h.page} at {time}
+                  </div>
+                );
+              })}
             </>
           )}
         </div>
