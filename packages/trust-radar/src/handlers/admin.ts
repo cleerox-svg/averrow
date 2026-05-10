@@ -1992,7 +1992,11 @@ export async function handleImportTranco(request: Request, env: Env): Promise<Re
       sectors?: Record<string, string>;
     } | null;
 
-    const limit = Math.min(body?.limit ?? 10000, 10000);
+    // Hard ceiling 100K per call. Tranco file itself is up to 1M; we cap at
+    // 100K to keep the brand catalog focused. Daily orchestrator currently
+    // requests 25K (incremental); super_admin can trigger the full 100K
+    // out-of-band via /api/admin/import-tranco for the bulk seed.
+    const limit = Math.min(body?.limit ?? 100000, 100000);
     const minRank = body?.min_rank ?? 1;
     const maxRank = body?.max_rank ?? limit;
 
@@ -2021,31 +2025,60 @@ export async function handleImportTranco(request: Request, env: Env): Promise<Re
       if (candidates.length >= limit) break;
     }
 
-    // Filter out domains we already have
+    // Load existing brands (id + canonical_domain + tranco_rank). Lets us
+    // (a) skip INSERT for dupes and (b) UPDATE tranco_rank where the import
+    // disagrees with the stored value (rank drifts week-over-week).
     const existing = await env.DB.prepare(
-      "SELECT canonical_domain FROM brands"
-    ).all<{ canonical_domain: string }>();
-    const existingSet = new Set(existing.results.map(r => r.canonical_domain.toLowerCase()));
+      "SELECT id, canonical_domain, tranco_rank FROM brands"
+    ).all<{ id: string; canonical_domain: string; tranco_rank: number | null }>();
+    const existingMap = new Map(
+      existing.results.map(r => [r.canonical_domain.toLowerCase(), r])
+    );
 
-    const toImport = candidates.filter(c => !existingSet.has(c.domain));
+    const toImport: Array<{ rank: number; domain: string }> = [];
+    const toUpdate: Array<{ rank: number; domain: string }> = [];
+    for (const c of candidates) {
+      const ex = existingMap.get(c.domain);
+      if (!ex) toImport.push(c);
+      else if (ex.tranco_rank !== c.rank) toUpdate.push(c);
+    }
     let imported = 0;
-    const skipped = candidates.length - toImport.length;
+    let updated = 0;
+    const skipped = candidates.length - toImport.length - toUpdate.length;
 
-    // Batch insert in groups of 50
+    // Batch INSERT — brand row + brand_domains apex row (PR1 table). Both
+    // wrapped in ON CONFLICT DO NOTHING semantics so re-runs are idempotent.
     const BATCH_SIZE = 50;
     for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
       const batch = toImport.slice(i, i + BATCH_SIZE);
-      const stmts = batch.map(c => {
+      const stmts: D1PreparedStatement[] = [];
+      for (const c of batch) {
         const brandId = `brand_${c.domain.replace(/[^a-z0-9]+/g, "_")}`;
         const name = extractBrandName(c.domain);
         const sector = body?.sectors?.[c.domain] ?? null;
-        return env.DB.prepare(
-          `INSERT OR IGNORE INTO brands (id, name, canonical_domain, sector, source, first_seen, threat_count)
-           VALUES (?, ?, ?, ?, 'tranco', datetime('now'), 0)`
-        ).bind(brandId, name, c.domain, sector);
-      });
+        stmts.push(env.DB.prepare(
+          `INSERT OR IGNORE INTO brands (id, name, canonical_domain, sector, source, first_seen, threat_count, tranco_rank)
+           VALUES (?, ?, ?, ?, 'tranco', datetime('now'), 0, ?)`
+        ).bind(brandId, name, c.domain, sector, c.rank));
+        stmts.push(env.DB.prepare(
+          `INSERT OR IGNORE INTO brand_domains (id, brand_id, domain, domain_type, source, verified, first_seen, last_seen)
+           VALUES (?, ?, ?, 'apex', 'tranco', 1, datetime('now'), datetime('now'))`
+        ).bind(`bd_${brandId}_apex`, brandId, c.domain));
+      }
       await env.DB.batch(stmts);
       imported += batch.length;
+    }
+
+    // Batch UPDATE — refresh tranco_rank for existing brands that drifted
+    // (or never had it populated due to the pre-PR2 INSERT bug).
+    for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+      const batch = toUpdate.slice(i, i + BATCH_SIZE);
+      const stmts = batch.map(c =>
+        env.DB.prepare(`UPDATE brands SET tranco_rank = ? WHERE canonical_domain = ?`)
+          .bind(c.rank, c.domain)
+      );
+      await env.DB.batch(stmts);
+      updated += batch.length;
     }
 
     // Clean up false positive brands — short/generic names that aren't real brands
@@ -2085,9 +2118,10 @@ export async function handleImportTranco(request: Request, env: Env): Promise<Re
       data: {
         candidates: candidates.length,
         imported,
+        updated,
         skipped,
         backfillMatched,
-        message: `Imported ${imported} brands from Tranco top ${maxRank} (${skipped} already existed, ${backfillMatched} threats backfill-matched)`,
+        message: `Imported ${imported} brands from Tranco top ${maxRank} (${updated} rank-updated, ${skipped} already up to date, ${backfillMatched} threats backfill-matched)`,
       },
     }, 200, origin);
   } catch (err) {
