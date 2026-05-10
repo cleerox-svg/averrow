@@ -36,6 +36,7 @@
 // All visuals are pure SVG with CSS-var colors → flips with theme.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
 import type { FeedOverview } from '@/hooks/useFeeds';
@@ -486,8 +487,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
   }
 
   // Fullscreen mode: pin the wrapper to the viewport, full bg, top
-  // z-index. CSS-based (not Fullscreen API) so it works on iOS
-  // Safari which has spotty support for element.requestFullscreen().
+  // z-index. CSS-based (not the Fullscreen API) so it works on iOS
+  // Safari. Rendered through a React portal attached to document.body
+  // so `position: fixed` escapes any backdrop-filter / transform on
+  // an ancestor (the surrounding Card uses backdrop-filter for its
+  // glass effect, which would otherwise scope `fixed` to the Card
+  // box instead of the viewport — the original bug).
   const wrapperClass = isFullscreen
     ? 'fixed inset-0 z-50 p-3 flex flex-col'
     : 'w-full relative';
@@ -495,7 +500,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     ? { background: 'var(--bg-page)' }
     : {};
 
-  return (
+  const view = (
     <div className={wrapperClass} style={wrapperStyle}>
       {/* Zoom controls — top right, layered over the SVG. Touch-tap
           works because the buttons sit above the SVG (z-10) and
@@ -973,4 +978,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
       </div>
     </div>
   );
+
+  // When fullscreen, render through a portal so the fixed-positioned
+  // wrapper escapes the parent Card's backdrop-filter containing
+  // block. typeof check guards SSR (document is undefined).
+  if (isFullscreen && typeof document !== 'undefined') {
+    return createPortal(view, document.body);
+  }
+  return view;
 }
