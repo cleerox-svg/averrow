@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin, isAuthContext, getOrgScope } from "../middle
 import {
   handleListBrands, handleTopTargetedBrands, handleMonitoredBrands,
   handleAddMonitoredBrand, handleRemoveMonitoredBrand, handleGetBrand,
+  handleBrandDomains, handleBrandFirmographics,
   handleBrandThreats, handleBrandThreatLocations, handleBrandThreatTimeline,
   handleBrandProviders, handleBrandCampaigns, handleBrandStats, handleBrandMovers,
   handleGetBrandAnalysis, handleGenerateBrandAnalysis,
@@ -94,6 +95,16 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetBrand(request, env, request.params["id"] ?? "");
+  });
+  router.get("/api/brands/:id/domains", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandDomains(request, env, request.params["id"] ?? "");
+  });
+  router.get("/api/brands/:id/firmographics", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandFirmographics(request, env, request.params["id"] ?? "");
   });
   router.get("/api/brands/:id/threats", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);

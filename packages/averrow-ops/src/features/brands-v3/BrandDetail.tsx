@@ -24,6 +24,7 @@ import {
 } from '@/hooks/useBrandDetail';
 import { useDarkWebMentions } from '@/hooks/useDarkWebMonitor';
 import { useAppStoreMonitor } from '@/hooks/useAppStoreMonitor';
+import { useBrandDomains, useBrandFirmographics, type BrandDomain, type BrandFirmographics } from '@/hooks/useBrandSurface';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
 import { DeepCard } from '@/components/ui/DeepCard';
@@ -88,6 +89,8 @@ export function BrandDetailV3() {
   const safeDomains = data?.safeDomains || [];
   const emailSec = data?.emailSecurity;
   const socialProfiles = data?.socialProfiles || [];
+  const { data: brandDomains = [] } = useBrandDomains(id);
+  const { data: firmographics = null } = useBrandFirmographics(id);
 
   const suspiciousSocials = useMemo(
     () => socialProfiles.filter((p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'),
@@ -191,6 +194,8 @@ export function BrandDetailV3() {
           safeDomains={safeDomains}
           officialSocials={officialSocials}
           appListings={appListings}
+          brandDomains={brandDomains}
+          firmographics={firmographics}
           onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
         />
       )}
@@ -226,44 +231,31 @@ export function BrandDetailV3() {
 }
 
 // ── SURFACE ──────────────────────────────────────────────────────────────
-// "What we know about you." Owned-domain footprint + email posture +
-// known-official social/app presence. The v3-architecture plan adds a
-// `brand_domains` table (Phase 1 of brand-seeding work) — once that
-// ships, this tab will render the full owned-domain list. For now the
-// canonical domain + safe-domain entries stand in.
+// "What we know about you." Owned-domain footprint + firmographic block
+// + email posture + known-official social/app presence. PR7 wires the
+// real brand_domains list (PR1 schema) and brand_firmographics sibling
+// (PR4 enricher) — both rendered honestly: empty/sparse where the
+// data isn't there yet rather than hidden.
 function SurfaceTab({
-  brand, emailSec, safeDomains, officialSocials, appListings, onJumpV2,
+  brand, emailSec, safeDomains, officialSocials, appListings,
+  brandDomains, firmographics, onJumpV2,
 }: {
   brand: any;
   emailSec: any;
   safeDomains: any[];
   officialSocials: any[];
   appListings: any[];
+  brandDomains: BrandDomain[];
+  firmographics: BrandFirmographics | null;
   onJumpV2: (tab: string) => void;
 }) {
   const officialApps = appListings.filter((l: any) => l.classification === 'official');
 
   return (
     <div className="space-y-4">
-      <Card hover={false}>
-        <SectionLabel>Owned domain footprint</SectionLabel>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <FootprintTile label="Canonical domain" value={brand.canonical_domain} mono />
-          <FootprintTile
-            label="Safe domains"
-            value={safeDomains.length === 0 ? 'None added' : `${safeDomains.length} tracked`}
-            sub={safeDomains.length > 0 ? 'Excluded from impersonation matching' : 'Add aliases / ccTLDs'}
-          />
-          <FootprintTile
-            label="Tracked since"
-            value={timeAgo(brand.first_seen) || '—'}
-            sub={brand.sector || 'Sector not classified'}
-          />
-        </div>
-        <div className="mt-3 text-[11px] text-[var(--text-muted)] font-mono">
-          v3 stage 2 will render full owned-domain list (apex + subdomains + ccTLDs) once <code>brand_domains</code> ships.
-        </div>
-      </Card>
+      <DomainFootprintCard brandDomains={brandDomains} canonicalDomain={brand.canonical_domain} safeDomains={safeDomains} />
+
+      <FirmographicBlock firmographics={firmographics} brand={brand} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
@@ -413,6 +405,148 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
 }
 
 // ── Tiles ────────────────────────────────────────────────────────────────
+// ── DomainFootprintCard ──────────────────────────────────────────────
+// Renders the brand_domains table (PR1 schema). Apex first, then
+// type-grouped (subdomain / regional / redirect / acquired / customer-
+// added). Each row shows the domain + type chip + source chip.
+function DomainFootprintCard({
+  brandDomains, canonicalDomain, safeDomains,
+}: {
+  brandDomains: BrandDomain[];
+  canonicalDomain: string;
+  safeDomains: any[];
+}) {
+  const empty = brandDomains.length === 0;
+  // Group for display
+  const apex = brandDomains.filter(d => d.domain_type === 'apex');
+  const others = brandDomains.filter(d => d.domain_type !== 'apex');
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>Owned domain footprint</SectionLabel>
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
+          {brandDomains.length} {brandDomains.length === 1 ? 'domain' : 'domains'} tracked
+        </span>
+      </div>
+      {empty && (
+        <div className="text-xs text-[var(--text-tertiary)] py-3">
+          No domains tracked yet. The CT scanner + RDAP enricher will populate
+          this as new evidence arrives.
+        </div>
+      )}
+      {!empty && (
+        <div className="space-y-1.5">
+          {apex.map(d => <DomainRow key={d.id} domain={d} apex />)}
+          {others.map(d => <DomainRow key={d.id} domain={d} />)}
+        </div>
+      )}
+      {safeDomains.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/[0.04] text-[11px] text-[var(--text-muted)] font-mono">
+          + {safeDomains.length} brand-safe {safeDomains.length === 1 ? 'domain' : 'domains'} (excluded from impersonation matching)
+        </div>
+      )}
+      {empty && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono">
+          Canonical: <code>{canonicalDomain}</code>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const DOMAIN_TYPE_LABEL: Record<string, string> = {
+  apex:              'Apex',
+  subdomain:         'Subdomain',
+  regional:          'Regional',
+  redirect:          'Redirect',
+  acquired_property: 'Acquired',
+  customer_added:    'Customer',
+};
+
+function DomainRow({ domain, apex = false }: { domain: BrandDomain; apex?: boolean }) {
+  return (
+    <div style={{
+      padding: '6px 10px', borderRadius: 6,
+      border: '1px solid var(--border-base)',
+      background: apex ? 'rgba(229,168,50,0.05)' : 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--amber)' : 'var(--text-primary)' }}>
+        {domain.domain}
+      </code>
+      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+        style={{ background: 'var(--bg-card)', color: 'var(--text-tertiary)' }}>
+        {DOMAIN_TYPE_LABEL[domain.domain_type] ?? domain.domain_type}
+      </span>
+      <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        {domain.source}
+      </span>
+    </div>
+  );
+}
+
+// ── FirmographicBlock ────────────────────────────────────────────────
+// Renders the brand_firmographics sibling (PR4 enricher). When the
+// row is null OR all fields are null, shows an "enrichment pending"
+// state — honest about coverage gaps rather than hiding the section.
+function FirmographicBlock({
+  firmographics, brand,
+}: {
+  firmographics: BrandFirmographics | null;
+  brand: any;
+}) {
+  const hasAny = firmographics && (
+    firmographics.revenue_band ||
+    firmographics.employee_band ||
+    firmographics.industry_naics ||
+    firmographics.industry_sic ||
+    firmographics.founded_year ||
+    firmographics.is_public ||
+    firmographics.ticker
+  );
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>Who you are</SectionLabel>
+        {firmographics?.source && (
+          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+            via {firmographics.source.replace(/_/g, ' ')}
+          </span>
+        )}
+      </div>
+      {!hasAny && (
+        <div className="text-xs text-[var(--text-tertiary)] py-3">
+          Firmographic enrichment pending. The free-source enricher
+          (SEC EDGAR + Companies House + Wikidata) sweeps daily; coverage
+          is sparse for the long tail.
+        </div>
+      )}
+      {hasAny && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <FootprintTile label="Revenue"   value={firmographics!.revenue_band  ?? '—'} />
+          <FootprintTile label="Employees" value={firmographics!.employee_band ?? '—'} />
+          <FootprintTile
+            label="Industry"
+            value={firmographics!.industry_naics ?? firmographics!.industry_sic ?? brand.sector ?? '—'}
+          />
+          <FootprintTile
+            label={firmographics!.is_public ? 'Public' : 'Status'}
+            value={firmographics!.ticker ?? (firmographics!.is_public ? 'Public' : 'Private')}
+            sub={firmographics!.founded_year ? `Founded ${firmographics!.founded_year}` : undefined}
+          />
+        </div>
+      )}
+      {firmographics?.parent_company && (
+        <div className="mt-3 text-[11px] text-[var(--text-tertiary)] font-mono">
+          Parent: <span className="text-[var(--text-secondary)]">{firmographics.parent_company}</span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function FootprintTile({
   label, value, sub, mono, onClick,
 }: {
