@@ -1,743 +1,117 @@
+// Brand-health v3 detail. Per .claude/plans/v3.md §9.6 the goal is to
+// collapse the v2 detail's 8 data-shape tabs into 3 outcome-shaped tabs:
+//
+//   • Surface  — the brand's owned-domain footprint ("what we know about you")
+//   • Risk     — active threats + impersonations ("what's threatening you now")
+//   • Workflow — open takedowns + alerts ("what needs your action")
+//
+// Stage 1 = frontend-only IA refactor. Same handlers (`/api/brands/...`)
+// as v2 — only the IA changes. The individual upstream surfaces
+// (threats / email / social / apps / dark-web / intelligence) are each
+// scheduled for their own audit, so this scaffold deliberately AVOIDS
+// re-asserting those as canonical labels — it shows counts, sparklines,
+// and deep-links back to the v2 tabs for full lists. The v3 file
+// concerns itself only with the outcome-shaped IA.
+
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   useBrandFullDetail,
   useBrandTimeline,
   useTriggerAnalysis,
-  useAddSafeDomain,
-  useDeleteSafeDomain,
-  useCleanFalsePositives,
-  useClassifySocialProfile,
   useScanSocialProfiles,
   useDiscoverSocialProfiles,
 } from '@/hooks/useBrandDetail';
-import { useBrandThreats, type BrandThreatRow } from '@/hooks/useBrands';
+import { useDarkWebMentions } from '@/hooks/useDarkWebMonitor';
+import { useAppStoreMonitor } from '@/hooks/useAppStoreMonitor';
 import {
-  useAppStoreMonitor,
-  useScanAppStore,
-  useClassifyAppStoreListing,
-  type AppClassification,
-  type AppStoreListing,
-} from '@/hooks/useAppStoreMonitor';
-import {
-  useDarkWebMentions,
-  useScanDarkWeb,
-  useClassifyDarkWebMention,
-  type DarkWebClassification,
-  type DarkWebMention,
-} from '@/hooks/useDarkWebMonitor';
+  useBrandDomains, useBrandFirmographics, useBrandScoreHistory,
+  type BrandDomain, type BrandFirmographics, type BrandScoreSnapshot,
+} from '@/hooks/useBrandSurface';
+import { useAlerts } from '@/hooks/useAlerts';
+import { useAdminTakedowns } from '@/hooks/useTakedowns';
 import { DeepCard } from '@/components/ui/DeepCard';
 import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
 import { DimensionalButton } from '@/components/ui/DimensionalButton';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Tabs } from '@/components/ui/Tabs';
 import { PageLoader } from '@/components/ui/PageLoader';
-import { CheckCircle } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SeverityChip } from '@/components/ui/SeverityChip';
-import { ThreatSummaryCards } from './components/ThreatSummaryCards';
-import { ProviderBars } from './components/ProviderBars';
-import { StatCard } from '@/components/ui/StatCard';
-import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
-import { BIMIStatusRow } from '@/components/ui/BIMIStatusRow';
-import { relativeTime, timeAgo } from '@/lib/time';
-import { AgentAttribution } from '@/components/ui/AgentAttribution';
-import { BrandsVersionToggle } from '@/components/ui/BrandsVersionToggle';
-
-// ── Constants ──────────────────────────────────────────────────────────
-const PLATFORM_ICONS: Record<string, string> = {
-  tiktok: '\u266A', github: '<>', linkedin: 'in', twitter: '\uD835\uDD4F',
-  instagram: '\uD83D\uDCF7', youtube: '\u25B6', facebook: 'f', reddit: 'r',
-};
+import { timeAgo } from '@/lib/time';
+import {
+  ExposureIndexCard,
+  ActiveThreatsCard,
+  EmailPostureCard,
+  SocialRiskCard,
+} from './components/HeroCards';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#C83C3C', high: '#E8923C', medium: '#DCAA32', low: '#78A0C8', info: '#5A80A8',
 };
 
-const TIMELINE_PERIODS = ['24h', '7d', '30d', '90d'] as const;
-
-// Tab labels mirror the v3 module taxonomy where each maps —
-// "App Stores" (not "Apps"), "Email Security", "Dark Web", "Social Media",
-// "Trademark" — so the brand-detail tabs match what customers will see in
-// averrow-tenant. Audit L3.
-const BRAND_TABS = [
-  { id: 'overview',      label: 'Overview' },
-  { id: 'threats',       label: 'Threats' },
-  { id: 'typosquats',    label: 'Typosquats' },
-  { id: 'email',         label: 'Email Security' },
-  { id: 'social',        label: 'Social Media' },
-  { id: 'apps',          label: 'App Stores' },
-  { id: 'dark-web',      label: 'Dark Web' },
-  { id: 'intelligence',  label: 'Intelligence' },
+const V3_TABS = [
+  { id: 'surface',  label: 'Surface',  hint: "What we know about you" },
+  { id: 'risk',     label: 'Risk',     hint: "What's threatening you now" },
+  { id: 'workflow', label: 'Workflow', hint: 'What needs your action' },
 ] as const;
 
-type BrandTab = typeof BRAND_TABS[number]['id'];
+type V3Tab = typeof V3_TABS[number]['id'];
 
-function classificationVariant(c: string): 'critical' | 'success' | 'high' | 'default' {
-  if (c === 'impersonation') return 'critical';
-  if (c === 'official') return 'success';
-  if (c === 'suspicious') return 'high';
-  return 'default';
-}
-
-// ── ASTRA Analysis Parser ─────────────────────────────────────────────
-interface AstraAnalysis {
-  summary: string | null;
-  riskLevel: 'critical' | 'high' | 'medium' | 'low' | null;
-  keyFindings: string[];
-  attackTypes: string[];
-  recommendation: string | null;
-}
-
-function parseAstraAnalysis(raw: string | object | null | undefined): AstraAnalysis | null {
-  if (!raw) return null;
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return {
-      summary: parsed.analysis ?? null,
-      riskLevel: parsed.risk_level ?? null,
-      keyFindings: parsed.key_findings ?? [],
-      attackTypes: parsed.attack_types ?? [],
-      recommendation: parsed.recommendation ?? null,
-    };
-  } catch {
-    return {
-      summary: typeof raw === 'string' ? raw : null,
-      riskLevel: null,
-      keyFindings: [],
-      attackTypes: [],
-      recommendation: null,
-    };
-  }
-}
-
-const RISK_BADGE_VARIANT: Record<string, 'critical' | 'high' | 'medium' | 'low'> = {
-  critical: 'critical',
-  high: 'high',
-  medium: 'medium',
-  low: 'low',
-};
-
-const RISK_BADGE_CLASSES: Record<string, string> = {
-  critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-  high: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  medium: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  low: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-};
-
-function toTitleCase(str: string): string {
-  return str
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, c => c.toUpperCase());
-}
-
-// ── Derive a friendly vector label from threat fields ────────────────
-//
-// The `threats` schema doesn't carry an explicit `vector` column. We
-// derive one from threat_type + source_feed for the Threats-tab table.
-// Returns null when there's nothing meaningful to surface — caller
-// renders an em-dash.
-function deriveVectorLabel(t: { threat_type?: string; source_feed?: string }): string | null {
-  const feed = (t.source_feed ?? '').toLowerCase();
-  if (feed.includes('certstream')) return 'CT';
-  if (feed.includes('phishtank')) return 'Phishing';
-  if (feed.includes('openphish')) return 'Phishing';
-  if (feed.includes('urlhaus')) return 'Malware';
-  if (feed.includes('abuse')) return 'Abuse.ch';
-  if (feed.includes('threatfox')) return 'ThreatFox';
-  if (feed.includes('alienvault') || feed.includes('otx')) return 'OTX';
-  if (feed.includes('cins')) return 'CINS';
-  if (feed.includes('spam_trap')) return 'Spam Trap';
-  if (feed.includes('lookalike')) return 'Lookalike';
-  if (feed.includes('certstream')) return 'CT';
-  if (feed.includes('typosquat')) return 'Typosquat';
-  if (feed.includes('darkweb') || feed.includes('dark_web')) return 'Dark Web';
-  if (feed.includes('social')) return 'Social';
-  return null;
-}
-
-// ── Timeline Tooltip ───────────────────────────────────────────────────
-function TimelineTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="border border-white/10 rounded-lg px-3 py-2 text-xs backdrop-blur-sm" style={{ background: 'var(--bg-page)' }}>
-      <div className="font-mono text-[var(--text-tertiary)] mb-1">{label}</div>
-      {payload.map((p: any) => (
-        <div key={p.name} className="flex justify-between gap-4">
-          <span style={{ color: p.color }}>{p.name}</span>
-          <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{p.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Severity helpers ─────────────────────────────────────────────────
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'] as const;
-
-const SEVERITY_TW: Record<string, { dot: string; text: string; hex: string }> = {
-  critical: { dot: 'bg-[#f87171]', text: 'text-[#f87171]', hex: '#f87171' },
-  high:     { dot: 'bg-[#fb923c]', text: 'text-[#fb923c]', hex: '#fb923c' },
-  medium:   { dot: 'bg-[#fbbf24]', text: 'text-[#fbbf24]', hex: '#fbbf24' },
-  low:      { dot: 'bg-contrail/50', text: 'text-[var(--text-muted)]', hex: '#78A0C8' },
-  info:     { dot: 'bg-contrail/50', text: 'text-[var(--text-muted)]', hex: '#78A0C8' },
-};
-
-const THREAT_TYPE_COLORS: Record<string, { bar: string; text: string }> = {
-  phishing:             { bar: 'bg-[#78A0C8]', text: 'text-[#78A0C8]' },
-  malware_distribution: { bar: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
-  c2:                   { bar: 'bg-[#f87171]', text: 'text-[#f87171]' },
-  credential_harvesting:{ bar: 'bg-[#f97316]', text: 'text-[#f97316]' },
-  typosquatting:        { bar: 'bg-[#fbbf24]', text: 'text-[#fbbf24]' },
-  impersonation:        { bar: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
-};
-
-function getExposureTier(score: number | null) {
-  if (score === null || score === undefined) return { color: 'text-white/30', stroke: '#ffffff4d', label: 'NO DATA', arcClass: 'stroke-white/20' };
-  if (score >= 80) return { color: 'text-[#4ade80]', stroke: '#4ade80', label: 'LOW RISK', arcClass: 'stroke-[#4ade80]' };
-  if (score >= 60) return { color: 'text-[#fbbf24]', stroke: '#fbbf24', label: 'MEDIUM', arcClass: 'stroke-[#fbbf24]' };
-  if (score >= 40) return { color: 'text-[#fb923c]', stroke: '#fb923c', label: 'HIGH', arcClass: 'stroke-[#fb923c]' };
-  return { color: 'text-[#f87171]', stroke: '#f87171', label: 'CRITICAL', arcClass: 'stroke-[#f87171]' };
-}
-
-// ── Card 1: Exposure Index ──────────────────────────────────────────
-export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any[] }) {
-  const score = brand?.exposure_score ?? brand?.email_security_score ?? brand?.domain_risk_score ?? null;
-  const tier = getExposureTier(score);
-  const s = score ?? 0;
-  const circumference = 2 * Math.PI * 23;
-  const offset = circumference * (1 - s / 100);
-
-  // Aggregate top 3 threat types
-  const typeCounts: Record<string, number> = {};
-  threats.forEach(t => {
-    const type = t.threat_type || 'unknown';
-    typeCounts[type] = (typeCounts[type] || 0) + 1;
-  });
-  const topTypes = Object.entries(typeCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-  const maxCount = topTypes.length > 0 ? topTypes[0][1] : 1;
-
-  return (
-    <StatCard
-      title="Exposure Index"
-      metricLabel={<span className={tier.color}>{tier.label}</span>}
-      metric={
-        <div className="relative w-[52px] h-[52px]">
-          <svg width="52" height="52" viewBox="0 0 52 52">
-            <circle cx="26" cy="26" r="23" fill="none" className="stroke-[#1e3048]" strokeWidth="5" />
-            {score !== null && (
-              <circle
-                cx="26" cy="26" r="23" fill="none"
-                className={`transition-all duration-700 ${tier.arcClass}`}
-                strokeWidth="5" strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={offset}
-                transform="rotate(-90 26 26)"
-              />
-            )}
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className={`font-mono text-[13px] font-bold ${tier.color}`}>
-              {score ?? '\u2014'}
-            </span>
-          </div>
-        </div>
-      }
-    >
-      <div className="space-y-2">
-        {topTypes.length === 0 && (
-          <div className="font-mono text-[10px] text-white/40">No threats detected</div>
-        )}
-        {topTypes.map(([type, count]) => {
-          const tc = THREAT_TYPE_COLORS[type] || { bar: 'bg-[#78A0C8]', text: 'text-[#78A0C8]' };
-          const pct = Math.max(count > 0 ? 4 : 0, Math.round((count / maxCount) * 100));
-          return (
-            <div key={type} className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-[var(--text-tertiary)] truncate">
-                  {type.replace(/_/g, ' ')}
-                </span>
-                <span className={`font-mono text-[10px] font-semibold ${tc.text}`}>
-                  {count}
-                </span>
-              </div>
-              <div className="w-full h-[2px] rounded-full bg-white/[0.04]">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${tc.bar}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </StatCard>
-  );
-}
-
-// ── Card 2: Active Threats ──────────────────────────────────────────
-export function ActiveThreatsCard({ threats }: { threats: any[] }) {
-  const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-  threats.forEach(t => {
-    const sev = t.severity || 'low';
-    if (sev in counts) counts[sev]++;
-    else counts.low++;
-  });
-
-  const total = threats.length;
-  const highestActive = SEVERITY_ORDER.find(s => counts[s] > 0) || 'low';
-  const totalTextClass = SEVERITY_TW[highestActive]?.text || 'text-[var(--text-muted)]';
-
-  return (
-    <StatCard
-      title="Active Threats"
-      metricLabel="TOTAL"
-      metric={
-        <span className={`font-display text-[32px] font-extrabold leading-none ${totalTextClass}`}>
-          {total}
-        </span>
-      }
-    >
-      <div className="space-y-1.5">
-        {(['critical', 'high', 'medium', 'low'] as const).map(sev => {
-          const tw = SEVERITY_TW[sev];
-          const c = counts[sev];
-          return (
-            <div key={sev} className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tw.dot}`} />
-              <span className="font-mono text-[10px] text-[var(--text-muted)] flex-1 capitalize">{sev}</span>
-              <span className={`font-mono text-[10px] font-semibold ${c > 0 ? tw.text : 'text-white/[0.15]'}`}>
-                {c}
-              </span>
-            </div>
-          );
-        })}
-        <div className="border-t border-contrail/[0.08] pt-1.5 mt-1">
-          <span className="font-mono text-[9px] text-white/50">7-day window</span>
-        </div>
-      </div>
-    </StatCard>
-  );
-}
-
-// ── Card 3: Email Posture ───────────────────────────────────────────
-const EMAIL_PROTOCOLS = ['SPF', 'DKIM', 'DMARC', 'MX'] as const;
-
-function getEmailStatus(protocol: string, emailSec: any) {
-  if (!emailSec) return { status: 'MISSING', hint: '' };
-
-  if (protocol === 'MX') {
-    if (emailSec.mx_exists) {
-      const providers = emailSec.mx_providers;
-      const hint = Array.isArray(providers) && providers.length > 0
-        ? (typeof providers[0] === 'string' ? providers[0] : providers[0]?.exchange ?? '')
-        : '';
-      return { status: 'FOUND', hint };
-    }
-    return { status: 'MISSING', hint: 'risk' };
-  }
-
-  if (protocol === 'SPF') {
-    if (!emailSec.spf_exists) return { status: 'MISSING', hint: '' };
-    if (emailSec.spf_too_many_lookups) return { status: 'PARTIAL', hint: '>10 lookups' };
-    const hint = emailSec.spf_raw
-      ? (String(emailSec.spf_raw).match(/[~+-]all/)?.[0] ?? '')
-      : '';
-    return { status: 'PASS', hint };
-  }
-
-  if (protocol === 'DKIM') {
-    if (!emailSec.dkim_exists) return { status: 'MISSING', hint: '' };
-    const selectors = emailSec.dkim_selectors_found;
-    const hint = Array.isArray(selectors) && selectors.length > 0
-      ? `${selectors.length} selector${selectors.length > 1 ? 's' : ''}`
-      : 'valid';
-    return { status: 'PASS', hint };
-  }
-
-  if (protocol === 'DMARC') {
-    if (!emailSec.dmarc_exists) return { status: 'NONE', hint: '' };
-    const policy = emailSec.dmarc_policy;
-    if (policy === 'none') return { status: 'NONE', hint: 'p=none' };
-    return { status: 'PASS', hint: policy ? `p=${policy}` : '' };
-  }
-
-  return { status: 'MISSING', hint: '' };
-}
-
-const EMAIL_STATUS_CLASSES: Record<string, string> = {
-  PASS:    'bg-green-900/40 text-green-400 border-green-500/30',
-  FOUND:   'bg-green-900/40 text-green-400 border-green-500/30',
-  FAIL:    'bg-red-900/40 text-red-400 border-red-500/30',
-  MISSING: 'bg-red-900/40 text-red-400 border-red-500/30',
-  PARTIAL: 'bg-amber-900/40 text-amber-400 border-amber-500/30',
-  NONE:    'bg-amber-900/40 text-amber-400 border-amber-500/30',
-};
-
-function getGradeClass(grade: string | null): string {
-  if (!grade) return 'text-[var(--text-muted)]';
-  const g = grade.toUpperCase();
-  if (g === 'A+' || g === 'A') return 'text-[#4ade80]';
-  if (g.startsWith('B')) return 'text-[#78A0C8]';
-  if (g.startsWith('C')) return 'text-[#fbbf24]';
-  if (g.startsWith('D')) return 'text-[#fb923c]';
-  return 'text-[#f87171]';
-}
-
-// Derive a BIMI grade client-side when brand.bimi_grade is null.
-// Mirrors the server-side scanBIMI scoring (email-security.ts:404):
-//   A+ = DMARC enforce + BIMI record + VMC verified
-//   A  = DMARC enforce + BIMI record (no VMC)
-//   B  = DMARC enforce, no BIMI
-//   C  = DMARC quarantine, no BIMI
-//   D  = DMARC none / reporting only
-//   F  = no DMARC
-function deriveBimiGrade(brand: any, emailSec: any): string | null {
-  if (brand?.bimi_grade) return brand.bimi_grade;
-  const dmarcPolicy = (emailSec?.dmarc?.policy ?? '').toLowerCase();
-  const hasBimi = !!brand?.bimi_record;
-  const vmcValid = !!brand?.bimi_vmc_valid;
-  if (!dmarcPolicy) return 'F';
-  if (dmarcPolicy === 'none') return 'D';
-  if (dmarcPolicy === 'quarantine') return 'C';
-  if (dmarcPolicy === 'reject') {
-    if (hasBimi && vmcValid) return 'A+';
-    if (hasBimi) return 'A';
-    return 'B';
-  }
-  return null;
-}
-
-export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec: any; grade: string | null; brand: any; onViewDetails?: () => void }) {
-  const gradeClass = getGradeClass(grade);
-  const bimiGrade = deriveBimiGrade(brand, emailSec);
-
-  // Count passing protocols for progress bar
-  const protocolResults = EMAIL_PROTOCOLS.map(proto => getEmailStatus(proto, emailSec));
-  const bimiPass = brand?.bimi_record ? 1 : 0;
-  const vmcPass = brand?.bimi_vmc_valid ? 1 : 0;
-  const totalChecks = 6; // SPF, DKIM, DMARC, MX, BIMI, VMC
-  const passing = protocolResults.filter(r => r.status === 'PASS' || r.status === 'FOUND').length + bimiPass + vmcPass;
-
-  const gradeBarColor =
-    grade === 'A+' || grade === 'A' ? 'bg-green-500' :
-    grade === 'B' ? 'bg-blue-400' :
-    grade === 'C' ? 'bg-amber-400' :
-    'bg-red-400';
-
-  return (
-    <StatCard
-      title={
-        <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-          </svg>
-          <span>Email Security</span>
-        </div>
-      }
-      metricLabel="GRADE"
-      metric={
-        <span className={`font-display text-[32px] font-extrabold leading-none ${gradeClass}`}>
-          {grade || '\u2014'}
-        </span>
-      }
-    >
-      <div className="space-y-1">
-        {/* Protocol progress bar \u2014 grade letter only shown in header above
-            (M6 audit: was duplicating the GRADE pillar's letter here). */}
-        <div className="mb-3">
-          <div className="flex justify-between text-[10px] font-mono text-white/30 mb-1">
-            <span>{passing} of {totalChecks} protocols passing</span>
-          </div>
-          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-700 ${gradeBarColor}`}
-              style={{ width: `${(passing / totalChecks) * 100}%` }}
-            />
-          </div>
-        </div>
-
-        {EMAIL_PROTOCOLS.map(proto => {
-          const { status, hint } = getEmailStatus(proto, emailSec);
-          const cls = EMAIL_STATUS_CLASSES[status] || EMAIL_STATUS_CLASSES.MISSING;
-          return (
-            <div key={proto} className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-[var(--text-tertiary)] w-10 flex-shrink-0">{proto}</span>
-              <span className={`font-mono text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded border leading-tight ${cls}`}>
-                {status}
-              </span>
-              {hint && (
-                <span className="font-mono text-[9px] text-white/40 truncate">{hint}</span>
-              )}
-            </div>
-          );
-        })}
-
-        {/* BIMI / VMC rows */}
-        <div className="border-t border-white/[0.06] mt-2 pt-2">
-          <BIMIStatusRow
-            label="BIMI"
-            status={brand?.bimi_record ? 'pass' : 'missing'}
-            detail={brand?.bimi_svg_url
-              ? (() => { try { return new URL(brand.bimi_svg_url).hostname; } catch { return undefined; } })()
-              : undefined}
-          />
-          <BIMIStatusRow
-            label="VMC"
-            status={brand?.bimi_vmc_valid ? 'verified' : brand?.bimi_vmc_url ? 'fail' : 'none'}
-            detail={brand?.bimi_vmc_expiry
-              ? `Expires ${new Date(brand.bimi_vmc_expiry).toLocaleDateString()}`
-              : undefined}
-          />
-        </div>
-
-        {/* BIMI Grade — distinct from the overall Email Grade in the
-            card header. The header grade scores SPF/DKIM/DMARC/MX
-            enforcement; this one scores BIMI + VMC adoption on top.
-            See email-security.ts:404 for the BIMI scoring scheme.
-            Visually subordinate per M6: smaller badge size keeps the
-            header GRADE as the primary signal. */}
-        <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
-          <span className="text-white/40 text-[10px] font-mono uppercase tracking-wider">
-            BIMI/VMC sub-grade
-          </span>
-          <BIMIGradeBadge grade={bimiGrade} size="sm" tooltip />
-        </div>
-
-        {/* BIMI SVG preview */}
-        {brand?.bimi_svg_url && (
-          <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-white/30 text-[10px] font-mono mb-2">BIMI LOGO</p>
-            <div className="flex items-center gap-3">
-              <img
-                src={brand.bimi_svg_url}
-                alt="BIMI Logo"
-                className="w-8 h-8 rounded"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
-              <p className="text-white/30 text-[10px] font-mono truncate">
-                {brand.bimi_svg_url}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Grade improvement hint */}
-        {bimiGrade && ['B', 'C', 'D', 'F'].includes(bimiGrade) && (
-          <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-white/40 text-[10px]">
-              {bimiGrade === 'B'
-                ? '\u2192 Publish a BIMI record to reach grade A'
-                : bimiGrade === 'C'
-                ? '\u2192 Upgrade DMARC to enforce to reach grade B'
-                : '\u2192 Implement DMARC enforcement to protect email'}
-            </p>
-          </div>
-        )}
-
-        {/* View DNS Details button */}
-        {onViewDetails && (
-          <button
-            onClick={onViewDetails}
-            className="mt-3 w-full text-center text-[10px] text-white/30 transition-colors font-mono py-1 hover:[color:var(--amber)]"
-          >
-            View DNS Details &rarr;
-          </button>
-        )}
-      </div>
-    </StatCard>
-  );
-}
-
-// ── Card 4: Social Risk ─────────────────────────────────────────────
-export function SocialRiskCard({
-  socialProfiles,
-  lastScan,
-  onScan,
-  onDiscover,
-  scanPending,
-  discoverPending,
-}: {
-  socialProfiles: any[];
-  lastScan: string | null;
-  onScan: () => void;
-  onDiscover: () => void;
-  scanPending: boolean;
-  discoverPending: boolean;
-}) {
-  const impersonation = socialProfiles.filter((p: any) => p.classification === 'impersonation').length;
-  const suspicious = socialProfiles.filter((p: any) => p.classification === 'suspicious').length;
-  const official = socialProfiles.filter((p: any) => p.classification === 'official' || p.classification === 'safe').length;
-  const total = socialProfiles.length;
-
-  const totalClass = impersonation > 0
-    ? 'text-[#f87171]'
-    : suspicious > 0
-      ? 'text-[#fb923c]'
-      : total > 0
-        ? 'text-[#4ade80]'
-        : 'text-white/40';
-
-  const scanDaysAgo = lastScan
-    ? Math.max(0, Math.round((Date.now() - new Date(lastScan).getTime()) / 86400000))
-    : null;
-
-  return (
-    <StatCard
-      title="Social Risk"
-      metricLabel="PROFILES"
-      metric={
-        <span className={`font-display text-[32px] font-extrabold leading-none ${totalClass}`}>
-          {total}
-        </span>
-      }
-    >
-      <div>
-        {([
-          { label: 'Impersonation', count: impersonation, dot: 'bg-[#f87171]', text: 'text-[#f87171]' },
-          { label: 'Suspicious', count: suspicious, dot: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
-          { label: 'Official', count: official, dot: 'bg-green-500/50', text: 'text-green-400' },
-        ] as const).map(row => (
-          <div key={row.label} className="flex items-center gap-2 py-1">
-            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${row.dot}`} />
-            <span className="flex-1 text-[11px] font-mono text-white/60 truncate">{row.label}</span>
-            <span className={`text-[11px] font-mono flex-shrink-0 ${row.count > 0 ? row.text : 'text-white/40'}`}>
-              {row.count}
-            </span>
-          </div>
-        ))}
-        <div className="border-t border-contrail/[0.08] pt-1.5 mt-1 space-y-1">
-          <span className="font-mono text-[9px] text-white/50 block">
-            {total} profiles tracked{scanDaysAgo !== null ? ` \u00b7 scanned ${scanDaysAgo}d ago` : ''}
-          </span>
-          <div className="flex gap-3">
-            <button
-              onClick={onScan}
-              disabled={scanPending}
-              className="font-mono text-[10px] transition-colors disabled:opacity-40"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              {scanPending ? 'SCANNING...' : 'SCAN'}
-            </button>
-            <button
-              onClick={onDiscover}
-              disabled={discoverPending}
-              className="font-mono text-[10px] transition-colors disabled:opacity-40"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              {discoverPending ? 'DISCOVERING...' : 'DISCOVER NEW'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </StatCard>
-  );
-}
-
-// ── Main Page ──────────────────────────────────────────────────────────
-export function BrandDetail() {
+export function BrandDetailV3() {
   const { brandId } = useParams<{ brandId: string }>();
   const navigate = useNavigate();
   const id = brandId || '';
 
-  // Deep-link tab via ?tab=apps (or any other valid id) — falls back to 'overview'.
   const [searchParams] = useSearchParams();
   const initialTab = (() => {
     const raw = searchParams.get('tab');
-    const match = BRAND_TABS.find(t => t.id === raw);
-    return (match?.id ?? 'overview') as BrandTab;
+    const match = V3_TABS.find(t => t.id === raw);
+    return (match?.id ?? 'surface') as V3Tab;
   })();
 
-  // State
-  const [activeTab, setActiveTab] = useState<BrandTab>(initialTab);
-  const [socialFilter, setSocialFilter] = useState('all');
-  const [timelinePeriod, setTimelinePeriod] = useState<string>('7d');
-  const [threatSort, setThreatSort] = useState<{ key: string; asc: boolean }>({ key: 'severity', asc: false });
-  const [safeDomainInput, setSafeDomainInput] = useState('');
-  const [expandedThreats, setExpandedThreats] = useState(false);
-  const [expandedSummary, setExpandedSummary] = useState(false);
+  const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
 
-  // Data
   const { data, isLoading } = useBrandFullDetail(id);
-  const { data: timelineData } = useBrandTimeline(id, timelinePeriod);
+  useBrandTimeline(id, '7d'); // primes cache; not rendered in v3 yet
+  const { data: darkWebData } = useDarkWebMentions(id);
+  const { data: appStoreData } = useAppStoreMonitor(id);
+  const { data: alertsData } = useAlerts({ brand_id: id, status: 'new' });
+  const { data: takedownData } = useAdminTakedowns({ status: 'pending', limit: 200 });
+  const alerts = alertsData?.alerts ?? [];
+  const darkWebMentions = darkWebData?.results ?? [];
+  const appListings = appStoreData?.results ?? [];
 
-  // Mutations
   const triggerAnalysis = useTriggerAnalysis();
-  const addSafeDomain = useAddSafeDomain();
-  const deleteSafeDomain = useDeleteSafeDomain();
-  const cleanFP = useCleanFalsePositives();
-  const classifyProfile = useClassifySocialProfile();
   const scanProfiles = useScanSocialProfiles();
   const discoverProfiles = useDiscoverSocialProfiles();
 
-  // Derived
   const brand = data?.brand;
   const threats = data?.threats || [];
-  const providers = data?.providers || [];
   const safeDomains = data?.safeDomains || [];
   const emailSec = data?.emailSecurity;
   const socialProfiles = data?.socialProfiles || [];
-  const analysis = data?.analysis;
+  const { data: brandDomains = [] } = useBrandDomains(id);
+  const { data: firmographics = null } = useBrandFirmographics(id);
+  const { data: scoreHistory = [] } = useBrandScoreHistory(id, 30);
 
-  const suspiciousCount = socialProfiles.filter(
-    (p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'
-  ).length;
+  const suspiciousSocials = useMemo(
+    () => socialProfiles.filter((p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'),
+    [socialProfiles],
+  );
+  const officialSocials = useMemo(
+    () => socialProfiles.filter((p: any) => p.classification === 'official'),
+    [socialProfiles],
+  );
+  const suspiciousApps = useMemo(
+    () => appListings.filter((l: any) => l.classification === 'impersonation' || l.classification === 'suspicious'),
+    [appListings],
+  );
+  const brandTakedowns = useMemo(
+    () => (takedownData?.takedowns ?? []).filter((t: any) => t.brand_id === id),
+    [takedownData, id],
+  );
 
-  const filteredProfiles = socialProfiles.filter((p: any) => {
-    if (socialFilter === 'all') return true;
-    if (socialFilter === 'official') return p.classification === 'official';
-    if (socialFilter === 'suspicious') return p.classification === 'suspicious' || p.classification === 'impersonation';
-    if (socialFilter === 'safe') return p.classification === 'safe' || p.classification === 'official';
-    return true;
-  });
-
-  const socialTabs = [
-    { id: 'all', label: 'All', count: socialProfiles.length },
-    { id: 'official', label: 'Official' },
-    { id: 'suspicious', label: 'Suspicious', count: suspiciousCount },
-    { id: 'safe', label: 'Safe' },
-  ];
-
-  // Sort threats
-  const sortedThreats = useMemo(() => {
-    const severityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
-    return [...threats].sort((a: any, b: any) => {
-      if (threatSort.key === 'severity') {
-        const diff = (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0);
-        return threatSort.asc ? -diff : diff;
-      }
-      if (threatSort.key === 'date') {
-        const diff = new Date(b.detected_at || 0).getTime() - new Date(a.detected_at || 0).getTime();
-        return threatSort.asc ? -diff : diff;
-      }
-      return 0;
-    });
-  }, [threats, threatSort]);
-
-  const visibleThreats = expandedThreats ? sortedThreats : sortedThreats.slice(0, 10);
-
-  // Timeline chart data
-  const chartData = useMemo(() => {
-    if (!timelineData) return [];
-    if (Array.isArray(timelineData)) return timelineData;
-    if (timelineData.labels) {
-      return timelineData.labels.map((label: string, i: number) => ({
-        date: label,
-        total: timelineData.values?.[i] ?? 0,
-        high_sev: timelineData.high_sev?.[i] ?? 0,
-        active: timelineData.active?.[i] ?? 0,
-      }));
-    }
-    return [];
-  }, [timelineData]);
-
-  // ── Loading / Not Found ────────────────────────────────────────────
   if (isLoading) return <PageLoader />;
 
   if (!brand) {
@@ -751,20 +125,15 @@ export function BrandDetail() {
     );
   }
 
-  // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className="animate-fade-in space-y-6">
-      {/* ── Nav ── */}
-      <div className="flex items-center justify-between gap-4">
+      <div>
         <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
           &larr; Back to Brands
         </button>
-        <BrandsVersionToggle brandId={id} />
       </div>
 
-      {/* ── Brand Header ── */}
       <DeepCard variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
-        {/* Ambient glow behind the header — matches brand severity */}
         <div style={{
           position: 'absolute', top: -40, left: '30%',
           width: 300, height: 200, borderRadius: '50%',
@@ -781,16 +150,10 @@ export function BrandDetail() {
             severity={brand.top_severity}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 style={{
-              fontSize: 22, fontWeight: 900, color: 'var(--text-primary)',
-              letterSpacing: -0.5, lineHeight: 1.1,
-            }}>
+            <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: -0.5, lineHeight: 1.1 }}>
               {brand.name}
             </h1>
-            <div style={{
-              fontSize: 12, fontFamily: 'monospace',
-              color: 'var(--text-tertiary)', marginTop: 3,
-            }}>
+            <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-tertiary)', marginTop: 3 }}>
               {brand.canonical_domain}
               {timeAgo(brand.first_seen) && (
                 <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
@@ -808,22 +171,17 @@ export function BrandDetail() {
         </div>
       </DeepCard>
 
-      {/* ════════════════════════════════════════════════════════════════
-           Sticky Tab Bar
-           ════════════════════════════════════════════════════════════════ */}
-      <div className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-lg
-        border-b border-white/[0.06] -mx-6 px-6">
+      <div className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-lg border-b border-white/[0.06] -mx-6 px-6">
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
-          {BRAND_TABS.map(tab => (
+          {V3_TABS.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all
-                border-b-2 ${activeTab === tab.id
-                  ? 'border-amber-500 text-amber-400'
-                  : 'border-transparent text-white/40 hover:text-white/70'
-                }`}
+              className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
+                activeTab === tab.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
+              }`}
               style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
+              title={tab.hint}
             >
               {tab.label}
             </button>
@@ -831,1304 +189,779 @@ export function BrandDetail() {
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════
-           Tab Content
-           ════════════════════════════════════════════════════════════════ */}
-
-      {/* ── OVERVIEW TAB ── */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Hero: Exposure + 3 stat cards */}
-          <div className="relative grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-4 gap-3" style={{
-            background: 'radial-gradient(ellipse 60% 40% at 50% 0%, rgba(229,168,50,0.06) 0%, transparent 70%)'
-          }}>
-            <ExposureIndexCard brand={brand} threats={threats} />
-            <ActiveThreatsCard threats={threats} />
-            <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => setActiveTab('email')} />
-            <SocialRiskCard
-              socialProfiles={socialProfiles}
-              lastScan={brand.last_social_scan}
-              onScan={() => scanProfiles.mutate(id)}
-              onDiscover={() => discoverProfiles.mutate(id)}
-              scanPending={scanProfiles.isPending}
-              discoverPending={discoverProfiles.isPending}
-            />
-          </div>
-
-          {/* AI Deep Scan CTA */}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <DimensionalButton variant="primary" size="md"
-              onClick={() => triggerAnalysis.mutate(id)}
-              disabled={triggerAnalysis.isPending}>
-              {triggerAnalysis.isPending ? 'ANALYZING...' : 'AI DEEP SCAN'}
-            </DimensionalButton>
-            <DimensionalButton variant="secondary" size="md"
-              onClick={() => cleanFP.mutate(id)}
-              disabled={cleanFP.isPending}>
-              CLEAN FALSE POSITIVES
-            </DimensionalButton>
-          </div>
-
-          {/* Threat Breakdown + Providers */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 space-y-4">
-              <SectionLabel label="Threat Breakdown" accent="#C83C3C" />
-              <ThreatSummaryCards threats={threats} />
-            </div>
-            <Card hover={false}>
-              <SectionLabel label="Top Providers" accent="#0A8AB5" />
-              <ProviderBars providers={providers} />
-            </Card>
-          </div>
-
-          {/* Latest 5 threats preview */}
-          <Card hover={false}>
-            <SectionLabel
-              label="Recent Threats"
-              accent="#C83C3C"
-              action={threats.length > 5 ? `View all ${threats.length}` : undefined}
-              onAction={() => setActiveTab('threats')}
-            />
-            {threats.length === 0 ? (
-              <EmptyState
-                icon={<CheckCircle />}
-                title="No active threats for this brand"
-                subtitle="Run AI Deep Scan for the latest analysis"
-                variant="clean"
-                compact
-              />
-            ) : (
-              <div className="space-y-0">
-                {sortedThreats.slice(0, 5).map((t: any) => (
-                  <div key={t.id}
-                    className="data-row flex items-center gap-3 py-2.5 border-b border-white/[0.03] transition-colors"
-                    data-severity={t.severity}>
-                    <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                      style={{ backgroundColor: SEVERITY_COLORS[t.severity] || '#5A80A8' }} />
-                    <div className="flex-1 min-w-0">
-                      <span className="font-mono text-xs text-white/90">
-                        {toTitleCase(t.threat_type || 'unknown')}
-                      </span>
-                      <span className="font-mono text-[10px] text-white/40 ml-2">
-                        {t.malicious_domain || t.malicious_url || t.ip_address || ''}
-                      </span>
-                    </div>
-                    <span className="font-mono text-[10px] text-white/30 flex-shrink-0">
-                      {relativeTime(t.detected_at || t.created_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
+      {activeTab === 'surface' && (
+        <SurfaceTab
+          brand={brand}
+          emailSec={emailSec}
+          safeDomains={safeDomains}
+          officialSocials={officialSocials}
+          appListings={appListings}
+          brandDomains={brandDomains}
+          firmographics={firmographics}
+          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+        />
       )}
 
-      {/* ── THREATS TAB ── */}
-      {activeTab === 'threats' && (
-        <div className="space-y-6">
-          {/* Timeline Chart */}
-          <Card hover={false}>
-            <div className="flex items-center justify-between mb-4">
-              <SectionLabel>Threat Timeline</SectionLabel>
-              <div className="flex gap-1.5">
-                {TIMELINE_PERIODS.map(p => (
-                  <button key={p} onClick={() => setTimelinePeriod(p)}
-                    className={`font-mono text-[11px] font-semibold px-3 py-1 rounded transition-all ${
-                      timelinePeriod === p
-                        ? 'bg-accent/10 text-accent border border-accent/25'
-                        : 'text-white/55 hover:bg-white/5 hover:[color:var(--text-primary)] border border-transparent'
-                    }`}>
-                    {p.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="gradTotal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#C83C3C" stopOpacity={0.4} />
-                      <stop offset="100%" stopColor="#C83C3C" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="gradHighSev" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#E8923C" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#E8923C" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="gradActive" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#28A050" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#28A050" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date"
-                    tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'IBM Plex Mono' }}
-                    axisLine={{ stroke: 'var(--border-base)' }} tickLine={false} />
-                  <YAxis tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'IBM Plex Mono' }}
-                    axisLine={false} tickLine={false} />
-                  <Tooltip content={<TimelineTooltip />} />
-                  <Area type="monotone" dataKey="total" stroke="#C83C3C" fill="url(#gradTotal)" strokeWidth={2} name="Total" />
-                  <Area type="monotone" dataKey="high_sev" stroke="#E8923C" fill="url(#gradHighSev)" strokeWidth={1.5} name="High Severity" />
-                  <Area type="monotone" dataKey="active" stroke="#28A050" fill="url(#gradActive)" strokeWidth={1.5} name="Active" />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-60 flex items-center justify-center text-white/40 font-mono text-xs">
-                No timeline data available
-              </div>
-            )}
-          </Card>
-
-          {/* Threats Table + Safe Domains */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2">
-              <Card hover={false}>
-                <div className="flex items-center justify-between mb-4">
-                  <SectionLabel>Active Threats</SectionLabel>
-                  <span className="font-mono text-[10px] text-white/40">{threats.length} total</span>
-                </div>
-
-                {threats.length === 0 ? (
-                  <EmptyState
-                    icon={<CheckCircle />}
-                    title="No active threats for this brand"
-                    subtitle="Run AI Deep Scan for the latest analysis"
-                    action={{ label: 'Run AI Deep Scan', onClick: () => triggerAnalysis.mutate(id) }}
-                    variant="clean"
-                    compact
-                  />
-                ) : (
-                  <>
-                    {/* Table header */}
-                    <div className="grid grid-cols-[3px_minmax(0,1fr)_minmax(0,1fr)_80px_80px] gap-3 items-center
-                      pb-2 border-b border-white/[0.06] mb-2">
-                      <div />
-                      <button onClick={() => setThreatSort({ key: 'severity', asc: threatSort.key === 'severity' ? !threatSort.asc : false })}
-                        className="font-mono text-[9px] text-[var(--text-muted)] uppercase tracking-wider text-left hover:[color:var(--text-primary)] transition-colors">
-                        Type / Severity {threatSort.key === 'severity' && (threatSort.asc ? '\u25B2' : '\u25BC')}
-                      </button>
-                      <div className="font-mono text-[9px] text-[var(--text-muted)] uppercase tracking-wider">Target</div>
-                      <div className="font-mono text-[9px] text-[var(--text-muted)] uppercase tracking-wider">Vector</div>
-                      <button onClick={() => setThreatSort({ key: 'date', asc: threatSort.key === 'date' ? !threatSort.asc : false })}
-                        className="font-mono text-[9px] text-[var(--text-muted)] uppercase tracking-wider text-right hover:[color:var(--text-primary)] transition-colors">
-                        Age {threatSort.key === 'date' && (threatSort.asc ? '\u25B2' : '\u25BC')}
-                      </button>
-                    </div>
-
-                    {/* Threat rows */}
-                    {visibleThreats.map((t: any) => {
-                      // API field names: malicious_domain / malicious_url
-                      // (handlers/brands.ts:619). The legacy field names
-                      // target_url / domain were never populated.
-                      const secondaryLabel = t.malicious_url || t.malicious_domain || t.ip_address || t.source_feed || null;
-                      // Derive a "vector" label from source_feed when the
-                      // schema doesn't carry one explicitly.
-                      const derivedVector = deriveVectorLabel(t);
-                      return (
-                        <div key={t.id}
-                          data-severity={t.severity}
-                          className="data-row grid grid-cols-[3px_minmax(0,1fr)_minmax(0,1fr)_80px_100px] gap-3 items-center py-2.5
-                          border-b border-white/[0.03] transition-colors group">
-                          <div className="h-full rounded-full" style={{ backgroundColor: SEVERITY_COLORS[t.severity] || '#5A80A8' }} />
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                              style={{
-                                backgroundColor: SEVERITY_COLORS[t.severity] || '#5A80A8',
-                                boxShadow: t.severity === 'critical' ? `0 0 8px ${SEVERITY_COLORS.critical}` : 'none',
-                              }} />
-                            <div className="min-w-0">
-                              <div className="font-mono text-xs font-semibold text-white/90 truncate">
-                                {toTitleCase(t.threat_type || 'unknown')}
-                              </div>
-                              {secondaryLabel && (
-                                <div className="font-mono text-[9px] text-white/55 truncate">{secondaryLabel}</div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="font-display text-xs font-semibold text-white/80 truncate">
-                            {t.malicious_domain || t.malicious_url || t.ip_address || '\u2014'}
-                          </div>
-                          {derivedVector ? (
-                            <Badge variant="info" className="text-[8px] justify-center">{derivedVector}</Badge>
-                          ) : (
-                            <span className="text-white/40 text-[10px]">{'\u2014'}</span>
-                          )}
-                          <div className="flex items-center justify-end gap-2 min-w-0">
-                            <span className="font-mono text-[10px] text-white/40">
-                              {relativeTime(t.detected_at || t.created_at)}
-                            </span>
-                            {t.score != null && (
-                              <span className="font-mono text-[9px] text-white/50">{t.score}</span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {sortedThreats.length > 10 && (
-                      <button onClick={() => setExpandedThreats(!expandedThreats)}
-                        className="w-full mt-3 py-2 font-mono text-[10px] hover:text-white
-                        border border-white/[0.04] rounded-lg hover:border-accent/20 transition-all"
-                        style={{ color: 'var(--text-secondary)' }}>
-                        {expandedThreats ? 'SHOW LESS' : `SHOW ALL ${sortedThreats.length} THREATS`}
-                      </button>
-                    )}
-                  </>
-                )}
-              </Card>
-            </div>
-
-            {/* Safe Domains Panel */}
-            <Card hover={false}>
-              <SectionLabel className="mb-4">Safe Domains</SectionLabel>
-              <div className="space-y-2 mb-4">
-                {safeDomains.length === 0 ? (
-                  <div className="text-white/40 font-mono text-xs py-2">No safe domains configured</div>
-                ) : (
-                  safeDomains.map((d: any) => (
-                    <div key={d.id || d.domain} className="flex items-center justify-between py-1.5 border-b border-white/[0.03]">
-                      <span className="font-mono text-xs text-[var(--text-secondary)]">{d.domain}</span>
-                      <button onClick={() => deleteSafeDomain.mutate({ brandId: id, domainId: d.id })}
-                        className="font-mono text-[9px] text-white/50 hover:text-accent transition-colors">
-                        REMOVE
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  value={safeDomainInput}
-                  onChange={e => setSafeDomainInput(e.target.value)}
-                  placeholder="Add domain..."
-                  className="flex-1 border border-white/[0.06] rounded-md px-3 py-1.5 font-mono text-xs
-                    placeholder:text-white/30 focus:border-accent/30 focus:outline-none transition-colors"
-                  style={{ background: 'var(--bg-page)', color: 'var(--text-primary)' }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && safeDomainInput.trim()) {
-                      addSafeDomain.mutate({ brandId: id, domain: safeDomainInput.trim() });
-                      setSafeDomainInput('');
-                    }
-                  }}
-                />
-                <Button variant="secondary" size="sm"
-                  onClick={() => { if (safeDomainInput.trim()) { addSafeDomain.mutate({ brandId: id, domain: safeDomainInput.trim() }); setSafeDomainInput(''); } }}
-                  disabled={!safeDomainInput.trim() || addSafeDomain.isPending}>
-                  ADD
-                </Button>
-              </div>
-            </Card>
-          </div>
-        </div>
+      {activeTab === 'risk' && (
+        <RiskTab
+          brand={brand}
+          threats={threats}
+          emailSec={emailSec}
+          socialProfiles={socialProfiles}
+          suspiciousSocials={suspiciousSocials}
+          suspiciousApps={suspiciousApps}
+          darkWebMentions={darkWebMentions}
+          alerts={alerts}
+          scoreHistory={scoreHistory}
+          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onScanSocials={() => scanProfiles.mutate(id)}
+          onDiscoverSocials={() => discoverProfiles.mutate(id)}
+          onAiDeepScan={() => triggerAnalysis.mutate(id)}
+          aiPending={triggerAnalysis.isPending}
+          scanPending={scanProfiles.isPending}
+          discoverPending={discoverProfiles.isPending}
+        />
       )}
 
-      {/* ── TYPOSQUATS TAB ── */}
-      {activeTab === 'typosquats' && (
-        <TyposquatsTab brandId={id} />
-      )}
-
-      {/* ── EMAIL SECURITY TAB ── */}
-      {activeTab === 'email' && (
-        <div className="space-y-6">
-          {/* Email Grade Hero */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Card hover={false} className="lg:col-span-1">
-              <div className="flex flex-col items-center justify-center py-6">
-                <BIMIGradeBadge grade={brand.bimi_grade} size="lg" tooltip />
-                <div className="mt-4 text-center">
-                  <div className={`font-display text-4xl font-extrabold ${getGradeClass(brand.email_security_grade)}`}>
-                    {brand.email_security_grade || '\u2014'}
-                  </div>
-                  <div className="font-mono text-[10px] text-white/40 uppercase tracking-widest mt-1">
-                    Overall Email Grade
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            {/* Protocol Status */}
-            <Card hover={false} className="lg:col-span-2">
-              <SectionLabel className="mb-4">Protocol Status</SectionLabel>
-              <div className="space-y-3">
-                {EMAIL_PROTOCOLS.map(proto => {
-                  const { status, hint } = getEmailStatus(proto, emailSec);
-                  const cls = EMAIL_STATUS_CLASSES[status] || EMAIL_STATUS_CLASSES.MISSING;
-                  return (
-                    <div key={proto} className="flex items-center gap-3 py-2 border-b border-white/[0.04]">
-                      <span className="font-mono text-sm font-bold text-white/70 w-14 flex-shrink-0">{proto}</span>
-                      <span className={`font-mono text-[10px] font-semibold uppercase px-2 py-0.5 rounded border leading-tight ${cls}`}>
-                        {status}
-                      </span>
-                      {hint && (
-                        <span className="font-mono text-xs text-white/40">{hint}</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          </div>
-
-          {/* BIMI Details */}
-          <Card hover={false}>
-            <SectionLabel className="mb-4">BIMI &amp; VMC Details</SectionLabel>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <BIMIStatusRow
-                  label="BIMI Record"
-                  status={brand.bimi_record ? 'pass' : 'missing'}
-                  detail={brand.bimi_record || undefined}
-                />
-                <BIMIStatusRow
-                  label="BIMI SVG Logo"
-                  status={brand.bimi_svg_url ? 'pass' : 'missing'}
-                  detail={brand.bimi_svg_url
-                    ? (() => { try { return new URL(brand.bimi_svg_url).hostname; } catch { return undefined; } })()
-                    : undefined}
-                />
-                <BIMIStatusRow
-                  label="VMC Certificate"
-                  status={brand.bimi_vmc_valid ? 'verified' : brand.bimi_vmc_url ? 'fail' : 'none'}
-                  detail={brand.bimi_vmc_expiry
-                    ? `Expires ${new Date(brand.bimi_vmc_expiry).toLocaleDateString()}`
-                    : undefined}
-                />
-              </div>
-
-              {/* SVG Preview */}
-              <div className="flex flex-col items-center justify-center">
-                {brand.bimi_svg_url ? (
-                  <div className="text-center">
-                    <img
-                      src={brand.bimi_svg_url}
-                      alt="BIMI Logo"
-                      className="w-20 h-20 rounded-lg mx-auto"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                    />
-                    <p className="text-white/30 text-[10px] font-mono mt-2 truncate max-w-[200px]">
-                      {brand.bimi_svg_url}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center text-white/30">
-                    <div className="w-20 h-20 rounded-lg bg-white/[0.03] border border-white/[0.06]
-                      flex items-center justify-center mx-auto">
-                      <span className="font-mono text-[10px]">NO LOGO</span>
-                    </div>
-                    <p className="text-[10px] font-mono mt-2">Publish a BIMI record to display your logo</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Raw DNS Records */}
-          {emailSec && (
-            <Card hover={false}>
-              <SectionLabel className="mb-4">Raw DNS Records</SectionLabel>
-              <div className="space-y-3">
-                {emailSec.spf_raw && (
-                  <div>
-                    <div className="font-mono text-[10px] text-white/40 uppercase tracking-wider mb-1">SPF</div>
-                    <div className="font-mono text-xs text-white/70 bg-white/[0.03] rounded-lg p-3 break-all">
-                      {emailSec.spf_raw}
-                    </div>
-                  </div>
-                )}
-                {emailSec.dmarc_raw && (
-                  <div>
-                    <div className="font-mono text-[10px] text-white/40 uppercase tracking-wider mb-1">DMARC</div>
-                    <div className="font-mono text-xs text-white/70 bg-white/[0.03] rounded-lg p-3 break-all">
-                      {emailSec.dmarc_raw}
-                    </div>
-                  </div>
-                )}
-                {brand.bimi_record && (
-                  <div>
-                    <div className="font-mono text-[10px] text-white/40 uppercase tracking-wider mb-1">BIMI</div>
-                    <div className="font-mono text-xs text-white/70 bg-white/[0.03] rounded-lg p-3 break-all">
-                      {brand.bimi_record}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
-
-          {/* Grade Improvement */}
-          {brand.bimi_grade && ['B', 'C', 'D', 'F'].includes(brand.bimi_grade) && (
-            <Card hover={false} className="border-l-[3px] border-amber-500/40">
-              <SectionLabel className="mb-3">Improvement Path</SectionLabel>
-              <div className="space-y-2 text-sm text-white/70">
-                {brand.bimi_grade === 'B' && (
-                  <p>&rarr; Publish a BIMI record with a valid SVG logo to reach grade A</p>
-                )}
-                {brand.bimi_grade === 'C' && (
-                  <p>&rarr; Upgrade DMARC policy to &ldquo;quarantine&rdquo; or &ldquo;reject&rdquo; to reach grade B</p>
-                )}
-                {(brand.bimi_grade === 'D' || brand.bimi_grade === 'F') && (
-                  <p>&rarr; Implement SPF, DKIM, and DMARC enforcement to protect email delivery</p>
-                )}
-              </div>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* ── SOCIAL TAB ── */}
-      {activeTab === 'social' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <SectionLabel>Social Profiles</SectionLabel>
-              <Badge variant="info">{socialProfiles.length}</Badge>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => scanProfiles.mutate(id)} disabled={scanProfiles.isPending}>
-                RESCAN
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => discoverProfiles.mutate(id)} disabled={discoverProfiles.isPending}>
-                DISCOVER NEW
-              </Button>
-            </div>
-          </div>
-          <Tabs tabs={socialTabs} activeTab={socialFilter} onChange={setSocialFilter} />
-
-          {filteredProfiles.length === 0 ? (
-            <Card hover={false}>
-              <div className="py-6 text-center text-white/40 font-mono text-xs">No profiles match this filter</div>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {filteredProfiles.map((profile: any) => (
-                <Card key={profile.id} hover={false} className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full bg-white/[0.04] border border-white/[0.06]
-                        flex items-center justify-center font-mono text-xs text-[var(--text-tertiary)] font-bold">
-                        {PLATFORM_ICONS[(profile.platform ?? '').toLowerCase()] ?? '\u25CF'}
-                      </div>
-                      <div>
-                        <div className="font-mono font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>@{profile.handle}</div>
-                        {profile.display_name && (
-                          <div className="text-[10px] text-white/55">{profile.display_name}</div>
-                        )}
-                      </div>
-                    </div>
-                    <Badge variant={classificationVariant(profile.classification)}>
-                      {profile.classification}
-                    </Badge>
-                  </div>
-
-                  <div className="flex items-center gap-4 font-mono text-[10px] text-white/55">
-                    {profile.followers_count != null && (
-                      <span>{Number(profile.followers_count).toLocaleString()} followers</span>
-                    )}
-                    {profile.verified === 1 && (
-                      <span className="text-positive font-bold uppercase">Verified</span>
-                    )}
-                    {profile.platform && (
-                      <span className="uppercase">{profile.platform}</span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] text-[var(--text-muted)]">Impersonation Score</span>
-                      <span className="font-mono text-xs font-bold" style={{
-                        color: profile.impersonation_score >= 0.70 ? '#C83C3C' : profile.impersonation_score >= 0.40 ? '#E8923C' : '#28A050'
-                      }}>{Math.round(profile.impersonation_score * 100)}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-white/5 rounded overflow-hidden">
-                      <div className="h-full rounded transition-all duration-500" style={{
-                        width: `${Math.min(Math.round(profile.impersonation_score * 100), 100)}%`,
-                        background: profile.impersonation_score >= 0.70 ? '#C83C3C' : profile.impersonation_score >= 0.40 ? '#E8923C' : '#28A050',
-                      }} />
-                    </div>
-                  </div>
-
-                  {profile.ai_assessment && (
-                    <p className="text-xs text-[var(--text-tertiary)] line-clamp-3 leading-relaxed">{profile.ai_assessment}</p>
-                  )}
-
-                  <div className="flex gap-2 pt-1">
-                    <Button variant="ghost" size="sm"
-                      onClick={() => classifyProfile.mutate({ brandId: id, profileId: profile.id, classification: 'official' })}>
-                      Confirm Safe
-                    </Button>
-                    <Button variant="danger" size="sm"
-                      onClick={() => classifyProfile.mutate({ brandId: id, profileId: profile.id, classification: 'impersonation' })}>
-                      Impersonation
-                    </Button>
-                    <Button variant="ghost" size="sm"
-                      onClick={() => classifyProfile.mutate({ brandId: id, profileId: profile.id, classification: 'safe' })}>
-                      False Positive
-                    </Button>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── APPS TAB ── */}
-      {activeTab === 'apps' && <AppsTab brandId={id} />}
-
-      {/* ── DARK WEB TAB ── */}
-      {activeTab === 'dark-web' && <DarkWebTab brandId={id} />}
-
-      {/* ── INTELLIGENCE TAB ── */}
-      {activeTab === 'intelligence' && (
-        <div className="space-y-6">
-          {/* AI Threat Analysis — Executive Briefing */}
-          {(brand.threat_analysis || analysis) && (() => {
-            const astra = parseAstraAnalysis(analysis?.summary || analysis || brand.threat_analysis);
-            if (!astra) return null;
-            const summaryText = astra.summary || '';
-            const needsTruncation = summaryText.length > 300;
-            const displaySummary = needsTruncation && !expandedSummary
-              ? summaryText.slice(0, 300) + '...'
-              : summaryText;
-            return (
-              <Card hover={false} className="border-l-[3px] border-accent">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <SectionLabel>AI Threat Analysis</SectionLabel>
-                    <AgentAttribution agent="Analyst" lastRun={brand.analysis_updated_at || analysis?.updated_at} />
-                    <div className="flex items-center gap-2 mt-2">
-                      <Badge variant="critical">CURRENT</Badge>
-                      {astra.riskLevel && (
-                        <span className={`inline-flex items-center font-mono text-[10px] font-bold tracking-wide uppercase px-2.5 py-0.5 rounded border ${RISK_BADGE_CLASSES[astra.riskLevel] || 'bg-white/5 text-white/60 border-white/10'}`}>
-                          {astra.riskLevel} &#9650;
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {summaryText && (
-                    <div>
-                      <h4 className="font-mono text-[10px] font-semibold text-white/40 uppercase tracking-widest mb-1.5">
-                        Summary
-                      </h4>
-                      <p className="text-sm text-white/80 leading-relaxed">
-                        {displaySummary}
-                        {needsTruncation && (
-                          <button
-                            onClick={() => setExpandedSummary(!expandedSummary)}
-                            className="ml-1.5 font-mono text-[10px] font-semibold hover:text-white transition-colors"
-                            style={{ color: 'var(--text-secondary)' }}
-                          >
-                            {expandedSummary ? 'Show less' : 'Show more'}
-                          </button>
-                        )}
-                      </p>
-                    </div>
-                  )}
-
-                  {astra.keyFindings.length > 0 && (
-                    <div>
-                      <h4 className="font-mono text-[10px] font-semibold text-white/40 uppercase tracking-widest mb-2">
-                        Key Findings
-                      </h4>
-                      <ul className="space-y-1.5">
-                        {astra.keyFindings.map((finding, i) => (
-                          <li key={i} className="flex items-start gap-2.5 text-sm text-white/70">
-                            <span className="mt-[5px] text-accent text-[8px] flex-shrink-0">&#9670;</span>
-                            {finding}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="flex gap-2">
-                      <Button variant="primary" size="sm"
-                        onClick={() => triggerAnalysis.mutate(id)}
-                        disabled={triggerAnalysis.isPending}>
-                        {triggerAnalysis.isPending ? 'ANALYZING...' : 'AI DEEP SCAN'}
-                      </Button>
-                      <Button variant="ghost" size="sm"
-                        onClick={() => cleanFP.mutate(id)}
-                        disabled={cleanFP.isPending}>
-                        CLEAN FALSE POSITIVES
-                      </Button>
-                    </div>
-                    {(brand.analysis_updated_at || analysis?.updated_at) && (
-                      <span className="font-mono text-xs text-white/40">
-                        Updated {relativeTime(brand.analysis_updated_at || analysis?.updated_at)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            );
-          })()}
-
-          {!brand.threat_analysis && !analysis && (
-            <EmptyState
-              title="No intelligence analysis available"
-              subtitle="Run an AI deep scan to generate threat intelligence for this brand"
-              variant="scanning"
-              action={{
-                label: triggerAnalysis.isPending ? 'Analyzing...' : 'Initiate AI Deep Scan',
-                onClick: () => triggerAnalysis.mutate(id),
-              }}
-            />
-          )}
-        </div>
+      {activeTab === 'workflow' && (
+        <WorkflowTab
+          alerts={alerts}
+          takedowns={brandTakedowns}
+        />
       )}
     </div>
   );
 }
 
-// ── TYPOSQUATS TAB ──────────────────────────────────────────────
-function TyposquatsTab({ brandId }: { brandId: string }) {
-  const [filter, setFilter] = useState<'ALL' | 'CRITICAL_HIGH' | 'AUTO'>('ALL');
-
-  const query = useBrandThreats(brandId, { threat_type: 'typosquatting', limit: 100 });
-
-  const allRows: BrandThreatRow[] = query.data?.rows ?? [];
-  const total = query.data?.total ?? 0;
-
-  const critHighCount = allRows.filter(
-    (r) => r.severity === 'critical' || r.severity === 'high',
-  ).length;
-  const autoCount = allRows.filter((r) => r.source_feed === 'typosquat_scanner').length;
-
-  const rows = allRows.filter((r) => {
-    if (filter === 'CRITICAL_HIGH') return r.severity === 'critical' || r.severity === 'high';
-    if (filter === 'AUTO') return r.source_feed === 'typosquat_scanner';
-    return true;
-  });
-
-  if (query.isLoading) {
-    return <div className="text-center text-white/40 font-mono text-xs py-12">Loading typosquats...</div>;
-  }
-
-  if (total === 0) {
-    return (
-      <EmptyState
-        title="No typosquats detected yet"
-        subtitle="Scanned automatically by Sentinel · next scan: ~7 days"
-        variant="scanning"
-      />
-    );
-  }
+// ── SURFACE ──────────────────────────────────────────────────────────────
+// "What we know about you." Owned-domain footprint + firmographic block
+// + email posture + known-official social/app presence. PR7 wires the
+// real brand_domains list (PR1 schema) and brand_firmographics sibling
+// (PR4 enricher) — both rendered honestly: empty/sparse where the
+// data isn't there yet rather than hidden.
+function SurfaceTab({
+  brand, emailSec, safeDomains, officialSocials, appListings,
+  brandDomains, firmographics, onJumpV2,
+}: {
+  brand: any;
+  emailSec: any;
+  safeDomains: any[];
+  officialSocials: any[];
+  appListings: any[];
+  brandDomains: BrandDomain[];
+  firmographics: BrandFirmographics | null;
+  onJumpV2: (tab: string) => void;
+}) {
+  const officialApps = appListings.filter((l: any) => l.classification === 'official');
 
   return (
-    <div className="space-y-6">
-      {/* STAT ROW */}
-      <DeepCard variant="active" accent="#C83C3C">
-        <div className="grid grid-cols-3 gap-6 p-2">
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Total Typosquats</div>
-            <div className="text-3xl font-bold text-instrument-white mt-1">{total}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Critical / High</div>
-            <div className="text-3xl font-bold text-[#f87171] mt-1">{critHighCount}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Auto-detected</div>
-            <div className="text-3xl font-bold text-[#fb923c] mt-1">{autoCount}</div>
-          </div>
-        </div>
-      </DeepCard>
+    <div className="space-y-4">
+      <DomainFootprintCard brandDomains={brandDomains} canonicalDomain={brand.canonical_domain} safeDomains={safeDomains} />
 
-      {/* FILTER PILLS + STATUS */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-2">
-          {(['ALL', 'CRITICAL_HIGH', 'AUTO'] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-md font-mono text-[10px] uppercase tracking-widest border transition-colors ${
-                filter === f
-                  ? 'bg-afterburner/20 text-[#E5A832] border-afterburner/40'
-                  : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10'
-              }`}
-            >
-              {f === 'CRITICAL_HIGH' ? 'Critical / High' : f === 'AUTO' ? 'Auto-detected' : 'All'}
-            </button>
-          ))}
-        </div>
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/40">
-          Scanned automatically by Sentinel · next scan: ~7 days
-        </div>
+      <FirmographicBlock firmographics={firmographics} brand={brand} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+
+        <Card hover={false}>
+          <SectionLabel>Confirmed presence</SectionLabel>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <FootprintTile
+              label="Official social profiles"
+              value={String(officialSocials.length)}
+              sub={officialSocials.length > 0 ? 'Confirmed by AI judge' : 'None classified yet'}
+              onClick={() => onJumpV2('social')}
+            />
+            <FootprintTile
+              label="Official app listings"
+              value={String(officialApps.length)}
+              sub={officialApps.length > 0 ? 'Across stores' : 'No store presence detected'}
+              onClick={() => onJumpV2('apps')}
+            />
+          </div>
+        </Card>
       </div>
-
-      {/* DOMAIN LIST */}
-      <DeepCard variant="base" style={{ padding: 0 }}>
-        {rows.length === 0 ? (
-          <div className="text-center text-white/40 font-mono text-xs py-10">
-            No domains match this filter.
-          </div>
-        ) : (
-          <div className="divide-y divide-white/5">
-            {rows.map((d) => {
-              const sev = (d.severity || 'low').toLowerCase() as 'critical' | 'high' | 'medium' | 'low';
-              const isAuto = d.source_feed === 'typosquat_scanner';
-              const domain = d.malicious_domain || d.malicious_url || '—';
-              return (
-                <div
-                  key={d.id}
-                  className="data-row flex items-center gap-4 px-4 py-3"
-                  data-severity={sev}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono text-sm text-instrument-white truncate">{domain}</div>
-                    <div className="flex items-center gap-3 mt-1 text-[10px] text-white/50 font-mono">
-                      {d.ip_address && <span>{d.ip_address}</span>}
-                      <span>{isAuto ? 'Auto-detected' : d.source_feed || 'manual'}</span>
-                      <span>{relativeTime(d.first_seen || d.created_at)}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <SeverityChip severity={sev} size="sm" />
-                    <span className="px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-widest bg-[#C83C3C]/20 text-[#f87171] border border-[#C83C3C]/40">
-                      Registered
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </DeepCard>
     </div>
   );
 }
 
-// ─── APPS TAB (app-store impersonation monitoring) ───────────────
+// ── RISK ──────────────────────────────────────────────────────────────────
+// "What's threatening you now." Active threat counts + impersonations
+// across surfaces + dark-web mentions + email-posture grade as a single
+// "what to worry about" view. Defers the per-surface drill-down to v2
+// for now — those upstream surfaces (threats / social / apps / dark-web)
+// are getting their own audits.
+function RiskTab({
+  brand, threats, emailSec, socialProfiles, suspiciousSocials, suspiciousApps,
+  darkWebMentions, alerts, scoreHistory, onJumpV2, onScanSocials, onDiscoverSocials,
+  onAiDeepScan, aiPending, scanPending, discoverPending,
+}: any) {
+  const newAlertCount = alerts.length;
+  const healthScore   = brand.brand_health_score   ?? null;
+  const healthGrade   = brand.brand_health_grade   ?? null;
+  const exposureScore = brand.brand_exposure_score ?? null;
 
-type AppsFilter = 'all' | 'impersonation' | 'suspicious' | 'legitimate' | 'official';
+  return (
+    <div className="space-y-4">
+      {/* Two-axis split: Health (defense) vs Exposure (offense). The
+          quadrant placement tells you the brand's posture at a glance. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <ScoreCard
+          label="Brand Health"
+          tone="ok"
+          score={healthScore}
+          grade={healthGrade}
+          history={scoreHistory as BrandScoreSnapshot[]}
+          field="brand_health_score"
+          subtitle="Defensive posture"
+          updatedAt={brand.brand_health_updated_at}
+        />
+        <ScoreCard
+          label="Brand Exposure"
+          tone="crit"
+          score={exposureScore}
+          grade={null}
+          history={scoreHistory as BrandScoreSnapshot[]}
+          field="brand_exposure_score"
+          subtitle="Offensive pressure"
+          updatedAt={brand.brand_exposure_updated_at}
+        />
+        <HealthExposureQuadrant healthScore={healthScore} exposureScore={exposureScore} />
+      </div>
 
-const APP_CLASSIFICATION_BADGE: Record<AppClassification, 'critical' | 'high' | 'success' | 'default'> = {
-  impersonation: 'critical',
-  suspicious: 'high',
-  legitimate: 'success',
-  official: 'success',
-  unknown: 'default',
-};
-
-const APP_CLASSIFICATION_LABEL: Record<AppClassification, string> = {
-  impersonation: 'Impersonation',
-  suspicious: 'Suspicious',
-  legitimate: 'Legitimate',
-  official: 'Official',
-  unknown: 'Unknown',
-};
-
-function AppsTab({ brandId }: { brandId: string }) {
-  const [filter, setFilter] = useState<AppsFilter>('all');
-  const query = useAppStoreMonitor(brandId, { status: 'active', limit: 100 });
-  const scan = useScanAppStore();
-  const classify = useClassifyAppStoreListing();
-
-  const all = query.data?.results ?? [];
-  const total = query.data?.total ?? 0;
-  const schedule = query.data?.schedule?.[0];
-
-  const counts = useMemo(() => {
-    const c = { all: all.length, impersonation: 0, suspicious: 0, legitimate: 0, official: 0 };
-    for (const l of all) {
-      if (l.classification === 'impersonation') c.impersonation++;
-      else if (l.classification === 'suspicious') c.suspicious++;
-      else if (l.classification === 'legitimate') c.legitimate++;
-      else if (l.classification === 'official') c.official++;
-    }
-    return c;
-  }, [all]);
-
-  const rows = filter === 'all'
-    ? all
-    : all.filter((l) => l.classification === filter);
-
-  if (query.isLoading) {
-    return <div className="text-center text-white/40 font-mono text-xs py-12">Loading app-store listings...</div>;
-  }
-
-  if (total === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => scan.mutate(brandId)}
-            disabled={scan.isPending}
-          >
-            {scan.isPending ? 'Scanning…' : 'Scan iOS Now'}
-          </Button>
-        </div>
-        <EmptyState
-          title="No app-store listings scanned yet"
-          subtitle={schedule?.next_check
-            ? `Next automated scan: ${relativeTime(schedule.next_check)}`
-            : 'Click "Scan iOS Now" to search the App Store for impersonations of this brand.'}
-          variant="scanning"
+      {/* Existing 4-card hero kept below the new split — these are the
+          per-category v2 cards. Kept for now since each upstream surface
+          (threats / email / social) is getting its own audit; v3 doesn't
+          want to lock in their data shape yet. */}
+      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-4 gap-3">
+        <ExposureIndexCard brand={brand} threats={threats} />
+        <ActiveThreatsCard threats={threats} />
+        <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+        <SocialRiskCard
+          socialProfiles={socialProfiles}
+          lastScan={brand.last_social_scan}
+          onScan={onScanSocials}
+          onDiscover={onDiscoverSocials}
+          scanPending={scanPending}
+          discoverPending={discoverPending}
         />
       </div>
-    );
-  }
 
-  const filterPills: Array<{ id: AppsFilter; label: string; count: number }> = [
-    { id: 'all', label: 'All', count: counts.all },
-    { id: 'impersonation', label: 'Impersonation', count: counts.impersonation },
-    { id: 'suspicious', label: 'Suspicious', count: counts.suspicious },
-    { id: 'legitimate', label: 'Legitimate', count: counts.legitimate },
-    { id: 'official', label: 'Official', count: counts.official },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {/* STATS + RESCAN */}
-      <DeepCard variant="active" accent="#0A8AB5">
-        <div className="grid grid-cols-4 gap-6 p-2">
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Total Apps</div>
-            <div className="text-3xl font-bold text-instrument-white mt-1">{total}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Impersonation</div>
-            <div className="text-3xl font-bold text-[#f87171] mt-1">{counts.impersonation}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Suspicious</div>
-            <div className="text-3xl font-bold text-[#fb923c] mt-1">{counts.suspicious}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Legit / Official</div>
-            <div className="text-3xl font-bold text-[#3CB878] mt-1">{counts.legitimate + counts.official}</div>
-          </div>
-        </div>
-      </DeepCard>
-
-      {/* FILTER + SCAN */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-2 flex-wrap">
-          {filterPills.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`px-3 py-1.5 rounded-md font-mono text-[10px] uppercase tracking-widest border transition-colors ${
-                filter === f.id
-                  ? 'bg-afterburner/20 text-[#E5A832] border-afterburner/40'
-                  : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10'
-              }`}
-            >
-              {f.label} <span className="opacity-60">({f.count})</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-white/40">
-            {schedule?.last_checked ? `Last scan: ${relativeTime(schedule.last_checked)}` : 'Never scanned'}
-          </div>
-          <Button
-            variant="secondary"
-            onClick={() => scan.mutate(brandId)}
-            disabled={scan.isPending}
-          >
-            {scan.isPending ? 'Scanning…' : 'Rescan'}
-          </Button>
-        </div>
-      </div>
-
-      {/* LISTINGS */}
-      {rows.length === 0 ? (
-        <DeepCard variant="base">
-          <div className="text-center text-white/40 font-mono text-xs py-10">
-            No apps match this filter.
-          </div>
-        </DeepCard>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {rows.map((listing) => (
-            <AppListingCard
-              key={listing.id}
-              listing={listing}
-              brandId={brandId}
-              onClassify={(classification) =>
-                classify.mutate({ listingId: listing.id, brandId, classification })
-              }
-              onResolve={(status) =>
-                classify.mutate({ listingId: listing.id, brandId, status })
-              }
-              disabled={classify.isPending}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AppListingCard({
-  listing,
-  onClassify,
-  onResolve,
-  disabled,
-}: {
-  listing: AppStoreListing;
-  brandId: string;
-  onClassify: (classification: AppClassification) => void;
-  onResolve: (status: 'resolved' | 'false_positive') => void;
-  disabled: boolean;
-}) {
-  const sev = (listing.severity || 'LOW').toLowerCase() as 'critical' | 'high' | 'medium' | 'low';
-  const badgeVariant = APP_CLASSIFICATION_BADGE[listing.classification];
-  const score = Math.round(listing.impersonation_score * 100);
-
-  return (
-    <Card>
-      <div className="flex items-start gap-3">
-        {listing.icon_url ? (
-          <img
-            src={listing.icon_url}
-            alt=""
-            className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+      <Card hover={false}>
+        <SectionLabel>Risk surface roll-up</SectionLabel>
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <RollupTile
+            label="Suspicious socials"
+            count={suspiciousSocials.length}
+            onClick={() => onJumpV2('social')}
+            tone={suspiciousSocials.length > 0 ? 'warn' : 'neutral'}
           />
-        ) : (
-          <div className="w-12 h-12 rounded-lg bg-white/5 flex-shrink-0" />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="font-mono text-sm text-instrument-white truncate">{listing.app_name}</div>
-              <div className="font-mono text-[10px] text-white/50 truncate">
-                {listing.developer_name ?? 'unknown developer'}
-              </div>
-            </div>
-            <Badge variant={badgeVariant}>{APP_CLASSIFICATION_LABEL[listing.classification]}</Badge>
-          </div>
-
-          <div className="flex items-center gap-3 mt-2 text-[10px] text-white/50 font-mono">
-            <span className="uppercase tracking-widest">{listing.store}</span>
-            {listing.bundle_id && <span className="truncate">{listing.bundle_id}</span>}
-            <span>{relativeTime(listing.last_checked ?? listing.created_at)}</span>
-          </div>
-
-          <div className="flex items-center gap-2 mt-2">
-            <SeverityChip severity={sev} size="sm" />
-            {listing.classification === 'impersonation' || listing.classification === 'suspicious' ? (
-              <div className="flex-1 h-1 rounded-full bg-white/5 overflow-hidden">
-                <div
-                  className="h-full"
-                  style={{
-                    width: `${score}%`,
-                    background:
-                      score >= 70 ? '#f87171' :
-                      score >= 40 ? '#fb923c' : '#fbbf24',
-                  }}
-                />
-              </div>
-            ) : null}
-            {score > 0 && (
-              <span className="font-mono text-[10px] text-white/60 tabular-nums">{score}%</span>
-            )}
-          </div>
-
-          {listing.ai_assessment && (
-            <div className="mt-2 text-[11px] text-white/70 line-clamp-3">
-              {listing.ai_assessment}
-            </div>
-          )}
-
-          {listing.app_url && (
-            <a
-              href={listing.app_url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-block text-[10px] font-mono text-[#E5A832] hover:underline"
-            >
-              View on App Store →
-            </a>
-          )}
-
-          <div className="flex gap-1.5 mt-3 flex-wrap">
-            <button
-              onClick={() => onClassify('legitimate')}
-              disabled={disabled}
-              className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-[#3CB878]/40 text-[#3CB878] bg-[#3CB878]/10 hover:bg-[#3CB878]/20 disabled:opacity-50"
-            >
-              Confirm Safe
-            </button>
-            <button
-              onClick={() => onClassify('impersonation')}
-              disabled={disabled}
-              className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-[#C83C3C]/40 text-[#f87171] bg-[#C83C3C]/10 hover:bg-[#C83C3C]/20 disabled:opacity-50"
-            >
-              Impersonation
-            </button>
-            <button
-              onClick={() => onResolve('false_positive')}
-              disabled={disabled}
-              className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-white/10 text-white/60 bg-white/5 hover:bg-white/10 disabled:opacity-50"
-            >
-              False Positive
-            </button>
-          </div>
+          <RollupTile
+            label="Suspicious app listings"
+            count={suspiciousApps.length}
+            onClick={() => onJumpV2('apps')}
+            tone={suspiciousApps.length > 0 ? 'warn' : 'neutral'}
+          />
+          <RollupTile
+            label="Dark-web mentions"
+            count={darkWebMentions.length}
+            onClick={() => onJumpV2('dark-web')}
+            tone={darkWebMentions.length > 0 ? 'warn' : 'neutral'}
+          />
+          <RollupTile
+            label="Open alerts"
+            count={newAlertCount}
+            tone={newAlertCount > 0 ? 'crit' : 'neutral'}
+          />
         </div>
+        <div className="mt-3 text-[11px] text-[var(--text-muted)] font-mono">
+          Each surface above gets its own audit. Counts here roll up the same
+          handlers v2 uses; the per-surface IA may change in subsequent v3 work.
+        </div>
+      </Card>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <DimensionalButton variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
+          {aiPending ? 'ANALYZING…' : 'AI DEEP SCAN'}
+        </DimensionalButton>
       </div>
-    </Card>
-  );
-}
-
-// ─── DARK WEB TAB (paste-archive mention monitoring) ─────────────
-
-type DarkWebFilter = 'all' | 'confirmed' | 'suspicious';
-
-const DARK_WEB_BADGE: Record<DarkWebClassification, 'critical' | 'high' | 'default' | 'success'> = {
-  confirmed: 'critical',
-  suspicious: 'high',
-  false_positive: 'default',
-  resolved: 'success',
-  unknown: 'default',
-};
-
-const DARK_WEB_LABEL: Record<DarkWebClassification, string> = {
-  confirmed: 'Confirmed',
-  suspicious: 'Suspicious',
-  false_positive: 'False Positive',
-  resolved: 'Resolved',
-  unknown: 'Unknown',
-};
-
-function DarkWebTab({ brandId }: { brandId: string }) {
-  const [filter, setFilter] = useState<DarkWebFilter>('all');
-  const query = useDarkWebMentions(brandId, { status: 'active', limit: 100 });
-  const scan = useScanDarkWeb();
-  const classify = useClassifyDarkWebMention();
-
-  const all = query.data?.results ?? [];
-  const total = query.data?.total ?? 0;
-  const schedule = query.data?.schedule?.[0];
-
-  const counts = useMemo(() => {
-    const c = { all: all.length, confirmed: 0, suspicious: 0 };
-    for (const m of all) {
-      if (m.classification === 'confirmed') c.confirmed++;
-      else if (m.classification === 'suspicious') c.suspicious++;
-    }
-    return c;
-  }, [all]);
-
-  const rows = filter === 'all'
-    ? all
-    : all.filter((m) => m.classification === filter);
-
-  if (query.isLoading) {
-    return <div className="text-center text-white/40 font-mono text-xs py-12">Loading dark-web mentions...</div>;
-  }
-
-  if (total === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => scan.mutate(brandId)}
-            disabled={scan.isPending}
-          >
-            {scan.isPending ? 'Scanning…' : 'Scan Pastebin Now'}
-          </Button>
-        </div>
-        <EmptyState
-          title="No dark-web mentions yet"
-          subtitle={schedule?.next_check
-            ? `Next automated scan: ${relativeTime(schedule.next_check)}`
-            : 'Click "Scan Pastebin Now" to search paste archives for mentions of this brand.'}
-          variant="scanning"
-        />
-      </div>
-    );
-  }
-
-  const filterPills: Array<{ id: DarkWebFilter; label: string; count: number }> = [
-    { id: 'all', label: 'All', count: counts.all },
-    { id: 'confirmed', label: 'Confirmed', count: counts.confirmed },
-    { id: 'suspicious', label: 'Suspicious', count: counts.suspicious },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <DeepCard variant="active" accent="#C83C3C">
-        <div className="grid grid-cols-3 gap-6 p-2">
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Total Mentions</div>
-            <div className="text-3xl font-bold text-instrument-white mt-1">{total}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Confirmed</div>
-            <div className="text-3xl font-bold text-[#f87171] mt-1">{counts.confirmed}</div>
-          </div>
-          <div>
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50">Suspicious</div>
-            <div className="text-3xl font-bold text-[#fb923c] mt-1">{counts.suspicious}</div>
-          </div>
-        </div>
-      </DeepCard>
-
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-2 flex-wrap">
-          {filterPills.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`px-3 py-1.5 rounded-md font-mono text-[10px] uppercase tracking-widest border transition-colors ${
-                filter === f.id
-                  ? 'bg-afterburner/20 text-[#E5A832] border-afterburner/40'
-                  : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10'
-              }`}
-            >
-              {f.label} <span className="opacity-60">({f.count})</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-white/40">
-            {schedule?.last_checked ? `Last scan: ${relativeTime(schedule.last_checked)}` : 'Never scanned'}
-          </div>
-          <Button
-            variant="secondary"
-            onClick={() => scan.mutate(brandId)}
-            disabled={scan.isPending}
-          >
-            {scan.isPending ? 'Scanning…' : 'Rescan'}
-          </Button>
-        </div>
-      </div>
-
-      {rows.length === 0 ? (
-        <DeepCard variant="base">
-          <div className="text-center text-white/40 font-mono text-xs py-10">
-            No mentions match this filter.
-          </div>
-        </DeepCard>
-      ) : (
-        <div className="space-y-3">
-          {rows.map((mention) => (
-            <MentionCard
-              key={mention.id}
-              mention={mention}
-              onClassify={(classification) =>
-                classify.mutate({ mentionId: mention.id, brandId, classification })
-              }
-              onResolve={(status) =>
-                classify.mutate({ mentionId: mention.id, brandId, status })
-              }
-              disabled={classify.isPending}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function MentionCard({
-  mention,
-  onClassify,
-  onResolve,
-  disabled,
-}: {
-  mention: DarkWebMention;
-  onClassify: (classification: DarkWebClassification) => void;
-  onResolve: (status: 'resolved' | 'false_positive') => void;
-  disabled: boolean;
-}) {
-  const sev = (mention.severity || 'LOW').toLowerCase() as 'critical' | 'high' | 'medium' | 'low';
-  const badgeVariant = DARK_WEB_BADGE[mention.classification];
+// ── WORKFLOW ─────────────────────────────────────────────────────────────
+// "What needs your action." Open takedowns + open alerts for this brand.
+// Provider escalations are part of the takedown automation track (Phase
+// C of the v3-architecture plan — `takedown_provider_apis`); for now
+// surfaced through the same takedown rows.
+// SLA threshold: if a takedown has been submitted (or in-flight) longer
+// than this without resolution, surface as breached. 7 days is a generous
+// median for the multi-provider mix; per-provider thresholds will land
+// in PR9b alongside the takedown_provider_apis SLA column from Phase C
+// of the v3-architecture plan.
+const SLA_BREACH_DAYS = 7;
+const SLA_BREACH_MS = SLA_BREACH_DAYS * 24 * 60 * 60_000;
 
-  let matchedTerms: string[] = [];
-  try {
-    matchedTerms = mention.matched_terms ? JSON.parse(mention.matched_terms) : [];
-  } catch { /* malformed JSON — render empty */ }
+function isSlaBreached(takedown: any): boolean {
+  if (takedown.resolved_at) return false;
+  const startedAt = takedown.submitted_at ?? takedown.created_at;
+  if (!startedAt) return false;
+  return Date.now() - new Date(startedAt).getTime() > SLA_BREACH_MS;
+}
+
+function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] }) {
+  const breached = useMemo(() => takedowns.filter(isSlaBreached), [takedowns]);
+  const onTime   = useMemo(() => takedowns.filter(t => !isSlaBreached(t)), [takedowns]);
+
+  // Provider escalation grouping: surface providers with multiple
+  // open takedowns OR any breach. Sorted breach-first then by count.
+  const providerStats = useMemo(() => {
+    const map = new Map<string, { name: string; total: number; breached: number }>();
+    for (const t of takedowns) {
+      const name = t.provider_name ?? 'Unknown provider';
+      const cur = map.get(name) ?? { name, total: 0, breached: 0 };
+      cur.total++;
+      if (isSlaBreached(t)) cur.breached++;
+      map.set(name, cur);
+    }
+    return Array.from(map.values())
+      .filter(p => p.total >= 2 || p.breached > 0)
+      .sort((a, b) => (b.breached - a.breached) || (b.total - a.total));
+  }, [takedowns]);
 
   return (
-    <Card>
-      <div className="space-y-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[9px] uppercase tracking-widest text-white/50">
-                {mention.source}
-              </span>
-              {mention.match_type && (
-                <span className="font-mono text-[9px] uppercase tracking-widest text-white/40">
-                  · {mention.match_type.replace(/_/g, ' ')}
-                </span>
-              )}
-              <span className="font-mono text-[9px] text-white/40">
-                · {relativeTime(mention.last_seen ?? mention.first_seen)}
-              </span>
-            </div>
-            <a
-              href={mention.source_url}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-sm text-[#E5A832] hover:underline truncate block mt-0.5"
-            >
-              {mention.source_url}
-            </a>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <SeverityChip severity={sev} size="sm" />
-            <Badge variant={badgeVariant}>{DARK_WEB_LABEL[mention.classification]}</Badge>
-          </div>
-        </div>
+    <div className="space-y-4">
+      {/* Top strip: counts that drive operator attention */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <RollupTile
+          label="Open takedowns"
+          count={takedowns.length}
+          tone={takedowns.length > 0 ? 'warn' : 'neutral'}
+        />
+        <RollupTile
+          label="SLA breached"
+          count={breached.length}
+          tone={breached.length > 0 ? 'crit' : 'neutral'}
+        />
+        <RollupTile
+          label="Provider escalations"
+          count={providerStats.length}
+          tone={providerStats.length > 0 ? 'warn' : 'neutral'}
+        />
+        <RollupTile
+          label="Open alerts"
+          count={alerts.length}
+          tone={alerts.length > 0 ? 'crit' : 'neutral'}
+        />
+      </div>
 
-        {matchedTerms.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {matchedTerms.map((t, i) => (
-              <span
-                key={`${t}-${i}`}
-                className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 font-mono text-[9px] text-white/60"
-              >
-                {t}
-              </span>
+      {/* Provider escalations — providers with multiple opens or any breach */}
+      {providerStats.length > 0 && (
+        <Card hover={false}>
+          <SectionLabel>Provider escalations</SectionLabel>
+          <div className="mt-2 text-[11px] font-mono text-[var(--text-tertiary)]">
+            Providers with multiple open takedowns or any SLA breach against this brand
+          </div>
+          <div className="mt-3 space-y-2">
+            {providerStats.map(p => (
+              <div key={p.name} style={{
+                padding: '8px 12px', borderRadius: 6,
+                border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}>
+                <div className="text-sm text-[var(--text-primary)]">{p.name}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-[var(--text-tertiary)]">
+                    {p.total} open
+                  </span>
+                  {p.breached > 0 && (
+                    <Badge variant="critical">{p.breached} breached</Badge>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
-        )}
+        </Card>
+      )}
 
-        {mention.content_snippet && (
-          <pre className="font-mono text-[10px] text-white/60 whitespace-pre-wrap break-all bg-black/30 rounded px-3 py-2 border border-white/5 max-h-32 overflow-y-auto">
-            {mention.content_snippet}
-          </pre>
-        )}
+      {/* Open takedowns — breached first, then on-time */}
+      <Card hover={false}>
+        <div className="flex items-center justify-between">
+          <SectionLabel>Open takedowns</SectionLabel>
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
+            {takedowns.length} pending
+          </span>
+        </div>
+        <div className="mt-3 space-y-2">
+          {takedowns.length === 0 && (
+            <EmptyState title="No open takedowns" description="Sparrow has no drafts assembled for this brand right now." />
+          )}
+          {breached.map((t: any) => (
+            <TakedownRow key={t.id} takedown={t} breached />
+          ))}
+          {onTime.slice(0, 8 - Math.min(8, breached.length)).map((t: any) => (
+            <TakedownRow key={t.id} takedown={t} />
+          ))}
+          {takedowns.length > 8 && (
+            <div className="text-[11px] font-mono text-[var(--text-muted)]">
+              + {takedowns.length - 8} more in the takedowns queue
+            </div>
+          )}
+        </div>
+      </Card>
 
-        {mention.ai_assessment && (
-          <div className="text-[11px] text-white/70 italic border-l-2 border-[#E5A832]/40 pl-3">
-            AI: {mention.ai_assessment}
-          </div>
-        )}
+      {/* Open alerts — unchanged from scaffold; severity-sorted */}
+      <Card hover={false}>
+        <div className="flex items-center justify-between">
+          <SectionLabel>Open alerts</SectionLabel>
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
+            {alerts.length} new
+          </span>
+        </div>
+        <div className="mt-3 space-y-2">
+          {alerts.length === 0 && (
+            <EmptyState title="No open alerts" description="Auto-triage has cleared everything we'd surface." />
+          )}
+          {alerts.slice(0, 8).map((a: any) => (
+            <AlertRow key={a.id} alert={a} />
+          ))}
+          {alerts.length > 8 && (
+            <div className="text-[11px] font-mono text-[var(--text-muted)]">
+              + {alerts.length - 8} more in the alerts queue
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
 
-        <div className="flex gap-1.5 flex-wrap pt-1">
-          <button
-            onClick={() => onClassify('confirmed')}
-            disabled={disabled}
-            className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-[#C83C3C]/40 text-[#f87171] bg-[#C83C3C]/10 hover:bg-[#C83C3C]/20 disabled:opacity-50"
-          >
-            Confirm Threat
-          </button>
-          <button
-            onClick={() => onResolve('false_positive')}
-            disabled={disabled}
-            className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-white/10 text-white/60 bg-white/5 hover:bg-white/10 disabled:opacity-50"
-          >
-            False Positive
-          </button>
-          <button
-            onClick={() => onResolve('resolved')}
-            disabled={disabled}
-            className="px-2 py-1 rounded font-mono text-[9px] uppercase tracking-widest border border-[#3CB878]/40 text-[#3CB878] bg-[#3CB878]/10 hover:bg-[#3CB878]/20 disabled:opacity-50"
-          >
-            Resolve
-          </button>
+// ── Tiles ────────────────────────────────────────────────────────────────
+// ── Risk: ScoreCard + HealthExposureQuadrant ──────────────────────────
+//
+// Health (defense) and Exposure (offense) are intentionally separate
+// scores per .claude/plans/v3.md §9.6 + Phase 2 research synthesis.
+// No DRP vendor publishes this split — it's a Averrow differentiator.
+// The ScoreCard renders one score with a 30-day sparkline from the
+// brand_score_snapshots table (PR3). The Quadrant places the brand
+// in the offensive-pressure × defensive-posture plane so an operator
+// sees at a glance whether they're a "sitting duck" (high pressure +
+// weak defense) or a "well-defended target" (high pressure + strong
+// defense).
+
+function ScoreCard({
+  label, tone, score, grade, history, field, subtitle, updatedAt,
+}: {
+  label: string;
+  tone: 'ok' | 'crit';
+  score: number | null;
+  grade: string | null;
+  history: BrandScoreSnapshot[];
+  field: 'brand_health_score' | 'brand_exposure_score';
+  subtitle: string;
+  updatedAt?: string | null;
+}) {
+  const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
+  const series = history
+    .map(s => s[field])
+    .filter((v): v is number => typeof v === 'number');
+  const empty = score === null || score === undefined;
+
+  return (
+    <Card hover={false} variant="active" accent={accent}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>{label}</SectionLabel>
+        {grade && (
+          <span style={{
+            padding: '2px 8px', borderRadius: 4,
+            background: 'rgba(60,184,120,0.10)', color: 'var(--green)',
+            fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+          }}>{grade}</span>
+        )}
+      </div>
+      <div className="mt-1 text-[10px] text-[var(--text-muted)] font-mono">{subtitle}</div>
+
+      <div className="mt-3 flex items-end gap-3">
+        <div style={{
+          fontSize: 36, fontWeight: 800, lineHeight: 1,
+          color: empty ? 'var(--text-muted)' : accent,
+          textShadow: empty ? 'none' : `0 0 12px ${accent}55`,
+        }}>
+          {empty ? '—' : score}
+        </div>
+        <div className="text-[10px] text-[var(--text-tertiary)] font-mono">
+          / 100
         </div>
       </div>
+
+      <div className="mt-3">
+        <Sparkline series={series} accent={accent} />
+        <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-[var(--text-muted)]">
+          <span>{series.length > 0 ? `${series.length}d trend` : 'No trend yet'}</span>
+          {updatedAt && <span>updated {timeAgo(updatedAt)}</span>}
+        </div>
+      </div>
+
+      {empty && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)]">
+          Score will populate after the next daily snapshot.
+        </div>
+      )}
     </Card>
+  );
+}
+
+function Sparkline({ series, accent }: { series: number[]; accent: string }) {
+  if (series.length < 2) {
+    return (
+      <div style={{
+        height: 28, borderRadius: 4,
+        border: '1px dashed var(--border-base)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {series.length === 0 ? 'no history' : '1 sample'}
+        </span>
+      </div>
+    );
+  }
+  const w = 240;
+  const h = 28;
+  const max = Math.max(...series, 1);
+  const min = Math.min(...series, 0);
+  const range = Math.max(1, max - min);
+  const step = w / (series.length - 1);
+  const points = series.map((v, i) => {
+    const x = i * step;
+    const y = h - ((v - min) / range) * (h - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 28 }}>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={accent}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function HealthExposureQuadrant({
+  healthScore, exposureScore,
+}: {
+  healthScore: number | null;
+  exposureScore: number | null;
+}) {
+  const haveBoth = healthScore !== null && exposureScore !== null;
+
+  // Quadrant labels — what each corner means
+  const quadrants = [
+    { x: 0.75, y: 0.25, label: 'Sitting duck',   tone: 'crit' },  // high exposure, low health
+    { x: 0.25, y: 0.25, label: 'Lucky',          tone: 'warn' },  // low exposure, low health
+    { x: 0.75, y: 0.75, label: 'Well defended',  tone: 'ok'   },  // high exposure, high health
+    { x: 0.25, y: 0.75, label: 'Quiet & safe',   tone: 'ok'   },  // low exposure, high health
+  ] as const;
+
+  // Map 0-100 scores to 0-1 chart coords. Y-axis inverted (SVG top=0).
+  const x = haveBoth ? exposureScore! / 100 : 0.5;
+  const y = haveBoth ? 1 - healthScore! / 100 : 0.5;
+
+  return (
+    <Card hover={false}>
+      <SectionLabel>Posture quadrant</SectionLabel>
+      <div className="mt-3 relative" style={{ aspectRatio: '1', maxWidth: 220, margin: '0 auto' }}>
+        <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%' }}>
+          {/* Background quadrants (faint) */}
+          <rect x="0"  y="0"  width="50" height="50" fill="rgba(229,168,50,0.04)" />
+          <rect x="50" y="0"  width="50" height="50" fill="rgba(200,60,60,0.06)" />
+          <rect x="0"  y="50" width="50" height="50" fill="rgba(60,184,120,0.06)" />
+          <rect x="50" y="50" width="50" height="50" fill="rgba(60,184,120,0.10)" />
+          {/* Center axes */}
+          <line x1="50" y1="0" x2="50" y2="100" stroke="rgba(255,255,255,0.10)" strokeWidth="0.5" />
+          <line x1="0"  y1="50" x2="100" y2="50" stroke="rgba(255,255,255,0.10)" strokeWidth="0.5" />
+          {/* Quadrant labels */}
+          {quadrants.map(q => (
+            <text key={q.label}
+              x={q.x * 100} y={q.y * 100}
+              fontSize="6" fontFamily="monospace"
+              fill="var(--text-muted)" textAnchor="middle"
+              dominantBaseline="middle"
+            >{q.label}</text>
+          ))}
+          {/* Brand position dot */}
+          {haveBoth && (
+            <>
+              <circle cx={x * 100} cy={y * 100} r="4" fill="var(--amber)"
+                stroke="rgba(0,0,0,0.4)" strokeWidth="1" />
+              <circle cx={x * 100} cy={y * 100} r="8" fill="none"
+                stroke="var(--amber)" strokeOpacity="0.4" strokeWidth="1" />
+            </>
+          )}
+        </svg>
+        {/* Axis labels */}
+        <div className="absolute bottom-0 right-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
+          → Exposure
+        </div>
+        <div className="absolute top-0 left-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider"
+          style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}>
+          ↑ Health
+        </div>
+      </div>
+      {!haveBoth && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono text-center">
+          Awaiting first daily snapshot
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── DomainFootprintCard ──────────────────────────────────────────────
+// Renders the brand_domains table (PR1 schema). Apex first, then
+// type-grouped (subdomain / regional / redirect / acquired / customer-
+// added). Each row shows the domain + type chip + source chip.
+function DomainFootprintCard({
+  brandDomains, canonicalDomain, safeDomains,
+}: {
+  brandDomains: BrandDomain[];
+  canonicalDomain: string;
+  safeDomains: any[];
+}) {
+  const empty = brandDomains.length === 0;
+  // Group for display
+  const apex = brandDomains.filter(d => d.domain_type === 'apex');
+  const others = brandDomains.filter(d => d.domain_type !== 'apex');
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>Owned domain footprint</SectionLabel>
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
+          {brandDomains.length} {brandDomains.length === 1 ? 'domain' : 'domains'} tracked
+        </span>
+      </div>
+      {empty && (
+        <div className="text-xs text-[var(--text-tertiary)] py-3">
+          No domains tracked yet. The CT scanner + RDAP enricher will populate
+          this as new evidence arrives.
+        </div>
+      )}
+      {!empty && (
+        <div className="space-y-1.5">
+          {apex.map(d => <DomainRow key={d.id} domain={d} apex />)}
+          {others.map(d => <DomainRow key={d.id} domain={d} />)}
+        </div>
+      )}
+      {safeDomains.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/[0.04] text-[11px] text-[var(--text-muted)] font-mono">
+          + {safeDomains.length} brand-safe {safeDomains.length === 1 ? 'domain' : 'domains'} (excluded from impersonation matching)
+        </div>
+      )}
+      {empty && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono">
+          Canonical: <code>{canonicalDomain}</code>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const DOMAIN_TYPE_LABEL: Record<string, string> = {
+  apex:              'Apex',
+  subdomain:         'Subdomain',
+  regional:          'Regional',
+  redirect:          'Redirect',
+  acquired_property: 'Acquired',
+  customer_added:    'Customer',
+};
+
+function DomainRow({ domain, apex = false }: { domain: BrandDomain; apex?: boolean }) {
+  return (
+    <div style={{
+      padding: '6px 10px', borderRadius: 6,
+      border: '1px solid var(--border-base)',
+      background: apex ? 'rgba(229,168,50,0.05)' : 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--amber)' : 'var(--text-primary)' }}>
+        {domain.domain}
+      </code>
+      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+        style={{ background: 'var(--bg-card)', color: 'var(--text-tertiary)' }}>
+        {DOMAIN_TYPE_LABEL[domain.domain_type] ?? domain.domain_type}
+      </span>
+      <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        {domain.source}
+      </span>
+    </div>
+  );
+}
+
+// ── FirmographicBlock ────────────────────────────────────────────────
+// Renders the brand_firmographics sibling (PR4 enricher). When the
+// row is null OR all fields are null, shows an "enrichment pending"
+// state — honest about coverage gaps rather than hiding the section.
+function FirmographicBlock({
+  firmographics, brand,
+}: {
+  firmographics: BrandFirmographics | null;
+  brand: any;
+}) {
+  const hasAny = firmographics && (
+    firmographics.revenue_band ||
+    firmographics.employee_band ||
+    firmographics.industry_naics ||
+    firmographics.industry_sic ||
+    firmographics.founded_year ||
+    firmographics.is_public ||
+    firmographics.ticker
+  );
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>Who you are</SectionLabel>
+        {firmographics?.source && (
+          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+            via {firmographics.source.replace(/_/g, ' ')}
+          </span>
+        )}
+      </div>
+      {!hasAny && (
+        <div className="text-xs text-[var(--text-tertiary)] py-3">
+          Firmographic enrichment pending. The free-source enricher
+          (SEC EDGAR + Companies House + Wikidata) sweeps daily; coverage
+          is sparse for the long tail.
+        </div>
+      )}
+      {hasAny && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <FootprintTile label="Revenue"   value={firmographics!.revenue_band  ?? '—'} />
+          <FootprintTile label="Employees" value={firmographics!.employee_band ?? '—'} />
+          <FootprintTile
+            label="Industry"
+            value={firmographics!.industry_naics ?? firmographics!.industry_sic ?? brand.sector ?? '—'}
+          />
+          <FootprintTile
+            label={firmographics!.is_public ? 'Public' : 'Status'}
+            value={firmographics!.ticker ?? (firmographics!.is_public ? 'Public' : 'Private')}
+            sub={firmographics!.founded_year ? `Founded ${firmographics!.founded_year}` : undefined}
+          />
+        </div>
+      )}
+      {firmographics?.parent_company && (
+        <div className="mt-3 text-[11px] text-[var(--text-tertiary)] font-mono">
+          Parent: <span className="text-[var(--text-secondary)]">{firmographics.parent_company}</span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function FootprintTile({
+  label, value, sub, mono, onClick,
+}: {
+  label: string; value: string; sub?: string; mono?: boolean; onClick?: () => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
+      style={{
+        padding: 12, borderRadius: 8,
+        border: '1px solid var(--border-base)',
+        background: 'var(--bg-input)',
+      }}
+    >
+      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className={`mt-1 text-sm ${mono ? 'font-mono' : 'font-semibold'} text-[var(--text-primary)]`}>{value}</div>
+      {sub && <div className="mt-1 text-[11px] text-[var(--text-tertiary)]">{sub}</div>}
+    </div>
+  );
+}
+
+function RollupTile({
+  label, count, tone = 'neutral', onClick,
+}: {
+  label: string; count: number; tone?: 'neutral' | 'warn' | 'crit'; onClick?: () => void;
+}) {
+  const color = tone === 'crit' ? 'var(--sev-critical)' : tone === 'warn' ? 'var(--sev-medium)' : 'var(--text-secondary)';
+  return (
+    <div
+      onClick={onClick}
+      className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
+      style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-base)', background: 'var(--bg-input)' }}
+    >
+      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="mt-1 text-2xl font-bold" style={{ color }}>{count}</div>
+    </div>
+  );
+}
+
+function TakedownRow({ takedown, breached = false }: { takedown: any; breached?: boolean }) {
+  const startedAt = takedown.submitted_at ?? takedown.created_at;
+  const ageHours  = startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 3_600_000) : null;
+  const ageLabel  = ageHours === null ? '' : ageHours < 24 ? `${ageHours}h` : `${Math.floor(ageHours / 24)}d`;
+  const submitted = !!takedown.submitted_at;
+
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 6,
+      border: breached ? '1px solid var(--sev-critical-border)' : '1px solid var(--border-base)',
+      background: breached ? 'var(--sev-critical-bg)' : 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-mono text-[var(--text-primary)] truncate">
+          {takedown.target_value}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-[var(--text-muted)]">
+          <span>{takedown.target_type}</span>
+          <span>·</span>
+          <span>{takedown.provider_name || 'no provider'}</span>
+          {takedown.provider_method && (
+            <span style={{ padding: '0 4px', borderRadius: 2, background: 'rgba(255,255,255,0.04)' }}>
+              {takedown.provider_method}
+            </span>
+          )}
+          <span>·</span>
+          <span>{takedown.severity}</span>
+          {ageLabel && (
+            <>
+              <span>·</span>
+              <span>{submitted ? 'submitted' : 'drafted'} {ageLabel} ago</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {breached && <Badge variant="critical">SLA</Badge>}
+        <Badge variant={takedown.status === 'pending' ? 'medium' : 'default'}>{takedown.status}</Badge>
+      </div>
+    </div>
+  );
+}
+
+function AlertRow({ alert }: { alert: any }) {
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 6,
+      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs text-[var(--text-primary)] truncate">{alert.title || alert.alert_type}</div>
+        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+          {alert.alert_type} · {alert.severity}
+        </div>
+      </div>
+      <Badge variant={alert.severity === 'critical' ? 'critical' : alert.severity === 'high' ? 'high' : 'default'}>
+        {alert.status}
+      </Badge>
+    </div>
   );
 }
