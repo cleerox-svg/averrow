@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Shell } from '@/components/layout/Shell';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
@@ -11,13 +11,11 @@ import { NotFound } from '@/pages/NotFound';
 // route-specific components). Observatory's deck.gl/maplibre stay isolated
 // to that route. Login and NotFound stay eager because they're tiny and
 // needed immediately at startup.
-const Brands = React.lazy(() => import('@/features/brands/Brands').then(m => ({ default: m.Brands })));
-const BrandsV3 = React.lazy(() => import('@/features/brands-v3/Brands').then(m => ({ default: m.BrandsV3 })));
+const Brands = React.lazy(() => import('@/features/brands/Brands').then(m => ({ default: m.BrandsV3 })));
 // Scan Leads now lives as a tab inside /leads. Old /admin/scan-leads
 // links (sidebar history, sales notification emails, bookmarks) keep
 // working through a redirect — see the route definition below.
-const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetail })));
-const BrandDetailV3 = React.lazy(() => import('@/features/brands-v3/BrandDetail').then(m => ({ default: m.BrandDetailV3 })));
+const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetailV3 })));
 const Apps = React.lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = React.lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
 const Agents = React.lazy(() => import('@/features/agents/Agents').then(m => ({ default: m.Agents })));
@@ -105,6 +103,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
  * Brand admins land on their scoped dashboard.
  * Super admins land on Observatory (desktop) or Mobile Command Center (mobile).
  */
+// Redirect /brands-v3/:brandId → /brands/:brandId after v2 decommission.
+// Bookmark / external-link safety net; can be deleted once we're sure
+// no live URLs reference the v3 path.
+function RedirectToBrand() {
+  const { brandId } = useParams<{ brandId: string }>();
+  return <Navigate to={`/brands/${brandId ?? ''}`} replace />;
+}
+
 function RoleAwareHome() {
   const { isBrandAdmin } = useAuth();
   if (isBrandAdmin) {
@@ -130,9 +136,11 @@ export default function App() {
         <Route path="observatory" element={lazyRoute(<Observatory />, <ObservatoryLoader />)} />
         <Route path="observatory-v3" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
         <Route path="brands" element={lazyRoute(<Brands />)} />
-        <Route path="brands-v3" element={lazyRoute(<BrandsV3 />)} />
         <Route path="brands/:brandId" element={lazyRoute(<BrandDetail />)} />
-        <Route path="brands-v3/:brandId" element={lazyRoute(<BrandDetailV3 />)} />
+        {/* Old /brands-v3 paths redirect to canonical /brands now that
+            v2 brands is decommissioned (v3 IS the brands surface). */}
+        <Route path="brands-v3" element={<Navigate to="/brands" replace />} />
+        <Route path="brands-v3/:brandId" element={<RedirectToBrand />} />
         <Route path="apps" element={lazyRoute(<Apps />)} />
         <Route path="dark-web" element={lazyRoute(<DarkWeb />)} />
         <Route path="threats" element={lazyRoute(<Threats />)} />

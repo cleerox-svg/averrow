@@ -1,439 +1,208 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useBrands, useBrandStats, useToggleMonitor, useAddBrand } from '@/hooks/useBrands';
-import type { Brand } from '@/hooks/useBrands';
-import { LiveFeedCard } from './components/LiveFeedCard';
-import { PortfolioHealthCard } from './components/PortfolioHealthCard';
-import { AttackVectorsCard } from './components/AttackVectorsCard';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { CardGridLoader } from '@/components/ui/PageLoader';
-import { useToast } from '@/components/ui/Toast';
-import { cn } from '@/lib/cn';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Search, Shield } from 'lucide-react';
+// Brand list v3 — three outcome-shaped tabs per .claude/plans/v3.md
+// §9.6 + the user-driven reframe:
+//
+//   Intel     — what's happening across the brand catalog (default)
+//   All Brands — the searchable grid (ports v2 list as-is)
+//   Prospects — staff-only sales-intel surface, review-shaped
+//
+// Stage 1 scaffold — leans on existing v2 list for All Brands tab
+// (Brands.tsx is 988 lines and well-tested; rebuilding it from
+// scratch isn't the v3 IA value-add). The Intel and Prospects tabs
+// are the new surfaces. Per-surface refinement (tier filter, Health/
+// Exposure columns, sort improvements) ships in follow-up PRs once
+// PR3's scoring populates and PR5's candidates accumulate.
+
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip } from 'recharts';
+import { useAuth } from '@/lib/auth';
+import { useBrandStats } from '@/hooks/useBrands';
+import { useBrandMovers, type BrandMover } from '@/hooks/useBrandMovers';
 import {
-  DeepCard,
-  GlowNumber,
-  TrendSparkline,
-} from '@/components/ui';
-import { VersionToggle } from '@/components/ui/VersionToggle';
+  useBrandCandidates,
+  usePromoteBrandCandidate,
+  useRejectBrandCandidate,
+  type BrandCandidate,
+} from '@/hooks/useBrandCandidates';
+import { BrandsGrid } from './components/BrandsGrid';
+import { Card } from '@/components/ui/Card';
+import { DeepCard } from '@/components/ui/DeepCard';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { SectionLabel } from '@/components/ui/SectionLabel';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { timeAgo } from '@/lib/time';
 
-/* ─── Severity helpers (card grid) ─── */
+const STAFF_ROLES = new Set(['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing']);
 
-// Severity based on threat count
-function cardSeverity(count: number): 'critical' | 'high' | 'medium' | 'low' {
-  if (count > 2000) return 'critical';
-  if (count > 500)  return 'high';
-  if (count > 100)  return 'medium';
-  return 'low';
-}
-
-// Accent color per severity
-function severityAccent(sev: string): string {
-  switch (sev) {
-    case 'critical': return '#E24B4A';
-    case 'high':     return '#BA7517';
-    case 'medium':   return '#E5A832';
-    default:         return '#639922';
-  }
-}
-
-// Email/exposure grade → color
-function gradeStyle(grade: string | null): {
-  bg: string; color: string; border: string;
-} {
-  if (!grade) return { bg: 'var(--border-base)', color: 'var(--text-tertiary)', border: 'var(--border-base)' };
-  const g = grade.replace('+', '').replace('-', '');
-  if (g === 'A')  return { bg: 'rgba(99,153,34,0.15)',   color: '#97C459', border: 'rgba(99,153,34,0.35)' };
-  if (g === 'B')  return { bg: 'rgba(229,168,50,0.12)',  color: '#E5A832', border: 'rgba(229,168,50,0.30)' };
-  if (g === 'C')  return { bg: 'rgba(186,117,23,0.12)',  color: '#EF9F27', border: 'rgba(186,117,23,0.30)' };
-  if (g === 'D')  return { bg: 'rgba(226,75,74,0.12)',   color: '#F09595', border: 'rgba(226,75,74,0.30)' };
-  return             { bg: 'rgba(226,75,74,0.18)',   color: '#E24B4A', border: 'rgba(226,75,74,0.40)' };
-}
-
-// Social risk score → label + color
-function socialRisk(score: number | null): { label: string; color: string } | null {
-  if (score == null) return null;
-  if (score >= 70) return { label: 'High',   color: '#E24B4A' };
-  if (score >= 40) return { label: 'Med',    color: '#BA7517' };
-  return              { label: 'Low',    color: '#639922' };
-}
-
-/* ─── Constants ─── */
-
-const SECTORS = [
-  'All Sectors',
-  'Technology',
-  'Financial Services',
-  'Healthcare',
-  'Retail',
-  'Cryptocurrency',
-  'Government',
-  'Media',
-  'Other',
+const V3_TABS = [
+  { id: 'intel',     label: 'Intel',      hint: "What's happening across the catalog",      staffOnly: false },
+  { id: 'all',       label: 'All Brands', hint: 'Search the full brand catalog',            staffOnly: false },
+  { id: 'prospects', label: 'Prospects',  hint: 'CT-driven candidates for sales review',   staffOnly: true  },
 ] as const;
 
-const GRADE_STYLES: Record<string, string> = {
-  'A+': 'bg-green-900/40 text-green-400 border-green-500/30',
-  A: 'bg-green-900/40 text-green-400 border-green-500/30',
-  B: 'bg-blue-900/40 text-blue-400 border-blue-500/30',
-  C: 'bg-amber-900/40 text-amber-400 border-amber-500/30',
-  D: 'bg-orange-900/40 text-orange-400 border-orange-500/30',
-  F: 'bg-red-900/40 text-red-400 border-red-500/30',
-};
+type V3Tab = typeof V3_TABS[number]['id'];
 
-const THREAT_TYPE_STYLES: Record<string, string> = {
-  phishing: 'text-[var(--text-secondary)] border-contrail/30',
-  typosquat: 'text-yellow-400 border-yellow-400/30',
-  malware: 'text-amber-400 border-amber-400/30',
-  c2: 'text-red-400 border-red-400/30',
-  credential: 'text-orange-400 border-orange-400/30',
-  social: 'text-[#E5A832] border-afterburner-border',
-};
+export function BrandsV3() {
+  const { user } = useAuth();
+  const isStaff = !!user && STAFF_ROLES.has(user.role);
 
-const PAGE_SIZE = 50;
-
-/* ─── Helpers ─── */
-
-function threatColor(count: number): string {
-  if (count >= 200) return 'text-[#f87171]';
-  if (count >= 100) return 'text-[#fb923c]';
-  if (count >= 50) return 'text-[#fbbf24]';
-  return 'text-[#78A0C8]';
-}
-
-function threatTypePill(type: string | null) {
-  if (!type) return null;
-  const key = type.toLowerCase().replace(/[_\s]/g, '');
-  const style = THREAT_TYPE_STYLES[key] ?? 'text-white/50 border-white/20';
-  return (
-    <span className={cn('text-[10px] font-mono px-2 py-0.5 rounded border', style)}>
-      {type.replace(/_/g, ' ')}
-    </span>
-  );
-}
-
-function gradeBadge(grade: string | null) {
-  if (!grade) return <span className="text-white/20 font-mono text-[10px]">&mdash;</span>;
-  const g = grade.toUpperCase();
-  const style = GRADE_STYLES[g] ?? GRADE_STYLES['F'];
-  return (
-    <span className={cn('text-[10px] font-mono font-bold px-2 py-0.5 rounded border', style)}>
-      {g}
-    </span>
-  );
-}
-
-function rankBadge(rank: number) {
-  let style = 'border-white/10 text-white/40';
-  if (rank === 1) style = 'border-yellow-400 text-yellow-400';
-  else if (rank === 2) style = 'border-slate-300 text-slate-300';
-  else if (rank === 3) style = 'border-amber-600 text-amber-600';
-  return (
-    <span className={cn('w-6 h-6 rounded-full border text-[10px] font-mono flex items-center justify-center flex-shrink-0', style)}>
-      {rank}
-    </span>
-  );
-}
-
-function monitorStatus(brand: Brand): { label: string; style: string } {
-  if (brand.threat_count > 0) {
-    return { label: 'ACTIVE', style: 'bg-red-900/40 text-red-400 border-red-500/30' };
-  }
-  if (brand.created_at) {
-    const days = Math.floor((Date.now() - new Date(brand.created_at).getTime()) / 86400000);
-    if (days < 7) {
-      return { label: 'NEW', style: 'bg-blue-900/40 text-blue-400 border-blue-500/30' };
-    }
-  }
-  return { label: 'CLEAN', style: 'bg-green-900/40 text-green-400 border-green-500/30' };
-}
-
-function daysAgo(dateStr: string | null): string {
-  if (!dateStr) return '—';
-  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
-  if (days === 0) return 'today';
-  if (days === 1) return '1d ago';
-  return `${days}d ago`;
-}
-
-function useDebounce(value: string, delay: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
-
-/* ─── Star Toggle ─── */
-
-function StarToggle({ brand, className }: { brand: Brand; className?: string }) {
-  const toggleMonitor = useToggleMonitor();
-  const isMonitored = brand.monitored ?? false;
+  // Default Option A: Intel for everyone (per design decision in
+  // earlier conversation). Tenants see catalog-level intel filtered
+  // to their org_brands binding via the underlying handler scope.
+  const [activeTab, setActiveTab] = useState<V3Tab>('intel');
 
   return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        toggleMonitor.mutate(brand.id);
-      }}
-      className={cn(
-        'transition-colors',
-        isMonitored ? 'text-yellow-400' : 'text-white/20 hover:text-yellow-400',
-        className,
-      )}
-      aria-label={isMonitored ? 'Unmonitor brand' : 'Monitor brand'}
-    >
-      {isMonitored ? (
-        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-        </svg>
-      ) : (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.562.562 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-        </svg>
-      )}
-    </button>
-  );
-}
+    <div className="animate-fade-in space-y-6">
+      {/* Header — title only; v2 brands surface decommissioned. */}
+      <div>
+        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Brands</h1>
+      </div>
 
-/* ─── Add Brand Modal ─── */
-
-function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { showToast } = useToast();
-  const addBrand = useAddBrand();
-  const [domain, setDomain] = useState('');
-  const [name, setName] = useState('');
-  const [sector, setSector] = useState('Auto-detect');
-  const [reason, setReason] = useState('Client Brand');
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
-
-  const handleSubmit = useCallback(() => {
-    let cleanDomain = domain.trim();
-    cleanDomain = cleanDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    if (!cleanDomain.includes('.')) {
-      setError('Domain must contain a dot (e.g. example.com)');
-      return;
-    }
-    setError('');
-    addBrand.mutate(
-      {
-        domain: cleanDomain,
-        name: name.trim() || undefined,
-        sector: sector === 'Auto-detect' ? undefined : sector,
-        reason,
-        notes: notes.trim() || undefined,
-      },
-      {
-        onSuccess: () => {
-          showToast('Brand added for monitoring', 'success');
-          onClose();
-          setDomain('');
-          setName('');
-          setSector('Auto-detect');
-          setReason('Client Brand');
-          setNotes('');
-        },
-        onError: (err) => {
-          showToast(err instanceof Error ? err.message : 'Failed to add brand', 'error');
-        },
-      },
-    );
-  }, [domain, name, sector, reason, notes, addBrand, showToast, onClose]);
-
-  if (!open) return null;
-
-  const inputClass = 'w-full rounded-lg px-3 py-2 font-mono text-sm';
-  const inputStyle: React.CSSProperties = {
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-base)',
-    color: 'var(--text-primary)',
-    outline: 'none',
-  };
-  const labelClass = 'block font-mono text-[10px] uppercase tracking-widest text-[var(--text-tertiary)] mb-1.5';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
-        <h2 className="font-display text-lg font-bold mb-5" style={{ color:'var(--text-primary)' }}>Monitor Brand</h2>
-
-        <div className="space-y-4">
-          <div>
-            <label className={labelClass}>Domain *</label>
-            <input
-              className={inputClass}
-              style={inputStyle}
-              placeholder="example.com"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-            />
-            {error && <p className="mt-1 font-mono text-[10px] text-red-400">{error}</p>}
-          </div>
-
-          <div>
-            <label className={labelClass}>Brand Name</label>
-            <input
-              className={inputClass}
-              style={inputStyle}
-              placeholder="Auto-detected from domain"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className={labelClass}>Sector</label>
-            <select
-              className={inputClass}
-              style={inputStyle}
-              value={sector}
-              onChange={(e) => setSector(e.target.value)}
+      {/* Sticky tab strip */}
+      <div className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-lg border-b border-white/[0.06] -mx-6 px-6">
+        <div className="flex gap-1 overflow-x-auto scrollbar-none">
+          {V3_TABS.filter(t => !t.staffOnly || isStaff).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
+                activeTab === tab.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
+              title={tab.hint}
             >
-              <option>Auto-detect</option>
-              {SECTORS.slice(1).map(s => <option key={s}>{s}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className={labelClass}>Reason</label>
-            <select
-              className={inputClass}
-              style={inputStyle}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            >
-              {['Client Brand', 'Competitor', 'Prospect', 'Partner', 'Threat Intel'].map(r => (
-                <option key={r}>{r}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className={labelClass}>Notes</label>
-            <textarea
-              className={cn(inputClass, 'resize-none h-20')}
-              style={inputStyle}
-              placeholder="Optional notes..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-3 mt-6">
-          <button
-            onClick={onClose}
-            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-white/10 text-[var(--text-tertiary)] hover:bg-white/5 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={addBrand.isPending}
-            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors disabled:opacity-50"
-            style={{ color: 'var(--amber)' }}
-          >
-            {addBrand.isPending ? 'Adding...' : 'Monitor Brand'}
-          </button>
+              {tab.label}
+              {tab.staffOnly && (
+                <span className="ml-2 inline-block px-1.5 py-0.5 text-[8px] uppercase tracking-wider rounded bg-white/10 text-[var(--text-muted)]">
+                  Staff
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
+
+      {activeTab === 'intel' && <IntelTab isStaff={isStaff} />}
+      {activeTab === 'all' && <BrandsGrid />}
+      {activeTab === 'prospects' && isStaff && <ProspectsTab />}
     </div>
   );
 }
 
-/* ─── Stats Row ─── */
+// ── INTEL ───────────────────────────────────────────────────────────────
+// Catalog-level overview. "What's happening across the brand catalog
+// this week." All data pulled from existing endpoints — no new backend
+// work. The visual rebuild lifts the surface from "stat tiles + plain
+// lists" (PR6 scaffold) to a chart-led intel surface with sector
+// donut, threat-type breakdown bars, and DeepCard-treated stat hero.
+function IntelTab({ isStaff }: { isStaff: boolean }) {
+  const { data: stats, isLoading: statsLoading } = useBrandStats();
+  const { data: movers, isLoading: moversLoading } = useBrandMovers();
 
-function StatsRow() {
-  const { data: stats, isLoading } = useBrandStats();
+  return (
+    <div className="space-y-5">
+      <HeroStrip stats={stats} loading={statsLoading} />
 
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {[0, 1, 2, 3].map(i => (
-          <Skeleton key={i} className="h-28 rounded-xl" />
-        ))}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <SectorDonut breakdown={stats?.sector_breakdown ?? null} totalTracked={stats?.total_tracked ?? 0} />
+        <ThreatTypeBreakdown stats={stats} />
+        {isStaff
+          ? <HotProspectsTeaser />
+          : <CatalogStatusCard stats={stats} />
+        }
       </div>
-    );
-  }
 
-  const cards: Array<{
-    label: string;
-    value: number;
-    suffix?: string;
-    sub?: string;
-    accent: string;
-  }> = [
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <MoversCard
+          title="Most attacked this week"
+          rows={movers?.rising ?? []}
+          tone="crit"
+          emptyMsg="No rising attack pressure this week"
+          loading={moversLoading}
+        />
+        <MoversCard
+          title="Cooling down"
+          rows={movers?.falling ?? []}
+          tone="ok"
+          emptyMsg="No brands cooling significantly this week"
+          loading={moversLoading}
+        />
+      </div>
+
+      <CatalogStatusFooter />
+    </div>
+  );
+}
+
+// ── HeroStrip ────────────────────────────────────────────────────────
+// 4 stat tiles using DeepCard with accent gradients, big numbers,
+// and contextual sub-info. Replaces the flat 4-tile strip from the
+// PR6 scaffold which had no visual hierarchy.
+function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
+  const tiles = [
     {
-      label: 'Total Tracked',
-      value: stats?.total_tracked ?? 0,
-      sub: stats?.sector_breakdown?.[0]?.sector ?? undefined,
+      label: 'Total tracked',
+      value: stats?.total_tracked != null ? formatNumber(stats.total_tracked) : '—',
+      sub: 'across catalog',
       accent: '#E5A832',
     },
     {
-      label: 'New This Week',
-      value: stats?.new_this_week ?? 0,
-      sub: stats?.newest_brand_name ?? undefined,
-      accent: '#E5A832',
+      label: 'New this week',
+      value: stats?.new_this_week != null ? `+${formatNumber(stats.new_this_week)}` : '—',
+      sub: stats?.newest_brand_name ?? 'newly seeded',
+      accent: '#3CB878',
     },
     {
-      label: 'Fastest Rising',
-      value: stats?.fastest_rising_pct ?? 0,
-      suffix: '%',
-      sub: stats?.fastest_rising ?? undefined,
-      accent: '#C83C3C',
+      label: 'Fastest rising',
+      value: stats?.fastest_rising_pct != null ? `+${stats.fastest_rising_pct}%` : '—',
+      sub: stats?.fastest_rising ?? '7-day delta',
+      accent: '#E8923C',
     },
     {
-      label: 'Top Attack',
-      value: 0,
-      sub: stats?.top_threat_type?.replace(/_/g, ' ') ?? '—',
+      label: 'Top attack',
+      value: stats?.top_threat_type ? humanizeThreatType(stats.top_threat_type) : '—',
+      sub: stats?.top_threat_type_pct != null ? `${stats.top_threat_type_pct}% of incidents` : 'across all brands',
       accent: '#C83C3C',
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-      {cards.map((c, i) => (
-        <DeepCard
-          key={c.label}
-          variant="active"
-          accent={c.accent}
-          style={{ padding: '16px 20px', minWidth: 160, position: 'relative', overflow: 'hidden' }}
-        >
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {tiles.map((t, i) => (
+        <DeepCard key={t.label} variant="active" accent={t.accent}
+          style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
           <div style={{
             position: 'absolute', top: 12, left: 16,
             width: 4, height: 4, borderRadius: '50%',
-            background: c.accent, boxShadow: `0 0 8px ${c.accent}`,
+            background: t.accent, boxShadow: `0 0 8px ${t.accent}`,
           }} />
           <div style={{
-            position: 'absolute', right: -16, bottom: -16,
-            width: 80, height: 80, borderRadius: '50%',
-            background: `radial-gradient(circle, ${c.accent}40, transparent 70%)`,
+            position: 'absolute', right: -20, bottom: -20,
+            width: 110, height: 110, borderRadius: '50%',
+            background: `radial-gradient(circle, ${t.accent}30, transparent 70%)`,
             pointerEvents: 'none',
           }} />
-          <div style={{ marginTop: 8, position: 'relative' }}>
+          <div style={{ position: 'relative', marginTop: 4 }}>
             <div style={{
               fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.20em',
-              color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 6,
+              color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8,
             }}>
-              {c.label}
+              {t.label}
             </div>
-            {i === 3 ? (
-              <div style={{
-                fontSize: 22, fontWeight: 800,
-                color: c.accent, textShadow: `0 0 12px ${c.accent}66`,
-                textTransform: 'capitalize', lineHeight: 1.1,
-              }}>
-                {c.sub ?? '—'}
-              </div>
-            ) : (
-              <GlowNumber value={c.value} color={c.accent} size="lg" suffix={c.suffix} />
-            )}
-            {i !== 3 && c.sub && (
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                {c.sub}
+            <div style={{
+              fontSize: i === 3 ? 22 : 30,
+              fontWeight: 800,
+              color: t.accent,
+              textShadow: `0 0 12px ${t.accent}55`,
+              textTransform: i === 3 ? 'capitalize' : 'none',
+              lineHeight: 1.05,
+            }}>
+              {loading ? '…' : t.value}
+            </div>
+            {t.sub && (
+              <div className="mt-1 text-[11px] font-mono text-[var(--text-tertiary)] truncate">
+                {t.sub}
               </div>
             )}
           </div>
@@ -443,48 +212,334 @@ function StatsRow() {
   );
 }
 
-/* ─── Favicon Avatar ─── */
+// ── SectorDonut ──────────────────────────────────────────────────────
+// Replaces the empty grid of sector tiles (most Tranco-imported brands
+// have no sector classified, so the grid was rendering blank). Uses
+// recharts PieChart so even sparse data presents as an intelligible
+// chart with a "%-of-classified" framing.
+const SECTOR_COLORS = [
+  '#E5A832', '#0A8AB5', '#3CB878', '#C83C3C', '#E8923C',
+  '#9B59B6', '#1ABC9C', '#34495E',
+];
 
-function FaviconAvatar({
-  name,
-  faviconUrl,
-  size = 38,
+function SectorDonut({ breakdown, totalTracked }: {
+  breakdown: { sector: string; count: number }[] | null;
+  totalTracked: number;
+}) {
+  const data = (breakdown ?? []).slice(0, 8);
+  const sumClassified = data.reduce((s, x) => s + x.count, 0);
+  const unclassified = Math.max(0, totalTracked - sumClassified);
+
+  if (data.length === 0) {
+    return (
+      <Card hover={false} style={{ minHeight: 220 }}>
+        <SectionLabel>Sector mix</SectionLabel>
+        <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
+          <span className="text-xs text-[var(--text-tertiary)]">
+            Sector classification pending for {formatNumber(totalTracked)} brands
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Sector mix</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(sumClassified)} classified
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 items-center">
+        <div style={{ height: 160 }}>
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie data={data} dataKey="count" nameKey="sector"
+                innerRadius={42} outerRadius={68} paddingAngle={2} stroke="none">
+                {data.map((_, i) => (
+                  <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />
+                ))}
+              </Pie>
+              <RTooltip
+                contentStyle={{
+                  background: 'var(--bg-card)', border: '1px solid var(--border-base)',
+                  borderRadius: 6, fontSize: 11, fontFamily: 'monospace',
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-1">
+          {data.map((s, i) => (
+            <div key={s.sector} className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-2 min-w-0">
+                <span style={{
+                  width: 8, height: 8, borderRadius: 2,
+                  background: SECTOR_COLORS[i % SECTOR_COLORS.length],
+                  flexShrink: 0,
+                }} />
+                <span className="font-mono text-[var(--text-secondary)] truncate capitalize">
+                  {s.sector}
+                </span>
+              </div>
+              <span className="font-mono text-[var(--text-tertiary)] flex-shrink-0">
+                {Math.round((s.count / sumClassified) * 100)}%
+              </span>
+            </div>
+          ))}
+          {unclassified > 0 && (
+            <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-white/[0.04]">
+              <span className="font-mono text-[var(--text-muted)]">Unclassified</span>
+              <span className="font-mono text-[var(--text-muted)]">
+                {formatNumber(unclassified)}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ── ThreatTypeBreakdown ──────────────────────────────────────────────
+// Bar-chart of the top 3 threat types from useBrandStats. Replaces
+// the implicit "Top attack" tile-only treatment with explicit ranking
+// so an operator sees the full breakdown at a glance.
+function ThreatTypeBreakdown({ stats }: { stats: any }) {
+  const types: Array<{ name: string; pct: number; rank: number }> = [];
+  if (stats?.top_threat_type) {
+    types.push({ name: stats.top_threat_type, pct: stats.top_threat_type_pct ?? 0, rank: 1 });
+  }
+  if (stats?.second_threat_type) {
+    types.push({ name: stats.second_threat_type, pct: 0, rank: 2 });
+  }
+  if (stats?.third_threat_type) {
+    types.push({ name: stats.third_threat_type, pct: 0, rank: 3 });
+  }
+
+  // Bar widths: top one is the actual %, 2nd/3rd are scaled relative
+  // to top so the visual hierarchy matches even when 2nd/3rd %s
+  // aren't published by the endpoint.
+  const topPct = types[0]?.pct ?? 0;
+
+  return (
+    <Card hover={false}>
+      <SectionLabel>Attack types</SectionLabel>
+      <div className="mt-3 space-y-2.5">
+        {types.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-4 text-center">
+            No threat type data yet
+          </div>
+        )}
+        {types.map((t, i) => {
+          const barPct = i === 0 ? topPct : Math.max(10, topPct - (i * 18));
+          const accent = i === 0 ? '#C83C3C' : i === 1 ? '#E8923C' : '#DCAA32';
+          return (
+            <div key={t.name}>
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-[var(--text-primary)] capitalize">
+                  {humanizeThreatType(t.name)}
+                </span>
+                <span className="text-[var(--text-tertiary)]">
+                  {i === 0 ? `${t.pct}%` : `#${t.rank}`}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <div className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${barPct}%`,
+                    background: `linear-gradient(90deg, ${accent}, ${accent}80)`,
+                    boxShadow: i === 0 ? `0 0 8px ${accent}55` : 'none',
+                  }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ── CatalogStatusCard ─────────────────────────────────────────────
+// Non-staff fallback for the third column (Hot prospects is staff-
+// only). Shows "what's running automatically" so customers
+// understand the platform's freshness model.
+function CatalogStatusCard({ stats }: { stats: any }) {
+  const items = [
+    { label: 'Tranco import',         schedule: 'Daily 06:00 UTC' },
+    { label: 'Brand-Health snapshot', schedule: 'Daily 00:00 UTC' },
+    { label: 'CT candidate sweep',    schedule: 'Daily 00:00 UTC' },
+    { label: 'Firmographic enricher', schedule: 'Hourly' },
+  ];
+  return (
+    <Card hover={false}>
+      <SectionLabel>Catalog automation</SectionLabel>
+      <div className="mt-3 space-y-2">
+        {items.map(it => (
+          <div key={it.label} className="flex items-center justify-between text-[11px] font-mono">
+            <span className="flex items-center gap-2">
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: 'var(--green)',
+                boxShadow: '0 0 6px var(--green)',
+              }} />
+              <span className="text-[var(--text-secondary)]">{it.label}</span>
+            </span>
+            <span className="text-[var(--text-tertiary)]">{it.schedule}</span>
+          </div>
+        ))}
+      </div>
+      {stats?.total_tracked != null && (
+        <div className="mt-3 pt-2 border-t border-white/[0.04] text-[10px] font-mono text-[var(--text-muted)]">
+          Auto-sweeps {formatNumber(stats.total_tracked)} brands continuously
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── CatalogStatusFooter ──────────────────────────────────────────────
+// Catalog-wide status footer: "what just ran" / "next refresh in X."
+// Keeps the user oriented without an admin button.
+function CatalogStatusFooter() {
+  return (
+    <div className="text-[10px] font-mono text-[var(--text-muted)] text-center pt-2">
+      Catalog data refreshes hourly; brand-health + exposure snapshots run nightly.
+      Tranco rank refreshes daily.
+    </div>
+  );
+}
+
+function MoversCard({ title, rows, tone, emptyMsg, loading }: {
+  title: string;
+  rows: BrandMover[];
+  tone: 'crit' | 'ok';
+  emptyMsg: string;
+  loading?: boolean;
+}) {
+  const navigate = useNavigate();
+  const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
+  // Bar widths relative to the largest abs delta in this card's set
+  const maxDelta = rows.length > 0
+    ? Math.max(...rows.slice(0, 5).map(r => Math.abs(r.delta_7d)), 1)
+    : 1;
+  const top5 = rows.slice(0, 5);
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>{title}</SectionLabel>
+        {rows.length > 0 && (
+          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+            top {Math.min(5, rows.length)} of {rows.length}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {loading && (
+          <div className="text-xs text-[var(--text-tertiary)] py-4 text-center">Loading…</div>
+        )}
+        {!loading && rows.length === 0 && (
+          <div className="text-xs text-[var(--text-tertiary)] py-4 text-center">{emptyMsg}</div>
+        )}
+        {top5.map(b => {
+          const barPct = (Math.abs(b.delta_7d) / maxDelta) * 100;
+          return (
+            <div
+              key={b.id}
+              onClick={() => navigate(`/brands-v3/${b.id}`)}
+              className="cursor-pointer hover:bg-white/[0.03] transition-colors group"
+              style={{
+                padding: '10px 12px', borderRadius: 6,
+                border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+                position: 'relative', overflow: 'hidden',
+              }}
+            >
+              {/* delta-magnitude bar — visual weight matches the data */}
+              <div style={{
+                position: 'absolute', left: 0, top: 0, bottom: 0,
+                width: `${barPct}%`,
+                background: `linear-gradient(90deg, ${accent}18, ${accent}06)`,
+                pointerEvents: 'none',
+              }} />
+              <div className="relative flex items-center gap-3">
+                <BrandFavicon
+                  name={b.name}
+                  domain={b.canonical_domain}
+                  logoUrl={b.logo_url}
+                  size={28}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--amber)] transition-colors">
+                    {b.name}
+                  </div>
+                  <div className="text-[11px] font-mono text-[var(--text-tertiary)] truncate">{b.canonical_domain}</div>
+                </div>
+                <div className="text-right flex-shrink-0" style={{ minWidth: 76 }}>
+                  <div className="text-sm font-bold" style={{ color: accent, textShadow: `0 0 6px ${accent}55` }}>
+                    {b.delta_7d >= 0 ? '+' : ''}{b.delta_7d}
+                  </div>
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    {b.today_count} active
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+function formatNumber(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+function humanizeThreatType(t: string): string {
+  return (t || '').replace(/_/g, ' ');
+}
+
+// Compact favicon avatar for Intel-tab list rows. Uses the brand's
+// stored logo_url when available, falls back to Google's S2 favicons
+// API by canonical_domain, and finally to a letter chip if both fail.
+function BrandFavicon({
+  name, domain, logoUrl, size = 24,
 }: {
-  name:        string;
-  domain?:     string | null;
-  faviconUrl?: string;
-  size?:       number;
+  name: string;
+  domain?: string | null;
+  logoUrl?: string | null;
+  size?: number;
 }) {
   const [failed, setFailed] = useState(false);
-  const radius = Math.round(size * 0.26);
+  const radius = Math.round(size * 0.25);
+  const src = logoUrl
+    ?? (domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : null);
 
   return (
     <div style={{
-      width:          size,
-      height:         size,
-      borderRadius:   radius,
-      background:     'linear-gradient(145deg, var(--bg-elevated), var(--bg-card-deep))',
-      border:         '1px solid var(--border-base)',
-      display:        'flex',
-      alignItems:     'center',
-      justifyContent: 'center',
-      overflow:       'hidden',
-      flexShrink:     0,
+      width: size, height: size, borderRadius: radius,
+      background: 'linear-gradient(145deg, var(--bg-elevated), var(--bg-card-deep))',
+      border: '1px solid var(--border-base)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      overflow: 'hidden', flexShrink: 0,
     }}>
-      {faviconUrl && !failed ? (
+      {src && !failed ? (
         <img
-          src={faviconUrl}
-          width={Math.round(size * 0.60)}
-          height={Math.round(size * 0.60)}
+          src={src}
+          width={Math.round(size * 0.65)}
+          height={Math.round(size * 0.65)}
           alt={name}
           onError={() => setFailed(true)}
-          style={{ borderRadius: 3, display: 'block' }}
+          style={{ borderRadius: 2, display: 'block' }}
         />
       ) : (
         <span style={{
-          fontSize:   Math.round(size * 0.37),
-          fontWeight: 900,
-          color:      'var(--text-secondary)',
+          fontSize: Math.round(size * 0.4),
+          fontWeight: 800,
+          color: 'var(--text-secondary)',
         }}>
           {(name[0] ?? '?').toUpperCase()}
         </span>
@@ -493,528 +548,259 @@ function FaviconAvatar({
   );
 }
 
-/* ─── Brand Card ─── */
-
-function BrandCard({
-  brand,
-}: {
-  brand: Brand;
-  onToggleMonitor: (id: string) => void;
-}) {
-  const tc        = brand.threat_count ?? 0;
-  const sev       = cardSeverity(tc);
-  const accent    = severityAccent(sev);
-  const emailG    = gradeStyle(brand.email_security_grade);
-  const exposureG = gradeStyle(
-    brand.exposure_score != null
-      ? (brand.exposure_score >= 80 ? 'A'
-       : brand.exposure_score >= 60 ? 'B'
-       : brand.exposure_score >= 40 ? 'C'
-       : brand.exposure_score >= 20 ? 'D' : 'F')
-      : null
-  );
-  const social   = socialRisk(brand.social_risk_score ?? null);
-  const faviconUrl =
-    brand.logo_url ??
-    (brand.canonical_domain
-      ? `https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=32`
-      : undefined);
-
-  // Sparkline from threat_history (array of daily counts)
-  const sparkData: number[] = Array.isArray(brand.threat_history)
-    ? brand.threat_history.slice(-14)
-    : [];
-
-  return (
-    // <Link> instead of <div onClick> — keyboard nav, middle-click new
-    // tab, and screen readers all work for free. Audit H1.
-    <Link
-      to={`/brands/${brand.id}`}
-      style={{
-        background:   'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        border:       `1px solid var(--border-base)`,
-        borderLeft:   `3px solid ${accent}`,
-        borderRadius: 'var(--card-radius)',
-        padding:      '14px 16px',
-        cursor:       'pointer',
-        position:     'relative',
-        overflow:     'hidden',
-        transition:   'var(--transition-fast)',
-        boxShadow:    'var(--card-shadow), inset 0 1px 0 var(--border-strong)',
-        textDecoration: 'none',
-        color:        'inherit',
-        display:      'block',
-      }}
-      onMouseEnter={e => {
-        (e.currentTarget as HTMLAnchorElement).style.borderColor = `${accent}60`;
-        (e.currentTarget as HTMLAnchorElement).style.boxShadow =
-          `var(--card-shadow), inset 0 1px 0 var(--border-strong), 0 0 20px ${accent}12`;
-      }}
-      onMouseLeave={e => {
-        (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--border-base)';
-        (e.currentTarget as HTMLAnchorElement).style.borderLeftColor = accent;
-        (e.currentTarget as HTMLAnchorElement).style.boxShadow =
-          'var(--card-shadow), inset 0 1px 0 var(--border-strong)';
-      }}
-    >
-      {/* ── HEADER: favicon + name + threat count ─────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-
-        {/* Favicon with severity dot */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
-          <FaviconAvatar
-            name={brand.name}
-            domain={brand.canonical_domain}
-            faviconUrl={faviconUrl}
-            size={38}
-          />
-          <div style={{
-            position:     'absolute',
-            bottom:       -2,
-            right:        -2,
-            width:        10,
-            height:       10,
-            borderRadius: '50%',
-            background:   accent,
-            border:       '2px solid var(--bg-page)',
-            boxShadow:    `0 0 6px ${accent}80`,
-          }} />
-        </div>
-
-        {/* Name + domain */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize:    14,
-            fontWeight:  700,
-            color:       'var(--text-primary)',
-            whiteSpace:  'nowrap',
-            overflow:    'hidden',
-            textOverflow:'ellipsis',
-          }}>
-            {brand.name}
-          </div>
-          <div style={{
-            fontSize:    11,
-            color:       'var(--text-muted)',
-            fontFamily:  'var(--font-mono)',
-            marginTop:   2,
-          }}>
-            {brand.canonical_domain ?? '—'}
-          </div>
-        </div>
-
-        {/* Threat count */}
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{
-            fontSize:    20,
-            fontWeight:  900,
-            fontFamily:  'var(--font-mono)',
-            color:       accent,
-            lineHeight:  1,
-            textShadow:  `0 0 16px ${accent}60`,
-          }}>
-            {tc.toLocaleString()}
-          </div>
-          <div style={{
-            fontSize:    9,
-            color:       'var(--text-muted)',
-            fontFamily:  'var(--font-mono)',
-            letterSpacing: '0.10em',
-            textTransform: 'uppercase',
-            marginTop:   2,
-          }}>
-            threats · all-time
-          </div>
-        </div>
-      </div>
-
-      {/* ── METRIC TILES ─────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 7, marginBottom: 10 }}>
-
-        {/* Exposure */}
-        <div style={{
-          flex: 1,
-          background: 'var(--border-base)',
-          borderRadius: 8,
-          padding: '7px 8px',
-          textAlign: 'center',
-          border: '1px solid var(--border-base)',
-        }}>
-          <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
-            textTransform: 'uppercase', marginBottom: 5,
-          }}>
-            Exposure
-          </div>
-          {brand.exposure_score != null ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-              <div style={{
-                width: 26, height: 26, borderRadius: 6, display: 'flex',
-                alignItems: 'center', justifyContent: 'center',
-                fontSize: 12, fontWeight: 800, fontFamily: 'var(--font-mono)',
-                background: exposureG.bg, color: exposureG.color,
-                border: `1px solid ${exposureG.border}`,
-              }}>
-                {brand.exposure_score >= 80 ? 'A'
-                : brand.exposure_score >= 60 ? 'B'
-                : brand.exposure_score >= 40 ? 'C'
-                : brand.exposure_score >= 20 ? 'D' : 'F'}
-              </div>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                {brand.exposure_score}
-              </span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>—</div>
-          )}
-        </div>
-
-        {/* Email grade */}
-        <div style={{
-          flex: 1,
-          background: 'var(--border-base)',
-          borderRadius: 8,
-          padding: '7px 8px',
-          textAlign: 'center',
-          border: '1px solid var(--border-base)',
-        }}>
-          <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
-            textTransform: 'uppercase', marginBottom: 5,
-          }}>
-            Email
-          </div>
-          {brand.email_security_grade ? (
-            <div style={{
-              width: 26, height: 26, borderRadius: 6, margin: '0 auto',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 800, fontFamily: 'var(--font-mono)',
-              background: emailG.bg, color: emailG.color,
-              border: `1px solid ${emailG.border}`,
-            }}>
-              {brand.email_security_grade}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>—</div>
-          )}
-        </div>
-
-        {/* Social risk */}
-        <div style={{
-          flex: 1,
-          background: 'var(--border-base)',
-          borderRadius: 8,
-          padding: '7px 8px',
-          textAlign: 'center',
-          border: '1px solid var(--border-base)',
-        }}>
-          <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
-            textTransform: 'uppercase', marginBottom: 5,
-          }}>
-            Social
-          </div>
-          {social ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 4 }}>
-              <div style={{
-                width: 7, height: 7, borderRadius: '50%',
-                background: social.color, flexShrink: 0,
-                boxShadow: `0 0 6px ${social.color}`,
-              }} />
-              <span style={{ fontSize: 12, color: social.color, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                {social.label}
-              </span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>—</div>
-          )}
-        </div>
-      </div>
-
-      {/* ── SPARKLINE ────────────────────────────────────────── */}
-      {sparkData.length > 1 ? (
-        <div style={{ position: 'relative' }}>
-          <TrendSparkline
-            data={sparkData}
-            fill
-            height={36}
-            color={accent}
-            animate={false}
-          />
-          <span style={{
-            position: 'absolute', bottom: 2, right: 4,
-            fontSize: 8, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)', letterSpacing: '0.10em',
-            opacity: 0.6,
-          }}>14d</span>
-        </div>
-      ) : (
-        <div style={{
-          height: 36,
-          background: 'var(--border-base)',
-          borderRadius: 6,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            no trend data
-          </span>
-        </div>
-      )}
-    </Link>
-  );
-}
-
-/* ─── Main Page ─── */
-
-
-interface BrandsProps {
-  /**
-   * When true, suppresses the page-level chrome (title row, version
-   * toggle, hero stats). Use when this component is embedded inside
-   * the v3 list shell (features/brands-v3/Brands.tsx All Brands tab)
-   * — that surface owns its own header + intel tab so the v2 chrome
-   * would duplicate.
-   */
-  embedded?: boolean;
-}
-
-export function Brands({ embedded = false }: BrandsProps = {}) {
+function HotProspectsTeaser() {
   const navigate = useNavigate();
-  const { data: brands = [], isLoading } = useBrands({ view: 'all', timeRange: '7d' });
-  const toggleMonitor = useToggleMonitor();
-
-  /* ─── Shared filter state ─── */
-  const [search, setSearch] = useState('');
-  const [sector, setSector] = useState('all');
-  const [activeTab, setActiveTab] = useState<'all' | 'monitored' | 'targeted'>('all');
-  const [page, setPage] = useState(1);
-  const [modalOpen, setModalOpen] = useState(false);
-  const debouncedSearch = useDebounce(search, 300);
-
-  const filteredBrands = useMemo(() => {
-    return (brands ?? []).filter(b => {
-      const matchSearch = !debouncedSearch ||
-        b.name?.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        b.canonical_domain?.toLowerCase().includes(debouncedSearch.toLowerCase());
-      const matchSector = sector === 'all' || b.sector === sector;
-      const matchTab = activeTab === 'all' ? true
-        : activeTab === 'monitored' ? b.monitored
-        : (b.threat_count ?? 0) > 0;
-      return matchSearch && matchSector && matchTab;
-    });
-  }, [brands, debouncedSearch, sector, activeTab]);
-
-  const totalPages = Math.ceil(filteredBrands.length / PAGE_SIZE);
-  const pagedBrands = filteredBrands.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const showFrom = filteredBrands.length > 0 ? (page - 1) * PAGE_SIZE + 1 : 0;
-  const showTo = Math.min(page * PAGE_SIZE, filteredBrands.length);
-
-  const handleToggleMonitor = useCallback((id: string) => {
-    toggleMonitor.mutate(id);
-  }, [toggleMonitor]);
-
-  const pageNumbers = useMemo(() => {
-    const pages: (number | 'ellipsis')[] = [];
-    if (totalPages <= 5) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (page > 3) pages.push('ellipsis');
-      for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
-      if (page < totalPages - 2) pages.push('ellipsis');
-      pages.push(totalPages);
-    }
-    return pages;
-  }, [page, totalPages]);
-
+  const { data } = useBrandCandidates('pending');
+  const top = (data?.candidates ?? []).slice(0, 3);
+  if (top.length === 0) return null;
   return (
-    <div className={embedded ? 'animate-fade-in' : 'animate-fade-in space-y-6'}>
-      {!embedded && (
-        <>
-          {/* Header row with title + version toggle + add brand */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Brands</h1>
-            <div className="flex items-center gap-2 sm:gap-3">
-              <VersionToggle surface="brands" ariaLabel="Brands version" />
-              <button
-                onClick={() => setModalOpen(true)}
-                className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
-                style={{ color: 'var(--amber)' }}
-              >
-                <span className="hidden sm:inline">Monitor Brand</span>
-                <span className="sm:hidden">+ Brand</span>
-              </button>
+    <Card hover={false}>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <SectionLabel>Hot prospects from CT</SectionLabel>
+        <Badge variant="info">Staff</Badge>
+      </div>
+      <div className="space-y-2">
+        {top.map(c => (
+          <div key={c.id} style={{
+            padding: '8px 12px', borderRadius: 6,
+            border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <BrandFavicon name={c.apex_domain} domain={c.apex_domain} size={24} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
+              <div className="text-[11px] text-[var(--text-tertiary)]">
+                {c.cert_count} certs · {c.distinct_issuers} issuers · seen {timeAgo(c.first_seen)}
+              </div>
             </div>
           </div>
+        ))}
+        <button
+          onClick={() => navigate('/brands-v3?tab=prospects')}
+          className="w-full mt-1 text-[11px] font-mono text-[var(--amber)] hover:underline"
+        >
+          View {data?.total ?? 0} pending candidates →
+        </button>
+      </div>
+    </Card>
+  );
+}
 
-          {/* Stats row — always visible in standalone /brands; suppressed
-              when embedded inside /brands-v3 (Intel tab owns the stats). */}
-          <StatsRow />
+// ── PROSPECTS (staff only) ───────────────────────────────────────────
+// CT-driven brand candidate review queue. Grouped by intent strength
+// per user feedback ("not just some long list. sortable or some
+// intelligence put into to make review easier").
+type ProspectStatus = 'pending' | 'promoted' | 'rejected';
+
+function ProspectsTab() {
+  const [status, setStatus] = useState<ProspectStatus>('pending');
+  const { data, isLoading } = useBrandCandidates(status);
+  // Prefetch counts for the other status buckets so sub-tab labels show
+  // counts even before the user clicks. Cheap — each call is staleTime 60s
+  // and refetched on the same 5min interval as the active query.
+  const pendingQ  = useBrandCandidates('pending');
+  const promotedQ = useBrandCandidates('promoted');
+  const rejectedQ = useBrandCandidates('rejected');
+  const counts: Record<ProspectStatus, number> = {
+    pending:  pendingQ.data?.total ?? 0,
+    promoted: promotedQ.data?.total ?? 0,
+    rejected: rejectedQ.data?.total ?? 0,
+  };
+
+  const promote = usePromoteBrandCandidate();
+  const reject = useRejectBrandCandidate();
+  const navigate = useNavigate();
+
+  const all = data?.candidates ?? [];
+  const grouped = useMemo(() => ({
+    hot:    all.filter(c => c.cert_count >= 50),
+    warm:   all.filter(c => c.cert_count >= 10 && c.cert_count < 50),
+    worth:  all.filter(c => c.cert_count >= 3 && c.cert_count < 10),
+  }), [all]);
+
+  function handleReject(id: string) {
+    const notes = window.prompt('Reason for rejecting (optional):', '');
+    // Cancelled (null) → no-op. Empty string → reject without notes.
+    if (notes === null) return;
+    reject.mutate({ id, notes: notes || undefined });
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Status sub-tabs with live counts */}
+      <div className="flex gap-1 border-b border-white/[0.06]">
+        {(['pending', 'promoted', 'rejected'] as const).map(s => (
+          <button
+            key={s}
+            onClick={() => setStatus(s)}
+            className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${
+              status === s ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
+            }`}
+          >
+            <span>{s}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+              status === s ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.05] text-white/40'
+            }`}>
+              {counts[s]}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {isLoading && <div className="text-sm text-[var(--text-tertiary)]">Loading prospects…</div>}
+
+      {!isLoading && all.length === 0 && (
+        <EmptyState
+          title={status === 'pending' ? 'No pending prospects'
+               : status === 'promoted' ? 'No promoted candidates yet'
+               : 'No rejected candidates yet'}
+          description={status === 'pending'
+            ? "The CT aggregator hasn't surfaced anything new for review. New candidates appear here daily as the CT log fills."
+            : status === 'promoted'
+            ? 'Once you promote a candidate, it lands here with a link back to the brand row.'
+            : 'Rejections stay here as a negative training set so the same domain isn\'t re-proposed.'
+          }
+        />
+      )}
+
+      {!isLoading && all.length > 0 && status === 'pending' && (
+        <>
+          <ProspectGroup label="Hot leads" emoji="🔥" tone="crit" rows={grouped.hot}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
+          <ProspectGroup label="Warm leads" emoji="🟡" tone="warn" rows={grouped.warm}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
+          <ProspectGroup label="Worth a look" emoji="⚪" tone="info" rows={grouped.worth}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
         </>
       )}
-      {embedded && (
-        // Add Brand button alone, top-right, when embedded — keeps the
-        // primary action available without duplicating the header.
-        <div className="flex justify-end mb-3">
-          <button
-            onClick={() => setModalOpen(true)}
-            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
-            style={{ color: 'var(--amber)' }}
-          >
-            <span className="hidden sm:inline">+ Monitor Brand</span>
-            <span className="sm:hidden">+ Brand</span>
-          </button>
-        </div>
+
+      {!isLoading && all.length > 0 && status === 'promoted' && (
+        <Card hover={false}>
+          <div className="flex items-center justify-between mb-3">
+            <SectionLabel>Promoted into the brand catalog</SectionLabel>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} promoted</span>
+          </div>
+          <div className="space-y-2">
+            {all.map(c => (
+              <ReviewedRow key={c.id} c={c} onJumpBrand={(brandId) => navigate(`/brands-v3/${brandId}`)} />
+            ))}
+          </div>
+        </Card>
       )}
 
-      {/* View content */}
-      {isLoading ? (
-        <CardGridLoader count={12} />
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-4 mt-4">
-          {/* Left: filter bar + brand rows */}
-          <div className="min-w-0">
-            {/* Filter bar */}
-            <DeepCard variant="base" style={{ padding: '10px 16px', marginBottom: 12 }}>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-              <input
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1); }}
-                placeholder="Search brands or domains..."
-                className="flex-1 rounded-lg px-3 py-1.5 text-sm min-w-0"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-base)',
-                  color: 'var(--text-primary)',
-                  outline: 'none',
-                }}
-              />
-              <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
-                <select
-                  className="rounded-lg px-3 py-1.5 font-mono text-xs flex-shrink-0"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-base)',
-                    color: 'var(--text-primary)',
-                    outline: 'none',
-                  }}
-                  value={sector}
-                  onChange={(e) => { setSector(e.target.value); setPage(1); }}
-                >
-                  <option value="all">All Sectors</option>
-                  {SECTORS.slice(1).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <div className="flex gap-1 flex-shrink-0">
-                  {(['all', 'monitored', 'targeted'] as const).map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => { setActiveTab(tab); setPage(1); }}
-                      className={cn(
-                        'px-3 py-1.5 text-[10px] font-mono tracking-wider capitalize rounded-lg border transition-colors whitespace-nowrap',
-                        activeTab === tab
-                          ? 'text-[#E5A832] border-afterburner-border bg-afterburner-muted'
-                          : 'text-white/50 border-white/10 hover:text-white/70'
-                      )}
-                    >
-                      {tab === 'targeted' ? 'Top Threatened' : tab}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            </DeepCard>
-
-            {/* Brand card grid */}
-            {pagedBrands.length > 0 ? (
-              <div style={{
-                display:             'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-                gap:                 12,
-              }}>
-                {pagedBrands.map(brand => (
-                  <BrandCard
-                    key={brand.id}
-                    brand={brand}
-                    onToggleMonitor={handleToggleMonitor}
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                icon={(brands ?? []).length === 0 ? <Shield /> : <Search />}
-                title={(brands ?? []).length === 0 ? 'No brands monitored yet' : 'No brands match your search'}
-                subtitle={(brands ?? []).length === 0
-                  ? 'Add your first brand to start tracking threats, typosquats, and email security posture'
-                  : `Try a different name or domain — you're monitoring ${(brands ?? []).length} brands`}
-                action={(brands ?? []).length === 0
-                  ? { label: 'Monitor new brand', onClick: () => setModalOpen(true) }
-                  : { label: 'Clear search', onClick: () => { setSearch(''); setPage(1); } }}
-                variant={(brands ?? []).length === 0 ? 'scanning' : 'clean'}
-                compact
-              />
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-3">
-                <span className="font-mono text-[11px] text-white/40">
-                  Showing {showFrom}&ndash;{showTo} of {filteredBrands.length} brands
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
-                  >
-                    Prev
-                  </button>
-                  {pageNumbers.map((p, i) =>
-                    p === 'ellipsis' ? (
-                      <span key={`e${i}`} className="font-mono text-[11px] text-white/30 px-1">&hellip;</span>
-                    ) : (
-                      <button
-                        key={p}
-                        onClick={() => setPage(p)}
-                        className={cn(
-                          'font-mono text-[11px] px-2.5 py-1 rounded border transition-colors',
-                          page === p
-                            ? 'border-afterburner text-[#E5A832]'
-                            : 'border-white/10 text-white/40 hover:text-[var(--text-primary)]',
-                        )}
-                      >
-                        {p}
-                      </button>
-                    ),
-                  )}
-                  <button
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page >= totalPages}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
+      {!isLoading && all.length > 0 && status === 'rejected' && (
+        <Card hover={false}>
+          <div className="flex items-center justify-between mb-3">
+            <SectionLabel>Rejected (negative examples)</SectionLabel>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} rejected</span>
           </div>
-
-          {/* Right: sticky sidebar */}
-          <div className="flex flex-col gap-3 sticky top-4 self-start">
-            <LiveFeedCard />
-            <PortfolioHealthCard brands={filteredBrands} />
-            <AttackVectorsCard brands={filteredBrands} />
+          <div className="space-y-2">
+            {all.map(c => <ReviewedRow key={c.id} c={c} />)}
           </div>
-        </div>
+        </Card>
       )}
-
-      <AddBrandModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }
+
+function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject, promotePending }: {
+  label: string; emoji: string; rows: BrandCandidate[];
+  tone?: 'crit' | 'warn' | 'info';
+  onPromote: (id: string) => void; onReject: (id: string) => void;
+  promotePending: boolean;
+}) {
+  if (rows.length === 0) return null;
+  const accent = tone === 'crit' ? '#C83C3C' : tone === 'warn' ? '#E8923C' : '#0A8AB5';
+  // Hot leads use DeepCard with critical accent so they visually
+  // dominate; warm/worth use plain Card for visual de-emphasis.
+  const Wrapper = tone === 'crit' ? DeepCard : Card;
+  const wrapperProps = tone === 'crit'
+    ? { variant: 'active' as const, accent, hover: false }
+    : { hover: false };
+  return (
+    <Wrapper {...wrapperProps}>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>{emoji} {label}</SectionLabel>
+        <span className="text-[11px] font-mono px-2 py-0.5 rounded"
+          style={{ background: tone === 'crit' ? 'rgba(200,60,60,0.15)' : 'rgba(255,255,255,0.04)',
+                   color: tone === 'crit' ? 'var(--sev-critical)' : 'var(--text-tertiary)' }}>
+          {rows.length} pending
+        </span>
+      </div>
+      <div className="space-y-2">
+        {rows.map(c => {
+          // Highlight candidates that landed in the queue in the last 3
+          // days — operator-visible "what's new since I last looked"
+          // signal without needing to track per-user last-visit time.
+          const isRecent = (Date.now() - new Date(c.first_seen).getTime()) < 3 * 24 * 60 * 60_000;
+          return (
+            <div key={c.id} style={{
+              padding: 12, borderRadius: 6,
+              border: isRecent ? '1px solid rgba(229,168,50,0.30)' : '1px solid var(--border-base)',
+              background: isRecent ? 'rgba(229,168,50,0.04)' : 'var(--bg-input)',
+            }}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate flex items-center gap-2">
+                    {c.apex_domain}
+                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber)' }}>
+                      {c.cert_count} certs
+                    </span>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue)' }}>
+                      {c.distinct_issuers} issuers
+                    </span>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)' }}>
+                      seen {timeAgo(c.first_seen)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <Button size="sm" variant="primary" onClick={() => onPromote(c.id)} disabled={promotePending}>
+                    Promote
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => onReject(c.id)}>
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Wrapper>
+  );
+}
+
+function ReviewedRow({ c, onJumpBrand }: { c: BrandCandidate; onJumpBrand?: (brandId: string) => void }) {
+  return (
+    <div style={{
+      padding: 10, borderRadius: 6,
+      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
+        <div className="mt-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+          {c.cert_count} certs · {c.distinct_issuers} issuers
+          {c.reviewed_at && <> · {c.status} {timeAgo(c.reviewed_at)}</>}
+          {c.reviewed_by && <> by {c.reviewed_by}</>}
+        </div>
+        {c.notes && (
+          <div className="mt-1 text-[10px] text-[var(--text-tertiary)] italic">"{c.notes}"</div>
+        )}
+      </div>
+      {c.status === 'promoted' && c.promoted_brand_id && onJumpBrand && (
+        <Button size="sm" variant="ghost" onClick={() => onJumpBrand(c.promoted_brand_id!)}>
+          View brand →
+        </Button>
+      )}
+    </div>
+  );
+}
+
