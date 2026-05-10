@@ -12,6 +12,7 @@ import { NotFound } from '@/pages/NotFound';
 // to that route. Login and NotFound stay eager because they're tiny and
 // needed immediately at startup.
 const Brands = React.lazy(() => import('@/features/brands/Brands').then(m => ({ default: m.Brands })));
+const BrandsV3 = React.lazy(() => import('@/features/brands-v3/Brands').then(m => ({ default: m.BrandsV3 })));
 // Scan Leads now lives as a tab inside /leads. Old /admin/scan-leads
 // links (sidebar history, sales notification emails, bookmarks) keep
 // working through a redirect — see the route definition below.
@@ -129,6 +130,7 @@ export default function App() {
         <Route path="observatory" element={lazyRoute(<Observatory />, <ObservatoryLoader />)} />
         <Route path="observatory-v3" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
         <Route path="brands" element={lazyRoute(<Brands />)} />
+        <Route path="brands-v3" element={lazyRoute(<BrandsV3 />)} />
         <Route path="brands/:brandId" element={lazyRoute(<BrandDetail />)} />
         <Route path="brands-v3/:brandId" element={lazyRoute(<BrandDetailV3 />)} />
         <Route path="apps" element={lazyRoute(<Apps />)} />

@@ -1028,17 +1028,18 @@ async function runDarkWebMonitor(env: Env): Promise<void> {
 
 async function runObserverBriefing(env: Env): Promise<void> {
   // Daily Tranco import + brand matching (runs at 06:00 UTC).
-  // Daily cron uses 25K limit to stay inside the cron CPU budget. The
-  // 100K bulk seed runs out-of-band via /api/admin/import-tranco when
-  // a super_admin triggers it (one-time op). After that initial seed,
-  // daily runs are mostly dedupe-skips + a small UPDATE pass for the
-  // ranks that drifted week-over-week.
+  // Daily cron pulls top 100K. First run after deploy will INSERT the
+  // delta (~90K rows) which takes ~90s of D1 batch time — well within
+  // the orchestrator tick's compute budget when wrapped via the
+  // existing await pattern. Subsequent daily runs are mostly dedupe-
+  // skips + a small UPDATE pass for ranks that drifted week-over-week
+  // (fast — single-digit seconds).
   try {
     const { handleImportTranco, runBrandMatchBackfill } = await import('../handlers/admin');
     const fakeReq = new Request('https://localhost/api/admin/import-tranco', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 25000 }),
+      body: JSON.stringify({ limit: 100000 }),
     });
     const trancoRes = await handleImportTranco(fakeReq, env);
     const trancoData = await trancoRes.json() as { success: boolean; data?: { imported: number; updated?: number; message: string } };

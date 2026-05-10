@@ -16,6 +16,7 @@ import {
   GlowNumber,
   TrendSparkline,
 } from '@/components/ui';
+import { VersionToggle } from '@/components/ui/VersionToggle';
 
 /* ─── Severity helpers (card grid) ─── */
 
@@ -824,10 +825,11 @@ export function Brands() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      {/* Header row with title + add brand */}
+      {/* Header row with title + version toggle + add brand */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Brands</h1>
         <div className="flex items-center gap-2 sm:gap-3">
+          <VersionToggle surface="brands" ariaLabel="Brands version" />
           <button
             onClick={() => setModalOpen(true)}
             className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
