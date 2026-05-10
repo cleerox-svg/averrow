@@ -232,59 +232,101 @@ function HotProspectsTeaser() {
 // CT-driven brand candidate review queue. Grouped by intent strength
 // per user feedback ("not just some long list. sortable or some
 // intelligence put into to make review easier").
+type ProspectStatus = 'pending' | 'promoted' | 'rejected';
+
 function ProspectsTab() {
-  const { data, isLoading } = useBrandCandidates('pending');
+  const [status, setStatus] = useState<ProspectStatus>('pending');
+  const { data, isLoading } = useBrandCandidates(status);
   const promote = usePromoteBrandCandidate();
   const reject = useRejectBrandCandidate();
+  const navigate = useNavigate();
 
-  const grouped = useMemo(() => {
-    const all = data?.candidates ?? [];
-    return {
-      hot:    all.filter(c => c.cert_count >= 50),
-      warm:   all.filter(c => c.cert_count >= 10 && c.cert_count < 50),
-      worth:  all.filter(c => c.cert_count >= 3 && c.cert_count < 10),
-    };
-  }, [data]);
+  const all = data?.candidates ?? [];
+  const grouped = useMemo(() => ({
+    hot:    all.filter(c => c.cert_count >= 50),
+    warm:   all.filter(c => c.cert_count >= 10 && c.cert_count < 50),
+    worth:  all.filter(c => c.cert_count >= 3 && c.cert_count < 10),
+  }), [all]);
 
-  if (isLoading) {
-    return <div className="text-sm text-[var(--text-tertiary)]">Loading prospects…</div>;
-  }
-
-  if ((data?.candidates ?? []).length === 0) {
-    return (
-      <EmptyState
-        title="No pending prospects"
-        description="The CT aggregator hasn't surfaced anything new for review. New candidates appear here daily as the CT log fills."
-      />
-    );
+  function handleReject(id: string) {
+    const notes = window.prompt('Reason for rejecting (optional):', '');
+    // Cancelled (null) → no-op. Empty string → reject without notes.
+    if (notes === null) return;
+    reject.mutate({ id, notes: notes || undefined });
   }
 
   return (
     <div className="space-y-4">
-      <ProspectGroup
-        label="Hot leads"
-        emoji="🔥"
-        rows={grouped.hot}
-        onPromote={(id) => promote.mutate(id)}
-        onReject={(id) => reject.mutate({ id })}
-        promotePending={promote.isPending}
-      />
-      <ProspectGroup
-        label="Warm leads"
-        emoji="🟡"
-        rows={grouped.warm}
-        onPromote={(id) => promote.mutate(id)}
-        onReject={(id) => reject.mutate({ id })}
-        promotePending={promote.isPending}
-      />
-      <ProspectGroup
-        label="Worth a look"
-        emoji="⚪"
-        rows={grouped.worth}
-        onPromote={(id) => promote.mutate(id)}
-        onReject={(id) => reject.mutate({ id })}
-        promotePending={promote.isPending}
-      />
+      {/* Status sub-tabs */}
+      <div className="flex gap-1 border-b border-white/[0.06]">
+        {(['pending', 'promoted', 'rejected'] as const).map(s => (
+          <button
+            key={s}
+            onClick={() => setStatus(s)}
+            className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 ${
+              status === s ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {isLoading && <div className="text-sm text-[var(--text-tertiary)]">Loading prospects…</div>}
+
+      {!isLoading && all.length === 0 && (
+        <EmptyState
+          title={status === 'pending' ? 'No pending prospects'
+               : status === 'promoted' ? 'No promoted candidates yet'
+               : 'No rejected candidates yet'}
+          description={status === 'pending'
+            ? "The CT aggregator hasn't surfaced anything new for review. New candidates appear here daily as the CT log fills."
+            : status === 'promoted'
+            ? 'Once you promote a candidate, it lands here with a link back to the brand row.'
+            : 'Rejections stay here as a negative training set so the same domain isn\'t re-proposed.'
+          }
+        />
+      )}
+
+      {!isLoading && all.length > 0 && status === 'pending' && (
+        <>
+          <ProspectGroup label="Hot leads" emoji="🔥" rows={grouped.hot}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
+          <ProspectGroup label="Warm leads" emoji="🟡" rows={grouped.warm}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
+          <ProspectGroup label="Worth a look" emoji="⚪" rows={grouped.worth}
+            onPromote={(id) => promote.mutate(id)} onReject={handleReject}
+            promotePending={promote.isPending} />
+        </>
+      )}
+
+      {!isLoading && all.length > 0 && status === 'promoted' && (
+        <Card hover={false}>
+          <div className="flex items-center justify-between mb-3">
+            <SectionLabel>Promoted into the brand catalog</SectionLabel>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} promoted</span>
+          </div>
+          <div className="space-y-2">
+            {all.map(c => (
+              <ReviewedRow key={c.id} c={c} onJumpBrand={(brandId) => navigate(`/brands-v3/${brandId}`)} />
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {!isLoading && all.length > 0 && status === 'rejected' && (
+        <Card hover={false}>
+          <div className="flex items-center justify-between mb-3">
+            <SectionLabel>Rejected (negative examples)</SectionLabel>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} rejected</span>
+          </div>
+          <div className="space-y-2">
+            {all.map(c => <ReviewedRow key={c.id} c={c} />)}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -302,50 +344,76 @@ function ProspectGroup({ label, emoji, rows, onPromote, onReject, promotePending
         <span className="text-[11px] font-mono text-[var(--text-muted)]">{rows.length} pending</span>
       </div>
       <div className="space-y-2">
-        {rows.map(c => (
-          <div key={c.id} style={{
-            padding: 12, borderRadius: 6,
-            border: '1px solid var(--border-base)', background: 'var(--bg-input)',
-          }}>
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate">
-                  {c.apex_domain}
+        {rows.map(c => {
+          // Highlight candidates that landed in the queue in the last 3
+          // days — operator-visible "what's new since I last looked"
+          // signal without needing to track per-user last-visit time.
+          const isRecent = (Date.now() - new Date(c.first_seen).getTime()) < 3 * 24 * 60 * 60_000;
+          return (
+            <div key={c.id} style={{
+              padding: 12, borderRadius: 6,
+              border: isRecent ? '1px solid rgba(229,168,50,0.30)' : '1px solid var(--border-base)',
+              background: isRecent ? 'rgba(229,168,50,0.04)' : 'var(--bg-input)',
+            }}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate flex items-center gap-2">
+                    {c.apex_domain}
+                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber)' }}>
+                      {c.cert_count} certs
+                    </span>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue)' }}>
+                      {c.distinct_issuers} issuers
+                    </span>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)' }}>
+                      seen {timeAgo(c.first_seen)}
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
-                  <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber)' }}>
-                    {c.cert_count} certs
-                  </span>
-                  <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue)' }}>
-                    {c.distinct_issuers} issuers
-                  </span>
-                  <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)' }}>
-                    seen {timeAgo(c.first_seen)}
-                  </span>
+                <div className="flex gap-2 flex-shrink-0">
+                  <Button size="sm" variant="primary" onClick={() => onPromote(c.id)} disabled={promotePending}>
+                    Promote
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => onReject(c.id)}>
+                    Reject
+                  </Button>
                 </div>
-              </div>
-              <div className="flex gap-2 flex-shrink-0">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={() => onPromote(c.id)}
-                  disabled={promotePending}
-                >
-                  Promote
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onReject(c.id)}
-                >
-                  Reject
-                </Button>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
+  );
+}
+
+function ReviewedRow({ c, onJumpBrand }: { c: BrandCandidate; onJumpBrand?: (brandId: string) => void }) {
+  return (
+    <div style={{
+      padding: 10, borderRadius: 6,
+      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
+        <div className="mt-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+          {c.cert_count} certs · {c.distinct_issuers} issuers
+          {c.reviewed_at && <> · {c.status} {timeAgo(c.reviewed_at)}</>}
+          {c.reviewed_by && <> by {c.reviewed_by}</>}
+        </div>
+        {c.notes && (
+          <div className="mt-1 text-[10px] text-[var(--text-tertiary)] italic">"{c.notes}"</div>
+        )}
+      </div>
+      {c.status === 'promoted' && c.promoted_brand_id && onJumpBrand && (
+        <Button size="sm" variant="ghost" onClick={() => onJumpBrand(c.promoted_brand_id!)}>
+          View brand →
+        </Button>
+      )}
+    </div>
   );
 }
 
