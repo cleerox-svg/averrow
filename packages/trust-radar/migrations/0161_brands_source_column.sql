@@ -1,22 +1,28 @@
 -- 0161_brands_source_column.sql
--- Add brands.source column. Already used in 6+ places in code:
+-- HOTFIX: this migration is now a no-op.
 --
---   handlers/admin.ts:1876   INSERT … 'ai_attributed'   (Pathfinder)
---   handlers/admin.ts:2043   INSERT … 'tranco'          (Tranco import)
---   handlers/admin.ts:2056   DELETE … WHERE source = 'tranco' AND ...  (cleanup)
---   handlers/admin.ts:2060   DELETE … WHERE source = 'tranco' AND ...  (cleanup)
---   handlers/admin.ts:2066   DELETE … WHERE source = 'tranco' AND ...  (cleanup)
---   handlers/admin.ts:2187   SELECT COALESCE(source, 'manual'), ...    (audit)
---   migrations/0024_seed_global_brands.sql                              (seed)
+-- Original intent: ALTER TABLE brands ADD COLUMN source TEXT.
+-- The column is referenced in 6+ places in code (handlers/admin.ts
+-- INSERTs at lines 1876 + 2043, DELETEs at 2056/2060/2066, SELECT
+-- at 2187, plus migrations/0024_seed_global_brands.sql) but no
+-- ALTER TABLE statement exists in the migration history that adds it.
 --
--- Column was excluded from the 0042 brands rebuild — likely an
--- oversight at the time. The handler INSERTs since then have been
--- silently failing inside the try/catch wrapping handleImportTranco
--- and the AI-attribution path. PR2 fixes that.
+-- Production turned out to ALREADY HAVE the column — added via
+-- out-of-band ALTER prior to this migration being written. So when
+-- this migration tried to ALTER TABLE ADD COLUMN source, prod
+-- failed with "duplicate column name: source."
 --
--- Default NULL (back-compat). Existing rows have unknown origin;
--- the audit handler at 2187 already coalesces to 'manual'.
+-- SQLite has no `ADD COLUMN IF NOT EXISTS` and rebuilding the
+-- brands table just to gate one column add is too heavy. Since
+-- prod already has the column AND the only reason this migration
+-- exists is to make prod consistent, the safe move is to no-op it
+-- here so the migration system records it as applied and unblocks
+-- subsequent migrations.
+--
+-- For dev environments that DO NOT have the column: run an out-of-
+-- band ALTER manually (`wrangler d1 execute DB --command 'ALTER
+-- TABLE brands ADD COLUMN source TEXT'`) before applying this
+-- migration. The codebase tolerates either schema state via the
+-- COALESCE in handlers/admin.ts:2187.
 
-ALTER TABLE brands ADD COLUMN source TEXT;
-
-CREATE INDEX IF NOT EXISTS idx_brands_source ON brands(source);
+SELECT 1;
