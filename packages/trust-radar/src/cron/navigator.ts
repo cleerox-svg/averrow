@@ -149,7 +149,7 @@ async function runNavigatorImpl(
     try {
       const reapedAgentCount = await reapOrphanAgentRuns(env);
       if (reapedAgentCount > 0) {
-        console.warn(`[navigator] reaped ${reapedAgentCount} orphan agent_runs rows (status=partial, > 15min)`);
+        console.warn(`[navigator] reaped ${reapedAgentCount} orphan agent_runs rows (status=partial, > 90min)`);
       }
     } catch (err) {
       console.error('[navigator] orphan agent_runs reap error:', err);

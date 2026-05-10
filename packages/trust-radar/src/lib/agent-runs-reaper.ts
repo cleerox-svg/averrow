@@ -18,16 +18,28 @@
 // pattern: navigator runs every 5 min, owns the sweep, never throws,
 // returns row count for diagnostic surfaces.
 //
-// Threshold: 15 min. Cloudflare paid-plan Workers have a 15-min
-// wall-clock cap (waitUntil included), so any row older than that
-// CANNOT still be running. Matches feed-pull-reaper for consistency.
+// Threshold: 90 min. NOT 15 min like feed-pull-reaper — agents
+// declare longer legitimate runtimes than feed pulls do:
+//   - sentinel.stallThresholdMinutes:  75
+//   - enricher.stallThresholdMinutes:  60   (12-min domain_geo loop
+//                                            + brand_logo_hq +
+//                                            brand_sector_rdap +
+//                                            brand_firmographic)
+//   - curator: ~7 min observed legit
+// 90 min sits 15 min above the longest declared stall threshold,
+// so anything still 'partial' past it is unambiguously dead.
+//
+// (The first cut at this reaper used 15 min and started reaping
+// legitimate enricher / sentinel / curator runs the moment it
+// shipped — the dashboard saw a sudden spike of "failed" runs
+// across ~5 agents within an hour of deploy. This is the correction.)
 //
 // Tested via `test/agent-runs-reaper.test.ts`.
 
 import type { Env } from "../types";
 
 /** Minimum age for a partial agent_runs row to be considered orphaned. */
-export const REAP_AGE_MINUTES = 15;
+export const REAP_AGE_MINUTES = 90;
 
 /** Returns the number of rows reaped. Never throws. */
 export async function reapOrphanAgentRuns(env: Env): Promise<number> {

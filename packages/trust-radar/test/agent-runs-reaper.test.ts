@@ -59,7 +59,7 @@ describe("reapOrphanAgentRuns", () => {
     expect(sql).toMatch(/completed_at\s+IS\s+NULL/);
     // Both sides through datetime() — see comment in lib for the
     // ISO-vs-sqlite-format string-comparison footgun.
-    expect(sql).toMatch(/datetime\(started_at\)\s*<=\s*datetime\('now',\s*'-15 minutes'\)/);
+    expect(sql).toMatch(/datetime\(started_at\)\s*<=\s*datetime\('now',\s*'-90 minutes'\)/);
 
     // Mutation: row gets a final 'failed' state with a forensic
     // error_message (only when error_message was previously null —
@@ -85,6 +85,9 @@ describe("reapOrphanAgentRuns", () => {
   });
 
   it("exposes the grace constant for callers and platform docs", () => {
-    expect(REAP_AGE_MINUTES).toBe(15);
+    // 90 min — see lib/agent-runs-reaper.ts for why this is higher
+    // than feed-pull-reaper's 15 min (agents legitimately run
+    // longer than feed pulls; sentinel declares 75 min).
+    expect(REAP_AGE_MINUTES).toBe(90);
   });
 });
