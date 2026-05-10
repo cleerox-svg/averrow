@@ -35,13 +35,13 @@
 //
 // All visuals are pure SVG with CSS-var colors → flips with theme.
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
 import type { FeedOverview } from '@/hooks/useFeeds';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { AgentIcon } from '@/components/brand/AgentIcon';
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCcw } from 'lucide-react';
 
 // Negative-X origin for the feeds cluster — keeps every existing
 // agent LAYOUT entry stable. The visible viewport spans x = -120
@@ -164,6 +164,31 @@ interface AgentNetworkViewProps {
   onSelect:      (name: string) => void;
 }
 
+// Compact control button for the top-right control strip. Stops
+// propagation so taps don't bubble to the SVG's pan handler.
+function CtrlButton({
+  onClick, disabled, children, ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      disabled={disabled}
+      className="w-8 h-8 rounded grid place-items-center transition-colors disabled:opacity-40"
+      style={{
+        background: 'var(--bg-card-deep)',
+        border:     '1px solid var(--border-base)',
+        color:      'var(--text-secondary)',
+      }}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetworkViewProps) {
   const byName = useMemo(() => {
     const m = new Map<string, Agent>();
@@ -200,63 +225,170 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     return m;
   }, [visibleFeeds]);
 
-  // ─── Zoom + pan via SVG viewBox manipulation ─────────────────
-  // Wheel zoom centered on cursor; click-drag to pan; +/-/reset
-  // controls in the top-right corner. SVG-native — text stays
-  // sharp at any zoom level, no new dependencies.
+  // ─── Zoom + pan + touch + fullscreen ────────────────────────────
+  // SVG viewBox manipulation for zoom/pan (text stays sharp at any
+  // zoom). Touch handlers for mobile: 1 finger drag = pan, 2 fingers
+  // = pinch zoom + pan around the centroid. Wheel handler attached
+  // via useEffect with passive:false so preventDefault works (React's
+  // onWheel is passive in modern browsers, ignoring preventDefault).
+  // Fullscreen mode pins the wrapper to the viewport via fixed
+  // positioning — works everywhere including iOS Safari which has
+  // patchy support for the native Fullscreen API on individual
+  // elements.
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
   const [zoom, setZoom] = useState(1);
   // Pan default starts at VIEWBOX_X so the negative-x feeds cluster
-  // is visible on first load — without this the viewport shows
-  // viewBox 0 0 ... and the feeds would be off-screen left.
-  const [pan, setPan]   = useState({ x: VIEWBOX_X, y: 0 });
+  // is visible on first load.
+  const [pan, setPan]         = useState({ x: VIEWBOX_X, y: 0 });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const isPanning  = useRef(false);
   const panOrigin  = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const panMoved   = useRef(false);
+  // Pinch state — distance + centroid between the two fingers at
+  // the start of (and most recent) gesture frame.
+  const pinchPrev  = useRef<{ dist: number; cx: number; cy: number } | null>(null);
   const svgRef     = useRef<SVGSVGElement | null>(null);
 
   function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
-  // Returns viewBox-space coordinates of a client-space point. Needed
-  // so wheel zoom feels anchored to the cursor (not the SVG centre).
-  const clientToSvg = useCallback((clientX: number, clientY: number) => {
-    const svg = svgRef.current;
-    if (!svg) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
-    const fracX = (clientX - rect.left) / rect.width;
-    const fracY = (clientY - rect.top) / rect.height;
-    const vbW = VIEWBOX_W / zoom;
-    const vbH = VIEWBOX_H / zoom;
-    return { x: pan.x + fracX * vbW, y: pan.y + fracY * vbH };
-  }, [pan, zoom]);
+  // ESC exits fullscreen so users can't get stuck.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setIsFullscreen(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isFullscreen]);
 
-  const handleWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 1 / 1.10 : 1.10;
-    const nextZoom = clamp(zoom * delta, ZOOM_MIN, ZOOM_MAX);
-    if (nextZoom === zoom) return;
-    // Anchor zoom on cursor: keep the under-cursor point fixed.
-    const before = clientToSvg(e.clientX, e.clientY);
-    const ratio = zoom / nextZoom;
-    const vbW = VIEWBOX_W / nextZoom;
-    const vbH = VIEWBOX_H / nextZoom;
+  // Anchor a zoom change on a client-space point so the SVG content
+  // under that point stays put. Used by both wheel + pinch.
+  function anchoredZoom(nextZoom: number, anchorClientX: number, anchorClientY: number) {
     const svg = svgRef.current;
     if (!svg) { setZoom(nextZoom); return; }
     const rect = svg.getBoundingClientRect();
-    const fracX = (e.clientX - rect.left) / rect.width;
-    const fracY = (e.clientY - rect.top) / rect.height;
-    const nextPanX = before.x - fracX * vbW;
-    const nextPanY = before.y - fracY * vbH;
+    const fracX = (anchorClientX - rect.left) / rect.width;
+    const fracY = (anchorClientY - rect.top)  / rect.height;
+    // Current viewBox under the anchor.
+    const curVbW = VIEWBOX_W / zoom;
+    const curVbH = VIEWBOX_H / zoom;
+    const anchorVbX = pan.x + fracX * curVbW;
+    const anchorVbY = pan.y + fracY * curVbH;
+    // New viewBox dimensions after zoom; reposition pan to keep
+    // anchor under the same client point.
+    const nextVbW = VIEWBOX_W / nextZoom;
+    const nextVbH = VIEWBOX_H / nextZoom;
     setZoom(nextZoom);
-    setPan({ x: nextPanX, y: nextPanY });
-    // Suppress unused-variable warning while keeping the math
-    // explicit for future contributors:
-    void ratio;
-  }, [zoom, clientToSvg]);
+    setPan({
+      x: anchorVbX - fracX * nextVbW,
+      y: anchorVbY - fracY * nextVbH,
+    });
+  }
 
+  // Native wheel listener (non-passive so preventDefault works).
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 1 / 1.10 : 1.10;
+      const next = clamp(zoom * delta, ZOOM_MIN, ZOOM_MAX);
+      if (next === zoom) return;
+      anchoredZoom(next, e.clientX, e.clientY);
+    }
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, pan]);
+
+  // Native touch listeners (non-passive so preventDefault stops the
+  // browser's pinch-zoom/page-scroll defaults).
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length === 1) {
+        const t = e.touches[0]!;
+        isPanning.current = true;
+        panMoved.current  = false;
+        panOrigin.current = { x: t.clientX, y: t.clientY, panX: pan.x, panY: pan.y };
+      } else if (e.touches.length === 2) {
+        e.preventDefault();
+        const a = e.touches[0]!, b = e.touches[1]!;
+        const dx = b.clientX - a.clientX;
+        const dy = b.clientY - a.clientY;
+        pinchPrev.current = {
+          dist: Math.hypot(dx, dy),
+          cx:   (a.clientX + b.clientX) / 2,
+          cy:   (a.clientY + b.clientY) / 2,
+        };
+        // Cancel any in-progress single-finger pan when the second
+        // finger lands so pinch takes over cleanly.
+        isPanning.current = false;
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (e.touches.length === 2 && pinchPrev.current) {
+        e.preventDefault();
+        const a = e.touches[0]!, b = e.touches[1]!;
+        const dx = b.clientX - a.clientX;
+        const dy = b.clientY - a.clientY;
+        const dist = Math.hypot(dx, dy);
+        const cx = (a.clientX + b.clientX) / 2;
+        const cy = (a.clientY + b.clientY) / 2;
+
+        // (1) Pinch zoom anchored on the gesture centroid.
+        const ratio = dist / pinchPrev.current.dist;
+        const next  = clamp(zoom * ratio, ZOOM_MIN, ZOOM_MAX);
+        if (next !== zoom) anchoredZoom(next, cx, cy);
+
+        // (2) Two-finger pan from centroid translation.
+        const rect = svg!.getBoundingClientRect();
+        const dxPx = cx - pinchPrev.current.cx;
+        const dyPx = cy - pinchPrev.current.cy;
+        const dxVb = dxPx * (VIEWBOX_W / next) / rect.width;
+        const dyVb = dyPx * (VIEWBOX_H / next) / rect.height;
+        setPan(p => ({ x: p.x - dxVb, y: p.y - dyVb }));
+
+        pinchPrev.current = { dist, cx, cy };
+        panMoved.current = true;
+      } else if (e.touches.length === 1 && isPanning.current) {
+        e.preventDefault();
+        const t = e.touches[0]!;
+        const rect = svg!.getBoundingClientRect();
+        const dxPx = t.clientX - panOrigin.current.x;
+        const dyPx = t.clientY - panOrigin.current.y;
+        if (Math.abs(dxPx) > 3 || Math.abs(dyPx) > 3) panMoved.current = true;
+        const dx = dxPx * (VIEWBOX_W / zoom) / rect.width;
+        const dy = dyPx * (VIEWBOX_H / zoom) / rect.height;
+        setPan({ x: panOrigin.current.panX - dx, y: panOrigin.current.panY - dy });
+      }
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) pinchPrev.current = null;
+      if (e.touches.length === 0) isPanning.current = false;
+    }
+
+    svg.addEventListener('touchstart', onTouchStart, { passive: false });
+    svg.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    svg.addEventListener('touchend',   onTouchEnd);
+    svg.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      svg.removeEventListener('touchstart', onTouchStart);
+      svg.removeEventListener('touchmove',  onTouchMove);
+      svg.removeEventListener('touchend',   onTouchEnd);
+      svg.removeEventListener('touchcancel', onTouchEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, pan]);
+
+  // Mouse pan (unchanged from before — touch path is separate).
   function handlePanStart(e: React.MouseEvent<SVGSVGElement>) {
-    if (e.button !== 0) return;           // primary button only
+    if (e.button !== 0) return;
     isPanning.current = true;
     panMoved.current  = false;
     panOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
@@ -282,9 +414,20 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     onSelect(name);
   }
 
-  function zoomIn()  { setZoom(z => clamp(z * 1.20, ZOOM_MIN, ZOOM_MAX)); }
-  function zoomOut() { setZoom(z => clamp(z / 1.20, ZOOM_MIN, ZOOM_MAX)); }
-  function resetView() { setZoom(1); setPan({ x: VIEWBOX_X, y: 0 }); }
+  // Zoom buttons: zoom about the SVG centre so the visible content
+  // stays put. Pre-fix this zoomed about (0,0) and the view jumped.
+  function zoomBy(factor: number) {
+    const svg = svgRef.current;
+    const next = clamp(zoom * factor, ZOOM_MIN, ZOOM_MAX);
+    if (next === zoom) return;
+    if (!svg) { setZoom(next); return; }
+    const rect = svg.getBoundingClientRect();
+    anchoredZoom(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+  function zoomIn()       { zoomBy(1.20); }
+  function zoomOut()      { zoomBy(1 / 1.20); }
+  function resetView()    { setZoom(1); setPan({ x: VIEWBOX_X, y: 0 }); }
+  function toggleFullscreen() { setIsFullscreen(v => !v); }
 
   const vbW = VIEWBOX_W / zoom;
   const vbH = VIEWBOX_H / zoom;
@@ -342,68 +485,60 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     return 0.05;
   }
 
+  // Fullscreen mode: pin the wrapper to the viewport, full bg, top
+  // z-index. CSS-based (not Fullscreen API) so it works on iOS
+  // Safari which has spotty support for element.requestFullscreen().
+  const wrapperClass = isFullscreen
+    ? 'fixed inset-0 z-50 p-3 flex flex-col'
+    : 'w-full relative';
+  const wrapperStyle: React.CSSProperties = isFullscreen
+    ? { background: 'var(--bg-page)' }
+    : {};
+
   return (
-    <div className="w-full relative">
-      {/* Zoom controls — top right, layered over the SVG */}
-      <div className="absolute top-2 right-2 z-10 flex gap-1">
-        <button
-          type="button"
-          onClick={zoomIn}
-          disabled={zoom >= ZOOM_MAX}
-          aria-label="Zoom in"
-          className="w-7 h-7 rounded grid place-items-center transition-colors disabled:opacity-40"
-          style={{
-            background: 'var(--bg-card-deep)',
-            border:     '1px solid var(--border-base)',
-            color:      'var(--text-secondary)',
-          }}
-        >
-          <ZoomIn size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={zoomOut}
-          disabled={zoom <= ZOOM_MIN}
-          aria-label="Zoom out"
-          className="w-7 h-7 rounded grid place-items-center transition-colors disabled:opacity-40"
-          style={{
-            background: 'var(--bg-card-deep)',
-            border:     '1px solid var(--border-base)',
-            color:      'var(--text-secondary)',
-          }}
-        >
-          <ZoomOut size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={resetView}
-          aria-label="Reset view"
-          className="w-7 h-7 rounded grid place-items-center transition-colors"
-          style={{
-            background: 'var(--bg-card-deep)',
-            border:     '1px solid var(--border-base)',
-            color:      'var(--text-secondary)',
-          }}
-        >
-          <Maximize2 size={14} />
-        </button>
+    <div className={wrapperClass} style={wrapperStyle}>
+      {/* Zoom controls — top right, layered over the SVG. Touch-tap
+          works because the buttons sit above the SVG (z-10) and
+          stopPropagation guards against the SVG's pan handlers. */}
+      <div
+        className={isFullscreen
+          ? 'absolute top-3 right-3 z-10 flex gap-1 items-center'
+          : 'absolute top-2 right-2 z-10 flex gap-1 items-center'}
+      >
         <span
-          className="ml-1 px-2 grid place-items-center font-mono text-[10px]"
+          className="px-2 grid place-items-center font-mono text-[10px]"
           style={{ color: 'var(--text-tertiary)' }}
         >
           {Math.round(zoom * 100)}%
         </span>
+        <CtrlButton onClick={zoomOut} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out">
+          <ZoomOut size={14} />
+        </CtrlButton>
+        <CtrlButton onClick={zoomIn} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">
+          <ZoomIn size={14} />
+        </CtrlButton>
+        <CtrlButton onClick={resetView} aria-label="Reset view">
+          <RotateCcw size={14} />
+        </CtrlButton>
+        <CtrlButton
+          onClick={toggleFullscreen}
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        >
+          {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </CtrlButton>
       </div>
       <svg
         ref={svgRef}
         viewBox={`${pan.x} ${pan.y} ${vbW} ${vbH}`}
         preserveAspectRatio="xMidYMid meet"
-        className="w-full h-auto select-none"
+        className={isFullscreen
+          ? 'w-full flex-1 select-none'
+          : 'w-full h-auto select-none'}
         style={{
-          maxHeight: 760,
-          cursor:    isPanning.current ? 'grabbing' : 'grab',
+          maxHeight:   isFullscreen ? undefined : 760,
+          cursor:      isPanning.current ? 'grabbing' : 'grab',
+          touchAction: 'none', // disable browser pinch/pan so our handlers fire
         }}
-        onWheel={handleWheel}
         onMouseDown={handlePanStart}
         onMouseMove={handlePanMove}
         onMouseUp={handlePanEnd}
