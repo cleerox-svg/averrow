@@ -24,7 +24,10 @@ import {
 } from '@/hooks/useBrandDetail';
 import { useDarkWebMentions } from '@/hooks/useDarkWebMonitor';
 import { useAppStoreMonitor } from '@/hooks/useAppStoreMonitor';
-import { useBrandDomains, useBrandFirmographics, type BrandDomain, type BrandFirmographics } from '@/hooks/useBrandSurface';
+import {
+  useBrandDomains, useBrandFirmographics, useBrandScoreHistory,
+  type BrandDomain, type BrandFirmographics, type BrandScoreSnapshot,
+} from '@/hooks/useBrandSurface';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
 import { DeepCard } from '@/components/ui/DeepCard';
@@ -91,6 +94,7 @@ export function BrandDetailV3() {
   const socialProfiles = data?.socialProfiles || [];
   const { data: brandDomains = [] } = useBrandDomains(id);
   const { data: firmographics = null } = useBrandFirmographics(id);
+  const { data: scoreHistory = [] } = useBrandScoreHistory(id, 30);
 
   const suspiciousSocials = useMemo(
     () => socialProfiles.filter((p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'),
@@ -210,6 +214,7 @@ export function BrandDetailV3() {
           suspiciousApps={suspiciousApps}
           darkWebMentions={darkWebMentions}
           alerts={alerts}
+          scoreHistory={scoreHistory}
           onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
           onScanSocials={() => scanProfiles.mutate(id)}
           onDiscoverSocials={() => discoverProfiles.mutate(id)}
@@ -290,13 +295,46 @@ function SurfaceTab({
 // are getting their own audits.
 function RiskTab({
   brand, threats, emailSec, socialProfiles, suspiciousSocials, suspiciousApps,
-  darkWebMentions, alerts, onJumpV2, onScanSocials, onDiscoverSocials,
+  darkWebMentions, alerts, scoreHistory, onJumpV2, onScanSocials, onDiscoverSocials,
   onAiDeepScan, aiPending, scanPending, discoverPending,
 }: any) {
   const newAlertCount = alerts.length;
+  const healthScore   = brand.brand_health_score   ?? null;
+  const healthGrade   = brand.brand_health_grade   ?? null;
+  const exposureScore = brand.brand_exposure_score ?? null;
 
   return (
     <div className="space-y-4">
+      {/* Two-axis split: Health (defense) vs Exposure (offense). The
+          quadrant placement tells you the brand's posture at a glance. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <ScoreCard
+          label="Brand Health"
+          tone="ok"
+          score={healthScore}
+          grade={healthGrade}
+          history={scoreHistory as BrandScoreSnapshot[]}
+          field="brand_health_score"
+          subtitle="Defensive posture"
+          updatedAt={brand.brand_health_updated_at}
+        />
+        <ScoreCard
+          label="Brand Exposure"
+          tone="crit"
+          score={exposureScore}
+          grade={null}
+          history={scoreHistory as BrandScoreSnapshot[]}
+          field="brand_exposure_score"
+          subtitle="Offensive pressure"
+          updatedAt={brand.brand_exposure_updated_at}
+        />
+        <HealthExposureQuadrant healthScore={healthScore} exposureScore={exposureScore} />
+      </div>
+
+      {/* Existing 4-card hero kept below the new split — these are the
+          per-category v2 cards. Kept for now since each upstream surface
+          (threats / email / social) is getting its own audit; v3 doesn't
+          want to lock in their data shape yet. */}
       <div className="grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-4 gap-3">
         <ExposureIndexCard brand={brand} threats={threats} />
         <ActiveThreatsCard threats={threats} />
@@ -405,6 +443,189 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
 }
 
 // ── Tiles ────────────────────────────────────────────────────────────────
+// ── Risk: ScoreCard + HealthExposureQuadrant ──────────────────────────
+//
+// Health (defense) and Exposure (offense) are intentionally separate
+// scores per .claude/plans/v3.md §9.6 + Phase 2 research synthesis.
+// No DRP vendor publishes this split — it's a Averrow differentiator.
+// The ScoreCard renders one score with a 30-day sparkline from the
+// brand_score_snapshots table (PR3). The Quadrant places the brand
+// in the offensive-pressure × defensive-posture plane so an operator
+// sees at a glance whether they're a "sitting duck" (high pressure +
+// weak defense) or a "well-defended target" (high pressure + strong
+// defense).
+
+function ScoreCard({
+  label, tone, score, grade, history, field, subtitle, updatedAt,
+}: {
+  label: string;
+  tone: 'ok' | 'crit';
+  score: number | null;
+  grade: string | null;
+  history: BrandScoreSnapshot[];
+  field: 'brand_health_score' | 'brand_exposure_score';
+  subtitle: string;
+  updatedAt?: string | null;
+}) {
+  const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
+  const series = history
+    .map(s => s[field])
+    .filter((v): v is number => typeof v === 'number');
+  const empty = score === null || score === undefined;
+
+  return (
+    <Card hover={false} variant="active" accent={accent}>
+      <div className="flex items-center justify-between">
+        <SectionLabel>{label}</SectionLabel>
+        {grade && (
+          <span style={{
+            padding: '2px 8px', borderRadius: 4,
+            background: 'rgba(60,184,120,0.10)', color: 'var(--green)',
+            fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+          }}>{grade}</span>
+        )}
+      </div>
+      <div className="mt-1 text-[10px] text-[var(--text-muted)] font-mono">{subtitle}</div>
+
+      <div className="mt-3 flex items-end gap-3">
+        <div style={{
+          fontSize: 36, fontWeight: 800, lineHeight: 1,
+          color: empty ? 'var(--text-muted)' : accent,
+          textShadow: empty ? 'none' : `0 0 12px ${accent}55`,
+        }}>
+          {empty ? '—' : score}
+        </div>
+        <div className="text-[10px] text-[var(--text-tertiary)] font-mono">
+          / 100
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <Sparkline series={series} accent={accent} />
+        <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-[var(--text-muted)]">
+          <span>{series.length > 0 ? `${series.length}d trend` : 'No trend yet'}</span>
+          {updatedAt && <span>updated {timeAgo(updatedAt)}</span>}
+        </div>
+      </div>
+
+      {empty && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)]">
+          Score will populate after the next daily snapshot.
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Sparkline({ series, accent }: { series: number[]; accent: string }) {
+  if (series.length < 2) {
+    return (
+      <div style={{
+        height: 28, borderRadius: 4,
+        border: '1px dashed var(--border-base)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {series.length === 0 ? 'no history' : '1 sample'}
+        </span>
+      </div>
+    );
+  }
+  const w = 240;
+  const h = 28;
+  const max = Math.max(...series, 1);
+  const min = Math.min(...series, 0);
+  const range = Math.max(1, max - min);
+  const step = w / (series.length - 1);
+  const points = series.map((v, i) => {
+    const x = i * step;
+    const y = h - ((v - min) / range) * (h - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 28 }}>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={accent}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function HealthExposureQuadrant({
+  healthScore, exposureScore,
+}: {
+  healthScore: number | null;
+  exposureScore: number | null;
+}) {
+  const haveBoth = healthScore !== null && exposureScore !== null;
+
+  // Quadrant labels — what each corner means
+  const quadrants = [
+    { x: 0.75, y: 0.25, label: 'Sitting duck',   tone: 'crit' },  // high exposure, low health
+    { x: 0.25, y: 0.25, label: 'Lucky',          tone: 'warn' },  // low exposure, low health
+    { x: 0.75, y: 0.75, label: 'Well defended',  tone: 'ok'   },  // high exposure, high health
+    { x: 0.25, y: 0.75, label: 'Quiet & safe',   tone: 'ok'   },  // low exposure, high health
+  ] as const;
+
+  // Map 0-100 scores to 0-1 chart coords. Y-axis inverted (SVG top=0).
+  const x = haveBoth ? exposureScore! / 100 : 0.5;
+  const y = haveBoth ? 1 - healthScore! / 100 : 0.5;
+
+  return (
+    <Card hover={false}>
+      <SectionLabel>Posture quadrant</SectionLabel>
+      <div className="mt-3 relative" style={{ aspectRatio: '1', maxWidth: 220, margin: '0 auto' }}>
+        <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%' }}>
+          {/* Background quadrants (faint) */}
+          <rect x="0"  y="0"  width="50" height="50" fill="rgba(229,168,50,0.04)" />
+          <rect x="50" y="0"  width="50" height="50" fill="rgba(200,60,60,0.06)" />
+          <rect x="0"  y="50" width="50" height="50" fill="rgba(60,184,120,0.06)" />
+          <rect x="50" y="50" width="50" height="50" fill="rgba(60,184,120,0.10)" />
+          {/* Center axes */}
+          <line x1="50" y1="0" x2="50" y2="100" stroke="rgba(255,255,255,0.10)" strokeWidth="0.5" />
+          <line x1="0"  y1="50" x2="100" y2="50" stroke="rgba(255,255,255,0.10)" strokeWidth="0.5" />
+          {/* Quadrant labels */}
+          {quadrants.map(q => (
+            <text key={q.label}
+              x={q.x * 100} y={q.y * 100}
+              fontSize="6" fontFamily="monospace"
+              fill="var(--text-muted)" textAnchor="middle"
+              dominantBaseline="middle"
+            >{q.label}</text>
+          ))}
+          {/* Brand position dot */}
+          {haveBoth && (
+            <>
+              <circle cx={x * 100} cy={y * 100} r="4" fill="var(--amber)"
+                stroke="rgba(0,0,0,0.4)" strokeWidth="1" />
+              <circle cx={x * 100} cy={y * 100} r="8" fill="none"
+                stroke="var(--amber)" strokeOpacity="0.4" strokeWidth="1" />
+            </>
+          )}
+        </svg>
+        {/* Axis labels */}
+        <div className="absolute bottom-0 right-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
+          → Exposure
+        </div>
+        <div className="absolute top-0 left-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider"
+          style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}>
+          ↑ Health
+        </div>
+      </div>
+      {!haveBoth && (
+        <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono text-center">
+          Awaiting first daily snapshot
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── DomainFootprintCard ──────────────────────────────────────────────
 // Renders the brand_domains table (PR1 schema). Apex first, then
 // type-grouped (subdomain / regional / redirect / acquired / customer-

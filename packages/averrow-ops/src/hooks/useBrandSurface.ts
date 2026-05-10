@@ -44,6 +44,27 @@ export function useBrandDomains(brandId: string) {
   });
 }
 
+export interface BrandScoreSnapshot {
+  snapshot_day:          string;        // YYYY-MM-DD
+  brand_health_score:    number | null;
+  brand_exposure_score:  number | null;
+  brand_health_grade:    string | null;
+}
+
+export function useBrandScoreHistory(brandId: string, days: number = 30) {
+  return useQuery({
+    queryKey: ['brand-score-history', brandId, days],
+    queryFn: async () => {
+      const res = await api.get<BrandScoreSnapshot[]>(
+        `/api/brands/${brandId}/score-history?days=${days}`,
+      );
+      return (res.data ?? []) as BrandScoreSnapshot[];
+    },
+    enabled: !!brandId,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useBrandFirmographics(brandId: string) {
   return useQuery({
     queryKey: ['brand-firmographics', brandId],

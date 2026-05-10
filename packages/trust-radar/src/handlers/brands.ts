@@ -778,6 +778,30 @@ export async function handleBrandFirmographics(request: Request, env: Env, brand
   }
 }
 
+// GET /api/brands/:id/score-history — health/exposure trend
+// Renders the brand_score_snapshots table (PR1 migration 0157,
+// populated daily by PR3's batch). Returns last 30 days by default.
+// Used by BrandDetail v3 Risk tab for the score sparkline.
+export async function handleBrandScoreHistory(request: Request, env: Env, brandId: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const url = new URL(request.url);
+    const days = Math.min(180, Math.max(1, parseInt(url.searchParams.get("days") ?? "30", 10)));
+    const rows = await session.prepare(`
+      SELECT snapshot_day, brand_health_score, brand_exposure_score, brand_health_grade
+      FROM brand_score_snapshots
+      WHERE brand_id = ?
+        AND snapshot_day >= date('now', '-' || ? || ' days')
+      ORDER BY snapshot_day ASC
+    `).bind(brandId, days).all();
+    return attachBookmark(json({ success: true, data: rows.results }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
 // GET /api/brands/:id/threats
 export async function handleBrandThreats(request: Request, env: Env, brandId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
