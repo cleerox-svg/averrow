@@ -28,7 +28,17 @@ export interface AbuseIPDBResult {
 
 const DAILY_LIMIT = 950;
 const BATCH_SIZE = 20;
-const DELAY_MS = 15_000; // 15s between calls
+// Concurrent fan-out cap. AbuseIPDB free tier docs cap on daily quota
+// (1,000/day) but don't publish a per-second rate limit; community
+// reports tolerate ~5-10 req/sec without 429s. Five is conservative.
+const CONCURRENCY = 5;
+// Safety delay between concurrent waves. Adds up to ~1.5s total
+// across 4 waves of 5 IPs (vs the prior 285s of sequential 15-s
+// sleeps that pushed pulls past Navigator's 15-min reap threshold).
+const WAVE_DELAY_MS = 500;
+// Per-fetch wall-clock cap so a hung upstream can't pin the whole
+// wave. Well below the Navigator reap threshold.
+const FETCH_TIMEOUT_MS = 8_000;
 
 const SEVERITY_RANK: Record<string, number> = {
   info: 0,
@@ -59,6 +69,7 @@ export async function checkAbuseIPDB(ip: string, env: Env): Promise<AbuseIPDBRes
         Key: env.ABUSEIPDB_API_KEY,
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     },
   );
 
@@ -149,85 +160,97 @@ export const abuseipdb: FeedModule = {
     let itemsDuplicate = 0;
     let itemsError = 0;
 
-    for (const threat of threats) {
-      itemsFetched++;
-      try {
-        const result = await checkAbuseIPDB(threat.ip_address, env);
+    // Process IPs in concurrent waves. The prior implementation looped
+    // sequentially with a 15-s sleep between every call (≈285 s for a
+    // full BATCH_SIZE=20 batch), which exceeded Navigator's 15-min
+    // partial-pull reap threshold often enough to fail 75% of pulls in
+    // the last 6 h. Concurrency=5 + a 500-ms wave delay keeps the full
+    // batch under ~10 s end-to-end while staying well under any
+    // realistic AbuseIPDB rate limit.
+    for (let i = 0; i < threats.length; i += CONCURRENCY) {
+      const wave = threats.slice(i, i + CONCURRENCY);
 
-        if (!result) {
-          itemsError++;
-          continue;
-        }
+      await Promise.all(
+        wave.map(async (threat) => {
+          itemsFetched++;
+          try {
+            const result = await checkAbuseIPDB(threat.ip_address, env);
 
-        // Determine severity escalation
-        let newSeverity: string | null = null;
-        let confidenceBoost = 0;
+            if (!result) {
+              itemsError++;
+              return;
+            }
 
-        if (result.abuseConfidenceScore >= 80) {
-          newSeverity = "critical";
-          confidenceBoost = 20;
-        } else if (result.abuseConfidenceScore >= 50) {
-          newSeverity = "high";
-          confidenceBoost = 10;
-        }
-        // score >= 25: no escalation, just record
+            // Determine severity escalation
+            let newSeverity: string | null = null;
+            let confidenceBoost = 0;
 
-        // Update threat with AbuseIPDB data
-        if (newSeverity) {
-          await env.DB.prepare(`
-            UPDATE threats SET
-              abuseipdb_checked = 1,
-              abuseipdb_score = ?,
-              abuseipdb_reports = ?,
-              abuseipdb_isp = ?,
-              confidence_score = MIN(100, COALESCE(confidence_score, 60) + ?),
-              severity = CASE
-                WHEN ? > COALESCE(
-                  CASE severity
-                    WHEN 'info' THEN 0 WHEN 'low' THEN 1 WHEN 'medium' THEN 2
-                    WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 0
-                  END, 0)
-                THEN ?
-                ELSE severity
-              END
-            WHERE id = ?
-          `).bind(
-            result.abuseConfidenceScore,
-            result.totalReports,
-            result.isp,
-            confidenceBoost,
-            SEVERITY_RANK[newSeverity] ?? 2,
-            newSeverity,
-            threat.id,
-          ).run();
-        } else {
-          await env.DB.prepare(`
-            UPDATE threats SET
-              abuseipdb_checked = 1,
-              abuseipdb_score = ?,
-              abuseipdb_reports = ?,
-              abuseipdb_isp = ?
-            WHERE id = ?
-          `).bind(
-            result.abuseConfidenceScore,
-            result.totalReports,
-            result.isp,
-            threat.id,
-          ).run();
-        }
+            if (result.abuseConfidenceScore >= 80) {
+              newSeverity = "critical";
+              confidenceBoost = 20;
+            } else if (result.abuseConfidenceScore >= 50) {
+              newSeverity = "high";
+              confidenceBoost = 10;
+            }
+            // score >= 25: no escalation, just record
 
-        itemsNew++;
+            if (newSeverity) {
+              await env.DB.prepare(`
+                UPDATE threats SET
+                  abuseipdb_checked = 1,
+                  abuseipdb_score = ?,
+                  abuseipdb_reports = ?,
+                  abuseipdb_isp = ?,
+                  confidence_score = MIN(100, COALESCE(confidence_score, 60) + ?),
+                  severity = CASE
+                    WHEN ? > COALESCE(
+                      CASE severity
+                        WHEN 'info' THEN 0 WHEN 'low' THEN 1 WHEN 'medium' THEN 2
+                        WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 0
+                      END, 0)
+                    THEN ?
+                    ELSE severity
+                  END
+                WHERE id = ?
+              `).bind(
+                result.abuseConfidenceScore,
+                result.totalReports,
+                result.isp,
+                confidenceBoost,
+                SEVERITY_RANK[newSeverity] ?? 2,
+                newSeverity,
+                threat.id,
+              ).run();
+            } else {
+              await env.DB.prepare(`
+                UPDATE threats SET
+                  abuseipdb_checked = 1,
+                  abuseipdb_score = ?,
+                  abuseipdb_reports = ?,
+                  abuseipdb_isp = ?
+                WHERE id = ?
+              `).bind(
+                result.abuseConfidenceScore,
+                result.totalReports,
+                result.isp,
+                threat.id,
+              ).run();
+            }
 
-        // Delay between API calls
-        if (itemsFetched < threats.length) {
-          await sleep(DELAY_MS);
-        }
-      } catch (err) {
-        logger.error("abuseipdb_check_error", {
-          ip: threat.ip_address,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        itemsError++;
+            itemsNew++;
+          } catch (err) {
+            logger.error("abuseipdb_check_error", {
+              ip: threat.ip_address,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            itemsError++;
+          }
+        }),
+      );
+
+      // Wave courtesy delay — skip after the final wave.
+      if (i + CONCURRENCY < threats.length) {
+        await sleep(WAVE_DELAY_MS);
       }
     }
 

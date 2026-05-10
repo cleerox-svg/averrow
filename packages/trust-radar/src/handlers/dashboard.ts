@@ -118,29 +118,43 @@ export async function handleDashboardTopBrands(request: Request, env: Env, scope
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
     }
 
-    const brandFilter = scope && scope.brand_ids.length > 0
-      ? { clause: `WHERE b.id IN (${scope.brand_ids.map(() => "?").join(", ")})`, params: [...scope.brand_ids, limit] }
-      : { clause: "", params: [limit] };
-
     if (scope && scope.brand_ids.length === 0) {
       return attachBookmark(json({ success: true, data: [] }, 200, origin), session);
     }
 
+    // CLAUDE.md §8: query the pre-computed `brands.threat_count` column
+    // and the threat_cube_brand for the trend, instead of LEFT JOIN-ing
+    // the full threats table. Prior implementation read ~22.7M rows /
+    // 24h (~3% of D1 budget) for this single endpoint. New plan:
+    //   1. Inner subquery selects top-N brand IDs ordered by the
+    //      pre-computed threat_count column — uses idx_brands_threat_count,
+    //      a bounded index scan (~limit rows).
+    //   2. Outer LEFT JOIN against threat_cube_brand is bounded to
+    //      those N brand IDs and uses idx_cube_brand_id_hour.
+    // Net read budget: a few thousand cube rows vs. millions from the
+    // raw threats table.
+    const innerScope = scope && scope.brand_ids.length > 0
+      ? { clause: `WHERE id IN (${scope.brand_ids.map(() => "?").join(", ")})`, params: scope.brand_ids }
+      : { clause: "", params: [] as string[] };
+
     const tally = newTally();
     const rows = await session.prepare(`
       SELECT b.id AS brand_id, b.name, b.sector,
-             COUNT(t.id) AS threat_count,
+             b.threat_count AS threat_count,
              ROUND(
-               (CAST(SUM(CASE WHEN t.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS REAL) /
-                NULLIF(SUM(CASE WHEN t.created_at >= datetime('now', '-14 days') AND t.created_at < datetime('now', '-7 days') THEN 1 ELSE 0 END), 0) - 1) * 100
+               (CAST(COALESCE(SUM(CASE WHEN c.hour_bucket >= datetime('now', '-7 days') THEN c.threat_count ELSE 0 END), 0) AS REAL) /
+                NULLIF(SUM(CASE WHEN c.hour_bucket >= datetime('now', '-14 days') AND c.hour_bucket < datetime('now', '-7 days') THEN c.threat_count ELSE 0 END), 0) - 1) * 100
              , 1) AS trend_pct
       FROM brands b
-      LEFT JOIN threats t ON t.target_brand_id = b.id
-      ${brandFilter.clause}
-      GROUP BY b.id
-      ORDER BY threat_count DESC
-      LIMIT ?
-    `).bind(...brandFilter.params).all();
+      LEFT JOIN threat_cube_brand c ON c.target_brand_id = b.id
+      WHERE b.id IN (
+        SELECT id FROM brands ${innerScope.clause}
+        ORDER BY threat_count DESC
+        LIMIT ?
+      )
+      GROUP BY b.id, b.name, b.sector, b.threat_count
+      ORDER BY b.threat_count DESC
+    `).bind(...innerScope.params, limit).all();
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results };
