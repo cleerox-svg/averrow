@@ -69,6 +69,47 @@ function detectBrandSquatting(domain: string, brandKeywords: string[]): string |
   return null;
 }
 
+// ─── Social profile cross-reference ─────────────────────────────
+
+export interface SocialProfileRow {
+  handle: string;
+  platform: string;
+  classification: string;
+  profile_url: string | null;
+  brand_name: string;
+}
+
+/**
+ * Match a threat's domain against a pre-fetched list of suspicious /
+ * impersonation social profiles. Pure function — exported for tests.
+ *
+ * Mirrors the prior per-threat SQL:
+ *   sp.profile_url LIKE '%' || ? || '%'         (full domain)
+ *   OR sp.handle    LIKE '%' || ? || '%'        (domain's first label)
+ *
+ * Pulling the social_profiles set once per Sentinel batch and
+ * matching in-memory replaces N full-table LIKE scans (12.4M rows /
+ * 24h per the diagnostic top-queries report) with a single
+ * filtered SELECT.
+ */
+export function findSocialMatchesForDomain(
+  profiles: SocialProfileRow[],
+  domain: string,
+  limit = 3,
+): SocialProfileRow[] {
+  const domainKeyword = domain.split(".")[0] ?? "";
+  const matches: SocialProfileRow[] = [];
+  for (const p of profiles) {
+    const profileUrlHit = !!(p.profile_url && p.profile_url.includes(domain));
+    const handleHit = !!(domainKeyword && p.handle && p.handle.includes(domainKeyword));
+    if (profileUrlHit || handleHit) {
+      matches.push(p);
+      if (matches.length >= limit) break;
+    }
+  }
+  return matches;
+}
+
 // ─── Sentinel Agent ─────────────────────────────────────────────
 
 export const sentinelAgent: AgentModule = {
@@ -160,7 +201,48 @@ export const sentinelAgent: AgentModule = {
     let haikuFailures = 0;
     let aiSkippedByRules = 0;
 
-    for (const threat of threats.results) {
+    // Pre-fetch the suspicious / impersonation social_profiles set
+    // ONCE per batch, then match in-memory inside the per-threat
+    // loop. Replaces the previous per-threat double-LIKE query that
+    // the diagnostic top-queries report flagged at 12.4M rows / 24h
+    // (738 calls × ~17K rows scanned per call). The active+suspicious
+    // /impersonation predicate keeps the working set small (<10K
+    // rows realistically), so the JSON returned fits comfortably in
+    // Workers RAM.
+    let socialProfiles: SocialProfileRow[] = [];
+    try {
+      const r = await env.DB.prepare(`
+        SELECT sp.handle, sp.platform, sp.classification, sp.profile_url,
+               b.name AS brand_name
+          FROM social_profiles sp
+          JOIN brands b ON b.id = sp.brand_id
+         WHERE sp.status = 'active'
+           AND sp.classification IN ('suspicious', 'impersonation')
+      `).all<SocialProfileRow>();
+      socialProfiles = r.results ?? [];
+    } catch (err) {
+      // Non-fatal — social cross-ref is best-effort.
+      console.warn("[sentinel] social profile prefetch failed:", err);
+    }
+
+    // Concurrent fan-out cap. The prior implementation processed
+    // threats serially with one Haiku call + 3 inner DB reads per
+    // iteration — 50-threat batches routinely hit the 15-min
+    // navigator reaper threshold (21% of runs killed over 48h per
+    // diagnostics). Five at a time keeps any single Haiku stall
+    // localized to its wave instead of blocking the whole batch.
+    // Same prompts, same JSON parsing — zero classification-quality
+    // risk. Increments to itemsProcessed / counters and pushes to
+    // outputs[] are race-free because JS is single-threaded between
+    // awaits.
+    const SENTINEL_CONCURRENCY = 5;
+    const threatList = threats.results;
+    for (let i = 0; i < threatList.length; i += SENTINEL_CONCURRENCY) {
+      const wave = threatList.slice(i, i + SENTINEL_CONCURRENCY);
+      await Promise.all(wave.map((threat) => processThreat(threat)));
+    }
+
+    async function processThreat(threat: typeof threats.results[number]): Promise<void> {
       itemsProcessed++;
 
       // Pre-filter: high-confidence feeds with known threat types skip AI
@@ -283,50 +365,30 @@ export const sentinelAgent: AgentModule = {
         }
       }
 
-      // Cross-reference with social profiles for coordinated attack detection
+      // Cross-reference with the pre-fetched social_profiles set
+      // (one query at the top of the batch, in-memory match here).
       if (domain) {
-        try {
-          const domainKeyword = domain.split('.')[0] || '';
-          const socialMatch = await env.DB.prepare(`
-            SELECT sp.handle, sp.platform, sp.classification, sp.profile_url, b.name AS brand_name
-            FROM social_profiles sp
-            JOIN brands b ON b.id = sp.brand_id
-            WHERE sp.status = 'active'
-              AND sp.classification IN ('suspicious', 'impersonation')
-              AND (
-                sp.profile_url LIKE '%' || ? || '%'
-                OR sp.handle LIKE '%' || ? || '%'
-              )
-            LIMIT 3
-          `).bind(domain, domainKeyword).all<{
-            handle: string; platform: string; classification: string;
-            profile_url: string | null; brand_name: string;
-          }>();
+        const socialMatches = findSocialMatchesForDomain(socialProfiles, domain);
+        if (socialMatches.length > 0) {
+          const correlationNote = socialMatches.map(s =>
+            `Correlated with ${s.classification} ${s.platform} profile @${s.handle} (${s.brand_name})`
+          ).join('; ');
 
-          if (socialMatch.results.length > 0) {
-            const correlationNote = socialMatch.results.map(s =>
-              `Correlated with ${s.classification} ${s.platform} profile @${s.handle} (${s.brand_name})`
-            ).join('; ');
+          // Escalate severity on social correlation
+          if (severity === 'medium') severity = 'high';
+          else if (severity === 'high') severity = 'critical';
 
-            // Escalate severity on social correlation
-            if (severity === 'medium') severity = 'high';
-            else if (severity === 'high') severity = 'critical';
-
-            outputs.push({
-              type: "classification",
-              summary: `**Social Correlation** — Threat ${threat.id} (${domain}) correlates with social impersonation: ${correlationNote}`,
-              severity: severity as "critical" | "high" | "medium" | "low" | "info",
-              details: {
-                threat_id: threat.id,
-                domain,
-                social_matches: socialMatch.results,
-                escalated_severity: severity,
-              },
-            });
-          }
-        } catch (socialErr) {
-          // Non-fatal — social cross-ref is best-effort
-          console.warn(`[sentinel] Social cross-ref error for ${threat.id}:`, socialErr);
+          outputs.push({
+            type: "classification",
+            summary: `**Social Correlation** — Threat ${threat.id} (${domain}) correlates with social impersonation: ${correlationNote}`,
+            severity: severity as "critical" | "high" | "medium" | "low" | "info",
+            details: {
+              threat_id: threat.id,
+              domain,
+              social_matches: socialMatches,
+              escalated_severity: severity,
+            },
+          });
         }
       }
 
