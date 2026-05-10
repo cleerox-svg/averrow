@@ -136,7 +136,7 @@ function IntelTab({ isStaff }: { isStaff: boolean }) {
 
       {/* Pressure panel — top brands by external attack signals */}
       <PanelHeader title="Pressure" subtitle="Top brands by external attack signal" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <PressureLeaderboard
           title="Lookalikes"
           rows={pressureAgg?.top_lookalikes}
@@ -273,7 +273,7 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map((t, i) => (
         <DeepCard key={t.label} variant="active" accent={t.accent}
           style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>

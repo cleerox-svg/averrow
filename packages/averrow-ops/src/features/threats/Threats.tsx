@@ -492,7 +492,7 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map(t => {
         const Icon = t.icon;
         return (
@@ -702,7 +702,7 @@ function LeaderboardsPanel({ agg }: { agg: ThreatAggregate | null | undefined })
   if (!agg) return null;
   const navigate = useNavigate();
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <Leaderboard
         title="Top brands"
         accent="#E5A832"
