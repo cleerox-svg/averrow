@@ -46,6 +46,7 @@ import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
 import { BIMIStatusRow } from '@/components/ui/BIMIStatusRow';
 import { relativeTime, timeAgo } from '@/lib/time';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
+import { BrandsVersionToggle } from '@/components/ui/BrandsVersionToggle';
 
 // ── Constants ──────────────────────────────────────────────────────────
 const PLATFORM_ICONS: Record<string, string> = {
@@ -204,7 +205,7 @@ function getExposureTier(score: number | null) {
 }
 
 // ── Card 1: Exposure Index ──────────────────────────────────────────
-function ExposureIndexCard({ brand, threats }: { brand: any; threats: any[] }) {
+export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any[] }) {
   const score = brand?.exposure_score ?? brand?.email_security_score ?? brand?.domain_risk_score ?? null;
   const tier = getExposureTier(score);
   const s = score ?? 0;
@@ -281,7 +282,7 @@ function ExposureIndexCard({ brand, threats }: { brand: any; threats: any[] }) {
 }
 
 // ── Card 2: Active Threats ──────────────────────────────────────────
-function ActiveThreatsCard({ threats }: { threats: any[] }) {
+export function ActiveThreatsCard({ threats }: { threats: any[] }) {
   const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   threats.forEach(t => {
     const sev = t.severity || 'low';
@@ -413,7 +414,7 @@ function deriveBimiGrade(brand: any, emailSec: any): string | null {
   return null;
 }
 
-function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec: any; grade: string | null; brand: any; onViewDetails?: () => void }) {
+export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec: any; grade: string | null; brand: any; onViewDetails?: () => void }) {
   const gradeClass = getGradeClass(grade);
   const bimiGrade = deriveBimiGrade(brand, emailSec);
 
@@ -555,7 +556,7 @@ function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { emailSec:
 }
 
 // ── Card 4: Social Risk ─────────────────────────────────────────────
-function SocialRiskCard({
+export function SocialRiskCard({
   socialProfiles,
   lastScan,
   onScan,
@@ -754,9 +755,12 @@ export function BrandDetail() {
   return (
     <div className="animate-fade-in space-y-6">
       {/* ── Nav ── */}
-      <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
-        &larr; Back to Brands
-      </button>
+      <div className="flex items-center justify-between gap-4">
+        <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
+          &larr; Back to Brands
+        </button>
+        <BrandsVersionToggle brandId={id} />
+      </div>
 
       {/* ── Brand Header ── */}
       <DeepCard variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>

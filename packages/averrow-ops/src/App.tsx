@@ -16,6 +16,7 @@ const Brands = React.lazy(() => import('@/features/brands/Brands').then(m => ({ 
 // links (sidebar history, sales notification emails, bookmarks) keep
 // working through a redirect — see the route definition below.
 const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetail })));
+const BrandDetailV3 = React.lazy(() => import('@/features/brands-v3/BrandDetail').then(m => ({ default: m.BrandDetailV3 })));
 const Apps = React.lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = React.lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
 const Agents = React.lazy(() => import('@/features/agents/Agents').then(m => ({ default: m.Agents })));
@@ -129,6 +130,7 @@ export default function App() {
         <Route path="observatory-v3" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
         <Route path="brands" element={lazyRoute(<Brands />)} />
         <Route path="brands/:brandId" element={lazyRoute(<BrandDetail />)} />
+        <Route path="brands-v3/:brandId" element={lazyRoute(<BrandDetailV3 />)} />
         <Route path="apps" element={lazyRoute(<Apps />)} />
         <Route path="dark-web" element={lazyRoute(<DarkWeb />)} />
         <Route path="threats" element={lazyRoute(<Threats />)} />

@@ -1,0 +1,492 @@
+// Brand-health v3 detail. Per .claude/plans/v3.md §9.6 the goal is to
+// collapse the v2 detail's 8 data-shape tabs into 3 outcome-shaped tabs:
+//
+//   • Surface  — the brand's owned-domain footprint ("what we know about you")
+//   • Risk     — active threats + impersonations ("what's threatening you now")
+//   • Workflow — open takedowns + alerts ("what needs your action")
+//
+// Stage 1 = frontend-only IA refactor. Same handlers (`/api/brands/...`)
+// as v2 — only the IA changes. The individual upstream surfaces
+// (threats / email / social / apps / dark-web / intelligence) are each
+// scheduled for their own audit, so this scaffold deliberately AVOIDS
+// re-asserting those as canonical labels — it shows counts, sparklines,
+// and deep-links back to the v2 tabs for full lists. The v3 file
+// concerns itself only with the outcome-shaped IA.
+
+import { useState, useMemo } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  useBrandFullDetail,
+  useBrandTimeline,
+  useTriggerAnalysis,
+  useScanSocialProfiles,
+  useDiscoverSocialProfiles,
+} from '@/hooks/useBrandDetail';
+import { useDarkWebMentions } from '@/hooks/useDarkWebMonitor';
+import { useAppStoreMonitor } from '@/hooks/useAppStoreMonitor';
+import { useAlerts } from '@/hooks/useAlerts';
+import { useAdminTakedowns } from '@/hooks/useTakedowns';
+import { DeepCard } from '@/components/ui/DeepCard';
+import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
+import { DimensionalButton } from '@/components/ui/DimensionalButton';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { SectionLabel } from '@/components/ui/SectionLabel';
+import { PageLoader } from '@/components/ui/PageLoader';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { BrandsVersionToggle } from '@/components/ui/BrandsVersionToggle';
+import { timeAgo } from '@/lib/time';
+import {
+  ExposureIndexCard,
+  ActiveThreatsCard,
+  EmailPostureCard,
+  SocialRiskCard,
+} from '@/features/brands/BrandDetail';
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: '#C83C3C', high: '#E8923C', medium: '#DCAA32', low: '#78A0C8', info: '#5A80A8',
+};
+
+const V3_TABS = [
+  { id: 'surface',  label: 'Surface',  hint: "What we know about you" },
+  { id: 'risk',     label: 'Risk',     hint: "What's threatening you now" },
+  { id: 'workflow', label: 'Workflow', hint: 'What needs your action' },
+] as const;
+
+type V3Tab = typeof V3_TABS[number]['id'];
+
+export function BrandDetailV3() {
+  const { brandId } = useParams<{ brandId: string }>();
+  const navigate = useNavigate();
+  const id = brandId || '';
+
+  const [searchParams] = useSearchParams();
+  const initialTab = (() => {
+    const raw = searchParams.get('tab');
+    const match = V3_TABS.find(t => t.id === raw);
+    return (match?.id ?? 'surface') as V3Tab;
+  })();
+
+  const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
+
+  const { data, isLoading } = useBrandFullDetail(id);
+  useBrandTimeline(id, '7d'); // primes cache; not rendered in v3 yet
+  const { data: darkWebData } = useDarkWebMentions(id);
+  const { data: appStoreData } = useAppStoreMonitor(id);
+  const { data: alertsData } = useAlerts({ brand_id: id, status: 'new' });
+  const { data: takedownData } = useAdminTakedowns({ status: 'pending', limit: 200 });
+  const alerts = alertsData?.alerts ?? [];
+  const darkWebMentions = darkWebData?.results ?? [];
+  const appListings = appStoreData?.results ?? [];
+
+  const triggerAnalysis = useTriggerAnalysis();
+  const scanProfiles = useScanSocialProfiles();
+  const discoverProfiles = useDiscoverSocialProfiles();
+
+  const brand = data?.brand;
+  const threats = data?.threats || [];
+  const safeDomains = data?.safeDomains || [];
+  const emailSec = data?.emailSecurity;
+  const socialProfiles = data?.socialProfiles || [];
+
+  const suspiciousSocials = useMemo(
+    () => socialProfiles.filter((p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'),
+    [socialProfiles],
+  );
+  const officialSocials = useMemo(
+    () => socialProfiles.filter((p: any) => p.classification === 'official'),
+    [socialProfiles],
+  );
+  const suspiciousApps = useMemo(
+    () => appListings.filter((l: any) => l.classification === 'impersonation' || l.classification === 'suspicious'),
+    [appListings],
+  );
+  const brandTakedowns = useMemo(
+    () => (takedownData?.takedowns ?? []).filter((t: any) => t.brand_id === id),
+    [takedownData, id],
+  );
+
+  if (isLoading) return <PageLoader />;
+
+  if (!brand) {
+    return (
+      <div className="animate-fade-in">
+        <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
+          &larr; Back to Brands
+        </button>
+        <Card hover={false}><p className="text-sm text-[var(--text-tertiary)]">Brand not found</p></Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-fade-in space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
+          &larr; Back to Brands
+        </button>
+        <BrandsVersionToggle brandId={id} />
+      </div>
+
+      <DeepCard variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
+        <div style={{
+          position: 'absolute', top: -40, left: '30%',
+          width: 300, height: 200, borderRadius: '50%',
+          background: `radial-gradient(ellipse, ${SEVERITY_COLORS[brand.top_severity] || '#E5A832'}14, transparent 70%)`,
+          pointerEvents: 'none',
+        }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
+          <DimensionalAvatar
+            name={brand.name}
+            color={SEVERITY_COLORS[brand.top_severity] || '#E5A832'}
+            size={52}
+            radius={14}
+            faviconUrl={`https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=64`}
+            severity={brand.top_severity}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: -0.5, lineHeight: 1.1 }}>
+              {brand.name}
+            </h1>
+            <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-tertiary)', marginTop: 3 }}>
+              {brand.canonical_domain}
+              {timeAgo(brand.first_seen) && (
+                <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
+                  &middot; tracked {timeAgo(brand.first_seen)}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              {brand.sector && <Badge variant="info">{brand.sector}</Badge>}
+              <Badge variant={brand.monitoring_status === 'active' ? 'success' : 'default'}>
+                {brand.monitoring_status}
+              </Badge>
+            </div>
+          </div>
+        </div>
+      </DeepCard>
+
+      <div className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-lg border-b border-white/[0.06] -mx-6 px-6">
+        <div className="flex gap-1 overflow-x-auto scrollbar-none">
+          {V3_TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
+                activeTab === tab.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
+              title={tab.hint}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'surface' && (
+        <SurfaceTab
+          brand={brand}
+          emailSec={emailSec}
+          safeDomains={safeDomains}
+          officialSocials={officialSocials}
+          appListings={appListings}
+          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+        />
+      )}
+
+      {activeTab === 'risk' && (
+        <RiskTab
+          brand={brand}
+          threats={threats}
+          emailSec={emailSec}
+          socialProfiles={socialProfiles}
+          suspiciousSocials={suspiciousSocials}
+          suspiciousApps={suspiciousApps}
+          darkWebMentions={darkWebMentions}
+          alerts={alerts}
+          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onScanSocials={() => scanProfiles.mutate(id)}
+          onDiscoverSocials={() => discoverProfiles.mutate(id)}
+          onAiDeepScan={() => triggerAnalysis.mutate(id)}
+          aiPending={triggerAnalysis.isPending}
+          scanPending={scanProfiles.isPending}
+          discoverPending={discoverProfiles.isPending}
+        />
+      )}
+
+      {activeTab === 'workflow' && (
+        <WorkflowTab
+          alerts={alerts}
+          takedowns={brandTakedowns}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── SURFACE ──────────────────────────────────────────────────────────────
+// "What we know about you." Owned-domain footprint + email posture +
+// known-official social/app presence. The v3-architecture plan adds a
+// `brand_domains` table (Phase 1 of brand-seeding work) — once that
+// ships, this tab will render the full owned-domain list. For now the
+// canonical domain + safe-domain entries stand in.
+function SurfaceTab({
+  brand, emailSec, safeDomains, officialSocials, appListings, onJumpV2,
+}: {
+  brand: any;
+  emailSec: any;
+  safeDomains: any[];
+  officialSocials: any[];
+  appListings: any[];
+  onJumpV2: (tab: string) => void;
+}) {
+  const officialApps = appListings.filter((l: any) => l.classification === 'official');
+
+  return (
+    <div className="space-y-4">
+      <Card hover={false}>
+        <SectionLabel>Owned domain footprint</SectionLabel>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <FootprintTile label="Canonical domain" value={brand.canonical_domain} mono />
+          <FootprintTile
+            label="Safe domains"
+            value={safeDomains.length === 0 ? 'None added' : `${safeDomains.length} tracked`}
+            sub={safeDomains.length > 0 ? 'Excluded from impersonation matching' : 'Add aliases / ccTLDs'}
+          />
+          <FootprintTile
+            label="Tracked since"
+            value={timeAgo(brand.first_seen) || '—'}
+            sub={brand.sector || 'Sector not classified'}
+          />
+        </div>
+        <div className="mt-3 text-[11px] text-[var(--text-muted)] font-mono">
+          v3 stage 2 will render full owned-domain list (apex + subdomains + ccTLDs) once <code>brand_domains</code> ships.
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+
+        <Card hover={false}>
+          <SectionLabel>Confirmed presence</SectionLabel>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <FootprintTile
+              label="Official social profiles"
+              value={String(officialSocials.length)}
+              sub={officialSocials.length > 0 ? 'Confirmed by AI judge' : 'None classified yet'}
+              onClick={() => onJumpV2('social')}
+            />
+            <FootprintTile
+              label="Official app listings"
+              value={String(officialApps.length)}
+              sub={officialApps.length > 0 ? 'Across stores' : 'No store presence detected'}
+              onClick={() => onJumpV2('apps')}
+            />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ── RISK ──────────────────────────────────────────────────────────────────
+// "What's threatening you now." Active threat counts + impersonations
+// across surfaces + dark-web mentions + email-posture grade as a single
+// "what to worry about" view. Defers the per-surface drill-down to v2
+// for now — those upstream surfaces (threats / social / apps / dark-web)
+// are getting their own audits.
+function RiskTab({
+  brand, threats, emailSec, socialProfiles, suspiciousSocials, suspiciousApps,
+  darkWebMentions, alerts, onJumpV2, onScanSocials, onDiscoverSocials,
+  onAiDeepScan, aiPending, scanPending, discoverPending,
+}: any) {
+  const newAlertCount = alerts.length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-4 gap-3">
+        <ExposureIndexCard brand={brand} threats={threats} />
+        <ActiveThreatsCard threats={threats} />
+        <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+        <SocialRiskCard
+          socialProfiles={socialProfiles}
+          lastScan={brand.last_social_scan}
+          onScan={onScanSocials}
+          onDiscover={onDiscoverSocials}
+          scanPending={scanPending}
+          discoverPending={discoverPending}
+        />
+      </div>
+
+      <Card hover={false}>
+        <SectionLabel>Risk surface roll-up</SectionLabel>
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <RollupTile
+            label="Suspicious socials"
+            count={suspiciousSocials.length}
+            onClick={() => onJumpV2('social')}
+            tone={suspiciousSocials.length > 0 ? 'warn' : 'neutral'}
+          />
+          <RollupTile
+            label="Suspicious app listings"
+            count={suspiciousApps.length}
+            onClick={() => onJumpV2('apps')}
+            tone={suspiciousApps.length > 0 ? 'warn' : 'neutral'}
+          />
+          <RollupTile
+            label="Dark-web mentions"
+            count={darkWebMentions.length}
+            onClick={() => onJumpV2('dark-web')}
+            tone={darkWebMentions.length > 0 ? 'warn' : 'neutral'}
+          />
+          <RollupTile
+            label="Open alerts"
+            count={newAlertCount}
+            tone={newAlertCount > 0 ? 'crit' : 'neutral'}
+          />
+        </div>
+        <div className="mt-3 text-[11px] text-[var(--text-muted)] font-mono">
+          Each surface above gets its own audit. Counts here roll up the same
+          handlers v2 uses; the per-surface IA may change in subsequent v3 work.
+        </div>
+      </Card>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <DimensionalButton variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
+          {aiPending ? 'ANALYZING…' : 'AI DEEP SCAN'}
+        </DimensionalButton>
+      </div>
+    </div>
+  );
+}
+
+// ── WORKFLOW ─────────────────────────────────────────────────────────────
+// "What needs your action." Open takedowns + open alerts for this brand.
+// Provider escalations are part of the takedown automation track (Phase
+// C of the v3-architecture plan — `takedown_provider_apis`); for now
+// surfaced through the same takedown rows.
+function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] }) {
+  return (
+    <div className="space-y-4">
+      <Card hover={false}>
+        <SectionLabel>Open takedowns</SectionLabel>
+        <div className="mt-3 text-[11px] font-mono text-[var(--text-tertiary)]">
+          {takedowns.length} pending for this brand
+        </div>
+        <div className="mt-3 space-y-2">
+          {takedowns.length === 0 && (
+            <EmptyState title="No open takedowns" description="Sparrow has no drafts assembled for this brand right now." />
+          )}
+          {takedowns.slice(0, 8).map((t: any) => (
+            <TakedownRow key={t.id} takedown={t} />
+          ))}
+          {takedowns.length > 8 && (
+            <div className="text-[11px] font-mono text-[var(--text-muted)]">
+              + {takedowns.length - 8} more in the takedowns queue
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card hover={false}>
+        <SectionLabel>Open alerts</SectionLabel>
+        <div className="mt-3 text-[11px] font-mono text-[var(--text-tertiary)]">
+          {alerts.length} new for this brand
+        </div>
+        <div className="mt-3 space-y-2">
+          {alerts.length === 0 && (
+            <EmptyState title="No open alerts" description="Auto-triage has cleared everything we'd surface." />
+          )}
+          {alerts.slice(0, 8).map((a: any) => (
+            <AlertRow key={a.id} alert={a} />
+          ))}
+          {alerts.length > 8 && (
+            <div className="text-[11px] font-mono text-[var(--text-muted)]">
+              + {alerts.length - 8} more in the alerts queue
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── Tiles ────────────────────────────────────────────────────────────────
+function FootprintTile({
+  label, value, sub, mono, onClick,
+}: {
+  label: string; value: string; sub?: string; mono?: boolean; onClick?: () => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
+      style={{
+        padding: 12, borderRadius: 8,
+        border: '1px solid var(--border-base)',
+        background: 'var(--bg-input)',
+      }}
+    >
+      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className={`mt-1 text-sm ${mono ? 'font-mono' : 'font-semibold'} text-[var(--text-primary)]`}>{value}</div>
+      {sub && <div className="mt-1 text-[11px] text-[var(--text-tertiary)]">{sub}</div>}
+    </div>
+  );
+}
+
+function RollupTile({
+  label, count, tone = 'neutral', onClick,
+}: {
+  label: string; count: number; tone?: 'neutral' | 'warn' | 'crit'; onClick?: () => void;
+}) {
+  const color = tone === 'crit' ? 'var(--sev-critical)' : tone === 'warn' ? 'var(--sev-medium)' : 'var(--text-secondary)';
+  return (
+    <div
+      onClick={onClick}
+      className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
+      style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-base)', background: 'var(--bg-input)' }}
+    >
+      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="mt-1 text-2xl font-bold" style={{ color }}>{count}</div>
+    </div>
+  );
+}
+
+function TakedownRow({ takedown }: { takedown: any }) {
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 6,
+      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-mono text-[var(--text-primary)] truncate">{takedown.target_value}</div>
+        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+          {takedown.target_type} · {takedown.provider_name || 'no provider'} · {takedown.severity}
+        </div>
+      </div>
+      <Badge variant={takedown.status === 'pending' ? 'medium' : 'default'}>{takedown.status}</Badge>
+    </div>
+  );
+}
+
+function AlertRow({ alert }: { alert: any }) {
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 6,
+      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs text-[var(--text-primary)] truncate">{alert.title || alert.alert_type}</div>
+        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+          {alert.alert_type} · {alert.severity}
+        </div>
+      </div>
+      <Badge variant={alert.severity === 'critical' ? 'critical' : alert.severity === 'high' ? 'high' : 'default'}>
+        {alert.status}
+      </Badge>
+    </div>
+  );
+}

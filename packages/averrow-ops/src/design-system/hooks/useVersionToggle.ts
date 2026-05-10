@@ -15,7 +15,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 export type Version = 'v2' | 'v3';
 
-export type Surface = 'observatory';
+export type Surface = 'observatory' | 'brands';
 
 interface SurfaceConfig {
   storageKey:     string;
@@ -28,6 +28,15 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
     storageKey:     'averrow.observatory-version',
     defaultVersion: 'v3', // v3 GPU TripsLayer ships as default
     paths:          { v2: '/observatory', v3: '/observatory-v3' },
+  },
+  brands: {
+    // Detail-level toggle. The list page is shared; only the brand-detail
+    // IA differs (8 data-shape tabs in v2, 3 outcome-shaped tabs in v3 per
+    // .claude/plans/v3.md §9.6). Path entries here are list-level — the
+    // BrandsVersionToggle component substitutes :brandId at render time.
+    storageKey:     'averrow.brands-version',
+    defaultVersion: 'v2',
+    paths:          { v2: '/brands', v3: '/brands-v3' },
   },
 };
 
