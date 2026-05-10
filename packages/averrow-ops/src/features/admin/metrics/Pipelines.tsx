@@ -1,4 +1,4 @@
-// Pipelines, v3 treatment for /admin/metrics-v3.
+// Pipelines, v3 treatment for /admin/metrics.
 //
 // Refinement of the v2 PipelineAutomationSection — keeps the
 // verdict-tinted card grid (operators already read it well) and
@@ -484,7 +484,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
   );
 }
 
-export function PipelinesV3({ agents }: { agents: Agent[] }) {
+export function Pipelines({ agents }: { agents: Agent[] }) {
   const { data: pipelines = [] } = usePipelineStatus(agents);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

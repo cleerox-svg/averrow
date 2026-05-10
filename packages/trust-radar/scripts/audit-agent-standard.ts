@@ -123,41 +123,64 @@ function ruleIconCoverage(): void {
   }
 }
 
-// ─── 3. AGENT_GROUPS membership ──────────────────────────────────
+// ─── 3. Agents page group membership ─────────────────────────────
+//
+// V3 Agents.tsx groups by AGENT_METADATA.category at render time
+// (no more hand-maintained AGENT_GROUPS constant). The page's
+// GROUP_LABELS map enumerates the categories that have a section
+// on the page. Every registered agent must:
+//   (a) appear in AGENT_METADATA, and
+//   (b) have its `category` listed in the page's GROUP_LABELS map.
+// Otherwise it would render in no section at all.
 
 function ruleGroupMembership(): void {
   let agentsPageSrc: string;
+  let metadataSrc: string;
   try {
     agentsPageSrc = readFileSync(UI_AGENTS_PAGE_PATH, "utf8");
+    metadataSrc   = readFileSync(UI_METADATA_PATH, "utf8");
   } catch (err) {
-    fail("group-membership", `cannot read Agents.tsx: ${err instanceof Error ? err.message : String(err)}`);
+    fail("group-membership", `cannot read Agents.tsx / agent-metadata.ts: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
-  // Each AGENT_GROUPS entry has `agentIds: ['x', 'y', ...]`. Collect
-  // every quoted string inside any agentIds: [...] block.
-  const groupedIds = new Set<string>();
-  const blockRe = /agentIds:\s*\[([^\]]*)\]/g;
-  let blockMatch: RegExpExecArray | null;
-  while ((blockMatch = blockRe.exec(agentsPageSrc)) !== null) {
-    const body = blockMatch[1] ?? "";
-    const idRe = /['"]([a-z_][a-z0-9_]*)['"]/g;
-    let idm: RegExpExecArray | null;
-    while ((idm = idRe.exec(body)) !== null) {
-      groupedIds.add(idm[1]!);
-    }
+  // Pull the set of category keys the page actually surfaces
+  // (anything before a colon inside the GROUP_LABELS map literal).
+  const groupLabelsBlockRe = /GROUP_LABELS\s*:\s*Record<[^>]+>\s*=\s*\{([\s\S]*?)\}\s*;/m;
+  const blockMatch = groupLabelsBlockRe.exec(agentsPageSrc);
+  if (!blockMatch) {
+    fail("group-membership", "could not find GROUP_LABELS map on Agents.tsx — page-render contract changed");
+    return;
+  }
+  const groupKeys = new Set<string>();
+  const keyRe = /^\s*([a-z_][a-z0-9_]*)\s*:/gm;
+  let km: RegExpExecArray | null;
+  while ((km = keyRe.exec(blockMatch[1] ?? "")) !== null) {
+    groupKeys.add(km[1]!);
   }
 
-  // Phase 5.4 will add an explicit "uncategorised" landing strip;
-  // until then, flight_control is the only agent allowed to live
-  // outside AGENT_GROUPS (it's rendered separately at the top of the
-  // page as the orchestrator).
+  // Pull (id, category) pairs from AGENT_METADATA. Each entry is
+  // an object literal with `id: 'x'` and `category: 'y'`.
+  const metaCategory = new Map<string, string>();
+  const entryRe = /id:\s*['"]([a-z_][a-z0-9_]*)['"][\s\S]*?category:\s*['"]([a-z]+)['"]/g;
+  let em: RegExpExecArray | null;
+  while ((em = entryRe.exec(metadataSrc)) !== null) {
+    metaCategory.set(em[1]!, em[2]!);
+  }
+
+  // flight_control renders in a dedicated SUPERVISOR section, not
+  // in a GROUP_LABELS bucket — exempt from category check.
   const groupExempt = new Set(["flight_control"]);
 
   for (const id of Object.keys(agentModules)) {
     if (groupExempt.has(id)) continue;
-    if (!groupedIds.has(id)) {
-      fail("group-membership", `agent not listed in any AGENT_GROUPS bucket on Agents.tsx`, id);
+    const cat = metaCategory.get(id);
+    if (!cat) {
+      fail("group-membership", `no AGENT_METADATA entry — won't render on Agents.tsx`, id);
+      continue;
+    }
+    if (!groupKeys.has(cat)) {
+      fail("group-membership", `category '${cat}' has no GROUP_LABELS bucket on Agents.tsx — won't render`, id);
     }
   }
 }

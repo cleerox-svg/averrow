@@ -1,641 +1,670 @@
-import { Fragment, useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
-import { useAgents, useAgentDetail, useAgentHealth, useAgentOutputsByName, useApiUsage, useDashboardStats, usePipelineStatus, usePipelineDetail } from '@/hooks/useAgents';
-import { usePendingApprovals } from '@/hooks/useAgentApprovals';
-import { PipelineAutomationSummaryStrip } from '@/features/admin/metrics/PipelineAutomation';
-import { useGeoipRefresh } from '@/hooks/useGeoipRefresh';
-import type { Agent, AgentDetailResponse, AgentHealthResponse, AgentOutput, AgentTick, PipelineDetail, PipelineEntry } from '@/hooks/useAgents';
-import { Card, StatCard, StatGrid, PageHeader, Tabs } from '@/design-system/components';
-import { VersionToggle } from '@/components/ui/VersionToggle';
-import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Bot } from 'lucide-react';
-import { CardGridLoader } from '@/components/ui/PageLoader';
+// /agents — Agent Operations page.
+//
+// Layout:
+//   - Flight Control rendered as the page's SUPERVISOR section, full
+//     width, separate from the worker grid (first-class concept,
+//     not just-another-card).
+//   - Worker agents grouped by AGENT_METADATA.category — Intelligence,
+//     Response, Platform Ops, Synchronous AI, Meta.
+//   - Each agent card shows upstream / downstream connectivity chips
+//     from the TRIGGER_CHAIN constant (source: CLAUDE.md "Agent
+//     trigger chain").
+//   - Compliance chips: Registered ✓ + Metadata ✓ are derived from
+//     real data; Schema + Budget remain ✗ until Phase 4 / §11 land.
+//
+// View modes:
+//   - Grid (default) — supervisor + worker cards
+//   - Network — interactive mind-map of the agent mesh with live
+//     pulses on edges currently in flight
+//
+// Backend-blocked surfaces (still ✗):
+//   - Per-agent cost gauge — needs §11 budget block
+//   - Resource-graph chips — needs §22 static-analysis manifest
+
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useAgents, useAgentDetail, useAgentHealth } from '@/hooks/useAgents';
+import type { Agent, AgentOutput } from '@/hooks/useAgents';
+import { Card, StatCard, StatGrid, PageHeader } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
-import { AgentIcon } from '@/components/brand/AgentIcon';
-import { ActivitySparkline } from '@/components/ui/ActivitySparkline';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
+import { CardGridLoader } from '@/components/ui/PageLoader';
+import { AgentIcon } from '@/components/brand/AgentIcon';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { RunStatusBlocks } from '@/components/ui/RunStatusBlocks';
-import { HistoryView } from '@/components/agents/HistoryView';
-import { ConfigView } from '@/components/agents/ConfigView';
-import { AgentDeclarationsPanel } from '@/components/agents/AgentDeclarationsPanel';
-import { relativeTime, formatDuration } from '@/lib/time';
-import { cn } from '@/lib/cn';
-import { getAgentMetadata, type AgentId } from '@/lib/agent-metadata';
-import { AgentStatusBadge } from '@/components/AgentStatusBadge';
+import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
+import { relativeTime } from '@/lib/time';
+import { Bot, AlertTriangle, ChevronDown, GitBranch, Shield } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { AgentNetworkView } from './components/AgentNetworkView';
 
-type AgentTab = 'MONITOR' | 'HISTORY' | 'CONFIG';
-
-// ─── Pending-approvals link (Phase 5.4c) ─────────────────────────
+// ─── Hierarchy: who manages who? ───────────────────────────────────
 //
-// Surfaces the count of agents currently in pending /
-// changes_requested state and links to the queue page. Hidden when
-// there's nothing pending so the header stays clean.
-function PendingApprovalsLink() {
-  const { data } = usePendingApprovals();
-  const count = data?.total ?? 0;
-  if (count === 0) return null;
-  return (
-    <Link
-      to="/agents/approvals"
-      className="inline-flex items-center gap-1.5 px-2 py-1 rounded font-mono text-[10px] font-bold uppercase tracking-wide hover:opacity-100"
-      style={{
-        background: 'rgba(229,168,50,0.12)',
-        color: 'var(--amber)',
-        border: '1px solid rgba(229,168,50,0.30)',
-        opacity: 0.95,
-      }}
-      title="Agents awaiting deployment review (AGENT_STANDARD §12.1)"
-    >
-      <ShieldCheck size={12} />
-      {count} pending
-    </Link>
-  );
-}
+// Today only one agent is structurally a supervisor: Flight Control
+// (parallel scaling, stall recovery, token budget enforcement). If
+// future supervisors land — e.g. a per-domain "Trap Mesh" coordinator
+// from AGENT_AUDIT §6.4 — add their ids here and they'll automatically
+// render in the supervisor section above the worker grid.
+const SUPERVISOR_AGENT_IDS: AgentId[] = ['flight_control'];
 
-// ─── Visual grouping ────────────────────────────────────────────────
+// ─── Trigger chain — encodes inter-agent event flow ───────────────
 //
-// Flight Control sits above as the supervisor card. Everything else is
-// grouped here by role — Detection (eyes & ears), Intelligence (analysis
-// & narrative), Response (taking action), Operations (platform health
-// & growth), and Meta (auditing the platform itself).
+// Source of truth: CLAUDE.md "Agent trigger chain" + the dispatcher
+// in cron/orchestrator.ts. Used to render upstream/downstream chips
+// on each agent card so operators can see what feeds X / what X
+// feeds without opening the agent's source file.
 //
-// Listing agent ids explicitly keeps the order deterministic and lets us
-// move agents between groups without touching agent-metadata.ts.
-interface AgentGroup {
-  id: string;
-  label: string;
-  agentIds: AgentId[];
-}
-
-const AGENT_GROUPS: AgentGroup[] = [
-  {
-    id: 'detection',
-    label: 'Detection & Surveillance',
-    agentIds: [
-      'sentinel',
-      'navigator',
-      'cartographer',
-      'nexus',
-      'analyst',
-      'social_discovery',
-      'social_monitor',
-      'app_store_monitor',
-      'dark_web_monitor',
-      'seed_strategist',
-      'auto_seeder',
-      'lookalike_scanner',
-    ],
-  },
-  {
-    id: 'intelligence',
-    label: 'Intelligence & Analysis',
-    agentIds: ['observer', 'attributor', 'news_watcher', 'strategist', 'narrator', 'notification_narrator'],
-  },
-  {
-    id: 'response',
-    label: 'Response',
-    agentIds: ['sparrow'],
-  },
-  {
-    id: 'operations',
-    label: 'Platform Operations',
-    agentIds: ['pathfinder', 'curator', 'watchdog', 'cube_healer', 'enricher', 'geoip_refresh'],
-  },
-  {
-    // Synchronous AI agents — handler-driven (not cron-scheduled).
-    // Each one wraps an inline AI call from a public/admin handler;
-    // see AGENT_STANDARD §2 + §7.4. Phase 3 of the agent audit migrates
-    // 15 such call-sites into this group, one per PR.
-    id: 'sync',
-    label: 'Synchronous AI',
-    agentIds: ['public_trust_check', 'qualified_report', 'brand_analysis', 'brand_report', 'brand_deep_scan', 'honeypot_generator', 'brand_enricher', 'admin_classify', 'url_scan', 'scan_report', 'social_ai_assessor', 'geo_campaign_assessment', 'evidence_assembler'],
-  },
-  // 'meta' group (architect) retired 2026-04-29 — see agent-metadata.ts.
-];
-
-// ─── Status helpers ─────────────────────────────────────────────────
-function pipelineDotClass(status: string): string {
-  if (status === 'active') return 'dot-pulse-green';
-  if (status === 'error') return 'dot-pulse-red';
-  if (status === 'degraded') return 'dot-pulse-amber';
-  return '';
-}
-
-const severityVariant: Record<string, 'critical' | 'high' | 'medium' | 'low' | 'default'> = {
-  critical: 'critical',
-  high: 'high',
-  medium: 'medium',
-  low: 'low',
+// Keep this minimal — only the structural fan-out edges that drive
+// orchestration. Sync agents (handler-driven) don't appear here.
+const TRIGGER_CHAIN: Partial<Record<AgentId, { upstream?: AgentId[]; downstream?: AgentId[] }>> = {
+  sentinel:        { downstream: ['cartographer'] },
+  cartographer:    { upstream: ['sentinel'], downstream: ['nexus'] },
+  nexus:           { upstream: ['cartographer'], downstream: ['analyst', 'observer', 'attributor'] },
+  analyst:         { upstream: ['nexus'], downstream: ['pathfinder'] },
+  observer:        { upstream: ['nexus'], downstream: ['narrator', 'seed_strategist'] },
+  attributor:      { upstream: ['nexus'] },
+  pathfinder:      { upstream: ['analyst'] },
+  narrator:        { upstream: ['observer'] },
+  seed_strategist: { upstream: ['observer'], downstream: ['auto_seeder'] },
+  auto_seeder:     { upstream: ['seed_strategist'] },
 };
 
-// ─── Run status blocks (last 5 hour buckets, stacked instances) ─────
-//
-// 2-D timeline: x = hour bucket (5 columns, oldest → newest),
-//               y = parallel-instance index (up to 3 stacked blocks).
-//
-// One block per instance per tick. Color encodes that instance's
-// run outcome (green = success, red = failed, amber = partial,
-// pulsing amber = running, gray = no run / idle slot). The natural
-// outcome of stacking is that Flight-Control scaling shows up as
-// taller columns on cartographer/analyst, while every other agent
-// stays a flat row of single blocks — same visual as before for
-// non-scaling agents. Component itself lives at
-// `@/components/ui/RunStatusBlocks` (shared with /agents-v3).
+// ─── Worker groupings — 5 categories from AGENT_METADATA ──────────
+const GROUP_LABELS: Record<string, { label: string; description: string }> = {
+  intelligence: { label: 'Intelligence',     description: 'Detection, enrichment, correlation' },
+  response:     { label: 'Response',         description: 'Takedowns + remediation' },
+  ops:          { label: 'Platform Ops',     description: 'Health, hygiene, refresh jobs' },
+  sync:         { label: 'Synchronous AI',   description: 'Handler-driven AI calls' },
+  meta:         { label: 'Meta',             description: 'Internal audit + tooling' },
+};
 
-// ─── Schedule Badge ──────────────────────────────────────────────
-//
-// Tiny schedule pill rendered beside the status/circuit badges. Navigator
-// runs on an independent 5-minute cron that FC observes but doesn't
-// dispatch, so it's rendered in the accent color instead of the muted
-// fill the rest use.
-function ScheduleBadge({ agent }: { agent: Agent }) {
-  const schedule = agent.schedule;
-  if (!schedule || schedule === '-') return null;
-  const isIndependent = agent.name === 'navigator';
-  return (
-    <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[9px] font-medium uppercase tracking-wide"
-      style={
-        isIndependent
-          ? { background: 'rgba(56,189,248,0.12)', color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.3)' }
-          : { background: 'var(--border-base)', color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }
-      }
-      title={isIndependent ? 'Independent cron — Flight Control monitors but does not dispatch' : 'Dispatched by Flight Control'}
-    >
-      {schedule}
-    </span>
-  );
+const COMPLIANCE_AXES = [
+  { key: 'registered', label: 'Registered' },
+  { key: 'metadata',   label: 'Metadata' },
+  { key: 'schema',     label: 'Schema' },
+  { key: 'budget',     label: 'Budget' },
+] as const;
+
+// Compliance signal — derived from real data:
+//   - registered: present in AGENT_METADATA (proxy for agentModules)
+//   - metadata:   AGENT_METADATA[name] has a non-default subtitle
+//   - schema:     ✗ until Phase 4 retrofit lands
+//   - budget:     ✗ until §11 per-agent budget block lands
+function complianceFor(agent: Agent) {
+  const meta = AGENT_METADATA[agent.name as AgentId];
+  return {
+    registered: !!meta,
+    metadata:   !!meta && !!meta.subtitle,
+    schema:     false,
+    budget:     false,
+  };
 }
 
-// ─── Circuit Breaker Badge ──────────────────────────────────────────
-function CircuitBadge({ agent }: { agent: Agent }) {
+function isDecommissionCandidate(agent: Agent): boolean {
+  if (!agent.last_run_at) return false;
+  const ageMs = Date.now() - new Date(agent.last_run_at).getTime();
+  const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+  return ageMs > fourteenDays;
+}
+
+type FailurePattern =
+  | { severity: 'critical'; label: string; reason: string }
+  | { severity: 'high';     label: string; reason: string }
+  | { severity: 'medium';   label: string; reason: string }
+  | null;
+
+function failurePatternFor(agent: Agent): FailurePattern {
   if (agent.circuit_state === 'tripped') {
-    return (
-      <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wide"
-        style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' }}
-      >
-        TRIPPED{agent.paused_after_n_failures ? ` \u00B7 ${agent.paused_after_n_failures}\u2717` : ''}
-      </span>
-    );
+    return {
+      severity: 'critical',
+      label:    'Circuit tripped',
+      reason:   `${agent.consecutive_failures} consecutive failures`,
+    };
   }
   if (agent.circuit_state === 'manual_pause') {
-    return (
-      <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wide"
-        style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)', border: '1px solid var(--border-base)' }}
-      >
-        Paused &middot; manual
-      </span>
-    );
+    return {
+      severity: 'medium',
+      label:    'Paused',
+      reason:   agent.paused_reason ?? 'Manually paused',
+    };
+  }
+  if (agent.last_run_status === 'failed' && agent.jobs_24h === 0) {
+    return {
+      severity: 'critical',
+      label:    'Failing',
+      reason:   'No successful run in 24h',
+    };
+  }
+  const errorRate = agent.error_count_24h / Math.max(agent.jobs_24h, 1);
+  if (agent.jobs_24h >= 5 && errorRate > 0.20) {
+    return {
+      severity: 'high',
+      label:    'High error rate',
+      reason:   `${Math.round(errorRate * 100)}% errors in 24h`,
+    };
   }
   return null;
 }
 
-// ─── Agent Card ─────────────────────────────────────────────────────
-function AgentCard({
-  agent,
-  isSelected,
-  onSelect,
+// Multi-series compact area chart for cards. All three series
+// (runs / outputs / errors) ride on the main /api/agents payload
+// — no per-card useAgentHealth fan-out. Same visual identity as
+// the drill-down HealthChart but stripped of axes/tooltips for
+// the dense card grid. Errors series only renders when the agent
+// actually has any errors in the 24h window.
+function CardHealthChart({
+  runs, outputs, errors, runsColor, width = 120, height = 40,
 }: {
-  agent: Agent;
-  isSelected: boolean;
-  onSelect: () => void;
+  runs:      number[];
+  outputs?:  number[];
+  errors?:   number[];
+  /** Tint used for the runs series — flips to sev-high when the
+   *  agent matches a failure pattern, otherwise amber. */
+  runsColor: string;
+  width?:    number;
+  height?:   number;
 }) {
-  const meta = getAgentMetadata(agent.name);
-  const agentColor = meta?.color ?? agent.color;
+  if (!runs || runs.length === 0) return null;
+  const N = runs.length;
+  // Single shared y-scale across all series so they're comparable.
+  const peak = Math.max(
+    ...runs,
+    ...(outputs ?? []),
+    ...(errors  ?? []),
+    1,
+  );
+  const stepX = N > 1 ? width / (N - 1) : width;
+
+  function paths(series: number[]) {
+    const points = series.map((v, i) => {
+      const x = i * stepX;
+      const y = height - (v / peak) * (height - 2) - 1;
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const area = `${line} L ${(N - 1) * stepX} ${height} L 0 ${height} Z`;
+    return { line, area };
+  }
+
+  // Stable per-series gradient ids — derived from a single random
+  // seed so the three gradients in this chart instance share a
+  // namespace but don't collide with other cards.
+  const seed = Math.random().toString(36).slice(2, 9);
+  const gradRuns    = `card-runs-${seed}`;
+  const gradOutputs = `card-out-${seed}`;
+  const gradErrors  = `card-err-${seed}`;
+
+  const runsP    = paths(runs);
+  const outputsP = outputs ? paths(outputs) : null;
+  const errorsP  = errors && errors.some(e => e > 0) ? paths(errors) : null;
 
   return (
-    <Card
-      variant={agent.circuit_state === 'tripped' ? 'critical' : agent.status === 'error' ? 'critical' : agent.status === 'active' ? 'active' : 'base'}
-      className={cn(
-        'card-accent-top transition-all duration-200 group',
-        isSelected && 'scale-[1.01]',
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradRuns} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={runsColor} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={runsColor} stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradOutputs} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+          <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradErrors} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.40} />
+          <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      {/* Runs first (broadest gradient, base layer) */}
+      <path d={runsP.area} fill={`url(#${gradRuns})`} />
+      <path d={runsP.line} stroke={runsColor} strokeWidth={1.3} fill="none" strokeLinejoin="round" />
+      {outputsP && (
+        <>
+          <path d={outputsP.area} fill={`url(#${gradOutputs})`} />
+          <path d={outputsP.line} stroke="#22D3EE" strokeWidth={1.1} fill="none" strokeLinejoin="round" opacity={0.85} />
+        </>
       )}
-      style={{ padding: '20px', cursor: 'pointer' }}
-      onClick={onSelect}
+      {errorsP && (
+        <>
+          <path d={errorsP.area} fill={`url(#${gradErrors})`} />
+          <path d={errorsP.line} stroke="var(--sev-high)" strokeWidth={1.1} fill="none" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function ComplianceChip({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] tracking-wide uppercase"
+      style={{
+        background: ok ? 'rgba(60,184,120,0.10)' : 'rgba(255,255,255,0.04)',
+        color:      ok ? 'var(--green)' : 'var(--text-muted)',
+        border:     `1px solid ${ok ? 'var(--green-border)' : 'var(--border-base)'}`,
+      }}
     >
-      {/* Header */}
-      <div className="flex items-start gap-3 mb-4">
-        <span className="shrink-0 mt-0.5" style={{ color: agentColor }}>
-          <AgentIcon agent={agent.name} size={32} />
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-            <span className="font-mono text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-              {meta?.displayName ?? agent.display_name}
+      {ok ? '✓' : '✗'} {label}
+    </span>
+  );
+}
+
+function ConnectivityChips({ agentName }: { agentName: string }) {
+  const chain = TRIGGER_CHAIN[agentName as AgentId];
+  if (!chain || (!chain.upstream && !chain.downstream)) return null;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap font-mono text-[9px]" style={{ color: 'var(--text-tertiary)' }}>
+      {chain.upstream && chain.upstream.length > 0 && (
+        <>
+          <span style={{ color: 'var(--text-muted)' }}>←</span>
+          {chain.upstream.map(a => (
+            <span
+              key={a}
+              className="px-1.5 py-0.5 rounded"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-secondary)' }}
+            >
+              {a}
             </span>
-            <AgentStatusBadge status={agent.status} />
-            <CircuitBadge agent={agent} />
-            <ScheduleBadge agent={agent} />
-          </div>
-          <div className="font-mono text-[10px] text-white/40 leading-relaxed line-clamp-2">
-            {meta?.subtitle ?? agent.description}
-          </div>
-        </div>
-      </div>
-
-      {/* 3-metric row */}
-      <div className="flex gap-5 mb-4">
-        <div>
-          <div className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{agent.jobs_24h}</div>
-          <div className="font-mono text-[9px] text-white/40 uppercase tracking-wider">Jobs 24h</div>
-        </div>
-        <div>
-          <div className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{agent.outputs_24h}</div>
-          <div className="font-mono text-[9px] text-white/40 uppercase tracking-wider">Outputs</div>
-        </div>
-        <div>
-          <div
-            className="font-display text-lg font-bold"
-            style={{ color: agent.error_count_24h > 0 ? '#C83C3C' : 'var(--text-primary)' }}
-          >
-            {agent.error_count_24h}
-          </div>
-          <div className="font-mono text-[9px] text-white/40 uppercase tracking-wider">Errors</div>
-        </div>
-      </div>
-
-      {/* Last output + status blocks */}
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-[9px] text-white/50">
-          Last output: {relativeTime(agent.last_output_at)}
-        </div>
-        <RunStatusBlocks ticks={agent.recent_ticks} fallbackActivity={agent.activity} />
-      </div>
-    </Card>
-  );
-}
-
-// ─── Flight Control Supervisor Card ─────────────────────────────────
-function FlightControlCard({
-  agent,
-  allAgents,
-  isSelected,
-  onSelect,
-}: {
-  agent: Agent;
-  allAgents: Agent[];
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const { data: apiUsage } = useApiUsage();
-  const { data: dashStats } = useDashboardStats();
-
-  const tokenBudget = 500_000;
-  const tokensUsed = apiUsage?.tokens_24h ?? 0;
-  const tokenPct = Math.min((tokensUsed / tokenBudget) * 100, 100);
-
-  const tokenBarColor = tokenPct >= 90 ? '#C83C3C' : tokenPct >= 80 ? '#FB923C' : '#22D3EE';
-
-  return (
-    <Card
-      variant={agent.status === 'error' ? 'critical' : 'active'}
-      className="col-span-1 sm:col-span-2 lg:col-span-3 card-accent-top transition-all duration-200"
-      style={{ padding: '24px', cursor: 'pointer' }}
-      onClick={onSelect}
-    >
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left: FC identity */}
-        <div className="flex items-start gap-3 lg:w-64 shrink-0">
-          <span className="shrink-0 mt-0.5" style={{ color: '#22D3EE' }}>
-            <AgentIcon agent="flight_control" size={36} />
-          </span>
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-mono text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Flight Control</span>
-              <AgentStatusBadge status={agent.status} />
-            </div>
-            <div className="font-mono text-[10px] text-white/40 leading-relaxed">
-              {getAgentMetadata('flight_control')?.subtitle}
-            </div>
-          </div>
-        </div>
-
-        {/* Center: Agent mesh bubbles, grouped by metadata category. */}
-        {/* Groups appear in pipeline order (intelligence → response → ops → meta).
-            Agents without metadata fall into "Other" so nothing disappears. */}
-        <div className="flex-1">
-          <div className="font-mono text-[9px] text-white/40 uppercase tracking-widest mb-3">Agent Mesh</div>
-          <div className="space-y-3">
-            {(() => {
-              const groupOrder: Array<{ key: string; label: string }> = [
-                { key: 'intelligence', label: 'Detection & Intelligence' },
-                { key: 'response',     label: 'Response' },
-                { key: 'ops',          label: 'Operations' },
-                { key: 'sync',         label: 'Synchronous AI' },
-                { key: 'meta',         label: 'Meta' },
-                { key: 'other',        label: 'Other' },
-              ];
-
-              // Bucket every non-FC agent by its metadata category.
-              // Unknown / missing metadata → 'other' so the agent still
-              // renders (defensive — never make an agent disappear from
-              // the mesh just because we forgot to wire its metadata).
-              const buckets: Record<string, typeof allAgents> = {
-                intelligence: [], response: [], ops: [], sync: [], meta: [], other: [],
-              };
-              for (const a of allAgents) {
-                if (a.name === 'flight_control') continue;
-                const meta = getAgentMetadata(a.name);
-                const cat = (meta?.category as string | undefined) ?? 'other';
-                (buckets[cat] ?? buckets.other).push(a);
-              }
-
-              return groupOrder.map(({ key, label }) => {
-                const agents = buckets[key] ?? [];
-                if (agents.length === 0) return null;
-                return (
-                  <div key={key}>
-                    <div className="font-mono text-[8px] text-white/30 uppercase tracking-widest mb-1.5">
-                      {label}
-                      <span className="text-white/20 ml-2 normal-case tracking-normal">{agents.length}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {agents.map(a => {
-                        const m = getAgentMetadata(a.name);
-                        return (
-                          <div
-                            key={a.name}
-                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5"
-                            style={{
-                              background: 'transparent',
-                              border: '1px solid var(--border-base)',
-                            }}
-                          >
-                            <AgentStatusBadge status={a.status} />
-                            <span
-                              className="font-mono text-[10px]"
-                              style={{ color: m?.color ?? a.color }}
-                            >
-                              {m?.displayName ?? a.display_name}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-          </div>
-        </div>
-
-        {/* Right: Token budget + backlogs */}
-        <div className="lg:w-72 shrink-0 space-y-3">
-          {/* Token budget bar */}
-          <div>
-            <div className="flex justify-between mb-1">
-              <span className="font-mono text-[9px] text-white/40 uppercase tracking-widest">Token Budget</span>
-              <span className="font-mono text-[10px] text-white/60">
-                {tokensUsed.toLocaleString()} / {tokenBudget.toLocaleString()}
-              </span>
-            </div>
-            <div className="progress-bar-track h-2">
-              <div
-                className={cn(
-                  tokenPct >= 90 ? 'progress-bar-fill-red' : tokenPct >= 80 ? 'progress-bar-fill-amber' : 'progress-bar-fill-teal',
-                )}
-                style={{ width: `${tokenPct}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Backlog counters */}
-          <div className="flex gap-4">
-            <div>
-              <div className="font-display text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-                {dashStats?.agent_backlogs?.cartographer?.toLocaleString() ?? '—'}
-              </div>
-              <div className="font-mono text-[8px] text-white/50 uppercase">Cart backlog</div>
-            </div>
-            <div>
-              <div className="font-display text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-                {dashStats?.agent_backlogs?.analyst?.toLocaleString() ?? '—'}
-              </div>
-              <div className="font-mono text-[8px] text-white/50 uppercase">Analyst backlog</div>
-            </div>
-            <div>
-              <div className="font-display text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{agent.jobs_24h}</div>
-              <div className="font-mono text-[8px] text-white/50 uppercase">FC Jobs 24h</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ─── Detail Panel ───────────────────────────────────────────────────
-function AgentDetailPanel({ agent }: { agent: Agent }) {
-  const { data: detail } = useAgentDetail(agent.name);
-  const { data: health } = useAgentHealth(agent.name);
-  const { data: outputs } = useAgentOutputsByName(agent.name);
-  const meta = getAgentMetadata(agent.name);
-  const agentColor = meta?.color ?? agent.color;
-
-  const typedDetail = detail as AgentDetailResponse | null;
-  const typedHealth = health as AgentHealthResponse | null;
-
-  const successRate = useMemo(() => {
-    if (!typedDetail?.stats) return null;
-    const { successes, total_runs } = typedDetail.stats;
-    if (total_runs === 0) return null;
-    return ((successes / total_runs) * 100).toFixed(1);
-  }, [typedDetail]);
-
-  const chartData = useMemo(() => {
-    if (!typedHealth) return [];
-    return typedHealth.runs.map((runs, i) => ({
-      hour: `${(new Date().getUTCHours() + i) % 24}:00`,
-      runs,
-      outputs: typedHealth.outputs[i] ?? 0,
-      errors:  typedHealth.errors?.[i] ?? 0,
-    }));
-  }, [typedHealth]);
-
-  return (
-    <Card className="col-span-1 sm:col-span-2 lg:col-span-3 animate-fade-in" style={{ padding: '24px' }}>
-      <div className="flex flex-col lg:flex-row gap-8">
-        {/* Left: Agent info */}
-        <div className="lg:w-72 shrink-0 space-y-4">
-          <div className="flex items-start gap-3">
-            <span style={{ color: agentColor }}>
-              <AgentIcon agent={agent.name} size={40} />
+          ))}
+        </>
+      )}
+      {chain.downstream && chain.downstream.length > 0 && (
+        <>
+          <span style={{ color: 'var(--text-muted)' }}>→</span>
+          {chain.downstream.map(a => (
+            <span
+              key={a}
+              className="px-1.5 py-0.5 rounded"
+              style={{
+                background: 'var(--amber-glow)',
+                color:      'var(--amber)',
+                border:     '1px solid var(--amber-border)',
+              }}
+            >
+              {a}
             </span>
-            <div>
-              <h3 className="font-mono text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-                {meta?.displayName ?? agent.display_name}
-              </h3>
-              <div className="font-mono text-[10px] text-white/40 mt-0.5">
-                {meta?.subtitle ?? agent.description}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <DetailRow label="Schedule" value={agent.schedule} />
-            <DetailRow label="Avg Duration" value={formatDuration(agent.avg_duration_ms)} />
-            <DetailRow
-              label="Success Rate"
-              value={successRate ? `${successRate}%` : '—'}
-            />
-            <DetailRow label="Status">
-              <AgentStatusBadge status={agent.status} />
-            </DetailRow>
-          </div>
-        </div>
-
-        {/* Right: Health chart */}
-        <div className="flex-1 min-w-0">
-          <div className="font-mono text-[9px] text-white/40 uppercase tracking-widest mb-3">
-            24h Health — Runs · Outputs · Errors
-          </div>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="runsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--amber)" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="outputsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#22D3EE" stopOpacity={0.30} />
-                    <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="errorsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--sev-high)" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="hour"
-                  tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'JetBrains Mono' }}
-                  axisLine={false}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis hide />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0D1520',
-                    border: '1px solid var(--border-base)',
-                    borderRadius: 8,
-                    fontSize: 11,
-                    fontFamily: 'JetBrains Mono',
-                  }}
-                  labelStyle={{ color: 'var(--text-tertiary)' }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="runs"
-                  stroke="var(--amber)"
-                  strokeWidth={1.5}
-                  fill="url(#runsGrad)"
-                  name="Runs"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="outputs"
-                  stroke="#22D3EE"
-                  strokeWidth={1.5}
-                  fill="url(#outputsGrad)"
-                  name="Outputs"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="errors"
-                  stroke="var(--sev-high)"
-                  strokeWidth={1.5}
-                  fill="url(#errorsGrad)"
-                  name="Errors"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-44 flex items-center justify-center text-white/40 font-mono text-xs">
-              No health data available
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent outputs */}
-      <div className="mt-6 pt-5 border-t border-white/[0.06]">
-        <div className="font-mono text-[9px] text-white/40 uppercase tracking-widest mb-3">
-          Recent Outputs
-        </div>
-        {outputs && outputs.length > 0 ? (
-          <div className="space-y-2">
-            {outputs.map((output: AgentOutput) => (
-              <div
-                key={output.id}
-                className="flex items-start gap-3 bg-white/[0.02] rounded-lg px-3 py-2.5"
-              >
-                <Badge
-                  variant={severityVariant[output.severity] || 'default'}
-                  className="shrink-0 mt-0.5"
-                >
-                  {output.severity}
-                </Badge>
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono text-[11px] text-white/70 line-clamp-2">
-                    {output.summary}
-                  </div>
-                </div>
-                <div className="font-mono text-[9px] text-white/50 shrink-0">
-                  {relativeTime(output.created_at)}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-white/40 font-mono text-[11px]">No recent outputs</div>
-        )}
-      </div>
-
-      {/* Phase 5.5 — module declarations (budget, supervision,
-          reads/writes, output types). Surfaces the AgentModule's
-          declared fields so operators can compare intent vs actual. */}
-      <div className="mt-4">
-        <AgentDeclarationsPanel agentId={agent.name} />
-      </div>
-    </Card>
-  );
-}
-
-function DetailRow({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="font-mono text-[10px] text-white/40 uppercase tracking-wider">{label}</span>
-      {children ?? <span className="font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>{value}</span>}
+          ))}
+        </>
+      )}
     </div>
   );
 }
 
-// ─── Group section header ──────────────────────────────────────────
-function GroupHeader({ label, count }: { label: string; count: number }) {
+function NetworkSection({
+  agents,
+  selectedAgent,
+  onSelect,
+}: {
+  agents:        Agent[];
+  selectedAgent: string | null;
+  onSelect:      (name: string) => void;
+}) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <GitBranch size={14} style={{ color: 'var(--blue)' }} />
+        <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          Network View
+        </span>
+        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          · trigger chain · click a node to spotlight its subgraph
+        </span>
+      </div>
+      <Card variant="elevated" className="p-4">
+        <AgentNetworkView
+          agents={agents}
+          selectedAgent={selectedAgent}
+          onSelect={onSelect}
+        />
+      </Card>
+    </div>
+  );
+}
+
+interface AgentCardProps {
+  agent:      Agent;
+  isSelected: boolean;
+  onSelect:   () => void;
+  variant?:   'elevated' | 'critical' | 'active';
+}
+
+function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: AgentCardProps) {
+  const compliance     = complianceFor(agent);
+  const decommission   = isDecommissionCandidate(agent);
+  const failurePattern = failurePatternFor(agent);
+  const okCount        = Object.values(compliance).filter(Boolean).length;
+  const lastRun        = agent.last_run_at ? relativeTime(agent.last_run_at) : '—';
+  const meta           = AGENT_METADATA[agent.name as AgentId];
+
+  const variant: 'elevated' | 'critical' | 'active' =
+    variantOverride
+      ?? (failurePattern?.severity === 'critical' || decommission ? 'critical' : 'elevated');
+
+  return (
+    <Card
+      variant={variant}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
+      onClick={onSelect}
+    >
+      <div className="flex items-center gap-3">
+        <AgentIcon agent={agent.name} size={28} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[13px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+              {meta?.displayName ?? agent.name}
+            </span>
+            {failurePattern && (
+              <Badge severity={failurePattern.severity}>
+                <AlertTriangle size={10} className="inline mr-1" />
+                {failurePattern.label}
+              </Badge>
+            )}
+            {!failurePattern && decommission && (
+              <Badge severity="high">
+                <AlertTriangle size={10} className="inline mr-1" />
+                Decommission?
+              </Badge>
+            )}
+          </div>
+          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            Last run {lastRun}
+          </div>
+        </div>
+        <ChevronDown
+          size={14}
+          style={{
+            color:      'var(--text-tertiary)',
+            transition: 'transform 0.18s ease',
+            transform:  isSelected ? 'rotate(180deg)' : 'rotate(0deg)',
+            flexShrink: 0,
+          }}
+        />
+      </div>
+
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>JOBS 24H</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>{agent.jobs_24h}</div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>OUTPUTS</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>{agent.outputs_24h}</div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>ERRORS</div>
+            <div
+              className="text-base"
+              style={{ color: agent.error_count_24h > 0 ? 'var(--sev-high)' : 'var(--text-primary)' }}
+            >
+              {agent.error_count_24h}
+            </div>
+          </div>
+        </div>
+        {agent.activity && agent.activity.length > 0 && (
+          <div className="flex flex-col items-end gap-1">
+            <CardHealthChart
+              runs={agent.activity}
+              outputs={agent.outputs_per_hour}
+              errors={agent.errors_per_hour}
+              runsColor={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
+              width={120}
+              height={36}
+            />
+            {/* Multi-instance scaling — each column is an hour bucket,
+                each row is a parallel instance. Reveals Flight Control
+                scale-out (taller stacks) that the area chart flattens. */}
+            <RunStatusBlocks
+              ticks={agent.recent_ticks}
+              fallbackActivity={agent.activity}
+            />
+            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+              24h shape · 5h instances
+            </div>
+          </div>
+        )}
+      </div>
+
+      <ConnectivityChips agentName={agent.name} />
+
+      <div>
+        <div className="font-mono text-[9px] tracking-[0.15em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+          Compliance · {okCount}/{COMPLIANCE_AXES.length}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {COMPLIANCE_AXES.map(axis => (
+            <ComplianceChip key={axis.key} label={axis.label} ok={compliance[axis.key]} />
+          ))}
+        </div>
+      </div>
+
+      {failurePattern && (
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          {failurePattern.reason}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Dual-area health chart — runs + outputs over the last 24 hourly
+// buckets. Mirrors v2's drill-down chart per operator preference;
+// gives more shape than the single-bar ActivitySparkline.
+function HealthChart({ name }: { name: string }) {
+  const { data, isLoading } = useAgentHealth(name);
+
+  const chartData = useMemo(() => {
+    if (!data) return [];
+    const baseHour = new Date().getUTCHours();
+    return data.runs.map((runs, i) => ({
+      hour:    `${(baseHour + i) % 24}:00`,
+      runs,
+      errors:  data.errors[i] ?? 0,
+      outputs: data.outputs[i] ?? 0,
+    }));
+  }, [data]);
+
+  if (isLoading) {
+    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading 24h health…</div>;
+  }
+  if (!data || chartData.length === 0) {
+    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No runs in last 24 hours</div>;
+  }
+
+  return (
+    <div className="w-full">
+      <ResponsiveContainer width="100%" height={180}>
+        <AreaChart data={chartData}>
+          <defs>
+            <linearGradient id="agents-v3-runsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="var(--amber)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="agents-v3-outputsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+              <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="agents-v3-errorsGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis
+            dataKey="hour"
+            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            axisLine={false}
+            tickLine={false}
+            interval="preserveStartEnd"
+            minTickGap={28}
+          />
+          <YAxis hide />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'var(--bg-elevated)',
+              border:           '1px solid var(--border-base)',
+              borderRadius:     8,
+              fontSize:         11,
+              fontFamily:       'var(--font-mono)',
+              color:            'var(--text-primary)',
+            }}
+            labelStyle={{ color: 'var(--text-tertiary)' }}
+            cursor={{ stroke: 'var(--border-strong)', strokeWidth: 1 }}
+          />
+          <Area
+            type="monotone"
+            dataKey="runs"
+            stroke="var(--amber)"
+            strokeWidth={1.5}
+            fill="url(#agents-v3-runsGrad)"
+            name="Runs"
+          />
+          <Area
+            type="monotone"
+            dataKey="outputs"
+            stroke="#22D3EE"
+            strokeWidth={1.5}
+            fill="url(#agents-v3-outputsGrad)"
+            name="Outputs"
+          />
+          {data.errors.some(e => e > 0) && (
+            <Area
+              type="monotone"
+              dataKey="errors"
+              stroke="var(--sev-high)"
+              strokeWidth={1.5}
+              fill="url(#agents-v3-errorsGrad)"
+              name="Errors"
+            />
+          )}
+        </AreaChart>
+      </ResponsiveContainer>
+      <div className="flex items-center gap-3 mt-1 font-mono text-[9px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--amber)', opacity: 0.6 }} />
+          Runs
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: '#22D3EE', opacity: 0.6 }} />
+          Outputs
+        </span>
+        {data.errors.some(e => e > 0) && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--sev-high)', opacity: 0.6 }} />
+            Errors
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutputRow({ output }: { output: AgentOutput }) {
+  const sev = output.severity?.toLowerCase();
+  const dotColor =
+    sev === 'critical' ? 'var(--sev-critical)'
+    : sev === 'high'   ? 'var(--sev-high)'
+    : sev === 'medium' ? 'var(--sev-medium)'
+    : 'var(--text-muted)';
+  return (
+    <div className="flex items-start gap-2 py-1.5 border-t" style={{ borderColor: 'var(--border-base)' }}>
+      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5" style={{ background: dotColor }} />
+      <div className="min-w-0 flex-1">
+        <div className="text-xs line-clamp-2" style={{ color: 'var(--text-primary)' }}>{output.summary}</div>
+        <div className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          {output.type} · {relativeTime(output.created_at)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentDetailPanelV3({ agent }: { agent: Agent }) {
+  const { data: detail, isLoading } = useAgentDetail(agent.name);
+  const recentOutputs = (detail?.outputs ?? []).slice(0, 5);
+  const meta = AGENT_METADATA[agent.name as AgentId];
+
+  return (
+    <Card variant="elevated" className="p-5 col-span-full">
+      {meta?.subtitle && (
+        <div className="mb-5 pb-4 border-b" style={{ borderColor: 'var(--border-base)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+            What it does
+          </div>
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {meta.subtitle}
+          </p>
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          <div>
+            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              Health · 24h runs · outputs · errors
+            </div>
+            <HealthChart name={agent.name} />
+          </div>
+          {detail?.stats && (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total runs</div>
+                <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{detail.stats.total_runs}</div>
+              </div>
+              <div>
+                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
+                <div className="text-lg font-mono" style={{ color: 'var(--green)' }}>{detail.stats.successes}</div>
+              </div>
+              <div>
+                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
+                <div className="text-lg font-mono" style={{ color: detail.stats.failures > 0 ? 'var(--sev-high)' : 'var(--text-primary)' }}>
+                  {detail.stats.failures}
+                </div>
+              </div>
+            </div>
+          )}
+          {agent.last_run_error && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>Last error</div>
+              <div className="font-mono text-[11px] p-2 rounded" style={{
+                background: 'var(--sev-critical-bg)',
+                color:      'var(--text-primary)',
+                border:     '1px solid var(--sev-critical-border)',
+              }}>
+                {agent.last_run_error}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            Recent outputs · last 5
+          </div>
+          {isLoading ? (
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading…</div>
+          ) : recentOutputs.length === 0 ? (
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No outputs persisted yet</div>
+          ) : (
+            <div>{recentOutputs.map(o => <OutputRow key={o.id} output={o} />)}</div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function GroupHeader({ label, description, count }: { label: string; description: string; count: number }) {
+  return (
+    <div className="flex items-end justify-between gap-3 mb-3">
+      <div>
+        <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          {label}
+        </div>
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{description}</div>
+      </div>
       <span
-        className="font-mono text-[10px] font-bold uppercase tracking-[0.22em]"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        {label}
-      </span>
-      <div
-        className="flex-1 h-px"
-        style={{ background: 'linear-gradient(90deg, var(--border-base), transparent)' }}
-      />
-      <span
-        className="font-mono text-[10px]"
-        style={{ color: 'var(--text-tertiary)' }}
+        className="font-mono text-[10px] px-2 py-0.5 rounded"
+        style={{ background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }}
       >
         {count}
       </span>
@@ -643,193 +672,223 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
   );
 }
 
-// ─── Monitor View (existing content, wrapped) ─────────────────
-function MonitorView() {
-  const { data: agents } = useAgents();
-  // useNavigate previously used for the architect detail click-through;
-  // the agent retired 2026-04-29 and no other navigation is needed here.
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-
-  const flightControl = agents?.find(a => a.name === 'flight_control') ?? null;
-
-  // Map each grouped agent id to its live Agent payload, dropping
-  // any agent that hasn't surfaced from the API yet.
-  const groupedAgents = useMemo(() => {
-    if (!agents) return [] as { group: AgentGroup; items: Agent[] }[];
-    return AGENT_GROUPS.map(group => ({
-      group,
-      items: group.agentIds
-        .map(id => agents.find(a => a.name === id))
-        .filter((a): a is Agent => !!a),
-    })).filter(g => g.items.length > 0);
-  }, [agents]);
-
-  // Anything coming back from the API that isn't in a known group
-  // (new agent shipped before metadata catches up) — surface it under
-  // a fallback "Unclassified" group instead of silently dropping it.
-  const unclassifiedAgents = useMemo(() => {
-    if (!agents) return [];
-    const known = new Set<string>([
-      'flight_control',
-      ...AGENT_GROUPS.flatMap(g => g.agentIds),
-    ]);
-    return agents.filter(a => !known.has(a.name));
-  }, [agents]);
-
-  const operational = agents?.filter(a => a.status !== 'error').length ?? 0;
-  const total = agents?.length ?? 0;
-  const totalJobs = agents?.reduce((sum, a) => sum + a.jobs_24h, 0) ?? 0;
-  const totalOutputs = agents?.reduce((sum, a) => sum + a.outputs_24h, 0) ?? 0;
-  const totalErrors = agents?.reduce((sum, a) => sum + a.error_count_24h, 0) ?? 0;
-
-  const selectedAgentData = agents?.find(a => a.name === selectedAgent) ?? null;
-
-  function handleSelect(agentName: string) {
-    // (architect's dedicated detail view click-through retired
-    //  2026-04-29 along with the agent itself; the route still
-    //  exists at /agents/architect for forensic access but is no
-    //  longer reachable from the Agents page.)
-    setSelectedAgent(prev => (prev === agentName ? null : agentName));
-  }
-
+function SupervisorSection({
+  supervisors,
+  selectedAgent,
+  onSelect,
+}: {
+  supervisors:   Agent[];
+  selectedAgent: string | null;
+  onSelect:      (name: string) => void;
+}) {
+  if (supervisors.length === 0) return null;
   return (
-    <div className="space-y-6">
-      {/* TOP STATS BAR */}
-      <StatGrid cols={4}>
-        <StatCard label="Agents Operational" value={`${operational}/${total}`} accentColor="var(--green)" />
-        <StatCard label="Jobs (24h)" value={totalJobs.toLocaleString()} />
-        <StatCard label="Outputs (24h)" value={totalOutputs.toLocaleString()} />
-        <StatCard
-          label="Errors (24h)"
-          value={totalErrors}
-          accentColor={totalErrors > 0 ? (totalErrors >= 5 ? 'var(--red)' : 'var(--sev-high)') : undefined}
-        />
-      </StatGrid>
-
-      {agents && agents.length > 0 ? (
-        <div className="space-y-6">
-          <div>
-            <SectionLabel className="mb-3">Squadron Status</SectionLabel>
-
-            {/* Flight Control — full-width supervisor card + its panel */}
-            {flightControl && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <FlightControlCard
-                  agent={flightControl}
-                  allAgents={agents}
-                  isSelected={selectedAgent === 'flight_control'}
-                  onSelect={() =>
-                    setSelectedAgent(prev => prev === 'flight_control' ? null : 'flight_control')
-                  }
-                />
-                {selectedAgent === 'flight_control' && selectedAgentData && (
-                  <AgentDetailPanel agent={selectedAgentData} />
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Grouped agents — each group gets its own header + grid so
-              the inline detail panel stays scoped to its own group's row. */}
-          {groupedAgents.map(({ group, items }) => (
-            <div key={group.id} className="space-y-3">
-              <GroupHeader label={group.label} count={items.length} />
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {items.map(agent => (
-                  <Fragment key={agent.agent_id}>
-                    <AgentCard
-                      agent={agent}
-                      isSelected={selectedAgent === agent.name}
-                      onSelect={() => handleSelect(agent.name)}
-                    />
-                    {selectedAgent === agent.name && selectedAgentData && (
-                      <AgentDetailPanel agent={selectedAgentData} />
-                    )}
-                  </Fragment>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {/* Fallback bucket for agents the API knows about but
-              metadata hasn't grouped yet — keeps them visible. */}
-          {unclassifiedAgents.length > 0 && (
-            <div className="space-y-3">
-              <GroupHeader label="Unclassified" count={unclassifiedAgents.length} />
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {unclassifiedAgents.map(agent => (
-                  <Fragment key={agent.agent_id}>
-                    <AgentCard
-                      agent={agent}
-                      isSelected={selectedAgent === agent.name}
-                      onSelect={() => handleSelect(agent.name)}
-                    />
-                    {selectedAgent === agent.name && selectedAgentData && (
-                      <AgentDetailPanel agent={selectedAgentData} />
-                    )}
-                  </Fragment>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <EmptyState
-          icon={<Bot />}
-          title="Squadron offline"
-          subtitle="No AI agents are currently registered. Check your worker deployment and agent configuration."
-          variant="error"
-        />
-      )}
-
-      {/* PIPELINE AUTOMATION — moved to /admin/metrics. Compact
-          summary strip stays here so a triaging operator still
-          sees pipeline health from this page; tap to deep-dive. */}
-      {agents && agents.length > 0 && (
-        <PipelineAutomationSummaryStrip agents={agents} />
-      )}
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Shield size={14} style={{ color: 'var(--amber)' }} />
+        <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          Supervisors
+        </span>
+        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          · agents managing other agents
+        </span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {supervisors.map(agent => (
+          <Fragment key={agent.agent_id}>
+            <AgentRowV3
+              agent={agent}
+              isSelected={selectedAgent === agent.name}
+              onSelect={() => onSelect(agent.name)}
+              variant="active"
+            />
+            {selectedAgent === agent.name && <AgentDetailPanelV3 agent={agent} />}
+          </Fragment>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ─── Main Page ──────────────────────────────────────────────────────
+// View mode — grid (cards) vs network (mind-map). Persisted per-device
+// so the operator's preference sticks across reloads. Local to /agents.
+type ViewMode = 'grid' | 'network';
+const VIEW_MODE_KEY = 'averrow.agents-v3-view-mode';
+
+function readViewMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    return v === 'network' ? 'network' : 'grid';
+  } catch {
+    return 'grid';
+  }
+}
+
+function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  const OPTIONS: Array<{ id: ViewMode; label: string }> = [
+    { id: 'grid',    label: 'Grid'    },
+    { id: 'network', label: 'Network' },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Agents view mode"
+      className="inline-flex rounded-md overflow-hidden"
+      style={{
+        border:     '1px solid var(--border-base)',
+        background: 'var(--bg-input)',
+      }}
+    >
+      {OPTIONS.map(opt => {
+        const active = opt.id === value;
+        return (
+          <button
+            key={opt.id}
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(opt.id)}
+            className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase transition-colors"
+            style={{
+              background: active ? 'var(--blue)' : 'transparent',
+              color:      active ? '#0A0F1C' : 'var(--text-secondary)',
+              fontWeight: active ? 600 : 500,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Agents() {
   const { data: agents = [], isLoading } = useAgents();
-  const [activeTab, setActiveTab] = useState<AgentTab>('MONITOR');
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [viewMode, setViewModeState] = useState<ViewMode>(readViewMode);
+
+  function setViewMode(v: ViewMode) {
+    setViewModeState(v);
+    try { localStorage.setItem(VIEW_MODE_KEY, v); } catch {}
+  }
+
+  // Cross-tab sync: another tab flipping the toggle updates this one too.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== VIEW_MODE_KEY) return;
+      const next = e.newValue;
+      if (next === 'grid' || next === 'network') setViewModeState(next);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   if (isLoading) return <CardGridLoader count={6} />;
 
+  // Partition: supervisors first, then workers grouped by category.
+  const supervisorSet = new Set<string>(SUPERVISOR_AGENT_IDS);
+  const supervisors = agents.filter(a => supervisorSet.has(a.name));
+  const workers     = agents.filter(a => !supervisorSet.has(a.name));
+
+  const groupedWorkers = new Map<string, Agent[]>();
+  for (const agent of workers) {
+    const meta = AGENT_METADATA[agent.name as AgentId];
+    const cat  = meta?.category ?? 'meta';
+    const existing = groupedWorkers.get(cat) ?? [];
+    existing.push(agent);
+    groupedWorkers.set(cat, existing);
+  }
+  // Stable ordering — render groups in this order regardless of map insertion.
+  const GROUP_ORDER = ['intelligence', 'response', 'ops', 'sync', 'meta'];
+
+  // Top-level stats
+  const operational       = agents.filter(a => a.status !== 'error').length;
+  const totalJobs         = agents.reduce((sum, a) => sum + a.jobs_24h, 0);
+  const totalOutputs      = agents.reduce((sum, a) => sum + a.outputs_24h, 0);
+  const decommissionCount = agents.filter(isDecommissionCandidate).length;
+  const failureCount      = agents.filter(a => failurePatternFor(a) !== null).length;
+
+  function handleSelect(name: string) {
+    setSelectedAgent(prev => prev === name ? null : name);
+  }
+
   return (
     <div className="animate-fade-in space-y-6">
-      {/* Page header with LIVE badge */}
       <PageHeader
         title="AI Agent Operations"
-        subtitle="AI agent mesh — threat intelligence automation"
+        subtitle={`${agents.length} agents · ${supervisors.length} supervisor`}
         actions={
           <div className="flex items-center gap-3">
-            <PendingApprovalsLink />
-            <VersionToggle surface="agents" ariaLabel="Agents page version" />
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
             <LiveIndicator />
           </div>
         }
       />
 
-      {/* Tab switcher */}
-      <Tabs
-        tabs={[
-          { id: 'MONITOR', label: 'Monitor' },
-          { id: 'HISTORY', label: 'History' },
-          { id: 'CONFIG',  label: 'Config'  },
-        ]}
-        activeTab={activeTab}
-        onChange={(id) => setActiveTab(id as AgentTab)}
-        variant="pills"
-      />
+      <StatGrid cols={4}>
+        <StatCard label="Agents Operational" value={`${operational}/${agents.length}`} accentColor="var(--green)" />
+        <StatCard label="Jobs (24h)" value={totalJobs.toLocaleString()} />
+        <StatCard label="Outputs (24h)" value={totalOutputs.toLocaleString()} />
+        <StatCard
+          label="Failure Patterns"
+          value={failureCount + decommissionCount}
+          accentColor={(failureCount + decommissionCount) > 0 ? 'var(--sev-high)' : undefined}
+        />
+      </StatGrid>
 
-      {/* Tab panels */}
-      {activeTab === 'MONITOR' && <MonitorView />}
-      {activeTab === 'HISTORY' && <HistoryView />}
-      {activeTab === 'CONFIG' && <ConfigView />}
+      {agents.length === 0 ? (
+        <EmptyState
+          icon={<Bot />}
+          title="Squadron offline"
+          subtitle="No AI agents are currently registered."
+          variant="error"
+        />
+      ) : viewMode === 'grid' ? (
+        <>
+          <SupervisorSection
+            supervisors={supervisors}
+            selectedAgent={selectedAgent}
+            onSelect={handleSelect}
+          />
+
+          {GROUP_ORDER.map(catKey => {
+            const items = groupedWorkers.get(catKey);
+            if (!items || items.length === 0) return null;
+            const groupMeta = GROUP_LABELS[catKey] ?? { label: catKey, description: '' };
+            return (
+              <div key={catKey} className="space-y-3">
+                <GroupHeader label={groupMeta.label} description={groupMeta.description} count={items.length} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {items.map(agent => (
+                    <Fragment key={agent.agent_id}>
+                      <AgentRowV3
+                        agent={agent}
+                        isSelected={selectedAgent === agent.name}
+                        onSelect={() => handleSelect(agent.name)}
+                      />
+                      {selectedAgent === agent.name && <AgentDetailPanelV3 agent={agent} />}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        <>
+          {/* Network view: detail panel renders above the network so
+              clicking a node still surfaces context without scrolling. */}
+          {selectedAgent && (() => {
+            const sel = agents.find(a => a.name === selectedAgent);
+            return sel ? <AgentDetailPanelV3 agent={sel} /> : null;
+          })()}
+          <NetworkSection
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelect={handleSelect}
+          />
+        </>
+      )}
     </div>
   );
 }

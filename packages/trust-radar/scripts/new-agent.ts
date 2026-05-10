@@ -528,48 +528,43 @@ function patchAgentMetadata(args: ScaffoldArgs): PatchResult {
   return { file, status: "patched", detail: `pipelinePosition=${position}` };
 }
 
+// Verifies the agent's category will land in a rendered section on
+// the v3 Agents page. v3 derives group membership from
+// AGENT_METADATA.category at render time (no more hand-maintained
+// AGENT_GROUPS constant), so this step writes nothing — it just
+// confirms the chosen category will actually surface a card.
 function patchAgentGroups(args: ScaffoldArgs): PatchResult {
   const file = "averrow-ops/src/features/agents/Agents.tsx";
   let src: string;
   try { src = readFileSync(UI_AGENTS_PAGE_PATH, "utf8"); }
   catch (err) { return { file, status: "failed", detail: `read failed: ${err instanceof Error ? err.message : String(err)}` }; }
 
-  if (new RegExp(`['\"]${args.snakeName}['\"]`).test(src)) return { file, status: "already-present" };
-
-  // Map AgentCategory → AGENT_GROUPS group label. Must match the
-  // labels used in features/agents/Agents.tsx today. orchestration
-  // (flight_control) and meta (architect retired) skip group
-  // membership — the audit script exempts flight_control and
-  // ignores retired modules.
-  const labelByCategory: Record<string, string | null> = {
-    orchestration: null,
-    meta: null,
-    intelligence: "Detection & Surveillance",
-    response: "Response",
-    ops: "Platform Operations",
-    sync: "Synchronous AI",
-  };
-  const targetLabel = labelByCategory[args.category];
-  if (targetLabel === null || targetLabel === undefined) {
-    return { file, status: "skipped", detail: `category '${args.category}' has no AGENT_GROUPS membership` };
+  // orchestration (flight_control) and meta render outside any
+  // GROUP_LABELS bucket — exempt from the surfacing check.
+  if (args.category === "orchestration" || args.category === "meta") {
+    return { file, status: "skipped", detail: `category '${args.category}' renders outside GROUP_LABELS sections` };
   }
 
-  // Anchor: locate the group's `agentIds: [...]` block and append
-  // the new id. The blocks in this file are single-line arrays.
-  const escapedLabel = targetLabel.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-  const groupRe = new RegExp(
-    `(label:\\s*['\"]${escapedLabel}['\"],\\s*\\n\\s*agentIds:\\s*\\[)([^\\]]*)(\\])`,
-  );
-  if (!groupRe.test(src)) {
-    return { file, status: "failed", detail: `could not locate AGENT_GROUPS bucket "${targetLabel}"` };
+  // Verify the category is one of the keys in the page's
+  // GROUP_LABELS map. The audit-agent-standard script does the
+  // same check; we mirror it here so misconfigured scaffolds fail
+  // fast at scaffold time, not at the next CI run.
+  const groupLabelsBlockRe = /GROUP_LABELS\s*:\s*Record<[^>]+>\s*=\s*\{([\s\S]*?)\}\s*;/m;
+  const blockMatch = groupLabelsBlockRe.exec(src);
+  if (!blockMatch) {
+    return { file, status: "failed", detail: `could not find GROUP_LABELS map on Agents.tsx — page-render contract changed` };
   }
-  const nextSrc = src.replace(groupRe, (_match, head: string, body: string, tail: string) => {
-    const trimmed = body.replace(/\s+$/, "");
-    const sep = trimmed.endsWith(",") || trimmed === "" ? "" : ",";
-    return `${head}${trimmed}${sep} '${args.snakeName}'${tail}`;
-  });
-  writeFileSync(UI_AGENTS_PAGE_PATH, nextSrc, "utf8");
-  return { file, status: "patched", detail: `added to "${targetLabel}"` };
+  const groupKeys = new Set<string>();
+  const keyRe = /^\s*([a-z_][a-z0-9_]*)\s*:/gm;
+  let km: RegExpExecArray | null;
+  while ((km = keyRe.exec(blockMatch[1] ?? "")) !== null) {
+    groupKeys.add(km[1]!);
+  }
+
+  if (!groupKeys.has(args.category)) {
+    return { file, status: "failed", detail: `category '${args.category}' has no GROUP_LABELS bucket — agent won't render` };
+  }
+  return { file, status: "already-present", detail: `derived from AGENT_METADATA.category='${args.category}' at render time` };
 }
 
 function patchAgentIcon(args: ScaffoldArgs): PatchResult {

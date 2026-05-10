@@ -19,21 +19,18 @@ const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').the
 const Apps = React.lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = React.lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
 const Agents = React.lazy(() => import('@/features/agents/Agents').then(m => ({ default: m.Agents })));
-const AgentsV3 = React.lazy(() => import('@/features/agents-v3/AgentsV3').then(m => ({ default: m.AgentsV3 })));
 const AgentApprovals = React.lazy(() => import('@/features/agents/AgentApprovals').then(m => ({ default: m.AgentApprovals })));
 const AgentReview = React.lazy(() => import('@/features/agents/AgentReview').then(m => ({ default: m.AgentReview })));
 const Takedowns = React.lazy(() => import('@/features/takedowns/Takedowns').then(m => ({ default: m.Takedowns })));
 const SpamTrap = React.lazy(() => import('@/features/spam-trap/SpamTrap').then(m => ({ default: m.SpamTrap })));
 const Alerts = React.lazy(() => import('@/features/alerts/Alerts').then(m => ({ default: m.Alerts })));
 const Feeds = React.lazy(() => import('@/features/feeds/Feeds').then(m => ({ default: m.Feeds })));
-const FeedsV3 = React.lazy(() => import('@/features/feeds-v3/FeedsV3').then(m => ({ default: m.FeedsV3 })));
 const AdminDashboard = React.lazy(() => import('@/features/admin/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const Organization = React.lazy(() => import('@/features/settings/Organization').then(m => ({ default: m.Organization })));
 const SuperAdminOrgs = React.lazy(() => import('@/features/admin/SuperAdminOrgs').then(m => ({ default: m.SuperAdminOrgs })));
 const PricingConfig = React.lazy(() => import('@/features/admin/PricingConfig').then(m => ({ default: m.PricingConfig })));
 const AdminAudit = React.lazy(() => import('@/features/admin/AdminAudit').then(m => ({ default: m.AdminAudit })));
 const Metrics = React.lazy(() => import('@/features/admin/Metrics').then(m => ({ default: m.Metrics })));
-const MetricsV3 = React.lazy(() => import('@/features/admin-metrics-v3/MetricsV3').then(m => ({ default: m.MetricsV3 })));
 const AdminIncidents = React.lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
 const AdminIncidentDetail = React.lazy(() => import('@/features/admin-incidents/IncidentDetail').then(m => ({ default: m.AdminIncidentDetail })));
 const PushAdmin = React.lazy(() => import('@/features/admin/PushAdmin').then(m => ({ default: m.PushAdmin })));
@@ -147,17 +144,14 @@ export default function App() {
             navigable for bookmarks. Audit H8. */}
         <Route path="intelligence" element={lazyRoute(<Trends />)} />
         <Route path="agents" element={lazyRoute(<Agents />)} />
-        <Route path="agents-v3" element={lazyRoute(<AgentsV3 />)} />
         <Route path="agents/approvals" element={lazyRoute(<AgentApprovals />)} />
         <Route path="agents/:id/review" element={lazyRoute(<AgentReview />)} />
         <Route path="agents/architect" element={lazyRoute(<ArchitectDetail />)} />
         <Route path="alerts" element={lazyRoute(<Alerts />)} />
         <Route path="leads" element={lazyRoute(<Leads />)} />
         <Route path="feeds" element={lazyRoute(<Feeds />)} />
-        <Route path="feeds-v3" element={lazyRoute(<FeedsV3 />)} />
         <Route path="admin" element={lazyRoute(<AdminDashboard />)} />
         <Route path="admin/metrics" element={lazyRoute(<Metrics />)} />
-        <Route path="admin/metrics-v3" element={lazyRoute(<MetricsV3 />)} />
         <Route path="admin/scan-leads" element={<Navigate to="/leads?view=scan" replace />} />
         <Route path="admin/takedowns" element={lazyRoute(<Takedowns />)} />
         <Route path="admin/spam-trap" element={lazyRoute(<SpamTrap />)} />

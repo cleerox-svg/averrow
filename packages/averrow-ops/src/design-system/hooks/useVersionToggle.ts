@@ -3,12 +3,19 @@
 //
 // Add a new surface by adding a row to SURFACES — the hook + the
 // VersionToggle component pick it up automatically.
+//
+// Historical: agents / feeds / metrics also lived here while their
+// v3 redesigns were under construction. Once each reached parity
+// the v2 source was deleted, the v3 file was promoted into the
+// canonical path, and the surface entry was removed from this map.
+// Observatory is the last remaining surface with an active v2/v3
+// split (v2 = legacy fallback, v3 = GPU TripsLayer default).
 
 import { useState, useEffect, useCallback } from 'react';
 
 export type Version = 'v2' | 'v3';
 
-export type Surface = 'observatory' | 'agents' | 'feeds' | 'metrics';
+export type Surface = 'observatory';
 
 interface SurfaceConfig {
   storageKey:     string;
@@ -19,23 +26,8 @@ interface SurfaceConfig {
 export const SURFACES: Record<Surface, SurfaceConfig> = {
   observatory: {
     storageKey:     'averrow.observatory-version',
-    defaultVersion: 'v3', // existing default — v3 GPU TripsLayer ships first
+    defaultVersion: 'v3', // v3 GPU TripsLayer ships as default
     paths:          { v2: '/observatory', v3: '/observatory-v3' },
-  },
-  agents: {
-    storageKey:     'averrow.agents-version',
-    defaultVersion: 'v2', // safe default until v3 reaches parity
-    paths:          { v2: '/agents', v3: '/agents-v3' },
-  },
-  feeds: {
-    storageKey:     'averrow.feeds-version',
-    defaultVersion: 'v2',
-    paths:          { v2: '/feeds', v3: '/feeds-v3' },
-  },
-  metrics: {
-    storageKey:     'averrow.metrics-version',
-    defaultVersion: 'v2',
-    paths:          { v2: '/admin/metrics', v3: '/admin/metrics-v3' },
   },
 };
 

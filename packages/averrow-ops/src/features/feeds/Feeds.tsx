@@ -1,970 +1,654 @@
-import { useState, useMemo } from 'react';
-import { useFeeds, useFeedHistory } from '@/hooks/useFeeds';
-import { useAdminAction } from '@/hooks/useAdminAction';
-import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { ThreatAreaChart } from '@/components/ui/ThreatAreaChart';
-import { DataRow, SeverityDot } from '@/components/ui/DataRow';
-import { cn } from '@/lib/cn';
-import { RotateCw, Loader2, Check, X, Zap, Play } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { useQueryClient } from '@tanstack/react-query';
-import {
-  Card,
-  StatCard,
-  StatGrid,
-  PageHeader,
-  Button,
-} from '@/design-system/components';
-import { VersionToggle } from '@/components/ui/VersionToggle';
-
-/* ─── Helpers ─── */
-
-// Single source of truth for "this feed needs attention" — three
-// surfaces (NEEDS ATTENTION tile, AttentionBanner, FeedHealthStrip
-// warning dots) all use this so they always agree on the count.
+// /feeds — Feed Intake page.
 //
-// A feed only counts as needing attention once it's actually been
-// polled — a freshly enabled feed with 0 pulls is still warming up,
-// not broken.
-function needsAttention(f: FeedOverview): boolean {
-  return Boolean(f.enabled) && f.total_pulls > 10 && f.total_ingested === 0;
+// Triage-focused card grid built around at-a-glance failure
+// detection and inline action (Trigger / Pause / Resume).
+//
+// Per-card surfaces:
+//   - Failure-pattern badge (auto-paused, high failure rate,
+//     ingestion-stuck), derived from FeedOverview fields
+//   - Decommission flag (no successful pull in 14d)
+//   - 24h pulls/ingested/errors mini-sparkline (rides on the same
+//     /api/feeds/overview payload — no per-card fan-out)
+//   - Click-to-expand inline detail panel with config + last error
+//     + recent-pulls history (last 20)
+//   - Inline Trigger / Pause / Resume buttons
+
+import { Fragment, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useFeeds, useFeedStats, useFeedHistory } from '@/hooks/useFeeds';
+import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
+import { useAdminAction } from '@/hooks/useAdminAction';
+import {
+  Card, StatCard, StatGrid, PageHeader, Button,
+} from '@/design-system/components';
+import { Badge } from '@/components/ui/Badge';
+import { LiveIndicator } from '@/components/ui/LiveIndicator';
+import { CardGridLoader } from '@/components/ui/PageLoader';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
+
+// Same humanizer used by /feeds — keep them in sync if the v2 list
+// gains new entries. (We could lift to a shared util once a third
+// caller appears.)
+const CRON_LABEL: Record<string, string> = {
+  '*/5 * * * *':   'Every 5 min',
+  '*/15 * * * *':  'Every 15 min',
+  '*/30 * * * *':  'Every 30 min',
+  '0 * * * *':     'Hourly',
+  '0 */2 * * *':   'Every 2 h',
+  '0 */4 * * *':   'Every 4 h',
+  '0 */6 * * *':   'Every 6 h',
+  '0 */12 * * *':  'Every 12 h',
+  '0 0 * * *':     'Daily',
+  '0 0 * * 0':     'Weekly',
+  '0 0 1 * *':     'Monthly',
+};
+function humanCron(cron: string): string {
+  return CRON_LABEL[cron] ?? cron;
 }
 
-function humanizeCron(cron: string): string {
-  const map: Record<string, string> = {
-    '*/5 * * * *':   'Every 5 minutes',
-    '*/15 * * * *':  'Every 15 minutes',
-    '*/30 * * * *':  'Every 30 minutes',
-    '0 * * * *':     'Every hour',
-    '0 */2 * * *':   'Every 2 hours',
-    '0 */4 * * *':   'Every 4 hours',
-    '0 */6 * * *':   'Every 6 hours',
-    '0 */12 * * *':  'Every 12 hours',
-    '0 0 * * *':     'Daily at midnight',
-    '0 3 * * *':     'Daily at 3 AM',
-    '0 4 * * *':     'Daily at 4 AM',
-    '0 6 * * *':     'Daily at 6 AM',
-    '0 0 * * 0':     'Weekly on Sunday',
-    '0 0 * * 1':     'Weekly on Monday',
-    '0 0 1 * *':     'Monthly on the 1st',
-  };
-  // Fall back to a generic label rather than leaking cron syntax into
-  // user-visible copy (audit C9).
-  return map[cron] ?? 'Custom schedule';
+function timeAgo(ts: string | null): string {
+  if (!ts) return 'Never';
+  const diff = Date.now() - new Date(ts).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return 'Never';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+// Failure-pattern detection — derived from existing fields, no new
+// backend data needed. Worst-first match wins.
+type FailurePattern =
+  | { severity: 'critical'; label: string; reason: string }
+  | { severity: 'high';     label: string; reason: string }
+  | { severity: 'medium';   label: string; reason: string }
+  | null;
 
-function detectFeedIssue(feed: FeedOverview): string | null {
-  if (!feed.enabled) return null;
-  if (feed.total_pulls > 10 && feed.total_ingested === 0) {
-    if (feed.feed_name === 'otx_alienvault')
-      return 'HTTP 403 Forbidden — API key invalid or expired';
-    if (feed.feed_name === 'cloudflare_scanner')
-      return 'Rate limited — 500 scan/month cap reached';
-    if (feed.feed_name === 'feodo')
-      return 'No matching threats ingested — check filter config';
-    if (feed.feed_name === 'cloudflare_email')
-      return 'No email threats detected in current window';
-    // 0 ingested but rejected>0 = dedup working as designed.
-    // Most public feeds publish IOCs already in the threats table
-    // (217K+ rows) — duplicate suppression is the success case,
-    // not a problem to flag. Only fire the generic warning when
-    // BOTH ingested and rejected are zero (truly silent feed —
-    // parser/scraper likely broken).
-    if (feed.total_rejected > 0) return null;
-    return '0 records ingested despite active pulls — investigate';
+function failurePatternFor(f: FeedOverview): FailurePattern {
+  if (f.paused_reason === 'auto:consecutive_failures') {
+    return {
+      severity: 'critical',
+      label:    'Auto-paused',
+      reason:   `${f.consecutive_failures ?? 0} consecutive failures`,
+    };
+  }
+  if (f.paused_reason === 'manual') {
+    return {
+      severity: 'medium',
+      label:    'Paused',
+      reason:   'Manually disabled',
+    };
+  }
+  if ((f.consecutive_failures ?? 0) >= 3) {
+    return {
+      severity: 'high',
+      label:    'Failing',
+      reason:   `${f.consecutive_failures} consecutive failures`,
+    };
+  }
+  if (f.total_pulls > 10 && f.total_ingested === 0) {
+    return {
+      severity: 'high',
+      label:    'No ingestion',
+      reason:   '10+ pulls, 0 records ingested',
+    };
+  }
+  const total = f.successes + f.errors;
+  if (total >= 10 && f.errors / total > 0.30) {
+    return {
+      severity: 'high',
+      label:    'High error rate',
+      reason:   `${Math.round((f.errors / total) * 100)}% errors`,
+    };
   }
   return null;
 }
 
-function successRate(feed: FeedOverview): number {
-  if (feed.total_pulls === 0) return 0;
-  return Math.round((feed.successes / feed.total_pulls) * 100);
-}
-
-function successBarGradient(rate: number): string {
-  if (rate >= 90) return 'linear-gradient(90deg, var(--green-dim), var(--green))';
-  if (rate >= 60) return 'linear-gradient(90deg, var(--amber-dim), var(--amber))';
-  return 'linear-gradient(90deg, var(--red-dim), var(--red))';
-}
-
-type FeedCategory = 'healthy' | 'attention' | 'disabled';
-
-function categorizeFeed(feed: FeedOverview): FeedCategory {
-  if (!feed.enabled) return 'disabled';
-  if (feed.total_ingested === 0) return 'attention';
-  return 'healthy';
-}
-
-/** True when a feed was auto-paused by the feedRunner after N consecutive failures. */
-function isAutoPaused(feed: FeedOverview): boolean {
-  return feed.enabled === 0 && feed.paused_reason === 'auto:consecutive_failures';
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
-  return String(n);
-}
-
-/* ─── Trigger Buttons ─── */
-
-function TriggerAllButton() {
-  const queryClient = useQueryClient();
-  const action = useAdminAction('/api/feeds/trigger-all', () => {
-    setTimeout(() => queryClient.invalidateQueries({ queryKey: ['feeds-overview'] }), 3000);
-  });
-
-  if (action.state === 'idle') {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={action.confirm}
-        icon={<RotateCw className="w-3.5 h-3.5" />}
-      >
-        <span className="hidden sm:inline">Trigger All</span>
-      </Button>
-    );
-  }
-  if (action.state === 'confirming') {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[10px] text-amber-400">Trigger all feeds?</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.execute}
-          icon={<Check className="w-3 h-3" />}
-          style={{ color: '#4ade80' }}
-        >
-          Confirm
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.cancel}
-          icon={<X className="w-3 h-3" />}
-        >
-          Cancel
-        </Button>
-      </div>
-    );
-  }
-  if (action.state === 'loading') {
-    return (
-      <span className="flex items-center gap-1.5 font-mono text-[10px]" style={{ color: 'var(--amber)' }}>
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Triggering...
-      </span>
-    );
-  }
-  if (action.state === 'success') {
-    return (
-      <span className="flex items-center gap-1.5 font-mono text-[10px] text-green-400">
-        <Check className="w-3.5 h-3.5" /> Feeds triggered
-      </span>
-    );
-  }
-  return (
-    <span className="font-mono text-[10px] text-red-400">{action.error || 'Failed'}</span>
-  );
-}
-
-function RetryButton({ feedName }: { feedName: string }) {
-  const queryClient = useQueryClient();
-  const action = useAdminAction(`/api/feeds/${feedName}/trigger`, () => {
-    setTimeout(() => queryClient.invalidateQueries({ queryKey: ['feeds-overview'] }), 3000);
-  });
-
-  if (action.state === 'idle') {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={(e) => { e.stopPropagation(); action.confirm(); }}
-        icon={<RotateCw className="w-3 h-3" />}
-        style={{ color: 'var(--amber)' }}
-      >
-        Retry
-      </Button>
-    );
-  }
-  if (action.state === 'confirming') {
-    return (
-      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.execute}
-          icon={<Check className="w-3 h-3" />}
-          style={{ color: '#4ade80' }}
-        >
-          {''}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.cancel}
-          icon={<X className="w-3 h-3" />}
-        >
-          {''}
-        </Button>
-      </div>
-    );
-  }
-  if (action.state === 'loading') {
-    return (
-      <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: 'var(--amber)' }} onClick={(e) => e.stopPropagation()}>
-        <Loader2 className="w-3 h-3 animate-spin" />
-      </span>
-    );
-  }
-  if (action.state === 'success') {
-    return (
-      <span className="flex items-center gap-1 font-mono text-[9px] text-green-400">
-        <Check className="w-3 h-3" />
-      </span>
-    );
-  }
-  return (
-    <span className="font-mono text-[9px] text-red-400">
-      <X className="w-3 h-3 inline" />
-    </span>
-  );
-}
-
-function UnpauseButton({ feedName }: { feedName: string }) {
-  const queryClient = useQueryClient();
-  const action = useAdminAction(`/api/feeds/${feedName}/unpause`, () => {
-    setTimeout(() => queryClient.invalidateQueries({ queryKey: ['feeds-overview'] }), 500);
-  });
-
-  if (action.state === 'idle') {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={(e) => { e.stopPropagation(); action.confirm(); }}
-        icon={<Play className="w-3 h-3" />}
-        style={{ color: 'var(--amber)' }}
-      >
-        Unpause
-      </Button>
-    );
-  }
-  if (action.state === 'confirming') {
-    return (
-      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        <span className="font-mono text-[10px] text-amber-400">Unpause?</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.execute}
-          icon={<Check className="w-3 h-3" />}
-          style={{ color: '#4ade80' }}
-        >
-          {''}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={action.cancel}
-          icon={<X className="w-3 h-3" />}
-        >
-          {''}
-        </Button>
-      </div>
-    );
-  }
-  if (action.state === 'loading') {
-    return (
-      <span
-        className="flex items-center gap-1 font-mono text-[9px]"
-        style={{ color: 'var(--amber)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Loader2 className="w-3 h-3 animate-spin" /> Unpausing
-      </span>
-    );
-  }
-  if (action.state === 'success') {
-    return (
-      <span className="flex items-center gap-1 font-mono text-[9px] text-green-400">
-        <Check className="w-3 h-3" /> Unpaused
-      </span>
-    );
-  }
-  return (
-    <span className="font-mono text-[9px] text-red-400" onClick={(e) => e.stopPropagation()}>
-      {action.error || 'Failed'}
-    </span>
-  );
-}
-
-/* ─── Components ─── */
-
-function HeaderStats({ feeds }: { feeds: FeedOverview[] }) {
-  const active = feeds.filter(f => f.enabled).length;
-  const disabled = feeds.filter(f => !f.enabled).length;
-  const totalIngested = feeds.reduce((s, f) => s + f.total_ingested, 0);
-  const attentionCount = feeds.filter(needsAttention).length;
-
-  return (
-    <StatGrid cols={4}>
-      <StatCard label="Active Feeds"    value={active}        accentColor="var(--green)" />
-      <StatCard label="Total Ingested"  value={totalIngested} accentColor="var(--amber)" />
-      <StatCard label="Needs Attention" value={attentionCount} accentColor={attentionCount > 0 ? 'var(--sev-medium)' : undefined} />
-      <StatCard label="Disabled"        value={disabled} />
-    </StatGrid>
-  );
-}
-
-function AttentionBanner({ feeds }: { feeds: FeedOverview[] }) {
-  const attentionFeeds = feeds.filter(needsAttention);
-  if (attentionFeeds.length === 0) return null;
-
-  const names = attentionFeeds.map(f => {
-    const issue = detectFeedIssue(f);
-    return issue ? `${f.display_name} (${issue.split('—')[0].trim().toLowerCase()})` : f.display_name;
-  });
-
-  return (
-    <Card variant="active" style={{ padding: '16px' }}>
-      <div className="flex items-start gap-2">
-        <span className="text-amber-400 text-sm mt-0.5">&#9888;</span>
-        <div>
-          <span className="text-[13px] font-semibold font-display" style={{ color: 'var(--text-primary)' }}>
-            {attentionFeeds.length} feed{attentionFeeds.length > 1 ? 's' : ''} need attention
-          </span>
-          <span className="text-[12px] text-white/50 ml-1">
-            — {names.join(', ')} {attentionFeeds.length > 1 ? 'are' : 'is'} enabled but ingesting 0 records.
-          </span>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function FeedHealthStrip({ feeds }: { feeds: FeedOverview[] }) {
-  // "warning" matches the NEEDS ATTENTION tile + banner exactly (tried
-  // and failed). Feeds enabled-but-not-yet-pulled fall into "warmup"
-  // and render as neutral dots — they shouldn't trip the warning count.
-  const healthy = feeds.filter(f => f.enabled && f.total_ingested > 0);
-  const warning = feeds.filter(needsAttention);
-  const warmup = feeds.filter(f => f.enabled && f.total_pulls <= 10 && f.total_ingested === 0);
-  const disabled = feeds.filter(f => !f.enabled);
-
-  return (
-    <Card style={{ padding: '16px' }}>
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">Feed Health</span>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {healthy.map(f => (
-            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-green-400" title={f.display_name} />
-          ))}
-          {warning.map(f => (
-            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" title={`${f.display_name} (needs attention)`} />
-          ))}
-          {warmup.map(f => (
-            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full bg-blue-400/40" title={`${f.display_name} (warming up)`} />
-          ))}
-          {disabled.map(f => (
-            <div key={f.feed_name} className="w-2.5 h-2.5 rounded-full border border-white/20 bg-transparent" title={f.display_name} />
-          ))}
-        </div>
-        <div className="flex items-center gap-3 ml-auto text-[10px] font-mono text-white/40">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> {healthy.length} healthy</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> {warning.length} warning</span>
-          {warmup.length > 0 && (
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400/40 inline-block" /> {warmup.length} warming up</span>
-          )}
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full border border-white/20 inline-block" /> {disabled.length} disabled</span>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function FeedCard({
-  feed,
-  category,
-  isExpanded,
-  onToggle,
+// Multi-series compact area chart for feed cards. Hand-rolled SVG
+// (no Recharts) so 40+ cards stay cheap. Three series share the
+// same y-scale so they're comparable. Same visual identity as the
+// agents-v3 CardHealthChart pattern. Errors series only renders
+// when the feed actually has errors in the 24h window.
+function FeedCardSparkline({
+  pulls, ingested, errors, runsColor, width = 120, height = 40,
 }: {
-  feed: FeedOverview;
-  category: FeedCategory;
-  isExpanded: boolean;
-  onToggle: () => void;
+  pulls:     number[];
+  ingested?: number[];
+  errors?:   number[];
+  runsColor: string;
+  width?:    number;
+  height?:   number;
 }) {
-  const rate = successRate(feed);
-  const issue = detectFeedIssue(feed);
-  const autoPaused = isAutoPaused(feed);
-
-  // Auto-paused feeds surface as critical-severity cards so they're visually
-  // distinguishable from plain manually-disabled ones.
-  const cardVariant: 'base' | 'active' | 'critical' =
-    autoPaused ? 'critical' :
-    category === 'attention' ? 'active' : 'base';
-  const cardClass = cn(
-    'cursor-pointer transition-all',
-    category === 'disabled' && !autoPaused && 'opacity-60',
+  if (!pulls || pulls.length === 0) return null;
+  const N = pulls.length;
+  const peak = Math.max(
+    ...pulls,
+    ...(ingested ?? []),
+    ...(errors   ?? []),
+    1,
   );
+  const stepX = N > 1 ? width / (N - 1) : width;
 
-  const badgeClass = cn(
-    'text-[9px] font-mono font-semibold uppercase tracking-wider px-2 py-0.5 rounded border',
-    category === 'healthy' && 'text-green-400 border-green-500/30 bg-green-900/30',
-    category === 'attention' && 'text-amber-400 border-amber-500/30 bg-amber-900/30',
-    autoPaused && 'text-red-400 border-red-500/40 bg-red-900/30',
-    category === 'disabled' && !autoPaused && 'text-white/40 border-white/10 bg-white/5',
-  );
+  function paths(series: number[]) {
+    const points = series.map((v, i) => {
+      const x = i * stepX;
+      const y = height - (v / peak) * (height - 2) - 1;
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const area = `${line} L ${(N - 1) * stepX} ${height} L 0 ${height} Z`;
+    return { line, area };
+  }
 
-  const badgeLabel =
-    category === 'healthy'   ? 'ACTIVE'
-  : category === 'attention' ? 'WARNING'
-  : autoPaused               ? `AUTO-PAUSED${feed.consecutive_failures ? ` · ${feed.consecutive_failures}✗` : ''}`
-  :                            'PAUSED';
+  const seed = Math.random().toString(36).slice(2, 9);
+  const gradPulls    = `feed-pulls-${seed}`;
+  const gradIngested = `feed-ing-${seed}`;
+  const gradErrors   = `feed-err-${seed}`;
 
-  const dotClass = cn(
-    'w-2.5 h-2.5 rounded-full flex-shrink-0',
-    category === 'healthy' && 'bg-green-400',
-    category === 'attention' && 'bg-amber-400 animate-pulse',
-    autoPaused && 'bg-red-500 animate-pulse',
-    category === 'disabled' && !autoPaused && 'border border-white/20',
-  );
+  const pullsP    = paths(pulls);
+  const ingestedP = ingested && ingested.some(v => v > 0) ? paths(ingested) : null;
+  const errorsP   = errors   && errors.some(v => v > 0)   ? paths(errors)   : null;
 
   return (
-    <div>
-      <Card variant={cardVariant} className={cardClass} style={{ padding: '16px' }} onClick={onToggle}>
-        {/* Header */}
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className={dotClass} />
-            <span className="text-[14px] font-semibold font-display truncate" style={{ color: 'var(--text-primary)' }}>
-              {feed.display_name}
-            </span>
-          </div>
-          <span className={badgeClass}>{badgeLabel}</span>
-        </div>
-
-        {/* Subtitle */}
-        <div className="text-[11px] text-white/40 font-mono ml-[18px] mb-3">
-          {feed.description ? `${feed.description} · ` : ''}
-          {category === 'disabled' ? humanizeCron(feed.schedule_cron) : humanizeCron(feed.schedule_cron)}
-        </div>
-
-        {/* Stats row */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          <div>
-            <div className={cn('text-[16px] font-bold font-mono', feed.total_ingested > 0 ? 'text-[var(--text-primary)]' : 'text-white/30')}>
-              {formatNumber(feed.total_ingested)}
-            </div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Threats</div>
-          </div>
-          <div>
-            <div className="text-[16px] font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
-              {formatNumber(feed.total_pulls)}
-            </div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Pulls</div>
-          </div>
-          <div>
-            {category === 'disabled' ? (
-              <>
-                <div className="text-[16px] font-bold font-mono text-white/40">&mdash;</div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Last Run</div>
-              </>
-            ) : (
-              <>
-                <div className="text-[16px] font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
-                  {formatNumber(feed.successes)}
-                </div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Successes</div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Issue banner for attention feeds */}
-        {issue && (
-          <div className="text-[11px] text-amber-400 font-mono mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              <span>&#9888;</span> {issue}
-            </div>
-            {category === 'attention' && (
-              <RetryButton feedName={feed.feed_name} />
-            )}
-          </div>
-        )}
-
-        {/* Footer */}
-        {category !== 'disabled' && (
-          <div className="space-y-2">
-            <div className="text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-              Last run: {timeAgo(feed.last_run)}
-            </div>
-            {/* Success rate bar — CSS vars, green/amber/red by rate */}
-            <div className="flex items-center gap-2">
-              <div
-                style={{
-                  flex: 1,
-                  height: 3,
-                  borderRadius: 99,
-                  overflow: 'hidden',
-                  background: 'var(--border-base)',
-                }}
-              >
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${Math.min(rate, 100)}%`,
-                    borderRadius: 99,
-                    background: successBarGradient(rate),
-                    transition: 'width 0.5s ease',
-                  }}
-                />
-              </div>
-              <span className="text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-                {rate}%
-              </span>
-            </div>
-          </div>
-        )}
-
-        {category === 'disabled' && !autoPaused && (
-          <div className="text-[10px] text-white/40 font-mono">
-            Paused{feed.paused_reason === 'manual' ? ' · manual' : ''}
-          </div>
-        )}
-
-        {autoPaused && (
-          <div className="space-y-2">
-            <div
-              className="text-[11px] font-mono flex items-start gap-1.5"
-              style={{ color: 'var(--sev-critical)' }}
-            >
-              <span>&#9888;</span>
-              <span>
-                Paused by system after {feed.consecutive_failures ?? 0} consecutive failures.
-                {feed.last_error ? ` Last error: ${feed.last_error.slice(0, 120)}${feed.last_error.length > 120 ? '…' : ''}` : ''}
-              </span>
-            </div>
-            <div className="flex items-center justify-end">
-              <UnpauseButton feedName={feed.feed_name} />
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* Expanded detail panel */}
-      {isExpanded && (
-        <FeedDetailPanel feed={feed} category={category} />
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradPulls} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor={runsColor} stopOpacity={0.40} />
+          <stop offset="95%" stopColor={runsColor} stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradIngested} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
+          <stop offset="95%" stopColor="#22D3EE" stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id={gradErrors} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%"  stopColor="var(--sev-high)" stopOpacity={0.40} />
+          <stop offset="95%" stopColor="var(--sev-high)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={pullsP.area} fill={`url(#${gradPulls})`} />
+      <path d={pullsP.line} stroke={runsColor} strokeWidth={1.3} fill="none" strokeLinejoin="round" />
+      {ingestedP && (
+        <>
+          <path d={ingestedP.area} fill={`url(#${gradIngested})`} />
+          <path d={ingestedP.line} stroke="#22D3EE" strokeWidth={1.1} fill="none" strokeLinejoin="round" opacity={0.85} />
+        </>
       )}
-    </div>
+      {errorsP && (
+        <>
+          <path d={errorsP.area} fill={`url(#${gradErrors})`} />
+          <path d={errorsP.line} stroke="var(--sev-high)" strokeWidth={1.1} fill="none" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
   );
 }
 
-function FeedDetailPanel({ feed, category }: { feed: FeedOverview; category: FeedCategory }) {
-  const { data: history, isLoading } = useFeedHistory(feed.feed_name, 20);
+function isDecommissionCandidate(f: FeedOverview): boolean {
+  if (!f.last_completed) return false;
+  const ageMs = Date.now() - new Date(f.last_completed).getTime();
+  const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+  return ageMs > fourteenDays;
+}
 
-  // Transform recent pull records into chart data (oldest → newest for the area chart)
-  const chartData = useMemo(() => {
-    if (!history) return [];
-    return [...history].reverse().slice(-20).map((h: FeedPullRecord) => ({
-      label: new Date(h.started_at).toLocaleString('en-US', {
-        month: 'short', day: 'numeric', hour: '2-digit',
-      }),
-      value: h.records_ingested,
-    }));
-  }, [history]);
+// Compact action button — idle / confirming (✓ / ✕) / loading /
+// success / error states. Mirrors v2's RetryButton + UnpauseButton
+// UX (tap → confirm → tap to fire). e.stopPropagation everywhere
+// so clicks don't bubble to the card's onSelect (which would
+// expand/collapse the card).
+function FeedActionButton({
+  feedName, action, label, icon, tone, queryKey,
+}: {
+  feedName: string;
+  action:   'trigger' | 'pause' | 'unpause';
+  label:    string;
+  icon:     React.ReactNode;
+  tone:     'amber' | 'green' | 'sev-high';
+  queryKey: string;
+}) {
+  const queryClient = useQueryClient();
+  const a = useAdminAction(`/api/feeds/${feedName}/${action}`, () => {
+    setTimeout(() => queryClient.invalidateQueries({ queryKey: [queryKey] }), 500);
+  });
+  const color =
+    tone === 'amber'    ? 'var(--amber)' :
+    tone === 'green'    ? 'var(--green)' :
+                          'var(--sev-high)';
 
-  const chartColor =
-    category === 'attention' ? 'var(--sev-high)' :
-    category === 'disabled'  ? 'var(--text-muted)' :
-                               'var(--sev-info)';
+  if (a.state === 'idle') {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={(e) => { e.stopPropagation(); a.confirm(); }}
+        icon={icon}
+        style={{ color }}
+      >
+        {label}
+      </Button>
+    );
+  }
+  if (a.state === 'confirming') {
+    return (
+      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <Button type="button" variant="ghost" size="sm" onClick={a.execute} icon={<Check size={12} />} style={{ color: 'var(--green)' }}>
+          {''}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={a.cancel} icon={<X size={12} />}>
+          {''}
+        </Button>
+      </div>
+    );
+  }
+  if (a.state === 'loading') {
+    return (
+      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color }} onClick={(e) => e.stopPropagation()}>
+        <Loader2 size={12} className="animate-spin" />
+      </span>
+    );
+  }
+  if (a.state === 'success') {
+    return (
+      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: 'var(--green)' }} onClick={(e) => e.stopPropagation()}>
+        <Check size={12} />
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-[10px]" style={{ color: 'var(--sev-high)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
+      <X size={12} className="inline" />
+    </span>
+  );
+}
 
-  const configRows: Array<{ label: string; value: string; mono?: boolean; truncate?: boolean }> = [
-    { label: 'Feed Name',    value: feed.feed_name, mono: true },
-    { label: 'Display Name', value: feed.display_name ?? '—' },
-    { label: 'Description',  value: feed.description ?? '—' },
-    { label: 'Source URL',   value: feed.source_url ?? '—', mono: true, truncate: true },
-    { label: 'Schedule',     value: humanizeCron(feed.schedule_cron), mono: true },
-    { label: 'Batch Size',   value: feed.batch_size != null ? feed.batch_size.toLocaleString() : '—' },
-    { label: 'Rate Limit',   value: feed.rate_limit != null ? `${feed.rate_limit}/min` : '—' },
-    { label: 'Status',       value: feed.enabled ? 'Enabled' : 'Disabled' },
-  ];
+function FeedCardV3({
+  feed, isSelected, onSelect,
+}: {
+  feed:       FeedOverview;
+  isSelected: boolean;
+  onSelect:   () => void;
+}) {
+  const pattern  = failurePatternFor(feed);
+  const decom    = isDecommissionCandidate(feed);
+  const total    = feed.successes + feed.errors;
+  const errorPct = total > 0 ? Math.round((feed.errors / total) * 100) : 0;
 
-  const retryConfig = feed.retry_count != null
-    ? `${feed.retry_count} retries · ${feed.retry_delay_seconds ?? 0}s delay`
-    : null;
+  const variant: 'elevated' | 'critical' =
+    pattern?.severity === 'critical' || decom ? 'critical' : 'elevated';
 
   return (
     <Card
-      className="mt-2"
-      style={{
-        padding: 0,
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-        gap: 16,
-      }}
+      variant={variant}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
+      onClick={onSelect}
     >
-      {/* LEFT — Feed Configuration */}
-      <div style={{
-        padding: '16px',
-        borderRight: '1px solid var(--border-base)',
-      }}>
-        <div style={{
-          fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
-          color: 'var(--amber)', textTransform: 'uppercase', marginBottom: 10,
-          fontWeight: 800,
-        }}>
-          Feed Configuration
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div
+          className="flex-shrink-0 w-8 h-8 rounded-md grid place-items-center"
+          style={{
+            background: 'var(--bg-input)',
+            color:      pattern ? 'var(--sev-high)' : 'var(--blue)',
+          }}
+        >
+          {pattern?.severity === 'critical' || feed.paused_reason
+            ? <Pause size={14} />
+            : <Activity size={14} />}
         </div>
-
-        {configRows.map(({ label, value, mono, truncate }) => (
-          <div key={label} style={{
-            display: 'flex', alignItems: 'flex-start',
-            gap: 8, padding: '5px 0',
-            borderBottom: '1px solid var(--border-base)',
-          }}>
-            <div style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
-              color: 'var(--text-muted)', letterSpacing: '0.10em',
-              textTransform: 'uppercase', minWidth: 90, flexShrink: 0,
-              paddingTop: 1,
-            }}>
-              {label}
-            </div>
-            {label === 'Source URL' && feed.source_url ? (
-              <a
-                href={feed.source_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  fontSize: 10,
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-secondary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  flex: 1,
-                  minWidth: 0,
-                  textDecoration: 'none',
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {value}
-              </a>
-            ) : (
-              <div style={{
-                fontSize: mono ? 10 : 12,
-                fontFamily: mono ? 'var(--font-mono)' : 'inherit',
-                color: 'var(--text-secondary)',
-                overflow: truncate ? 'hidden' : 'visible',
-                textOverflow: truncate ? 'ellipsis' : 'clip',
-                whiteSpace: truncate ? 'nowrap' : 'normal',
-                flex: 1, minWidth: 0,
-              }}>
-                {value}
-              </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[13px] font-bold uppercase tracking-wide truncate" style={{ color: 'var(--text-primary)' }}>
+              {feed.display_name || feed.feed_name}
+            </span>
+            {pattern && (
+              <Badge severity={pattern.severity}>
+                <AlertTriangle size={10} className="inline mr-1" />
+                {pattern.label}
+              </Badge>
+            )}
+            {!pattern && decom && (
+              <Badge severity="high">
+                <AlertTriangle size={10} className="inline mr-1" />
+                Stale?
+              </Badge>
             )}
           </div>
-        ))}
-
-        {retryConfig && (
-          <div style={{
-            marginTop: 8, padding: '6px 10px', borderRadius: 8,
-            background: 'var(--border-base)',
-            border: '1px solid var(--border-base)',
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)',
-          }}>
-            Retry: {retryConfig}
+          <div className="flex items-center gap-2 font-mono text-[10px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            <Clock size={10} />
+            {humanCron(feed.schedule_cron)} · last {timeAgo(feed.last_completed)}
           </div>
-        )}
+        </div>
+        <ChevronDown
+          size={14}
+          style={{
+            color:      'var(--text-tertiary)',
+            transition: 'transform 0.18s ease',
+            transform:  isSelected ? 'rotate(180deg)' : 'rotate(0deg)',
+            flexShrink: 0,
+          }}
+        />
+      </div>
 
-        {feed.filters && (
-          <div style={{
-            marginTop: 8, padding: '6px 10px', borderRadius: 8,
-            background: 'var(--border-base)',
-            border: '1px solid var(--border-base)',
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}>
-            Filters: {feed.filters}
+      {/* Stats row + sparkline */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>PULLS</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {feed.total_pulls.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>INGESTED</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {feed.total_ingested.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>ERROR %</div>
+            <div
+              className="text-base"
+              style={{ color: errorPct > 20 ? 'var(--sev-high)' : 'var(--text-primary)' }}
+            >
+              {errorPct}%
+            </div>
+          </div>
+        </div>
+        {feed.pulls_per_hour && feed.pulls_per_hour.length > 0 && (
+          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+            <FeedCardSparkline
+              pulls={feed.pulls_per_hour}
+              ingested={feed.ingested_per_hour}
+              errors={feed.errors_per_hour}
+              runsColor={pattern ? 'var(--sev-high)' : 'var(--blue)'}
+              width={120}
+              height={36}
+            />
+            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+              24h · pulls · ingested
+            </div>
           </div>
         )}
       </div>
 
-      {/* RIGHT — Pull History + Recent Runs */}
-      <div style={{ padding: '16px', minWidth: 0 }}>
-        <div style={{
-          fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
-          color: 'var(--amber)', textTransform: 'uppercase', marginBottom: 10,
-          fontWeight: 800,
-        }}>
-          Pull History
+      {pattern && (
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          {pattern.reason}
         </div>
+      )}
 
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-6 w-full" />
-            ))}
-          </div>
+      {/* Inline actions — Trigger always available; Pause shows when
+          the feed is currently running; Resume shows when paused
+          (auto- or manual-paused). All buttons stopPropagation so a
+          click doesn't bubble to the card's expand/collapse handler. */}
+      <div className="flex items-center gap-1 pt-1 border-t" style={{ borderColor: 'var(--border-base)' }}>
+        <FeedActionButton
+          feedName={feed.feed_name}
+          action="trigger"
+          label="Trigger"
+          icon={<RotateCw size={12} />}
+          tone="amber"
+          queryKey="feeds-overview"
+        />
+        {Boolean(feed.enabled) && !feed.paused_reason ? (
+          <FeedActionButton
+            feedName={feed.feed_name}
+            action="pause"
+            label="Pause"
+            icon={<Pause size={12} />}
+            tone="sev-high"
+            queryKey="feeds-overview"
+          />
         ) : (
-          <>
-            {chartData.length > 1 ? (
-              <ThreatAreaChart
-                data={chartData}
-                height={120}
-                color={chartColor}
-                label="Records Ingested"
-                showXAxis={false}
-                showGrid={false}
-              />
-            ) : (
-              <div style={{
-                height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--text-muted)', fontSize: 11,
-                fontStyle: 'italic',
-              }}>
-                No pull history yet
-              </div>
-            )}
-
-            {/* Recent run records */}
-            <div style={{ marginTop: 12 }}>
-              <div style={{
-                fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.14em',
-                color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6,
-              }}>
-                Recent Runs
-              </div>
-
-              {history && history.length > 0 ? (
-                history.slice(0, 6).map((record: FeedPullRecord) => {
-                  const isSuccess = record.status === 'success';
-                  const dur = record.duration_ms != null
-                    ? `${(record.duration_ms / 1000).toFixed(1)}s`
-                    : '—';
-                  const when = new Date(record.started_at).toLocaleDateString('en-US', {
-                    month: 'short', day: 'numeric',
-                    hour: '2-digit', minute: '2-digit',
-                  });
-
-                  return (
-                    <DataRow key={record.id} severity={isSuccess ? undefined : 'high'}>
-                      <div
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '5px 8px', width: '100%',
-                        }}
-                        title={!isSuccess ? (record.error_message ?? undefined) : undefined}
-                      >
-                        <SeverityDot severity={isSuccess ? 'info' : 'high'} size={7} />
-                        <span style={{
-                          fontSize: 10, fontFamily: 'var(--font-mono)',
-                          color: 'var(--text-muted)', flex: 1,
-                        }}>
-                          {when}
-                        </span>
-                        <span style={{
-                          fontSize: 11, fontWeight: 700,
-                          color: isSuccess ? 'var(--sev-info)' : 'var(--sev-high)',
-                          fontFamily: 'var(--font-mono)',
-                        }}>
-                          {record.records_ingested.toLocaleString()}
-                        </span>
-                        <span style={{
-                          fontSize: 9, color: 'var(--text-muted)',
-                          fontFamily: 'var(--font-mono)', minWidth: 32, textAlign: 'right',
-                        }}>
-                          {dur}
-                        </span>
-                      </div>
-                    </DataRow>
-                  );
-                })
-              ) : (
-                <div style={{
-                  fontSize: 11, fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-muted)', fontStyle: 'italic',
-                }}>
-                  No recent runs
-                </div>
-              )}
-            </div>
-          </>
+          <FeedActionButton
+            feedName={feed.feed_name}
+            action="unpause"
+            label="Resume"
+            icon={<Play size={12} />}
+            tone="green"
+            queryKey="feeds-overview"
+          />
         )}
       </div>
     </Card>
   );
 }
 
-function FeedSection({
-  title,
-  feeds,
-  category,
-  expandedFeed,
-  setExpandedFeed,
-  cardClass,
-}: {
-  title: string;
-  feeds: FeedOverview[];
-  category: FeedCategory;
-  expandedFeed: string | null;
-  setExpandedFeed: (name: string | null) => void;
-  cardClass?: string;
-}) {
-  if (feeds.length === 0) return null;
-
+function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
   return (
-    <div>
-      <div className={cn('font-mono text-[10px] font-bold uppercase tracking-widest mb-3', cardClass)}>
-        {title}
-        <span className="text-white/50 ml-2 font-normal">{feeds.length}</span>
+    <Card variant="elevated" className="p-5 col-span-full">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left — config + status */}
+        <div className="space-y-3">
+          {feed.description && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+                What it does
+              </div>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {feed.description}
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 font-mono text-[10px]">
+            <Row label="Cron"      value={feed.schedule_cron} />
+            <Row label="Schedule"  value={humanCron(feed.schedule_cron)} />
+            <Row label="Batch"     value={feed.batch_size?.toString() ?? '—'} />
+            <Row label="Rate cap"  value={feed.rate_limit?.toString() ?? '—'} />
+            <Row label="Retries"   value={feed.retry_count?.toString() ?? '—'} />
+            <Row label="Threshold" value={feed.consecutive_failure_threshold?.toString() ?? '—'} />
+          </div>
+          {feed.last_error && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>
+                Last error
+              </div>
+              <div className="font-mono text-[11px] p-2 rounded" style={{
+                background: 'var(--sev-critical-bg)',
+                color:      'var(--text-primary)',
+                border:     '1px solid var(--sev-critical-border)',
+              }}>
+                {feed.last_error}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right — totals + source */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <Stat label="Pulls"    value={feed.total_pulls.toLocaleString()} />
+            <Stat label="Successes" value={feed.successes.toLocaleString()} tone="green" />
+            <Stat label="Errors"   value={feed.errors.toLocaleString()}    tone={feed.errors > 0 ? 'sev-high' : undefined} />
+            <Stat label="Ingested" value={feed.total_ingested.toLocaleString()} />
+            <Stat label="Rejected" value={feed.total_rejected.toLocaleString()} />
+            <Stat label="Conseq. Fail" value={(feed.consecutive_failures ?? 0).toString()} tone={(feed.consecutive_failures ?? 0) > 0 ? 'sev-high' : undefined} />
+          </div>
+          {feed.source_url && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+                Source
+              </div>
+              <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                {feed.source_url}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              Recent pulls · last 20
+            </div>
+            <FeedHistorySection feedName={feed.feed_name} />
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {feeds.map(feed => (
-          <FeedCard
-            key={feed.feed_name}
-            feed={feed}
-            category={category}
-            isExpanded={expandedFeed === feed.feed_name}
-            onToggle={() =>
-              setExpandedFeed(expandedFeed === feed.feed_name ? null : feed.feed_name)
-            }
-          />
-        ))}
-      </div>
-    </div>
+    </Card>
   );
 }
 
-/* ─── Page ─── */
-
-export function Feeds() {
-  const { data: feeds, isLoading } = useFeeds();
-  const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
-
-  const grouped = useMemo(() => {
-    if (!feeds) return { healthy: [], attention: [], disabled: [] };
-    const healthy: FeedOverview[] = [];
-    const attention: FeedOverview[] = [];
-    const disabled: FeedOverview[] = [];
-    for (const f of feeds) {
-      const cat = categorizeFeed(f);
-      if (cat === 'healthy') healthy.push(f);
-      else if (cat === 'attention') attention.push(f);
-      else disabled.push(f);
-    }
-    return { healthy, attention, disabled };
-  }, [feeds]);
+// Recent-pulls history list rendered inside the detail panel. Lazy
+// fetch — `enabled: !!feedName` in useFeedHistory means this only
+// fires when a card actually expands. Mirrors v2's recent-runs pane
+// but with a denser layout (one line per pull, error inline below).
+function FeedHistorySection({ feedName }: { feedName: string }) {
+  const { data: history, isLoading } = useFeedHistory(feedName, 20);
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-xl font-bold font-display" style={{ color: 'var(--text-primary)' }}>Feeds</h1>
-          <p className="text-sm text-[var(--text-muted)] font-mono mt-1">Threat intelligence feed sources</p>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-xl" />
-          ))}
-        </div>
-        <Skeleton className="h-12 rounded-xl" />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-40 rounded-xl" />
-          ))}
-        </div>
+      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        Loading history…
+      </div>
+    );
+  }
+  if (!history || history.length === 0) {
+    return (
+      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        No pull history yet
       </div>
     );
   }
 
-  const allFeeds = feeds ?? [];
+  return (
+    <div className="space-y-1.5">
+      {history.slice(0, 20).map(record => (
+        <PullRow key={record.id} record={record} />
+      ))}
+    </div>
+  );
+}
+
+function PullRow({ record }: { record: FeedPullRecord }) {
+  const isSuccess = record.status === 'success';
+  const isPartial = record.status === 'partial';
+  const tone =
+    isSuccess ? 'var(--green)' :
+    isPartial ? 'var(--sev-medium)' :
+                'var(--sev-high)';
+  const when = new Date(record.started_at).toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  });
+  const dur = record.duration_ms != null
+    ? `${(record.duration_ms / 1000).toFixed(1)}s`
+    : '—';
 
   return (
-    <div className="space-y-5">
-      {/* Page header */}
-      <PageHeader
-        title="Threat Feeds"
-        subtitle={`${allFeeds.length} feed configurations · Threat intelligence ingestion`}
-        actions={
-          <div className="flex items-center gap-3">
-            <VersionToggle surface="feeds" ariaLabel="Feeds page version" />
-            <TriggerAllButton />
-          </div>
-        }
-      />
-
-      {/* 1. Header stats */}
-      <HeaderStats feeds={allFeeds} />
-
-      {/* 2. Attention banner */}
-      <AttentionBanner feeds={allFeeds} />
-
-      {/* 3. Feed health strip */}
-      <FeedHealthStrip feeds={allFeeds} />
-
-      {/* 4. Feed sections */}
-      {allFeeds.length === 0 ? (
-        <EmptyState
-          icon={<Zap />}
-          title="No feeds configured"
-          subtitle="Configure your first threat intelligence feed to start ingesting data"
-          variant="scanning"
+    <div
+      className="rounded px-2 py-1.5"
+      style={{
+        background: 'var(--bg-input)',
+        border:     `1px solid ${isSuccess ? 'var(--border-base)' : 'var(--sev-critical-border)'}`,
+      }}
+    >
+      <div className="flex items-center gap-2 font-mono text-[10px]">
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+          style={{ background: tone }}
         />
-      ) : (
-      <div className="space-y-6">
-        <FeedSection
-          title="Healthy Feeds"
-          feeds={grouped.healthy}
-          category="healthy"
-          expandedFeed={expandedFeed}
-          setExpandedFeed={setExpandedFeed}
-          cardClass="text-green-400"
-        />
-        <FeedSection
-          title="Needs Attention"
-          feeds={grouped.attention}
-          category="attention"
-          expandedFeed={expandedFeed}
-          setExpandedFeed={setExpandedFeed}
-          cardClass="text-amber-400"
-        />
-        <FeedSection
-          title="Disabled"
-          feeds={grouped.disabled}
-          category="disabled"
-          expandedFeed={expandedFeed}
-          setExpandedFeed={setExpandedFeed}
-          cardClass="text-white/40"
-        />
+        <span style={{ color: 'var(--text-tertiary)' }} className="flex-1 truncate">
+          {when}
+        </span>
+        <span style={{ color: 'var(--text-secondary)' }}>
+          {record.records_ingested.toLocaleString()}
+          {record.records_rejected > 0 && (
+            <span style={{ color: 'var(--sev-medium)' }}>
+              {' '}/ {record.records_rejected.toLocaleString()} rej
+            </span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', minWidth: 36, textAlign: 'right' }}>
+          {dur}
+        </span>
       </div>
+      {!isSuccess && record.error_message && (
+        <div
+          className="font-mono text-[10px] mt-1 line-clamp-2"
+          style={{ color: 'var(--sev-high)' }}
+          title={record.error_message}
+        >
+          {record.error_message}
+        </div>
       )}
     </div>
   );
 }
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div style={{ color: 'var(--text-muted)' }}>{label.toUpperCase()}</div>
+      <div className="text-xs" style={{ color: 'var(--text-primary)' }}>{value}</div>
+    </div>
+  );
+}
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'sev-high' }) {
+  const color = tone === 'green' ? 'var(--green)' : tone === 'sev-high' ? 'var(--sev-high)' : 'var(--text-primary)';
+  return (
+    <div>
+      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-lg font-mono" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+export function Feeds() {
+  const { data: feeds = [], isLoading } = useFeeds();
+  const { data: stats } = useFeedStats();
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const failureCount = useMemo(
+    () => feeds.filter(f => failurePatternFor(f) !== null).length,
+    [feeds]
+  );
+
+  if (isLoading) return <CardGridLoader count={6} />;
+
+  return (
+    <div className="animate-fade-in space-y-6">
+      <PageHeader
+        title="Feed Intake"
+        subtitle="Triage-focused with failure-pattern detection"
+        actions={<LiveIndicator />}
+      />
+
+      <StatGrid cols={4}>
+        <StatCard label="Active"       value={stats?.active   ?? 0} accentColor="var(--green)" />
+        <StatCard label="Disabled"     value={stats?.disabled ?? 0} />
+        <StatCard label="Records (24h)" value={(stats?.total_ingested ?? 0).toLocaleString()} />
+        <StatCard
+          label="Failure Patterns"
+          value={failureCount}
+          accentColor={failureCount > 0 ? 'var(--sev-high)' : undefined}
+        />
+      </StatGrid>
+
+      {feeds.length === 0 ? (
+        <EmptyState
+          icon={<Rss />}
+          title="No feeds configured"
+          subtitle="Threat-intel feed sources haven't been wired yet."
+          variant="error"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {feeds.map(feed => (
+            <Fragment key={feed.feed_name}>
+              <FeedCardV3
+                feed={feed}
+                isSelected={selected === feed.feed_name}
+                onSelect={() =>
+                  setSelected(prev => prev === feed.feed_name ? null : feed.feed_name)
+                }
+              />
+              {selected === feed.feed_name && <FeedDetailPanelV3 feed={feed} />}
+            </Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+

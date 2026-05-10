@@ -1,32 +1,35 @@
-// Metrics — admin-only ops dashboard.
+// /admin/metrics — operator metrics dashboard.
 //
-// Five tabbed sections:
-//   1. Pipelines     — Pipeline Automation grid (moved from Agents)
-//   2. D1 Budget     — daily / monthly meters + top queries / endpoints
-//   3. AI Spend      — 24h/7d/30d windows + 30d daily-cost bar chart
-//   4. Geo Coverage  — coverage % windows + 30d trend + exhausted pile
-//   5. Feed Failures — per-feed pull stats + auto-pause risk + errors
+// 6-tab layout, default = Summary (stacks all 5 sections so a
+// glance answers "is everything healthy?"). Other tabs are focused
+// deep-dives.
 //
-// Tab selection is URL-encoded as `?tab=<id>` so an operator can deep-
-// link to a specific view (handy when sharing a triage link). The tab
-// component is the same `Tabs` primitive used on /agents.
+// v2 was decommissioned in favour of this layout — see git history
+// for the original v2 + v3 toggle pattern.
 
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAgents } from '@/hooks/useAgents';
-import { PageHeader, Tabs } from '@/design-system/components';
-import { VersionToggle } from '@/components/ui/VersionToggle';
 import {
-  PipelineAutomationSection,
-} from './metrics/PipelineAutomation';
-import { D1BudgetSection }    from './metrics/D1Budget';
-import { AiSpendSection }     from './metrics/AiSpend';
-import { GeoCoverageSection } from './metrics/GeoCoverage';
-import { FeedFailuresSection } from './metrics/FeedFailures';
+  PageHeader, Tabs,
+} from '@/design-system/components';
+import { LiveIndicator } from '@/components/ui/LiveIndicator';
+import { Pipelines }         from './metrics/Pipelines';
+import { D1Budget }          from './metrics/D1Budget';
+import { AiSpend }           from './metrics/AiSpend';
+import { GeoCoverage }       from './metrics/GeoCoverage';
+import { FeedFailures }      from './metrics/FeedFailures';
 
-type TabId = 'pipelines' | 'd1-budget' | 'ai-spend' | 'geo-coverage' | 'feed-failures';
+type TabId =
+  | 'summary'
+  | 'pipelines'
+  | 'd1-budget'
+  | 'ai-spend'
+  | 'geo-coverage'
+  | 'feed-failures';
 
 const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
+  { id: 'summary',       label: 'Summary'       },
   { id: 'pipelines',     label: 'Pipelines'     },
   { id: 'd1-budget',     label: 'D1 Budget'     },
   { id: 'ai-spend',      label: 'AI Spend'      },
@@ -34,10 +37,48 @@ const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
   { id: 'feed-failures', label: 'Feed Failures' },
 ];
 
-const DEFAULT_TAB: TabId = 'pipelines';
+const DEFAULT_TAB: TabId = 'summary';
 
 function isValidTabId(s: string | null): s is TabId {
   return !!s && TABS.some((t) => t.id === s);
+}
+
+// Stacks every section in a single scroll so the operator can answer
+// "is everything healthy?" without tab-flipping. Lazy data fetching
+// is preserved — each section owns its own hook, and TanStack Query
+// caches results across mounts so flipping back to a tab doesn't
+// refetch.
+function SummaryView({ agents }: { agents: ReturnType<typeof useAgents>['data'] }) {
+  return (
+    <div className="space-y-6">
+      <SummaryBlock label="Pipelines">
+        <Pipelines agents={agents ?? []} />
+      </SummaryBlock>
+      <SummaryBlock label="D1 Budget">
+        <D1Budget />
+      </SummaryBlock>
+      <SummaryBlock label="AI Spend">
+        <AiSpend />
+      </SummaryBlock>
+      <SummaryBlock label="Geo Coverage">
+        <GeoCoverage />
+      </SummaryBlock>
+      <SummaryBlock label="Feed Failures">
+        <FeedFailures />
+      </SummaryBlock>
+    </div>
+  );
+}
+
+function SummaryBlock({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  );
 }
 
 export function Metrics() {
@@ -48,7 +89,7 @@ export function Metrics() {
   const activeTab: TabId = isValidTabId(tabParam) ? tabParam : DEFAULT_TAB;
 
   // Normalize the URL on first render: if the user landed without
-  // a tab param (or with a bogus one), rewrite to ?tab=pipelines so
+  // a tab param (or with a bogus one), rewrite to ?tab=summary so
   // bookmarks always carry the explicit selection.
   useEffect(() => {
     if (tabParam !== activeTab) {
@@ -69,8 +110,8 @@ export function Metrics() {
     <div className="px-4 sm:px-6 py-4 space-y-4 max-w-7xl mx-auto">
       <PageHeader
         title="Metrics"
-        subtitle="Platform operations · Pipelines · D1 budget · AI spend · Geo coverage · Feed health"
-        actions={<VersionToggle surface="metrics" ariaLabel="Metrics page version" />}
+        subtitle="Platform operations · Summary + tabbed deep-dives"
+        actions={<LiveIndicator />}
       />
 
       <Tabs
@@ -80,15 +121,12 @@ export function Metrics() {
         variant="pills"
       />
 
-      {/* Only the active tab's section renders. Each section
-          fetches its own data via its own hook, so switching tabs
-          doesn't refetch anything that's still warm in TanStack
-          Query's cache. */}
-      {activeTab === 'pipelines'     && <PipelineAutomationSection agents={agents} />}
-      {activeTab === 'd1-budget'     && <D1BudgetSection />}
-      {activeTab === 'ai-spend'      && <AiSpendSection />}
-      {activeTab === 'geo-coverage'  && <GeoCoverageSection />}
-      {activeTab === 'feed-failures' && <FeedFailuresSection />}
+      {activeTab === 'summary'       && <SummaryView agents={agents} />}
+      {activeTab === 'pipelines'     && <Pipelines agents={agents} />}
+      {activeTab === 'd1-budget'     && <D1Budget />}
+      {activeTab === 'ai-spend'      && <AiSpend />}
+      {activeTab === 'geo-coverage'  && <GeoCoverage />}
+      {activeTab === 'feed-failures' && <FeedFailures />}
     </div>
   );
 }
