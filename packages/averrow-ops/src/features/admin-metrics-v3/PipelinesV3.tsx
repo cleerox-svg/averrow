@@ -1,0 +1,458 @@
+// Pipelines, v3 treatment for /admin/metrics-v3.
+//
+// Refinement of the v2 PipelineAutomationSection — keeps the
+// verdict-tinted card grid (operators already read it well) and
+// adds the click-to-inline-expand pattern that agents-v3 / feeds-v3
+// use, plus an explicit failure-pattern reason line under the
+// verdict pill so "STALE" / "GROWING" stops requiring inference.
+//
+// What changed vs v2:
+//   1. Click opens inline below the card (was a centered modal)
+//   2. Reason text under verdict pill — explicit numeric / time
+//      detail (e.g. "+3,500 since last cycle", "no measurement
+//      in 6h")
+//   3. Detail panel shows full-width sparkline + 24h failure-rate
+//      breakdown + last-run summary + endpoints chip row
+//
+// Out of scope (queued):
+//   - Mini sparkline per card (would need either a fan-out of
+//     usePipelineDetail calls or a backend extension to include
+//     `sparkline` in /api/admin/pipeline-status — see PR #1178
+//     for the same pattern on feeds)
+
+import { Fragment, useState } from 'react';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from 'recharts';
+import { Card } from '@/design-system/components';
+import { Badge } from '@/components/ui/Badge';
+import type { VerdictTag } from '@/components/ui/Badge';
+import { ChevronDown } from 'lucide-react';
+import { usePipelineStatus, usePipelineDetail } from '@/hooks/useAgents';
+import type { Agent, PipelineEntry } from '@/hooks/useAgents';
+import { relativeTime, formatDuration } from '@/lib/time';
+
+// Maps PipelineVerdict.label → VerdictTag for the styled Badge.
+// Verdict labels not in this map (EMPTY, SETUP) fall back to
+// Badge's `status` prop with the raw label text.
+const VERDICT_TAG_BY_LABEL: Record<string, VerdictTag> = {
+  CLEAR:    'clear',
+  DRAINING: 'draining',
+  STEADY:   'steady',
+  GROWING:  'growing',
+  STALE:    'stale',
+  UPDATED:  'updated',
+  STABLE:   'stable',
+};
+
+function labelToVerdict(label?: string): VerdictTag | undefined {
+  if (!label) return undefined;
+  return VERDICT_TAG_BY_LABEL[label.toUpperCase()];
+}
+
+function trendArrow(dir: string): string {
+  if (dir === 'up') return '▲';
+  if (dir === 'down') return '▼';
+  if (dir === 'flat') return '–';
+  return '';
+}
+
+function trendBorderColor(dir: string): string {
+  if (dir === 'up')   return 'var(--sev-high-border)';
+  if (dir === 'down') return 'var(--green-border)';
+  return 'var(--border-base)';
+}
+function trendTopColor(dir: string): string {
+  if (dir === 'up')   return 'var(--sev-high)';
+  if (dir === 'down') return 'var(--green)';
+  return 'var(--border-base)';
+}
+
+function agentStatusLabel(status: string): 'active' | 'failed' | 'degraded' | 'inactive' {
+  if (status === 'active')   return 'active';
+  if (status === 'error')    return 'failed';
+  if (status === 'degraded') return 'degraded';
+  return 'inactive';
+}
+
+// Explicit failure-pattern / health reason text. Returns null when
+// the verdict alone is self-explanatory (CLEAR with 0 backlog).
+function pipelineReasonFor(p: PipelineEntry): string | null {
+  const verdict = p.verdict?.label?.toUpperCase();
+  if (verdict === 'GROWING' && p.trend != null && p.trend !== 0) {
+    return `+${Math.abs(p.trend).toLocaleString()} since last cycle`;
+  }
+  if (verdict === 'DRAINING' && p.trend != null && p.trend !== 0) {
+    return `−${Math.abs(p.trend).toLocaleString()} since last cycle`;
+  }
+  if (verdict === 'STALE' && p.last_measured_at) {
+    return `No measurement since ${relativeTime(p.last_measured_at)}`;
+  }
+  if (verdict === 'STEADY') {
+    return 'Backlog stable';
+  }
+  if (verdict === 'CLEAR') {
+    return null; // self-explanatory at backlog 0
+  }
+  if (verdict === 'EMPTY' || verdict === 'STABLE' || verdict === 'UPDATED' || verdict === 'SETUP') {
+    return null; // reference-dataset states — verdict label says it
+  }
+  // Fallback for unmapped verdicts: surface trend if any.
+  if (p.trend != null && p.trend !== 0) {
+    return `${trendArrow(p.trend_direction)} ${Math.abs(p.trend).toLocaleString()} since last cycle`;
+  }
+  return null;
+}
+
+interface PipelineCardProps {
+  pipeline:    PipelineEntry;
+  agentStatus: string;
+  isSelected:  boolean;
+  onSelect:    () => void;
+}
+
+function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: PipelineCardProps) {
+  const borderColor = p.count === 0
+    ? 'var(--border-base)'
+    : trendBorderColor(p.trend_direction);
+  const topBorderColor = p.count === 0
+    ? 'var(--border-base)'
+    : trendTopColor(p.trend_direction);
+  const reason = pipelineReasonFor(p);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className="rounded-lg overflow-hidden cursor-pointer transition-transform hover:scale-[1.01]"
+      style={{
+        background: 'rgba(22,30,48,0.50)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: `1px solid ${borderColor}`,
+        borderTop: `3px solid ${topBorderColor}`,
+        boxShadow: 'inset 0 1px 0 var(--border-base), 0 4px 24px rgba(0,0,0,0.40)',
+      }}
+      aria-label={`${isSelected ? 'Collapse' : 'Expand'} ${p.label} details`}
+    >
+      <div className="p-3">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="font-mono text-[10px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+            {p.label}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <Badge
+              status={agentStatusLabel(agentStatus)}
+              label={p.agent}
+              size="xs"
+              pulse={agentStatus === 'active'}
+            />
+            <ChevronDown
+              size={12}
+              style={{
+                color:      'var(--text-tertiary)',
+                transition: 'transform 0.18s ease',
+                transform:  isSelected ? 'rotate(180deg)' : 'rotate(0deg)',
+              }}
+            />
+          </div>
+        </div>
+
+        {p.description && (
+          <div
+            className="font-mono text-[9px] leading-snug mb-2 line-clamp-2"
+            style={{ color: 'var(--text-tertiary)' }}
+            title={p.description}
+          >
+            {p.description}
+          </div>
+        )}
+
+        <div className="flex items-baseline gap-2 mb-1">
+          <span
+            className="font-display text-lg font-bold"
+            style={{ color: 'var(--text-primary)', lineHeight: 1 }}
+          >
+            {p.count.toLocaleString()}
+          </span>
+          {p.verdict && (() => {
+            const v = labelToVerdict(p.verdict.label);
+            return v
+              ? <Badge verdict={v} size="xs" />
+              : <Badge status={p.verdict.tone} label={p.verdict.label} size="xs" />;
+          })()}
+        </div>
+
+        {/* Explicit reason — what the verdict means in numbers/time */}
+        {reason && (
+          <div
+            className="font-mono text-[9px] mb-1"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            {reason}
+          </div>
+        )}
+
+        <div className="font-mono text-[8px] space-y-0.5" style={{ color: 'var(--text-muted)' }}>
+          <div className="uppercase tracking-wider">{p.schedule}</div>
+          {p.agent_last_run_at && (
+            <div>
+              {relativeTime(p.agent_last_run_at)}
+              {p.agent_records_processed != null && p.agent_records_processed > 0 && (
+                <> · {p.agent_records_processed} rec</>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
+  const { data: detail, isLoading, isError } = usePipelineDetail(pipelineId);
+
+  if (isError) {
+    return (
+      <Card variant="elevated" className="p-5 col-span-full">
+        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+          Failed to load detail. Try again in a moment.
+        </div>
+      </Card>
+    );
+  }
+  if (isLoading || !detail) {
+    return (
+      <Card variant="elevated" className="p-5 col-span-full">
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          Loading detail…
+        </div>
+      </Card>
+    );
+  }
+
+  const sparkData = (detail.sparkline ?? []).map(s => ({
+    t: s.recorded_at.slice(11, 16),
+    v: s.count,
+  }));
+  const fr = detail.failure_rate_24h;
+  const lr = detail.last_run;
+
+  return (
+    <Card variant="elevated" className="p-5 col-span-full">
+      {detail.description && (
+        <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+            What this pipeline does
+          </div>
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {detail.description}
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left — sparkline + drain rate */}
+        <div className="space-y-4">
+          <div>
+            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              Backlog · last 24h
+            </div>
+            {sparkData.length > 1 ? (
+              <ResponsiveContainer width="100%" height={140}>
+                <AreaChart data={sparkData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id={`pipeline-spark-${detail.id}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor="var(--amber)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis
+                    dataKey="t"
+                    tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                    minTickGap={28}
+                  />
+                  <YAxis hide />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'var(--bg-elevated)',
+                      border:           '1px solid var(--border-base)',
+                      borderRadius:     8,
+                      fontSize:         11,
+                      fontFamily:       'var(--font-mono)',
+                      color:            'var(--text-primary)',
+                    }}
+                    labelStyle={{ color: 'var(--text-tertiary)' }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="v"
+                    stroke="var(--amber)"
+                    strokeWidth={1.5}
+                    fill={`url(#pipeline-spark-${detail.id})`}
+                    name="Backlog"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                Not enough samples yet
+              </div>
+            )}
+          </div>
+
+          {detail.drained_last_hour != null && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+                Drained · last hour
+              </div>
+              <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>
+                {detail.drained_last_hour.toLocaleString()}
+              </div>
+            </div>
+          )}
+
+          {detail.why_grows && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+                Why this grows
+              </div>
+              <p className="font-mono text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {detail.why_grows}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Right — failure-rate + last-run + endpoints */}
+        <div className="space-y-4">
+          {fr && fr.total > 0 && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                Failure rate · 24h · {fr.total} runs
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <Stat label="Success" value={fr.success.toString()} tone="green" />
+                <Stat label="Partial" value={fr.partial.toString()} tone={fr.partial > 0 ? 'sev-medium' : undefined} />
+                <Stat label="Failed"  value={fr.failed.toString()}  tone={fr.failed  > 0 ? 'sev-high'   : undefined} />
+              </div>
+              <div
+                className="font-mono text-[10px] mt-1.5"
+                style={{ color: fr.pct >= 95 ? 'var(--green)' : fr.pct >= 80 ? 'var(--sev-medium)' : 'var(--sev-high)' }}
+              >
+                {fr.pct}% success
+              </div>
+            </div>
+          )}
+
+          {lr && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                Last run
+              </div>
+              <div className="space-y-1 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                <div>Status: <span style={{ color: lr.status === 'success' ? 'var(--green)' : lr.status === 'failed' ? 'var(--sev-high)' : 'var(--text-primary)' }}>{lr.status}</span></div>
+                <div>Started: {relativeTime(lr.started_at)}</div>
+                {lr.duration_ms != null && <div>Duration: {formatDuration(lr.duration_ms)}</div>}
+                {lr.records_processed != null && <div>Records: {lr.records_processed.toLocaleString()}</div>}
+              </div>
+              {lr.error_message && (
+                <div className="font-mono text-[11px] mt-2 p-2 rounded" style={{
+                  background: 'var(--sev-critical-bg)',
+                  color:      'var(--text-primary)',
+                  border:     '1px solid var(--sev-critical-border)',
+                }}>
+                  {lr.error_message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {detail.endpoints && detail.endpoints.length > 0 && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                External endpoints
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {detail.endpoints.map(e => (
+                  <span
+                    key={e.url}
+                    className="px-2 py-0.5 rounded font-mono text-[9px]"
+                    style={{
+                      background: 'var(--bg-input)',
+                      color:      'var(--text-secondary)',
+                      border:     '1px solid var(--border-base)',
+                    }}
+                    title={e.url}
+                  >
+                    {e.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'sev-high' | 'sev-medium' }) {
+  const color =
+    tone === 'green'      ? 'var(--green)' :
+    tone === 'sev-high'   ? 'var(--sev-high)' :
+    tone === 'sev-medium' ? 'var(--sev-medium)' :
+                            'var(--text-primary)';
+  return (
+    <div>
+      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-lg font-mono" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+export function PipelinesV3({ agents }: { agents: Agent[] }) {
+  const { data: pipelines = [] } = usePipelineStatus(agents);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  if (pipelines.length === 0) {
+    return (
+      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        No pipelines registered.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      {pipelines.map(p => {
+        const agentData   = agents.find(a => a.name === p.agent);
+        const agentStatus = agentData?.status ?? p.agent_last_status ?? 'idle';
+        const isSelected  = selectedId === p.id;
+        return (
+          <Fragment key={p.id}>
+            <PipelineCardV3
+              pipeline={p}
+              agentStatus={agentStatus}
+              isSelected={isSelected}
+              onSelect={() =>
+                setSelectedId(prev => prev === p.id ? null : p.id)
+              }
+            />
+            {isSelected && <PipelineDetailPanelV3 pipelineId={p.id} />}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
