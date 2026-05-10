@@ -86,7 +86,7 @@ export function BrandsV3() {
       </div>
 
       {activeTab === 'intel' && <IntelTab isStaff={isStaff} />}
-      {activeTab === 'all' && <BrandsV2 />}
+      {activeTab === 'all' && <BrandsV2 embedded />}
       {activeTab === 'prospects' && isStaff && <ProspectsTab />}
     </div>
   );
@@ -544,6 +544,18 @@ type ProspectStatus = 'pending' | 'promoted' | 'rejected';
 function ProspectsTab() {
   const [status, setStatus] = useState<ProspectStatus>('pending');
   const { data, isLoading } = useBrandCandidates(status);
+  // Prefetch counts for the other status buckets so sub-tab labels show
+  // counts even before the user clicks. Cheap — each call is staleTime 60s
+  // and refetched on the same 5min interval as the active query.
+  const pendingQ  = useBrandCandidates('pending');
+  const promotedQ = useBrandCandidates('promoted');
+  const rejectedQ = useBrandCandidates('rejected');
+  const counts: Record<ProspectStatus, number> = {
+    pending:  pendingQ.data?.total ?? 0,
+    promoted: promotedQ.data?.total ?? 0,
+    rejected: rejectedQ.data?.total ?? 0,
+  };
+
   const promote = usePromoteBrandCandidate();
   const reject = useRejectBrandCandidate();
   const navigate = useNavigate();
@@ -564,17 +576,22 @@ function ProspectsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Status sub-tabs */}
+      {/* Status sub-tabs with live counts */}
       <div className="flex gap-1 border-b border-white/[0.06]">
         {(['pending', 'promoted', 'rejected'] as const).map(s => (
           <button
             key={s}
             onClick={() => setStatus(s)}
-            className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 ${
+            className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${
               status === s ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/40 hover:text-white/70'
             }`}
           >
-            {s}
+            <span>{s}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+              status === s ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.05] text-white/40'
+            }`}>
+              {counts[s]}
+            </span>
           </button>
         ))}
       </div>
@@ -597,13 +614,13 @@ function ProspectsTab() {
 
       {!isLoading && all.length > 0 && status === 'pending' && (
         <>
-          <ProspectGroup label="Hot leads" emoji="🔥" rows={grouped.hot}
+          <ProspectGroup label="Hot leads" emoji="🔥" tone="crit" rows={grouped.hot}
             onPromote={(id) => promote.mutate(id)} onReject={handleReject}
             promotePending={promote.isPending} />
-          <ProspectGroup label="Warm leads" emoji="🟡" rows={grouped.warm}
+          <ProspectGroup label="Warm leads" emoji="🟡" tone="warn" rows={grouped.warm}
             onPromote={(id) => promote.mutate(id)} onReject={handleReject}
             promotePending={promote.isPending} />
-          <ProspectGroup label="Worth a look" emoji="⚪" rows={grouped.worth}
+          <ProspectGroup label="Worth a look" emoji="⚪" tone="info" rows={grouped.worth}
             onPromote={(id) => promote.mutate(id)} onReject={handleReject}
             promotePending={promote.isPending} />
         </>
@@ -638,17 +655,29 @@ function ProspectsTab() {
   );
 }
 
-function ProspectGroup({ label, emoji, rows, onPromote, onReject, promotePending }: {
+function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject, promotePending }: {
   label: string; emoji: string; rows: BrandCandidate[];
+  tone?: 'crit' | 'warn' | 'info';
   onPromote: (id: string) => void; onReject: (id: string) => void;
   promotePending: boolean;
 }) {
   if (rows.length === 0) return null;
+  const accent = tone === 'crit' ? '#C83C3C' : tone === 'warn' ? '#E8923C' : '#0A8AB5';
+  // Hot leads use DeepCard with critical accent so they visually
+  // dominate; warm/worth use plain Card for visual de-emphasis.
+  const Wrapper = tone === 'crit' ? DeepCard : Card;
+  const wrapperProps = tone === 'crit'
+    ? { variant: 'active' as const, accent, hover: false }
+    : { hover: false };
   return (
-    <Card hover={false}>
+    <Wrapper {...wrapperProps}>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>{emoji} {label}</SectionLabel>
-        <span className="text-[11px] font-mono text-[var(--text-muted)]">{rows.length} pending</span>
+        <span className="text-[11px] font-mono px-2 py-0.5 rounded"
+          style={{ background: tone === 'crit' ? 'rgba(200,60,60,0.15)' : 'rgba(255,255,255,0.04)',
+                   color: tone === 'crit' ? 'var(--sev-critical)' : 'var(--text-tertiary)' }}>
+          {rows.length} pending
+        </span>
       </div>
       <div className="space-y-2">
         {rows.map(c => {
@@ -693,7 +722,7 @@ function ProspectGroup({ label, emoji, rows, onPromote, onReject, promotePending
           );
         })}
       </div>
-    </Card>
+    </Wrapper>
   );
 }
 

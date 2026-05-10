@@ -774,7 +774,18 @@ function BrandCard({
 /* ─── Main Page ─── */
 
 
-export function Brands() {
+interface BrandsProps {
+  /**
+   * When true, suppresses the page-level chrome (title row, version
+   * toggle, hero stats). Use when this component is embedded inside
+   * the v3 list shell (features/brands-v3/Brands.tsx All Brands tab)
+   * — that surface owns its own header + intel tab so the v2 chrome
+   * would duplicate.
+   */
+  embedded?: boolean;
+}
+
+export function Brands({ embedded = false }: BrandsProps = {}) {
   const navigate = useNavigate();
   const { data: brands = [], isLoading } = useBrands({ view: 'all', timeRange: '7d' });
   const toggleMonitor = useToggleMonitor();
@@ -824,25 +835,44 @@ export function Brands() {
   }, [page, totalPages]);
 
   return (
-    <div className="animate-fade-in space-y-6">
-      {/* Header row with title + version toggle + add brand */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Brands</h1>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <VersionToggle surface="brands" ariaLabel="Brands version" />
+    <div className={embedded ? 'animate-fade-in' : 'animate-fade-in space-y-6'}>
+      {!embedded && (
+        <>
+          {/* Header row with title + version toggle + add brand */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Brands</h1>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <VersionToggle surface="brands" ariaLabel="Brands version" />
+              <button
+                onClick={() => setModalOpen(true)}
+                className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
+                style={{ color: 'var(--amber)' }}
+              >
+                <span className="hidden sm:inline">Monitor Brand</span>
+                <span className="sm:hidden">+ Brand</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Stats row — always visible in standalone /brands; suppressed
+              when embedded inside /brands-v3 (Intel tab owns the stats). */}
+          <StatsRow />
+        </>
+      )}
+      {embedded && (
+        // Add Brand button alone, top-right, when embedded — keeps the
+        // primary action available without duplicating the header.
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setModalOpen(true)}
             className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
             style={{ color: 'var(--amber)' }}
           >
-            <span className="hidden sm:inline">Monitor Brand</span>
+            <span className="hidden sm:inline">+ Monitor Brand</span>
             <span className="sm:hidden">+ Brand</span>
           </button>
         </div>
-      </div>
-
-      {/* Stats row — always visible */}
-      <StatsRow />
+      )}
 
       {/* View content */}
       {isLoading ? (
