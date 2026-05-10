@@ -778,6 +778,64 @@ export async function handleBrandFirmographics(request: Request, env: Env, brand
   }
 }
 
+// ── Catalog-level aggregates ────────────────────────────────
+// 4 read-only endpoints powering the Brands Intel page sections
+// (Defense / Pressure / Composition / Posture). All wrapped via
+// cachedValue (5min TTL) inside lib/brand-aggregates.ts. Hot-path
+// safe at 100K+ catalog size.
+
+export async function handleBrandsAggregateEmailSecurity(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const { emailSecurityAggregate } = await import('../lib/brand-aggregates');
+    const data = await emailSecurityAggregate(env);
+    return attachBookmark(json({ success: true, data }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
+export async function handleBrandsAggregatePressure(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const { pressureAggregate } = await import('../lib/brand-aggregates');
+    const data = await pressureAggregate(env);
+    return attachBookmark(json({ success: true, data }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
+export async function handleBrandsAggregateComposition(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const { compositionAggregate } = await import('../lib/brand-aggregates');
+    const data = await compositionAggregate(env);
+    return attachBookmark(json({ success: true, data }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
+export async function handleBrandsAggregatePosture(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const ctx = getDbContext(request);
+  const session = getReadSession(env, ctx);
+  try {
+    const { postureAggregate } = await import('../lib/brand-aggregates');
+    const data = await postureAggregate(env);
+    return attachBookmark(json({ success: true, data }, 200, origin), session);
+  } catch (err) {
+    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+  }
+}
+
 // GET /api/brands/:id/score-history — health/exposure trend
 // Renders the brand_score_snapshots table (PR1 migration 0157,
 // populated daily by PR3's batch). Returns last 30 days by default.

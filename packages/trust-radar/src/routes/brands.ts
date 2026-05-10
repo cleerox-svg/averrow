@@ -6,6 +6,8 @@ import {
   handleListBrands, handleTopTargetedBrands, handleMonitoredBrands,
   handleAddMonitoredBrand, handleRemoveMonitoredBrand, handleGetBrand,
   handleBrandDomains, handleBrandFirmographics, handleBrandScoreHistory,
+  handleBrandsAggregateEmailSecurity, handleBrandsAggregatePressure,
+  handleBrandsAggregateComposition, handleBrandsAggregatePosture,
   handleBrandThreats, handleBrandThreatLocations, handleBrandThreatTimeline,
   handleBrandProviders, handleBrandCampaigns, handleBrandStats, handleBrandMovers,
   handleGetBrandAnalysis, handleGenerateBrandAnalysis,
@@ -80,6 +82,29 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBrandMovers(request, env);
+  });
+  // /api/brands/aggregate/* — same path-precedence concern as movers.
+  // Each is a single GROUP BY (or small JOIN) over the catalog,
+  // wrapped in cachedValue for 5min TTL inside lib/brand-aggregates.ts.
+  router.get("/api/brands/aggregate/email-security", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandsAggregateEmailSecurity(request, env);
+  });
+  router.get("/api/brands/aggregate/pressure", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandsAggregatePressure(request, env);
+  });
+  router.get("/api/brands/aggregate/composition", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandsAggregateComposition(request, env);
+  });
+  router.get("/api/brands/aggregate/posture", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBrandsAggregatePosture(request, env);
   });
   router.post("/api/brands/monitor", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
