@@ -5,6 +5,7 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { cachedCount } from "../lib/cached-count";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -41,10 +42,60 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
       return attachBookmark(json({ success: true, data: { active_threats: 0, threats_24h: 0, brands_tracked: 0, brands_new: 0, providers_tracked: 0, active_campaigns: 0, campaigns_new: 0, feed_health: { active: 0, total: 0, degraded: 0, down: 0 } } }, 200, origin), session);
     }
 
+    // For the unscoped (global) path, route the three full-table
+    // threats COUNT(*) queries through `cachedCount` (KV-backed,
+    // free of D1 reads on a hit). The diagnostic top-queries
+    // report flagged these at ~127M rows / 24h combined — biggest
+    // remaining D1 spend after the FC backlogs migration in
+    // PR #1213. Scoped (per-tenant) requests fall through to the
+    // raw queries to avoid blowing up the cache key space.
+    //
+    // 60s TTL: total/active/24h-count drift slowly enough that a
+    // 60-second lag is invisible on a tile/dashboard surface,
+    // and the outer dashboard_overview KV cache (5 min) already
+    // absorbs most repeat traffic — these inner caches catch the
+    // outer-cache-miss case where the same global counts get
+    // recomputed by parallel cold readers.
+    // We only reach this point when scope is null/undefined (the
+    // "empty brand_ids" case short-circuited with an empty payload
+    // above). When `scope` is set with N>0 brand_ids, the queries
+    // are tenant-scoped and fall through to raw D1 reads — caching
+    // those would blow up the KV key space.
+    const useGlobalCache = !scope;
+
+    const threatCountP = useGlobalCache
+      ? cachedCount(env, 'count.threats.total', 60, async () => {
+          const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
+          return r?.n ?? 0;
+        }).then((n) => ({ n }))
+      : session.prepare(`SELECT COUNT(*) AS n FROM threats ${threatScope.clause}`)
+          .bind(...threatScope.params)
+          .first<{ n: number }>();
+
+    const threatActiveP = useGlobalCache
+      ? cachedCount(env, 'count.threats.active', 60, async () => {
+          const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active'`).first<{ n: number }>();
+          return r?.n ?? 0;
+        }).then((n) => ({ n }))
+      : session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active' ${threatScopeAnd.clause}`)
+          .bind(...threatScopeAnd.params)
+          .first<{ n: number }>()
+          .catch(() => ({ n: 0 }));
+
+    const threat24hP = useGlobalCache
+      ? cachedCount(env, 'count.threats.last_24h', 60, async () => {
+          const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now', '-1 day')`).first<{ n: number }>();
+          return r?.n ?? 0;
+        }).then((n) => ({ n }))
+      : session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now', '-1 day') ${threatScopeAnd.clause}`)
+          .bind(...threatScopeAnd.params)
+          .first<{ n: number }>()
+          .catch(() => ({ n: 0 }));
+
     const [threatCount, threatActive, threat24h, brands, providers, campaigns, feeds] = await Promise.all([
-      session.prepare(`SELECT COUNT(*) AS n FROM threats ${threatScope.clause}`).bind(...threatScope.params).first<{ n: number }>(),
-      session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active' ${threatScopeAnd.clause}`).bind(...threatScopeAnd.params).first<{ n: number }>().catch(() => ({ n: 0 })),
-      session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now', '-1 day') ${threatScopeAnd.clause}`).bind(...threatScopeAnd.params).first<{ n: number }>().catch(() => ({ n: 0 })),
+      threatCountP,
+      threatActiveP,
+      threat24hP,
       session.prepare(`
         SELECT COUNT(*) AS tracked,
                SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_7d
