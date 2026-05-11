@@ -13,15 +13,14 @@
  */
 import Layout from "../layouts/Layout.astro";
 import TrustSignals from "../components/TrustSignals.astro";
+import liveStats from "../data/stats.json";
 
-const stats = {
-  agents_deployed: "18",
-  feeds_protecting: "33+",
-  threats_detected: "210K+",
-  brands_monitored: "9.6K+",
-  uptime_label: "24/7",
-  detection_time_label: "<5min",
-};
+// stats.json is refreshed by scripts/fetch-stats.mjs before each
+// astro build. If the fetch failed (offline / API down), the file
+// keeps its previous values and the build still produces a clean
+// homepage. R6 lost the per-request Worker fetch; this gets us
+// build-time-fresh numbers without paying that cost.
+const stats = liveStats;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---

@@ -1,5 +1,5 @@
 import { generateSpiderTraps } from "../seeders/spider-injector";
-import { wrapPage, renderTrustSignals } from "./shared";
+import { wrapPage } from "./shared";
 import type { PublicStats } from "../lib/public-stats";
 
 // Static fallback so callers that don't pass stats (legacy, tests) still
@@ -1441,14 +1441,9 @@ ${pageStyles}
   </div>
 </section>
 
-<!-- TRUST SIGNALS — sector strip + testimonial.
-     Markup defined in shared.ts (renderTrustSignals). Placeholder
-     content; swap real customer logos and testimonials in shared.ts. -->
-<hr class="tr-divider-animated">
-
-<section class="trust-signals fade-in-section">
-${renderTrustSignals()}
-</section>
+<!-- TRUST SIGNALS removed from /legacy in R7 — they live in the
+     Astro marketing site (TrustSignals.astro) and don't need to
+     appear on the legacy escape-hatch view. -->
 
 <!-- CTA SECTION — Phase 2C -->
 <hr class="tr-divider-animated">
