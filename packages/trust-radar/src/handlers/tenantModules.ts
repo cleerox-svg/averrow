@@ -251,3 +251,70 @@ export async function handleAdminSyncPlanModules(
     }, 500, origin);
   }
 }
+
+// ─── POST /api/admin/orgs/sync-all-plan-modules ────────────────
+//
+// One-shot bulk-sync: walks every org with `plan_id` set and calls
+// syncOrgModulesToPlan. Used after the 0164 backfill migration to
+// align org_modules rows with the newly populated plan_ids. Safe to
+// re-run — idempotent. Skips orgs with billing_status='cancelled'
+// since their modules should already be suspended.
+
+export interface BulkSyncResult {
+  scanned:   number;
+  synced:    number;
+  skipped:   number;
+  failures:  Array<{ org_id: number; error: string }>;
+}
+
+export async function handleAdminBulkSyncPlanModules(
+  request: Request,
+  env:     Env,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (ctx.role !== "super_admin") {
+    return json({ success: false, error: "Super admin required" }, 403, origin);
+  }
+
+  const result: BulkSyncResult = {
+    scanned:  0,
+    synced:   0,
+    skipped:  0,
+    failures: [],
+  };
+
+  // Scope to orgs that actually have a plan we can sync to. Free /
+  // unplanned orgs are intentionally skipped — they're already in
+  // the "no modules" state and a sync would suspend everything,
+  // which is a no-op but burns D1 writes.
+  const rows = await env.DB.prepare(
+    `SELECT id, billing_status FROM organizations
+     WHERE plan_id IS NOT NULL`,
+  ).all<{ id: number; billing_status: string }>();
+
+  for (const row of rows.results ?? []) {
+    result.scanned += 1;
+    if (row.billing_status === "cancelled") {
+      result.skipped += 1;
+      continue;
+    }
+    try {
+      await syncOrgModulesToPlan(env, row.id, {
+        // billingStatusOverride deliberately omitted — pulls the
+        // current row's billing_status so trialing orgs stay
+        // trialing, active stays active, etc. The 0164 migration
+        // only touches plan_id, so the bulk sync just needs to
+        // propagate that change to org_modules.
+      });
+      result.synced += 1;
+    } catch (err) {
+      result.failures.push({
+        org_id: row.id,
+        error:  err instanceof Error ? err.message : "sync failed",
+      });
+    }
+  }
+
+  return json({ success: true, data: result }, 200, origin);
+}
