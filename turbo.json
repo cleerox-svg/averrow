@@ -4,7 +4,28 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".wrangler/**", "public/**"]
+      "outputs": [
+        "dist/**",
+        ".wrangler/**",
+        "public/**",
+        ".astro/**"
+      ]
+    },
+    "trust-radar#build": {
+      "dependsOn": ["^build", "@averrow/marketing#build"],
+      "outputs": [
+        "dist/**",
+        ".wrangler/**",
+        "public/**"
+      ]
+    },
+    "@averrow/marketing#build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        ".astro/**",
+        "../trust-radar/public/marketing/**"
+      ]
     },
     "dev": {
       "cache": false,
