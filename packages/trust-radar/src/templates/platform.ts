@@ -17,6 +17,9 @@ export function renderPlatformPage(): string {
 .fade-in-up.d1 { transition-delay: 0.1s; }
 .fade-in-up.d2 { transition-delay: 0.2s; }
 .fade-in-up.d3 { transition-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-up { opacity: 1; transform: none; transition: none; }
+}
 
 /* === KEYFRAMES === */
 @keyframes pulse { 0%,100% { opacity:1; box-shadow:0 0 0 0 rgba(200,60,60,0.4); } 50% { opacity:0.8; box-shadow:0 0 0 6px rgba(200,60,60,0); } }
@@ -26,9 +29,77 @@ export function renderPlatformPage(): string {
 @keyframes shimmer { to { left: 120%; } }
 
 /* === HERO === */
-.plat-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); position: relative; }
-.plat-hero h1 { font-family: var(--font-display); font-size: clamp(36px, 5vw, 64px); font-weight: 800; margin-bottom: 1rem; }
-.plat-hero p { font-size: 20px; color: var(--text-secondary); max-width: 560px; margin: 0 auto 2rem; line-height: 1.7; }
+.plat-hero { padding: 5rem 0 3rem; text-align: center; background: var(--gradient-hero); position: relative; overflow: hidden; }
+.plat-hero h1 { font-family: var(--font-display); font-size: clamp(36px, 5vw, 64px); font-weight: 800; margin-bottom: 1rem; line-height: 1.05; }
+.plat-hero h1 .hero-accent { color: var(--amber); }
+.plat-hero p { font-size: 18px; color: var(--text-secondary); max-width: 620px; margin: 0 auto 2.25rem; line-height: 1.6; }
+.plat-hero-section-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--amber); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 0.85rem; }
+
+/* === SQUADRON STATUS PANEL === */
+.squadron-status {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--glass-card-bg, rgba(22,30,48,0.55));
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  text-align: left;
+  font-family: var(--font-mono);
+}
+.squadron-status-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 12px;
+}
+.squadron-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3CB878;
+  box-shadow: 0 0 0 0 rgba(60,184,120,0.55);
+  animation: squadron-pulse 1.8s ease-out infinite;
+}
+@keyframes squadron-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(60,184,120,0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(60,184,120,0); }
+  100% { box-shadow: 0 0 0 0 rgba(60,184,120,0); }
+}
+.squadron-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.squadron-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+}
+[data-theme="light"] .squadron-row { background: rgba(0,0,0,0.025); }
+.squadron-name { color: var(--text-primary); font-weight: 600; letter-spacing: 0.04em; }
+.squadron-state { color: #3CB878; font-size: 11px; letter-spacing: 0.06em; }
+@media (prefers-reduced-motion: reduce) {
+  .squadron-status-dot { animation: none; box-shadow: 0 0 0 4px rgba(60,184,120,0.2); }
+}
+@media (max-width: 720px) {
+  .squadron-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .squadron-grid { grid-template-columns: 1fr; }
+}
 
 /* === CAP NAV === */
 .cap-nav { position: sticky; top: 64px; z-index: 50; background: var(--bg-secondary); border-bottom: 1px solid var(--border); padding: 0.6rem 0; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -128,7 +199,9 @@ export function renderPlatformPage(): string {
 
 /* === INTEGRATIONS === */
 .int-section { padding: 3rem 0; text-align: center; background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
-.int-grid { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.int-group-label { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-tertiary); margin: 1.5rem auto 0.75rem; max-width: 1400px; padding: 0 2rem; display: flex; align-items: center; gap: 0.75rem; }
+.int-group-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+.int-grid { max-width: 1400px; margin: 0.5rem auto 0; padding: 0 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
 .int-card { background: rgba(14,26,43,0.5); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.5rem 1.25rem; text-align: center; transition: all 0.3s ease; position: relative; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 [data-theme="light"] .int-card { background: rgba(255,255,255,0.6); border-color: rgba(226,221,213,0.5); box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9); }
 .int-card:hover { border-color: rgba(200,60,60,0.4); transform: translateY(-5px); box-shadow: 0 0 28px rgba(200,60,60,0.14), 0 8px 24px rgba(0,0,0,0.2); }
@@ -159,9 +232,23 @@ export function renderPlatformPage(): string {
 
 <section class="plat-hero">
   <div class="container">
-    <div class="section-label" style="text-align:center;">The Platform</div>
-    <h1>The Averrow Platform</h1>
-    <p>AI-powered brand protection. Six agents defending your brand across every attack surface.</p>
+    <div class="plat-hero-section-label">The Platform</div>
+    <h1>One platform.<br/><span class="hero-accent">Twenty-seven agents.</span><br/>Zero blind spots.</h1>
+    <p>Continuous radar across phishing, domains, email, and social — fused into a single brand exposure picture by an AI agent squadron that reasons about threats, not just lists them.</p>
+    <div class="squadron-status" aria-label="Live squadron status">
+      <div class="squadron-status-label">
+        <span class="squadron-status-dot" aria-hidden="true"></span>
+        Squadron Status &mdash; All Systems Operational
+      </div>
+      <div class="squadron-grid">
+        <div class="squadron-row"><span class="squadron-name">Sentinel</span><span class="squadron-state">SCANNING</span></div>
+        <div class="squadron-row"><span class="squadron-name">ASTRA</span><span class="squadron-state">SCORING</span></div>
+        <div class="squadron-row"><span class="squadron-name">Observer</span><span class="squadron-state">WATCHING</span></div>
+        <div class="squadron-row"><span class="squadron-name">Navigator</span><span class="squadron-state">PLOTTING</span></div>
+        <div class="squadron-row"><span class="squadron-name">Blackbox</span><span class="squadron-state">RECORDING</span></div>
+        <div class="squadron-row"><span class="squadron-name">Pathfinder</span><span class="squadron-state">SEEKING</span></div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -180,7 +267,7 @@ export function renderPlatformPage(): string {
     <div class="cap-text fade-in-up">
       <div class="section-label">Capability 01</div>
       <h2>Radar Sweep — Continuous Brand Monitoring</h2>
-      <p>Continuous monitoring across phishing databases, malware feeds, and domain intelligence — scanning for anyone targeting your brand. Sentinel, our first-line detection agent, never stops scanning.</p>
+      <p>Sentinel sweeps phishing databases, malware feeds, CT logs, and DNS intelligence on a 360&deg; loop — surfacing anyone targeting your brand the moment they appear in the open feed network.</p>
       <ul class="cap-features">
         <li>Continuous scanning across all radar feeds</li>
         <li>Parallel feed processing for speed</li>
@@ -249,7 +336,7 @@ export function renderPlatformPage(): string {
     <div class="cap-text fade-in-up">
       <div class="section-label">Capability 02</div>
       <h2>Email Security Posture Engine</h2>
-      <p>Most companies don't know their email can be spoofed. We scan your SPF, DKIM, DMARC, and MX configuration to find the gaps attackers exploit.</p>
+      <p>Most companies don't know their email can be spoofed. Averrow grades your SPF, DKIM, DMARC, and MX configuration on an A+ through F scale — and tells you exactly which gap an attacker would exploit first.</p>
       <ul class="cap-features">
         <li>SPF record validation</li>
         <li>DKIM multi-selector verification (12+ enterprise selectors)</li>
@@ -287,7 +374,7 @@ export function renderPlatformPage(): string {
     <div class="cap-text fade-in-up">
       <div class="section-label">Capability 03</div>
       <h2>Social Airspace Monitoring</h2>
-      <p>Brand impersonation on social media is exploding. Averrow monitors six platforms for fake accounts, handle squatting, and unauthorized brand usage. Observer's AI-powered profile assessment identifies the most dangerous impersonation attempts with confidence scoring.</p>
+      <p>Impersonation on social is the fastest-growing attack vector. Averrow monitors six platforms for fake accounts, handle squatting, and unauthorized brand usage &mdash; with AI confidence scoring so you only see what actually warrants a takedown.</p>
       <ul class="cap-features">
         <li>AI-powered profile assessment (confidence scoring)</li>
         <li>Auto-discovery of brand accounts from company websites</li>
@@ -366,7 +453,7 @@ export function renderPlatformPage(): string {
     <div class="cap-text fade-in-up">
       <div class="section-label">Capability 04</div>
       <h2>Agent Squadron</h2>
-      <p>Six AI agents don't just detect threats — they reason about them. Cross-referencing signals across email, domains, social platforms, and radar feeds to produce actionable intelligence and a composite Brand Exposure Score.</p>
+      <p>Six core agents don't just detect threats &mdash; they reason about them. They cross-reference signals across email, domains, social, and radar feeds to produce a single Brand Exposure Score and natural-language briefings your team can act on.</p>
       <ul class="cap-features">
         <li>Cross-system signal fusion (email + social + threats + domains)</li>
         <li>Social intelligence correlation in risk scoring</li>
@@ -574,56 +661,62 @@ export function renderPlatformPage(): string {
   <div class="container">
     <div class="section-label" style="text-align:center;">Integrations</div>
     <h2 style="font-family:var(--font-display);font-size:2rem;font-weight:700;margin-bottom:0.5rem;">Works With Your Existing Stack</h2>
-    <p style="color:var(--text-secondary);margin-bottom:2rem;">Export data and receive alerts in the tools you already use.</p>
-    <div class="int-grid">
-      <div class="int-card fade-in-up">
-        <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-        <div class="int-card-name">STIX/TAXII</div>
-        <div class="int-card-desc">Standard threat intelligence export</div>
-        <span class="int-card-status live">Live</span>
-      </div>
-      <div class="int-card fade-in-up d1">
-        <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
-        <div class="int-card-name">REST API</div>
-        <div class="int-card-desc">Full programmatic access</div>
-        <span class="int-card-status live">Live</span>
-      </div>
-      <div class="int-card fade-in-up d2">
-        <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
-        <div class="int-card-name">Webhooks</div>
-        <div class="int-card-desc">Real-time event notifications</div>
-        <span class="int-card-status live">Live</span>
-      </div>
-      <div class="int-card fade-in-up d3">
-        <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
-        <div class="int-card-name">Email</div>
-        <div class="int-card-desc">Alert delivery and digests</div>
-        <span class="int-card-status live">Live</span>
-      </div>
-      <div class="int-card fade-in-up">
-        <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg></div>
-        <div class="int-card-name">Slack</div>
-        <div class="int-card-desc">Team alert channels</div>
-        <span class="int-card-status planned">Coming Soon</span>
-      </div>
-      <div class="int-card fade-in-up d1">
-        <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div>
-        <div class="int-card-name">Splunk</div>
-        <div class="int-card-desc">SIEM data integration</div>
-        <span class="int-card-status planned">Coming Soon</span>
-      </div>
-      <div class="int-card fade-in-up d2">
-        <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><line x1="2" y1="12" x2="22" y2="12"/></svg></div>
-        <div class="int-card-name">QRadar</div>
-        <div class="int-card-desc">Security analytics feed</div>
-        <span class="int-card-status planned">Coming Soon</span>
-      </div>
-      <div class="int-card fade-in-up d3">
-        <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg></div>
-        <div class="int-card-name">Microsoft Sentinel</div>
-        <div class="int-card-desc">Cloud SIEM integration</div>
-        <span class="int-card-status planned">Coming Soon</span>
-      </div>
+    <p style="color:var(--text-secondary);margin-bottom:0;">Export data and receive alerts in the tools you already use.</p>
+  </div>
+
+  <div class="int-group-label">Live Today</div>
+  <div class="int-grid">
+    <div class="int-card fade-in-up">
+      <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+      <div class="int-card-name">STIX/TAXII</div>
+      <div class="int-card-desc">Standard threat intelligence export</div>
+      <span class="int-card-status live">Live</span>
+    </div>
+    <div class="int-card fade-in-up d1">
+      <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+      <div class="int-card-name">REST API</div>
+      <div class="int-card-desc">Full programmatic access</div>
+      <span class="int-card-status live">Live</span>
+    </div>
+    <div class="int-card fade-in-up d2">
+      <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+      <div class="int-card-name">Webhooks</div>
+      <div class="int-card-desc">Real-time event notifications</div>
+      <span class="int-card-status live">Live</span>
+    </div>
+    <div class="int-card fade-in-up d3">
+      <div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+      <div class="int-card-name">Email</div>
+      <div class="int-card-desc">Alert delivery and digests</div>
+      <span class="int-card-status live">Live</span>
+    </div>
+  </div>
+
+  <div class="int-group-label">On the Roadmap</div>
+  <div class="int-grid">
+    <div class="int-card fade-in-up">
+      <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg></div>
+      <div class="int-card-name">Slack</div>
+      <div class="int-card-desc">Team alert channels</div>
+      <span class="int-card-status planned">Coming Soon</span>
+    </div>
+    <div class="int-card fade-in-up d1">
+      <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div>
+      <div class="int-card-name">Splunk</div>
+      <div class="int-card-desc">SIEM data integration</div>
+      <span class="int-card-status planned">Coming Soon</span>
+    </div>
+    <div class="int-card fade-in-up d2">
+      <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><line x1="2" y1="12" x2="22" y2="12"/></svg></div>
+      <div class="int-card-name">QRadar</div>
+      <div class="int-card-desc">Security analytics feed</div>
+      <span class="int-card-status planned">Coming Soon</span>
+    </div>
+    <div class="int-card fade-in-up d3">
+      <div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg></div>
+      <div class="int-card-name">Microsoft Sentinel</div>
+      <div class="int-card-desc">Cloud SIEM integration</div>
+      <span class="int-card-status planned">Coming Soon</span>
     </div>
   </div>
 </section>
@@ -631,10 +724,10 @@ export function renderPlatformPage(): string {
 <!-- CTA -->
 <section class="cta-block">
   <div class="container">
-    <h2>Ready to see your brand exposure?</h2>
-    <p>Start with a free scan or explore our pricing plans.</p>
+    <h2>See what's already targeting your brand.</h2>
+    <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
     <div class="cta-actions">
-      <a href="/scan" class="btn btn-primary btn-lg">Scan Your Brand — Free</a>
+      <a href="/scan" class="btn btn-primary btn-lg">Launch Free Scan</a>
       <a href="/pricing" class="btn btn-outline btn-lg">See Pricing</a>
     </div>
   </div>
