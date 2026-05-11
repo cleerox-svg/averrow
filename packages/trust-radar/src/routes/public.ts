@@ -17,6 +17,7 @@ import { renderBlogPost2 } from "../templates/blog-post-2";
 import { renderBlogPost3 } from "../templates/blog-post-3";
 import { renderBlogPost4 } from "../templates/blog-post-4";
 import { renderChangelogPage } from "../templates/changelog";
+import { renderChangelogRss } from "../templates/changelog-rss";
 import { renderContactPage } from "../templates/contact";
 import { renderReportAbusePage } from "../templates/report-abuse";
 import { renderNotFoundPage } from "../templates/not-found";
@@ -256,6 +257,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.get("/blog/ai-powered-threat-narratives", htmlPage(renderBlogPost3));
   router.get("/blog/lookalike-domains-threat-hiding", htmlPage(renderBlogPost4));
   router.get("/changelog", htmlPage(renderChangelogPage));
+  router.get("/changelog/feed.xml", () =>
+    new Response(renderChangelogRss(), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/rss+xml; charset=utf-8",
+        "Cache-Control": "public, max-age=900",
+      },
+    }),
+  );
   router.get("/contact", htmlPage(renderContactPage));
   router.get("/report-abuse", htmlPage(renderReportAbusePage));
   // Common alternate path users may guess
