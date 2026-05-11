@@ -310,8 +310,8 @@ export function Notifications() {
               if (n.state === 'unread') markRead.mutate(n.id);
               if (n.link) navigate(n.link);
             }}
-            onSnooze={(id) => {
-              const until = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            onSnooze={(id, hours) => {
+              const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
               snooze.mutate({ id, until });
             }}
             onDone={(id) => markDone.mutate(id)}
@@ -361,7 +361,7 @@ function NotificationGroupedList({
 }: {
   notifications: Notification[];
   onActivate: (n: Notification) => void;
-  onSnooze: (id: string) => void;
+  onSnooze: (id: string, hours: number) => void;
   onDone: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -398,7 +398,7 @@ function NotificationGroupedList({
               key={head.id}
               notification={head}
               onActivate={() => onActivate(head)}
-              onSnooze={() => onSnooze(head.id)}
+              onSnooze={(h) => onSnooze(head.id, h)}
               onDone={() => onDone(head.id)}
             />
           );
@@ -421,7 +421,11 @@ function NotificationGroupedList({
                 {isOpen
                   ? <ChevronDown className="w-3 h-3" />
                   : <ChevronRight className="w-3 h-3" />}
-                {g.key ?? 'Group'} · {g.members.length}
+                {/* Humanized group label — show "+ N similar (Brand Threats)"
+                    instead of the raw group_key like brand_threat:brand_acme. */}
+                {isOpen
+                  ? `Hide ${g.members.length} grouped`
+                  : `+ ${g.members.length - 1} similar · ${typeLabel(head.type)}`}
               </button>
             </div>
             {isOpen ? (
@@ -430,7 +434,7 @@ function NotificationGroupedList({
                   key={n.id}
                   notification={n}
                   onActivate={() => onActivate(n)}
-                  onSnooze={() => onSnooze(n.id)}
+                  onSnooze={(h) => onSnooze(n.id, h)}
                   onDone={() => onDone(n.id)}
                 />
               ))
@@ -439,7 +443,7 @@ function NotificationGroupedList({
                 key={head.id}
                 notification={head}
                 onActivate={() => onActivate(head)}
-                onSnooze={() => onSnooze(head.id)}
+                onSnooze={(h) => onSnooze(head.id, h)}
                 onDone={() => onDone(head.id)}
               />
             )}
@@ -481,6 +485,13 @@ function FilterPill({
   );
 }
 
+const SNOOZE_OPTIONS = [
+  { hours: 1,   label: '1h' },
+  { hours: 4,   label: '4h' },
+  { hours: 24,  label: '1d' },
+  { hours: 168, label: '7d' },
+] as const;
+
 function NotificationRow({
   notification,
   onActivate,
@@ -489,9 +500,10 @@ function NotificationRow({
 }: {
   notification: Notification;
   onActivate: () => void;
-  onSnooze: () => void;
+  onSnooze: (hours: number) => void;
   onDone: () => void;
 }) {
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const isUnread = notification.state === 'unread';
   const isSnoozed = notification.state === 'snoozed';
   const isDone = notification.state === 'done';
@@ -570,15 +582,51 @@ function NotificationRow({
         {!isDone && (
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
             {!isSnoozed && (
-              <button
-                onClick={onSnooze}
-                className="p-1.5 rounded touch-target hover:bg-white/[0.05]"
-                style={{ color: 'var(--text-tertiary)' }}
-                aria-label="Snooze 1 hour"
-                title="Snooze 1h"
-              >
-                <Clock className="w-3.5 h-3.5" />
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setSnoozeOpen((v) => !v)}
+                  className="p-1.5 rounded touch-target hover:bg-white/[0.05] flex items-center gap-0.5"
+                  style={{ color: 'var(--text-tertiary)' }}
+                  aria-haspopup="menu"
+                  aria-expanded={snoozeOpen}
+                  aria-label="Snooze notification"
+                  title="Snooze"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+                {snoozeOpen && (
+                  <>
+                    {/* Click-away overlay */}
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setSnoozeOpen(false)}
+                      aria-hidden
+                    />
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full mt-1 z-30 rounded-md shadow-lg overflow-hidden"
+                      style={{
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-base)',
+                        minWidth: 110,
+                      }}
+                    >
+                      {SNOOZE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.hours}
+                          role="menuitem"
+                          onClick={() => { onSnooze(opt.hours); setSnoozeOpen(false); }}
+                          className="block w-full text-left px-3 py-1.5 text-[11px] font-mono hover:bg-white/[0.05] transition-colors"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
+                          Snooze {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             )}
             <button
               onClick={onDone}
