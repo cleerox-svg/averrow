@@ -470,11 +470,14 @@ export async function issueSession(
   // users (role='client') route to /tenant/ regardless of what
   // returnToPath was. The averrow-ops auth bootstrap ALSO redirects
   // these users client-side; this is the worker-side belt to the
-  // SPA's suspenders so a client never lands inside /v2/.
+  // SPA's suspenders so a client never lands inside /v2/ or the
+  // legacy /observatory alias (which 301s to /v2 anyway). Clients
+  // only keep an explicit return_to if it's already a /tenant path.
   const rawReturnTo = returnToPath || '/observatory';
-  const returnTo = (role === 'client' && rawReturnTo.startsWith('/v2'))
-    ? '/tenant/'
-    : rawReturnTo;
+  const isClientToStaffPath =
+    role === 'client' &&
+    !rawReturnTo.startsWith('/tenant');
+  const returnTo = isClientToStaffPath ? '/tenant/' : rawReturnTo;
 
   if (mode === 'json') {
     // For AJAX callers (passkeys.ts on the SPA): JSON envelope, refresh
