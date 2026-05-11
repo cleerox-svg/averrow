@@ -183,3 +183,32 @@ export function useUpdateMemberRole() {
     },
   });
 }
+
+interface TransferOwnershipResponse {
+  org_id:                 string;
+  previous_owner_user_id: string;
+  new_owner_user_id:      string;
+}
+
+export function useTransferOwnership() {
+  const { user, refreshUser } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (newOwnerUserId: string) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await apiPost<TransferOwnershipResponse>(
+        `/api/orgs/${orgId}/transfer-ownership`,
+        { new_owner_user_id: newOwnerUserId },
+      );
+      return res.data;
+    },
+    onSuccess: async () => {
+      void qc.invalidateQueries({ queryKey: ['tenant-org-members', orgId] });
+      // The caller just dropped from 'owner' to 'admin'; the auth
+      // context's organization.role is stale. Refresh so the UI
+      // re-renders without an owner row on this user.
+      await refreshUser();
+    },
+  });
+}

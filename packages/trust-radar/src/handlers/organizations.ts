@@ -869,6 +869,100 @@ export async function handleResendOrgInvite(
   }, 200, origin);
 }
 
+// ─── Org Owner: Transfer Ownership ────────────────────────────
+//
+// Atomically: demotes the current owner to 'admin' and promotes
+// the target member to 'owner'. Caller must be the current owner
+// (or super_admin); the target must already be an active member
+// of this org.
+
+export async function handleTransferOwnership(
+  request: Request,
+  env: Env,
+  orgId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+
+  if (ctx.role !== "super_admin") {
+    if (ctx.orgId !== orgId) return json({ success: false, error: "Not a member of this organization" }, 403, origin);
+    if (ctx.orgRole !== "owner") return json({ success: false, error: "Only the current owner can transfer ownership" }, 403, origin);
+  }
+
+  const body = await request.json().catch(() => null) as { new_owner_user_id?: string } | null;
+  if (!body?.new_owner_user_id) {
+    return json({ success: false, error: "new_owner_user_id is required" }, 400, origin);
+  }
+  const targetUserId = body.new_owner_user_id;
+
+  // Find the current owner (there should be exactly one for any
+  // org). Super-admin doesn't necessarily map to a row in
+  // org_members, so we resolve via the org_members table not ctx.
+  const currentOwner = await env.DB.prepare(
+    `SELECT user_id FROM org_members
+     WHERE org_id = ? AND role = 'owner' AND status = 'active'
+     LIMIT 1`,
+  ).bind(orgId).first<{ user_id: string }>();
+
+  if (!currentOwner) {
+    return json({ success: false, error: "No active owner found for this organization" }, 409, origin);
+  }
+  if (currentOwner.user_id === targetUserId) {
+    return json({ success: false, error: "Target user is already the owner" }, 400, origin);
+  }
+
+  // Caller-is-owner double-check (defends against the ctx.orgRole
+  // claim being stale).
+  if (ctx.role !== "super_admin" && currentOwner.user_id !== ctx.userId) {
+    return json({ success: false, error: "Only the current owner can transfer ownership" }, 403, origin);
+  }
+
+  const target = await env.DB.prepare(
+    `SELECT user_id, role FROM org_members
+     WHERE org_id = ? AND user_id = ? AND status = 'active'
+     LIMIT 1`,
+  ).bind(orgId, targetUserId).first<{ user_id: string; role: string }>();
+
+  if (!target) {
+    return json({ success: false, error: "Target user is not an active member of this organization" }, 404, origin);
+  }
+
+  // Atomic batch: demote, then promote. D1 batches are
+  // transactional so either both writes land or neither does.
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE org_members SET role = 'admin', updated_at = datetime('now')
+       WHERE org_id = ? AND user_id = ?`,
+    ).bind(orgId, currentOwner.user_id),
+    env.DB.prepare(
+      `UPDATE org_members SET role = 'owner', updated_at = datetime('now')
+       WHERE org_id = ? AND user_id = ?`,
+    ).bind(orgId, targetUserId),
+  ]);
+
+  await audit(env, {
+    action: "org_ownership_transferred",
+    userId: ctx.userId,
+    resourceType: "organization",
+    resourceId: orgId,
+    details: {
+      previous_owner_user_id: currentOwner.user_id,
+      new_owner_user_id: targetUserId,
+      previous_role_of_new_owner: target.role,
+    },
+    request,
+  });
+
+  return json({
+    success: true,
+    data: {
+      org_id: orgId,
+      previous_owner_user_id: currentOwner.user_id,
+      new_owner_user_id: targetUserId,
+    },
+  }, 200, origin);
+}
+
 // ─── Org Admin: Update Webhook Config ────────────────────────
 
 export async function handleUpdateWebhook(

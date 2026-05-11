@@ -6,7 +6,7 @@ import {
   handleGetOwnOrg, handleListOrgMembers, handleOrgInvite,
   handleRemoveOrgMember, handleUpdateOrgMember,
   handleAssignOrgBrand, handleRemoveOrgBrand, handleListOrgBrands,
-  handleListOrgInvites, handleRevokeOrgInvite, handleResendOrgInvite,
+  handleListOrgInvites, handleRevokeOrgInvite, handleResendOrgInvite, handleTransferOwnership,
   handleUpdateWebhook, handleRegenerateSecret, handleTestWebhook, handleGetWebhookConfig,
   handleListApiKeys, handleCreateApiKey, handleRevokeApiKey,
   handleListIntegrations, handleCreateIntegration, handleUpdateIntegration,
@@ -83,6 +83,11 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateOrgMember(request, env, request.params["orgId"] ?? "", request.params["userId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/transfer-ownership", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTransferOwnership(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.post("/api/orgs/:orgId/brands", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);

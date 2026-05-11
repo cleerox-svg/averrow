@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Mail, Trash2, AlertTriangle, Copy, Check, Send } from 'lucide-react';
+import { ArrowLeft, UserPlus, Mail, Trash2, AlertTriangle, Copy, Check, Send, Crown, ArrowRightLeft } from 'lucide-react';
 import { parseInitials, colorForUserId } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
 import {
@@ -11,6 +11,7 @@ import {
   useResendInvite,
   useRemoveMember,
   useUpdateMemberRole,
+  useTransferOwnership,
   canManageMembers,
   ORG_ROLE_LABELS,
   INVITABLE_ROLES,
@@ -22,6 +23,7 @@ import {
 export function Members() {
   const { user } = useAuth();
   const userCanManage = canManageMembers(user?.role, user?.organization?.role);
+  const userIsOwner = user?.organization?.role === 'owner';
   const { data: members, isLoading: membersLoading, error: membersError } = useOrgMembers();
   const { data: invites, isLoading: invitesLoading } = useOrgInvites();
 
@@ -113,6 +115,10 @@ export function Members() {
               </div>
             )}
           </section>
+
+          {userIsOwner && members && members.length > 1 && (
+            <TransferOwnershipSection members={members} currentUserId={user?.id ?? ''} />
+          )}
         </>
       )}
     </div>
@@ -267,6 +273,11 @@ function MemberRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-white/90 font-medium truncate">{member.user_name || member.email}</span>
+          {member.role === 'owner' && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5" title="Org owner">
+              <Crown size={10} /> Owner
+            </span>
+          )}
           {isSelf && (
             <span className="text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
               You
@@ -458,4 +469,82 @@ function formatRelative(ts: string): string {
   if (hours < 24) return `in ${hours}h`;
   const days = Math.round(hours / 24);
   return `in ${days}d`;
+}
+
+// ─── Transfer ownership section ───────────────────────────────
+//
+// Only rendered when the current user is the org owner and there's
+// at least one other active member. Clicking a candidate fires the
+// transfer; on success the auth context refreshes (the user drops
+// to 'admin') and the section disappears.
+
+function TransferOwnershipSection({
+  members,
+  currentUserId,
+}: {
+  members:       OrgMember[];
+  currentUserId: string;
+}) {
+  const transfer = useTransferOwnership();
+  const candidates = members.filter((m) => m.user_id !== currentUserId);
+
+  const handleTransfer = (target: OrgMember) => {
+    const name = target.user_name || target.email;
+    const ok = window.confirm(
+      `Transfer ownership to ${name}?\n\n` +
+      `They will become the owner of this organization. You will be demoted to admin and can no longer transfer ownership back without their action. This is not reversible from your side.`,
+    );
+    if (!ok) return;
+    transfer.mutate(target.user_id);
+  };
+
+  return (
+    <section className="rounded-xl border border-sev-critical/[0.20] bg-sev-critical/[0.04] p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <ArrowRightLeft className="text-sev-critical flex-shrink-0 mt-0.5" size={16} />
+        <div>
+          <h2 className="text-sm font-semibold text-sev-critical">Transfer ownership</h2>
+          <p className="text-[12px] text-white/65 mt-1 max-w-2xl leading-relaxed">
+            Hand the owner role to another active member. You will be demoted to admin. Not reversible from your side — only the new owner can transfer it back.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        {candidates.map((m) => {
+          const initials = parseInitials(m.user_name, m.email);
+          const color = colorForUserId(m.user_id);
+          return (
+            <button
+              key={m.user_id}
+              type="button"
+              onClick={() => handleTransfer(m)}
+              disabled={transfer.isPending}
+              className="w-full flex items-center gap-3 py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.03] text-left disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+            >
+              <div
+                className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#0a0a0a]"
+                style={{ backgroundColor: color }}
+              >
+                {initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-white/90 truncate">{m.user_name || m.email}</div>
+                <div className="text-[11px] font-mono text-white/45 truncate">
+                  {ORG_ROLE_LABELS[m.role] ?? m.role} · {m.email}
+                </div>
+              </div>
+              <span className="flex-shrink-0 text-[11px] font-mono text-sev-critical">Transfer →</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {transfer.error && (
+        <p className="text-[12px] text-sev-critical mt-3">
+          {transfer.error instanceof Error ? transfer.error.message : 'Transfer failed'}
+        </p>
+      )}
+    </section>
+  );
 }
