@@ -17,6 +17,7 @@ import { renderBlogPost3 } from "../templates/blog-post-3";
 import { renderBlogPost4 } from "../templates/blog-post-4";
 import { renderChangelogPage } from "../templates/changelog";
 import { renderContactPage } from "../templates/contact";
+import { renderReportAbusePage } from "../templates/report-abuse";
 import { renderNotFoundPage } from "../templates/not-found";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
@@ -246,6 +247,9 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.get("/blog/lookalike-domains-threat-hiding", htmlPage(renderBlogPost4));
   router.get("/changelog", htmlPage(renderChangelogPage));
   router.get("/contact", htmlPage(renderContactPage));
+  router.get("/report-abuse", htmlPage(renderReportAbusePage));
+  // Common alternate path users may guess
+  router.get("/report-phishing", () => Response.redirect("/report-abuse", 302));
   router.get("/privacy", htmlPage(renderPrivacyPage));
   router.get("/terms", htmlPage(renderTermsPage));
 

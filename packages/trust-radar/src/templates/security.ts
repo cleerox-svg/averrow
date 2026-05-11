@@ -546,6 +546,11 @@ export function renderSecurityPage(): string {
           <div class="sec-detail-value">Within 48 hours</div>
         </div>
       </div>
+
+      <p style="margin-top:1.25rem;font-size:0.88rem;color:var(--text-secondary);">
+        <strong style="color:var(--text-primary);">Reporting brand abuse rather than a vulnerability?</strong>
+        Forward phishing emails or report impersonation, lookalike domains, and counterfeits at <a href="/report-abuse">averrow.com/report-abuse</a>.
+      </p>
     </div>
   </div>
 
