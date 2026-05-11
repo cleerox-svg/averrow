@@ -147,6 +147,81 @@ export async function handleAdminRecordAuthorization(
   }, 200, origin);
 }
 
+// ─── POST /api/orgs/:orgId/takedown-authorization ───────────────
+//
+// Tenant-side signing. Gated to org admin/owner (or super_admin).
+// signed_by_user_id is derived from ctx.userId — the tenant can't
+// claim to sign on someone else's behalf. signed_ip and
+// signed_user_agent are pulled from the request so the audit
+// record reflects the actual signing browser.
+
+interface RecordAuthorizationBody {
+  agreement_version: string;
+  scope:             AuthorizationScope;
+}
+
+export async function handleRecordAuthorization(
+  request: Request,
+  env:     Env,
+  orgId:   string,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  if (!canMutateAuthorization(ctx)) {
+    return json({
+      success: false,
+      error:   "Org admin / owner required to sign takedown authorization",
+    }, 403, origin);
+  }
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) {
+    return json({ success: false, error: "Invalid organization id" }, 400, origin);
+  }
+
+  let body: RecordAuthorizationBody;
+  try {
+    body = await request.json<RecordAuthorizationBody>();
+  } catch {
+    return json({ success: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  if (typeof body.agreement_version !== "string" || !body.agreement_version.trim()) {
+    return json({ success: false, error: "agreement_version is required" }, 400, origin);
+  }
+  if (!validateScope(body.scope)) {
+    return json({
+      success: false,
+      error: `Invalid scope. modules must be a subset of [${MODULE_KEYS.join(", ")}]; max_takedowns_per_month, auto_followup_breached_sla_hours can be number or null; escalation must be 'auto_resubmit_on_pivot' or 'manual_only'; high_risk_requires_per_takedown_approval must be boolean`,
+    }, 400, origin);
+  }
+
+  // Extract signing IP from CF/standard headers. CF-Connecting-IP
+  // is the public source IP behind Cloudflare's edge; falling back
+  // to X-Forwarded-For for non-CF dev contexts.
+  const signedIp =
+    request.headers.get("CF-Connecting-IP") ??
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ??
+    null;
+  const signedUserAgent = request.headers.get("User-Agent") ?? null;
+
+  const auth = await recordSignedAuthorization(env, {
+    orgId:            orgIdNum,
+    agreementVersion: body.agreement_version,
+    signedByUserId:   ctx.userId,
+    scope:            body.scope,
+    signedIp,
+    signedUserAgent,
+  });
+
+  return json({
+    success: true,
+    data: { authorization: auth },
+  }, 200, origin);
+}
+
 // ─── DELETE /api/orgs/:orgId/takedown-authorization ─────────────
 // Tenant admin/owner or super_admin. Idempotent.
 
