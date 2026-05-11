@@ -22,6 +22,7 @@ import {
 } from "../handlers/takedowns";
 import {
   handleListTenantModules, handleAdminModuleAction, handleAdminSyncPlanModules,
+  handleAdminBulkSyncPlanModules,
 } from "../handlers/tenantModules";
 import {
   handleGetActiveAuthorization, handleAdminRecordAuthorization, handleRevokeAuthorization,
@@ -258,6 +259,14 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminSyncPlanModules(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  // Bulk-sync companion to the 0164 plan_id backfill. Walks every
+  // org with a plan_id and re-runs syncOrgModulesToPlan. Run once
+  // after the migration ships; idempotent.
+  router.post("/api/admin/orgs/sync-all-plan-modules", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminBulkSyncPlanModules(request, env, ctx);
   });
 
   // ─── Takedown Authorization (v3 Phase A) ──────────────────────
