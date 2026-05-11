@@ -1,23 +1,20 @@
 ---
 /*
- * Changelog page — first real-page port of the rebuild. Mirrors the
- * existing /changelog visual (timeline + kind filter chips + RSS pill)
- * but rendered by Astro from the manifest in src/data/changelog-entries.ts.
- *
- * RSS feed lives at /changelog/feed.xml — that handler is unchanged in
- * R2; it still runs from the inline-template implementation in the
- * Worker. R3 ports it to Astro alongside the blog RSS port.
+ * Changelog page. Mirrors the existing /changelog visual (timeline +
+ * kind filter chips + RSS pill) but renders from the manifest in
+ * src/data/changelog-entries.ts. RSS feed is the sibling file
+ * feed.xml.ts (Astro RSS integration, ported in R3).
  *
  * Filter chips run on a tiny inline script — overkill to ship a React
  * island for one toggle group.
  */
-import Layout from "../layouts/Layout.astro";
+import Layout from "../../layouts/Layout.astro";
 import {
   sortedEntries,
   formatDate,
   ALL_KINDS,
   kindSlug,
-} from "../data/changelog-entries";
+} from "../../data/changelog-entries";
 
 const entries = sortedEntries();
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");

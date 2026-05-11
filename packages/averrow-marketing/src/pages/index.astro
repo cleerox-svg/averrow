@@ -14,15 +14,34 @@ const ported = [
   {
     href: `${base}/changelog`,
     label: "Changelog",
-    note: "R2 — ported in this PR. Filter chips work. RSS still served by Worker until R3.",
+    note: "R2 — timeline + filter chips. RSS feed at /changelog/feed.xml in R3.",
+  },
+  {
+    href: `${base}/changelog/feed.xml`,
+    label: "Changelog RSS",
+    note: "R3 — replaces the hand-rolled XML helper with @astrojs/rss.",
+  },
+  {
+    href: `${base}/blog`,
+    label: "Blog index",
+    note: "R3 — reads from MDX content collection. Category filter chips work.",
+  },
+  {
+    href: `${base}/blog/feed.xml`,
+    label: "Blog RSS",
+    note: "R3 — replaces the hand-rolled XML helper with @astrojs/rss.",
+  },
+  {
+    href: `${base}/blog/email-security-posture-brand-defense`,
+    label: "Sample blog post",
+    note: "R3 — MDX body rendered through dynamic [...slug] route. Related-posts strip at bottom.",
   },
 ];
 const todo = [
-  { label: "Blog index + 4 posts + RSS", phase: "R3" },
   { label: "About, Contact, Security, Report Abuse, Pricing", phase: "R4" },
   { label: "Platform, Home (with ticker island)", phase: "R5" },
   { label: "Production cutover — drop /marketing/* prefix", phase: "R6" },
-  { label: "Lighthouse + Playwright regression suite", phase: "R7" },
+  { label: "Lighthouse + Playwright regression suite + OG images + sitemap", phase: "R7" },
 ];
 ---
 

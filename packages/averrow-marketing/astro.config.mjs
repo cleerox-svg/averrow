@@ -31,8 +31,10 @@ export default defineConfig({
   // Conservative trailing-slash policy that matches the Worker's existing
   // behavior on inline-template routes.
   trailingSlash: "ignore",
-  // @astrojs/sitemap is added in R3 once the blog content collection
-  // lands — it requires more than one route to compute its rollup.
+  // @astrojs/sitemap is added in R6 once the /marketing/* prefix
+  // drops and Astro becomes the canonical surface — the existing
+  // robots-sitemap.ts handler in trust-radar covers the inline-
+  // template pages until then.
   integrations: [
     react(),
     mdx(),

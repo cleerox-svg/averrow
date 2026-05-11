@@ -1,0 +1,56 @@
+---
+title: "Lookalike Domains: The Threat Hiding in Plain Sight"
+excerpt: "How attackers register typosquat and homoglyph domains to impersonate your brand."
+category: "Threat Intel"
+author: "Claude Leroux"
+publishedAt: "2026-02-20"
+readingMinutes: 8
+---
+
+I run domain permutation scans regularly as part of my own security practice, and the results are always sobering. Even for a relatively modest brand, you'll find dozens of registered variants — some parked, some serving content, and occasionally one that's clearly been set up to impersonate you.
+
+Having worked inside platforms where brand trust is the product — where the entire value proposition depends on customers believing that a communication genuinely came from who it says it came from — I've seen firsthand what happens when that trust gets exploited. Domain impersonation isn't just a technical threat. It's an attack on the fundamental relationship between a brand and its customers.
+
+The numbers at scale are staggering. In 2025, the World Intellectual Property Organization handled a record 6,200 domain name disputes — a 68% increase since 2020. Zscaler ThreatLabz researchers examined over 30,000 lookalike domains targeting just 500 major websites in six months and found more than 10,000 were actively malicious.
+
+If you're not monitoring for lookalike domains, the question isn't whether they exist. It's how many there are and what they're being used for.
+
+### The Techniques Behind the Threat
+
+Lookalike domain attacks work because humans don't read URLs character by character. We scan. We recognize patterns. And we're remarkably bad at catching small deviations, especially on mobile devices where the URL bar shows maybe 20 characters before truncating.
+
+Attackers exploit this with several well-established techniques:
+
+**Character omission** is the simplest — remove one letter and see if anyone notices. "averrow" becomes "averow." The missing 'r' is nearly invisible when you're scanning quickly, particularly in an email hyperlink.
+
+**Adjacent character swaps** transpose neighboring letters. "averrow" becomes "avrerow." Our brains are surprisingly good at reading transposed text — it's the same reason you can understand a sentence with jumbled middle letters — which is precisely what makes the attack effective.
+
+**Homoglyph substitution** is the nastiest variant. It replaces characters with visually identical ones from different Unicode character sets. The Latin 'a' and Cyrillic 'а' are indistinguishable in virtually every font, but they're different code points. A domain registered with Cyrillic substitutions can appear absolutely identical to the legitimate one. Having worked with authentication systems that verify identity across hundreds of applications, I can tell you that this kind of deception — where something looks exactly right but isn't — is the hardest class of attack to defend against.
+
+**TLD swaps** register the same brand name under alternative top-level domains. If you own yourcompany.com, an attacker might grab yourcompany.net, .co, .io, or any of the hundreds of available extensions. It's cheap, it's easy, and it works because most people assume a familiar brand name under any TLD is legitimate.
+
+**Keyword additions** append trust-signaling words: "yourcompany-login.com," "yourcompany-support.net," "yourcompany-secure.org." Pair these with a free SSL certificate — which gives you the padlock icon in the browser — and you've got a phishing site that passes casual inspection.
+
+### The Scale Has Industrialized
+
+This isn't one person manually registering a clever domain. Modern lookalike campaigns are automated, bulk operations. Open-source tools can generate thousands of permutations in seconds. Attackers register them in batches through budget registrars, often using stolen payment credentials, and deploy phishing infrastructure across the lot simultaneously.
+
+A Krebs on Security investigation found that the majority of parked lookalike domains now redirect visitors to malicious content — a dramatic shift from a decade ago, when fewer than 5% served malicious payloads. The infrastructure has matured from opportunistic to industrial.
+
+The mobile threat vector compounds the problem. On a phone, URL bars are truncated. A user might see "yourcompany-sec..." and reasonably assume they're on a legitimate page. In a world where more business communication happens on mobile than desktop, the ergonomics of mobile browsing actively work in the attacker's favor.
+
+### Why Reactive Monitoring Isn't Enough
+
+Most domain monitoring services work by checking blacklists or scanning for known suspicious domains. That's useful, but it's reactive — the domain has to be flagged by someone else before you find out about it.
+
+Proactive monitoring works differently. You generate the full set of plausible permutations for your domain, covering every technique: omission, swap, homoglyph, TLD, keyword addition, and subdomain tricks. You check which permutations are registered. For those that are, you monitor for signs of weaponization — active web content, MX records indicating email capability, freshly issued SSL certificates.
+
+That's the approach we built into Averrow. When you add a brand, the domain permutation engine generates hundreds of variants, checks their registration and DNS configuration, and feeds the results to our AI engine for risk scoring. A parked domain scores differently than one with active hosting, an MX record, and a certificate issued yesterday.
+
+### What You Can Do Right Now
+
+You don't need a monitoring platform to start protecting yourself. Register your brand name across the most common TLDs — .com, .net, .org, .co, and your country-code domain. Grab the obvious misspellings and the hyphenated variant. This is cheap insurance that eliminates the lowest-effort attacks.
+
+Enforce SPF, DKIM, and DMARC at the strictest level your infrastructure supports. This won't prevent someone from registering a lookalike domain, but it makes email-based impersonation from those domains less likely to succeed — and it signals to receiving mail servers that you take email authentication seriously.
+
+And start monitoring. The threat isn't slowing down — domain squatting disputes are at record highs, AI is making phishing content more convincing, and the barrier to entry for attackers keeps dropping. Every day your brand goes unmonitored is a day someone could be building infrastructure designed to look exactly like you.

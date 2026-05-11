@@ -1,0 +1,253 @@
+---
+/*
+ * Dynamic blog post page. SSG iterates over the content collection
+ * via getStaticPaths() so every post in src/content/blog/ becomes a
+ * pre-rendered HTML file at /blog/<slug>/.
+ *
+ * Related posts strip at the bottom is computed at build time from
+ * the same collection — adding a new post automatically updates
+ * every existing post's "Keep Reading" suggestions.
+ */
+import type { GetStaticPaths } from "astro";
+import Layout from "../../layouts/Layout.astro";
+import {
+  getSortedBlogPosts,
+  formatDate,
+  categorySlug,
+  pickRelatedPosts,
+} from "../../lib/blog";
+
+export const getStaticPaths = (async () => {
+  const posts = await getSortedBlogPosts();
+  return posts.map(post => ({
+    params: { slug: post.slug },
+    props: { post, all: posts },
+  }));
+}) satisfies GetStaticPaths;
+
+const { post, all } = Astro.props;
+const { Content } = await post.render();
+const related = pickRelatedPosts(all, post.slug, 2);
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const slug = categorySlug(post.data.category);
+---
+
+<Layout
+  title={`${post.data.title} — Averrow Blog`}
+  description={post.data.excerpt}
+>
+  <section class="blog-post-hero">
+    <div class="container">
+      <span class={`blog-post-badge blog-post-badge-${slug}`}>{post.data.category}</span>
+      <h1>{post.data.title}</h1>
+      <div class="blog-post-meta">
+        {post.data.author}
+        <span>&middot;</span>
+        <time datetime={post.data.publishedAt}>{formatDate(post.data.publishedAt)}</time>
+        <span>&middot;</span>
+        {post.data.readingMinutes} min read
+      </div>
+    </div>
+  </section>
+
+  <article class="blog-post-body">
+    <Content />
+    <a href={`${base}/blog`} class="blog-post-back">&larr; Back to Blog</a>
+  </article>
+
+  {related.length > 0 && (
+    <section class="related-section" aria-label="Related posts">
+      <div class="related-label">Keep Reading</div>
+      <div class="related-grid">
+        {related.map(rel => {
+          const relSlug = categorySlug(rel.data.category);
+          return (
+            <a class="related-card" href={`${base}/blog/${rel.slug}`}>
+              <span class={`related-badge related-badge-${relSlug}`}>{rel.data.category}</span>
+              <div class="related-title">{rel.data.title}</div>
+              <div class="related-meta">
+                {rel.data.author} &middot; {formatDate(rel.data.publishedAt)} &middot; {rel.data.readingMinutes} min read
+              </div>
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  )}
+</Layout>
+
+<style>
+  .blog-post-hero {
+    padding: 6rem 0 2.5rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .blog-post-badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.25rem 0.7rem;
+    border-radius: 100px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+  .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(200,60,60,0.2); }
+  .blog-post-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber); border: 1px solid rgba(229,168,50,0.25); }
+  .blog-post-badge-engineering  { background: var(--green-bg); color: var(--green); border: 1px solid rgba(60,184,120,0.25); }
+  .blog-post-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue); border: 1px solid rgba(10,138,181,0.25); }
+
+  .blog-post-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 4vw, 2.75rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    margin-bottom: 1.25rem;
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .blog-post-meta {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+  }
+  .blog-post-meta span { margin: 0 0.5rem; }
+
+  .blog-post-body {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 3rem 2rem 3rem;
+  }
+  .blog-post-body :global(p) {
+    color: var(--text-secondary);
+    line-height: 1.85;
+    margin-bottom: 1.5rem;
+    font-size: 1rem;
+  }
+  .blog-post-body :global(h3) {
+    font-family: var(--font-display);
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 2.5rem 0 1rem;
+    color: var(--text-primary);
+  }
+  .blog-post-body :global(strong) { color: var(--text-primary); font-weight: 600; }
+  .blog-post-body :global(a) {
+    color: var(--amber);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .blog-post-body :global(a:hover) { color: var(--amber); opacity: 0.85; }
+  .blog-post-body :global(ul), .blog-post-body :global(ol) {
+    color: var(--text-secondary);
+    line-height: 1.85;
+    margin-bottom: 1.5rem;
+    padding-left: 1.5rem;
+  }
+  .blog-post-body :global(li) { margin-bottom: 0.5rem; }
+  .blog-post-body :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg-tertiary);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    color: var(--text-primary);
+  }
+  .blog-post-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--amber);
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    text-decoration: none;
+  }
+  .blog-post-back:hover { gap: 0.75rem; }
+  @media (max-width: 768px) {
+    .blog-post-hero { padding: 5rem 0 2rem; }
+    .blog-post-body { padding: 2rem 1.5rem 2rem; }
+  }
+
+  /* ── RELATED POSTS ── */
+  .related-section {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2.5rem 2rem 4rem;
+    border-top: 1px solid var(--border);
+  }
+  .related-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    text-align: center;
+    margin-bottom: 1.25rem;
+  }
+  .related-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+  .related-card {
+    display: block;
+    padding: 1.25rem 1.5rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  }
+  .related-card:hover {
+    border-color: var(--amber);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.10);
+    text-decoration: none;
+  }
+  :global([data-theme="light"]) .related-card {
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .related-badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    padding: 0.18rem 0.55rem;
+    border-radius: 100px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.55rem;
+  }
+  .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(200,60,60,0.2); }
+  .related-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber); border: 1px solid rgba(229,168,50,0.25); }
+  .related-badge-engineering  { background: var(--green-bg); color: var(--green); border: 1px solid rgba(60,184,120,0.25); }
+  .related-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue); border: 1px solid rgba(10,138,181,0.25); }
+  .related-title {
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.35;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+  }
+  .related-meta {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+  }
+  @media (max-width: 720px) {
+    .related-grid { grid-template-columns: 1fr; }
+  }
+</style>
