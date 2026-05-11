@@ -511,6 +511,11 @@ async function saveDmarcReport(
           severity: failRate > 0.5 ? "critical" : "high",
           title: `DMARC failures detected for ${report.domain}`,
           message: `${failPct}% of ${emailCount.toLocaleString()} emails failed DMARC — reported by ${report.reporter_org}`,
+          // Deep-link to the brand's detail page. v3 BrandDetail's
+          // default 'Surface' tab renders EmailPostureCard with
+          // SPF/DKIM/DMARC/BIMI/VMC breakdown — exactly where the
+          // operator wants to land when reading this notification.
+          link: `/brands/${brandId}`,
           metadata: { brand_id: String(brandId), domain: report.domain },
         });
       } catch (notifErr) {
