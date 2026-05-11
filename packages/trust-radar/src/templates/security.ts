@@ -418,22 +418,205 @@ export function renderSecurityPage(): string {
   .sec-body { padding: 0 1.25rem; }
   .sec-cta { padding: 2rem 0; }
 }
+
+/* ── TRUST STACK ── live-now badges shown above the fold so visitors
+   see what's already in place before they hit the certification
+   roadmap. Each tile links to the section that explains it. */
+.sec-trust-stack {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 2rem 1rem;
+}
+.sec-trust-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.85rem;
+}
+.sec-trust-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.sec-trust-tile:hover {
+  border-color: rgba(229,168,50,0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  text-decoration: none;
+}
+[data-theme="light"] .sec-trust-tile {
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: rgba(226,221,213,0.5);
+}
+.sec-trust-tile-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sec-trust-tile-icon svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sec-trust-tile-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sec-trust-tile-title {
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.sec-trust-tile-sub {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+@media (max-width: 900px) { .sec-trust-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px) { .sec-trust-grid { grid-template-columns: 1fr; } }
+
+/* ── COMPLIANCE STATUS PILLS ── softer than "PENDING/PROGRESS" */
+.sec-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.sec-status-pill::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.sec-status-pill.in-place {
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid rgba(60,184,120,0.3);
+}
+.sec-status-pill.in-place::before { background: var(--green); }
+.sec-status-pill.scheduled {
+  color: var(--amber);
+  background: rgba(229,168,50,0.10);
+  border: 1px solid rgba(229,168,50,0.3);
+}
+.sec-status-pill.scheduled::before { background: var(--amber); }
 </style>
 
 <!-- ═══════════════════════════ HERO ═══════════════════════════ -->
 <section class="sec-hero">
   <div class="sec-body">
     <h1>Security &amp; Trust</h1>
-    <p>How we protect your data and our platform.</p>
+    <p>Open by design. Below is the architecture, the controls in place today, and the certifications we&rsquo;re building toward &mdash; with dates.</p>
   </div>
 </section>
+
+<!-- ═══════════════ TRUST STACK ═══════════════ -->
+<div class="sec-trust-stack">
+  <div class="sec-trust-grid">
+    <a class="sec-trust-tile" href="#security-practices">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">TLS 1.3 in transit</div>
+        <div class="sec-trust-tile-sub">In place</div>
+      </div>
+    </a>
+    <a class="sec-trust-tile" href="#security-practices">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <ellipse cx="12" cy="6" rx="9" ry="3"/>
+          <path d="M3 6v6c0 1.7 4 3 9 3s9-1.3 9-3V6"/>
+          <path d="M3 12v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">Encrypted at rest</div>
+        <div class="sec-trust-tile-sub">D1 + KV</div>
+      </div>
+    </a>
+    <a class="sec-trust-tile" href="#security-practices">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">JWT + RBAC</div>
+        <div class="sec-trust-tile-sub">Short-lived tokens</div>
+      </div>
+    </a>
+    <a class="sec-trust-tile" href="#infrastructure">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M2 12h20"/>
+          <path d="M12 2a14 14 0 0 1 0 20 14 14 0 0 1 0-20z"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">Zero-trust edge</div>
+        <div class="sec-trust-tile-sub">Cloudflare Workers</div>
+      </div>
+    </a>
+    <a class="sec-trust-tile" href="#data-handling">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">Audit logging</div>
+        <div class="sec-trust-tile-sub">Every admin action</div>
+      </div>
+    </a>
+    <a class="sec-trust-tile" href="#data-handling">
+      <div class="sec-trust-tile-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M3 12s4-8 9-8 9 8 9 8-4 8-9 8-9-8-9-8z"/>
+          <line x1="3" y1="3" x2="21" y2="21"/>
+        </svg>
+      </div>
+      <div class="sec-trust-tile-text">
+        <div class="sec-trust-tile-title">No PII collected</div>
+        <div class="sec-trust-tile-sub">Public signals only</div>
+      </div>
+    </a>
+  </div>
+</div>
 
 <hr class="tr-divider">
 
 <div class="sec-body">
 
   <!-- ═══════════════════ SECURITY PRACTICES ═══════════════════ -->
-  <div class="sec-section">
+  <div class="sec-section" id="security-practices">
     <div class="sec-section-label">Security Practices</div>
     <h2 class="sec-section-title">Built with security at every layer</h2>
 
@@ -471,7 +654,7 @@ export function renderSecurityPage(): string {
   </div>
 
   <!-- ═══════════════════ INFRASTRUCTURE ═══════════════════ -->
-  <div class="sec-section">
+  <div class="sec-section" id="infrastructure">
     <div class="sec-section-label">Infrastructure</div>
     <h2 class="sec-section-title">Edge-native, zero-trust architecture</h2>
 
@@ -494,35 +677,38 @@ export function renderSecurityPage(): string {
   </div>
 
   <!-- ═══════════════════ COMPLIANCE ROADMAP ═══════════════════ -->
-  <div class="sec-section">
-    <div class="sec-section-label">Compliance Roadmap</div>
-    <h2 class="sec-section-title">Our path to certification</h2>
+  <div class="sec-section" id="compliance">
+    <div class="sec-section-label">Compliance</div>
+    <h2 class="sec-section-title">Standards we operate to today</h2>
+    <p style="margin:-1rem 0 1.75rem;font-size:0.95rem;color:var(--text-secondary);line-height:1.7;">
+      Three frameworks shape our day-to-day controls right now. SOC 2 audits are scheduled and we&rsquo;ll publish the report when we have it &mdash; we don&rsquo;t want to overstate where we are.
+    </p>
 
     <div class="sec-timeline">
+      <div class="sec-timeline-item sec-tl-active">
+        <div class="sec-timeline-date">Operating today</div>
+        <div class="sec-timeline-title">PIPEDA <span class="sec-status-pill in-place">In place</span></div>
+        <div class="sec-timeline-desc">Personal Information Protection and Electronic Documents Act &mdash; Canadian privacy law that governs how we collect, use, and disclose personal information.</div>
+      </div>
+      <div class="sec-timeline-item sec-tl-active">
+        <div class="sec-timeline-date">Operating today</div>
+        <div class="sec-timeline-title">GDPR-aligned processing <span class="sec-status-pill in-place">In place</span></div>
+        <div class="sec-timeline-desc">Lawful-basis, data-minimization, and subject-rights handling aligned with EU General Data Protection Regulation requirements. EU sub-processor list available on request.</div>
+      </div>
+      <div class="sec-timeline-item sec-tl-active">
+        <div class="sec-timeline-date">Operating today</div>
+        <div class="sec-timeline-title">WCAG 2.1 Level AA <span class="sec-status-pill in-place">In place</span></div>
+        <div class="sec-timeline-desc">Accessibility target across public-facing pages and the authenticated dashboard. Audit findings get tracked the same way as security findings.</div>
+      </div>
       <div class="sec-timeline-item">
         <div class="sec-timeline-date">Q3 2026</div>
-        <div class="sec-timeline-title">SOC 2 Type I Audit</div>
-        <div class="sec-timeline-desc">Initial assessment of security controls design and implementation.</div>
+        <div class="sec-timeline-title">SOC 2 Type I <span class="sec-status-pill scheduled">Scheduled</span></div>
+        <div class="sec-timeline-desc">Initial third-party assessment of security controls design and implementation. Engagement letter in place.</div>
       </div>
       <div class="sec-timeline-item">
         <div class="sec-timeline-date">Q1 2027</div>
-        <div class="sec-timeline-title">SOC 2 Type II Certification</div>
-        <div class="sec-timeline-desc">Full certification demonstrating operational effectiveness over time.</div>
-      </div>
-      <div class="sec-timeline-item sec-tl-active">
-        <div class="sec-timeline-date">Ongoing</div>
-        <div class="sec-timeline-title">PIPEDA Compliance</div>
-        <div class="sec-timeline-desc">Adherence to PIPEDA (Personal Information Protection and Electronic Documents Act).</div>
-      </div>
-      <div class="sec-timeline-item sec-tl-active">
-        <div class="sec-timeline-date">Ongoing</div>
-        <div class="sec-timeline-title">GDPR Readiness</div>
-        <div class="sec-timeline-desc">Data processing practices aligned with EU General Data Protection Regulation requirements.</div>
-      </div>
-      <div class="sec-timeline-item sec-tl-active">
-        <div class="sec-timeline-date">Ongoing</div>
-        <div class="sec-timeline-title">WCAG 2.1 Level AA</div>
-        <div class="sec-timeline-desc">Averrow is committed to WCAG 2.1 Level AA accessibility across all public-facing pages and the authenticated dashboard.</div>
+        <div class="sec-timeline-title">SOC 2 Type II <span class="sec-status-pill scheduled">Scheduled</span></div>
+        <div class="sec-timeline-desc">Full certification demonstrating operational effectiveness across the audit window. Report available under NDA on completion.</div>
       </div>
     </div>
   </div>
@@ -555,7 +741,7 @@ export function renderSecurityPage(): string {
   </div>
 
   <!-- ═══════════════════ DATA HANDLING ═══════════════════ -->
-  <div class="sec-section">
+  <div class="sec-section" id="data-handling">
     <div class="sec-section-label">Data Handling</div>
     <h2 class="sec-section-title">What we collect and what we don't</h2>
 
