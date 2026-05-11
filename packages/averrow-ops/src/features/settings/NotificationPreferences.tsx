@@ -1,6 +1,29 @@
+// Notification Preferences — v3 rebuild
+//
+// The legacy 680-line page was confusing: 5 event toggles in an
+// "Alert Types" card, then Push devices, then Quiet Hours, then
+// Channel Routing — but the v2 schema (notification_preferences_v2)
+// supports far more (per-channel severity floors, digest mode,
+// per-brand subscriptions) that the UI never surfaced. PR-C
+// rebuilds the page with 6 sectioned panels matching the
+// brands/threats Intel pattern (PanelHeader + sectioned Cards),
+// using the existing v2 hooks. Same backend, much more visible.
+//
+// Sections:
+//   1. Delivery — per-channel severity floor (in-app / push / email)
+//   2. Digest — mode + severity floor for digest contents
+//   3. Events — user-toggleable event rows (auto-picks up PR-B's
+//      DMARC / Feed at Risk / Agent Stalled toggles)
+//   4. Subscriptions — per-brand watching/default/ignored level
+//   5. Quiet hours — start/end/timezone + critical bypass
+//   6. Push devices — enable/disable + manage registered devices
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BellRing, BellOff, Smartphone, Trash2, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import {
+  ArrowLeft, Bell, Smartphone, Trash2, AlertTriangle,
+  Eye, Inbox, Mail, Clock, Globe, Building2,
+} from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import {
@@ -46,17 +69,50 @@ const FULL_DEFAULTS: PreferencesResponse = {
   quiet_hours_start: null,
   quiet_hours_end: null,
   quiet_hours_tz: null,
-  critical_breakthrough: false,
+  critical_breakthrough: true,
 };
 
-const DEFAULT_TZ = typeof Intl !== 'undefined'
-  ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
-  : 'UTC';
+const SEVERITY_FLOOR_OPTIONS = [
+  { value: 'info',     label: 'Everything (info+)' },
+  { value: 'low',      label: 'Low and above' },
+  { value: 'medium',   label: 'Medium and above' },
+  { value: 'high',     label: 'High and critical only' },
+  { value: 'critical', label: 'Critical only' },
+] as const;
+
+const SEVERITY_FLOOR_WITH_OFF = [
+  ...SEVERITY_FLOOR_OPTIONS,
+  { value: 'off', label: 'Off — never send' },
+] as const;
+
+const DIGEST_MODES = [
+  { value: 'realtime', label: 'Realtime — every notification individually' },
+  { value: 'hourly',   label: 'Hourly digest' },
+  { value: 'daily',    label: 'Daily digest' },
+  { value: 'weekly',   label: 'Weekly digest' },
+  { value: 'off',      label: 'Off — no digests' },
+] as const;
+
+const DIGEST_FLOOR_OPTIONS = [
+  { value: 'info',   label: 'Include everything (info+)' },
+  { value: 'low',    label: 'Low and above' },
+  { value: 'medium', label: 'Medium and above' },
+  { value: 'high',   label: 'High and critical only' },
+] as const;
+
+const SUBSCRIPTION_LEVELS: Array<{ value: SubscriptionLevel; label: string; description: string }> = [
+  { value: 'watching', label: 'Watching', description: 'Receive every notification for this brand' },
+  { value: 'default',  label: 'Default',  description: 'Severity floors apply' },
+  { value: 'ignored',  label: 'Ignored',  description: 'No notifications for this brand' },
+];
 
 export function NotificationPreferences() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
 
+  // ── N1 prefs (event-row toggles + channel booleans + quiet hours) ──
   const { data: prefs } = useQuery({
     queryKey: ['notification-preferences'],
     queryFn: async () => {
@@ -69,12 +125,9 @@ export function NotificationPreferences() {
   const currentPrefs = localPrefs ?? prefs;
 
   const updatePrefs = useMutation({
-    mutationFn: async (updated: Partial<PreferencesResponse>) => {
-      await api.patch('/api/notifications/preferences', updated);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
-    },
+    mutationFn: async (updated: Partial<PreferencesResponse>) =>
+      api.patch('/api/notifications/preferences', updated),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notification-preferences'] }),
   });
 
   const handleToggle = (key: keyof Preferences) => {
@@ -83,10 +136,8 @@ export function NotificationPreferences() {
     setLocalPrefs(updated);
     updatePrefs.mutate({ [key]: updated[key] } as Partial<PreferencesResponse>);
   };
-
   const handleQuietField = <K extends 'quiet_hours_start' | 'quiet_hours_end' | 'quiet_hours_tz' | 'critical_breakthrough'>(
-    key: K,
-    value: PreferencesResponse[K],
+    key: K, value: PreferencesResponse[K],
   ) => {
     if (!currentPrefs) return;
     const updated = { ...currentPrefs, [key]: value };
@@ -94,587 +145,429 @@ export function NotificationPreferences() {
     updatePrefs.mutate({ [key]: value } as Partial<PreferencesResponse>);
   };
 
-  // ─── Push subscription state ───────────────────────────────────────
-  const { data: pushStatus, refetch: refetchPushStatus } = useQuery({
-    queryKey: ['push-status'],
-    queryFn: getPushStatus,
-  });
+  // ── v2 prefs (per-channel severity floors + digest mode) ──
+  const { data: v2 } = useNotificationPreferencesV2();
+  const updateV2 = useUpdateNotificationPreferencesV2();
+  function patchV2(p: Partial<NotificationPreferencesV2>) { updateV2.mutate(p); }
 
+  // ── Per-brand subscriptions ──
+  const { data: subscriptions = [] } = useNotificationSubscriptions();
+  const updateSub = useUpdateSubscription();
+  const deleteSub = useDeleteSubscription();
+
+  // ── Push subscription state ──
+  const { data: pushStatus, refetch: refetchPushStatus } = useQuery({
+    queryKey: ['push-status'], queryFn: getPushStatus,
+  });
   const { data: pushDevices } = useQuery({
-    queryKey: ['push-devices'],
-    queryFn: listPushDevices,
+    queryKey: ['push-devices'], queryFn: listPushDevices,
     enabled: pushStatus?.subscribed === true,
   });
-
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
 
-  const handleEnablePush = async () => {
+  async function handleEnablePush() {
     setPushBusy(true); setPushError(null);
     try {
       await subscribePush();
       await refetchPushStatus();
       queryClient.invalidateQueries({ queryKey: ['push-devices'] });
     } catch (err) {
-      setPushError(err instanceof Error ? err.message : 'Failed to enable push notifications.');
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
-  const handleDisablePush = async () => {
+      setPushError(err instanceof Error ? err.message : 'Failed to enable push.');
+    } finally { setPushBusy(false); }
+  }
+  async function handleDisablePush() {
     setPushBusy(true); setPushError(null);
     try {
       await unsubscribePush();
       await refetchPushStatus();
       queryClient.invalidateQueries({ queryKey: ['push-devices'] });
     } catch (err) {
-      setPushError(err instanceof Error ? err.message : 'Failed to disable push notifications.');
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
-  const handleRemoveDevice = async (id: string) => {
+      setPushError(err instanceof Error ? err.message : 'Failed to disable push.');
+    } finally { setPushBusy(false); }
+  }
+  async function handleRemoveDevice(id: string) {
     try {
       await removePushDevice(id);
       queryClient.invalidateQueries({ queryKey: ['push-devices'] });
       await refetchPushStatus();
     } catch { /* swallow */ }
-  };
-
-  const inputStyle: React.CSSProperties = {
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-base)',
-    color: 'var(--text-primary)',
-  };
+  }
 
   return (
-    <div className="max-w-2xl mx-auto page-enter">
-      <div className="flex items-center gap-3 mb-6">
+    <div className="animate-fade-in space-y-5 max-w-4xl pb-12">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
         <button
           onClick={() => navigate(-1)}
-          className="p-2 rounded-lg touch-target"
-          style={{
-            background: 'transparent',
-            border: '1px solid var(--border-base)',
-            color: 'var(--text-secondary)',
-            transition: 'var(--transition-fast)',
-          }}
-          aria-label="Back"
+          className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider hover:text-[var(--amber)] transition-colors"
+          style={{ color: 'var(--text-tertiary)' }}
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft size={12} /> Back
         </button>
-        <h1 className="font-mono text-[10px] uppercase tracking-[0.15em] font-bold" style={{ color: 'var(--text-muted)' }}>
-          Notification Preferences
-        </h1>
+        <h1 className="text-2xl font-bold flex-1" style={{ color: 'var(--text-primary)' }}>Notification preferences</h1>
       </div>
 
-      {/* ─── Alert Types ─────────────────────────────────────────── */}
-      <Card className="mb-4">
-        <SectionLabel className="mb-3">Alert Types</SectionLabel>
-        <div className="space-y-1">
-          {USER_TOGGLEABLE_EVENTS.map(({ key, label, description }) => (
-            <button
-              key={key}
-              onClick={() => handleToggle(key)}
-              className="w-full flex items-center justify-between py-3 px-1 border-b border-white/5 last:border-0 touch-target"
-            >
-              <div>
-                <p className="text-[13px] text-left" style={{ color: 'var(--text-primary)' }}>{label}</p>
-                <p className="text-[11px] text-left mt-0.5" style={{ color: 'var(--text-tertiary)' }}>{description}</p>
+      {/* 1. DELIVERY CHANNELS ─────────────────────────────────────────── */}
+      <PanelHeader title="Delivery" subtitle="What severity counts as worth your attention, per channel" icon={<Inbox size={14} />} />
+      <Card hover={false}>
+        <div className="space-y-3">
+          <ChannelRow
+            icon={<Bell size={14} />}
+            title="In-app inbox"
+            description="The bell icon and /notifications page"
+            value={v2?.inapp_severity_floor ?? 'info'}
+            options={SEVERITY_FLOOR_OPTIONS}
+            onChange={(v) => patchV2({ inapp_severity_floor: v as NotificationPreferencesV2['inapp_severity_floor'] })}
+          />
+          <ChannelRow
+            icon={<Smartphone size={14} />}
+            title="Push notifications"
+            description="OS-level push to registered devices"
+            value={v2?.push_severity_floor ?? 'high'}
+            options={SEVERITY_FLOOR_WITH_OFF}
+            onChange={(v) => patchV2({ push_severity_floor: v as NotificationPreferencesV2['push_severity_floor'] })}
+          />
+          <ChannelRow
+            icon={<Mail size={14} />}
+            title="Email"
+            description="Per-event email (sent via Resend, when configured)"
+            value={v2?.email_severity_floor ?? 'high'}
+            options={SEVERITY_FLOOR_WITH_OFF}
+            onChange={(v) => patchV2({ email_severity_floor: v as NotificationPreferencesV2['email_severity_floor'] })}
+          />
+        </div>
+      </Card>
+
+      {/* 2. DIGEST ────────────────────────────────────────────────────── */}
+      <PanelHeader title="Digest" subtitle="Roll up lower-severity notifications into a summary" icon={<Clock size={14} />} />
+      <Card hover={false}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Frequency">
+            <Select
+              value={v2?.digest_mode ?? 'daily'}
+              options={DIGEST_MODES}
+              onChange={(v) => patchV2({ digest_mode: v as NotificationPreferencesV2['digest_mode'] })}
+            />
+          </Field>
+          <Field label="Include severities">
+            <Select
+              value={v2?.digest_severity_floor ?? 'medium'}
+              options={DIGEST_FLOOR_OPTIONS}
+              onChange={(v) => patchV2({ digest_severity_floor: v as NotificationPreferencesV2['digest_severity_floor'] })}
+            />
+          </Field>
+        </div>
+      </Card>
+
+      {/* 3. EVENT TOGGLES ─────────────────────────────────────────────── */}
+      <PanelHeader title="Events" subtitle="Per-event firing controls — works alongside delivery floors" icon={<AlertTriangle size={14} />} />
+      <Card hover={false}>
+        <div className="space-y-2.5">
+          {USER_TOGGLEABLE_EVENTS.map((event) => (
+            <div key={event.key} className="flex items-start justify-between gap-3 py-1.5">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {event.label}
+                </div>
+                <div className="text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                  {event.description}
+                </div>
               </div>
-              <Toggle on={currentPrefs?.[key] === true} />
-            </button>
+              <ToggleSwitch
+                on={!!currentPrefs?.[event.key as PrefKey]}
+                onClick={() => handleToggle(event.key as keyof Preferences)}
+              />
+            </div>
           ))}
         </div>
       </Card>
 
-      {/* ─── Push Notifications ──────────────────────────────────── */}
-      <PushSection
-        status={pushStatus}
-        busy={pushBusy}
-        error={pushError}
-        devices={pushDevices ?? []}
-        onEnable={handleEnablePush}
-        onDisable={handleDisablePush}
-        onRemoveDevice={handleRemoveDevice}
-      />
+      {/* 4. PER-BRAND SUBSCRIPTIONS ──────────────────────────────────── */}
+      <PanelHeader title="Subscriptions" subtitle="Override delivery floors for specific brands you watch" icon={<Building2 size={14} />} />
+      <Card hover={false}>
+        {subscriptions.length === 0 ? (
+          <div className="text-xs py-3 text-center" style={{ color: 'var(--text-tertiary)' }}>
+            No brand subscriptions yet. Add a brand to your monitored list and it auto-appears here.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {subscriptions.map((s) => (
+              <div key={s.brand_id}
+                className="flex items-center justify-between gap-3 py-1.5 px-2 rounded"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-base)' }}>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {s.brand_name ?? s.brand_id}
+                  </div>
+                </div>
+                <select
+                  value={s.level}
+                  onChange={(e) => updateSub.mutate({ brandId: s.brand_id, level: e.target.value as SubscriptionLevel })}
+                  className="text-[11px] font-mono px-2 py-1 rounded"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: 'var(--text-primary)' }}
+                >
+                  {SUBSCRIPTION_LEVELS.map((l) => (
+                    <option key={l.value} value={l.value}>{l.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => deleteSub.mutate(s.brand_id)}
+                  className="p-1 rounded hover:bg-white/[0.05] transition-colors"
+                  aria-label="Remove subscription"
+                  title="Remove subscription"
+                >
+                  <Trash2 size={14} style={{ color: 'var(--text-tertiary)' }} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+          Watching = always notify · Default = use severity floors · Ignored = never notify
+        </div>
+      </Card>
 
-      {/* ─── Quiet Hours ─────────────────────────────────────────── */}
-      <Card className="mb-4">
-        <SectionLabel className="mb-3">Quiet Hours</SectionLabel>
-        <p className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-          Suppress push notifications during these hours. The bell icon and
-          notification feed still update — only the OS push delivery is
-          silenced.
-        </p>
-
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <label className="block">
-            <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Start</span>
+      {/* 5. QUIET HOURS ──────────────────────────────────────────────── */}
+      <PanelHeader title="Quiet hours" subtitle="Suppress push during these hours; in-app bell still updates" icon={<Globe size={14} />} />
+      <Card hover={false}>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Field label="Start">
             <input
               type="time"
               value={currentPrefs?.quiet_hours_start ?? ''}
               onChange={(e) => handleQuietField('quiet_hours_start', e.target.value || null)}
-              className="mt-1 w-full px-3 py-2 rounded-md text-[13px]"
+              className="w-full text-sm px-2 py-1.5 rounded"
               style={inputStyle}
             />
-          </label>
-          <label className="block">
-            <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>End</span>
+          </Field>
+          <Field label="End">
             <input
               type="time"
               value={currentPrefs?.quiet_hours_end ?? ''}
               onChange={(e) => handleQuietField('quiet_hours_end', e.target.value || null)}
-              className="mt-1 w-full px-3 py-2 rounded-md text-[13px]"
+              className="w-full text-sm px-2 py-1.5 rounded"
               style={inputStyle}
             />
-          </label>
+          </Field>
+          <Field label="Timezone">
+            <input
+              type="text"
+              placeholder="UTC"
+              value={currentPrefs?.quiet_hours_tz ?? ''}
+              onChange={(e) => handleQuietField('quiet_hours_tz', e.target.value || null)}
+              className="w-full text-sm px-2 py-1.5 rounded"
+              style={inputStyle}
+            />
+          </Field>
         </div>
-
-        <label className="block mb-3">
-          <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Timezone</span>
+        <label className="flex items-center gap-2 mt-3 cursor-pointer">
           <input
-            type="text"
-            value={currentPrefs?.quiet_hours_tz ?? ''}
-            placeholder={DEFAULT_TZ}
-            onChange={(e) => handleQuietField('quiet_hours_tz', e.target.value || null)}
-            onBlur={(e) => {
-              // If the user leaves it blank but has set a window, pre-fill with their browser tz.
-              if (!e.target.value && (currentPrefs?.quiet_hours_start || currentPrefs?.quiet_hours_end)) {
-                handleQuietField('quiet_hours_tz', DEFAULT_TZ);
-              }
-            }}
-            className="mt-1 w-full px-3 py-2 rounded-md text-[13px] font-mono"
-            style={inputStyle}
+            type="checkbox"
+            checked={!!currentPrefs?.critical_breakthrough}
+            onChange={(e) => handleQuietField('critical_breakthrough', e.target.checked)}
+            className="cursor-pointer"
           />
+          <span className="text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+            Allow critical-severity notifications to break through quiet hours
+          </span>
         </label>
-
-        <button
-          onClick={() => handleQuietField('critical_breakthrough', !currentPrefs?.critical_breakthrough)}
-          className="w-full flex items-center justify-between py-3 px-1 touch-target"
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5" style={{ color: 'var(--sev-critical)' }} />
-            <div>
-              <p className="text-[13px] text-left" style={{ color: 'var(--text-primary)' }}>Critical Breakthrough</p>
-              <p className="text-[11px] text-left mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-                Allow critical severity events to break through quiet hours
-              </p>
-            </div>
-          </div>
-          <Toggle on={currentPrefs?.critical_breakthrough === true} />
-        </button>
       </Card>
 
-      {/* ─── N5: Channel Routing — per-channel severity floors + digest ── */}
-      <ChannelRoutingSection />
-
-      {/* ─── N5: Watching — per-brand subscription list ────────────────── */}
-      <WatchingSection />
-    </div>
-  );
-}
-
-// ─── Sub-components ──────────────────────────────────────────────────
-
-function Toggle({ on }: { on: boolean }) {
-  return (
-    <div className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 ml-3 flex items-center ${
-      on ? 'bg-afterburner/30' : 'bg-white/10'
-    }`}>
-      <div className={`w-4 h-4 rounded-full transition-transform ${
-        on ? 'translate-x-[18px] bg-afterburner' : 'translate-x-[2px] bg-white/30'
-      }`} />
-    </div>
-  );
-}
-
-interface PushSectionProps {
-  status: PushStatus | undefined;
-  busy: boolean;
-  error: string | null;
-  devices: PushDevice[];
-  onEnable: () => void;
-  onDisable: () => void;
-  onRemoveDevice: (id: string) => void;
-}
-
-function PushSection(props: PushSectionProps) {
-  const { status, busy, error, devices, onEnable, onDisable, onRemoveDevice } = props;
-
-  return (
-    <Card className="mb-4">
-      <SectionLabel className="mb-3">Push Notifications</SectionLabel>
-
-      {status === undefined ? (
-        <p className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>Checking browser support…</p>
-      ) : !status.supported ? (
-        <p className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-          Your browser doesn't support Web Push. Try Safari 16.4+, Chrome, or Firefox.
-        </p>
-      ) : status.needsInstall ? (
-        <div
-          className="p-3 rounded-md"
-          style={{
-            background: 'var(--sev-medium-bg)',
-            border: '1px solid var(--sev-medium-border)',
-          }}
-        >
-          <p className="text-[12px]" style={{ color: 'var(--text-primary)' }}>
-            <strong>Install required.</strong> On iOS, add Averrow to your home screen first:
-            tap <span className="font-mono">Share</span> → <span className="font-mono">Add to Home Screen</span>,
-            then re-open from the home-screen icon and come back here.
-          </p>
-        </div>
-      ) : status.permission === 'denied' ? (
-        <p className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-          Notification permission was denied. Re-enable it in your browser's site settings, then refresh.
-        </p>
-      ) : (
-        <div>
-          <button
-            onClick={status.subscribed ? onDisable : onEnable}
-            disabled={busy}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-md text-[13px] font-medium transition-colors disabled:opacity-50"
-            style={{
-              background: status.subscribed ? 'var(--sev-critical-bg)' : 'var(--green-glow)',
-              border: `1px solid ${status.subscribed ? 'var(--sev-critical-border)' : 'var(--green-border)'}`,
-              color: status.subscribed ? 'var(--sev-critical)' : 'var(--green)',
-            }}
-          >
-            {status.subscribed ? <BellOff className="w-4 h-4" /> : <BellRing className="w-4 h-4" />}
-            {busy
-              ? 'Working…'
-              : status.subscribed
-                ? 'Disable Push Notifications'
-                : 'Enable Push Notifications'}
-          </button>
-          {error && (
-            <p className="text-[11px] mt-2" style={{ color: 'var(--sev-critical)' }}>{error}</p>
-          )}
-        </div>
-      )}
-
-      {status?.subscribed && devices.length > 0 && (
-        <DeviceList devices={devices} onRemoveDevice={onRemoveDevice} />
-      )}
-    </Card>
-  );
-}
-
-// ─── DeviceList ───────────────────────────────────────────────────────
-//
-// Push subscriptions accumulate over time (every browser session
-// that subscribes creates a new endpoint; SW updates and storage
-// clears rotate keys). FC auto-prunes never-used rows >7 days old,
-// but the list can still be 10s of entries deep for active operators.
-// Collapse behind "Show all" so the channel-routing section below
-// stays reachable without scrolling past hundreds of rows.
-
-function formatDeviceDate(value: string | null | undefined): string {
-  if (!value) return 'recently';
-  // SQLite returns "YYYY-MM-DD HH:MM:SS" (space separator). Safari
-  // refuses non-ISO; normalise to "YYYY-MM-DDTHH:MM:SSZ" before parse.
-  const iso = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return 'recently';
-  return new Date(ms).toLocaleDateString();
-}
-
-const DEVICE_LIST_COLLAPSED_LIMIT = 5;
-
-function DeviceList({
-  devices, onRemoveDevice,
-}: {
-  devices: PushDevice[];
-  onRemoveDevice: (id: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? devices : devices.slice(0, DEVICE_LIST_COLLAPSED_LIMIT);
-  const hidden = Math.max(0, devices.length - DEVICE_LIST_COLLAPSED_LIMIT);
-
-  return (
-    <div className="mt-4 pt-3 border-t border-white/5">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-          Devices ({devices.length})
-        </span>
-        {hidden > 0 && (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="text-[10px] font-mono touch-target"
-            style={{ color: 'var(--amber)' }}
-          >
-            {expanded ? 'Show less' : `Show all (+${hidden})`}
-          </button>
+      {/* 6. PUSH DEVICES ─────────────────────────────────────────────── */}
+      <PanelHeader title="Push devices" subtitle="Manage registered devices that receive push notifications" icon={<Smartphone size={14} />} />
+      <Card hover={false}>
+        {pushError && (
+          <div className="mb-3 p-2 rounded text-[11px] font-mono"
+            style={{ background: 'var(--sev-critical-bg)', color: 'var(--sev-critical)', border: '1px solid var(--sev-critical-border)' }}>
+            {pushError}
+          </div>
         )}
-      </div>
-      <div className="mt-2 space-y-1">
-        {visible.map((d) => (
-          <div key={d.id} className="flex items-center justify-between py-2 px-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <Smartphone className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
-              <div className="min-w-0">
-                <p className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>{d.device_label || 'Unknown device'}</p>
-                <p className="text-[10px] truncate font-mono" style={{ color: 'var(--text-tertiary)' }}>
-                  Added {formatDeviceDate(d.created_at)}
-                  {d.last_used_at ? ` · last push ${formatDeviceDate(d.last_used_at)}` : ' · never used'}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => onRemoveDevice(d.id)}
-              className="p-1.5 rounded touch-target"
-              style={{ color: 'var(--sev-critical)', opacity: 0.7 }}
-              aria-label="Remove device"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+        <div className="flex items-center gap-3">
+          {pushStatus?.subscribed ? (
+            <Button variant="secondary" size="sm" onClick={handleDisablePush} disabled={pushBusy}>
+              {pushBusy ? 'Disabling…' : 'Disable on this device'}
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" onClick={handleEnablePush} disabled={pushBusy}>
+              {pushBusy ? 'Enabling…' : 'Enable push on this device'}
+            </Button>
+          )}
+          <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+            {pushStatus?.subscribed ? 'This browser is subscribed' : 'Not subscribed on this browser'}
+          </span>
+        </div>
+        {pushDevices && pushDevices.length > 0 && (
+          <div className="mt-4 space-y-1.5">
+            {pushDevices.map((d) => (
+              <DeviceRow key={d.id} device={d} onRemove={() => handleRemoveDevice(d.id)} />
+            ))}
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── N5: Channel Routing — per-channel severity floors + digest ───────
-
-const SEVERITY_FLOOR_OPTIONS: { value: 'critical'|'high'|'medium'|'low'|'info'; label: string }[] = [
-  { value: 'critical', label: 'Critical only' },
-  { value: 'high',     label: 'High and above' },
-  { value: 'medium',   label: 'Medium and above' },
-  { value: 'low',      label: 'Low and above' },
-  { value: 'info',     label: 'Everything' },
-];
-
-const SEVERITY_FLOOR_OFF_OPTIONS: { value: 'critical'|'high'|'medium'|'low'|'info'|'off'; label: string }[] = [
-  { value: 'off',      label: 'Off' },
-  ...SEVERITY_FLOOR_OPTIONS,
-];
-
-const DIGEST_OPTIONS: { value: 'realtime'|'hourly'|'daily'|'weekly'|'off'; label: string }[] = [
-  { value: 'realtime', label: 'Realtime' },
-  { value: 'hourly',   label: 'Hourly' },
-  { value: 'daily',    label: 'Daily' },
-  { value: 'weekly',   label: 'Weekly' },
-  { value: 'off',      label: 'Off' },
-];
-
-const DIGEST_FLOOR_OPTIONS: { value: 'high'|'medium'|'low'|'info'; label: string }[] = [
-  { value: 'high',   label: 'High and above' },
-  { value: 'medium', label: 'Medium and above' },
-  { value: 'low',    label: 'Low and above' },
-  { value: 'info',   label: 'Everything' },
-];
-
-function ChannelRoutingSection() {
-  const { isSuperAdmin } = useAuth();
-  const { data: prefs } = useNotificationPreferencesV2();
-  const update = useUpdateNotificationPreferencesV2();
-
-  const set = <K extends keyof NotificationPreferencesV2>(
-    key: K,
-    value: NotificationPreferencesV2[K],
-  ) => update.mutate({ [key]: value } as Partial<NotificationPreferencesV2>);
-
-  // Loading + first-render state — render the card with placeholder
-  // copy so the operator knows the section exists but isn't editable
-  // until prefs land. Avoids a flash of zero content.
-  if (!prefs) {
-    return (
-      <Card className="mb-4">
-        <SectionLabel className="mb-3">Channel Routing</SectionLabel>
-        <p className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>Loading…</p>
+        )}
       </Card>
-    );
-  }
 
-  return (
-    <Card className="mb-4">
-      <SectionLabel className="mb-3">Channel Routing</SectionLabel>
-      <p className="text-[11px] mb-4" style={{ color: 'var(--text-secondary)' }}>
-        Set the minimum severity each channel will deliver.
-        Critical events bypass these floors when the bypass toggle is on.
-      </p>
-
-      <FloorRow
-        label="In-app (bell + inbox)"
-        value={prefs.inapp_severity_floor}
-        options={SEVERITY_FLOOR_OPTIONS}
-        onChange={(v) => set('inapp_severity_floor', v as NotificationPreferencesV2['inapp_severity_floor'])}
-      />
-      <FloorRow
-        label="Push notifications"
-        value={prefs.push_severity_floor}
-        options={SEVERITY_FLOOR_OFF_OPTIONS}
-        onChange={(v) => set('push_severity_floor', v as NotificationPreferencesV2['push_severity_floor'])}
-      />
-      <FloorRow
-        label="Email"
-        value={prefs.email_severity_floor}
-        options={SEVERITY_FLOOR_OFF_OPTIONS}
-        onChange={(v) => set('email_severity_floor', v as NotificationPreferencesV2['email_severity_floor'])}
-      />
-
-      <div className="border-t border-white/[0.06] my-4" />
-
-      <p className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-        Digest mode rolls non-realtime notifications into a single email at
-        a fixed cadence.
-      </p>
-      <FloorRow
-        label="Digest cadence"
-        value={prefs.digest_mode}
-        options={DIGEST_OPTIONS}
-        onChange={(v) => set('digest_mode', v as NotificationPreferencesV2['digest_mode'])}
-      />
-      {prefs.digest_mode !== 'off' && prefs.digest_mode !== 'realtime' && (
-        <FloorRow
-          label="Digest severity floor"
-          value={prefs.digest_severity_floor}
-          options={DIGEST_FLOOR_OPTIONS}
-          onChange={(v) => set('digest_severity_floor', v as NotificationPreferencesV2['digest_severity_floor'])}
-        />
-      )}
-
-      {/* Q3 — super_admin opt-in for tenant firehose */}
+      {/* 7. SUPER_ADMIN OPT-IN ───────────────────────────────────────── */}
       {isSuperAdmin && (
         <>
-          <div className="border-t border-white/[0.06] my-4" />
-          <button
-            onClick={() => set('show_tenant_notifications', prefs.show_tenant_notifications ? 0 : 1)}
-            className="w-full flex items-center justify-between py-3 px-1 touch-target"
-          >
-            <div className="flex items-center gap-2">
-              {prefs.show_tenant_notifications
-                ? <Eye className="w-3.5 h-3.5" style={{ color: 'var(--amber)' }} />
-                : <EyeOff className="w-3.5 h-3.5" style={{ color: 'var(--text-tertiary)' }} />}
-              <div>
-                <p className="text-[13px] text-left" style={{ color: 'var(--text-primary)' }}>
-                  Show tenant notifications too
-                </p>
-                <p className="text-[11px] text-left mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-                  Super admins normally see operational alerts only. Enable this
-                  to also receive every tenant-scoped notification.
-                </p>
+          <PanelHeader title="Super admin" subtitle="See tenant-scoped notifications across the platform" icon={<Eye size={14} />} />
+          <Card hover={false}>
+            <label className="flex items-start justify-between gap-3 cursor-pointer">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Show tenant notifications
+                </div>
+                <div className="text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                  When on, you'll receive copies of customer-tenant notifications across all orgs.
+                  Useful for support; noisy by default.
+                </div>
               </div>
-            </div>
-            <Toggle on={prefs.show_tenant_notifications === 1} />
-          </button>
+              <ToggleSwitch
+                on={(v2?.show_tenant_notifications ?? 0) === 1}
+                onClick={() => patchV2({ show_tenant_notifications: v2?.show_tenant_notifications === 1 ? 0 : 1 })}
+              />
+            </label>
+          </Card>
         </>
       )}
-    </Card>
+    </div>
   );
 }
 
-function FloorRow({
-  label, value, options, onChange,
-}: {
-  label: string;
+// ─── Subcomponents ───────────────────────────────────────────────
+
+const inputStyle: React.CSSProperties = {
+  background: 'var(--bg-input)',
+  border: '1px solid var(--border-base)',
+  color: 'var(--text-primary)',
+  fontFamily: 'inherit',
+};
+
+function PanelHeader({ title, subtitle, icon }: { title: string; subtitle: string; icon?: React.ReactNode }) {
+  return (
+    <div className="pt-2">
+      <div className="flex items-baseline gap-2.5">
+        {icon && <span style={{ color: 'var(--amber)' }}>{icon}</span>}
+        <h2 className="text-sm font-mono font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--text-secondary)' }}>
+          {title}
+        </h2>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{subtitle}</span>
+      </div>
+      <div className="mt-1 h-px bg-gradient-to-r from-white/[0.10] via-white/[0.04] to-transparent" />
+    </div>
+  );
+}
+
+function ChannelRow({ icon, title, description, value, options, onChange }: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: readonly { value: string; label: string }[];
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="flex items-center justify-between py-2 gap-3">
-      <span className="text-[12px]" style={{ color: 'var(--text-primary)' }}>{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="px-3 py-1.5 rounded-md text-[12px] font-mono"
-        style={{
-          background: 'var(--bg-input)',
-          border: '1px solid var(--border-base)',
-          color: 'var(--text-primary)',
-        }}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+    <div className="flex items-start justify-between gap-3 py-1.5">
+      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+        <span className="mt-0.5" style={{ color: 'var(--text-tertiary)' }}>{icon}</span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</div>
+          <div className="text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>{description}</div>
+        </div>
+      </div>
+      <Select value={value} options={options} onChange={onChange} compact />
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-mono uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      {children}
     </label>
   );
 }
 
-// ─── N5: Watching — per-brand subscription list ───────────────────────
-
-function WatchingSection() {
-  const navigate = useNavigate();
-  const { data: subs, isLoading } = useNotificationSubscriptions();
-  const update = useUpdateSubscription();
-  const remove = useDeleteSubscription();
-
+function Select({ value, options, onChange, compact = false }: {
+  value: string;
+  options: readonly { value: string; label: string }[];
+  onChange: (v: string) => void;
+  compact?: boolean;
+}) {
   return (
-    <Card className="mb-4">
-      <SectionLabel className="mb-3">Watching</SectionLabel>
-      <p className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-        Per-brand watch level. <strong>Watching</strong> sends every severity.
-        <strong> Default</strong> sends critical and high. <strong>Ignored</strong>
-        mutes the brand entirely.
-      </p>
-
-      {isLoading ? (
-        <p className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>Loading…</p>
-      ) : !subs || subs.length === 0 ? (
-        <div className="py-6 text-center">
-          <p className="text-[12px] mb-2" style={{ color: 'var(--text-tertiary)' }}>
-            You're not watching any brands yet.
-          </p>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/brands')}>
-            Browse brands
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-1">
-          {subs.map((s) => (
-            <div
-              key={s.brand_id}
-              className="flex items-center justify-between gap-3 py-2 px-1 border-b border-white/[0.04] last:border-0"
-            >
-              <button
-                onClick={() => navigate(`/brands/${s.brand_id}`)}
-                className="text-[13px] text-left flex-1 min-w-0 truncate touch-target"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {s.brand_name ?? s.brand_id}
-              </button>
-              <select
-                value={s.level}
-                onChange={(e) => update.mutate({ brandId: s.brand_id, level: e.target.value as SubscriptionLevel })}
-                className="px-2 py-1 rounded text-[11px] font-mono uppercase tracking-wider"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-base)',
-                  color: levelColor(s.level),
-                }}
-              >
-                <option value="watching">Watching</option>
-                <option value="default">Default</option>
-                <option value="ignored">Ignored</option>
-              </select>
-              <button
-                onClick={() => remove.mutate(s.brand_id)}
-                className="p-1.5 rounded touch-target hover:bg-white/[0.05]"
-                style={{ color: 'var(--text-tertiary)' }}
-                aria-label="Remove subscription"
-                title="Remove"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`${compact ? 'text-[11px]' : 'text-sm'} font-mono px-2 py-1.5 rounded flex-shrink-0`}
+      style={{
+        background: 'var(--bg-input)',
+        border: '1px solid var(--border-base)',
+        color: 'var(--text-primary)',
+        minWidth: compact ? 200 : '100%',
+      }}
+    >
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
   );
 }
 
-function levelColor(level: SubscriptionLevel): string {
-  switch (level) {
-    case 'watching': return 'var(--amber)';
-    case 'ignored':  return 'var(--text-tertiary)';
-    default:         return 'var(--text-primary)';
+function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="relative flex-shrink-0 transition-colors"
+      style={{
+        width: 36, height: 20, borderRadius: 10,
+        background: on ? 'var(--amber)' : 'rgba(255,255,255,0.10)',
+      }}
+      role="switch"
+      aria-checked={on}
+    >
+      <span
+        className="absolute top-0.5 transition-transform"
+        style={{
+          left: on ? 18 : 2,
+          width: 16, height: 16, borderRadius: '50%',
+          background: '#0A0F1C',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+        }}
+      />
+    </button>
+  );
+}
+
+function DeviceRow({ device, onRemove }: { device: PushDevice; onRemove: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-2 py-1.5 rounded"
+      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-base)' }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+          {device.device_label || device.user_agent || 'Unknown device'}
+        </div>
+        <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          {device.created_at && `Registered ${formatDeviceDate(device.created_at)}`}
+          {device.last_used_at && ` · Last seen ${formatDeviceDate(device.last_used_at)}`}
+        </div>
+      </div>
+      <button
+        onClick={onRemove}
+        className="p-1 rounded hover:bg-white/[0.05] transition-colors"
+        aria-label="Remove device"
+      >
+        <Trash2 size={14} style={{ color: 'var(--text-tertiary)' }} />
+      </button>
+    </div>
+  );
+}
+
+function formatDeviceDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  try {
+    const d = new Date(value);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch {
+    return value;
   }
 }
