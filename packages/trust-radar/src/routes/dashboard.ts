@@ -162,7 +162,7 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleGetPreferences(request, env, ctx.userId);
   });
-  router.put("/api/notifications/preferences", async (request: Request, env: Env) => {
+  router.patch("/api/notifications/preferences", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdatePreferences(request, env, ctx.userId);
