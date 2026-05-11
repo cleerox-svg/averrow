@@ -60,10 +60,25 @@ img, video, svg { max-width: 100%; height: auto; }
 .page-content { padding-bottom: 0; }
 
 .tr-divider {
-  border: 0;
   height: 1px;
-  background: var(--border);
+  background: linear-gradient(90deg, transparent 0%, var(--border) 20%, var(--accent) 50%, var(--border) 80%, transparent 100%);
+  border: 0;
   margin: 0;
+}
+.tr-divider-animated {
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: linear-gradient(90deg, transparent, var(--border), var(--accent), var(--border), transparent);
+  background-size: 200% 100%;
+  animation: dividerSlide 3s linear infinite;
+}
+@keyframes dividerSlide {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tr-divider-animated { animation: none; background-position: 50% 0; }
 }
 
 .section-label {
