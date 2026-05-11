@@ -522,6 +522,9 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
                 }}
                 className="w-full"
               />
+              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1.5 leading-snug">
+                Saving auto-activates this plan's modules on the Modules tab.
+              </p>
             </div>
             <div>
               <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">Max Brands</label>

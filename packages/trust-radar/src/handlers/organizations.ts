@@ -6,6 +6,7 @@ import { audit } from "../lib/audit";
 import { generateInviteToken, hashToken } from "../lib/hash";
 import { sendInviteEmail } from "../lib/invite-email";
 import { sendTestWebhook } from "../lib/webhooks";
+import { syncOrgModulesToPlan } from "../lib/entitlements";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 
@@ -303,11 +304,30 @@ export async function handleUpdateOrg(
   const vals: unknown[] = [];
 
   if (body.name !== undefined) { sets.push("name = ?"); vals.push(body.name); }
-  if (body.plan !== undefined) { sets.push("plan = ?"); vals.push(body.plan); }
   if (body.max_brands !== undefined) { sets.push("max_brands = ?"); vals.push(body.max_brands); }
   if (body.max_members !== undefined) { sets.push("max_members = ?"); vals.push(body.max_members); }
   if (body.status !== undefined) { sets.push("status = ?"); vals.push(body.status); }
   if (body.webhook_url !== undefined) { sets.push("webhook_url = ?"); vals.push(body.webhook_url); }
+
+  // Plan changes flow through plan_id (the FK-soft to pricing_plans).
+  // 'free' has no pricing_plans row, so plan_id goes NULL for that
+  // tier and syncOrgModulesToPlan suspends everything. The legacy
+  // `plan` column is kept in sync so older readers don't break.
+  let planChanged = false;
+  let resolvedPlanId: string | null = null;
+  if (body.plan !== undefined) {
+    sets.push("plan = ?");
+    vals.push(body.plan);
+    planChanged = true;
+
+    const planRow = await env.DB.prepare(
+      `SELECT id FROM pricing_plans WHERE id = ? AND is_active = 1 LIMIT 1`,
+    ).bind(body.plan).first<{ id: string }>();
+    resolvedPlanId = planRow?.id ?? null;
+
+    sets.push("plan_id = ?");
+    vals.push(resolvedPlanId);
+  }
 
   if (sets.length === 0) return json({ success: false, error: "No valid fields to update" }, 400, origin);
 
@@ -316,6 +336,26 @@ export async function handleUpdateOrg(
 
   await env.DB.prepare(`UPDATE organizations SET ${sets.join(", ")} WHERE id = ?`)
     .bind(...vals).run();
+
+  // Auto-sync module entitlements when the plan changed. This is a
+  // super-admin action that explicitly says "this org gets this
+  // plan", so we override billing_status to 'active' — the Stripe
+  // webhook still owns the live billing state for orgs that have a
+  // subscription. Idempotent and safe to call when no plan row
+  // matched (resolvedPlanId === null) — the helper suspends every
+  // active module in that case, which is the right "moved to free"
+  // semantics.
+  if (planChanged) {
+    try {
+      await syncOrgModulesToPlan(env, Number(orgId), {
+        planId:                resolvedPlanId,
+        billingStatusOverride: "active",
+      });
+    } catch {
+      // Don't fail the PATCH on a sync error — the plan itself
+      // saved, and the admin can hit /sync-plan-modules to retry.
+    }
+  }
 
   const org = await env.DB.prepare("SELECT * FROM organizations WHERE id = ?")
     .bind(orgId).first();

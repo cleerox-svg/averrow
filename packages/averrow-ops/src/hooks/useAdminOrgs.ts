@@ -114,11 +114,19 @@ export function useAdminUpdateOrg() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ orgId, ...payload }: { orgId: string; name?: string; plan?: string; max_brands?: number; max_members?: number; status?: string }) => {
-      return api.patch(`/api/admin/organizations/${orgId}`, payload);
+      const res = await api.patch(`/api/admin/organizations/${orgId}`, payload);
+      return { res, orgId, planChanged: payload.plan !== undefined };
     },
-    onSuccess: () => {
+    onSuccess: ({ orgId, planChanged }) => {
       qc.invalidateQueries({ queryKey: ['admin-orgs'] });
       qc.invalidateQueries({ queryKey: ['admin-org-detail'] });
+      // A plan change auto-syncs org_modules + plan_id on the
+      // backend; refresh the module + pricing tabs so the operator
+      // sees the result immediately.
+      if (planChanged) {
+        qc.invalidateQueries({ queryKey: ['admin-customer-modules', orgId] });
+        qc.invalidateQueries({ queryKey: ['admin-customer-pricing', orgId] });
+      }
     },
   });
 }
