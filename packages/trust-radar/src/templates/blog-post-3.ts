@@ -4,7 +4,7 @@
  * Category: PRODUCT | Date: Feb 28, 2026 | Author: Claude Leroux
  * Slug: ai-powered-threat-narratives
  */
-import { wrapPage } from "./shared";
+import { wrapPage, renderRelatedPosts } from "./shared";
 import { generateSpiderTraps } from "../seeders/spider-injector";
 
 export function renderBlogPost3(): string {
@@ -89,6 +89,7 @@ export function renderBlogPost3(): string {
 
 <a href="/blog" class="blog-post-back">&larr; Back to Blog</a>
 </article>
+${renderRelatedPosts("ai-powered-threat-narratives")}
 ${generateSpiderTraps("averrow.com", "blog-post-3")}
 `
   );

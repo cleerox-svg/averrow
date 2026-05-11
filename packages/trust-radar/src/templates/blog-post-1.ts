@@ -4,7 +4,7 @@
  * Category: PRODUCT | Date: Mar 15, 2026 | Author: Claude Leroux
  * Slug: email-security-posture-brand-defense
  */
-import { wrapPage } from "./shared";
+import { wrapPage, renderRelatedPosts } from "./shared";
 import { generateSpiderTraps } from "../seeders/spider-injector";
 
 export function renderBlogPost1(): string {
@@ -85,6 +85,7 @@ export function renderBlogPost1(): string {
 
 <a href="/blog" class="blog-post-back">&larr; Back to Blog</a>
 </article>
+${renderRelatedPosts("email-security-posture-brand-defense")}
 ${generateSpiderTraps("averrow.com", "blog-post-1")}
 `
   );

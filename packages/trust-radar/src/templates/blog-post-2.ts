@@ -4,7 +4,7 @@
  * Category: THREAT INTEL | Date: Mar 10, 2026 | Author: Claude Leroux
  * Slug: cost-brand-impersonation-mid-market
  */
-import { wrapPage } from "./shared";
+import { wrapPage, renderRelatedPosts } from "./shared";
 import { generateSpiderTraps } from "../seeders/spider-injector";
 
 export function renderBlogPost2(): string {
@@ -85,6 +85,7 @@ export function renderBlogPost2(): string {
 
 <a href="/blog" class="blog-post-back">&larr; Back to Blog</a>
 </article>
+${renderRelatedPosts("cost-brand-impersonation-mid-market")}
 ${generateSpiderTraps("averrow.com", "blog-post-2")}
 `
   );

@@ -1,47 +1,112 @@
 /**
  * Trust Radar — Blog Index Page
- * 4 post cards in a 2x2 grid served at /blog
+ *
+ * Reads posts from the BLOG_POSTS manifest in blog-posts.ts.
+ * Adds a category filter strip (client-side JS) + author bylines +
+ * reading time on each card. RSS feed lives at /blog/feed.xml.
  */
 
-import { wrapPage } from './shared';
-import { generateSpiderTraps } from '../seeders/spider-injector';
+import { wrapPage } from "./shared";
+import { generateSpiderTraps } from "../seeders/spider-injector";
+import {
+  sortedPosts,
+  formatDate,
+  ALL_CATEGORIES,
+  categorySlug,
+  type BlogPostMeta,
+} from "./blog-posts";
+
+function renderCard(post: BlogPostMeta): string {
+  const slug = categorySlug(post.category);
+  return `
+      <article class="blog-card" data-category="${post.category}">
+        <div class="blog-card-meta-top">
+          <span class="blog-badge blog-badge-${slug}">${post.category}</span>
+          <span class="blog-card-read">${post.readingMinutes} min read</span>
+        </div>
+        <h2 class="blog-card-title">${post.title}</h2>
+        <p class="blog-card-excerpt">${post.excerpt}</p>
+        <div class="blog-card-byline">
+          <span class="blog-card-author">${post.author}</span>
+          <span class="blog-card-dot">&middot;</span>
+          <time datetime="${post.publishedAt}">${formatDate(post.publishedAt)}</time>
+        </div>
+        <a href="/blog/${post.slug}" class="blog-card-link" aria-label="Read ${post.title}">Read more &rarr;</a>
+      </article>`;
+}
 
 export function renderBlogPage(): string {
+  const posts = sortedPosts();
   const content = `
 <style>
-/* ── BLOG PAGE ── */
-.blog-hero {
-  padding: 5rem 0 2.5rem;
-  text-align: center;
-  background: var(--gradient-hero);
+/* ── BLOG INDEX ── */
+.blog-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); }
+.blog-hero h1 { font-family: var(--font-display); font-size: clamp(2.2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.03em; line-height: 1.12; margin-bottom: 1rem; }
+.blog-hero p { font-size: 1.08rem; color: var(--text-secondary); max-width: 520px; margin: 0 auto; line-height: 1.75; }
+.blog-hero-actions { display: inline-flex; align-items: center; gap: 0.75rem; margin-top: 1.5rem; }
+.blog-rss {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber);
+  border: 1px solid rgba(229,168,50,0.30);
+  background: rgba(229,168,50,0.06);
+  padding: 0.45rem 0.8rem;
+  border-radius: 100px;
+  text-decoration: none;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
+.blog-rss:hover { background: rgba(229,168,50,0.12); border-color: rgba(229,168,50,0.50); color: var(--amber); text-decoration: none; }
+.blog-rss svg { width: 12px; height: 12px; }
 
-.blog-hero h1 {
-  font-family: var(--font-display);
-  font-size: clamp(2.2rem, 4vw, 3rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.12;
-  margin-bottom: 1rem;
+.blog-filter-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0 1.5rem 0;
+  margin: 1.75rem 0 0.25rem;
 }
-
-.blog-hero p {
-  font-size: 1.08rem;
+.blog-filter-chip {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.45rem 1rem;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  max-width: 520px;
-  margin: 0 auto;
-  line-height: 1.75;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.blog-filter-chip:hover { color: var(--text-primary); border-color: var(--amber); }
+.blog-filter-chip.active {
+  background: var(--amber);
+  color: var(--bg-primary);
+  border-color: var(--amber);
+  box-shadow: 0 0 12px rgba(229,168,50,0.25);
+}
+[data-theme="light"] .blog-filter-chip.active { color: #fff; }
+
+.blog-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
 }
 
-.blog-grid-section {
-  padding: 3rem 0;
-}
-
-.blog-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1.25rem;
-}
+.blog-grid-section { padding: 2.5rem 0; }
+.blog-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
 
 .blog-card {
   background: var(--bg-secondary);
@@ -54,7 +119,7 @@ export function renderBlogPage(): string {
   position: relative;
   overflow: hidden;
 }
-
+.blog-card.is-hidden { display: none; }
 .blog-card::before {
   content: '';
   position: absolute;
@@ -64,59 +129,38 @@ export function renderBlogPage(): string {
   height: 3px;
   opacity: 0;
   transition: opacity 0.3s;
+  background: var(--amber);
 }
+.blog-card:hover { border-color: var(--amber); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
+.blog-card:hover::before { opacity: 1; }
 
-.blog-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-glow);
-  transform: translateY(-2px);
+.blog-card-meta-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
 }
-
-.blog-card:hover::before {
-  opacity: 1;
+.blog-card-read {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
 }
-
-.blog-card[data-category="Product"]::before { background: var(--accent); }
-.blog-card[data-category="Threat Intel"]::before { background: var(--coral); }
-.blog-card[data-category="Engineering"]::before { background: var(--green); }
-.blog-card[data-category="Company"]::before { background: var(--amber); }
 
 .blog-badge {
   display: inline-block;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 600;
   padding: 0.25rem 0.7rem;
   border-radius: 100px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-bottom: 1.25rem;
-  width: fit-content;
 }
-
-.blog-badge-product {
-  background: var(--accent-bg);
-  color: var(--accent);
-  border: 1px solid rgba(8, 145, 178, 0.2);
-}
-
-.blog-badge-threat {
-  background: var(--coral-bg);
-  color: var(--coral);
-  border: 1px solid rgba(249, 115, 22, 0.2);
-}
-
-.blog-badge-engineering {
-  background: var(--green-bg);
-  color: var(--green);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.blog-badge-company {
-  background: rgba(245, 158, 11, 0.08);
-  color: var(--amber);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-}
+.blog-badge-product       { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(200,60,60,0.20); }
+.blog-badge-threat-intel  { background: rgba(229,168,50,0.10); color: var(--amber); border: 1px solid rgba(229,168,50,0.25); }
+.blog-badge-engineering   { background: var(--green-bg); color: var(--green); border: 1px solid rgba(60,184,120,0.25); }
+.blog-badge-company       { background: rgba(10,138,181,0.10); color: var(--blue); border: 1px solid rgba(10,138,181,0.25); }
 
 .blog-card-title {
   font-family: var(--font-display);
@@ -127,19 +171,11 @@ export function renderBlogPage(): string {
   margin-bottom: 0.6rem;
 }
 
-.blog-card-date {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--text-tertiary);
-  margin-bottom: 1rem;
-  letter-spacing: 0.02em;
-}
-
 .blog-card-excerpt {
   font-size: 0.92rem;
   color: var(--text-secondary);
   line-height: 1.65;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   flex: 1;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -147,41 +183,40 @@ export function renderBlogPage(): string {
   overflow: hidden;
 }
 
+.blog-card-byline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  margin-bottom: 1rem;
+  letter-spacing: 0.02em;
+}
+.blog-card-author { color: var(--text-secondary); font-weight: 600; }
+.blog-card-dot { opacity: 0.6; }
+
 .blog-card-link {
   font-family: var(--font-body);
   font-size: 0.88rem;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--amber);
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  transition: gap 0.2s;
+  transition: gap 0.2s, color 0.2s;
 }
+.blog-card:hover .blog-card-link { gap: 0.6rem; }
 
-.blog-card:hover .blog-card-link {
-  gap: 0.6rem;
-}
-
-/* ── RESPONSIVE ── */
-@media (max-width: 1024px) {
-  .blog-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
+@media (max-width: 1024px) { .blog-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) {
-  .blog-grid {
-    grid-template-columns: 1fr;
-  }
-  .blog-hero {
-    padding: 5rem 0 2rem;
-  }
-  .blog-grid-section {
-    padding: 2rem 0;
-  }
+  .blog-grid { grid-template-columns: 1fr; }
+  .blog-hero { padding: 5rem 0 2rem; }
+  .blog-grid-section { padding: 2rem 0; }
+  .blog-filter-strip { gap: 0.4rem; }
+  .blog-filter-chip { font-size: 0.66rem; padding: 0.35rem 0.7rem; }
 }
 
-/* ── Light theme glass effects ── */
 [data-theme="light"] .blog-card {
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(16px);
@@ -195,66 +230,73 @@ export function renderBlogPage(): string {
 }
 </style>
 
-<!-- ── HERO ── -->
+<!-- HERO -->
 <section class="blog-hero">
   <div class="container">
     <p class="section-label">Blog</p>
     <h1>Insights &amp; Intelligence</h1>
     <p>Product updates, threat research, and engineering deep dives from the Averrow team.</p>
-  </div>
-</section>
-
-<hr class="tr-divider">
-
-<!-- ── BLOG GRID ── -->
-<section class="blog-grid-section">
-  <div class="container">
-    <div class="blog-grid">
-
-      <!-- Post 1 -->
-      <article class="blog-card" data-category="Product">
-        <span class="blog-badge blog-badge-product">Product</span>
-        <h2 class="blog-card-title">Why Email Security Posture Is Your First Line of Brand Defense</h2>
-        <time class="blog-card-date">Mar 15, 2026</time>
-        <p class="blog-card-excerpt">Most brand protection platforms ignore email security entirely. Here&rsquo;s why that&rsquo;s a critical gap.</p>
-        <a href="/blog/email-security-posture-brand-defense" class="blog-card-link">Read more &rarr;</a>
-      </article>
-
-      <!-- Post 2 -->
-      <article class="blog-card" data-category="Threat Intel">
-        <span class="blog-badge blog-badge-threat">Threat Intel</span>
-        <h2 class="blog-card-title">The Real Cost of Brand Impersonation for Mid-Market Companies</h2>
-        <time class="blog-card-date">Mar 10, 2026</time>
-        <p class="blog-card-excerpt">A single impersonation campaign can cost companies 10x what continuous monitoring costs.</p>
-        <a href="/blog/cost-brand-impersonation-mid-market" class="blog-card-link">Read more &rarr;</a>
-      </article>
-
-      <!-- Post 3 -->
-      <article class="blog-card" data-category="Product">
-        <span class="blog-badge blog-badge-product">Product</span>
-        <h2 class="blog-card-title">Introducing AI-Powered Threat Narratives</h2>
-        <time class="blog-card-date">Feb 28, 2026</time>
-        <p class="blog-card-excerpt">Why our AI agents write threat narratives instead of generating alert noise.</p>
-        <a href="/blog/ai-powered-threat-narratives" class="blog-card-link">Read more &rarr;</a>
-      </article>
-
-      <!-- Post 4 -->
-      <article class="blog-card" data-category="Threat Intel">
-        <span class="blog-badge blog-badge-threat">Threat Intel</span>
-        <h2 class="blog-card-title">Lookalike Domains: The Threat Hiding in Plain Sight</h2>
-        <time class="blog-card-date">Feb 20, 2026</time>
-        <p class="blog-card-excerpt">How attackers register typosquat and homoglyph domains to impersonate your brand.</p>
-        <a href="/blog/lookalike-domains-threat-hiding" class="blog-card-link">Read more &rarr;</a>
-      </article>
-
+    <div class="blog-hero-actions">
+      <a class="blog-rss" href="/blog/feed.xml" aria-label="Subscribe to the Averrow blog via RSS">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6.18" cy="17.82" r="2.18"/><path d="M4 4.44v2.83c7.03 0 12.73 5.7 12.73 12.73h2.83C19.56 11.41 12.59 4.44 4 4.44zm0 5.66v2.83c3.91 0 7.07 3.16 7.07 7.07h2.83c0-5.46-4.44-9.9-9.9-9.9z"/></svg>
+        RSS
+      </a>
     </div>
   </div>
 </section>
+
+<!-- FILTER STRIP -->
+<div class="blog-filter-strip" role="tablist" aria-label="Filter posts by category">
+  <button type="button" class="blog-filter-chip active" data-filter="all" role="tab" aria-selected="true">All</button>
+  ${ALL_CATEGORIES.map(
+    cat =>
+      `<button type="button" class="blog-filter-chip" data-filter="${cat}" role="tab" aria-selected="false">${cat}</button>`,
+  ).join("\n  ")}
+</div>
+
+<hr class="tr-divider">
+
+<!-- BLOG GRID -->
+<section class="blog-grid-section">
+  <div class="container">
+    <div class="blog-grid" id="blog-grid">
+${posts.map(renderCard).join("\n")}
+    </div>
+    <div class="blog-empty" id="blog-empty" style="display:none;">No posts in this category yet.</div>
+  </div>
+</section>
+
+<script>
+(function() {
+  var chips = document.querySelectorAll('.blog-filter-chip');
+  var cards = document.querySelectorAll('.blog-card');
+  var empty = document.getElementById('blog-empty');
+
+  function setFilter(filter) {
+    var visible = 0;
+    cards.forEach(function(card) {
+      var match = filter === 'all' || card.getAttribute('data-category') === filter;
+      card.classList.toggle('is-hidden', !match);
+      if (match) visible++;
+    });
+    if (empty) empty.style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  chips.forEach(function(chip) {
+    chip.addEventListener('click', function() {
+      chips.forEach(function(c) { c.classList.remove('active'); c.setAttribute('aria-selected', 'false'); });
+      chip.classList.add('active');
+      chip.setAttribute('aria-selected', 'true');
+      setFilter(chip.getAttribute('data-filter'));
+    });
+  });
+})();
+</script>
 `;
 
   return wrapPage(
-    'Blog — Averrow | AI-Powered Brand Threat Intelligence',
-    'Product updates, threat research, and engineering deep dives from the Averrow team.',
+    "Blog — Averrow | AI-Powered Brand Threat Intelligence",
+    "Product updates, threat research, and engineering deep dives from the Averrow team.",
     content + generateSpiderTraps("averrow.com", "blog"),
   );
 }

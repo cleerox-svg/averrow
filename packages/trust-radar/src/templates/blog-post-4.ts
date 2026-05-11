@@ -4,7 +4,7 @@
  * Category: THREAT INTEL | Date: Feb 20, 2026 | Author: Claude Leroux
  * Slug: lookalike-domains-threat-hiding
  */
-import { wrapPage } from "./shared";
+import { wrapPage, renderRelatedPosts } from "./shared";
 import { generateSpiderTraps } from "../seeders/spider-injector";
 
 export function renderBlogPost4(): string {
@@ -91,6 +91,7 @@ export function renderBlogPost4(): string {
 
 <a href="/blog" class="blog-post-back">&larr; Back to Blog</a>
 </article>
+${renderRelatedPosts("lookalike-domains-threat-hiding")}
 ${generateSpiderTraps("averrow.com", "blog-post-4")}
 `
   );

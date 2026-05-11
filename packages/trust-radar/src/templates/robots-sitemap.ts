@@ -1,7 +1,12 @@
 /**
  * Averrow — robots.txt and sitemap.xml for the public corporate site.
  * Includes honeypot Disallow paths that malicious bots will specifically crawl.
+ *
+ * Blog post entries are derived from the BLOG_POSTS manifest so adding
+ * a new post automatically updates the sitemap.
  */
+
+import { BLOG_POSTS } from "./blog-posts";
 
 export function renderRobotsTxt(): string {
   return `User-agent: *
@@ -18,28 +23,27 @@ Sitemap: https://averrow.com/sitemap.xml
 }
 
 export function renderSitemapXml(): string {
-  const pages = [
+  const staticPages = [
     "/",
     "/platform",
     "/pricing",
     "/about",
     "/security",
     "/blog",
-    "/blog/email-security-posture-brand-defense",
-    "/blog/cost-brand-impersonation-mid-market",
-    "/blog/ai-powered-threat-narratives",
-    "/blog/lookalike-domains-threat-hiding",
     "/changelog",
     "/contact",
     "/scan",
     "/team",
     "/privacy",
     "/terms",
+    "/report-abuse",
   ];
 
-  const urls = pages.map(
+  const blogPages = BLOG_POSTS.map(p => `/blog/${p.slug}`);
+
+  const urls = [...staticPages, ...blogPages].map(
     (p) =>
-      `  <url><loc>https://averrow.com${p}</loc><changefreq>weekly</changefreq></url>`
+      `  <url><loc>https://averrow.com${p}</loc><changefreq>weekly</changefreq></url>`,
   );
 
   return `<?xml version="1.0" encoding="UTF-8"?>

@@ -11,6 +11,7 @@ import { renderPricingPage } from "../templates/pricing";
 import { renderSecurityPage } from "../templates/security";
 import { renderStatusPage } from "../templates/status";
 import { renderBlogPage } from "../templates/blog";
+import { renderBlogRss } from "../templates/blog-rss";
 import { renderBlogPost1 } from "../templates/blog-post-1";
 import { renderBlogPost2 } from "../templates/blog-post-2";
 import { renderBlogPost3 } from "../templates/blog-post-3";
@@ -241,6 +242,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     });
   });
   router.get("/blog", htmlPage(renderBlogPage));
+  router.get("/blog/feed.xml", () =>
+    new Response(renderBlogRss(), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/rss+xml; charset=utf-8",
+        "Cache-Control": "public, max-age=900",
+      },
+    }),
+  );
   router.get("/blog/email-security-posture-brand-defense", htmlPage(renderBlogPost1));
   router.get("/blog/cost-brand-impersonation-mid-market", htmlPage(renderBlogPost2));
   router.get("/blog/ai-powered-threat-narratives", htmlPage(renderBlogPost3));

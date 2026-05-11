@@ -152,6 +152,7 @@ export function renderHead(title: string, description: string): string {
 <meta name="description" content="${description}">
 <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-192.svg">
+<link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <noscript>
   <style>
@@ -1016,6 +1017,113 @@ section {
   .testimonial-attribution-divider { display: none; }
 }
 </style>`;
+}
+
+/* ──────────────────────────────────────────────────────────
+   renderRelatedPosts — 2-card strip shown at the bottom of
+   each blog post. Reads from blog-posts.ts manifest so adding
+   a new post automatically updates everyone's related strip.
+   ────────────────────────────────────────────────────────── */
+import { relatedPosts, formatDate, categorySlug } from "./blog-posts";
+
+export function renderRelatedPosts(currentSlug: string): string {
+  const picks = relatedPosts(currentSlug, 2);
+  if (picks.length === 0) return "";
+  const cards = picks
+    .map(post => {
+      const slug = categorySlug(post.category);
+      return `    <a class="related-card" href="/blog/${post.slug}">
+      <span class="related-badge related-badge-${slug}">${post.category}</span>
+      <div class="related-title">${post.title}</div>
+      <div class="related-meta">${post.author} &middot; ${formatDate(post.publishedAt)} &middot; ${post.readingMinutes} min read</div>
+    </a>`;
+    })
+    .join("\n");
+
+  return `
+<style>
+.related-section {
+  max-width: 960px;
+  margin: 3rem auto 0;
+  padding: 2.5rem 2rem 0;
+  border-top: 1px solid var(--border);
+}
+.related-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
+.related-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+.related-card {
+  display: block;
+  padding: 1.25rem 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.related-card:hover {
+  border-color: var(--amber);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.10);
+  text-decoration: none;
+}
+[data-theme="light"] .related-card {
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: rgba(226,221,213,0.5);
+}
+.related-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  border-radius: 100px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.55rem;
+}
+.related-badge-product       { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(200,60,60,0.2); }
+.related-badge-threat-intel  { background: rgba(229,168,50,0.10); color: var(--amber); border: 1px solid rgba(229,168,50,0.25); }
+.related-badge-engineering   { background: var(--green-bg); color: var(--green); border: 1px solid rgba(60,184,120,0.25); }
+.related-badge-company       { background: rgba(10,138,181,0.10); color: var(--blue); border: 1px solid rgba(10,138,181,0.25); }
+.related-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+.related-meta {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+@media (max-width: 720px) {
+  .related-grid { grid-template-columns: 1fr; }
+}
+</style>
+<section class="related-section" aria-label="Related posts">
+  <div class="related-label">Keep Reading</div>
+  <div class="related-grid">
+${cards}
+  </div>
+</section>`;
 }
 
 /* ──────────────────────────────────────────────────────────
