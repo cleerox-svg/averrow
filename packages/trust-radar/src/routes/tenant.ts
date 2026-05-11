@@ -6,7 +6,7 @@ import {
   handleGetOwnOrg, handleListOrgMembers, handleOrgInvite,
   handleRemoveOrgMember, handleUpdateOrgMember,
   handleAssignOrgBrand, handleRemoveOrgBrand, handleListOrgBrands,
-  handleListOrgInvites, handleRevokeOrgInvite,
+  handleListOrgInvites, handleRevokeOrgInvite, handleResendOrgInvite,
   handleUpdateWebhook, handleRegenerateSecret, handleTestWebhook, handleGetWebhookConfig,
   handleListApiKeys, handleCreateApiKey, handleRevokeApiKey,
   handleListIntegrations, handleCreateIntegration, handleUpdateIntegration,
@@ -109,6 +109,11 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRevokeOrgInvite(request, env, request.params["orgId"] ?? "", request.params["inviteId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/invites/:inviteId/resend", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleResendOrgInvite(request, env, request.params["orgId"] ?? "", request.params["inviteId"] ?? "", ctx);
   });
 
   // ─── API Keys ──────────────────────────────────────────────────────

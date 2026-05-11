@@ -130,6 +130,25 @@ export function useRevokeInvite() {
   });
 }
 
+export function useResendInvite() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (inviteId: string) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await apiPost<InviteResponse>(
+        `/api/orgs/${orgId}/invites/${inviteId}/resend`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tenant-org-invites', orgId] });
+    },
+  });
+}
+
 export function useRemoveMember() {
   const { user } = useAuth();
   const orgId = user?.organization?.id ?? null;

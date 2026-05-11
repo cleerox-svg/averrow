@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Mail, Trash2, AlertTriangle, Copy, Check } from 'lucide-react';
+import { ArrowLeft, UserPlus, Mail, Trash2, AlertTriangle, Copy, Check, Send } from 'lucide-react';
 import { parseInitials, colorForUserId } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
 import {
@@ -8,6 +8,7 @@ import {
   useOrgInvites,
   useInviteMember,
   useRevokeInvite,
+  useResendInvite,
   useRemoveMember,
   useUpdateMemberRole,
   canManageMembers,
@@ -327,6 +328,9 @@ function MemberRow({
 
 function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolean }) {
   const revoke = useRevokeInvite();
+  const resend = useResendInvite();
+  const [resentUrl, setResentUrl] = useState<string | null>(null);
+  const [resentNote, setResentNote] = useState<string | null>(null);
   const initials = parseInitials(null, invite.email);
   const color = colorForUserId(invite.id);
   const expiresAt = new Date(invite.expires_at);
@@ -338,43 +342,108 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
     revoke.mutate(invite.id);
   };
 
+  const handleResend = () => {
+    resend.mutate(invite.id, {
+      onSuccess: (data) => {
+        if (data.email_sent) {
+          setResentUrl(null);
+          setResentNote(`Invite email re-sent to ${invite.email}.`);
+        } else {
+          setResentUrl(data.invite_url);
+          setResentNote(null);
+        }
+      },
+    });
+  };
+
+  const copyToClipboard = async (url: string) => {
+    try { await navigator.clipboard.writeText(url); } catch { /* noop */ }
+  };
+
   return (
-    <div className="flex items-center gap-3 py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.02] transition-colors">
-      <div
-        className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#0a0a0a] opacity-60"
-        style={{ backgroundColor: color }}
-      >
-        {initials}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-white/85 truncate">{invite.email}</span>
-          {isExpired ? (
-            <span className="text-[10px] font-mono uppercase tracking-wider text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.30] rounded px-1.5 py-0.5">
-              Expired
-            </span>
-          ) : (
-            <span className="text-[10px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
-              Pending
-            </span>
-          )}
-        </div>
-        <div className="text-[11px] font-mono text-white/45">
-          Invited as {ORG_ROLE_LABELS[invite.org_role] ?? invite.org_role}
-          {!isExpired && ' · expires '}
-          {!isExpired && formatRelative(invite.expires_at)}
-        </div>
-      </div>
-      {canManage && (
-        <button
-          type="button"
-          onClick={handleRevoke}
-          disabled={revoke.isPending}
-          className="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
-          title="Revoke invitation"
+    <div className="py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.02] transition-colors">
+      <div className="flex items-center gap-3">
+        <div
+          className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#0a0a0a] opacity-60"
+          style={{ backgroundColor: color }}
         >
-          {revoke.isPending ? <Check size={13} /> : <Trash2 size={13} />}
-        </button>
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-white/85 truncate">{invite.email}</span>
+            {isExpired ? (
+              <span className="text-[10px] font-mono uppercase tracking-wider text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.30] rounded px-1.5 py-0.5">
+                Expired
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                Pending
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] font-mono text-white/45">
+            Invited as {ORG_ROLE_LABELS[invite.org_role] ?? invite.org_role}
+            {!isExpired && ' · expires '}
+            {!isExpired && formatRelative(invite.expires_at)}
+          </div>
+        </div>
+        {canManage && (
+          <div className="flex-shrink-0 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={resend.isPending}
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-amber hover:bg-amber/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+              title={isExpired ? 'Resend (rotates token + extends expiry)' : 'Resend invite (rotates token)'}
+            >
+              {resend.isPending ? <Check size={13} /> : <Send size={13} />}
+            </button>
+            <button
+              type="button"
+              onClick={handleRevoke}
+              disabled={revoke.isPending}
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+              title="Revoke invitation"
+            >
+              {revoke.isPending ? <Check size={13} /> : <Trash2 size={13} />}
+            </button>
+          </div>
+        )}
+      </div>
+      {resend.error && (
+        <p className="text-[11px] text-sev-critical mt-2 pl-11">
+          {resend.error instanceof Error ? resend.error.message : 'Resend failed'}
+        </p>
+      )}
+      {resentNote && (
+        <p className="text-[11px] text-green mt-2 pl-11">{resentNote}</p>
+      )}
+      {resentUrl && (
+        <div className="mt-2 ml-11 rounded-lg border border-amber/[0.25] bg-amber/[0.04] p-2.5">
+          <p className="text-[11px] text-amber/95 mb-1.5">
+            Email delivery unavailable — share this fresh link:
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 min-w-0 text-[10px] font-mono text-white/75 bg-bg-page border border-white/[0.06] rounded px-2 py-1 truncate">
+              {resentUrl}
+            </code>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(resentUrl)}
+              className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono text-white/65 hover:text-white border border-white/[0.08] rounded hover:border-white/[0.20] transition-colors"
+            >
+              <Copy size={11} /> Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => setResentUrl(null)}
+              className="flex-shrink-0 text-[10px] font-mono text-white/45 hover:text-white/70 px-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

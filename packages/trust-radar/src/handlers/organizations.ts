@@ -787,6 +787,88 @@ export async function handleRevokeOrgInvite(
   return json({ success: true, data: { message: "Invitation revoked" } }, 200, origin);
 }
 
+// ─── Org Admin: Resend Pending Invite ────────────────────────
+//
+// Rotates the invite token + bumps expires_at, then re-sends the
+// email. Old token-bearing links stop working — that's deliberate;
+// it bounds the blast radius if an earlier link leaked.
+
+export async function handleResendOrgInvite(
+  request: Request,
+  env: Env,
+  orgId: string,
+  inviteId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+
+  if (ctx.role !== "super_admin") {
+    if (ctx.orgId !== orgId) return json({ success: false, error: "Not a member of this organization" }, 403, origin);
+    const level = ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0;
+    if (level < (ORG_ROLE_HIERARCHY.admin ?? 3)) return json({ success: false, error: "Requires org role: admin or higher" }, 403, origin);
+  }
+
+  const invite = await env.DB.prepare(
+    `SELECT id, email, org_role FROM invitations
+     WHERE id = ? AND org_id = ? AND status = 'pending'`,
+  ).bind(inviteId, orgId).first<{ id: string; email: string; org_role: string }>();
+
+  if (!invite) {
+    return json({ success: false, error: "Invitation not found or already used" }, 404, origin);
+  }
+
+  const rawToken = generateInviteToken();
+  const tokenHash = await hashToken(rawToken);
+
+  await env.DB.prepare(
+    `UPDATE invitations
+     SET token_hash = ?,
+         expires_at = datetime('now', '+${INVITE_EXPIRY_HOURS} hours')
+     WHERE id = ?`,
+  ).bind(tokenHash, inviteId).run();
+
+  await audit(env, {
+    action: "org_invite_resent",
+    userId: ctx.userId,
+    resourceType: "invitation",
+    resourceId: inviteId,
+    details: { org_id: orgId, email: invite.email },
+    request,
+  });
+
+  const inviteUrl = `${new URL(request.url).origin}/invite?token=${rawToken}`;
+
+  let emailSent = false;
+  if (env.RESEND_API_KEY) {
+    const orgRow = await env.DB.prepare("SELECT name FROM organizations WHERE id = ?")
+      .bind(orgId).first<{ name: string }>();
+    const inviterRow = await env.DB.prepare("SELECT name, email FROM users WHERE id = ?")
+      .bind(ctx.userId).first<{ name: string; email: string }>();
+    const expiresAt = new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000).toISOString();
+    const emailResult = await sendInviteEmail(env.RESEND_API_KEY, {
+      recipientEmail: invite.email,
+      orgName: orgRow?.name ?? "your organization",
+      role: invite.org_role,
+      invitedByName: inviterRow?.name ?? inviterRow?.email ?? "A team member",
+      acceptUrl: inviteUrl,
+      expiresAt,
+    });
+    emailSent = emailResult.ok;
+  }
+
+  return json({
+    success: true,
+    data: {
+      id: inviteId,
+      email: invite.email,
+      org_role: invite.org_role,
+      invite_url: inviteUrl,
+      email_sent: emailSent,
+      expires_in_hours: INVITE_EXPIRY_HOURS,
+    },
+  }, 200, origin);
+}
+
 // ─── Org Admin: Update Webhook Config ────────────────────────
 
 export async function handleUpdateWebhook(
