@@ -271,27 +271,27 @@ export function renderPricingPage(): string {
   <div class="faq-list">
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">How does the free scan work? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">Enter any domain and we'll run a comprehensive brand exposure assessment — checking email security, threat feeds, lookalike domains, and social handle availability. Results are available immediately with no account required.</div>
+      <div class="faq-a">Enter any domain. We check email security, threat feeds, lookalike domains, and social handles in under a minute. No account, no credit card.</div>
     </div>
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">What's included in continuous monitoring? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">Professional and above plans include continuous 24/7 monitoring across all threat feeds, daily AI-generated briefings, real-time alerts on new threats, and ongoing social platform monitoring with AI-powered impersonation detection.</div>
+      <div class="faq-a">Professional and above run 24/7 across every feed and social platform, with daily AI briefings and real-time alerts when something new lands.</div>
     </div>
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Can I switch plans? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">Yes. You can upgrade or downgrade your plan at any time. Changes take effect at the start of your next billing cycle. No penalties for switching.</div>
+      <div class="faq-a">Yes — upgrade or downgrade any time. Changes take effect at the next billing cycle. No penalties.</div>
     </div>
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">How does annual billing work? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">Annual billing saves you 20% compared to monthly pricing. Professional is $1,199/mo billed annually ($14,388/yr) and Business is $3,199/mo billed annually ($38,388/yr). Use the toggle above to compare.</div>
+      <div class="faq-a">Annual saves 20%: Professional is $1,199/mo ($14,388/yr) and Business is $3,199/mo ($38,388/yr). That's $3,600 off Professional and $9,600 off Business each year.</div>
     </div>
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">What payment methods do you accept? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">We accept all major credit cards. Enterprise customers can arrange invoicing and wire transfers.</div>
+      <div class="faq-a">All major credit cards. Enterprise can pay by invoice or wire.</div>
     </div>
     <div class="faq-item">
       <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Is there a minimum contract? <span class="faq-arrow">▼</span></button>
-      <div class="faq-a">No. Professional and Business plans are month-to-month with no minimum commitment. Enterprise plans are customized to your needs.</div>
+      <div class="faq-a">No. Professional and Business are month-to-month. Enterprise is custom.</div>
     </div>
   </div>
 </section>
