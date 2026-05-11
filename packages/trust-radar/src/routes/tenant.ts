@@ -24,7 +24,8 @@ import {
   handleListTenantModules, handleAdminModuleAction, handleAdminSyncPlanModules,
 } from "../handlers/tenantModules";
 import {
-  handleGetActiveAuthorization, handleAdminRecordAuthorization, handleRevokeAuthorization,
+  handleGetActiveAuthorization, handleAdminRecordAuthorization, handleRecordAuthorization,
+  handleRevokeAuthorization,
 } from "../handlers/takedownAuthorizations";
 import {
   handleGetDomainModuleSummary, handleGetBrandDomainFindings,
@@ -255,14 +256,20 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     return handleAdminSyncPlanModules(request, env, request.params["orgId"] ?? "", ctx);
   });
 
-  // ─── Takedown Authorization (v3 Phase A) ──────────────────────
-  // Tenant + super_admin can read; super_admin records (until the
-  // tenant-side signing UI lands in Phase B); admin/owner of the
-  // org can revoke. See `lib/takedown-authorizations.ts`.
+  // ─── Takedown Authorization ───────────────────────────────────
+  // Tenant + super_admin can read; org admin/owner can sign or
+  // revoke; super_admin can also record on a tenant's behalf via
+  // the /admin/ path for support-style cases. See
+  // `lib/takedown-authorizations.ts`.
   router.get("/api/orgs/:orgId/takedown-authorization", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetActiveAuthorization(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/takedown-authorization", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRecordAuthorization(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.post("/api/admin/orgs/:orgId/takedown-authorization", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);

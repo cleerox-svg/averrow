@@ -9,7 +9,7 @@
 // side. Until then this client supports view + revoke.
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiDelete } from './api';
+import { apiGet, apiPost, apiDelete } from './api';
 import { useAuth } from './auth';
 
 export type AuthorizationStatus = 'active' | 'revoked' | 'expired';
@@ -76,6 +76,39 @@ export function useRevokeAuthorization() {
       void qc.invalidateQueries({ queryKey: ['tenant-takedown-authorization', orgId] });
     },
   });
+}
+
+export interface SignAuthorizationInput {
+  agreement_version: string;
+  scope:             AuthorizationScope;
+}
+
+export function useSignAuthorization() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SignAuthorizationInput) => {
+      if (!orgId) throw new Error('orgId required');
+      const res = await apiPost<{ authorization: TakedownAuthorization }>(
+        `/api/orgs/${orgId}/takedown-authorization`,
+        input,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tenant-takedown-authorization', orgId] });
+    },
+  });
+}
+
+/** Org-level roles that may sign — same as revoke. Mirrors backend
+ *  canMutateAuthorization in handlers/takedownAuthorizations.ts. */
+export function canSignAuthorization(
+  globalRole: string | undefined,
+  orgRole:    string | undefined,
+): boolean {
+  return canRevokeAuthorization(globalRole, orgRole);
 }
 
 /** Org-level roles that may revoke. Mirrors backend ADMIN_ROLES in handlers/takedownAuthorizations.ts. */

@@ -1,14 +1,28 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, ShieldOff, FileSignature, AlertTriangle, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import {
   useTakedownAuthorization,
   useRevokeAuthorization,
+  useSignAuthorization,
   canRevokeAuthorization,
+  canSignAuthorization,
   ESCALATION_LABELS,
   type TakedownAuthorization,
+  type AuthorizationScope,
+  type EscalationMode,
 } from '@/lib/takedownAuthorization';
+import {
+  AGREEMENT_VERSION,
+  AGREEMENT_TITLE,
+  AGREEMENT_SUMMARY,
+  AGREEMENT_SECTIONS,
+} from '@/lib/takedown-msa';
 import { useOrgMembers, useOrgInvites, canManageMembers } from '@/lib/members';
+import { MODULE_LABELS, type ModuleKey } from '@/lib/modules';
+
+const ALL_MODULE_KEYS = Object.keys(MODULE_LABELS) as ModuleKey[];
 
 // User profile (display name, theme, timezone, passkeys, sessions)
 // lives at /profile per SHARED_LOGIN_SPEC §2 — rendered by the
@@ -145,7 +159,9 @@ export function TakedownAuthorizationPage() {
       )}
 
       {!isLoading && !error && !auth && (
-        <NotSignedYet />
+        userCanRevoke
+          ? <SignAuthorizationForm />
+          : <NotSignedYetReadOnly />
       )}
     </div>
   );
@@ -270,7 +286,9 @@ function AuthorizationDetails({
   );
 }
 
-function NotSignedYet() {
+// Shown to viewers / analysts who can't sign. Admins / owners
+// see the SignAuthorizationForm below instead.
+function NotSignedYetReadOnly() {
   return (
     <section className="rounded-xl border border-amber/[0.25] bg-amber/[0.04] p-6">
       <div className="flex items-start gap-3">
@@ -278,18 +296,225 @@ function NotSignedYet() {
         <div>
           <h2 className="text-sm font-semibold text-amber">No authorization on file yet</h2>
           <p className="text-[12px] text-white/65 mt-2 leading-relaxed max-w-2xl">
-            Without a signed authorization, Averrow can detect and rank impersonations but won't submit takedowns automatically. You can still launch every takedown manually from the Takedowns tab.
+            Without a signed authorization, Averrow detects and ranks impersonations but won't submit takedowns automatically.
           </p>
           <p className="text-[12px] text-white/65 mt-3 leading-relaxed max-w-2xl">
-            The self-serve signing flow is in finalisation. To enable automated takedowns now, email{' '}
-            <a className="text-amber hover:underline" href="mailto:support@averrow.com?subject=Takedown%20authorization%20request">
-              support@averrow.com
-            </a>
-            {' '}— our team will record your authorization on your behalf and confirm the scope.
+            An org admin or owner can sign on behalf of {' '}
+            <span className="text-white/85">this organization</span>.
           </p>
         </div>
       </div>
     </section>
+  );
+}
+
+// Tenant-side signing flow. Admin/owner only.
+function SignAuthorizationForm() {
+  const sign = useSignAuthorization();
+  const [selectedModules, setSelectedModules] = useState<Set<ModuleKey>>(
+    () => new Set(ALL_MODULE_KEYS),
+  );
+  const [cap, setCap] = useState<string>(''); // empty = unlimited
+  const [escalation, setEscalation] = useState<EscalationMode>('auto_resubmit_on_pivot');
+  const [autoFollowup, setAutoFollowup] = useState<string>('72');
+  const [highRiskApproval, setHighRiskApproval] = useState<boolean>(true);
+  const [agreed, setAgreed] = useState<boolean>(false);
+  const [expanded, setExpanded] = useState<boolean>(false);
+
+  const toggleModule = (key: ModuleKey) => {
+    setSelectedModules((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agreed) return;
+
+    const capNum = cap.trim() === '' ? null : Number(cap);
+    const followupNum = autoFollowup.trim() === '' ? null : Number(autoFollowup);
+    if (capNum !== null && (!Number.isFinite(capNum) || capNum < 0)) return;
+    if (followupNum !== null && (!Number.isFinite(followupNum) || followupNum < 0)) return;
+
+    const scope: AuthorizationScope = {
+      modules: Array.from(selectedModules),
+      max_takedowns_per_month: capNum,
+      escalation,
+      auto_followup_breached_sla_hours: followupNum,
+      high_risk_requires_per_takedown_approval: highRiskApproval,
+    };
+
+    sign.mutate({ agreement_version: AGREEMENT_VERSION, scope });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <section className="rounded-xl border border-amber/[0.15] bg-amber/[0.03] p-5">
+        <div className="flex items-start gap-3">
+          <FileSignature className="text-amber flex-shrink-0 mt-0.5" size={18} />
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-amber">{AGREEMENT_TITLE}</h2>
+            <p className="text-[12px] text-white/70 mt-1 leading-relaxed">{AGREEMENT_SUMMARY}</p>
+            <p className="text-[10px] font-mono uppercase tracking-wider text-amber/70 mt-2">
+              Agreement {AGREEMENT_VERSION}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Agreement copy — collapsible */}
+      <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center justify-between text-left"
+        >
+          <h3 className="text-sm font-semibold text-white/90">Full agreement</h3>
+          <span className="text-[11px] font-mono text-amber">{expanded ? 'Hide ▾' : 'Read ▸'}</span>
+        </button>
+        {expanded && (
+          <div className="mt-4 space-y-4 max-h-[420px] overflow-y-auto pr-2">
+            {AGREEMENT_SECTIONS.map((s) => (
+              <div key={s.heading}>
+                <h4 className="text-[12px] font-semibold text-white/85 mb-1">{s.heading}</h4>
+                <p className="text-[12px] text-white/65 leading-relaxed">{s.body}</p>
+              </div>
+            ))}
+            <p className="text-[10px] text-white/40 italic pt-2 border-t border-white/[0.06]">
+              {AGREEMENT_VERSION.includes('draft')
+                ? 'This is a working-draft version of the agreement. Final legal copy will replace it before general availability; existing signed authorizations retain their original version stamp in the audit trail.'
+                : 'See your organization\'s MSA for the master agreement these terms incorporate.'}
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Scope */}
+      <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5 space-y-5">
+        <h3 className="text-sm font-semibold text-white/90">Scope</h3>
+
+        <div>
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
+            Modules covered ({selectedModules.size} of {ALL_MODULE_KEYS.length})
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {ALL_MODULE_KEYS.map((m) => {
+              const on = selectedModules.has(m);
+              return (
+                <label
+                  key={m}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                    on
+                      ? 'border-amber/[0.40] bg-amber/[0.06]'
+                      : 'border-white/[0.08] bg-bg-page hover:border-white/[0.15]'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggleModule(m)}
+                    className="accent-amber"
+                  />
+                  <span className="text-[12px] text-white/85">{MODULE_LABELS[m]}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+              Monthly cap
+            </label>
+            <input
+              type="number"
+              min="0"
+              placeholder="Unlimited"
+              value={cap}
+              onChange={(e) => setCap(e.target.value)}
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white placeholder-white/30 focus:border-amber focus:outline-none"
+            />
+            <p className="text-[10px] text-white/40 mt-1">Leave blank for unlimited.</p>
+          </div>
+
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+              Auto-followup (h)
+            </label>
+            <input
+              type="number"
+              min="0"
+              placeholder="Off"
+              value={autoFollowup}
+              onChange={(e) => setAutoFollowup(e.target.value)}
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white placeholder-white/30 focus:border-amber focus:outline-none"
+            />
+            <p className="text-[10px] text-white/40 mt-1">Re-submit after provider misses SLA.</p>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+            Escalation
+          </label>
+          <select
+            value={escalation}
+            onChange={(e) => setEscalation(e.target.value as EscalationMode)}
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white focus:border-amber focus:outline-none"
+          >
+            <option value="auto_resubmit_on_pivot">{ESCALATION_LABELS.auto_resubmit_on_pivot}</option>
+            <option value="manual_only">{ESCALATION_LABELS.manual_only}</option>
+          </select>
+        </div>
+
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={highRiskApproval}
+            onChange={(e) => setHighRiskApproval(e.target.checked)}
+            className="accent-amber mt-0.5"
+          />
+          <span className="text-[12px] text-white/75 leading-relaxed">
+            Require per-takedown approval for high-risk targets (recommended).
+          </span>
+        </label>
+      </section>
+
+      {/* Consent + submit */}
+      <section className="rounded-xl border border-amber/[0.25] bg-amber/[0.04] p-5 space-y-4">
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={agreed}
+            onChange={(e) => setAgreed(e.target.checked)}
+            className="accent-amber mt-0.5"
+          />
+          <span className="text-[12px] text-white/85 leading-relaxed">
+            I have authority to act on behalf of this organization and accept the terms of the Takedown Submission Authorization ({AGREEMENT_VERSION}) above.
+          </span>
+        </label>
+
+        {sign.error && (
+          <p className="text-[12px] text-sev-critical">
+            {sign.error instanceof Error ? sign.error.message : 'Signing failed'}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={!agreed || sign.isPending || selectedModules.size === 0}
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+        >
+          {sign.isPending ? 'Signing…' : <><FileSignature size={14} /> Sign authorization</>}
+        </button>
+        {selectedModules.size === 0 && (
+          <p className="text-[11px] text-white/55">Select at least one module to enable signing.</p>
+        )}
+      </section>
+    </form>
   );
 }
 
