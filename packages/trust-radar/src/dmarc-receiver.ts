@@ -507,14 +507,16 @@ async function saveDmarcReport(
       const failPct = Math.round(failRate * 100);
       try {
         await createNotification(env, {
-          type: "brand_threat",
+          // PR-B: was 'brand_threat' (which lumped DMARC alerts in
+          // with phishing/impersonation, making them un-silenceable).
+          // Now fires as 'email_security_change' — promoted to a
+          // user-toggleable event in PR-B so operators can disable
+          // DMARC-specific noise without losing brand_threat alerts
+          // for actual phishing/impersonation campaigns.
+          type: "email_security_change",
           severity: failRate > 0.5 ? "critical" : "high",
           title: `DMARC failures detected for ${report.domain}`,
           message: `${failPct}% of ${emailCount.toLocaleString()} emails failed DMARC — reported by ${report.reporter_org}`,
-          // Deep-link to the brand's detail page. v3 BrandDetail's
-          // default 'Surface' tab renders EmailPostureCard with
-          // SPF/DKIM/DMARC/BIMI/VMC breakdown — exactly where the
-          // operator wants to land when reading this notification.
           link: `/brands/${brandId}`,
           metadata: { brand_id: String(brandId), domain: report.domain },
         });

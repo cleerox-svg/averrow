@@ -138,10 +138,10 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
   {
     key: 'email_security_change',
     label: 'Email Security Change',
-    description: 'DMARC / SPF / DKIM grade change for a monitored brand',
+    description: 'DMARC / SPF / DKIM grade change for a monitored brand (also fires on observed DMARC failure spikes)',
     dedupWindow: '-6 hours',
     defaultEnabled: true,
-    userToggleable: false,
+    userToggleable: true,
   },
   {
     key: 'circuit_breaker_tripped',
@@ -234,11 +234,11 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
   },
   {
     key: 'platform_feed_at_risk',
-    label: 'Feed At Risk',
+    label: 'Feed at Risk',
     description: 'Feed approaching auto-pause threshold',
     dedupWindow: '-6 hours',
     defaultEnabled: true,
-    userToggleable: false,
+    userToggleable: true,
   },
   {
     key: 'platform_feed_auto_paused',
@@ -262,7 +262,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     description: 'Agent run stuck in running state >15 min',
     dedupWindow: '-1 hour',
     defaultEnabled: true,
-    userToggleable: false,
+    userToggleable: true,
   },
   {
     key: 'platform_geoip_refresh_stalled',
