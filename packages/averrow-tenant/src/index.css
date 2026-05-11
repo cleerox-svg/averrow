@@ -1,12 +1,18 @@
+/* Theme tokens (light + dark + Tailwind opacity overrides) live in
+   @averrow/shared/theme.css per the unification arc. Per
+   SHARED_LOGIN_SPEC the design surface is canonical; products import
+   the shared CSS once at app boot.
+
+   CSS @import rules must come BEFORE @tailwind directives, otherwise
+   PostCSS silently drops them. This bit us hard — every customer
+   shipped with a tenant SPA that referenced var(--bg-page) etc but
+   had no token definitions because the import after @tailwind never
+   made it into the bundle. */
+@import "@averrow/shared/theme.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Theme tokens (light + dark + Tailwind opacity overrides) live
-   in @averrow/shared/theme.css per the unification arc. Per
-   SHARED_LOGIN_SPEC the design surface is canonical; products
-   import the shared CSS once at app boot. */
-@import "@averrow/shared/theme.css";
 
 html, body, #root { height: 100%; }
 body {
