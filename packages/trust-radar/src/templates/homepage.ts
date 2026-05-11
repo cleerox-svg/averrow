@@ -1,5 +1,5 @@
 import { generateSpiderTraps } from "../seeders/spider-injector";
-import { wrapPage } from "./shared";
+import { wrapPage, renderTrustSignals } from "./shared";
 import type { PublicStats } from "../lib/public-stats";
 
 // Static fallback so callers that don't pass stats (legacy, tests) still
@@ -1439,6 +1439,15 @@ ${pageStyles}
     </div>
 
   </div>
+</section>
+
+<!-- TRUST SIGNALS — sector strip + testimonial.
+     Markup defined in shared.ts (renderTrustSignals). Placeholder
+     content; swap real customer logos and testimonials in shared.ts. -->
+<hr class="tr-divider-animated">
+
+<section class="trust-signals fade-in-section">
+${renderTrustSignals()}
 </section>
 
 <!-- CTA SECTION — Phase 2C -->

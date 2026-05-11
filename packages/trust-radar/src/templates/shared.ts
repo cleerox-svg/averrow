@@ -879,7 +879,229 @@ section {
   .nav-right .theme-toggle { order: 2; }
   .nav-right .nav-hamburger { order: 1; }
 }
+
+/* ── TRUST SIGNALS ──
+   Sector strip + testimonial. Shared across home + pricing.
+   Placeholder content marked for swap when real customer logos
+   and testimonials land. */
+.trust-signals {
+  padding: 56px 24px 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+  text-align: center;
+}
+.trust-strip-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 18px;
+}
+.trust-strip-grid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 14px 24px;
+}
+.trust-sector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+  transition: opacity 0.2s, color 0.2s;
+}
+.trust-sector:hover { opacity: 1; color: var(--text-secondary); }
+.trust-sector-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.trust-sector-icon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.trust-sector-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.trust-disclaimer {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  opacity: 0.6;
+  letter-spacing: 0.05em;
+  margin-bottom: 36px;
+}
+.testimonial-card {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--glass-card-bg, rgba(22,30,48,0.55));
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  text-align: left;
+  position: relative;
+}
+.testimonial-quote-mark {
+  position: absolute;
+  top: 8px;
+  left: 18px;
+  font-family: var(--font-display);
+  font-size: 64px;
+  line-height: 1;
+  color: var(--amber);
+  opacity: 0.18;
+  pointer-events: none;
+  user-select: none;
+}
+.testimonial-quote {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.55;
+  color: var(--text-primary);
+  margin-bottom: 18px;
+  position: relative;
+  z-index: 1;
+}
+.testimonial-attribution {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.testimonial-attribution-divider {
+  width: 24px;
+  height: 1px;
+  background: var(--amber);
+  opacity: 0.6;
+}
+.testimonial-role {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.testimonial-meta {
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+@media (max-width: 640px) {
+  .trust-strip-grid { gap: 24px; }
+  .trust-signals { padding: 40px 16px 24px; }
+  .testimonial-card { padding: 22px 22px; }
+  .testimonial-quote { font-size: 16px; }
+  .testimonial-attribution { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .testimonial-attribution-divider { display: none; }
+}
 </style>`;
+}
+
+/* ──────────────────────────────────────────────────────────
+   renderTrustSignals — sector strip + testimonial card.
+   Placeholder content; swap when real customer logos and
+   testimonials land. Wrap in a <section class="trust-signals
+   fade-in-section"> at the call site so each page controls
+   its own rhythm with surrounding sections.
+   ────────────────────────────────────────────────────────── */
+export function renderTrustSignals(): string {
+  return `
+  <div class="trust-strip-label">Trusted by security teams across</div>
+  <div class="trust-strip-grid">
+    <div class="trust-sector" title="Financial services">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M3 21h18"/>
+          <path d="M5 21V10"/>
+          <path d="M19 21V10"/>
+          <path d="M9 21v-7"/>
+          <path d="M15 21v-7"/>
+          <path d="M3 10l9-6 9 6"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">Fintech</div>
+    </div>
+    <div class="trust-sector" title="Software / SaaS">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="14" rx="2"/>
+          <path d="M3 10h18"/>
+          <path d="M8 18l-2 4"/>
+          <path d="M16 18l2 4"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">SaaS</div>
+    </div>
+    <div class="trust-sector" title="Healthcare">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M12 21s-7-4.5-7-11a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6.5-7 11-7 11z" transform="translate(-2 0)"/>
+          <path d="M9 12h2v-2h2v2h2v2h-2v2h-2v-2H9z"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">Healthcare</div>
+    </div>
+    <div class="trust-sector" title="Retail / E-commerce">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+          <path d="M3 6h18"/>
+          <path d="M16 10a4 4 0 1 1-8 0"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">E-commerce</div>
+    </div>
+    <div class="trust-sector" title="Media / Publishing">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M3 9h18"/>
+          <path d="M9 21V9"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">Media</div>
+    </div>
+    <div class="trust-sector" title="Marketing / Agencies">
+      <div class="trust-sector-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M3 11l18-7v16l-18-7"/>
+          <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>
+        </svg>
+      </div>
+      <div class="trust-sector-label">Marketing</div>
+    </div>
+  </div>
+  <div class="trust-disclaimer">Sample placement &mdash; customer logos publishing in 2026.</div>
+
+  <div class="testimonial-card">
+    <div class="testimonial-quote-mark" aria-hidden="true">&ldquo;</div>
+    <div class="testimonial-quote">Averrow caught three impersonation domains in our first week &mdash; two of them already had MX records and were ready to send. We had been doing this manually with two analysts, and they were missing this.</div>
+    <div class="testimonial-attribution">
+      <span class="testimonial-role">VP of Security</span>
+      <span class="testimonial-attribution-divider" aria-hidden="true"></span>
+      <span class="testimonial-meta">Mid-market SaaS &middot; 800 employees</span>
+    </div>
+  </div>`;
 }
 
 /* ──────────────────────────────────────────────────────────

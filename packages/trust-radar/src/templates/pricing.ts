@@ -2,7 +2,7 @@
  * Trust Radar — Pricing Page
  * Served at /pricing
  */
-import { wrapPage } from "./shared";
+import { wrapPage, renderTrustSignals } from "./shared";
 import { generateSpiderTraps } from "../seeders/spider-injector";
 
 export function renderPricingPage(): string {
@@ -261,6 +261,12 @@ export function renderPricingPage(): string {
       </tbody>
     </table>
   </div>
+</section>
+
+<!-- TRUST SIGNALS — sector strip + testimonial.
+     Markup defined in shared.ts (renderTrustSignals). -->
+<section class="trust-signals">
+${renderTrustSignals()}
 </section>
 
 <!-- FAQ -->
