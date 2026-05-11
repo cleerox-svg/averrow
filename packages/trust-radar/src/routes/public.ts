@@ -353,6 +353,18 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Static assets fallback (SPA) ────────────────────────────────
+  //
+  // Deep-link refresh handling for the two React SPAs that live under
+  // path prefixes:
+  //   /v2/*      → averrow-ops    (staff back office) — shell at /v2/index.html
+  //   /tenant/*  → averrow-tenant (customers)         — shell at /tenant/index.html
+  //
+  // ASSETS handles the happy path (file exists). When a 404 falls
+  // through, we re-issue the request against the matching SPA shell
+  // so the React Router can take over client-side. Without this the
+  // catch-all would route every /tenant/<slug> refresh into the
+  // legacy /dashboard.html shell, which renders its own "Page not
+  // found" (the bug the user just hit).
   router.all("*", async (request: Request, env: Env) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
@@ -362,8 +374,24 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     if (assetResponse.status !== 404) {
       return assetResponse;
     }
-    const spaFallback = await env.ASSETS.fetch(new Request(new URL("/dashboard.html", request.url).toString()));
-    if (spaFallback.status !== 404) return spaFallback;
+
+    // SPA shell fallbacks. /v2 + /tenant are React Router apps — any
+    // sub-path that isn't a real file should serve their respective
+    // index.html so the client router decides what to render.
+    if (url.pathname.startsWith("/v2/") || url.pathname === "/v2") {
+      const shell = await env.ASSETS.fetch(new Request(new URL("/v2/index.html", request.url).toString()));
+      if (shell.status !== 404) return shell;
+    }
+    if (url.pathname.startsWith("/tenant/") || url.pathname === "/tenant") {
+      const shell = await env.ASSETS.fetch(new Request(new URL("/tenant/index.html", request.url).toString()));
+      if (shell.status !== 404) return shell;
+    }
+
+    // Last-ditch fallback: render the Worker's branded 404 page.
+    // Note: /dashboard.html (the legacy SPA shell) is intentionally
+    // no longer the catch-all — that surface was retired with the
+    // marketing-site Astro cutover and isn't a sensible fallback
+    // for unknown paths.
     return new Response(renderNotFoundPage(), { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } });
   });
 }
