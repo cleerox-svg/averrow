@@ -152,6 +152,17 @@ export function renderHead(title: string, description: string): string {
 <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icon-192.svg">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<noscript>
+  <style>
+    /* JS off: force reveal patterns visible so crawlers and no-JS users
+       see every section. Matches the @media reduced-motion override. */
+    .fade-in-section, .reveal,
+    .platform-card, .feature-row, .price-card, .fact-card {
+      opacity: 1 !important;
+      transform: none !important;
+    }
+  </style>
+</noscript>
 <style>
 /* ═══════════════════════════════════════════════════════════
    AVERROW — DESIGN SYSTEM
@@ -160,24 +171,38 @@ export function renderHead(title: string, description: string): string {
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* ── THEME TOKENS ── */
+/* ── THEME TOKENS ──
+   Aligned with platform tokens (CLAUDE.md §5). Marketing keeps its own
+   variable names so existing call sites stay valid; only values shift. */
 :root {
   --font-display: 'Plus Jakarta Sans', sans-serif;
   --font-body: 'Plus Jakarta Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
 
-  /* Accent — Signal Red */
+  /* Accent — Signal Red (matches platform --red) */
   --accent: #C83C3C;
   --accent-hover: #A82E2E;
   --accent-light: #E87070;
   --accent-bg: rgba(200, 60, 60, 0.08);
   --accent-bg-strong: rgba(200, 60, 60, 0.15);
-  --green: #28A050;
-  --green-bg: rgba(40, 160, 80, 0.08);
+
+  /* Platform palette parity */
   --red: #C83C3C;
+  --red-dim: #8B1A1A;
   --red-bg: rgba(200, 60, 60, 0.08);
-  --amber: #E8923C;
-  --blue: #78A0C8;
+  --amber: #E5A832;        /* was #E8923C — aligned with platform gold */
+  --amber-dim: #B8821F;
+  --green: #3CB878;        /* was #28A050 — aligned with platform */
+  --green-dim: #1A6B3C;
+  --green-bg: rgba(60, 184, 120, 0.08);
+  --blue: #0A8AB5;         /* was #78A0C8 — aligned with platform */
+  --blue-dim: #065A78;
+
+  /* Severity (platform parity) */
+  --sev-critical: #f87171;
+  --sev-high: #fb923c;
+  --sev-medium: #fbbf24;
+  --sev-low: #60a5fa;
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -219,28 +244,49 @@ export function renderHead(title: string, description: string): string {
 }
 
 [data-theme="dark"] {
-  --bg-primary: #080E18;
+  --bg-primary: #060A14;     /* matches platform --bg-page */
   --bg-secondary: #0E1A2B;
   --bg-tertiary: #142236;
   --bg-code: #0C1420;
   --bg-elevated: #1A2E48;
-  --text-primary: #F0EDE8;
-  --text-secondary: #78A0C8;
-  --text-tertiary: #5A80A8;
+  --text-primary: rgba(255,255,255,0.92);  /* matches platform --text-primary */
+  --text-secondary: rgba(255,255,255,0.60);
+  --text-tertiary: rgba(255,255,255,0.40);
   --text-inverse: #1A1F2E;
   --border: rgba(120, 160, 200, 0.08);
   --border-strong: rgba(120, 160, 200, 0.15);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
-  --shadow-glow: 0 0 60px rgba(200,60,60,0.15);
-  --gradient-hero: linear-gradient(135deg, #080E18 0%, #0E1A2B 50%, #080E18 100%);
+  --shadow-glow: 0 0 60px rgba(229,168,50,0.18);
+  --gradient-hero: linear-gradient(135deg, #060A14 0%, #0E1A2B 50%, #060A14 100%);
   --illustration-fill: #F0EDE8;
   --illustration-stroke: #C83C3C;
-  --nav-bg: rgba(8,14,24,0.85);
+  --nav-bg: rgba(6,10,20,0.85);
+
+  /* Glass card tokens (parity with light mode) */
+  --glass-card-bg: rgba(22,30,48,0.85);
+  --glass-card-border: rgba(120,160,200,0.10);
+  --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.30);
+  --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.45);
 }
 
 html { scroll-behavior: smooth; }
+
+/* ── REVEAL FALLBACKS ──
+   The site uses three reveal patterns: .fade-in-section, .reveal, and
+   JS-applied inline opacity. All three start hidden on the default code
+   path. If JS doesn't run, or the user prefers reduced motion, force
+   them visible so crawlers, screenshot tools, and accessibility users
+   never see empty pages. */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-section,
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
 
 body {
   background: var(--bg-primary);
@@ -841,9 +887,22 @@ section {
    ────────────────────────────────────────────────────────── */
 export function wrapPage(title: string, description: string, content: string): string {
   return `<!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
 ${renderHead(title, description)}
+<script>
+  // Pre-paint theme load — avoids a flash from the dark default to a
+  // saved-light preference. Runs before <body> so the variables are set
+  // before the first paint.
+  (function(){
+    try {
+      var saved = localStorage.getItem('averrow-theme');
+      if (saved === 'light' || saved === 'dark') {
+        document.documentElement.setAttribute('data-theme', saved);
+      }
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 
@@ -873,16 +932,17 @@ function toggleTheme() {
   const current = html.getAttribute('data-theme');
   const next = current === 'light' ? 'dark' : 'light';
   html.setAttribute('data-theme', next);
-  document.getElementById('theme-icon').textContent = next === 'light' ? '\\u2600' : '\\u263E';
-  localStorage.setItem('averrow-theme', next);
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.textContent = next === 'light' ? '\\u2600' : '\\u263E';
+  try { localStorage.setItem('averrow-theme', next); } catch (e) {}
 }
 
-// Load saved theme
-const saved = localStorage.getItem('averrow-theme');
-if (saved) {
-  document.documentElement.setAttribute('data-theme', saved);
-  document.getElementById('theme-icon').textContent = saved === 'light' ? '\\u2600' : '\\u263E';
-}
+// Sync icon to whatever theme the pre-paint script settled on
+(function(){
+  var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  var icon = document.getElementById('theme-icon');
+  if (icon) icon.textContent = theme === 'light' ? '\\u2600' : '\\u263E';
+})();
 
 // Smooth scroll for anchor links
 document.querySelectorAll('a[href^="#"]').forEach(a => {
@@ -895,35 +955,43 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 });
 
-// Scroll animations — .reveal class
-const revealObserver = new IntersectionObserver((entries) => {
-  entries.forEach(e => {
-    if (e.isIntersecting) {
-      e.target.classList.add('revealed');
-      revealObserver.unobserve(e.target);
+// Scroll animations — .reveal class. Skip entirely under reduced-motion.
+var prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+if (!prefersReducedMotion && 'IntersectionObserver' in window) {
+  const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('revealed');
+        revealObserver.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+  // Legacy inline observer for cards without .reveal — only flip cards to
+  // hidden when JS + IO + motion are all available. CSS-default is visible.
+  const cardObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.style.opacity = '1';
+        entry.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
+
+  document.querySelectorAll('.platform-card, .feature-row, .price-card, .fact-card').forEach(el => {
+    if (!el.classList.contains('reveal')) {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(24px)';
+      el.style.transition = 'opacity 0.6s ease, transform 0.6s ease, background 0.3s, border 0.3s, box-shadow 0.3s';
+      cardObserver.observe(el);
     }
   });
-}, { threshold: 0.1 });
-document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
-
-// Legacy inline observer for cards without .reveal
-const cardObserver = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      entry.target.style.opacity = '1';
-      entry.target.style.transform = 'translateY(0)';
-    }
-  });
-}, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
-
-document.querySelectorAll('.platform-card, .feature-row, .price-card, .fact-card').forEach(el => {
-  if (!el.classList.contains('reveal')) {
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(24px)';
-    el.style.transition = 'opacity 0.6s ease, transform 0.6s ease, background 0.3s, border 0.3s, box-shadow 0.3s';
-    cardObserver.observe(el);
-  }
-});
+} else {
+  // Reduced motion or no IO: make sure .reveal targets are immediately visible.
+  document.querySelectorAll('.reveal').forEach(el => el.classList.add('revealed'));
+}
 
 // Nav scroll — stronger blur on scroll
 const nav = document.querySelector('.nav');

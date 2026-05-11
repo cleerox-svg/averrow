@@ -11,9 +11,72 @@ export function renderAboutPage(): string {
     "LRX Enterprises Inc. — Making brand protection accessible. AI-native, edge-first, radically accessible.",
     `
 <style>
-.about-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); }
-.about-hero h1 { font-family: var(--font-display); font-size: clamp(36px, 5vw, 64px); font-weight: 800; margin-bottom: 1rem; }
-.about-hero p { font-size: 20px; color: var(--text-secondary); max-width: 560px; margin: 0 auto; line-height: 1.7; }
+.about-hero {
+  padding: 5rem 0 2.5rem;
+  text-align: center;
+  background: var(--gradient-hero);
+  position: relative;
+  overflow: hidden;
+}
+.about-hero h1 { font-family: var(--font-display); font-size: clamp(36px, 5vw, 64px); font-weight: 800; margin-bottom: 1rem; position: relative; z-index: 2; }
+.about-hero p { font-size: 20px; color: var(--text-secondary); max-width: 580px; margin: 0 auto; line-height: 1.7; position: relative; z-index: 2; }
+.about-hero .section-label { position: relative; z-index: 2; }
+
+/* Delta-wing watermark behind hero — Avro Arrow heritage cue */
+.about-hero-wing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.06;
+}
+[data-theme="light"] .about-hero-wing { opacity: 0.05; }
+.about-hero-wing svg {
+  width: min(680px, 90vw);
+  height: auto;
+}
+
+/* Heritage callout band, sits between hero and Our Story */
+.about-heritage {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.75rem 2rem 0;
+}
+.about-heritage-card {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.5rem 1.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-md);
+}
+.about-heritage-card svg { width: 100%; height: auto; color: var(--amber); }
+.about-heritage-text {
+  font-family: var(--font-body);
+  color: var(--text-secondary);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.about-heritage-text .ah-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+  display: block;
+  margin-bottom: 4px;
+}
+.about-heritage-text strong { color: var(--text-primary); }
+@media (max-width: 640px) {
+  .about-heritage-card { grid-template-columns: 1fr; text-align: center; }
+  .about-heritage-card svg { width: 96px; margin: 0 auto; }
+}
 
 .about-section { padding: 3rem 0; }
 .about-section:nth-child(even) { background: var(--bg-tertiary); }
@@ -83,21 +146,41 @@ export function renderAboutPage(): string {
 </style>
 
 <section class="about-hero">
+  <!-- Delta-wing watermark — Avro Arrow heritage cue, decorative -->
+  <div class="about-hero-wing" aria-hidden="true">
+    <svg viewBox="0 0 600 360" xmlns="http://www.w3.org/2000/svg">
+      <path d="M300 16 L568 336 L300 296 L32 336 Z" fill="currentColor"/>
+    </svg>
+  </div>
   <div class="container">
     <div class="section-label" style="text-align:center;">About</div>
-    <h1>Making brand protection<br>accessible.</h1>
+    <h1>Built from a heritage of<br>interception.</h1>
     <p>LRX Enterprises Inc. is building the brand protection that every company deserves — not just enterprises with six-figure security budgets.</p>
   </div>
 </section>
+
+<!-- Heritage callout — Avro Arrow lift -->
+<div class="about-heritage">
+  <div class="about-heritage-card">
+    <svg viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Stylised delta-wing silhouette -->
+      <path d="M60 6 L114 74 L60 60 L6 74 Z" fill="currentColor"/>
+      <path d="M44 64 L76 64 L72 56 L48 56 Z" fill="var(--bg-secondary)"/>
+    </svg>
+    <div class="about-heritage-text">
+      <span class="ah-eyebrow">1958 &middot; Avro Canada CF-105</span>
+      In 1958, Canada built the most advanced interceptor in the world &mdash; the <strong>Avro Arrow</strong>. Averrow carries that legacy into the digital domain. Detect, classify, and neutralize threats crossing into your brand's airspace before they reach their target.
+    </div>
+  </div>
+</div>
 
 <!-- Our Story -->
 <section class="about-section">
   <div class="about-content">
     <h2>Our Story</h2>
     <div class="our-story-container">
-      <p>In 1958, Canada built the most advanced interceptor in the world — the Avro Arrow. Averrow carries that legacy into the digital domain. We detect, classify, and neutralize threats crossing into your brand's airspace before they reach their target.</p>
-      <p>Enterprise brand protection platforms cost $20,000 to $150,000+ per year and require dedicated security analysts to operate. Meanwhile, companies of every size — the ones actually being targeted by phishing campaigns and brand impersonation — have no affordable option.</p>
-      <p>Averrow exists to close that gap. Founded by LRX Enterprises Inc., built AI-native from day one, and deployed on edge infrastructure that keeps costs 10-50x lower than traditional platforms. We believe every company should be able to see their brand the way attackers do — and intercept threats before they land.</p>
+      <p>Enterprise brand protection platforms cost $20,000 to $150,000+ per year and require dedicated security analysts to operate. Meanwhile, companies of every size &mdash; the ones actually being targeted by phishing campaigns and brand impersonation &mdash; have no affordable option.</p>
+      <p>Averrow exists to close that gap. Founded by LRX Enterprises Inc., built AI-native from day one, and deployed on edge infrastructure that keeps costs 10-50x lower than traditional platforms. Every company should be able to see their brand the way attackers do &mdash; and intercept threats before they land.</p>
     </div>
   </div>
 </section>

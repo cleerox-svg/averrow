@@ -72,7 +72,92 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   color: var(--text-secondary);
   line-height: 1.65;
   max-width: 580px;
-  margin: 0 auto 36px;
+  margin: 0 auto 28px;
+}
+
+/* ── HERO INTERCEPT TICKER ── */
+.hero-ticker {
+  max-width: 560px;
+  margin: 0 auto 28px;
+  padding: 14px 18px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-card-bg, rgba(22,30,48,0.55));
+  backdrop-filter: blur(12px) saturate(160%);
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.hero-ticker-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 10px;
+}
+.hero-ticker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 0 rgba(229,168,50,0.6);
+  animation: ticker-pulse 1.8s ease-out infinite;
+}
+@keyframes ticker-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(229,168,50,0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(229,168,50,0); }
+  100% { box-shadow: 0 0 0 0 rgba(229,168,50,0); }
+}
+.hero-ticker-viewport {
+  height: 84px;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+.hero-ticker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  animation: ticker-scroll 18s linear infinite;
+}
+.hero-ticker-list li {
+  display: grid;
+  grid-template-columns: 80px 56px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  white-space: nowrap;
+}
+.ti-time     { color: var(--text-tertiary); font-size: 11px; }
+.ti-sev      { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-align: center; padding: 2px 0; border-radius: 3px; }
+.ti-critical { color: var(--sev-critical); background: rgba(248,113,113,0.10); }
+.ti-high     { color: var(--sev-high);     background: rgba(251,146,60,0.10); }
+.ti-medium   { color: var(--sev-medium);   background: rgba(251,191,36,0.10); }
+.ti-target   { color: var(--text-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.ti-tag      { color: var(--text-secondary); font-size: 11px; }
+@keyframes ticker-scroll {
+  0%   { transform: translateY(0); }
+  100% { transform: translateY(-168px); } /* 6 rows × 28px */
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-ticker-list { animation: none; }
+  .hero-ticker-dot  { animation: none; box-shadow: 0 0 0 4px rgba(229,168,50,0.20); }
+}
+@media (max-width: 560px) {
+  .hero-ticker { font-size: 12px; padding: 12px 14px; }
+  .hero-ticker-list li { grid-template-columns: 64px 48px 1fr; }
+  .hero-ticker-list li .ti-tag { display: none; }
+}
+.scan-hint-emphasis {
+  color: var(--text-tertiary);
+  font-style: italic;
 }
 
 /* ── SCAN INPUT ── */
@@ -591,6 +676,103 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-size: 15px;
   color: var(--text-secondary);
   line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+/* ── CAPABILITY PRODUCT MOCKS ──
+   Stylized UI snippets, not real screenshots. Synthetic data only. */
+.cap-mock {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.cap-mock-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 4px 0;
+  align-items: center;
+}
+.cap-mock-row + .cap-mock-row { border-top: 1px solid var(--border); }
+.cap-mock-target { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-mock-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.cap-mock-badge.crit { color: var(--sev-critical); background: rgba(248,113,113,0.10); }
+.cap-mock-badge.high { color: var(--sev-high);     background: rgba(251,146,60,0.10); }
+.cap-mock-badge.med  { color: var(--sev-medium);   background: rgba(251,191,36,0.10); }
+.cap-mock-badge.ok   { color: var(--green);        background: rgba(60,184,120,0.10); }
+.cap-mock-grade {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+.cap-mock-grade-cell {
+  padding: 8px 4px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.cap-mock-grade-cell .gl-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); }
+.cap-mock-grade-cell .gl-value { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; }
+.gl-value.pass { color: var(--green); }
+.gl-value.fail { color: var(--sev-critical); }
+.cap-mock-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cap-mock-diff-line { display: flex; gap: 8px; align-items: center; }
+.cap-mock-diff-label { width: 56px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
+.cap-mock-diff-value { color: var(--text-primary); }
+.cap-mock-diff-value .hi { color: var(--sev-high); background: rgba(251,146,60,0.16); padding: 1px 2px; border-radius: 2px; }
+.cap-mock-narrative {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  border-left: 2px solid var(--amber);
+  padding-left: 10px;
+  line-height: 1.55;
+}
+.cap-mock-narrative .nm-meta { color: var(--text-tertiary); font-size: 11px; margin-top: 6px; }
+.cap-mock-social {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.cap-mock-social-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--red), var(--amber));
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+}
+.cap-mock-social-info { flex: 1; min-width: 0; }
+.cap-mock-social-handle { color: var(--text-primary); font-size: 12px; }
+.cap-mock-social-meta { color: var(--text-tertiary); font-size: 10.5px; }
+.cap-mock-score {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sev-critical);
 }
 
 /* ── CTA ── */
@@ -832,6 +1014,14 @@ html { scroll-behavior: smooth; }
   transform: translateY(0);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-section {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
 /* ── AGENT CARD ICONS ── */
 .agent-icon {
   width: 28px;
@@ -940,12 +1130,32 @@ ${pageStyles}
   <div class="hero-content">
     <div class="hero-tag">Threat Interceptor</div>
     <h1 class="hero-h1">Your brand is under attack<br>right now.</h1>
-    <p class="hero-p">Averrow detects impersonation, phishing, and brand abuse across domains, email, and social media — before it reaches your customers.</p>
+    <p class="hero-p">Averrow intercepts impersonation, phishing, and brand abuse across domains, email, and social — before it reaches your customers.</p>
+
+    <!-- Synthetic intercept ticker. Illustrative only; not live data. -->
+    <div class="hero-ticker" role="img" aria-label="Sample of recent threat intercepts">
+      <div class="hero-ticker-label">Live Intercept Feed <span class="hero-ticker-dot"></span></div>
+      <div class="hero-ticker-viewport">
+        <ul class="hero-ticker-list">
+          <li><span class="ti-time">14:08:22Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">phish-azure-mfa.com</span><span class="ti-tag">Phishing kit</span></li>
+          <li><span class="ti-time">14:08:11Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">paypal-secure-verify.net</span><span class="ti-tag">Lookalike domain</span></li>
+          <li><span class="ti-time">14:07:58Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">@yourbrand_support</span><span class="ti-tag">Social impersonation</span></li>
+          <li><span class="ti-time">14:07:42Z</span><span class="ti-sev ti-medium">MED</span><span class="ti-target">yourbrand.com</span><span class="ti-tag">SPF record drift</span></li>
+          <li><span class="ti-time">14:07:30Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">acct.yourbrand.com.io</span><span class="ti-tag">Cert anomaly</span></li>
+          <li><span class="ti-time">14:07:14Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">chase-banking-alert.app</span><span class="ti-tag">Malware delivery</span></li>
+          <!-- duplicate first three for seamless loop -->
+          <li aria-hidden="true"><span class="ti-time">14:08:22Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">phish-azure-mfa.com</span><span class="ti-tag">Phishing kit</span></li>
+          <li aria-hidden="true"><span class="ti-time">14:08:11Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">paypal-secure-verify.net</span><span class="ti-tag">Lookalike domain</span></li>
+          <li aria-hidden="true"><span class="ti-time">14:07:58Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">@yourbrand_support</span><span class="ti-tag">Social impersonation</span></li>
+        </ul>
+      </div>
+    </div>
+
     <form class="scan-box" id="scanForm" action="/assess" method="POST">
       <input class="scan-input" id="domainInput" name="domain" placeholder="Enter any domain" autocomplete="off">
       <button class="scan-btn" type="submit" id="scanBtn">Launch Sortie</button>
     </form>
-    <div class="scan-hint">Enter any domain &mdash; no signup required</div>
+    <div class="scan-hint">Enter any domain &mdash; no signup required &middot; <span class="scan-hint-emphasis">Intercept feed above is illustrative</span></div>
   </div>
 </section>
 
@@ -1128,7 +1338,12 @@ ${pageStyles}
         <circle cx="22" cy="9" r="1.5" fill="currentColor" opacity="0.7"/>
       </svg>
       <div class="cap-title">Threat Feed Intelligence</div>
-      <div class="cap-desc">Stop brand abuse before customers are deceived — continuous scanning across phishing databases, malware feeds, and newly registered domains</div>
+      <div class="cap-desc">Continuous scanning across phishing databases, malware feeds, and newly registered domains.</div>
+      <div class="cap-mock" aria-label="Sample threat feed output">
+        <div class="cap-mock-row"><span class="cap-mock-target">login-yourbrand-mfa.com</span><span class="cap-mock-badge crit">CRIT</span></div>
+        <div class="cap-mock-row"><span class="cap-mock-target">yourbrand-support.help</span><span class="cap-mock-badge high">HIGH</span></div>
+        <div class="cap-mock-row"><span class="cap-mock-target">yourbrand-billing.app</span><span class="cap-mock-badge high">HIGH</span></div>
+      </div>
     </div>
 
     <div class="cap-card">
@@ -1139,7 +1354,14 @@ ${pageStyles}
         <path d="M24 21 L26 23 L24 25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div class="cap-title">Email Security Posture</div>
-      <div class="cap-desc">Prevent email spoofing before attackers impersonate your brand — SPF, DKIM, DMARC analysis and grading</div>
+      <div class="cap-desc">SPF, DKIM, and DMARC analysis with grading so spoofing is caught at the gate.</div>
+      <div class="cap-mock" aria-label="Sample email auth grade">
+        <div class="cap-mock-grade">
+          <div class="cap-mock-grade-cell"><div class="gl-label">SPF</div><div class="gl-value pass">A</div></div>
+          <div class="cap-mock-grade-cell"><div class="gl-label">DKIM</div><div class="gl-value pass">A</div></div>
+          <div class="cap-mock-grade-cell"><div class="gl-label">DMARC</div><div class="gl-value fail">F</div></div>
+        </div>
+      </div>
     </div>
 
     <div class="cap-card">
@@ -1153,7 +1375,17 @@ ${pageStyles}
         <circle cx="25" cy="20" r="1" fill="currentColor" opacity="0.6"/>
       </svg>
       <div class="cap-title">Social Airspace Monitoring</div>
-      <div class="cap-desc">Stop impersonation before customers are deceived — fake accounts, handle squatting, and unauthorized brand usage across six platforms</div>
+      <div class="cap-desc">Fake accounts, handle squatting, and unauthorized brand usage across six platforms.</div>
+      <div class="cap-mock" aria-label="Sample social impersonation match">
+        <div class="cap-mock-social">
+          <div class="cap-mock-social-avatar">Y</div>
+          <div class="cap-mock-social-info">
+            <div class="cap-mock-social-handle">@yourbrand_support</div>
+            <div class="cap-mock-social-meta">Instagram &middot; 11 days old &middot; no link in bio</div>
+          </div>
+          <div class="cap-mock-score">94</div>
+        </div>
+      </div>
     </div>
 
     <div class="cap-card">
@@ -1165,7 +1397,14 @@ ${pageStyles}
         <circle cx="13" cy="13" r="2" fill="currentColor" opacity="0.4"/>
       </svg>
       <div class="cap-title">Lookalike Domain Detection</div>
-      <div class="cap-desc">Fuzzy matching, homoglyph analysis, and NRD monitoring for brand abuse</div>
+      <div class="cap-desc">Fuzzy matching, homoglyph analysis, and newly registered domain monitoring.</div>
+      <div class="cap-mock" aria-label="Sample lookalike comparison">
+        <div class="cap-mock-diff">
+          <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Real</div><div class="cap-mock-diff-value">yourbrand.com</div></div>
+          <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Match</div><div class="cap-mock-diff-value">y<span class="hi">0</span>urbr<span class="hi">a</span>nd.<span class="hi">co</span></div></div>
+          <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Reg.</div><div class="cap-mock-diff-value">2 days ago &middot; Namecheap</div></div>
+        </div>
+      </div>
     </div>
 
     <div class="cap-card">
@@ -1178,7 +1417,11 @@ ${pageStyles}
         <polyline points="19.5,24 21.5,26 24.5,22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div class="cap-title">Certificate Transparency</div>
-      <div class="cap-desc">Real-time monitoring of SSL certificate issuance for brand domains</div>
+      <div class="cap-desc">Real-time monitoring of SSL certificate issuance across brand-adjacent domains.</div>
+      <div class="cap-mock" aria-label="Sample CT log entry">
+        <div class="cap-mock-row"><span class="cap-mock-target">acct.yourbrand.com.io</span><span class="cap-mock-badge high">NEW</span></div>
+        <div class="cap-mock-row"><span class="cap-mock-target">Let's Encrypt &middot; 14:07:30Z</span><span class="cap-mock-badge med">ANOM</span></div>
+      </div>
     </div>
 
     <div class="cap-card">
@@ -1188,7 +1431,11 @@ ${pageStyles}
         <circle cx="26" cy="8" r="2.5" fill="currentColor" opacity="0.9"/>
       </svg>
       <div class="cap-title">AI Threat Narratives</div>
-      <div class="cap-desc">Understand exactly what happened and why it matters — human-readable threat timelines and remediation steps</div>
+      <div class="cap-desc">Human-readable threat timelines and remediation steps so your team can act fast.</div>
+      <div class="cap-mock cap-mock-narrative" aria-label="Sample threat narrative">
+        &ldquo;A single actor registered three lookalikes in 72 hours, all behind the same Cloudflare account. Pattern matches the &lsquo;BeaverTooth&rsquo; phishing kit.&rdquo;
+        <div class="nm-meta">Analyst agent &middot; 2 min read</div>
+      </div>
     </div>
 
   </div>
@@ -1380,9 +1627,15 @@ document.getElementById('domainInput').addEventListener('keydown', function(e) {
   }
 });
 
-// Fade-in on scroll (IntersectionObserver)
+// Fade-in on scroll (IntersectionObserver). Reduced-motion users skip
+// the reveal entirely so content is visible immediately.
 (function() {
   var sections = document.querySelectorAll('.fade-in-section');
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    sections.forEach(function(el) { el.classList.add('is-visible'); });
+    return;
+  }
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function(entries) {
       entries.forEach(function(e) {
