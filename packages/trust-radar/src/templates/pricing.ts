@@ -31,9 +31,55 @@ export function renderPricingPage(): string {
 .price-card.popular { border: 2px solid var(--accent); border-radius: 12px; box-shadow: var(--shadow-glow); }
 .price-card.popular::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 
-.pricing-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 2.5rem; }
+.pricing-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 0.85rem; }
 .pricing-toggle-btn { font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 0.5rem 1.25rem; border-radius: 100px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-tertiary); cursor: pointer; transition: all 0.2s; }
 .pricing-toggle-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+.pricing-grid-hint {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 1.75rem;
+}
+.pricing-grid-hint .pricing-grid-hint-arrow {
+  color: var(--amber);
+  margin: 0 6px;
+}
+
+/* ── FREE-SCAN CARD (visually offset from real plans) ── */
+.price-card.free-scan {
+  background: transparent;
+  border: 1.5px dashed var(--border);
+  position: relative;
+}
+.price-card.free-scan::before {
+  content: 'TRY FIRST';
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  background: var(--bg-primary);
+  padding: 2px 8px;
+  color: var(--amber);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+[data-theme="light"] .price-card.free-scan::before { background: var(--bg-primary); }
+.price-card.free-scan .price-not-a-plan {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 0.4rem;
+}
 
 .popular-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: white; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 100px; letter-spacing: 0.05em; }
 .price-tier { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin-bottom: 0.25rem; }
@@ -128,16 +174,20 @@ export function renderPricingPage(): string {
   <div class="pricing-toggle">
     <button id="pricing-monthly" class="pricing-toggle-btn active" onclick="setPricing('monthly')">MONTHLY</button>
     <button id="pricing-annual" class="pricing-toggle-btn" onclick="setPricing('annual')">
-      ANNUAL <span style="background:#28A050;color:white;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:6px">Save 20%</span>
+      ANNUAL <span style="background:var(--green);color:white;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:6px">Save $3.6K&ndash;$9.6K/yr</span>
     </button>
   </div>
+  <div class="pricing-grid-hint">
+    Start with the free scan <span class="pricing-grid-hint-arrow">&rarr;</span> pick a plan when you&rsquo;re ready
+  </div>
   <div class="pricing-grid">
-    <!-- Free -->
-    <div class="price-card">
-      <div class="price-tier">Free</div>
+    <!-- Free Scan — top-of-funnel, not a plan -->
+    <div class="price-card free-scan">
+      <div class="price-not-a-plan">Free Scan &middot; Not a plan</div>
+      <div class="price-tier">Free Scan</div>
       <div class="price-desc">Brand Exposure Report</div>
       <div class="price-amount">$0</div>
-      <div class="price-billing">One-time scan</div>
+      <div class="price-billing">One-time, no signup</div>
       <div class="price-divider"></div>
       <ul class="price-features">
         <li>Email security grade</li>
@@ -146,7 +196,7 @@ export function renderPricingPage(): string {
         <li>Social handle check</li>
         <li>Exposure score</li>
       </ul>
-      <div class="price-cta"><a href="/scan" class="btn btn-outline" style="width:100%;justify-content:center;">Scan Your Brand</a></div>
+      <div class="price-cta"><a href="/scan" class="btn btn-outline" style="width:100%;justify-content:center;">Run Free Scan</a></div>
     </div>
 
     <!-- Professional -->
@@ -160,12 +210,12 @@ export function renderPricingPage(): string {
       </div>
       <div class="price-annual" style="display:none">
         <div class="price-amount">$1,199<span>/mo</span></div>
-        <div class="price-billing">Billed annually ($14,388/yr)</div>
+        <div class="price-billing">Billed annually ($14,388/yr) &middot; <strong style="color:var(--green);">Save $3,600/yr</strong></div>
       </div>
       <div class="price-divider"></div>
       <ul class="price-features">
-        <li>Everything in Free</li>
-        <li>1 brand — continuous 24/7 monitoring</li>
+        <li>Everything in Free Scan, monitored continuously</li>
+        <li>1 brand &mdash; continuous 24/7 monitoring</li>
         <li>Full Agent Squadron</li>
         <li>Daily Observer briefings</li>
         <li>Email security posture monitoring</li>
@@ -186,7 +236,7 @@ export function renderPricingPage(): string {
       </div>
       <div class="price-annual" style="display:none">
         <div class="price-amount">$3,199<span>/mo</span></div>
-        <div class="price-billing">Billed annually ($38,388/yr)</div>
+        <div class="price-billing">Billed annually ($38,388/yr) &middot; <strong style="color:var(--green);">Save $9,600/yr</strong></div>
       </div>
       <div class="price-divider"></div>
       <ul class="price-features">
@@ -235,7 +285,7 @@ export function renderPricingPage(): string {
       <thead>
         <tr>
           <th></th>
-          <th>Free</th>
+          <th>Free Scan</th>
           <th class="highlight">Professional</th>
           <th>Business</th>
           <th>Enterprise</th>
