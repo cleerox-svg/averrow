@@ -115,6 +115,7 @@ export function renderFooter(): string {
           <li><a href="/changelog">Changelog</a></li>
           <li><a href="/security">Security</a></li>
           <li><a href="/status">Status</a></li>
+          <li><a href="/report-abuse">Report Abuse</a></li>
         </ul>
       </div>
       <div class="footer-col">
