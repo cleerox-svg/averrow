@@ -79,7 +79,7 @@ export async function handleGetDarkWebModuleSummary(
        (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.classification = 'suspicious') AS mentions_suspicious,
        (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.classification = 'unknown') AS mentions_unknown,
        (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.classification = 'false_positive') AS mentions_false_positive,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.severity IN ('HIGH','CRITICAL')) AS mentions_high_critical,
+       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND LOWER(dwm.severity) IN ('high','critical')) AS mentions_high_critical,
        (SELECT COUNT(DISTINCT dwm.source) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active') AS sources_covered
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
@@ -190,7 +190,7 @@ export async function handleGetBrandDarkWebFindings(
      FROM dark_web_mentions
      WHERE brand_id = ? AND status != 'resolved'
      ORDER BY
-       CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+       CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
        CASE classification
          WHEN 'confirmed'      THEN 1
          WHEN 'suspicious'     THEN 2

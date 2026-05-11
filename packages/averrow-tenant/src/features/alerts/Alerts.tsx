@@ -17,10 +17,10 @@ type StatusFilter   = AlertStatus | 'all';
 
 const SEVERITY_OPTIONS: Array<{ key: SeverityFilter; label: string }> = [
   { key: 'all',      label: 'All' },
-  { key: 'CRITICAL', label: 'Critical' },
-  { key: 'HIGH',     label: 'High' },
-  { key: 'MEDIUM',   label: 'Medium' },
-  { key: 'LOW',      label: 'Low' },
+  { key: 'critical', label: 'Critical' },
+  { key: 'high',     label: 'High' },
+  { key: 'medium',   label: 'Medium' },
+  { key: 'low',      label: 'Low' },
 ];
 
 const STATUS_OPTIONS: Array<{ key: StatusFilter; label: string }> = [
@@ -79,17 +79,23 @@ function SeverityRollup({
   breakdown: Array<{ severity: AlertSeverity; count: number }>;
 }) {
   const counts: Record<AlertSeverity, number> = {
-    CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0,
+    critical: 0, high: 0, medium: 0, low: 0,
   };
-  for (const b of breakdown) counts[b.severity] = b.count;
-  const total = counts.CRITICAL + counts.HIGH + counts.MEDIUM + counts.LOW;
+  // Defensive: the DB has historically mixed case for alert
+  // severity (lowercase in alerts/threats, uppercase in module
+  // tables). Normalise so the rollup is robust to either.
+  for (const b of breakdown) {
+    const key = (b.severity ?? '').toLowerCase() as AlertSeverity;
+    if (key in counts) counts[key] = b.count;
+  }
+  const total = counts.critical + counts.high + counts.medium + counts.low;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       <RollupCard label="Total" value={total} icon={Bell} tone="neutral" />
-      <RollupCard label="Critical" value={counts.CRITICAL} icon={AlertTriangle} tone={counts.CRITICAL > 0 ? 'crit' : 'neutral'} />
-      <RollupCard label="High" value={counts.HIGH} icon={AlertTriangle} tone={counts.HIGH > 0 ? 'warn' : 'neutral'} />
-      <RollupCard label="Resolved-able" value={counts.MEDIUM + counts.LOW} icon={ShieldCheck} tone="neutral" />
+      <RollupCard label="Critical" value={counts.critical} icon={AlertTriangle} tone={counts.critical > 0 ? 'crit' : 'neutral'} />
+      <RollupCard label="High" value={counts.high} icon={AlertTriangle} tone={counts.high > 0 ? 'warn' : 'neutral'} />
+      <RollupCard label="Resolved-able" value={counts.medium + counts.low} icon={ShieldCheck} tone="neutral" />
     </div>
   );
 }
@@ -145,10 +151,11 @@ function FilterBar<T extends string>({
 }
 
 function AlertRow({ alert: a }: { alert: Alert }) {
+  const sev = (a.severity ?? '').toLowerCase();
   const tone =
-    a.severity === 'CRITICAL' ? 'border-sev-critical/[0.30]' :
-    a.severity === 'HIGH'     ? 'border-amber/[0.30]'        :
-                                'border-white/[0.06]';
+    sev === 'critical' ? 'border-sev-critical/[0.30]' :
+    sev === 'high'     ? 'border-amber/[0.30]'        :
+                         'border-white/[0.06]';
   return (
     <article className={`rounded-xl border bg-bg-card p-4 ${tone}`}>
       <div className="flex items-start justify-between gap-3 mb-2">
@@ -178,15 +185,16 @@ function AlertRow({ alert: a }: { alert: Alert }) {
   );
 }
 
-function SeverityPill({ level }: { level: AlertSeverity }) {
+function SeverityPill({ level }: { level: AlertSeverity | string }) {
+  const sev = (level ?? '').toLowerCase();
   const tone =
-    level === 'CRITICAL' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    level === 'HIGH'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    level === 'MEDIUM'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
-                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
+    sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
+    sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
+    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+                         'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {level}
+      {sev}
     </span>
   );
 }

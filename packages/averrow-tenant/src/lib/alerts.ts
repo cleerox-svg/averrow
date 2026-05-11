@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiGet } from './api';
 import { useAuth } from './auth';
 
-export type AlertSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type AlertStatus = 'new' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive';
 
 export interface Alert {

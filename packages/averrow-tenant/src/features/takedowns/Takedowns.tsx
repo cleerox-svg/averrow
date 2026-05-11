@@ -180,11 +180,12 @@ function TakedownsList({ rows }: { rows: TakedownListRow[] }) {
 }
 
 function TakedownRow({ takedown: t }: { takedown: TakedownListRow }) {
+  const sev = (t.severity ?? '').toLowerCase();
   const tone =
-    t.severity === 'CRITICAL' || t.severity === 'critical' ? 'border-sev-critical/[0.30]' :
-    t.status   === 'failed'   || t.status === 'expired'    ? 'border-sev-critical/[0.30]' :
-    t.severity === 'HIGH'     || t.severity === 'high'     ? 'border-amber/[0.30]'        :
-                                                             'border-white/[0.06]';
+    sev          === 'critical'                          ? 'border-sev-critical/[0.30]' :
+    t.status     === 'failed'   || t.status === 'expired' ? 'border-sev-critical/[0.30]' :
+    sev          === 'high'                              ? 'border-amber/[0.30]'        :
+                                                            'border-white/[0.06]';
   return (
     <Link
       to={`/takedowns/${t.id}`}

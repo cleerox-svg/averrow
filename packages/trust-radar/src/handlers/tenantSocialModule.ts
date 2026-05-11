@@ -81,7 +81,7 @@ export async function handleGetSocialModuleSummary(
        (SELECT COUNT(*) FROM social_profiles sp WHERE sp.brand_id = b.id AND sp.classification = 'suspicious') AS profiles_suspicious,
        (SELECT COUNT(*) FROM social_profiles sp WHERE sp.brand_id = b.id AND sp.classification = 'impersonation') AS profiles_impersonation,
        (SELECT COUNT(*) FROM social_profiles sp WHERE sp.brand_id = b.id AND sp.classification = 'parked') AS profiles_parked,
-       (SELECT COUNT(*) FROM social_profiles sp WHERE sp.brand_id = b.id AND sp.severity IN ('HIGH','CRITICAL')) AS profiles_high_critical
+       (SELECT COUNT(*) FROM social_profiles sp WHERE sp.brand_id = b.id AND LOWER(sp.severity) IN ('high','critical')) AS profiles_high_critical
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
      WHERE ob.org_id = ?
@@ -193,7 +193,7 @@ export async function handleGetBrandSocialFindings(
      FROM social_profiles
      WHERE brand_id = ?
      ORDER BY
-       CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+       CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
        CASE classification
          WHEN 'impersonation' THEN 1
          WHEN 'suspicious'    THEN 2

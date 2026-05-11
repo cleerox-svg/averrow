@@ -167,7 +167,7 @@ export async function handleTenantAlerts(
       JOIN brands b ON b.id = a.brand_id
       WHERE ${whereClause}
       ORDER BY
-        CASE a.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+        CASE LOWER(a.severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
         a.created_at DESC
       LIMIT ? OFFSET ?
     `).bind(...bindings, limit, offset).all();

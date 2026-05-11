@@ -95,7 +95,7 @@ export async function handleGetAbuseMailboxModuleSummary(
        (SELECT COUNT(*) FROM abuse_inbox_messages m WHERE m.brand_id = b.id AND m.org_id = ? AND m.classification = 'spam')     AS messages_spam,
        (SELECT COUNT(*) FROM abuse_inbox_messages m WHERE m.brand_id = b.id AND m.org_id = ? AND m.classification = 'benign')   AS messages_benign,
        (SELECT COUNT(*) FROM abuse_inbox_messages m WHERE m.brand_id = b.id AND m.org_id = ? AND m.classification = 'pending')  AS messages_pending,
-       (SELECT COUNT(*) FROM abuse_inbox_messages m WHERE m.brand_id = b.id AND m.org_id = ? AND m.severity IN ('HIGH','CRITICAL')) AS messages_high_critical
+       (SELECT COUNT(*) FROM abuse_inbox_messages m WHERE m.brand_id = b.id AND m.org_id = ? AND LOWER(m.severity) IN ('high','critical')) AS messages_high_critical
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
      WHERE ob.org_id = ?
@@ -235,7 +235,7 @@ export async function handleListAbuseInboxMessages(
   `;
   const orderBy = `
     ORDER BY
-      CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+      CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
       CASE classification
         WHEN 'phishing'  THEN 1
         WHEN 'malware'   THEN 2

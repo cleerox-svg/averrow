@@ -85,7 +85,7 @@ export async function handleGetTrademarkModuleSummary(
        (SELECT COUNT(*) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.status = 'active' AND tf.classification = 'likely')    AS findings_likely,
        (SELECT COUNT(*) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.status = 'active' AND tf.classification = 'unknown')   AS findings_unknown,
        (SELECT COUNT(*) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.classification = 'false_positive') AS findings_false_positive,
-       (SELECT COUNT(*) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.status = 'active' AND tf.severity IN ('HIGH','CRITICAL')) AS findings_high_critical,
+       (SELECT COUNT(*) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.status = 'active' AND LOWER(tf.severity) IN ('high','critical')) AS findings_high_critical,
        (SELECT COUNT(DISTINCT tf.found_context) FROM trademark_findings tf WHERE tf.brand_id = b.id AND tf.status = 'active') AS contexts_covered
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
@@ -224,7 +224,7 @@ export async function handleGetBrandTrademarkFindings(
        FROM trademark_findings
        WHERE brand_id = ? AND status != 'resolved'
        ORDER BY
-         CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+         CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
          CASE classification
            WHEN 'confirmed'      THEN 1
            WHEN 'likely'         THEN 2

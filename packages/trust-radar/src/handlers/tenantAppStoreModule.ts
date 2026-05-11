@@ -78,7 +78,7 @@ export async function handleGetAppStoreModuleSummary(
        (SELECT COUNT(*) FROM app_store_listings al WHERE al.brand_id = b.id AND al.classification = 'legitimate') AS apps_legitimate,
        (SELECT COUNT(*) FROM app_store_listings al WHERE al.brand_id = b.id AND al.classification = 'suspicious') AS apps_suspicious,
        (SELECT COUNT(*) FROM app_store_listings al WHERE al.brand_id = b.id AND al.classification = 'impersonation') AS apps_impersonation,
-       (SELECT COUNT(*) FROM app_store_listings al WHERE al.brand_id = b.id AND al.severity IN ('HIGH','CRITICAL')) AS apps_high_critical,
+       (SELECT COUNT(*) FROM app_store_listings al WHERE al.brand_id = b.id AND LOWER(al.severity) IN ('high','critical')) AS apps_high_critical,
        (SELECT COUNT(DISTINCT al.store) FROM app_store_listings al WHERE al.brand_id = b.id) AS stores_covered
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
@@ -192,7 +192,7 @@ export async function handleGetBrandAppStoreFindings(
      FROM app_store_listings
      WHERE brand_id = ?
      ORDER BY
-       CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+       CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
        CASE classification
          WHEN 'impersonation' THEN 1
          WHEN 'suspicious'    THEN 2
