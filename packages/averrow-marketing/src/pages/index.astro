@@ -1,103 +1,175 @@
 ---
-// R1 skeleton page.
-//
-// This file proves the build pipeline end-to-end: Astro builds, output lands
-// in the trust-radar Worker's static-assets directory, the Worker serves it
-// at /marketing/. R2 replaces this with the real Layout + first ported route.
-//
-// Visible at: https://staging.averrow.com/marketing/  (and production while
-// gated under /marketing/* — production site at / is unchanged until R6.)
-const buildTime = new Date().toISOString();
+/*
+ * /marketing/ — staging landing page for the rebuild. Lists which
+ * pages have been ported so far so reviewers can click through and
+ * spot-check parity. Marked noindex so search engines don't surface
+ * the staging surface.
+ *
+ * This page will be replaced by the real homepage port in R5.
+ */
+import Layout from "../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const ported = [
+  {
+    href: `${base}/changelog`,
+    label: "Changelog",
+    note: "R2 — ported in this PR. Filter chips work. RSS still served by Worker until R3.",
+  },
+];
+const todo = [
+  { label: "Blog index + 4 posts + RSS", phase: "R3" },
+  { label: "About, Contact, Security, Report Abuse, Pricing", phase: "R4" },
+  { label: "Platform, Home (with ticker island)", phase: "R5" },
+  { label: "Production cutover — drop /marketing/* prefix", phase: "R6" },
+  { label: "Lighthouse + Playwright regression suite", phase: "R7" },
+];
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex,nofollow" />
-    <title>Marketing rebuild — R1 skeleton — Averrow</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #060A14;
-        --card: #0E1A2B;
-        --border: rgba(255, 255, 255, 0.08);
-        --text: rgba(255, 255, 255, 0.92);
-        --muted: rgba(255, 255, 255, 0.55);
-        --amber: #E5A832;
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        display: grid;
-        place-items: center;
-        padding: 24px;
-      }
-      .card {
-        max-width: 640px;
-        width: 100%;
-        padding: 32px;
-        border-radius: 12px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      }
-      .kicker {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-        color: var(--amber);
-        margin-bottom: 12px;
-      }
-      h1 {
-        font-size: 24px;
-        font-weight: 700;
-        margin: 0 0 16px;
-        letter-spacing: -0.01em;
-      }
-      p {
-        color: var(--muted);
-        font-size: 14px;
-        line-height: 1.6;
-        margin: 0 0 16px;
-      }
-      .meta {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11px;
-        color: var(--muted);
-        padding-top: 16px;
-        border-top: 1px solid var(--border);
-      }
-      .meta strong { color: var(--text); }
-      a { color: var(--amber); }
-    </style>
-  </head>
-  <body>
-    <main class="card">
-      <div class="kicker">Marketing rebuild · R1 · Skeleton</div>
-      <h1>Astro + MDX skeleton is live.</h1>
+<Layout
+  title="Marketing rebuild — Averrow"
+  description="Astro + MDX marketing rebuild for averrow.com. Gated under /marketing/ until R6."
+  noindex
+>
+  <section class="status-hero">
+    <div class="container">
+      <p class="section-label">Marketing Rebuild</p>
+      <h1>Astro + MDX rebuild &mdash; in progress.</h1>
       <p>
-        This page exists to prove the build pipeline. Astro built, the static
-        artifacts were written into the trust-radar Worker&rsquo;s assets
-        directory, and the Worker served the file at <code>/marketing/</code>
-        via its existing Static Assets binding.
+        This is the staging surface for the marketing-site rebuild. Production
+        at <a href="/">averrow.com</a> still serves from the inline TypeScript
+        templates until R6 cuts over.
       </p>
-      <p>
-        Production routes (<a href="/">/</a>, <a href="/platform">/platform</a>,
-        etc.) are still served from the inline TypeScript templates &mdash; this
-        rebuild is gated under <code>/marketing/*</code> until R6 ships the
-        cutover. See <a href="/" target="_blank">docs/marketing-rebuild-evaluation.md</a>
-        for the phase plan.
+      <p class="status-spec-link">
+        Migration plan:
+        <a href="https://github.com/cleerox-svg/trust-radar/blob/master/docs/marketing-rebuild-evaluation.md">
+          docs/marketing-rebuild-evaluation.md
+        </a>
       </p>
-      <div class="meta">
-        <strong>Built at:</strong> {buildTime}
+    </div>
+  </section>
+
+  <section class="status-section">
+    <div class="container">
+      <div class="status-grid">
+        <div class="status-col">
+          <div class="section-label" style="margin-bottom: 1rem;">Ported</div>
+          <ul class="status-list">
+            {ported.map(p => (
+              <li class="status-item is-ported">
+                <a href={p.href} class="status-item-link">
+                  <span class="status-item-pill">Live</span>
+                  <span class="status-item-label">{p.label}</span>
+                </a>
+                <p class="status-item-note">{p.note}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div class="status-col">
+          <div class="section-label" style="margin-bottom: 1rem;">Upcoming</div>
+          <ul class="status-list">
+            {todo.map(t => (
+              <li class="status-item">
+                <span class="status-item-pill is-pending">{t.phase}</span>
+                <span class="status-item-label">{t.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
-    </main>
-  </body>
-</html>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .status-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); }
+  .status-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 4vw, 2.75rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    margin-bottom: 1rem;
+  }
+  .status-hero p {
+    color: var(--text-secondary);
+    max-width: 560px;
+    margin: 0 auto;
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+  .status-spec-link {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    margin-top: 1.25rem;
+  }
+  .status-spec-link a { color: var(--amber); }
+
+  .status-section { padding: 3rem 0 6rem; }
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    max-width: 880px;
+    margin: 0 auto;
+  }
+  .status-list { list-style: none; display: flex; flex-direction: column; gap: 0.85rem; }
+  .status-item {
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .status-item.is-ported {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 1rem 1.25rem;
+  }
+  .status-item-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-decoration: none;
+    color: var(--text-primary);
+  }
+  .status-item-link:hover { color: var(--amber); text-decoration: none; }
+  .status-item-pill {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.18rem 0.55rem;
+    border-radius: 100px;
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid rgba(60, 184, 120, 0.25);
+    flex-shrink: 0;
+  }
+  .status-item-pill.is-pending {
+    background: rgba(229, 168, 50, 0.10);
+    color: var(--amber);
+    border-color: rgba(229, 168, 50, 0.25);
+  }
+  .status-item-label {
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .status-item-note {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    line-height: 1.55;
+    margin-left: 0;
+  }
+  @media (max-width: 720px) {
+    .status-grid { grid-template-columns: 1fr; gap: 2rem; }
+  }
+</style>

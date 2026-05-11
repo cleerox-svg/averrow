@@ -1,0 +1,76 @@
+---
+/*
+ * Root document shell — used by every Astro page.
+ *
+ * Equivalent to wrapPage() in packages/trust-radar/src/templates/shared.ts.
+ * Renders the full <!doctype html>, head meta, pre-paint theme script,
+ * top nav, page body, footer.
+ *
+ * The theme cycle island is mounted inside Nav.astro; this layout
+ * just sets data-theme via the pre-paint inline script so first
+ * paint matches the user's saved (or OS) preference without flash.
+ */
+import "../styles/global.css";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Optional override for noindex meta (e.g. for the R1 skeleton). */
+  noindex?: boolean;
+}
+
+const { title, description, noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://averrow.com").toString();
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex,nofollow" />}
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml" />
+    <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <script is:inline>
+      // Pre-paint theme load — avoids a flash. Three modes match the
+      // back-end sidebar: auto / dark / light. Auto resolves from
+      // prefers-color-scheme. data-theme always ends up either 'dark'
+      // or 'light' so CSS rules apply; the saved mode (including 'auto')
+      // is what the ThemeCycle island reads on hydration.
+      (function () {
+        try {
+          const saved = localStorage.getItem("averrow-theme");
+          let resolved = "dark";
+          if (saved === "light" || saved === "dark") {
+            resolved = saved;
+          } else {
+            const prefersLight =
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: light)").matches;
+            resolved = prefersLight ? "light" : "dark";
+          }
+          document.documentElement.setAttribute("data-theme", resolved);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <Nav />
+    <div class="page-content">
+      <slot />
+    </div>
+    <Footer />
+  </body>
+</html>

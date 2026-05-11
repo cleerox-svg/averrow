@@ -1,0 +1,119 @@
+---
+/*
+ * Top navigation bar. Horizontal port of the back-end (averrow-ops)
+ * sidebar pattern. Active link is decided server-side from the
+ * current path so there's no hydration flash.
+ *
+ * Pages that include this Layout get the Nav automatically; no need
+ * to render it directly.
+ */
+import { NAV_LINKS, activeFor } from "../lib/nav";
+import ThemeCycle from "../islands/ThemeCycle";
+
+const currentPath = Astro.url.pathname;
+const activeHref = activeFor(currentPath);
+
+// Add the same /marketing base to internal links during the migration
+// window. After R6 (production cutover) the base flips back to "/"
+// and these prefixes become no-ops.
+const base = import.meta.env.BASE_URL.replace(/\/$/, ""); // "/marketing" or ""
+const withBase = (href: string) => `${base}${href}`;
+---
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href={withBase("/")} class="nav-brand">
+      <svg width="28" height="28" viewBox="0 0 32 32" style="flex-shrink:0">
+        <defs>
+          <linearGradient id="deep-arrow-nav" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#6B1010" />
+            <stop offset="100%" stop-color="#C83C3C" />
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="6" fill="#080E18" />
+        <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-nav)" />
+        <path d="M14.5 22H17.5L16 18Z" fill="#080E18" />
+      </svg>
+      <div>
+        <span class="nav-brand-text">AVERROW</span>
+        <span class="nav-brand-sub">THREAT INTERCEPTOR</span>
+      </div>
+    </a>
+
+    <ul class="nav-links">
+      {NAV_LINKS.map(link => (
+        <li>
+          <a
+            href={withBase(link.href)}
+            class:list={["nav-link", { "is-active": activeHref === link.href }]}
+            data-path={link.href}
+          >
+            <span class="nav-link-icon" set:html={link.icon} />
+            <span class="nav-link-label">{link.label}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+
+    <div class="nav-right">
+      <button
+        class="nav-hamburger"
+        type="button"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+        data-toggle-mobile-menu
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="18" x2="21" y2="18" />
+        </svg>
+      </button>
+      <ThemeCycle client:load />
+      <a href={withBase("/login")} class="btn btn-outline" style="font-size:0.82rem;padding:0.45rem 1rem;">Login</a>
+      <a href={withBase("/scan")} class="btn btn-primary" style="font-size:0.82rem;padding:0.45rem 1rem;">Free Scan</a>
+    </div>
+  </div>
+</nav>
+
+<div class="mobile-menu" id="mobile-menu" aria-hidden="true">
+  <div class="mobile-menu-section-label">Navigate</div>
+  {NAV_LINKS.map(link => (
+    <a
+      href={withBase(link.href)}
+      class:list={["mobile-link", { "is-active": activeHref === link.href }]}
+      data-path={link.href}
+    >
+      <span class="mobile-link-icon" set:html={link.icon} />
+      <span>{link.label}</span>
+    </a>
+  ))}
+  <div class="mobile-menu-divider"></div>
+  <a href={withBase("/login")} class="mobile-link mobile-link-secondary">Login</a>
+  <a href={withBase("/scan")} class="mobile-link mobile-link-primary">Free Scan</a>
+</div>
+
+<script>
+  // Mobile menu toggle + nav scroll shadow. Tiny, no framework.
+  (function () {
+    const button = document.querySelector<HTMLButtonElement>("[data-toggle-mobile-menu]");
+    const menu = document.getElementById("mobile-menu");
+    if (button && menu) {
+      button.addEventListener("click", () => {
+        const open = menu.classList.toggle("open");
+        menu.setAttribute("aria-hidden", open ? "false" : "true");
+        button.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
+
+    const nav = document.querySelector(".nav");
+    if (nav) {
+      const onScroll = () => {
+        if (window.scrollY > 20) nav.classList.add("nav-scrolled");
+        else nav.classList.remove("nav-scrolled");
+      };
+      onScroll();
+      window.addEventListener("scroll", onScroll, { passive: true });
+    }
+  })();
+</script>

@@ -1,0 +1,78 @@
+---
+/*
+ * Footer — 5-column layout (brand + Product / Resources / Company / Legal).
+ * Mirrors the back-end footer pattern. Internal links pick up the
+ * Astro base prefix so they work whether we're under /marketing/*
+ * (pre-cutover) or / (post-cutover).
+ */
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const withBase = (href: string) => `${base}${href}`;
+const year = new Date().getFullYear();
+---
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand-block">
+        <a href={withBase("/")} class="nav-brand" style="margin-bottom:0.5rem">
+          <svg width="24" height="24" viewBox="0 0 32 32" style="flex-shrink:0">
+            <defs>
+              <linearGradient id="deep-arrow-foot" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#6B1010" />
+                <stop offset="100%" stop-color="#C83C3C" />
+              </linearGradient>
+            </defs>
+            <rect width="32" height="32" rx="6" fill="#080E18" />
+            <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-foot)" />
+            <path d="M14.5 22H17.5L16 18Z" fill="#080E18" />
+          </svg>
+          <div>
+            <span class="nav-brand-text" style="font-size:18px">AVERROW</span>
+          </div>
+        </a>
+        <p>AI-powered brand protection. Detect impersonation, phishing domains, and social media abuse before they reach your customers.</p>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Product</div>
+        <ul>
+          <li><a href={withBase("/platform")}>Platform</a></li>
+          <li><a href={withBase("/pricing")}>Pricing</a></li>
+          <li><a href={withBase("/scan")}>Free Scan</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Resources</div>
+        <ul>
+          <li><a href={withBase("/blog")}>Blog</a></li>
+          <li><a href={withBase("/changelog")}>Changelog</a></li>
+          <li><a href={withBase("/security")}>Security</a></li>
+          <li><a href={withBase("/status")}>Status</a></li>
+          <li><a href={withBase("/report-abuse")}>Report Abuse</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Company</div>
+        <ul>
+          <li><a href={withBase("/about")}>About</a></li>
+          <li><a href={withBase("/contact")}>Contact</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Legal</div>
+        <ul>
+          <li><a href={withBase("/privacy")}>Privacy</a></li>
+          <li><a href={withBase("/terms")}>Terms</a></li>
+          <li><a href={withBase("/privacy")}>DPA</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span class="footer-legal">&copy; {year} LRX Enterprises Inc. All rights reserved.</span>
+    </div>
+  </div>
+</footer>

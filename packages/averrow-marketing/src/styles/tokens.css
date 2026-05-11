@@ -1,0 +1,97 @@
+/*
+ * Design tokens — aligned with the platform (CLAUDE.md §5) and ported
+ * from packages/trust-radar/src/templates/shared.ts.
+ *
+ * The trust-radar copy remains authoritative until R6 cuts over
+ * production. At that point shared.ts retires and this file becomes
+ * the single source of truth.
+ */
+
+:root {
+  --font-display: "Plus Jakarta Sans", sans-serif;
+  --font-body:    "Plus Jakarta Sans", sans-serif;
+  --font-mono:    "IBM Plex Mono", monospace;
+
+  /* Accent — Signal Red (platform --red) */
+  --accent:           #C83C3C;
+  --accent-hover:     #A82E2E;
+  --accent-light:     #E87070;
+  --accent-bg:        rgba(200, 60, 60, 0.08);
+  --accent-bg-strong: rgba(200, 60, 60, 0.15);
+
+  /* Platform palette parity */
+  --red:        #C83C3C;
+  --red-dim:    #8B1A1A;
+  --red-bg:     rgba(200, 60, 60, 0.08);
+  --amber:      #E5A832;
+  --amber-dim:  #B8821F;
+  --green:      #3CB878;
+  --green-dim:  #1A6B3C;
+  --green-bg:   rgba(60, 184, 120, 0.08);
+  --blue:       #0A8AB5;
+  --blue-dim:   #065A78;
+
+  /* Severity */
+  --sev-critical: #f87171;
+  --sev-high:     #fb923c;
+  --sev-medium:   #fbbf24;
+  --sev-low:      #60a5fa;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+[data-theme="light"] {
+  --bg-primary:    #F8F7F5;
+  --bg-secondary:  #FFFFFF;
+  --bg-tertiary:   #FAFAF8;
+  --bg-code:       #F0EDE8;
+  --bg-elevated:   #FFFFFF;
+  --text-primary:  #1A1F2E;
+  --text-secondary:#5A6170;
+  --text-tertiary: #8A8F9C;
+  --text-inverse:  #F0EDE8;
+  --border:        #E2DDD5;
+  --border-strong: rgba(226, 221, 213, 0.6);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.08);
+  --shadow-glow: 0 0 40px rgba(181,48,48,0.12);
+  --gradient-hero: linear-gradient(135deg, #F8F7F5 0%, #FAFAF8 50%, #F8F7F5 100%);
+  --accent: #B53030;
+  --accent-hover: #9A2828;
+  --accent-bg: rgba(181,48,48,0.06);
+  --accent-bg-strong: rgba(181,48,48,0.12);
+  --accent-section: #C88B1E;
+  --nav-bg: rgba(248,247,245,0.8);
+  --glass-card-bg: rgba(255,255,255,0.6);
+  --glass-card-border: rgba(226,221,213,0.5);
+  --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
+  --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+[data-theme="dark"] {
+  --bg-primary:    #060A14;
+  --bg-secondary:  #0E1A2B;
+  --bg-tertiary:   #142236;
+  --bg-code:       #0C1420;
+  --bg-elevated:   #1A2E48;
+  --text-primary:  rgba(255,255,255,0.92);
+  --text-secondary:rgba(255,255,255,0.60);
+  --text-tertiary: rgba(255,255,255,0.40);
+  --text-inverse:  #1A1F2E;
+  --border:        rgba(120, 160, 200, 0.08);
+  --border-strong: rgba(120, 160, 200, 0.15);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 60px rgba(229,168,50,0.18);
+  --gradient-hero: linear-gradient(135deg, #060A14 0%, #0E1A2B 50%, #060A14 100%);
+  --nav-bg: rgba(6,10,20,0.85);
+  --glass-card-bg: rgba(22,30,48,0.85);
+  --glass-card-border: rgba(120,160,200,0.10);
+  --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.30);
+  --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.45);
+}
