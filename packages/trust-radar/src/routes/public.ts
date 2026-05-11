@@ -3,27 +3,22 @@ import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
 import { rateLimit } from "../middleware/rateLimit";
 import { json } from "../lib/cors";
+// R6 cutover: marketing pages (/, /platform, /about, /pricing, /security,
+// /contact, /report-abuse, /blog, /changelog) are now served as static
+// HTML from packages/averrow-marketing via the Workers ASSETS binding.
+// The router.get() handlers for those routes have been retired below.
+// Worker-served routes remain for paths with dynamic behaviour
+// (auth, scan, status incidents, etc.).
+//
+// homepage.ts is kept to power /legacy (renderHomepage wrapped with a
+// banner) and the /assess/:id/results scan-results page.
 import { renderHomepage, renderAssessResults } from "../templates/homepage";
 import { renderScanPage } from "../templates/scan";
-import { renderPlatformPage } from "../templates/platform";
-import { renderAboutPage } from "../templates/about";
-import { renderPricingPage } from "../templates/pricing";
-import { renderSecurityPage } from "../templates/security";
 import { renderStatusPage } from "../templates/status";
-import { renderBlogPage } from "../templates/blog";
-import { renderBlogRss } from "../templates/blog-rss";
-import { renderBlogPost1 } from "../templates/blog-post-1";
-import { renderBlogPost2 } from "../templates/blog-post-2";
-import { renderBlogPost3 } from "../templates/blog-post-3";
-import { renderBlogPost4 } from "../templates/blog-post-4";
-import { renderChangelogPage } from "../templates/changelog";
-import { renderChangelogRss } from "../templates/changelog-rss";
-import { renderContactPage } from "../templates/contact";
-import { renderReportAbusePage } from "../templates/report-abuse";
-import { renderNotFoundPage } from "../templates/not-found";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
 import { renderTeamPage } from "../templates/team";
+import { renderNotFoundPage } from "../templates/not-found";
 import { renderAdminPortalPage, renderInternalStaffPage } from "../templates/honeypot-pages";
 import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
 import { handleContactSubmission } from "../handlers/contact";
@@ -67,25 +62,17 @@ const LEGACY_REDIRECTS: Record<string, string> = {
 };
 
 export function registerPublicRoutes(router: RouterType<IRequest>): void {
-  // ─── Root — always serve public homepage ───────────────────────────
-  // The React app at /v2 handles its own auth. We don't redirect based
-  // on cookies here because stale/expired cookies send users into the
-  // app login screen instead of showing the public marketing site.
+  // ─── Root, marketing pages — served by Workers ASSETS binding ─────
   //
-  // Stats are server-rendered so the marketing numbers track the
-  // platform's actual state. lib/public-stats.ts caches the underlying
-  // D1 reads in KV (10min TTL) — homepage cache (5min) sits in front
-  // of that, so most loads cost zero D1 reads.
-  router.get("/", async (_request: Request, env: Env) => {
-    const { getPublicStats } = await import("../lib/public-stats");
-    const stats = await getPublicStats(env);
-    return new Response(renderHomepage(stats), {
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "public, max-age=300, s-maxage=600",
-      },
-    });
-  });
+  // After the R6 cutover the homepage, platform, about, pricing,
+  // security, contact, report-abuse, blog, and changelog routes are
+  // pre-rendered HTML files under public/ (built by
+  // packages/averrow-marketing). The ASSETS binding picks them up
+  // before any route handler runs, so the Worker no longer registers
+  // /, /platform, /about, /pricing, /security, /contact,
+  // /report-abuse, /blog, /blog/<slug>, /blog/feed.xml, /changelog,
+  // and /changelog/feed.xml. The dynamic-stats fetch that used to
+  // live on / moves to R7 (build-time fetch in averrow-marketing).
 
   // ─── Legacy redirects (old admin routes → /v2) ──────────────────
   for (const [oldPath, newPath] of Object.entries(LEGACY_REDIRECTS)) {
@@ -164,10 +151,9 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.get("/dashboard/social", () => Response.redirect("/social", 302));
 
   // ─── Corporate Site Pages ─────────────────────────────────────────
-  router.get("/platform", htmlPage(renderPlatformPage));
-  router.get("/about", htmlPage(renderAboutPage));
-  router.get("/pricing", htmlPage(renderPricingPage));
-  router.get("/security", htmlPage(renderSecurityPage));
+  // /platform, /about, /pricing, /security — see R6 cutover note at
+  // top of file. These are now static HTML served by the ASSETS
+  // binding.
 
   // ─── Public platform status page ──────────────────────────────────
   // Server-renders the 30-day uptime rollup and a small inline script
@@ -242,34 +228,17 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
       },
     });
   });
-  router.get("/blog", htmlPage(renderBlogPage));
-  router.get("/blog/feed.xml", () =>
-    new Response(renderBlogRss(), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/rss+xml; charset=utf-8",
-        "Cache-Control": "public, max-age=900",
-      },
-    }),
-  );
-  router.get("/blog/email-security-posture-brand-defense", htmlPage(renderBlogPost1));
-  router.get("/blog/cost-brand-impersonation-mid-market", htmlPage(renderBlogPost2));
-  router.get("/blog/ai-powered-threat-narratives", htmlPage(renderBlogPost3));
-  router.get("/blog/lookalike-domains-threat-hiding", htmlPage(renderBlogPost4));
-  router.get("/changelog", htmlPage(renderChangelogPage));
-  router.get("/changelog/feed.xml", () =>
-    new Response(renderChangelogRss(), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/rss+xml; charset=utf-8",
-        "Cache-Control": "public, max-age=900",
-      },
-    }),
-  );
-  router.get("/contact", htmlPage(renderContactPage));
-  router.get("/report-abuse", htmlPage(renderReportAbusePage));
-  // Common alternate path users may guess
+  // /blog, /blog/<slug>, /blog/feed.xml, /changelog, /changelog/feed.xml,
+  // /contact, /report-abuse — all served as static HTML by the ASSETS
+  // binding now (built by packages/averrow-marketing).
+
+  // Common alternate path users may guess. ASSETS doesn't handle
+  // redirects, so this one stays Worker-side.
   router.get("/report-phishing", () => Response.redirect("/report-abuse", 302));
+
+  // /privacy and /terms are inline templates until they get ported in
+  // a follow-up — they're rarely-changing legal content, lowest priority
+  // for the Astro migration.
   router.get("/privacy", htmlPage(renderPrivacyPage));
   router.get("/terms", htmlPage(renderTermsPage));
 

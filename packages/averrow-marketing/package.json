@@ -6,7 +6,7 @@
   "description": "Averrow corporate marketing site (averrow.com). Astro + MDX, output served by the trust-radar Worker via its Static Assets binding.",
   "scripts": {
     "dev": "astro dev --port 4321",
-    "build": "astro build",
+    "build": "astro build && node scripts/sync-to-worker.mjs",
     "preview": "astro preview --port 4321",
     "astro": "astro",
     "typecheck": "astro check"
@@ -16,6 +16,7 @@
     "@astrojs/mdx": "^3.1.9",
     "@astrojs/react": "^3.6.3",
     "@astrojs/rss": "^4.0.10",
+    "@astrojs/sitemap": "^3.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -3,38 +3,36 @@ import { defineConfig } from "astro/config";
 import mdx from "@astrojs/mdx";
 import react from "@astrojs/react";
 
-// R1 skeleton config.
+// R6 cutover config.
 //
-// Output mode: 'static' — every route is pre-rendered to HTML at build time.
-// The trust-radar Worker serves those HTML/CSS/JS files via its Static Assets
-// binding ([assets] directory = "./public" in wrangler.toml).
+// Output mode: 'static' — every route is pre-rendered to HTML at build
+// time. Files are written into the trust-radar Worker's static-assets
+// directory so the Workers ASSETS binding picks them up.
 //
-// outDir points DIRECTLY into the Worker's assets directory so we don't have
-// to copy artifacts in a separate build step. R1 ships under /marketing/* so
-// the production site (still served from inline templates) is untouched.
-// Production cutover happens in R6: drop the /marketing prefix, swap the
-// per-page htmlPage() handlers to fall through to ASSETS.
+// After R6 the base is "/" (was "/marketing" during R1-R5) so the
+// canonical URLs land at /, /about, /pricing, etc. The Worker's
+// per-page htmlPage(renderXxxPage) handlers for ported pages are
+// removed in this PR — Static Assets takes over.
 //
-// site: used by @astrojs/sitemap to emit absolute URLs in sitemap.xml.
+// Astro writes to its own ./dist/ (default). A postbuild sync script
+// copies the artifacts overlay-style into ../trust-radar/public/ so
+// the Worker's ASSETS binding picks them up. Going through dist/
+// instead of writing directly into public/ prevents Astro's outDir
+// cleanup from wiping the legacy SPA assets (app.js, dashboard.html,
+// public/v2, public/tenant) that share the directory.
 export default defineConfig({
   site: "https://averrow.com",
-  base: "/marketing",
-  outDir: "../trust-radar/public/marketing",
+  base: "/",
   build: {
-    // Tells Astro to emit index.html in each directory (e.g. /about/index.html)
-    // so Cloudflare Workers static assets resolves /about/ cleanly without a
-    // trailing-slash redirect.
     format: "directory",
-    // Inline small assets to reduce HTTP requests during initial paint.
     inlineStylesheets: "auto",
   },
-  // Conservative trailing-slash policy that matches the Worker's existing
-  // behavior on inline-template routes.
   trailingSlash: "ignore",
-  // @astrojs/sitemap is added in R6 once the /marketing/* prefix
-  // drops and Astro becomes the canonical surface — the existing
-  // robots-sitemap.ts handler in trust-radar covers the inline-
-  // template pages until then.
+  // @astrojs/sitemap deferred to R7 — version 3.7.x crashes with
+  // an internal reduce() against an undefined pages array when run
+  // against an Astro 4.16 build. Worker keeps generating the
+  // sitemap from robots-sitemap.ts until then; that handler already
+  // reads from the blog manifest so new posts are picked up.
   integrations: [
     react(),
     mdx(),
