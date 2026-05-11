@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, ShieldOff, FileSignature, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ShieldOff, FileSignature, AlertTriangle, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import {
   useTakedownAuthorization,
@@ -8,6 +8,7 @@ import {
   ESCALATION_LABELS,
   type TakedownAuthorization,
 } from '@/lib/takedownAuthorization';
+import { useOrgMembers, useOrgInvites, canManageMembers } from '@/lib/members';
 
 // User profile (display name, theme, timezone, passkeys, sessions)
 // lives at /profile per SHARED_LOGIN_SPEC §2 — rendered by the
@@ -18,6 +19,12 @@ export function Settings() {
   const { user } = useAuth();
   const { data } = useTakedownAuthorization();
   const auth = data?.authorization ?? null;
+  const { data: members } = useOrgMembers();
+  const { data: invites } = useOrgInvites();
+
+  const userCanManageMembers = canManageMembers(user?.role, user?.organization?.role);
+  const memberCount = members?.length ?? 0;
+  const pendingCount = invites?.length ?? 0;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -25,6 +32,29 @@ export function Settings() {
         <h1 className="text-[28px] font-bold text-white tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-white/55">{user?.organization?.name ?? 'Your organization'}</p>
       </header>
+
+      <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5 flex items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Users size={14} className="text-white/45" />
+            <h2 className="text-sm font-semibold text-white/90">Members</h2>
+          </div>
+          <p className="text-[11px] text-white/55 mt-1 max-w-md">
+            {userCanManageMembers ? (
+              <>
+                {memberCount} active member{memberCount === 1 ? '' : 's'}
+                {pendingCount > 0 && ` · ${pendingCount} pending invite${pendingCount === 1 ? '' : 's'}`}
+                {memberCount === 0 && pendingCount === 0 && 'Invite teammates, change roles, manage access.'}
+              </>
+            ) : (
+              'Org admins can invite teammates and manage roles.'
+            )}
+          </p>
+        </div>
+        <Link to="/settings/members" className="text-[11px] font-mono text-amber hover:underline whitespace-nowrap">
+          Manage →
+        </Link>
+      </section>
 
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5 flex items-center justify-between gap-4">
         <div>
