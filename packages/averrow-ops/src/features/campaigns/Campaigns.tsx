@@ -9,8 +9,6 @@ import {
   FilterBar,
   PageHeader,
   EmptyState,
-  EntityCard,
-  MetricTile,
 } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -25,7 +23,7 @@ import {
 import type { Operation } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import type { GeopoliticalCampaign } from '@/hooks/useGeopoliticalCampaign';
-import { Activity, Search } from 'lucide-react';
+import { Activity, ChevronDown, Search } from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -132,240 +130,119 @@ function OperationCard({
 }) {
   const asns      = parseJsonArray(operation.asns);
   const countries = parseJsonArray(operation.countries);
-  const sev       = opSeverity(operation.threat_count);
-  const accent    = opAccent(sev);
   const primaryAsn = asns[0] ?? '';
-
   const sparkData = operation.threat_history ?? [];
+
+  // Agents/Feeds pattern: calm `elevated` Card by default, `critical`
+  // only when status reflects a problem state. No severity left-stripe;
+  // metric values stay plain `--text-primary` and only color signals
+  // problems (errors / accelerating / pivot).
+  const isProblemState = operation.status === 'pivot';
+  const variant: 'elevated' | 'critical' | 'active' =
+    isSelected ? 'active' : isProblemState ? 'critical' : 'elevated';
 
   return (
     <Card
-      variant={isSelected ? 'active' : 'base'}
+      variant={variant}
       hover={!isSelected}
       onClick={() => onSelect(operation.id)}
-      style={{
-        borderLeft: `3px solid ${accent}`,
-        padding:    '14px 16px',
-        cursor:     'pointer',
-        position:   'relative',
-        overflow:   'hidden',
-      }}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
     >
-      {/* Header: status + ASN badge + country flags */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <StatusBadge status={operation.status} />
-
+      {/* Header: ASN chip + name + status badge + chevron */}
+      <div className="flex items-center gap-3">
         {primaryAsn && (
-          <span style={{
-            fontSize:      9,
-            fontFamily:    'var(--font-mono)',
-            fontWeight:    800,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            padding:       '2px 7px',
-            borderRadius:  5,
-            color:         asnColor(primaryAsn),
-            background:    `${asnColor(primaryAsn)}15`,
-            border:        `1px solid ${asnColor(primaryAsn)}35`,
-          }}>
+          <span
+            className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.12em] px-1.5 py-1 rounded"
+            style={{
+              color: asnColor(primaryAsn),
+              background: `${asnColor(primaryAsn)}15`,
+              border: `1px solid ${asnColor(primaryAsn)}35`,
+            }}
+          >
             {primaryAsn}
           </span>
         )}
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
-          {countries.slice(0, 3).map(c => (
-            <span key={c} style={{ fontSize: 14 }}>{countryFlag(c)}</span>
-          ))}
-          {countries.length > 3 && (
-            <span style={{
-              fontSize:   9,
-              color:      'var(--text-muted)',
-              fontFamily: 'var(--font-mono)',
-            }}>
-              +{countries.length - 3}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="font-mono text-[13px] font-bold uppercase tracking-wide truncate"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {operation.cluster_name || `Cluster ${operation.id.slice(0, 8)}`}
             </span>
-          )}
+            <StatusBadge status={operation.status} />
+          </div>
+          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            {operation.first_detected
+              ? `Since ${formatDate(operation.first_detected)}`
+              : 'Detection date unknown'}
+            {countries.length > 0 && (
+              <> \u00B7 <span style={{ color: 'var(--text-muted)' }}>
+                {countries.slice(0, 4).map(c => countryFlag(c)).join(' ')}
+                {countries.length > 4 && ` +${countries.length - 4}`}
+              </span></>
+            )}
+          </div>
         </div>
+        <ChevronDown
+          size={14}
+          style={{
+            color: 'var(--text-tertiary)',
+            transition: 'transform 0.18s ease',
+            transform: isSelected ? 'rotate(180deg)' : 'rotate(0deg)',
+            flexShrink: 0,
+          }}
+        />
       </div>
 
-      {/* Cluster name */}
-      <div style={{
-        fontSize:     13,
-        fontWeight:   700,
-        color:        'var(--text-primary)',
-        marginBottom: 3,
-        overflow:     'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace:   'nowrap',
-      }}>
-        {operation.cluster_name || `Cluster ${operation.id.slice(0, 8)}`}
+      {/* Metrics row + top-right sparkline */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>THREATS</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {operation.threat_count.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>CONFIDENCE</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {operation.confidence_score != null ? `${operation.confidence_score}%` : '\u2014'}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>COUNTRIES</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {countries.length}
+            </div>
+          </div>
+        </div>
+        {sparkData.length >= 2 && (
+          <div className="flex flex-col items-end gap-1">
+            <div style={{ width: 120, height: 36 }}>
+              <TrendSparkline
+                data={sparkData}
+                fill
+                height={36}
+                color={isProblemState ? 'var(--sev-high)' : 'var(--amber)'}
+              />
+            </div>
+            <div
+              className="font-mono text-[8px] tracking-[0.12em] uppercase"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              14d shape
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Meta line */}
-      <div style={{
-        fontSize:     10,
-        fontFamily:   'var(--font-mono)',
-        color:        'var(--text-muted)',
-        marginBottom: 12,
-      }}>
-        {primaryAsn}
-        {operation.first_detected
-          ? ` \u00B7 Since ${formatDate(operation.first_detected)}`
-          : ''}
-      </div>
-
-      {/* Metric row */}
-      <div style={{
-        display:             'grid',
-        gridTemplateColumns: '1fr 1fr 1fr',
-        gap:                 12,
-        paddingTop:          10,
-        paddingBottom:       10,
-        borderTop:           '1px solid var(--border-base)',
-        borderBottom:        '1px solid var(--border-base)',
-        marginBottom:        10,
-      }}>
-        <div>
-          <div style={{
-            fontSize:   18,
-            fontWeight: 900,
-            fontFamily: 'var(--font-mono)',
-            color:      accent,
-            lineHeight: 1,
-            textShadow: `0 0 14px ${accent}60`,
-          }}>
-            {operation.threat_count.toLocaleString()}
-          </div>
-          <div style={{
-            fontSize:      9,
-            fontFamily:    'var(--font-mono)',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            color:         'var(--text-muted)',
-            marginTop:     3,
-          }}>
-            Threats
-          </div>
-        </div>
-
-        <div>
-          <div style={{
-            fontSize:   18,
-            fontWeight: 900,
-            fontFamily: 'var(--font-mono)',
-            lineHeight: 1,
-            color:      confidenceColor(operation.confidence_score),
-          }}>
-            {operation.confidence_score != null
-              ? `${operation.confidence_score}%`
-              : '\u2014'}
-          </div>
-          <div style={{
-            fontSize:      9,
-            fontFamily:    'var(--font-mono)',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            color:         'var(--text-muted)',
-            marginTop:     3,
-          }}>
-            Confidence
-          </div>
-        </div>
-
-        <div>
-          <div style={{
-            fontSize:   18,
-            fontWeight: 900,
-            fontFamily: 'var(--font-mono)',
-            lineHeight: 1,
-            color:      'var(--text-secondary)',
-          }}>
-            {countries.length}
-          </div>
-          <div style={{
-            fontSize:      9,
-            fontFamily:    'var(--font-mono)',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            color:         'var(--text-muted)',
-            marginTop:     3,
-          }}>
-            Countries
-          </div>
-        </div>
-      </div>
-
-      {/* Sparkline */}
-      {sparkData.length >= 2 ? (
-        <div style={{ position: 'relative' }}>
-          <TrendSparkline
-            data={sparkData}
-            fill
-            height={28}
-            color={accent}
-          />
-          <span style={{
-            position: 'absolute', bottom: 1, right: 4,
-            fontSize: 8, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)', letterSpacing: '0.10em',
-            opacity: 0.6,
-          }}>14d</span>
-        </div>
-      ) : (
-        <div style={{
-          height: 28,
-          background: 'var(--border-base)',
-          borderRadius: 6,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            insufficient data
-          </span>
-        </div>
-      )}
-
-      {/* Status alerts */}
-      {operation.status === 'accelerating' && (
-        <div style={{
-          marginTop:  8,
-          fontSize:   10,
-          fontFamily: 'var(--font-mono)',
-          color:      'var(--amber)',
-          display:    'flex',
-          alignItems: 'center',
-          gap:        5,
-        }}>
-          <span>{'\u26A0'}</span>
-          <span>{'ACCELERATING \u2014 activity increasing'}</span>
-        </div>
-      )}
-      {operation.status === 'pivot' && (
-        <div style={{
-          marginTop:  8,
-          fontSize:   10,
-          fontFamily: 'var(--font-mono)',
-          color:      'var(--amber)',
-          display:    'flex',
-          alignItems: 'center',
-          gap:        5,
-        }}>
-          <span>{'\u2192'}</span>
-          <span>{'PIVOT DETECTED \u2014 infrastructure migration'}</span>
-        </div>
-      )}
-      {operation.agent_notes && (
-        <div style={{
-          marginTop:    6,
-          fontSize:     10,
-          fontFamily:   'var(--font-mono)',
-          color:        'var(--text-muted)',
-          overflow:     'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace:   'nowrap',
-        }}>
-          {operation.agent_notes}
+      {/* Status / notes footer */}
+      {(operation.status === 'accelerating' || operation.status === 'pivot' || operation.agent_notes) && (
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          {operation.status === 'accelerating' && '\u2191 Accelerating \u2014 activity up vs prior week'}
+          {operation.status === 'pivot' && '\u2192 Pivot detected \u2014 infrastructure migration'}
+          {operation.status !== 'accelerating' && operation.status !== 'pivot' && operation.agent_notes}
         </div>
       )}
     </Card>
@@ -593,41 +470,67 @@ function CampaignCard({
     }
   }
 
-  // Severity from threat volume drives the accent (matches OperationCard).
-  const sev    = opSeverity(campaign.threat_count);
-  const accent = opAccent(sev);
   const status = (campaign.status ?? 'active').toLowerCase();
 
   return (
-    <EntityCard accent={accent} onClick={onClick}>
-      {/* Header: status badge + attack-type pill + name */}
-      <div className="flex items-center gap-2 mb-2">
-        <Badge
-          status={status === 'active' ? 'active' : 'inactive'}
-          label={status === 'active' ? 'Active' : 'Dormant'}
-          size="xs"
-          pulse={status === 'active'}
-        />
-        {attackType && <AttackTypeBadge type={attackType} />}
+    <Card
+      variant="elevated"
+      hover
+      onClick={onClick}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
+    >
+      {/* Header: name (mono caps) + status badge */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="font-mono text-[13px] font-bold uppercase tracking-wide truncate"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {campaign.name}
+            </span>
+            <Badge
+              status={status === 'active' ? 'active' : 'inactive'}
+              label={status === 'active' ? 'Active' : 'Dormant'}
+              size="xs"
+              pulse={status === 'active'}
+            />
+          </div>
+          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            Since {formatDate(campaign.first_seen)} {'\u00B7'} Last seen {formatDate(campaign.last_seen)}
+          </div>
+        </div>
       </div>
 
-      <div
-        className="font-display text-[13px] font-bold truncate mb-0.5"
-        style={{ color: 'var(--text-primary)', letterSpacing: '-0.1px' }}
-      >
-        {campaign.name}
-      </div>
-      <div className="font-mono text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>
-        Since {formatDate(campaign.first_seen)} {'\u00B7'} Last seen {formatDate(campaign.last_seen)}
+      {/* Metrics row (label-above-value, plain colors) */}
+      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>THREATS</div>
+          <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+            {campaign.threat_count.toLocaleString()}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>BRANDS</div>
+          <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+            {campaign.brand_count.toLocaleString()}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>PROVIDERS</div>
+          <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+            {campaign.provider_count.toLocaleString()}
+          </div>
+        </div>
       </div>
 
-      {/* Metric tiles */}
-      <div style={{ display: 'flex', gap: 7 }}>
-        <MetricTile label="Threats"   value={campaign.threat_count}   color={accent}         glow />
-        <MetricTile label="Brands"    value={campaign.brand_count}    color="var(--amber)"   glow={campaign.brand_count > 0} />
-        <MetricTile label="Providers" value={campaign.provider_count} color="var(--blue)"    glow={campaign.provider_count > 0} />
-      </div>
-    </EntityCard>
+      {/* Attack-type pill (footer \u2014 parallels Agents COMPLIANCE chips) */}
+      {attackType && (
+        <div className="flex flex-wrap gap-1">
+          <AttackTypeBadge type={attackType} />
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -645,104 +548,79 @@ function GeoCampaignCard({
   const threatActors = parseJsonArray(campaign.threat_actors);
 
   const status = (campaign.status ?? 'active').toLowerCase();
-  const accent =
-    status === 'active'  ? 'var(--sev-critical)' :
-    status === 'dormant' ? 'var(--amber)'       :
-                           'var(--text-muted)';
 
   return (
-    <EntityCard accent={accent} onClick={onClick}>
-      {/* Header: status badge + Geopolitical eyebrow */}
-      <div className="flex items-center gap-2 mb-2">
-        <Badge
-          status={status === 'active' ? 'active' : 'inactive'}
-          label={status.charAt(0).toUpperCase() + status.slice(1)}
-          size="xs"
-          pulse={status === 'active'}
-        />
-        <span
-          className="ml-auto font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          Geopolitical
-        </span>
-      </div>
-
-      <div
-        className="font-display text-[13px] font-bold truncate mb-1"
-        style={{ color: 'var(--text-primary)', letterSpacing: '-0.1px' }}
-      >
-        {campaign.name}
-      </div>
-      {campaign.description && (
-        <div
-          className="font-mono text-[10px] mb-3 line-clamp-2"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          {campaign.description}
-        </div>
-      )}
-
-      {/* Adversary → Target country flow */}
-      <div
-        className="flex items-center gap-3 mt-2 pt-2"
-        style={{ borderTop: '1px solid var(--border-base)' }}
-      >
-        <div>
-          <div
-            className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            Adversary
-          </div>
-          <div className="flex gap-1">
-            {adversaryCountries.slice(0, 4).map(c => (
-              <span key={c} className="text-sm" title={c}>{countryFlag(c)}</span>
-            ))}
-            {adversaryCountries.length > 4 && (
-              <span className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                +{adversaryCountries.length - 4}
-              </span>
-            )}
-          </div>
-        </div>
-        <span style={{ color: 'var(--text-muted)' }}>{'→'}</span>
-        <div>
-          <div
-            className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            Targets
-          </div>
-          <div className="flex gap-1">
-            {targetCountries.slice(0, 4).map(c => (
-              <span key={c} className="text-sm" title={c}>{countryFlag(c)}</span>
-            ))}
-            {targetCountries.length > 4 && (
-              <span className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                +{targetCountries.length - 4}
-              </span>
-            )}
-          </div>
-        </div>
-        {threatActors.length > 0 && (
-          <div className="ml-auto text-right">
-            <div
-              className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
+    <Card
+      variant="elevated"
+      hover
+      onClick={onClick}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
+    >
+      {/* Header: name (mono caps) + status badge + Geopolitical eyebrow */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="font-mono text-[13px] font-bold uppercase tracking-wide truncate"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {campaign.name}
+            </span>
+            <Badge
+              status={status === 'active' ? 'active' : 'inactive'}
+              label={status.charAt(0).toUpperCase() + status.slice(1)}
+              size="xs"
+              pulse={status === 'active'}
+            />
+            <span
+              className="ml-auto font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
               style={{ color: 'var(--text-muted)' }}
             >
-              Actors
-            </div>
-            <div
-              className="font-mono text-[10px] font-bold"
-              style={{ color: 'var(--sev-critical)' }}
-            >
-              {threatActors.length} linked
-            </div>
+              Geopolitical
+            </span>
           </div>
-        )}
+          {campaign.description && (
+            <div
+              className="font-mono text-[10px] mt-0.5 line-clamp-2"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              {campaign.description}
+            </div>
+          )}
+        </div>
       </div>
-    </EntityCard>
+
+      {/* Metrics row: adversary count / target count / actor count */}
+      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>ADVERSARY</div>
+          <div className="text-base flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
+            <span>{adversaryCountries.length}</span>
+            <span className="text-xs">
+              {adversaryCountries.slice(0, 3).map(c => countryFlag(c)).join(' ')}
+            </span>
+          </div>
+        </div>
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>TARGETS</div>
+          <div className="text-base flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
+            <span>{targetCountries.length}</span>
+            <span className="text-xs">
+              {targetCountries.slice(0, 3).map(c => countryFlag(c)).join(' ')}
+            </span>
+          </div>
+        </div>
+        <div>
+          <div style={{ color: 'var(--text-muted)' }}>ACTORS</div>
+          <div
+            className="text-base"
+            style={{ color: threatActors.length > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}
+          >
+            {threatActors.length}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
