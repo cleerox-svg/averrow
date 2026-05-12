@@ -1,15 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useProviderDetail, useProviderThreats } from '@/hooks/useProviders';
-import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
-import { StatCard } from '@/components/ui/StatCard';
+import { Card, Badge, StatCard, EmptyState } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Tabs } from '@/components/ui/Tabs';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { PageLoader } from '@/components/ui/PageLoader';
-import { Globe } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { Globe, Mail, ExternalLink, Zap } from 'lucide-react';
 import { Table, Th, Td } from '@/components/ui/Table';
 import { relativeTime } from '@/lib/time';
 
@@ -79,13 +76,103 @@ export function ProviderDetail() {
         {provider.country && <Badge variant="default">{provider.country}</Badge>}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard label="Active Threats" value={provider.active_threats ?? 0} />
         <StatCard label="Total Threats" value={provider.total_threats ?? 0} />
         <StatCard label="Brands Targeted" value={provider.brands_targeted ?? 0} />
-        <StatCard label="Avg Response" value={provider.avg_response_time ? `${provider.avg_response_time}h` : '—'} />
-        <StatCard label="Reputation" value={provider.reputation_score ?? '—'} />
       </div>
+
+      {/* Abuse contact panel — from takedown_providers directory. Sparrow
+          uses this to route takedown filings; surfacing it here proves
+          the channel is wired. Hidden entirely when no directory match. */}
+      {provider.abuse_contact && (
+        <Card hover={false}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <SectionLabel>Abuse channel</SectionLabel>
+            <Badge variant="info">{provider.abuse_contact.provider_type.replace('_', ' ')}</Badge>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {provider.abuse_contact.abuse_email && (
+              <div className="flex items-start gap-2">
+                <Mail size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Email
+                  </div>
+                  <a
+                    href={`mailto:${provider.abuse_contact.abuse_email}`}
+                    className="text-sm break-all font-mono hover:underline"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {provider.abuse_contact.abuse_email}
+                  </a>
+                </div>
+              </div>
+            )}
+            {provider.abuse_contact.abuse_url && (
+              <div className="flex items-start gap-2">
+                <ExternalLink size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Report URL
+                  </div>
+                  <a
+                    href={provider.abuse_contact.abuse_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm break-all font-mono hover:underline"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {provider.abuse_contact.abuse_url.replace(/^https?:\/\//, '')}
+                  </a>
+                </div>
+              </div>
+            )}
+            {provider.abuse_contact.abuse_api_url && (
+              <div className="flex items-start gap-2">
+                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    API {provider.abuse_contact.abuse_api_type ? `· ${provider.abuse_contact.abuse_api_type}` : ''}
+                  </div>
+                  <span className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {provider.abuse_contact.abuse_api_url.replace(/^https?:\/\//, '')}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+          {(provider.abuse_contact.avg_response_hours != null || provider.abuse_contact.success_rate != null) && (
+            <div className="grid grid-cols-2 gap-4 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+              {provider.abuse_contact.avg_response_hours != null && (
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    Avg response
+                  </div>
+                  <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {provider.abuse_contact.avg_response_hours}h
+                  </div>
+                </div>
+              )}
+              {provider.abuse_contact.success_rate != null && (
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    Success rate
+                  </div>
+                  <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {Math.round(provider.abuse_contact.success_rate * 100)}%
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {provider.abuse_contact.notes && (
+            <div className="font-mono text-[11px] mt-3" style={{ color: 'var(--text-tertiary)' }}>
+              {provider.abuse_contact.notes}
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">

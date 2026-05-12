@@ -361,6 +361,17 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
 
     const displayName = providerInfo?.name ?? decoded;
 
+    // takedown_providers is the abuse-contact directory. Match by
+    // case-insensitive provider name; falls back to NULL if no entry.
+    // Used by Sparrow for takedown routing; exposing it here lets
+    // operators see the abuse channel and SLA on the detail page.
+    const abuseContact = await env.DB.prepare(
+      `SELECT provider_name, provider_type, abuse_email, abuse_url, abuse_api_url,
+              abuse_api_type, avg_response_hours, success_rate, notes
+       FROM takedown_providers
+       WHERE LOWER(provider_name) = LOWER(?) LIMIT 1`
+    ).bind(displayName).first();
+
     const [stats, brandBreakdown, typeBreakdown] = await Promise.all([
       env.DB.prepare(`
         SELECT COUNT(*) AS total_threats,
@@ -392,6 +403,7 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
         country: providerInfo?.country ?? null,
         reputation_score: providerInfo?.reputation_score ?? null,
         avg_response_time: providerInfo?.avg_response_time ?? null,
+        abuse_contact: abuseContact ?? null,
         ...stats,
         brand_breakdown: brandBreakdown.results,
         type_breakdown: typeBreakdown.results,

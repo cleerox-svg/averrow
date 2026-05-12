@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Fragment, useState, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   Badge,
@@ -171,6 +171,21 @@ function OperationCard({
               {operation.cluster_name || `Cluster ${operation.id.slice(0, 8)}`}
             </span>
             <StatusBadge status={operation.status} />
+            {operation.actor_id && operation.actor_name && (
+              <Link
+                to={`/threat-actors/${operation.actor_id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded transition-colors hover:underline"
+                style={{
+                  color: 'var(--blue)',
+                  background: 'rgba(10, 138, 181, 0.10)',
+                  border: '1px solid rgba(10, 138, 181, 0.30)',
+                }}
+                title={`Attributed to ${operation.actor_name}`}
+              >
+                {operation.actor_name}
+              </Link>
+            )}
           </div>
           <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
             {operation.first_detected
@@ -658,9 +673,6 @@ export function Campaigns() {
   const allOperations = operations ?? [];
   const allCampaigns = (campaignsRes ?? []) as Campaign[];
 
-  // Find selected operation for detail panel
-  const selectedOperation = allOperations.find(o => o.id === selectedOperationId) ?? null;
-
   // Filter & sort campaigns
   const filteredCampaigns = useMemo(() => {
     let result = [...allCampaigns];
@@ -751,21 +763,23 @@ export function Campaigns() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {allOperations.map(op => (
-                <OperationCard
-                  key={op.id}
-                  operation={op}
-                  isSelected={selectedOperationId === op.id}
-                  onSelect={id => setSelectedOperationId(selectedOperationId === id ? null : id)}
-                />
+                <Fragment key={op.id}>
+                  <OperationCard
+                    operation={op}
+                    isSelected={selectedOperationId === op.id}
+                    onSelect={id => setSelectedOperationId(selectedOperationId === id ? null : id)}
+                  />
+                  {selectedOperationId === op.id && (
+                    <div className="col-span-full">
+                      <OperationDetailPanel
+                        operationId={op.id}
+                        operation={op}
+                      />
+                    </div>
+                  )}
+                </Fragment>
               ))}
             </div>
-
-            {/* Operation Detail Panel */}
-            {selectedOperationId && selectedOperation && (
-              <div className="mt-4">
-                <OperationDetailPanel operationId={selectedOperationId} operation={selectedOperation} />
-              </div>
-            )}
 
             {(opsStats?.total_clusters ?? 0) > 12 && (
               <div className="mt-3 text-center">

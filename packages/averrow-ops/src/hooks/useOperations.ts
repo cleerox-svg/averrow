@@ -15,6 +15,8 @@ export interface Operation {
   first_detected: string | null;
   last_seen: string | null;
   last_updated: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
   threat_history?: number[];
 }
 

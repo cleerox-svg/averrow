@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   Card,
@@ -794,26 +794,23 @@ export function Providers() {
               ))}
             </div>
           ) : providers && providers.length > 0 ? (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {providers.map(provider => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {providers.map(provider => (
+                <Fragment key={provider.id}>
                   <ProviderCard
-                    key={provider.id}
                     provider={provider}
                     clusters={clusters ?? []}
                     isSelected={selectedProviderId === provider.id}
                     onSelect={setSelectedProviderId}
                   />
-                ))}
-              </div>
-
-              {/* Detail Panel */}
-              {selectedProviderId && (
-                <div className="mt-4">
-                  <ProviderDetailPanel providerId={selectedProviderId} />
-                </div>
-              )}
-            </>
+                  {selectedProviderId === provider.id && (
+                    <div className="col-span-full">
+                      <ProviderDetailPanel providerId={provider.id} />
+                    </div>
+                  )}
+                </Fragment>
+              ))}
+            </div>
           ) : (
             <Card padding="48px" className="text-center">
               <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>

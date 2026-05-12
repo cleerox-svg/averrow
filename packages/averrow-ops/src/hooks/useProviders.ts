@@ -43,6 +43,18 @@ export interface Cluster {
   last_updated: string | null;
 }
 
+export interface AbuseContact {
+  provider_name: string;
+  provider_type: 'registrar' | 'hosting' | 'social_platform' | 'cdn' | 'email_provider' | 'reporting';
+  abuse_email: string | null;
+  abuse_url: string | null;
+  abuse_api_url: string | null;
+  abuse_api_type: 'rest' | 'form' | 'email' | null;
+  avg_response_hours: number | null;
+  success_rate: number | null;
+  notes: string | null;
+}
+
 export interface ProviderDetail {
   id: string;
   name: string;
@@ -56,6 +68,7 @@ export interface ProviderDetail {
   campaigns: number;
   first_seen: string;
   last_seen: string;
+  abuse_contact: AbuseContact | null;
   brand_breakdown: Array<{ brand_id: string | null; brand_name: string | null; count: number }>;
   type_breakdown: Array<{ threat_type: string; count: number }>;
 }

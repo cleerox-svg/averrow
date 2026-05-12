@@ -1,5 +1,6 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { StatCard } from '@/components/ui/StatCard';
+import { ArrowLeft, Search } from 'lucide-react';
+import { Card, StatCard, EmptyState } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useThreatActorDetail } from '@/hooks/useThreatActors';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
@@ -44,8 +45,27 @@ export function ThreatActorDetail() {
 
   if (!actor) {
     return (
-      <div className="p-6">
-        <p className="text-gauge-gray font-mono">Threat actor not found.</p>
+      <div className="p-6 space-y-4">
+        <button
+          onClick={() => navigate('/threat-actors')}
+          className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
+          style={{ color: 'var(--text-tertiary)' }}
+        >
+          <ArrowLeft size={12} /> Back to Threat Actors
+        </button>
+        <Card hover={false}>
+          <EmptyState
+            icon={<Search />}
+            title="Threat actor not found"
+            subtitle="The ID may have changed or the actor was merged. Browse the full registry to find them."
+            variant="scanning"
+            action={{
+              label: 'Browse all threat actors',
+              onClick: () => navigate('/threat-actors'),
+              variant: 'secondary',
+            }}
+          />
+        </Card>
       </div>
     );
   }
@@ -81,7 +101,7 @@ export function ThreatActorDetail() {
       {/* Back nav */}
       <button
         onClick={() => navigate('/threat-actors')}
-        className="text-[11px] text-gauge-gray hover:text-instrument-white font-mono transition-colors"
+        className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
       >
         &larr; Back to Threat Actors
       </button>
@@ -89,16 +109,16 @@ export function ThreatActorDetail() {
       {/* Header */}
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-mono font-bold text-instrument-white">{actor.name}</h1>
+          <h1 className="text-xl font-mono font-bold text-[var(--text-primary)]">{actor.name}</h1>
           <span className="text-lg">{countryFlag(actor.country)}</span>
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold uppercase ${
-            actor.status === 'active' ? 'bg-signal-red/20 text-red-400 border-signal-red/30' : 'bg-white/5 text-gauge-gray border-white/10'
+            actor.status === 'active' ? 'bg-[var(--sev-critical)]/20 text-[var(--sev-critical)] border-[var(--sev-critical)]/30' : 'bg-white/5 text-[var(--text-tertiary)] border-white/10'
           }`}>
             {actor.status}
           </span>
         </div>
         {aliases.length > 0 && (
-          <p className="text-[11px] text-gauge-gray font-mono mt-1">
+          <p className="text-[11px] text-[var(--text-tertiary)] font-mono mt-1">
             Also known as: {aliases.join(', ')}
           </p>
         )}
@@ -111,19 +131,19 @@ export function ThreatActorDetail() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard
           title="ATTRIBUTION"
-          metric={<span className="text-lg sm:text-[28px] font-bold leading-none text-signal-red">{actor.attribution ?? '?'}</span>}
+          metric={<span className="text-lg sm:text-[28px] font-bold leading-none text-[var(--sev-critical)]">{actor.attribution ?? '?'}</span>}
           metricLabel="state sponsor"
         >
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-signal-red" />
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--sev-critical)]" />
               <span className="text-[11px] text-white/60">Attribution</span>
-              <span className="text-[11px] font-mono text-instrument-white">{actor.attribution ?? 'Unknown'}</span>
+              <span className="text-[11px] font-mono text-[var(--text-primary)]">{actor.attribution ?? 'Unknown'}</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-afterburner" />
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--amber)]" />
               <span className="text-[11px] text-white/60">Country</span>
-              <span className="text-[11px] font-mono text-instrument-white">{actor.country ?? 'Unknown'}</span>
+              <span className="text-[11px] font-mono text-[var(--text-primary)]">{actor.country ?? 'Unknown'}</span>
             </div>
           </div>
         </StatCard>
@@ -171,7 +191,7 @@ export function ThreatActorDetail() {
 
       {/* Campaigns */}
       {campaigns.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3 flex items-center gap-2">
             Active Campaigns
             <span className="flex-1 h-px bg-white/[0.06]" />
@@ -184,7 +204,7 @@ export function ThreatActorDetail() {
                   to={`/campaigns/${campaign.id}`}
                   className="flex items-center justify-between p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.10] transition-all group"
                 >
-                  <p className="text-instrument-white text-sm font-medium group-hover:text-[var(--amber)] transition-colors">
+                  <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--amber)] transition-colors">
                     {campaign.name}
                   </p>
                   <span className="text-white/40 group-hover:text-[var(--amber)] transition-colors">&rarr;</span>
@@ -194,7 +214,7 @@ export function ThreatActorDetail() {
                   key={`${campaign.name}-${idx}`}
                   className="flex items-center p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]"
                 >
-                  <p className="text-instrument-white text-sm">{campaign.name}</p>
+                  <p className="text-[var(--text-primary)] text-sm">{campaign.name}</p>
                 </div>
               )
             ))}
@@ -204,13 +224,13 @@ export function ThreatActorDetail() {
 
       {/* TTPs */}
       {ttps.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Tactics, Techniques & Procedures
           </h2>
           <div className="flex flex-wrap gap-2">
             {ttps.map(ttp => (
-              <span key={ttp} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[11px] text-instrument-white">
+              <span key={ttp} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[11px] text-[var(--text-primary)]">
                 {ttp.replace(/_/g, ' ')}
               </span>
             ))}
@@ -220,14 +240,14 @@ export function ThreatActorDetail() {
 
       {/* Infrastructure */}
       {actor.infrastructure && actor.infrastructure.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Known Infrastructure
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-[11px] font-mono">
               <thead>
-                <tr className="text-gauge-gray text-left border-b border-white/10">
+                <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
                   <th className="pb-2 pr-4">ASN</th>
                   <th className="pb-2 pr-4">Domain</th>
                   <th className="pb-2 pr-4">Country</th>
@@ -244,7 +264,7 @@ export function ThreatActorDetail() {
                     <td className="py-2 pr-4">
                       <span className={
                         infra.confidence === 'confirmed' ? 'text-green-400' :
-                        infra.confidence === 'high' ? 'text-[var(--amber)]' : 'text-gauge-gray'
+                        infra.confidence === 'high' ? 'text-[var(--amber)]' : 'text-[var(--text-tertiary)]'
                       }>
                         {infra.confidence}
                       </span>
@@ -260,7 +280,7 @@ export function ThreatActorDetail() {
 
       {/* Targeted Brands */}
       {actor.targets && actor.targets.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Targeted Brands ({actor.targets.length})
           </h2>
@@ -269,20 +289,20 @@ export function ThreatActorDetail() {
               <button
                 key={target.id}
                 onClick={() => target.brand_id ? navigate(`/brands/${target.brand_id}`) : undefined}
-                className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left hover:border-afterburner/30 transition-all"
+                className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left hover:border-[var(--amber)]/30 transition-all"
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-mono text-instrument-white font-semibold">
+                  <div className="text-[11px] font-mono text-[var(--text-primary)] font-semibold">
                     {target.brand_name ?? target.sector ?? 'Unknown'}
                   </div>
                   {target.canonical_domain && (
-                    <div className="text-[10px] text-gauge-gray">{target.canonical_domain}</div>
+                    <div className="text-[10px] text-[var(--text-tertiary)]">{target.canonical_domain}</div>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   <BIMIGradeBadge grade={(target as any).bimi_grade ?? null} size="sm" tooltip />
                   {target.sector && (
-                    <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-gauge-gray border border-white/5">
+                    <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-[var(--text-tertiary)] border border-white/5">
                       {target.sector}
                     </span>
                   )}
@@ -304,7 +324,7 @@ export function ThreatActorDetail() {
           static seed-data feel with real cross-source activity
           per actor. */}
       {actor.recent_attributions && actor.recent_attributions.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Recent Activity ({actor.recent_attributions.length})
           </h2>
@@ -352,7 +372,7 @@ export function ThreatActorDetail() {
           that named this actor. Five most recent geopolitical-flagged
           items first; click opens the source article in a new tab. */}
       {actor.news_mentions && actor.news_mentions.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             News Mentions ({actor.news_mentions.length})
           </h2>
@@ -370,7 +390,7 @@ export function ThreatActorDetail() {
                       {m.source_feed}
                     </span>
                     {m.is_geopolitical === 1 && (
-                      <span className="rounded bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-red-400">
+                      <span className="rounded bg-[var(--sev-critical)]/10 border border-[var(--sev-critical)]/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-[var(--sev-critical)]">
                         Geopolitical
                       </span>
                     )}

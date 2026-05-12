@@ -37,6 +37,7 @@ export async function handleListOperations(request: Request, env: Env): Promise<
       SELECT ic.id, ic.cluster_name, ic.asns, ic.countries, ic.threat_count,
              ic.status, ic.confidence_score, ic.agent_notes,
              ic.first_detected, ic.last_seen, ic.last_updated,
+             ic.actor_id, ta.name AS actor_name,
              (
                SELECT json_group_array(daily_count)
                FROM (
@@ -48,7 +49,9 @@ export async function handleListOperations(request: Request, env: Env): Promise<
                  ORDER BY date(t2.created_at) ASC
                )
              ) as threat_history_json
-      FROM infrastructure_clusters ic ${where}
+      FROM infrastructure_clusters ic
+      LEFT JOIN threat_actors ta ON ta.id = ic.actor_id
+      ${where}
       ORDER BY
         CASE ic.status
           WHEN 'accelerating' THEN 0
