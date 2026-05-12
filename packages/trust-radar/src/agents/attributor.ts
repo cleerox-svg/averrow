@@ -97,7 +97,13 @@ export const attributorAgent: AgentModule = {
   color: "#9333ea",
   trigger: "scheduled",
   requiresApproval: false,
-  stallThresholdMinutes: 20,
+  // Bumped 20→60 on 2026-05-12. Attributor pulls unattributed
+  // infrastructure_clusters, runs Haiku classification per cluster,
+  // writes threat_attributions + caches actor_id on the cluster.
+  // Cold runs across many clusters with Haiku rate limits cross 50
+  // min — 20-min threshold (50-min ceiling with buffer) was tripping
+  // legitimate work. 60 declared → 90-min ceiling.
+  stallThresholdMinutes: 60,
   parallelMax: 1,
   costGuard: "enforced",
   budget: { monthlyTokenCap: 50_000_000 },
