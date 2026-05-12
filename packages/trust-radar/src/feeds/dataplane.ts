@@ -1,6 +1,6 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { isPrivateIP } from "../lib/geoip";
 
 /**
  * DataPlane.org — first-party honeypot-derived attacker IP feeds.
@@ -17,12 +17,16 @@ import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
  *   hour%6=4  sipinvitation   — SIP scanner IPs (VoIP probing)
  *   hour%6=5  proto41         — IPv6-tunneling abuse (proto 41)
  *
- * The first impl (PR #1275) pulled all 6 per tick and was reaped
- * at 15 min by navigator — 5k IPs × 6 endpoints × sequential D1
- * inserts blew the scheduled-handler CPU budget. Rotating one
- * endpoint per tick keeps each run bounded; over 6 hours we cover
- * the full mesh and steady-state inflow per endpoint sits well
- * under the budget.
+ * Iteration history:
+ *   - PR #1275 (initial): pulled all 6 endpoints per tick. Reaped
+ *     at 15min — sequential D1 inserts blew the CPU budget.
+ *   - PR #1276 (rotate): one endpoint per tick. Still reaped —
+ *     per-endpoint volume (5k+ IPs) × per-IP `isDuplicate` + `insertThreat`
+ *     + `markSeen` round-trips was still too much.
+ *   - This PR (batched): copy the cins_army pattern — sample down
+ *     to SAMPLE_SIZE, batched `db.batch()` INSERT OR IGNORE for
+ *     DB-side dedup, fire-and-forget KV markSeen at end. Per-tick
+ *     runtime should now be <60 sec.
  *
  * Every line is `<ASN>|<ASN_org>|<IP>|<last_seen>|<category>`
  * (plus blank/comment lines we filter). We only extract the IP +
@@ -68,6 +72,13 @@ const ENDPOINTS: DataPlaneEndpoint[] = [
     severity: "low", confidence: 65, category: "ipv6_proto41_abuse" },
 ];
 
+// Sample size per tick. With 6-endpoint rotation, 500 × 6 = 3000
+// IPs/6h across the full mesh. Random sampling means we get
+// breadth across the upstream list rather than always the first N.
+const SAMPLE_SIZE = 500;
+const BATCH_SIZE = 50;
+const FETCH_TIMEOUT_MS = 60_000;
+
 /**
  * Parse one DataPlane text line into an IP, tolerating their
  * pipe-delimited format AND the bare-IP variant some endpoints
@@ -92,13 +103,25 @@ function extractIp(line: string): string | null {
   return null;
 }
 
+/** Fisher-Yates partial shuffle — returns the first n elements. */
+function sample<T>(arr: T[], n: number): T[] {
+  const copy = arr.slice();
+  const len = copy.length;
+  const limit = Math.min(n, len);
+  for (let i = 0; i < limit; i++) {
+    const j = i + Math.floor(Math.random() * (len - i));
+    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+  }
+  return copy.slice(0, limit);
+}
+
 async function fetchEndpoint(endpoint: DataPlaneEndpoint): Promise<string[]> {
   const res = await fetch(endpoint.url, {
     headers: {
       Accept: "text/plain",
       "User-Agent": "Averrow-ThreatIntel/1.0",
     },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`dataplane HTTP ${res.status} from ${endpoint.url}`);
   const text = await res.text();
@@ -107,17 +130,12 @@ async function fetchEndpoint(endpoint: DataPlaneEndpoint): Promise<string[]> {
 
 export const dataplane: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    // Pick one endpoint per tick. UTC hour mod 6 walks the full
-    // mesh every 6 hours; first impl pulled all 6 per tick and
-    // got reaped (~30k inserts blew the CPU budget).
+    // Pick one endpoint per tick. UTC hour mod 6 walks the full mesh
+    // every 6 hours.
     const hour = new Date().getUTCHours();
     const endpoint = ENDPOINTS[hour % ENDPOINTS.length]!;
 
-    let itemsFetched = 0;
-    let itemsNew = 0;
-    let itemsDuplicate = 0;
-    let itemsError = 0;
-
+    const db = ctx.env.DB;
     let lines: string[];
     try {
       lines = await fetchEndpoint(endpoint);
@@ -126,40 +144,72 @@ export const dataplane: FeedModule = {
       throw err;
     }
 
+    // Parse every line, then random-sample down to SAMPLE_SIZE so
+    // we don't burn the CPU budget on 5k+ inserts per tick. Over
+    // ENDPOINTS.length hours we cover the breadth of each list.
+    const allIps: string[] = [];
     for (const line of lines) {
       const ip = extractIp(line);
-      if (!ip) continue;
-      itemsFetched++;
+      if (ip) allIps.push(ip);
+    }
+    const ips = sample(allIps, SAMPLE_SIZE);
+
+    // Batched INSERT OR IGNORE — dedup is DB-side, no per-IP KV
+    // round-trip. is_private_ip stamped via the shared isPrivateIP
+    // helper for consistency with feedRunner.insertThreat.
+    let itemsNew = 0;
+    let firstError: string | null = null;
+    for (let i = 0; i < ips.length; i += BATCH_SIZE) {
+      const batch = ips.slice(i, i + BATCH_SIZE);
+      const stmts = batch.map((ip) => {
+        const iocJson = JSON.stringify({
+          ip,
+          category: endpoint.category,
+          dataplane_feed: endpoint.name,
+        });
+        return db.prepare(
+          `INSERT OR IGNORE INTO threats
+             (id, source_feed, threat_type, malicious_url, malicious_domain,
+              ip_address, ioc_value, severity, confidence_score, status,
+              is_private_ip, first_seen, last_seen, created_at)
+           VALUES (?, 'dataplane', 'scanning', NULL, NULL,
+                   ?, ?, ?, ?, 'active',
+                   ?, datetime('now'), datetime('now'), datetime('now'))`,
+        ).bind(
+          threatId(`dataplane_${endpoint.name}`, "ip", ip),
+          ip,
+          iocJson,
+          endpoint.severity,
+          endpoint.confidence,
+          isPrivateIP(ip) ? 1 : 0,
+        );
+      });
 
       try {
-        if (await isDuplicate(ctx.env, "ip", ip)) {
-          itemsDuplicate++;
-          continue;
-        }
-        await insertThreat(ctx.env.DB, {
-          id: threatId(`dataplane_${endpoint.name}`, "ip", ip),
-          source_feed: "dataplane",
-          threat_type: "scanning",
-          malicious_url: null,
-          malicious_domain: null,
-          ip_address: ip,
-          ioc_value: JSON.stringify({
-            ip,
-            category: endpoint.category,
-            dataplane_feed: endpoint.name,
-          }),
-          severity: endpoint.severity,
-          confidence_score: endpoint.confidence,
-          status: "active",
-        });
-        await markSeen(ctx.env, "ip", ip);
-        itemsNew++;
+        const results = await db.batch(stmts);
+        const batchNew = results.reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
+        itemsNew += batchNew;
       } catch (err) {
-        itemsError++;
-        console.error(`[dataplane:${endpoint.name}] insert error:`, err);
+        if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+        console.error(`[dataplane:${endpoint.name}] batch insert error:`, err);
       }
     }
 
-    return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
+    // Mark inserted IPs as seen in KV — fire-and-forget Promise.all.
+    // Only the ones that actually inserted (itemsNew > 0) — if the
+    // whole batch failed we have nothing useful to cache.
+    if (itemsNew > 0) {
+      const kvPromises = ips.map((ip) =>
+        ctx.env.CACHE.put(`dedup:ip:${ip}`, "1", { expirationTtl: 86_400 }).catch(() => {}),
+      );
+      await Promise.all(kvPromises);
+    }
+
+    return {
+      itemsFetched: allIps.length,
+      itemsNew,
+      itemsDuplicate: ips.length - itemsNew,
+      itemsError: firstError ? 1 : 0,
+    };
   },
 };
