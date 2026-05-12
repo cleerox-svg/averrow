@@ -107,7 +107,33 @@ function buildThreatRow(
 
 export const taxii: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    const { env, feedName } = ctx;
+    // Wall-clock cap on the entire ingest. Feeds dispatched via the
+    // standard FeedRunner already get a feed-pull-reaper at 15 min,
+    // but a clean Promise.race bail-out at 12 min surfaces a
+    // descriptive error in pull-history INSTEAD of the generic
+    // "reaped by navigator" stamp. Diagnostic 12:08 UTC (post-0167):
+    // 10/11 OTX TAXII pulls reaped — the response body parse was
+    // hanging on a too-large bundle and the runFeed try/catch never
+    // resolved. Migration 0169 backstops the cold-start cursor so
+    // that's much less likely now, but the timeout is cheap defense.
+    const TAXII_WALLTIME_MS = 12 * 60_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`taxii: ${ctx.feedName} ingest timed out after ${TAXII_WALLTIME_MS}ms`)),
+        TAXII_WALLTIME_MS,
+      );
+    });
+    try {
+      return await Promise.race([taxiiIngest(ctx), timeoutPromise]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  },
+};
+
+async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
+  const { env, feedName } = ctx;
 
     // Pull the TAXII-specific config back from feed_configs. The
     // standard FeedContext only carries feed_name + source_url, so
@@ -193,5 +219,4 @@ export const taxii: FeedModule = {
     }
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
-  },
-};
+}
