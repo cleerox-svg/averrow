@@ -11,7 +11,7 @@ import {
   Badge,
 } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
-import { Globe } from 'lucide-react';
+import { Globe, Mail, ExternalLink, Zap } from 'lucide-react';
 import {
   useProviderIntelligence,
   useProviders,
@@ -507,6 +507,97 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
         </div>
       </div>
 
+      {/* Abuse channel — from takedown_providers directory. Sparrow uses
+          this to route takedown filings; surfacing it here proves the
+          channel is wired. Hidden entirely when no directory match. */}
+      {detail.abuse_contact && (
+        <div className="mb-6 pb-6" style={{ borderBottom: '1px solid var(--border-base)' }}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+              Abuse channel
+            </div>
+            <Badge size="xs">{detail.abuse_contact.provider_type.replace('_', ' ')}</Badge>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {detail.abuse_contact.abuse_email && (
+              <div className="flex items-start gap-2">
+                <Mail size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Email
+                  </div>
+                  <a
+                    href={`mailto:${detail.abuse_contact.abuse_email}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-sm break-all font-mono hover:underline"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {detail.abuse_contact.abuse_email}
+                  </a>
+                </div>
+              </div>
+            )}
+            {detail.abuse_contact.abuse_url && (
+              <div className="flex items-start gap-2">
+                <ExternalLink size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Report URL
+                  </div>
+                  <a
+                    href={detail.abuse_contact.abuse_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-sm break-all font-mono hover:underline"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {detail.abuse_contact.abuse_url.replace(/^https?:\/\//, '')}
+                  </a>
+                </div>
+              </div>
+            )}
+            {detail.abuse_contact.abuse_api_url && (
+              <div className="flex items-start gap-2">
+                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    API {detail.abuse_contact.abuse_api_type ? `· ${detail.abuse_contact.abuse_api_type}` : ''}
+                  </div>
+                  <span className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {detail.abuse_contact.abuse_api_url.replace(/^https?:\/\//, '')}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+          {(detail.abuse_contact.avg_response_hours != null || detail.abuse_contact.success_rate != null) && (
+            <div className="grid grid-cols-2 gap-4 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+              {detail.abuse_contact.avg_response_hours != null && (
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    Avg response
+                  </div>
+                  <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {detail.abuse_contact.avg_response_hours}h
+                  </div>
+                </div>
+              )}
+              {detail.abuse_contact.success_rate != null && (
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    Success rate
+                  </div>
+                  <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {Math.round(detail.abuse_contact.success_rate * 100)}%
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Three columns */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — Provider Info */}
@@ -801,7 +892,7 @@ export function Providers() {
                     provider={provider}
                     clusters={clusters ?? []}
                     isSelected={selectedProviderId === provider.id}
-                    onSelect={setSelectedProviderId}
+                    onSelect={(id) => setSelectedProviderId(prev => prev === id ? null : id)}
                   />
                   {selectedProviderId === provider.id && (
                     <div className="col-span-full">
