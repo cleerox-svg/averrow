@@ -60,11 +60,15 @@ import { urlscanio } from "./urlscanio";
 // NIST NVD full CVE catalog (supplements CISA KEV with broader
 // vuln coverage) + CryptoScamDB (crypto-specific phishing /
 // scam URLs, valuable for fintech customers) + DigitalSide.it
-// OSINT lists + TweetFeed (researcher-curated IOCs from X).
+// OSINT lists + TweetFeed (researcher-curated IOCs from X) +
+// DataPlane (first-party honeypot mesh, attacker IPs by attack
+// category) + Talos IP blocklist (Snort community).
 import { nvd_cve } from "./nvd_cve";
 import { cryptoscamdb } from "./cryptoscamdb";
 import { digitalside_osint } from "./digitalside_osint";
 import { tweetfeed } from "./tweetfeed";
+import { dataplane } from "./dataplane";
+import { talos_ips } from "./talos_ips";
 
 // ─── Generic STIX/TAXII 2.1 Consumer ────────────────────────────
 // One module shared across every TAXII-backed collection; each
@@ -110,11 +114,13 @@ export const feedModules: Record<string, FeedModule> = {
   urlscanio,
 
   // Supplemental no-auth feeds — vulnerabilities + crypto scams
-  // + researcher-curated IOCs.
+  // + researcher-curated IOCs + honeypot-derived attacker IPs.
   nvd_cve,
   cryptoscamdb,
   digitalside_osint,
   tweetfeed,
+  dataplane,
+  talos_ips,
 
   // STIX/TAXII collections — all dispatch to the same generic
   // module; the per-collection params live in feed_configs columns.
