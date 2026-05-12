@@ -967,10 +967,11 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   }
 
   // Daily brand-score snapshot (Brand Health + Exposure split per v3 §9.6).
-  // Runs once at hour===0. Scores monitored+customer tiers only; tracked
-  // brands have no signal worth snapshotting and there are tens of
-  // thousands of them. Per-brand recompute on signal change still happens
-  // via computeBrandExposureScore from the analyst/scanner paths.
+  // Runs once at hour===0. Scores the ENTIRE brand catalog (~78K brands)
+  // via concurrent waves under a 12-min wall-clock budget — see
+  // computeBrandScoresBatch for the rationale. Per-brand recompute on
+  // signal change still happens via computeBrandExposureScore from the
+  // analyst/scanner paths.
   if (hour === 0) {
     try {
       const { computeBrandScoresBatch } = await import('../lib/brand-scoring');
