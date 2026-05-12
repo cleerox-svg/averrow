@@ -10,6 +10,7 @@
 // dumb — eg: "33+" for feeds, "18" for agents, "210K+" for threats.
 
 import type { Env } from "../types";
+import { cachedCount } from "./cached-count";
 
 export interface PublicStats {
   agents_deployed: string;     // e.g. "18"
@@ -49,23 +50,39 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
   } catch { /* ignore */ }
 
   try {
+    // KV-backed inner caches share keys with handlers/stats.ts so the
+    // homepage and /api/public/stats hit the same KV entries instead
+    // of each one running its own COUNT(*). TTLs tuned per CLAUDE.md:
+    // threats fast (15 min), feed_configs + brands slow (1 hour).
     const [agents, feeds, threats, brands] = await Promise.all([
       // Agents: count distinct agent_ids that ran in the last 7 days.
       // Better than COUNT(*) on agent_configs which can include disabled
       // ones; this surfaces the operationally-active set.
-      env.DB.prepare(`
-        SELECT COUNT(DISTINCT agent_id) AS n FROM agent_runs
-        WHERE started_at >= datetime('now', '-7 days')
-      `).first<{ n: number }>(),
-      env.DB.prepare(
-        "SELECT COUNT(*) AS n FROM feed_configs WHERE enabled = 1",
-      ).first<{ n: number }>(),
-      env.DB.prepare(
-        "SELECT COUNT(*) AS n FROM threats",
-      ).first<{ n: number }>(),
-      env.DB.prepare(
-        "SELECT COUNT(*) AS n FROM brands",
-      ).first<{ n: number }>(),
+      cachedCount(env, 'count.agents.distinct_active_7d', 3600, async () => {
+        const r = await env.DB.prepare(`
+          SELECT COUNT(DISTINCT agent_id) AS n FROM agent_runs
+          WHERE started_at >= datetime('now', '-7 days')
+        `).first<{ n: number }>();
+        return r?.n ?? 0;
+      }).then((n) => ({ n })),
+      cachedCount(env, 'count.feed_configs.enabled', 3600, async () => {
+        const r = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM feed_configs WHERE enabled = 1",
+        ).first<{ n: number }>();
+        return r?.n ?? 0;
+      }).then((n) => ({ n })),
+      cachedCount(env, 'count.threats.total', 900, async () => {
+        const r = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM threats",
+        ).first<{ n: number }>();
+        return r?.n ?? 0;
+      }).then((n) => ({ n })),
+      cachedCount(env, 'count.brands.total', 3600, async () => {
+        const r = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM brands",
+        ).first<{ n: number }>();
+        return r?.n ?? 0;
+      }).then((n) => ({ n })),
     ]);
 
     const stats: PublicStats = {

@@ -488,7 +488,24 @@ export const cartographerAgent: AgentModule = {
       for (const row of stuckRows.results) {
         mmdbAttempted++;
         const geo = await lookupGeoMmdb(env, row.ip_address);
-        if (!geo || geo.lat == null || geo.lng == null) continue;
+        if (!geo || geo.lat == null || geo.lng == null) {
+          // Increment the attempt counter even on miss so this IP
+          // eventually drops out of the queue via the < 8 bound.
+          // Without this, GeoLite2-uncovered IPs (sinkholes, CDN,
+          // anycast) get re-selected by the LIMIT 500 selector every
+          // cartographer tick and re-hit D1 forever — see geoip-mmdb
+          // null-cache fix in the same PR.
+          try {
+            await env.DB.prepare(`
+              UPDATE threats
+                 SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
+               WHERE id = ?
+            `).bind(row.id).run();
+          } catch (err) {
+            console.error('[cartographer] mmdb attempt-increment failed:', err instanceof Error ? err.message : err);
+          }
+          continue;
+        }
         try {
           await env.DB.prepare(`
             UPDATE threats SET

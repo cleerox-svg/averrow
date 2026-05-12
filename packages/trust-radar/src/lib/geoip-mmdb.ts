@@ -36,6 +36,16 @@ import type { Env } from '../types';
 // weeks/months. 24h is a good balance of freshness and cache hit rate.
 const KV_TTL_S = 24 * 60 * 60;
 
+// Sentinel stored when D1 returns no row for an IP. Without this,
+// `JSON.stringify(null)` round-trips through `KV.get(..., 'json')` as
+// `null` — indistinguishable from a cache miss — so every subsequent
+// lookup of an unresolvable IP falls through to D1. The result on
+// 2026-05-12 was ~22M geoip-db reads in 6h, almost all of which were
+// retries of IPs GeoLite2 doesn't cover (sinkholes, CDN, anycast).
+// Reading as text + checking the sentinel lets us cache misses
+// effectively.
+const NULL_SENTINEL = "GEOIP_MISS";
+
 // In-memory LRU bound — Workers don't persist across invocations, but
 // within a single hot invocation (e.g. cartographer's Phase 0.5 loop
 // over 500 IPs) repeated lookups hit this. Bounded so a malicious or
@@ -83,11 +93,28 @@ export async function lookupGeoMmdb(env: Env, ip: string): Promise<GeoIpLookupRe
   if (memHit !== undefined) return memHit;
 
   // KV second — cross-invocation cache.
+  //
+  // Read as TEXT (not json) so we can distinguish three states:
+  //   raw === null              → cache miss, fall through to D1
+  //   raw === NULL_SENTINEL     → cached miss (GeoLite2 doesn't cover this IP)
+  //   raw === <stringified hit> → cached hit, parse + return
+  //
+  // Reading as 'json' would collapse the first two into the same
+  // `null` value — the bug fixed here on 2026-05-12.
   try {
-    const cached = await env.CACHE?.get(`geoip:mmdb:${ip}`, 'json') as GeoIpLookupResult | null;
-    if (cached !== null) {
-      addToMemoryLru(ip, cached);
-      return cached;
+    const raw = await env.CACHE?.get(`geoip:mmdb:${ip}`, 'text');
+    if (raw === NULL_SENTINEL) {
+      addToMemoryLru(ip, null);
+      return null;
+    }
+    if (raw !== null && raw !== undefined) {
+      try {
+        const parsed = JSON.parse(raw) as GeoIpLookupResult;
+        addToMemoryLru(ip, parsed);
+        return parsed;
+      } catch {
+        // Malformed cache entry — fall through to D1 and overwrite.
+      }
     }
   } catch {
     // KV read failure is non-fatal — fall through to D1.
@@ -142,11 +169,14 @@ export async function lookupGeoMmdb(env: Env, ip: string): Promise<GeoIpLookupRe
     return null;
   }
 
-  // Cache both sides — null answers count too, otherwise we hammer
-  // D1 every time a sinkhole IP gets retried.
+  // Cache both sides — null answers stored as NULL_SENTINEL so the
+  // read path can distinguish "cached miss" from "cache miss".
+  // Without this, sinkhole / CDN / anycast IPs that GeoLite2 doesn't
+  // cover would re-hit D1 every cartographer cycle forever.
   try {
     if (env.CACHE) {
-      await env.CACHE.put(`geoip:mmdb:${ip}`, JSON.stringify(result), { expirationTtl: KV_TTL_S });
+      const payload = result === null ? NULL_SENTINEL : JSON.stringify(result);
+      await env.CACHE.put(`geoip:mmdb:${ip}`, payload, { expirationTtl: KV_TTL_S });
     }
   } catch {
     // KV write failure is non-fatal.
