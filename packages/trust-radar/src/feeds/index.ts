@@ -56,6 +56,13 @@ import { typosquat_scanner } from "./typosquat_scanner";
 import { phishstats } from "./phishstats";
 import { urlscanio } from "./urlscanio";
 
+// ─── No-auth supplemental feeds ────────────────────────────────
+// NIST NVD full CVE catalog (supplements CISA KEV with broader
+// vuln coverage) + CryptoScamDB (crypto-specific phishing /
+// scam URLs, valuable for fintech customers).
+import { nvd_cve } from "./nvd_cve";
+import { cryptoscamdb } from "./cryptoscamdb";
+
 // ─── Generic STIX/TAXII 2.1 Consumer ────────────────────────────
 // One module shared across every TAXII-backed collection; each
 // subscribed collection is a feed_configs row whose feed_name
@@ -98,6 +105,10 @@ export const feedModules: Record<string, FeedModule> = {
   // Tier-A volume adds — public, no-auth phishing feeds.
   phishstats,
   urlscanio,
+
+  // Supplemental no-auth feeds — vulnerabilities + crypto scams.
+  nvd_cve,
+  cryptoscamdb,
 
   // STIX/TAXII collections — all dispatch to the same generic
   // module; the per-collection params live in feed_configs columns.
