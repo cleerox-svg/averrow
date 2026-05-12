@@ -179,7 +179,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           width="100%"
           height={chartHeight}
         >
-          <AreaChart data={chartData} margin={{ top: 10, right: 8, bottom: 16, left: -16 }}>
+          <AreaChart data={chartData} margin={{ top: 14, right: 8, bottom: 16, left: 0 }}>
             <XAxis
               dataKey="bucket"
               tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
@@ -193,7 +193,11 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
               tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
               axisLine={false}
               tickLine={false}
-              width={44}
+              width={48}
+              // Monotone smoothing curves slightly above the highest data
+              // point; without the 8% domain padding the smoothed peaks
+              // clip against the top of the plot area.
+              domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.08)]}
               tickFormatter={(v: number) => {
                 if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
                 if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
