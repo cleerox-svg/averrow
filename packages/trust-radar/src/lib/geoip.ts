@@ -243,18 +243,16 @@ export interface GeoEnrichResult {
 }
 
 /** SQL WHERE clauses to exclude private/bogon IP ranges at the query level. */
+// Post-0175: filter switched from 11 chained `NOT LIKE` predicates
+// (which forced full-table scans on every cartographer / flight-control
+// / diagnostics callsite) to a single boolean check against the
+// materialized `is_private_ip` column. New rows are stamped by
+// feedRunner.insertThreat via isPrivateIP(); existing rows were
+// backfilled in migration 0175 using the exact same LIKE set so
+// classifications are stable. Callsites consume this string unchanged
+// — the public API is preserved.
 export const PRIVATE_IP_SQL_FILTER = `
-  AND ip_address NOT LIKE '10.%'
-  AND ip_address NOT LIKE '192.168.%'
-  AND ip_address NOT LIKE '172.16.%'
-  AND ip_address NOT LIKE '172.17.%'
-  AND ip_address NOT LIKE '172.18.%'
-  AND ip_address NOT LIKE '172.19.%'
-  AND ip_address NOT LIKE '172.2_.%'
-  AND ip_address NOT LIKE '172.3_.%'
-  AND ip_address NOT LIKE '127.%'
-  AND ip_address NOT LIKE '0.%'
-  AND ip_address NOT LIKE '100.64.%'`;
+  AND is_private_ip = 0`;
 
 export async function enrichThreatsGeo(db: D1Database, kv?: KVNamespace, token?: string): Promise<GeoEnrichResult> {
   const result: GeoEnrichResult = { enriched: 0, total: 0, skippedPrivate: 0, skippedNoResult: 0, errors: [] };

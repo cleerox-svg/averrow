@@ -14,6 +14,7 @@ import type { Env } from "../types";
 import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "../feeds/types";
 import { createNotification } from "./notifications";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./threatScoring";
+import { isPrivateIP } from "./geoip";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -53,13 +54,22 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<v
   // Derive severity from confidence if not set by the feed
   const severity = threat.severity ?? calculateSeverity(confidence);
 
+  // Materialize the private-IP classification at insert time so
+  // cartographer's Phase 0 selector can index on `is_private_ip = 0`
+  // instead of chained NOT LIKE predicates (see migration 0175).
+  // Null IP → 0 (the cartographer selector also filters on
+  // `ip_address IS NOT NULL`, so the column value is irrelevant
+  // for those rows).
+  const isPrivateIp = threat.ip_address ? (isPrivateIP(threat.ip_address) ? 1 : 0) : 0;
+
   await db.prepare(
     `INSERT OR IGNORE INTO threats
        (id, source_feed, threat_type, malicious_url, malicious_domain,
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
         registrar, status, confidence_score, campaign_id, ioc_value, severity,
+        is_private_ip,
         first_seen, last_seen, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              datetime('now'), datetime('now'), datetime('now'))`
   ).bind(
     threat.id,
@@ -78,6 +88,7 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<v
     threat.campaign_id ?? null,
     threat.ioc_value ?? null,
     severity,
+    isPrivateIp,
   ).run();
 }
 
