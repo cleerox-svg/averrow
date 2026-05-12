@@ -49,6 +49,14 @@ import { seclookup } from "./seclookup";
 import { c2_intel_feeds } from "./c2intelfeeds";
 import { typosquat_scanner } from "./typosquat_scanner";
 
+// ─── Generic STIX/TAXII 2.1 Consumer ────────────────────────────
+// One module shared across every TAXII-backed collection; each
+// subscribed collection is a feed_configs row whose feed_name
+// (e.g. taxii_otx, taxii_circl) dispatches to `taxii` below.
+// See lib/taxii-client.ts + lib/stix-parser.ts for the wire +
+// parse layers.
+import { taxii } from "./taxii";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -79,6 +87,10 @@ export const feedModules: Record<string, FeedModule> = {
   c2_intel_feeds,
   typosquat_scanner,
   cisa_iran_iocs,
+
+  // STIX/TAXII collections — all dispatch to the same generic
+  // module; the per-collection params live in feed_configs columns.
+  taxii_otx: taxii,
 };
 
 /**
