@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from 'react';
+import { Fragment, useState, type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell,
@@ -19,7 +20,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
-import { ReportPanel } from '@/components/ui/ReportPanel';
 import { Badge } from '@/components/ui/Badge';
 /* ── Constants ── */
 
@@ -54,14 +54,63 @@ const THREAT_TYPE_LABELS: Record<string, string> = {
 const THREAT_TYPES = Object.keys(THREAT_TYPE_COLORS);
 
 // Briefing summaries arrive as markdown — typically `**Title** — body…`.
-// Cards and modal headers want a clean preview, not raw markdown
-// asterisks. Extract the bold title when present, otherwise fall back
-// to the plain prefix. ReportPanel still parses the full markdown body.
-function briefingPreview(summary: string | undefined, maxLen = 100): string {
-  if (!summary) return 'Untitled';
-  const boldMatch = summary.match(/^\*\*(.+?)\*\*/);
-  const text = boldMatch ? boldMatch[1] : summary;
-  return text.length > maxLen ? text.slice(0, maxLen) : text;
+// Cards want a clean preview, not raw markdown asterisks. Split into
+// title (bold prefix) + body (everything after the em-dash / dash
+// separator). The inline detail panel renders the body verbatim with
+// any remaining asterisks stripped.
+function splitBriefing(summary: string | undefined): { title: string; body: string } {
+  if (!summary) return { title: 'Untitled', body: '' };
+  const boldMatch = summary.match(/^\*\*(.+?)\*\*\s*[—–-]?\s*(.*)$/s);
+  if (boldMatch) {
+    return { title: boldMatch[1] ?? 'Untitled', body: boldMatch[2] ?? '' };
+  }
+  // No bold prefix — first 100 chars become the title, rest is body.
+  return {
+    title: summary.slice(0, 100),
+    body: summary.length > 100 ? summary.slice(100) : '',
+  };
+}
+
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+    .replace(/_(.+?)_/g, '$1')       // italic
+    .replace(/^#+\s+/gm, '');        // headings
+}
+
+function parseIdList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
+    if (typeof parsed === 'string') return [parsed];
+    return [];
+  } catch {
+    // Comma-separated fallback
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+}
+
+interface ParsedDetails {
+  category?: string;
+  title?: string;
+  recommendations?: string[];
+  // Anything else the Observer wrote — surface as a key/value table
+  // so we never lose data we don't yet have a tailored renderer for.
+  [k: string]: unknown;
+}
+
+function parseDetails(raw: string | null | undefined): ParsedDetails | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ParsedDetails;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /* ── Tooltip ── */
@@ -87,53 +136,198 @@ function ChartTooltip({ active, payload, label }: {
 
 /* ── Section 1: Observer Intelligence Briefings ── */
 
-function BriefingCard({ briefing, onOpen }: { briefing: IntelligenceBriefing; onOpen: (b: IntelligenceBriefing) => void }) {
+function BriefingCard({
+  briefing,
+  isSelected,
+  onSelect,
+}: {
+  briefing: IntelligenceBriefing;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
   const sev = briefing.severity?.toLowerCase() ?? 'low';
   const dotColor = SEVERITY_COLORS[sev] ?? '#78A0C8';
-  const title = briefingPreview(briefing.summary, 100);
-  const hasMore = (briefing.summary?.length ?? 0) > title.length;
+  const { title } = splitBriefing(briefing.summary);
 
   return (
-    <div className="rounded-xl p-4" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border: sev === 'critical' ? '1px solid rgba(200,60,60,0.30)' : sev === 'high' ? '1px solid rgba(229,168,50,0.30)' : '1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full text-left rounded-xl p-4 transition-all cursor-pointer hover:bg-white/[0.03]"
+      style={{
+        background: isSelected ? 'rgba(229,168,50,0.06)' : 'rgba(15,23,42,0.50)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: isSelected
+          ? '1px solid rgba(229,168,50,0.45)'
+          : sev === 'critical' ? '1px solid rgba(200,60,60,0.30)'
+          : sev === 'high'     ? '1px solid rgba(229,168,50,0.30)'
+                               : '1px solid var(--border-base)',
+        borderRadius: '0.75rem',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
+      }}
+    >
       <div className="flex items-start gap-2">
         <span
           className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full"
           style={{ backgroundColor: dotColor }}
         />
         <div className="min-w-0 flex-1">
-          <p className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>
+          <p className="text-sm leading-snug font-medium" style={{ color: 'var(--text-primary)' }}>
             {title}
-            {hasMore && '…'}
           </p>
-          <button
-            onClick={() => onOpen(briefing)}
-            className="mt-1 text-[11px] font-mono transition-colors hover:opacity-80"
-            style={{ color: 'var(--amber)' }}
-          >
-            Read full briefing →
-          </button>
-          <div className="mt-2 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-            {new Date(briefing.created_at).toLocaleDateString('en-US', {
+          <div className="mt-2 font-mono text-[10px] flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+            <span>
+              {new Date(briefing.created_at).toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+              })}
+            </span>
+            <span style={{ color: 'var(--amber)' }}>
+              {isSelected ? '▾ Collapse' : '▸ View context'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// Inline detail panel — replaces the right-side ReportPanel drawer. Renders
+// beneath the selected card via grid `col-span-full` so all the context
+// is in the page flow, not behind an overlay.
+function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
+  const { title, body } = splitBriefing(briefing.summary);
+  const cleanBody = stripMarkdown(body).trim();
+  const details = parseDetails(briefing.details);
+  const brandIds = parseIdList(briefing.related_brand_ids);
+  const providerIds = parseIdList(briefing.related_provider_ids);
+  const campaignId = briefing.related_campaign_id ?? null;
+
+  const sev = briefing.severity?.toLowerCase() ?? 'low';
+  const sevBadge: 'critical' | 'high' | 'medium' | 'low' =
+    sev === 'critical' ? 'critical'
+      : sev === 'high' ? 'high'
+      : sev === 'medium' ? 'medium'
+      : 'low';
+
+  // Known structured fields. Everything else falls into a generic
+  // key/value table so we surface whatever the agent wrote without
+  // needing per-category renderers for each.
+  const KNOWN_KEYS = new Set(['title', 'category', 'recommendations']);
+  const extraEntries = details
+    ? Object.entries(details).filter(([k, v]) => !KNOWN_KEYS.has(k) && v != null && v !== '' && (typeof v !== 'object' || Array.isArray(v)))
+    : [];
+
+  return (
+    <Card hover={false} variant="elevated">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+            <Badge status="active" label="Observer" size="xs" />
+            <Badge severity={sevBadge} size="xs" />
+            {details?.category && (
+              <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)' }}>
+                {details.category.replace(/_/g, ' ')}
+              </span>
+            )}
+          </div>
+          <h3 className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+            {title}
+          </h3>
+          <div className="font-mono text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+            Generated {new Date(briefing.created_at).toLocaleString('en-US', {
               month: 'short', day: 'numeric', year: 'numeric',
               hour: '2-digit', minute: '2-digit',
             })}
           </div>
         </div>
       </div>
-    </div>
+
+      {cleanBody && (
+        <p className="text-sm leading-relaxed mb-4" style={{ color: 'var(--text-secondary)' }}>
+          {cleanBody}
+        </p>
+      )}
+
+      {/* Structured detail rows (counts, conflict, etc.) */}
+      {extraEntries.length > 0 && (
+        <div className="mb-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            Signals
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {extraEntries.map(([k, v]) => (
+              <div key={k} className="flex flex-col gap-0.5">
+                <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                  {k.replace(/_/g, ' ')}
+                </span>
+                <span className="font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
+                  {Array.isArray(v)
+                    ? v.length === 0 ? '—' : v.join(', ')
+                    : typeof v === 'number' || typeof v === 'string'
+                      ? String(v)
+                      : JSON.stringify(v)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recommendations list */}
+      {details?.recommendations && details.recommendations.length > 0 && (
+        <div className="mb-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            Recommended actions
+          </div>
+          <ul className="space-y-1.5">
+            {details.recommendations.map((r, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--amber)' }} />
+                <span>{r}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Related entity chips */}
+      {(brandIds.length > 0 || providerIds.length > 0 || campaignId) && (
+        <div className="pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            Related
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {brandIds.slice(0, 12).map(id => (
+              <Link key={`b-${id}`} to={`/brands/${id}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+                Brand · {id}
+              </Link>
+            ))}
+            {brandIds.length > 12 && (
+              <span className="font-mono text-[10px] px-2 py-1" style={{ color: 'var(--text-muted)' }}>
+                +{brandIds.length - 12} more
+              </span>
+            )}
+            {providerIds.slice(0, 6).map(id => (
+              <Link key={`p-${id}`} to={`/providers/${id}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+                Provider · {id}
+              </Link>
+            ))}
+            {campaignId && (
+              <Link to={`/campaigns/${campaignId}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+                Campaign · {campaignId.slice(0, 8)}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
 function IntelligenceBriefings() {
   const { data: briefings, isLoading } = useIntelligenceBriefings(6);
-  const [selected, setSelected] = useState<IntelligenceBriefing | null>(null);
-
-  const selectedSev = selected?.severity?.toLowerCase();
-  const badgeSeverity: 'critical' | 'high' | 'medium' | 'low' =
-    selectedSev === 'critical' ? 'critical'
-      : selectedSev === 'high' ? 'high'
-      : selectedSev === 'medium' ? 'medium'
-      : 'low';
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   return (
     <section>
@@ -151,42 +345,22 @@ function IntelligenceBriefings() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {briefings.map((b) => (
-            <BriefingCard key={b.id} briefing={b} onOpen={setSelected} />
+          {briefings.map(b => (
+            <Fragment key={b.id}>
+              <BriefingCard
+                briefing={b}
+                isSelected={selectedId === b.id}
+                onSelect={() => setSelectedId(prev => prev === b.id ? null : b.id)}
+              />
+              {selectedId === b.id && (
+                <div className="col-span-full">
+                  <BriefingDetailPanel briefing={b} />
+                </div>
+              )}
+            </Fragment>
           ))}
         </div>
       )}
-
-      <ReportPanel
-        isOpen={!!selected}
-        onClose={() => setSelected(null)}
-        title={briefingPreview(selected?.summary, 80)}
-        subtitle="Observer Intelligence — Powered by ASTRA"
-        badge={
-          selected ? (
-            <>
-              <Badge status="active" label="Observer" size="xs" />
-              <Badge severity={badgeSeverity} size="xs" />
-            </>
-          ) : null
-        }
-        content={selected?.summary ?? ''}
-        meta={
-          selected ? (
-            <>
-              <span>
-                {new Date(selected.created_at).toLocaleDateString('en-US', {
-                  month: 'short', day: 'numeric', year: 'numeric',
-                })}
-              </span>
-              <span>•</span>
-              <span>{selected.output_type}</span>
-              <span>•</span>
-              <span>300 day period</span>
-            </>
-          ) : null
-        }
-      />
     </section>
   );
 }
