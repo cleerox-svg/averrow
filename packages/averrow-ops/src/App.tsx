@@ -36,7 +36,6 @@ const AdminIncidentDetail = React.lazy(() => import('@/features/admin-incidents/
 const PushAdmin = React.lazy(() => import('@/features/admin/PushAdmin').then(m => ({ default: m.PushAdmin })));
 const ArchitectDetail = React.lazy(() => import('@/features/agents/ArchitectDetail').then(m => ({ default: m.ArchitectDetail })));
 const Providers = React.lazy(() => import('@/features/providers/Providers').then(m => ({ default: m.Providers })));
-const ProviderDetail = React.lazy(() => import('@/features/providers/ProviderDetail').then(m => ({ default: m.ProviderDetail })));
 const Campaigns = React.lazy(() => import('@/features/campaigns/Campaigns').then(m => ({ default: m.Campaigns })));
 const CampaignDetail = React.lazy(() => import('@/features/campaigns/CampaignDetail').then(m => ({ default: m.CampaignDetail })));
 const GeopoliticalCampaignDashboard = React.lazy(() => import('@/features/campaigns/GeopoliticalCampaignDashboard').then(m => ({ default: m.GeopoliticalCampaignDashboard })));
@@ -145,7 +144,8 @@ export default function App() {
         <Route path="dark-web" element={lazyRoute(<DarkWeb />)} />
         <Route path="threats" element={lazyRoute(<Threats />)} />
         <Route path="providers" element={lazyRoute(<Providers />)} />
-        <Route path="providers/:providerId" element={lazyRoute(<ProviderDetail />)} />
+        {/* `providers/:providerId` retired — provider detail is inline-only via card expansion. */}
+        <Route path="providers/:providerId" element={<Navigate to="/providers" replace />} />
         <Route path="campaigns" element={lazyRoute(<Campaigns />)} />
         <Route path="campaigns/geo/:slug" element={lazyRoute(<GeopoliticalCampaignDashboard />)} />
         <Route path="campaigns/:campaignId" element={lazyRoute(<CampaignDetail />)} />
