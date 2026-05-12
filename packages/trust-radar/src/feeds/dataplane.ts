@@ -7,14 +7,22 @@ import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
  *
  * https://dataplane.org/ runs a globally-distributed honeypot mesh
  * and publishes attacker IPs by attack category as plain-text
- * lists. We pull six of their categorized feeds in one module:
+ * lists. We pull six of their categorized feeds, ONE per hourly
+ * tick, selected by `hour % 6`:
  *
- *   sshpwauth       — SSH password-auth brute-force IPs
- *   sshclient       — SSH client connect attempts
- *   telnetlogin     — Telnet login attempts
- *   dnsrd           — DNS recursion desperation (DDoS amplifiers)
- *   sipinvitation   — SIP scanner IPs (VoIP probing)
- *   proto41         — IPv6-tunneling abuse (proto 41)
+ *   hour%6=0  sshpwauth       — SSH password-auth brute-force IPs
+ *   hour%6=1  sshclient       — SSH client connect attempts
+ *   hour%6=2  telnetlogin     — Telnet login attempts
+ *   hour%6=3  dnsrd           — DNS recursion desperation
+ *   hour%6=4  sipinvitation   — SIP scanner IPs (VoIP probing)
+ *   hour%6=5  proto41         — IPv6-tunneling abuse (proto 41)
+ *
+ * The first impl (PR #1275) pulled all 6 per tick and was reaped
+ * at 15 min by navigator — 5k IPs × 6 endpoints × sequential D1
+ * inserts blew the scheduled-handler CPU budget. Rotating one
+ * endpoint per tick keeps each run bounded; over 6 hours we cover
+ * the full mesh and steady-state inflow per endpoint sits well
+ * under the budget.
  *
  * Every line is `<ASN>|<ASN_org>|<IP>|<last_seen>|<category>`
  * (plus blank/comment lines we filter). We only extract the IP +
@@ -99,53 +107,56 @@ async function fetchEndpoint(endpoint: DataPlaneEndpoint): Promise<string[]> {
 
 export const dataplane: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
+    // Pick one endpoint per tick. UTC hour mod 6 walks the full
+    // mesh every 6 hours; first impl pulled all 6 per tick and
+    // got reaped (~30k inserts blew the CPU budget).
+    const hour = new Date().getUTCHours();
+    const endpoint = ENDPOINTS[hour % ENDPOINTS.length]!;
+
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;
     let itemsError = 0;
 
-    for (const endpoint of ENDPOINTS) {
-      let lines: string[];
+    let lines: string[];
+    try {
+      lines = await fetchEndpoint(endpoint);
+    } catch (err) {
+      console.error(`[dataplane:${endpoint.name}] fetch failed:`, err);
+      throw err;
+    }
+
+    for (const line of lines) {
+      const ip = extractIp(line);
+      if (!ip) continue;
+      itemsFetched++;
+
       try {
-        lines = await fetchEndpoint(endpoint);
+        if (await isDuplicate(ctx.env, "ip", ip)) {
+          itemsDuplicate++;
+          continue;
+        }
+        await insertThreat(ctx.env.DB, {
+          id: threatId(`dataplane_${endpoint.name}`, "ip", ip),
+          source_feed: "dataplane",
+          threat_type: "scanning",
+          malicious_url: null,
+          malicious_domain: null,
+          ip_address: ip,
+          ioc_value: JSON.stringify({
+            ip,
+            category: endpoint.category,
+            dataplane_feed: endpoint.name,
+          }),
+          severity: endpoint.severity,
+          confidence_score: endpoint.confidence,
+          status: "active",
+        });
+        await markSeen(ctx.env, "ip", ip);
+        itemsNew++;
       } catch (err) {
         itemsError++;
-        console.error(`[dataplane:${endpoint.name}] fetch failed:`, err);
-        continue;
-      }
-
-      for (const line of lines) {
-        const ip = extractIp(line);
-        if (!ip) continue;
-        itemsFetched++;
-
-        try {
-          if (await isDuplicate(ctx.env, "ip", ip)) {
-            itemsDuplicate++;
-            continue;
-          }
-          await insertThreat(ctx.env.DB, {
-            id: threatId(`dataplane_${endpoint.name}`, "ip", ip),
-            source_feed: "dataplane",
-            threat_type: "scanning",
-            malicious_url: null,
-            malicious_domain: null,
-            ip_address: ip,
-            ioc_value: JSON.stringify({
-              ip,
-              category: endpoint.category,
-              dataplane_feed: endpoint.name,
-            }),
-            severity: endpoint.severity,
-            confidence_score: endpoint.confidence,
-            status: "active",
-          });
-          await markSeen(ctx.env, "ip", ip);
-          itemsNew++;
-        } catch (err) {
-          itemsError++;
-          console.error(`[dataplane:${endpoint.name}] insert error:`, err);
-        }
+        console.error(`[dataplane:${endpoint.name}] insert error:`, err);
       }
     }
 
