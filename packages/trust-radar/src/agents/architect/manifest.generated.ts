@@ -837,8 +837,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/trust-radar/src/feeds/dataplane.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 166,
-      "last_modified": "2026-05-12T14:52:13.870Z"
+      "loc": 216,
+      "last_modified": "2026-05-12T18:53:58.416Z"
     },
     {
       "name": "digitalside_osint",

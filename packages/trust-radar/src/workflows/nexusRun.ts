@@ -128,20 +128,39 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
 
     // Step 3: Update hosting provider trends
     const providers = await step.do('update-provider-trends', async () => {
-      // Single aggregation query — much cheaper than correlated subqueries
+      // Phase 2 D1 migration: read aggregates from threat_cube_provider
+      // instead of GROUP BY scanning the full threats table. Mirrors
+      // the cartographer aggregateProviderStats migration in PR-B
+      // (#1278). The cube is hour-bucketed with denormalized severity
+      // + threat_type, so summing across 7d / 30d slices is bounded
+      // by the cube row count, not the threats count.
+      //
+      // Note: total_count + active_count don't exist as a clean
+      // slice in the cube (active_threat_count is a separate
+      // pre-computed column on hosting_providers, maintained by
+      // cartographer Phase 5). We pull the rolling-window inflows
+      // from the cube and leave active/total to cartographer's own
+      // path — re-running them here would duplicate work and the
+      // pre-computed columns are already fresh.
       const agg = await this.env.DB.prepare(`
         SELECT
           hosting_provider_id,
-          COUNT(*) as total_count,
-          SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_count,
-          SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as count_7d,
-          SUM(CASE WHEN first_seen >= datetime('now', '-30 days') THEN 1 ELSE 0 END) as count_30d
-        FROM threats
-        WHERE hosting_provider_id IS NOT NULL
+          SUM(CASE WHEN hour_bucket >= datetime('now', '-7 days')
+                   THEN threat_count ELSE 0 END) as count_7d,
+          SUM(CASE WHEN hour_bucket >= datetime('now', '-30 days')
+                   THEN threat_count ELSE 0 END) as count_30d
+        FROM threat_cube_provider
+        WHERE hour_bucket >= datetime('now', '-30 days')
         GROUP BY hosting_provider_id
-      `).all<any>();
+      `).all<{
+        hosting_provider_id: string;
+        count_7d: number;
+        count_30d: number;
+      }>();
 
-      // Update providers in batches of 20 to stay well under CPU limit
+      // Update providers in batches of 20 to stay well under CPU limit.
+      // active/total updates removed — pre-computed columns are
+      // maintained by cartographer Phase 5 (handlers/admin.ts:1309).
       let updated = 0;
       const BATCH = 20;
       for (let i = 0; i < agg.results.length; i += BATCH) {
@@ -150,11 +169,9 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
           this.env.DB.prepare(`
             UPDATE hosting_providers SET
               trend_7d = ?,
-              trend_30d = ?,
-              active_threat_count = ?,
-              total_threat_count = ?
+              trend_30d = ?
             WHERE id = ?
-          `).bind(r.count_7d, r.count_30d, r.active_count, r.total_count, r.hosting_provider_id)
+          `).bind(r.count_7d, r.count_30d, r.hosting_provider_id)
         );
         await this.env.DB.batch(stmts);
         updated += chunk.length;
