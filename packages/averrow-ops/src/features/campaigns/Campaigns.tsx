@@ -9,6 +9,8 @@ import {
   FilterBar,
   PageHeader,
   EmptyState,
+  EntityCard,
+  MetricTile,
 } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -591,43 +593,41 @@ function CampaignCard({
     }
   }
 
+  // Severity from threat volume drives the accent (matches OperationCard).
+  const sev    = opSeverity(campaign.threat_count);
+  const accent = opAccent(sev);
+  const status = (campaign.status ?? 'active').toLowerCase();
+
   return (
-    <Card hover onClick={onClick} className="w-full text-left">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <AttackTypeBadge type={attackType} />
+    <EntityCard accent={accent} onClick={onClick}>
+      {/* Header: status badge + attack-type pill + name */}
+      <div className="flex items-center gap-2 mb-2">
+        <Badge
+          status={status === 'active' ? 'active' : 'inactive'}
+          label={status === 'active' ? 'Active' : 'Dormant'}
+          size="xs"
+          pulse={status === 'active'}
+        />
+        {attackType && <AttackTypeBadge type={attackType} />}
       </div>
 
-      {/* Name */}
-      <div className="font-display text-sm font-semibold truncate mb-0.5" style={{ color: 'var(--text-primary)' }}>
+      <div
+        className="font-display text-[13px] font-bold truncate mb-0.5"
+        style={{ color: 'var(--text-primary)', letterSpacing: '-0.1px' }}
+      >
         {campaign.name}
       </div>
-      <div className="font-mono text-[10px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
-        First seen {formatDate(campaign.first_seen)} {'\u00B7'} Last seen {formatDate(campaign.last_seen)}
+      <div className="font-mono text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>
+        Since {formatDate(campaign.first_seen)} {'\u00B7'} Last seen {formatDate(campaign.last_seen)}
       </div>
 
-      {/* Metrics */}
-      <div className="grid grid-cols-3 gap-3 py-2 border-t border-white/[0.06]">
-        <div>
-          <div className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-            {campaign.threat_count}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Threats</div>
-        </div>
-        <div>
-          <div className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-            {campaign.brand_count}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Brands</div>
-        </div>
-        <div>
-          <div className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-            {campaign.provider_count}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Providers</div>
-        </div>
+      {/* Metric tiles */}
+      <div style={{ display: 'flex', gap: 7 }}>
+        <MetricTile label="Threats"   value={campaign.threat_count}   color={accent}         glow />
+        <MetricTile label="Brands"    value={campaign.brand_count}    color="var(--amber)"   glow={campaign.brand_count > 0} />
+        <MetricTile label="Providers" value={campaign.provider_count} color="var(--blue)"    glow={campaign.provider_count > 0} />
       </div>
-    </Card>
+    </EntityCard>
   );
 }
 
@@ -644,62 +644,105 @@ function GeoCampaignCard({
   const targetCountries = parseJsonArray(campaign.target_countries);
   const threatActors = parseJsonArray(campaign.threat_actors);
 
+  const status = (campaign.status ?? 'active').toLowerCase();
+  const accent =
+    status === 'active'  ? 'var(--sev-critical)' :
+    status === 'dormant' ? 'var(--amber)'       :
+                           'var(--text-muted)';
+
   return (
-    <Card variant="critical" hover onClick={onClick} className="w-full text-left">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${
-          campaign.status === 'active'
-            ? 'bg-signal-red/20 text-red-400 border-signal-red/30 animate-pulse'
-            : campaign.status === 'dormant'
-              ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-              : 'bg-white/5 text-gauge-gray border-white/10'
-        }`}>
-          {campaign.status}
-        </span>
-        <span className="font-mono text-[9px] text-gauge-gray uppercase tracking-widest">
+    <EntityCard accent={accent} onClick={onClick}>
+      {/* Header: status badge + Geopolitical eyebrow */}
+      <div className="flex items-center gap-2 mb-2">
+        <Badge
+          status={status === 'active' ? 'active' : 'inactive'}
+          label={status.charAt(0).toUpperCase() + status.slice(1)}
+          size="xs"
+          pulse={status === 'active'}
+        />
+        <span
+          className="ml-auto font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Geopolitical
         </span>
       </div>
 
-      {/* Name */}
-      <div className="font-display text-sm font-semibold truncate mb-1" style={{ color: 'var(--text-primary)' }}>
+      <div
+        className="font-display text-[13px] font-bold truncate mb-1"
+        style={{ color: 'var(--text-primary)', letterSpacing: '-0.1px' }}
+      >
         {campaign.name}
       </div>
       {campaign.description && (
-        <div className="font-mono text-[10px] text-white/55 mb-3 line-clamp-2">
+        <div
+          className="font-mono text-[10px] mb-3 line-clamp-2"
+          style={{ color: 'var(--text-tertiary)' }}
+        >
           {campaign.description}
         </div>
       )}
 
-      {/* Country flags */}
-      <div className="flex items-center gap-4 py-2 border-t border-white/[0.06]">
+      {/* Adversary → Target country flow */}
+      <div
+        className="flex items-center gap-3 mt-2 pt-2"
+        style={{ borderTop: '1px solid var(--border-base)' }}
+      >
         <div>
-          <div className="font-mono text-[8px] text-white/55 uppercase mb-0.5">Adversary</div>
+          <div
+            className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Adversary
+          </div>
           <div className="flex gap-1">
-            {adversaryCountries.map(c => (
+            {adversaryCountries.slice(0, 4).map(c => (
               <span key={c} className="text-sm" title={c}>{countryFlag(c)}</span>
             ))}
+            {adversaryCountries.length > 4 && (
+              <span className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                +{adversaryCountries.length - 4}
+              </span>
+            )}
           </div>
         </div>
+        <span style={{ color: 'var(--text-muted)' }}>{'→'}</span>
         <div>
-          <div className="font-mono text-[8px] text-white/55 uppercase mb-0.5">Targets</div>
+          <div
+            className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Targets
+          </div>
           <div className="flex gap-1">
-            {targetCountries.map(c => (
+            {targetCountries.slice(0, 4).map(c => (
               <span key={c} className="text-sm" title={c}>{countryFlag(c)}</span>
             ))}
+            {targetCountries.length > 4 && (
+              <span className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                +{targetCountries.length - 4}
+              </span>
+            )}
           </div>
         </div>
         {threatActors.length > 0 && (
-          <div className="ml-auto">
-            <div className="font-mono text-[8px] text-white/55 uppercase mb-0.5">Actors</div>
-            <div className="font-mono text-[10px] text-red-400">
+          <div className="ml-auto text-right">
+            <div
+              className="font-mono text-[8px] uppercase tracking-wider mb-0.5"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Actors
+            </div>
+            <div
+              className="font-mono text-[10px] font-bold"
+              style={{ color: 'var(--sev-critical)' }}
+            >
               {threatActors.length} linked
             </div>
           </div>
         )}
       </div>
-    </Card>
+    </EntityCard>
   );
 }
 

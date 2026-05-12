@@ -82,3 +82,76 @@ export function useCampaignTimeline(campaignId: string, period: '24h' | '7d' | '
     enabled: !!campaignId,
   });
 }
+
+export interface CampaignThreatRow {
+  id: string;
+  threat_type: string;
+  severity: string;
+  status: string;
+  malicious_domain: string | null;
+  malicious_url: string | null;
+  ip_address: string | null;
+  country_code: string | null;
+  hosting_provider_id: string | null;
+  target_brand_id: string | null;
+  brand_name: string | null;
+  first_seen: string;
+  last_seen: string;
+  created_at: string;
+}
+
+export function useCampaignThreats(campaignId: string, limit = 50) {
+  return useQuery({
+    queryKey: ['campaign-threats', campaignId, limit],
+    queryFn: async () => {
+      const res = await api.get<CampaignThreatRow[]>(
+        `/api/campaigns/${campaignId}/threats?limit=${limit}`,
+      );
+      return res.data ?? [];
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!campaignId,
+  });
+}
+
+export interface CampaignInfrastructure {
+  domains: Array<{ domain: string; ip_address: string | null; hosting_provider_id: string | null }>;
+  ips: Array<{
+    ip_address: string;
+    domain_count: number;
+    hosting_provider_id: string | null;
+    country_code: string | null;
+  }>;
+  providers: Array<{ provider_id: string; provider_name: string; threat_count: number }>;
+}
+
+export function useCampaignInfrastructure(campaignId: string) {
+  return useQuery({
+    queryKey: ['campaign-infrastructure', campaignId],
+    queryFn: async () => {
+      const res = await api.get<CampaignInfrastructure>(`/api/campaigns/${campaignId}/infrastructure`);
+      return res.data ?? { domains: [], ips: [], providers: [] };
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!campaignId,
+  });
+}
+
+export interface CampaignBrandRow {
+  id: string;
+  name: string;
+  sector: string | null;
+  threat_count: number;
+}
+
+export function useCampaignBrands(campaignId: string) {
+  return useQuery({
+    queryKey: ['campaign-brands', campaignId],
+    queryFn: async () => {
+      const res = await api.get<CampaignBrandRow[]>(`/api/campaigns/${campaignId}/brands`);
+      return res.data ?? [];
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!campaignId,
+  });
+}
