@@ -50,12 +50,18 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
     // PR #1213. Scoped (per-tenant) requests fall through to the
     // raw queries to avoid blowing up the cache key space.
     //
-    // 60s TTL: total/active/24h-count drift slowly enough that a
-    // 60-second lag is invisible on a tile/dashboard surface,
-    // and the outer dashboard_overview KV cache (5 min) already
-    // absorbs most repeat traffic — these inner caches catch the
-    // outer-cache-miss case where the same global counts get
-    // recomputed by parallel cold readers.
+    // 300s TTL: total/active/24h-count drift slowly enough that a
+    // 5-min lag is invisible on a tile/dashboard surface, and the
+    // outer dashboard_overview KV cache (5 min) already absorbs
+    // most repeat traffic — these inner caches catch the outer-
+    // cache-miss case where the same global counts get recomputed
+    // by parallel cold readers. Bumped from 60s after diagnostics
+    // showed each miss reading ~250K rows; at 60s the maximum
+    // call rate was ~60/hour and we were still seeing 14/hour
+    // burning ~88M rows / 24h. 300s caps that at 12/hour.
+    // Safe to bump independently of sentinel.ts's 900s read on
+    // the same key — cachedCount lets each caller pick its own
+    // freshness window against the shared cached value.
     // We only reach this point when scope is null/undefined (the
     // "empty brand_ids" case short-circuited with an empty payload
     // above). When `scope` is set with N>0 brand_ids, the queries
@@ -64,7 +70,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
     const useGlobalCache = !scope;
 
     const threatCountP = useGlobalCache
-      ? cachedCount(env, 'count.threats.total', 60, async () => {
+      ? cachedCount(env, 'count.threats.total', 300, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
@@ -73,7 +79,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .first<{ n: number }>();
 
     const threatActiveP = useGlobalCache
-      ? cachedCount(env, 'count.threats.active', 60, async () => {
+      ? cachedCount(env, 'count.threats.active', 300, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active'`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
@@ -83,7 +89,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .catch(() => ({ n: 0 }));
 
     const threat24hP = useGlobalCache
-      ? cachedCount(env, 'count.threats.last_24h', 60, async () => {
+      ? cachedCount(env, 'count.threats.last_24h', 300, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now', '-1 day')`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
