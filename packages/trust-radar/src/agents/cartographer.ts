@@ -138,6 +138,7 @@ export const cartographerAgent: AgentModule = {
     { kind: "d1_table", name: "geopolitical_campaign_links" },
     { kind: "d1_table", name: "geopolitical_campaigns" },
     { kind: "d1_table", name: "hosting_providers" },
+    { kind: "d1_table", name: "threat_cube_provider" },
     { kind: "d1_table", name: "threats" },
   ],
   writes: [
