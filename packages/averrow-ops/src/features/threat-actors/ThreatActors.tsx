@@ -10,7 +10,6 @@ import {
   StatCard,
   StatGrid,
 } from '@/components/ui';
-import { EntityCard, MetricTile } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -96,141 +95,165 @@ function ActorCardUnified({ actor, onClick }: { actor: ThreatActor; onClick: () 
   const accColor = attributionColor(actor.attribution);
   const saasTechniques = saasTechniquesForTtps(ttps);
   const sparkData = Array.isArray(actor.threat_history) ? actor.threat_history : [];
-
-  // Activity intensity drives the accent color
   const totalRecent = sparkData.reduce((sum, v) => sum + v, 0);
-  const statusAccent =
+
+  // Agents/Feeds/Metrics shell: calm `elevated` Card by default,
+  // `critical` only when status reflects an active, high-volume actor.
+  // Status dot keeps the per-actor signal without a severity stripe.
+  const isProblemState = actor.status === 'active' && totalRecent > 50;
+  const variant: 'elevated' | 'critical' = isProblemState ? 'critical' : 'elevated';
+
+  const statusDot =
     actor.status === 'disrupted' ? 'var(--sev-info)'
     : actor.status === 'dormant' ? 'var(--sev-medium)'
     : totalRecent > 50 ? 'var(--sev-critical)'
     : totalRecent > 10 ? 'var(--sev-high)'
     : accColor;
 
-  // Human-friendly last seen
   const lastSeenStr = actor.last_seen ? formatLastSeen(actor.last_seen) : null;
 
   return (
-    <EntityCard accent={statusAccent} onClick={onClick}>
-      {/* ── HEADER: flag avatar + name/affiliation + status ────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        {/* Flag avatar with status dot (parallels Brands favicon) */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
-          <div style={{
-            width: 38, height: 38, borderRadius: 10,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: `${accColor}15`,
-            border: `1px solid ${accColor}35`,
-            fontSize: 20, lineHeight: 1,
-          }}>
-            {flag || <span style={{ color: accColor, fontSize: 12, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>{actor.country ?? '?'}</span>}
-          </div>
-          <div style={{
-            position: 'absolute', bottom: -2, right: -2,
-            width: 10, height: 10, borderRadius: '50%',
-            background: statusAccent, border: '2px solid var(--bg-page)',
-            boxShadow: `0 0 6px ${statusAccent}80`,
-          }} />
-        </div>
-
-        {/* Name + aliases */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 14, fontWeight: 700, color: 'var(--text-primary)',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            fontFamily: 'var(--font-mono)', letterSpacing: -0.2,
-          }}>
-            {actor.name}
-          </div>
-          <div style={{
-            fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)',
-            marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {actor.attribution && (
-              <span style={{ color: accColor, letterSpacing: '0.08em' }}>{actor.attribution}</span>
-            )}
-            {actor.attribution && aliases.length > 0 && ' \u00B7 '}
-            {aliases.length > 0 && (
-              <span>aka {aliases.slice(0, 2).join(', ')}{aliases.length > 2 && ` +${aliases.length - 2}`}</span>
+    <Card
+      variant={variant}
+      hover
+      onClick={onClick}
+      className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
+    >
+      {/* Header: flag tile + name (mono caps) + attribution / status */}
+      <div className="flex items-center gap-3">
+        <div className="flex-shrink-0 relative">
+          <div
+            className="flex items-center justify-center"
+            style={{
+              width: 28, height: 28, borderRadius: 8,
+              background: `${accColor}15`,
+              border: `1px solid ${accColor}35`,
+              fontSize: 16, lineHeight: 1,
+            }}
+          >
+            {flag || (
+              <span
+                style={{
+                  color: accColor, fontSize: 10, fontWeight: 800,
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                {actor.country ?? '?'}
+              </span>
             )}
           </div>
-        </div>
-
-        {/* Status badge */}
-        <div style={{ flexShrink: 0 }}>
-          {actorStatusBadge(actor.status)}
-        </div>
-      </div>
-
-      {/* ── METRIC TILES ────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 7, marginBottom: 10 }}>
-        <MetricTile
-          label="Infrastructure"
-          value={actor.infra_count ?? 0}
-          color="var(--blue)"
-          glow
-        />
-        <MetricTile
-          label="Targets"
-          value={actor.target_count ?? 0}
-          color="var(--amber)"
-          glow
-        />
-        <MetricTile
-          label="Activity 14d"
-          value={totalRecent}
-          color={totalRecent > 0 ? statusAccent : 'var(--text-secondary)'}
-          glow={totalRecent > 0}
-        />
-      </div>
-
-      {/* ── SPARKLINE ───────────────────────────────────────── */}
-      {sparkData.length > 1 && sparkData.some(v => v > 0) ? (
-        <div style={{ position: 'relative', marginBottom: 10 }}>
-          <TrendSparkline
-            data={sparkData}
-            fill
-            height={36}
-            color={statusAccent}
-            animate={false}
+          <div
+            style={{
+              position: 'absolute', bottom: -2, right: -2,
+              width: 9, height: 9, borderRadius: '50%',
+              background: statusDot, border: '2px solid var(--bg-page)',
+            }}
           />
-          <span style={{
-            position: 'absolute', bottom: 2, right: 4,
-            fontSize: 8, fontFamily: 'var(--font-mono)',
-            color: 'var(--text-muted)', letterSpacing: '0.10em',
-            opacity: 0.6,
-          }}>14d</span>
         </div>
-      ) : (
-        <div style={{
-          height: 36, marginBottom: 10,
-          background: 'var(--border-base)', borderRadius: 6,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            no observed activity
-          </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="font-mono text-[13px] font-bold uppercase tracking-wide truncate"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {actor.name}
+            </span>
+            {actorStatusBadge(actor.status)}
+          </div>
+          <div
+            className="font-mono text-[10px] truncate"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            {actor.attribution && (
+              <span style={{ color: accColor, letterSpacing: '0.08em' }}>
+                {actor.attribution}
+              </span>
+            )}
+            {actor.attribution && aliases.length > 0 && ' · '}
+            {aliases.length > 0 && (
+              <>aka {aliases.slice(0, 2).join(', ')}{aliases.length > 2 && ` +${aliases.length - 2}`}</>
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
-      {/* ── TTP + SaaS technique pills (preserved from classic) ─ */}
+      {/* Metrics + top-right sparkline */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>INFRASTRUCTURE</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {(actor.infra_count ?? 0).toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>TARGETS</div>
+            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
+              {(actor.target_count ?? 0).toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>ACTIVITY 14D</div>
+            <div
+              className="text-base"
+              style={{
+                color: totalRecent > 50
+                  ? 'var(--sev-high)'
+                  : totalRecent > 0
+                    ? 'var(--text-primary)'
+                    : 'var(--text-muted)',
+              }}
+            >
+              {totalRecent.toLocaleString()}
+            </div>
+          </div>
+        </div>
+        {sparkData.length > 1 && sparkData.some(v => v > 0) && (
+          <div className="flex flex-col items-end gap-1">
+            <div style={{ width: 120, height: 36 }}>
+              <TrendSparkline
+                data={sparkData}
+                fill
+                height={36}
+                color={isProblemState ? 'var(--sev-high)' : 'var(--amber)'}
+                animate={false}
+              />
+            </div>
+            <div
+              className="font-mono text-[8px] tracking-[0.12em] uppercase"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              14d shape
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* TTP + SaaS technique pills (parallels Agents COMPLIANCE chips) */}
       {(ttps.length > 0 || saasTechniques.length > 0) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+        <div className="flex flex-wrap gap-1">
           {ttps.slice(0, 4).map(ttp => {
             const color = ttpColor(ttp);
             return (
-              <span key={ttp} style={{
-                fontSize: 9, fontFamily: 'var(--font-mono)',
-                fontWeight: 700, letterSpacing: '0.08em',
-                padding: '3px 7px', borderRadius: 5,
-                background: `${color}10`, border: `1px solid ${color}30`,
-                color,
-              }}>
+              <span
+                key={ttp}
+                className="font-mono font-bold tracking-[0.08em]"
+                style={{
+                  fontSize: 9,
+                  padding: '3px 7px', borderRadius: 5,
+                  background: `${color}10`, border: `1px solid ${color}30`,
+                  color,
+                }}
+              >
                 {ttp}
               </span>
             );
           })}
           {ttps.length > 4 && (
-            <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', padding: '3px 4px' }}>
+            <span
+              className="font-mono"
+              style={{ fontSize: 9, color: 'var(--text-muted)', padding: '3px 4px' }}
+            >
               +{ttps.length - 4}
             </span>
           )}
@@ -248,25 +271,27 @@ function ActorCardUnified({ actor, onClick }: { actor: ThreatActor; onClick: () 
         </div>
       )}
 
-      {/* ── FOOTER: last seen / capability ─────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        paddingTop: 6,
-        borderTop: '1px solid var(--border-base)',
-        fontSize: 9, fontFamily: 'var(--font-mono)',
-        color: 'var(--text-muted)',
-        letterSpacing: '0.08em', textTransform: 'uppercase',
-      }}>
-        {actor.capability && (
-          <span style={{ color: 'var(--text-tertiary)' }}>{actor.capability}</span>
-        )}
-        {lastSeenStr && (
-          <span style={{ marginLeft: 'auto' }}>
-            {actor.status === 'active' ? 'Last seen' : 'Active'} {lastSeenStr}
-          </span>
-        )}
-      </div>
-    </EntityCard>
+      {/* Footer: capability + last seen */}
+      {(actor.capability || lastSeenStr) && (
+        <div
+          className="font-mono text-[9px] tracking-[0.08em] uppercase flex items-center gap-2"
+          style={{
+            color: 'var(--text-muted)',
+            paddingTop: 6,
+            borderTop: '1px solid var(--border-base)',
+          }}
+        >
+          {actor.capability && (
+            <span style={{ color: 'var(--text-tertiary)' }}>{actor.capability}</span>
+          )}
+          {lastSeenStr && (
+            <span style={{ marginLeft: 'auto' }}>
+              {actor.status === 'active' ? 'Last seen' : 'Active'} {lastSeenStr}
+            </span>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
