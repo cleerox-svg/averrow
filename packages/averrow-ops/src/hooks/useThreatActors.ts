@@ -18,6 +18,11 @@ export interface ThreatActor {
   attribution_confidence?: string;
   infra_count?: number;
   target_count?: number;
+  /** Total attributions linking this actor to threats (lifetime). Populated
+   *  by OTX pulses + Attributor agent + manual entries via threat_attributions. */
+  attribution_count_total?: number;
+  /** Attributions observed in the last 7 days — current activity signal. */
+  attribution_count_7d?: number;
   /** 14-day daily threat count from actor's known ASN infrastructure (oldest first) */
   threat_history?: number[];
   created_at: string;
