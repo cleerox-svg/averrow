@@ -248,15 +248,33 @@ function countJsonEntries(json: string | null | undefined): number {
 
 // ─── Daily batch + snapshot ────────────────────────────────────────
 //
-// Recomputes scores for all monitored+customer brands and writes a
-// row per brand per day to brand_score_snapshots. Used by the daily
-// orchestrator hour===0 path so the Risk tab can render score
-// sparklines and the Intel tab can surface "improving brands"
-// (week-over-week brand_health_score delta).
+// Recomputes scores for ALL brands and writes a row per brand per
+// day to brand_score_snapshots. The Risk tab + Intel tab + "improving
+// brands" mover list all read this table.
 //
-// Skips 'tracked' tier brands by design: 100K of them with no
-// signal would balloon the snapshot table. They get scored on-demand
-// when queried via per-brand recompute.
+// Scope decision: the original implementation scored only 'monitored'
+// and 'customer' tier brands, on the rationale that tracked brands
+// have no signal worth snapshotting. The product requirement evolved
+// — scores are used to evaluate the entire brand catalog (current
+// customers, prospects, and the long tail alike), so the tier filter
+// has been removed. Brands with no signal land at zeroed-out scores,
+// which is itself a valid display state (flat-zero sparkline =
+// "no risk detected").
+//
+// At ~78K brands the prior serial loop would run ~3 hours and exceed
+// the Workers wall-clock cap. Replaced with concurrent waves of 20
+// and a 12-min budget; counters are race-free because JS is
+// single-threaded between awaits (same pattern as the AbuseIPDB,
+// sentinel, and curator refactors).
+//
+// When the budget is hit, the loop exits cleanly and reports
+// `budget_hit: true` so the orchestrator log surfaces deferred work.
+// Snapshots are upserted, so a partial run on day N just leaves
+// fewer-than-78K rows for that day — harmless to the sparkline /
+// mover-list queries which gracefully handle gaps.
+
+const BATCH_CONCURRENCY = 20;
+const BATCH_WALLTIME_MS = 12 * 60_000;
 
 export interface BatchScoreSummary {
   scanned: number;
@@ -264,22 +282,34 @@ export interface BatchScoreSummary {
   skipped: number;
   errors: number;
   duration_ms: number;
+  budget_hit: boolean;
 }
 
 export async function computeBrandScoresBatch(env: Env): Promise<BatchScoreSummary> {
   const start = Date.now();
-  const summary: BatchScoreSummary = { scanned: 0, scored: 0, skipped: 0, errors: 0, duration_ms: 0 };
+  const summary: BatchScoreSummary = {
+    scanned: 0, scored: 0, skipped: 0, errors: 0,
+    duration_ms: 0, budget_hit: false,
+  };
 
-  // Score only monitored + customer tiers — tracked brands have no signal
-  // worth snapshotting and there are tens of thousands of them.
+  // Score the full brand catalog. Exclude only the trash bin
+  // (deleted/merged rows). canonical_domain IS NULL brands stay
+  // included — their email_score path returns the default and the
+  // signal-side queries still run cleanly.
   const targets = await env.DB.prepare(`
-    SELECT id FROM brands WHERE tier IN ('monitored', 'customer')
+    SELECT id FROM brands
+    WHERE COALESCE(monitoring_status, '') NOT IN ('deleted', 'merged')
   `).all<{ id: string }>();
   summary.scanned = targets.results.length;
 
   const today = new Date().toISOString().slice(0, 10);
 
-  for (const { id } of targets.results) {
+  // Counters incremented inside the wave closures; race-free because
+  // JS is single-threaded between awaits.
+  let scored = 0;
+  let errors = 0;
+
+  const scoreOne = async (id: string): Promise<void> => {
     try {
       const result = await computeBrandExposureScore(env, id);
 
@@ -314,11 +344,23 @@ export async function computeBrandScoresBatch(env: Env): Promise<BatchScoreSumma
         }),
       ).run();
 
-      summary.scored++;
+      scored++;
     } catch {
-      summary.errors++;
+      errors++;
     }
+  };
+
+  for (let i = 0; i < targets.results.length; i += BATCH_CONCURRENCY) {
+    if (Date.now() - start > BATCH_WALLTIME_MS) {
+      summary.budget_hit = true;
+      break;
+    }
+    const wave = targets.results.slice(i, i + BATCH_CONCURRENCY);
+    await Promise.all(wave.map(({ id }) => scoreOne(id)));
   }
+
+  summary.scored = scored;
+  summary.errors = errors;
   summary.skipped = summary.scanned - summary.scored - summary.errors;
   summary.duration_ms = Date.now() - start;
   return summary;
