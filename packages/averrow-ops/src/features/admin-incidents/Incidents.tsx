@@ -14,19 +14,21 @@ import { useIncidents, type Incident, type IncidentStatus, type IncidentSeverity
 type Filter = 'all' | 'open';
 
 const STATUS_PILL_BG: Record<IncidentStatus, string> = {
-  investigating: 'rgba(248,113,113,0.10)',
-  identified:    'rgba(251,146,60,0.10)',
-  monitoring:    'rgba(251,191,36,0.10)',
-  resolved:      'rgba(34,197,94,0.10)',
-  postmortem:    'var(--border-base)',
+  investigating:  'rgba(248,113,113,0.10)',
+  identified:     'rgba(251,146,60,0.10)',
+  monitoring:     'rgba(251,191,36,0.10)',
+  resolved:       'rgba(34,197,94,0.10)',
+  postmortem:     'var(--border-base)',
+  false_positive: 'var(--border-base)',
 };
 
 const STATUS_PILL_TEXT: Record<IncidentStatus, string> = {
-  investigating: '#f87171',
-  identified:    '#fb923c',
-  monitoring:    '#fbbf24',
-  resolved:      '#22c55e',
-  postmortem:    'var(--text-secondary)',
+  investigating:  '#f87171',
+  identified:     '#fb923c',
+  monitoring:     '#fbbf24',
+  resolved:       '#22c55e',
+  postmortem:     'var(--text-secondary)',
+  false_positive: 'var(--text-tertiary)',
 };
 
 const SEVERITY_TO_BADGE: Record<IncidentSeverity, IncidentSeverity> = {

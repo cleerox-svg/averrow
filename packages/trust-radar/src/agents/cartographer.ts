@@ -168,10 +168,15 @@ export const cartographerAgent: AgentModule = {
     const outputs: AgentOutputEntry[] = [];
 
     // ─── Phase 0: ip-api.com batch enrichment for unenriched threats ───
-    // Process up to 5 batches of 500 (2,500 threats) per cron tick to clear backlog faster
+    // Process up to 3 batches of 500 (1,500 threats) per cron tick. 2026-05-12
+    // platform-status went degraded because 5 batches at ~3s/threat overshot
+    // the 105-min reaper ceiling; navigator was killing cartographer runs
+    // mid-flight. Trimming to 3 batches keeps each tick under ~60 min and
+    // (paired with the typosquat skip below) drains the queue at the same
+    // rate by stopping unenrichable items from re-entering it.
     // Flight Control can pass an offset via ctx.input to allow parallel instances
     const BATCH_SIZE = 500;
-    const MAX_BATCHES_PER_RUN = 5;
+    const MAX_BATCHES_PER_RUN = 3;
     const startOffset = typeof ctx.input.offset === 'number' ? ctx.input.offset : 0;
     let batchGeoResponded = 0;
     let batchGeoLocated = 0;
@@ -196,6 +201,11 @@ export const cartographerAgent: AgentModule = {
           WHERE enriched_at IS NULL
             AND ip_address IS NOT NULL AND ip_address != ''
             AND enrichment_attempts < 5
+            -- typosquat_scanner emits hypothetical lookalike domains that
+            -- almost never have a resolving IP, so cartographer just burns
+            -- attempts on them and clogs the queue. Skip upstream — the
+            -- companion migration drains items already enqueued.
+            AND source_feed != 'typosquat_scanner'
             ${PRIVATE_IP_SQL_FILTER}
           ORDER BY created_at DESC
           LIMIT ? OFFSET ?

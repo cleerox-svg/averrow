@@ -25,7 +25,13 @@ export type IncidentStatus =
   | "identified"
   | "monitoring"
   | "resolved"
-  | "postmortem";
+  | "postmortem"
+  // Confirmed not a real outage — fires when a noisy notification or
+  // flapping signal triggered an incident that operators have since
+  // verified didn't impact customers. Behaves like 'resolved' for
+  // lifecycle (sets resolved_at) but is excluded from the public
+  // status page so it doesn't show up alongside genuine outages.
+  | "false_positive";
 
 export type IncidentSeverity = "critical" | "high" | "medium" | "low" | "info";
 
@@ -303,7 +309,10 @@ export async function transitionStatus(
   incidentId: string,
   newStatus: IncidentStatus,
 ): Promise<void> {
-  if (newStatus === "resolved") {
+  if (newStatus === "resolved" || newStatus === "false_positive") {
+    // false_positive shares the resolved lifecycle — closes the
+    // timeline + stamps resolved_at — but is filtered from the
+    // public status page (see toPublicShape).
     await env.DB.prepare(
       `UPDATE incidents
           SET status = ?, resolved_at = datetime('now'), updated_at = datetime('now')
@@ -569,6 +578,11 @@ export function toPublicShape(
   // either is missing the operator hasn't promoted it; drop on the
   // floor.
   if (incident.visibility !== "public" || !incident.public_title) return null;
+  // false_positive is the "confirmed not a real outage" status. It uses
+  // resolved's lifecycle for cleanup but is intentionally hidden from
+  // the public list — operators close noisy/flapping incidents without
+  // them appearing alongside genuine outages on the status site.
+  if (incident.status === "false_positive") return null;
   // Per-update gate (migration 0133): an update only appears publicly
   // if BOTH visibility='public' AND public_message is non-null. The
   // sanitized public_message is what we render — never the internal

@@ -4,7 +4,10 @@ import { api } from '@/lib/api';
 // Mirrors lib/incidents.ts on the worker side. Kept inline (not hoisted to
 // @averrow/shared) until a second consumer needs the same shape.
 export type IncidentStatus =
-  | 'investigating' | 'identified' | 'monitoring' | 'resolved' | 'postmortem';
+  | 'investigating' | 'identified' | 'monitoring' | 'resolved' | 'postmortem'
+  // Confirmed not a real outage — operators close noisy / flapping
+  // incidents this way so they don't appear on the public status site.
+  | 'false_positive';
 
 export type IncidentSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 

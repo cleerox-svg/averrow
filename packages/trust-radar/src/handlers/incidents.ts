@@ -28,7 +28,7 @@ import {
 import type { Env } from "../types";
 
 const VALID_STATUS = new Set<IncidentStatus>([
-  "investigating", "identified", "monitoring", "resolved", "postmortem",
+  "investigating", "identified", "monitoring", "resolved", "postmortem", "false_positive",
 ]);
 const VALID_SEVERITY = new Set<IncidentSeverity>([
   "critical", "high", "medium", "low", "info",

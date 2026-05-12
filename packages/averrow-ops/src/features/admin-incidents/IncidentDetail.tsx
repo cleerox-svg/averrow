@@ -20,22 +20,28 @@ const SEVERITY_TO_BADGE: Record<IncidentSeverity, IncidentSeverity> = {
   critical: 'critical', high: 'high', medium: 'medium', low: 'low', info: 'info',
 };
 
-const STATUSES: IncidentStatus[] = ['investigating', 'identified', 'monitoring', 'resolved'];
+// `postmortem` is reserved and not yet exposed in the dropdown.
+// `false_positive` IS exposed — operators close noisy/flapping incidents
+// this way so they don't end up on the public status site alongside
+// genuine outages (see lib/incidents.toPublicShape).
+const STATUSES: IncidentStatus[] = ['investigating', 'identified', 'monitoring', 'resolved', 'false_positive'];
 
 const STATUS_PILL_BG: Record<IncidentStatus, string> = {
-  investigating: 'rgba(248,113,113,0.10)',
-  identified:    'rgba(251,146,60,0.10)',
-  monitoring:    'rgba(251,191,36,0.10)',
-  resolved:      'rgba(34,197,94,0.10)',
-  postmortem:    'var(--border-base)',
+  investigating:  'rgba(248,113,113,0.10)',
+  identified:     'rgba(251,146,60,0.10)',
+  monitoring:     'rgba(251,191,36,0.10)',
+  resolved:       'rgba(34,197,94,0.10)',
+  postmortem:     'var(--border-base)',
+  false_positive: 'var(--border-base)',
 };
 
 const STATUS_PILL_TEXT: Record<IncidentStatus, string> = {
-  investigating: '#f87171',
-  identified:    '#fb923c',
-  monitoring:    '#fbbf24',
-  resolved:      '#22c55e',
-  postmortem:    'var(--text-secondary)',
+  investigating:  '#f87171',
+  identified:     '#fb923c',
+  monitoring:     '#fbbf24',
+  resolved:       '#22c55e',
+  postmortem:     'var(--text-secondary)',
+  false_positive: 'var(--text-tertiary)',
 };
 
 export function AdminIncidentDetail() {
