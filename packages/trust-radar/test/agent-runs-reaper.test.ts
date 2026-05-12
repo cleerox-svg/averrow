@@ -1,93 +1,211 @@
 /**
- * Tests for the orphan agent_runs sweeper.
+ * Tests for the per-agent orphan reaper.
  *
- * Mirrors test/feed-pull-reaper.test.ts — same architectural pattern,
- * different table. See lib/agent-runs-reaper.ts for the rationale.
+ * The reaper consults each candidate row's agent module to find its
+ * declared `stallThresholdMinutes`, then reaps the row only when its
+ * age exceeds threshold + 30-min buffer. Earlier versions used a
+ * flat 90-min constant, which mis-fired against NEXUS (declared
+ * 360 min for the long ASN-correlation Workflow) and would have
+ * under-reaped against short-running agents.
  *
  * Verifies:
- *   1. The SQL UPDATE targets exactly the orphan rows: status='partial'
- *      AND completed_at IS NULL AND started_at older than the grace.
- *   2. duration_ms is back-stamped from started_at so downstream
- *      metrics don't keep treating the row as "still running".
- *   3. The function returns the row count via meta.changes.
- *   4. A D1 throw is swallowed (returns 0, never throws).
+ *   1. NEXUS-style long-threshold agents stay safe past 90 min.
+ *   2. Default 90-min ceiling kicks in for agents not in the registry.
+ *   3. Live rows (not past their per-agent ceiling) are NOT reaped.
+ *   4. SQL preserves the existing guardrails: status='partial' +
+ *      completed_at IS NULL + datetime() canonicalization +
+ *      duration_ms back-stamp.
+ *   5. D1 throws are swallowed; per-row failures don't abort the
+ *      whole sweep.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { reapOrphanAgentRuns, REAP_AGE_MINUTES } from "../src/lib/agent-runs-reaper";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  reapOrphanAgentRuns,
+  DEFAULT_REAP_AGE_MINUTES,
+  REAP_BUFFER_MINUTES,
+} from "../src/lib/agent-runs-reaper";
 import type { Env } from "../src/types";
 
-interface CapturedRun {
-  sql: string;
+// Mock the agent module registry with a controlled fixture so tests
+// don't depend on the real codebase's agent set.
+vi.mock("../src/agents", () => ({
+  agentModules: {
+    nexus: { stallThresholdMinutes: 360 },          // 360 + 30 = reap @ 390
+    sentinel: { stallThresholdMinutes: 75 },        // 75  + 30 = reap @ 105
+    brand_enricher: { stallThresholdMinutes: 5 },   // 5   + 30 = reap @ 35
+    no_threshold: {},                               // → default 90
+  },
+}));
+
+interface Candidate {
+  id: string;
+  agent_id: string;
+  started_at: string;
+  age_minutes: number;
 }
 
 function makeEnv(opts: {
-  changes?: number;
-  throws?: boolean;
-}): { env: Env; captured: CapturedRun[] } {
-  const captured: CapturedRun[] = [];
+  candidates?: Candidate[];
+  changes?: Record<string, number>;     // row.id → meta.changes returned by per-row UPDATE
+  selectThrows?: boolean;
+  updateThrowsFor?: string[];           // row ids whose UPDATE should throw
+}): {
+  env: Env;
+  updateCalls: Array<{ ceiling: number; id: string }>;
+} {
+  const updateCalls: Array<{ ceiling: number; id: string }> = [];
+
   const env = {
     DB: {
       prepare(sql: string) {
+        const lower = sql.toLowerCase();
+        // SELECT path — candidates list.
+        if (lower.startsWith("select")) {
+          return {
+            all: async () => {
+              if (opts.selectThrows) throw new Error("D1 SELECT failed");
+              return { results: opts.candidates ?? [] };
+            },
+          };
+        }
+        // UPDATE path — accepts (ceiling, id) bind args via .bind().run().
         return {
-          run: async () => {
-            captured.push({ sql });
-            if (opts.throws) throw new Error("network connection lost");
-            return { success: true, meta: { changes: opts.changes ?? 0 } };
-          },
+          bind: (...args: unknown[]) => ({
+            run: async () => {
+              const ceiling = args[0] as number;
+              const id = args[1] as string;
+              updateCalls.push({ ceiling, id });
+              if (opts.updateThrowsFor?.includes(id)) {
+                throw new Error(`D1 UPDATE failed for ${id}`);
+              }
+              const changes = opts.changes?.[id] ?? 1;
+              return { success: true, meta: { changes } };
+            },
+          }),
         };
       },
     },
   } as unknown as Env;
-  return { env, captured };
+
+  return { env, updateCalls };
 }
 
 describe("reapOrphanAgentRuns", () => {
-  it("targets only orphan partial rows older than the grace window", async () => {
-    const { env, captured } = makeEnv({ changes: 4 });
-    const reaped = await reapOrphanAgentRuns(env);
-
-    expect(reaped).toBe(4);
-    expect(captured).toHaveLength(1);
-    const sql = captured[0]!.sql;
-
-    // All three guardrails must be in the WHERE clause — missing any
-    // would either over-reap (live rows) or under-reap (rows that
-    // legitimately completed). Same shape as feed-pull-reaper.
-    expect(sql).toMatch(/UPDATE\s+agent_runs/);
-    expect(sql).toMatch(/status\s*=\s*'partial'/);
-    expect(sql).toMatch(/completed_at\s+IS\s+NULL/);
-    // Both sides through datetime() — see comment in lib for the
-    // ISO-vs-sqlite-format string-comparison footgun.
-    expect(sql).toMatch(/datetime\(started_at\)\s*<=\s*datetime\('now',\s*'-90 minutes'\)/);
-
-    // Mutation: row gets a final 'failed' state with a forensic
-    // error_message (only when error_message was previously null —
-    // never overwrites a real exception message).
-    expect(sql).toMatch(/SET\s+status\s*=\s*'failed'/);
-    expect(sql).toMatch(/completed_at\s*=\s*datetime\('now'\)/);
-    expect(sql).toMatch(/COALESCE\(\s*error_message/);
-
-    // duration_ms is back-stamped so the diagnostic's
-    // avg_duration_ms doesn't accumulate dead rows as if they ran
-    // forever.
-    expect(sql).toMatch(/duration_ms\s*=\s*COALESCE\(/);
-    expect(sql).toMatch(/julianday\('now'\)\s*-\s*julianday\(started_at\)/);
+  beforeEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it("returns 0 when D1 throws (never crashes the navigator tick)", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { env } = makeEnv({ throws: true });
+  it("does NOT reap NEXUS at 100 min (under its per-agent ceiling)", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "run-nexus-100", agent_id: "nexus", started_at: "x", age_minutes: 100 },
+      ],
+    });
     const reaped = await reapOrphanAgentRuns(env);
     expect(reaped).toBe(0);
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
+    expect(updateCalls).toHaveLength(0);
   });
 
-  it("exposes the grace constant for callers and platform docs", () => {
-    // 90 min — see lib/agent-runs-reaper.ts for why this is higher
-    // than feed-pull-reaper's 15 min (agents legitimately run
-    // longer than feed pulls; sentinel declares 75 min).
-    expect(REAP_AGE_MINUTES).toBe(90);
+  it("reaps NEXUS at 400 min (past its 360 + 30 ceiling)", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "run-nexus-400", agent_id: "nexus", started_at: "x", age_minutes: 400 },
+      ],
+      changes: { "run-nexus-400": 1 },
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(1);
+    expect(updateCalls).toEqual([{ ceiling: 390, id: "run-nexus-400" }]);
+  });
+
+  it("reaps sentinel at its 105-min ceiling, not the default 90", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "s-100", agent_id: "sentinel", started_at: "x", age_minutes: 100 },   // < 105 → skip
+        { id: "s-200", agent_id: "sentinel", started_at: "x", age_minutes: 200 },   // > 105 → reap
+      ],
+      changes: { "s-200": 1 },
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(1);
+    expect(updateCalls).toEqual([{ ceiling: 105, id: "s-200" }]);
+  });
+
+  it("falls back to DEFAULT (90) for agents not in the registry", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "u-old",   agent_id: "unknown_agent", started_at: "x", age_minutes: 200 },
+        { id: "u-young", agent_id: "unknown_agent", started_at: "x", age_minutes: 50 },
+      ],
+      changes: { "u-old": 1 },
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(1);
+    expect(updateCalls).toEqual([{ ceiling: 90, id: "u-old" }]);
+  });
+
+  it("uses DEFAULT when the module exists but has no stallThresholdMinutes", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "n-old", agent_id: "no_threshold", started_at: "x", age_minutes: 200 },
+      ],
+      changes: { "n-old": 1 },
+    });
+    await reapOrphanAgentRuns(env);
+    expect(updateCalls).toEqual([{ ceiling: 90, id: "n-old" }]);
+  });
+
+  it("processes multiple agents in one sweep with their own ceilings", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "n-400",   agent_id: "nexus",          started_at: "x", age_minutes: 400 }, // reap
+        { id: "n-200",   agent_id: "nexus",          started_at: "x", age_minutes: 200 }, // skip (<390)
+        { id: "s-150",   agent_id: "sentinel",       started_at: "x", age_minutes: 150 }, // reap (>105)
+        { id: "be-40",   agent_id: "brand_enricher", started_at: "x", age_minutes: 40 },  // reap (>35)
+      ],
+      changes: { "n-400": 1, "s-150": 1, "be-40": 1 },
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(3);
+    expect(updateCalls.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { ceiling: 35, id: "be-40" },
+      { ceiling: 390, id: "n-400" },
+      { ceiling: 105, id: "s-150" },
+    ]);
+  });
+
+  it("returns 0 when no candidate rows are returned by SELECT", async () => {
+    const { env, updateCalls } = makeEnv({ candidates: [] });
+    expect(await reapOrphanAgentRuns(env)).toBe(0);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("returns 0 when the SELECT itself throws (never crashes navigator)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { env } = makeEnv({ selectThrows: true });
+    expect(await reapOrphanAgentRuns(env)).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("per-row UPDATE failure doesn't abort the rest of the sweep", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "x-1", agent_id: "nexus",    started_at: "x", age_minutes: 400 }, // throws
+        { id: "x-2", agent_id: "sentinel", started_at: "x", age_minutes: 150 }, // succeeds
+      ],
+      changes: { "x-2": 1 },
+      updateThrowsFor: ["x-1"],
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(1);   // only x-2 counted
+    expect(updateCalls.map((c) => c.id).sort()).toEqual(["x-1", "x-2"]);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exposes the policy constants for callers + platform docs", () => {
+    expect(DEFAULT_REAP_AGE_MINUTES).toBe(90);
+    expect(REAP_BUFFER_MINUTES).toBe(30);
   });
 });
