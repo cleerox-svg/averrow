@@ -41,7 +41,6 @@ const CampaignDetail = React.lazy(() => import('@/features/campaigns/CampaignDet
 const GeopoliticalCampaignDashboard = React.lazy(() => import('@/features/campaigns/GeopoliticalCampaignDashboard').then(m => ({ default: m.GeopoliticalCampaignDashboard })));
 const Trends = React.lazy(() => import('@/features/trends/Trends').then(m => ({ default: m.Trends })));
 const ThreatActors = React.lazy(() => import('@/features/threat-actors/ThreatActors').then(m => ({ default: m.ThreatActors })));
-const ThreatActorDetail = React.lazy(() => import('@/features/threat-actors/ThreatActorDetail').then(m => ({ default: m.ThreatActorDetail })));
 const Leads = React.lazy(() => import('@/features/leads/Leads').then(m => ({ default: m.Leads })));
 const Home = React.lazy(() => import('@/pages/Home').then(m => ({ default: m.Home })));
 const BrandAdminDashboard = React.lazy(() => import('@/features/admin/BrandAdminDashboard').then(m => ({ default: m.BrandAdminDashboard })));
@@ -150,7 +149,8 @@ export default function App() {
         <Route path="campaigns/geo/:slug" element={lazyRoute(<GeopoliticalCampaignDashboard />)} />
         <Route path="campaigns/:campaignId" element={lazyRoute(<CampaignDetail />)} />
         <Route path="threat-actors" element={lazyRoute(<ThreatActors />)} />
-        <Route path="threat-actors/:actorId" element={lazyRoute(<ThreatActorDetail />)} />
+        {/* `threat-actors/:actorId` retired — detail is inline-only via card expansion. */}
+        <Route path="threat-actors/:actorId" element={<Navigate to="/threat-actors" replace />} />
         <Route path="trends" element={lazyRoute(<Trends />)} />
         {/* Alias — sidebar entry says "Intelligence"; keep /intelligence
             navigable for bookmarks. Audit H8. */}

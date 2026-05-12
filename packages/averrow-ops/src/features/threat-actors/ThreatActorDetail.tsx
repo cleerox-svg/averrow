@@ -24,8 +24,19 @@ function parseJsonArray(val: string | null): string[] {
   }
 }
 
-export function ThreatActorDetail() {
-  const { actorId } = useParams<{ actorId: string }>();
+interface ThreatActorDetailProps {
+  /** When passed, renders the actor inline (used by Threat Actors list page).
+   *  When omitted, falls back to URL params (used by retired standalone route
+   *  during the redirect grace window). */
+  actorId?: string;
+  /** Inline mode hides the back-to-list affordance since the parent list page
+   *  remains visible — the card stays selected with a chevron rotation. */
+  inline?: boolean;
+}
+
+export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: ThreatActorDetailProps = {}) {
+  const params = useParams<{ actorId: string }>();
+  const actorId = actorIdProp ?? params.actorId;
   const navigate = useNavigate();
   const { data: actor, isLoading } = useThreatActorDetail(actorId ?? '');
 
@@ -46,20 +57,22 @@ export function ThreatActorDetail() {
   if (!actor) {
     return (
       <div className="p-6 space-y-4">
-        <button
-          onClick={() => navigate('/threat-actors')}
-          className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          <ArrowLeft size={12} /> Back to Threat Actors
-        </button>
+        {!inline && (
+          <button
+            onClick={() => navigate('/threat-actors')}
+            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            <ArrowLeft size={12} /> Back to Threat Actors
+          </button>
+        )}
         <Card hover={false}>
           <EmptyState
             icon={<Search />}
             title="Threat actor not found"
-            subtitle="The ID may have changed or the actor was merged. Browse the full registry to find them."
+            subtitle="The ID may have changed or the actor was merged."
             variant="scanning"
-            action={{
+            action={inline ? undefined : {
               label: 'Browse all threat actors',
               onClick: () => navigate('/threat-actors'),
               variant: 'secondary',
@@ -97,14 +110,16 @@ export function ThreatActorDetail() {
   })();
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Back nav */}
-      <button
-        onClick={() => navigate('/threat-actors')}
-        className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
-      >
-        &larr; Back to Threat Actors
-      </button>
+    <div className={inline ? 'p-6 space-y-6' : 'p-6 space-y-6'}>
+      {/* Back nav — hidden in inline mode (parent list is already visible) */}
+      {!inline && (
+        <button
+          onClick={() => navigate('/threat-actors')}
+          className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
+        >
+          &larr; Back to Threat Actors
+        </button>
+      )}
 
       {/* Header */}
       <div>

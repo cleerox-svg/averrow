@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Fragment, useState, useMemo } from 'react';
 import { Search } from 'lucide-react';
+import { ThreatActorDetail } from './ThreatActorDetail';
 import {
   Badge,
   Card,
@@ -79,35 +79,49 @@ function ttpColor(ttp: string): string {
 
 // ─── ActorCard dispatcher: unified vs classic ────────────────
 
-function ActorCard({ actor, onClick }: { actor: ThreatActor; onClick: () => void }) {
+function ActorCard({ actor, isSelected, onClick }: { actor: ThreatActor; isSelected?: boolean; onClick: () => void }) {
   const style = useCardStyle();
   return style === 'classic'
     ? <ActorCardClassic actor={actor} onClick={onClick} />
-    : <ActorCardUnified actor={actor} onClick={onClick} />;
+    : <ActorCardUnified actor={actor} isSelected={isSelected} onClick={onClick} />;
 }
 
 // ─── ActorCard (UNIFIED — matches Brands/Providers architecture) ──
 
-function ActorCardUnified({ actor, onClick }: { actor: ThreatActor; onClick: () => void }) {
+function ActorCardUnified({ actor, isSelected = false, onClick }: { actor: ThreatActor; isSelected?: boolean; onClick: () => void }) {
   const aliases = parseJsonArray(actor.aliases);
   const ttps = parseJsonArray(actor.ttps);
   const flag = countryFlag(actor.country);
   const accColor = attributionColor(actor.attribution);
   const saasTechniques = saasTechniquesForTtps(ttps);
   const sparkData = Array.isArray(actor.threat_history) ? actor.threat_history : [];
-  const totalRecent = sparkData.reduce((sum, v) => sum + v, 0);
+
+  // The card surfaces three signals chosen because the data behind them
+  // actually exists today:
+  //   - attribution_count_total : lifetime references via OTX/Attributor/news
+  //   - attribution_count_7d    : current pulse (last week)
+  //   - infra_count             : known ASNs/IPs (sparse — only populated for
+  //                                seeded Iranian actors + Attributor matches)
+  // threat_history (sparkline) depends on threat_actor_infrastructure being
+  // populated; we still show it when available but never let it gate the
+  // card's "is this actor live?" judgment — that's attribution_count_7d's job.
+  const recent7d = actor.attribution_count_7d ?? 0;
+  const totalAttributions = actor.attribution_count_total ?? 0;
+  const infraCount = actor.infra_count ?? 0;
 
   // Agents/Feeds/Metrics shell: calm `elevated` Card by default,
-  // `critical` only when status reflects an active, high-volume actor.
-  // Status dot keeps the per-actor signal without a severity stripe.
-  const isProblemState = actor.status === 'active' && totalRecent > 50;
-  const variant: 'elevated' | 'critical' = isProblemState ? 'critical' : 'elevated';
+  // `critical` only when actor is active AND has fresh attribution activity.
+  // `active` on selection so the operator sees which card the inline panel
+  // belongs to.
+  const isProblemState = actor.status === 'active' && recent7d > 5;
+  const variant: 'elevated' | 'critical' | 'active' =
+    isSelected ? 'active' : isProblemState ? 'critical' : 'elevated';
 
   const statusDot =
     actor.status === 'disrupted' ? 'var(--sev-info)'
     : actor.status === 'dormant' ? 'var(--sev-medium)'
-    : totalRecent > 50 ? 'var(--sev-critical)'
-    : totalRecent > 10 ? 'var(--sev-high)'
+    : recent7d > 10 ? 'var(--sev-critical)'
+    : recent7d > 2 ? 'var(--sev-high)'
     : accColor;
 
   const lastSeenStr = actor.last_seen ? formatLastSeen(actor.last_seen) : null;
@@ -181,30 +195,36 @@ function ActorCardUnified({ actor, onClick }: { actor: ThreatActor; onClick: () 
       <div className="flex items-end justify-between gap-3">
         <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
           <div>
-            <div style={{ color: 'var(--text-muted)' }}>INFRASTRUCTURE</div>
-            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
-              {(actor.infra_count ?? 0).toLocaleString()}
+            <div style={{ color: 'var(--text-muted)' }}>ATTRIBUTIONS</div>
+            <div
+              className="text-base"
+              style={{ color: totalAttributions > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}
+            >
+              {totalAttributions.toLocaleString()}
             </div>
           </div>
           <div>
-            <div style={{ color: 'var(--text-muted)' }}>TARGETS</div>
-            <div className="text-base" style={{ color: 'var(--text-primary)' }}>
-              {(actor.target_count ?? 0).toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <div style={{ color: 'var(--text-muted)' }}>ACTIVITY 14D</div>
+            <div style={{ color: 'var(--text-muted)' }}>RECENT 7D</div>
             <div
               className="text-base"
               style={{
-                color: totalRecent > 50
+                color: recent7d > 5
                   ? 'var(--sev-high)'
-                  : totalRecent > 0
+                  : recent7d > 0
                     ? 'var(--text-primary)'
                     : 'var(--text-muted)',
               }}
             >
-              {totalRecent.toLocaleString()}
+              {recent7d.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-muted)' }}>INFRASTRUCTURE</div>
+            <div
+              className="text-base"
+              style={{ color: infraCount > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}
+            >
+              {infraCount.toLocaleString()}
             </div>
           </div>
         </div>
@@ -503,8 +523,8 @@ function ActorCardClassic({ actor, onClick }: { actor: ThreatActor; onClick: () 
 type CountryFilter = 'all' | 'IR' | 'RU' | 'CN' | 'KP';
 
 export function ThreatActors() {
-  const navigate = useNavigate();
   const [filter, setFilter] = useState<CountryFilter>('all');
+  const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
   const country = filter === 'all' ? undefined : filter;
 
   const { data: actors, isLoading } = useThreatActors({ country, status: 'active' });
@@ -654,11 +674,18 @@ export function ThreatActors() {
           gap: 12,
         }}>
           {actors.map(actor => (
-            <ActorCard
-              key={actor.id}
-              actor={actor}
-              onClick={() => navigate(`/threat-actors/${actor.id}`)}
-            />
+            <Fragment key={actor.id}>
+              <ActorCard
+                actor={actor}
+                isSelected={selectedActorId === actor.id}
+                onClick={() => setSelectedActorId(prev => prev === actor.id ? null : actor.id)}
+              />
+              {selectedActorId === actor.id && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <ThreatActorDetail actorId={actor.id} inline />
+                </div>
+              )}
+            </Fragment>
           ))}
         </div>
       ) : (
