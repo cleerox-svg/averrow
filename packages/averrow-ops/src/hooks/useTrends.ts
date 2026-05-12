@@ -10,6 +10,14 @@ export interface IntelligenceBriefing {
   summary: string;
   severity: string;
   created_at: string;
+  /** Structured per-briefing payload — Observer writes category-specific
+   *  fields (counts, recommendations, conflict label, etc.). Stringified
+   *  JSON; parse in the UI on demand. */
+  details?: string | null;
+  /** JSON array of brand ids or single id, depending on writer. */
+  related_brand_ids?: string | null;
+  related_campaign_id?: string | null;
+  related_provider_ids?: string | null;
 }
 
 export interface VolumePoint {

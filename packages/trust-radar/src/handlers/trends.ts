@@ -180,17 +180,37 @@ export async function handleTrendTypes(request: Request, env: Env): Promise<Resp
 }
 
 // GET /api/trends/intelligence
+//
+// Observer briefings (agent_outputs rows of type='insight'). The Observer
+// agent already writes a structured `details` JSON blob and related-entity
+// id lists for most briefing categories; previously the handler dropped
+// those columns, so the UI only had the markdown summary to display. Now
+// we surface them so the inline detail panel can render recommendations,
+// per-category counts, and clickable links to the referenced brands /
+// campaign / providers.
 export async function handleTrendIntelligence(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const limit = Math.min(20, parseInt(new URL(request.url).searchParams.get("limit") ?? "6", 10));
 
     const rows = await env.DB.prepare(`
-      SELECT id, type, summary, severity, created_at
+      SELECT id, type, summary, severity, details,
+             related_brand_ids, related_campaign_id, related_provider_ids,
+             created_at
       FROM agent_outputs
       WHERE agent_id = 'observer' AND type = 'insight'
       ORDER BY created_at DESC LIMIT ?
-    `).bind(limit).all<{ id: string; type: string; summary: string; severity: string; created_at: string }>();
+    `).bind(limit).all<{
+      id: string;
+      type: string;
+      summary: string;
+      severity: string;
+      details: string | null;
+      related_brand_ids: string | null;
+      related_campaign_id: string | null;
+      related_provider_ids: string | null;
+      created_at: string;
+    }>();
 
     return json({ success: true, data: rows.results }, 200, origin);
   } catch (err) {
