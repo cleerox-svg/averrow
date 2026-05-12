@@ -54,7 +54,12 @@ export const analystAgent: AgentModule = {
   color: "#E8923C",
   trigger: "scheduled",
   requiresApproval: false,
-  stallThresholdMinutes: 75,
+  // Bumped 75→120 on 2026-05-12. Analyst processes the full threat
+  // queue through Haiku scoring + AI-judge re-evaluations + brand
+  // attribution. Live diagnostics showed reaps at the 105-min ceiling
+  // (75+30) under backlog. 120 declared → 150-min ceiling, matching
+  // observed cold-cache runs.
+  stallThresholdMinutes: 120,
   parallelMax: 1,
   costGuard: "enforced",
   budget: { monthlyTokenCap: 100_000_000 },

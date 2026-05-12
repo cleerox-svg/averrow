@@ -127,7 +127,17 @@ export const cartographerAgent: AgentModule = {
   color: "#5A80A8",
   trigger: "scheduled",
   requiresApproval: false,
-  stallThresholdMinutes: 75,
+  // Cartographer runs 5 phases sequentially: Phase 0 (ip-api batch),
+  // 0.5 (GeoIP MMDB), 1 (ipinfo fallback), 2 (Haiku provider reputation
+  // scoring — top 50 providers), 3 (email security scans), 4 (DMARC
+  // source IP geo), 5 (provider stats aggregation). Live diagnostics
+  // 2026-05-12 showed avg run duration 67 min with the 75-min stall
+  // threshold + 30-min buffer = 105-min reaper ceiling repeatedly
+  // tripping. Bumping the declared threshold to 150 (180-min ceiling)
+  // gives the multi-phase pipeline room to land without false reaps.
+  // Splitting Phase 2/3 into their own agents is the proper fix — this
+  // is the operator-relief change while that's planned.
+  stallThresholdMinutes: 150,
   parallelMax: 1,
   costGuard: "enforced",
   budget: { monthlyTokenCap: 50_000_000 },
