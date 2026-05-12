@@ -304,6 +304,45 @@ export default {
         return Response.json({ success: true, data: result });
       }
 
+      // GET /api/internal/taxii/discover?root_url=<url>&auth_type=<type>&api_key_env=<env_var>&username=<u>
+      // Operator helper for adding new TAXII collections without
+      // guessing collection IDs (which bit us on the OTX seed —
+      // see PR #1271). Auto-detects whether the URL is a discovery
+      // resource or an api_root resource, then walks collections/
+      // for each api_root and returns a flat inventory.
+      //
+      // Auth params are optional — most public TAXII feeds
+      // (EclecticIQ, OTX user_AlienVault) accept anonymous
+      // discovery. For private collections, pass auth_type=basic
+      // or bearer + the env var name holding the secret.
+      //
+      // Used by scripts/taxii-discover.sh.
+      if (url.pathname === '/api/internal/taxii/discover' && request.method === 'GET') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const rootUrl = url.searchParams.get('root_url');
+        if (!rootUrl) {
+          return Response.json({ success: false, error: 'root_url query param is required' }, { status: 400 });
+        }
+        const authType = url.searchParams.get('auth_type') ?? 'none';
+        const username = url.searchParams.get('username') ?? '';
+        const apiKeyEnv = url.searchParams.get('api_key_env');
+        const apiKey = apiKeyEnv
+          ? ((env as unknown as Record<string, string | undefined>)[apiKeyEnv] ?? '')
+          : '';
+        const taxiiAuth = authType === 'bearer'
+          ? { type: 'bearer' as const, token: apiKey }
+          : authType === 'basic'
+            ? { type: 'basic' as const, username, password: apiKey }
+            : { type: 'none' as const };
+        const { discoverTaxiiServer } = await import('./lib/taxii-client');
+        const report = await discoverTaxiiServer({ root_url: rootUrl, auth: taxiiAuth });
+        return Response.json({ success: true, data: report });
+      }
+
       // POST /api/internal/notifications/sweep-stale-platform
       // Marks platform_* notifications older than ?olderThanMinutes
       // as state='done'. Used to clear pre-fix stale alerts from
