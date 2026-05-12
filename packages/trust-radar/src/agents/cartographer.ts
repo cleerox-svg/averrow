@@ -138,6 +138,7 @@ export const cartographerAgent: AgentModule = {
     { kind: "d1_table", name: "geopolitical_campaign_links" },
     { kind: "d1_table", name: "geopolitical_campaigns" },
     { kind: "d1_table", name: "hosting_providers" },
+    { kind: "d1_table", name: "threat_cube_provider" },
     { kind: "d1_table", name: "threats" },
   ],
   writes: [
@@ -1000,17 +1001,34 @@ async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> 
   }
 
   for (const period of periods) {
+    // Phase 2 D1 migration: read aggregates from threat_cube_provider
+    // instead of scanning the threats table. The cube is hour-bucketed
+    // with denormalized threat_type + severity, so SUM(CASE...)
+    // expressions pivot cleanly per provider. Pre-migration this single
+    // 30d query alone consumed ~708k rows_read/hour at ~6 calls/hour
+    // (see diagnostics 2026-05-12 query #7).
+    //
+    // Note: country_code is NOT on the cube — provider_threat_stats.top_countries
+    // is rebuilt below by a small bounded query keyed off the top-50 provider IDs
+    // we just resolved, which is way cheaper than the original global GROUP BY.
+    const cubePeriodWhere = period.key === "all"
+      ? "1=1"
+      : period.key === "today"
+        ? "hour_bucket >= date('now', 'start of day')"
+        : period.key === "7d"
+          ? "hour_bucket >= datetime('now', '-7 days')"
+          : "hour_bucket >= datetime('now', '-30 days')";
+
     const providerRows = await db.prepare(`
       SELECT
         hosting_provider_id,
-        COUNT(*) as threat_count,
-        SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_count,
-        SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as high_count,
-        SUM(CASE WHEN threat_type = 'phishing' THEN 1 ELSE 0 END) as phishing_count,
-        SUM(CASE WHEN threat_type = 'malware_distribution' THEN 1 ELSE 0 END) as malware_count,
-        GROUP_CONCAT(DISTINCT country_code) as countries
-      FROM threats
-      WHERE hosting_provider_id IS NOT NULL AND ${period.where}
+        SUM(threat_count) as threat_count,
+        SUM(CASE WHEN severity = 'critical' THEN threat_count ELSE 0 END) as critical_count,
+        SUM(CASE WHEN severity = 'high' THEN threat_count ELSE 0 END) as high_count,
+        SUM(CASE WHEN threat_type = 'phishing' THEN threat_count ELSE 0 END) as phishing_count,
+        SUM(CASE WHEN threat_type = 'malware_distribution' THEN threat_count ELSE 0 END) as malware_count
+      FROM threat_cube_provider
+      WHERE ${cubePeriodWhere}
       GROUP BY hosting_provider_id
       ORDER BY threat_count DESC
       LIMIT 50
@@ -1018,16 +1036,43 @@ async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> 
       hosting_provider_id: string; threat_count: number;
       critical_count: number; high_count: number;
       phishing_count: number; malware_count: number;
-      countries: string | null;
     }>();
 
-    // Get prior period for trend calculation
+    // Resolve countries only for the 50 providers we actually care about.
+    // Bounded IN-list keeps the scan small even though it touches the
+    // threats table — vs the pre-migration query which scanned the full
+    // 30d window across ALL providers.
+    const countryMap = new Map<string, string>();
+    if (providerRows.results.length > 0) {
+      const ids = providerRows.results.map(r => r.hosting_provider_id);
+      const placeholders = ids.map(() => "?").join(",");
+      const countryRows = await db.prepare(`
+        SELECT hosting_provider_id,
+               GROUP_CONCAT(DISTINCT country_code) as countries
+        FROM threats
+        WHERE hosting_provider_id IN (${placeholders})
+          AND country_code IS NOT NULL
+          AND ${period.where}
+        GROUP BY hosting_provider_id
+      `).bind(...ids).all<{ hosting_provider_id: string; countries: string | null }>();
+      for (const r of countryRows.results) {
+        countryMap.set(r.hosting_provider_id, r.countries ?? "");
+      }
+    }
+
+    // Get prior period for trend calculation — also from the cube.
     const priorMap = new Map<string, number>();
     if (period.priorWhere) {
+      const cubePriorWhere = period.key === "today"
+        ? "hour_bucket >= date('now', '-1 day', 'start of day') AND hour_bucket < date('now', 'start of day')"
+        : period.key === "7d"
+          ? "hour_bucket >= datetime('now', '-14 days') AND hour_bucket < datetime('now', '-7 days')"
+          : "hour_bucket >= datetime('now', '-60 days') AND hour_bucket < datetime('now', '-30 days')";
+
       const priorRows = await db.prepare(`
-        SELECT hosting_provider_id, COUNT(*) as count
-        FROM threats
-        WHERE hosting_provider_id IS NOT NULL AND ${period.priorWhere}
+        SELECT hosting_provider_id, SUM(threat_count) as count
+        FROM threat_cube_provider
+        WHERE ${cubePriorWhere}
         GROUP BY hosting_provider_id
       `).all<{ hosting_provider_id: string; count: number }>();
       for (const r of priorRows.results) {
@@ -1050,7 +1095,7 @@ async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> 
         trendPct = 100;
       }
 
-      const countryCodes = (row.countries || "").split(",").filter(Boolean);
+      const countryCodes = (countryMap.get(row.hosting_provider_id) ?? "").split(",").filter(Boolean);
       const topCountries = countryCodes.slice(0, 5).map(c => ({ country_code: c, count: 1 }));
 
       const providerName = providerNameMap.get(row.hosting_provider_id) ?? row.hosting_provider_id;

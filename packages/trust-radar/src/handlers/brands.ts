@@ -132,12 +132,27 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
       "SELECT COUNT(*) AS n FROM brands WHERE first_seen >= datetime('now', '-7 days')"
     ).first<{ n: number }>();
 
-    const fastestRising = await session.prepare(`
-      SELECT b.name, COUNT(t.id) AS cnt
-      FROM brands b
-      JOIN threats t ON t.target_brand_id = b.id AND t.created_at >= datetime('now', '-1 day')
-      GROUP BY b.id ORDER BY cnt DESC LIMIT 1
-    `).first<{ name: string; cnt: number }>();
+    // Phase 2 D1 migration: aggregate from threat_cube_brand instead
+    // of JOIN+GROUP BY scanning the full 24h threats slice. The cube
+    // is hour-bucketed so summing the last 24h hits ~24 rows per
+    // brand (vs O(threat_count) per brand pre-migration). Pre-fix
+    // this single query consumed ~793k rows/hour at 5 calls/hour
+    // (diagnostics 2026-05-12 query #6).
+    const topBrandRow = await session.prepare(`
+      SELECT target_brand_id, SUM(threat_count) AS cnt
+      FROM threat_cube_brand
+      WHERE hour_bucket >= datetime('now', '-1 day')
+      GROUP BY target_brand_id
+      ORDER BY cnt DESC
+      LIMIT 1
+    `).first<{ target_brand_id: string; cnt: number }>();
+
+    const fastestRising = topBrandRow
+      ? await session.prepare(`SELECT name FROM brands WHERE id = ?`)
+          .bind(topBrandRow.target_brand_id)
+          .first<{ name: string }>()
+          .then((r) => r ? { name: r.name, cnt: topBrandRow.cnt } : null)
+      : null;
 
     // Phase 2 D1 migration: read from threat_cube_status instead of
     // GROUP BY scanning the full threats table. Both the per-type

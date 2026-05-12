@@ -14,6 +14,7 @@ import { resolveMasterBrandName } from "../lib/threatScoring";
 import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, incrementBrandThreatCount } from "../db/brands";
+import { cachedValue } from "../lib/cached-value";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -375,34 +376,66 @@ export const analystAgent: AgentModule = {
     // Split into 6 small queries (one per enrichment signal) to avoid the
     // single-query OR-over-six-columns that forces a full active-table scan.
     // See docs/runbooks/analyst-d1-diagnosis.md for EXPLAIN plans.
+    //
+    // KV-cached for 25 min. Analyst's natural cadence is hourly but
+    // navigator pre-warming + retries had it running ~7×/hour
+    // (diagnostics 2026-05-12 query #5: dbl_listed slice alone burned
+    // 924k rows/hour). The 6 signals are all active-status snapshots,
+    // not real-time — a stale 25-min reading is acceptable.
     const baseCond = "status = 'active' AND target_brand_id IS NOT NULL";
-    const [surblRows, vtRows, vtAvgRows, gsbRows, dblRows, greynoiseRows, seclookupRows] = await Promise.all([
-      env.DB.prepare(
-        `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND surbl_listed = 1 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; cnt: number }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; cnt: number }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id, ROUND(AVG(vt_malicious), 1) as avg_mal FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; avg_mal: number | null }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND gsb_flagged = 1 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; cnt: number }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND dbl_listed = 1 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; cnt: number }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id,
-          SUM(CASE WHEN greynoise_noise = 1 AND greynoise_classification = 'benign' THEN 1 ELSE 0 END) as noise_scanners,
-          SUM(CASE WHEN greynoise_noise = 0 THEN 1 ELSE 0 END) as potentially_targeted
-        FROM threats WHERE ${baseCond} AND greynoise_checked = 1 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>(),
-      env.DB.prepare(
-        `SELECT target_brand_id, SUM(CASE WHEN seclookup_risk_score >= 80 THEN 1 ELSE 0 END) as high_risk
-        FROM threats WHERE ${baseCond} AND seclookup_checked = 1 GROUP BY target_brand_id`
-      ).all<{ target_brand_id: string; high_risk: number }>(),
-    ]);
+    const enrichmentBatch = await cachedValue<{
+      surbl: Array<{ target_brand_id: string; cnt: number }>;
+      vt: Array<{ target_brand_id: string; cnt: number }>;
+      vtAvg: Array<{ target_brand_id: string; avg_mal: number | null }>;
+      gsb: Array<{ target_brand_id: string; cnt: number }>;
+      dbl: Array<{ target_brand_id: string; cnt: number }>;
+      greynoise: Array<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>;
+      seclookup: Array<{ target_brand_id: string; high_risk: number }>;
+    }>(env, "analyst.enrichment_by_brand", 1500, async () => {
+      const [surblRows, vtRows, vtAvgRows, gsbRows, dblRows, greynoiseRows, seclookupRows] = await Promise.all([
+        env.DB.prepare(
+          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND surbl_listed = 1 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; cnt: number }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; cnt: number }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id, ROUND(AVG(vt_malicious), 1) as avg_mal FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; avg_mal: number | null }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND gsb_flagged = 1 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; cnt: number }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND dbl_listed = 1 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; cnt: number }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id,
+            SUM(CASE WHEN greynoise_noise = 1 AND greynoise_classification = 'benign' THEN 1 ELSE 0 END) as noise_scanners,
+            SUM(CASE WHEN greynoise_noise = 0 THEN 1 ELSE 0 END) as potentially_targeted
+          FROM threats WHERE ${baseCond} AND greynoise_checked = 1 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>(),
+        env.DB.prepare(
+          `SELECT target_brand_id, SUM(CASE WHEN seclookup_risk_score >= 80 THEN 1 ELSE 0 END) as high_risk
+          FROM threats WHERE ${baseCond} AND seclookup_checked = 1 GROUP BY target_brand_id`
+        ).all<{ target_brand_id: string; high_risk: number }>(),
+      ]);
+      return {
+        surbl: surblRows.results,
+        vt: vtRows.results,
+        vtAvg: vtAvgRows.results,
+        gsb: gsbRows.results,
+        dbl: dblRows.results,
+        greynoise: greynoiseRows.results,
+        seclookup: seclookupRows.results,
+      };
+    });
+    const surblRows = { results: enrichmentBatch.surbl };
+    const vtRows = { results: enrichmentBatch.vt };
+    const vtAvgRows = { results: enrichmentBatch.vtAvg };
+    const gsbRows = { results: enrichmentBatch.gsb };
+    const dblRows = { results: enrichmentBatch.dbl };
+    const greynoiseRows = { results: enrichmentBatch.greynoise };
+    const seclookupRows = { results: enrichmentBatch.seclookup };
 
     // Pivot subquery results into the original per-brand shape
     const enrichmentByBrand = new Map<string, {
