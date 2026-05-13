@@ -1766,6 +1766,22 @@ async function recoverStalledAgents(
     // Skip manual + api agents — see #948 / #941.
     if (mod.trigger === 'manual' || mod.trigger === 'api') continue;
 
+    // Skip nexus — its primary path is the NEXUS_RUN workflow
+    // (dispatched from handleScheduled at hour % 4 === 0). The PR-A
+    // workflow_dispatch_supervisor block above watches the
+    // `wf_last_dispatch:nexus-run` KV stamp and emits
+    // `platform_workflow_dispatch_silent` when stale > 12h — that IS
+    // the recovery signal for nexus.
+    //
+    // FC dispatching nexus inline via executeAgent re-creates the loop
+    // observed 2026-05-13: each "recovery" inserted a new agent_runs
+    // partial row that the parent worker couldn't drive to completion
+    // before its CPU budget exhausted, leaving another stuck-partial
+    // row that the next FC tick saw as stalled. Six consecutive hours
+    // of recoveries (12:08 → 16:08) and 7 cumulative stuck partials
+    // in `agent_runs` before this guard landed.
+    if (agent.agent_id === 'nexus') continue;
+
     // Force-fail orphaned 'running' rows before re-dispatching.
     // A Worker timeout / unhandled exception leaves the row in
     // 'running' state forever; without this UPDATE-to-failed,

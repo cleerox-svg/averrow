@@ -177,6 +177,37 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
   // wall-clock past the scheduled minute and skipping every job.
   const now = new Date(event.scheduledTime);
   const hour = now.getUTCHours();
+
+  // ─── NEXUS workflow dispatch — fire EARLY, before any heavy inline awaits ───
+  //
+  // The previous placement (inside runThreatFeedScan at line ~860, after
+  // sentinel + analyst) was never reached: 2026-05-13 diagnostics showed
+  // zero `workflow_dispatched` activity_log rows at the 12/16/20 ticks
+  // even though analyst was completing successfully. Root cause: analyst's
+  // 113s inline await leaves the orchestrator parent worker out of CPU
+  // before line 860 executes (same root as the chronic enricher drop
+  // rate). Meanwhile FC's recoverStalledAgents kept dispatching nexus
+  // inline every hour, creating fresh stuck-partial rows that perpetuated
+  // the recovery loop.
+  //
+  // Moving dispatchWorkflow here — right after the prework block, before
+  // runThreatFeedScan — means it fires while the worker still has a fresh
+  // budget. ~50-100ms (KV read + workflow.create + KV put + activity_log
+  // INSERT) is well within reach. dispatchWorkflow's internal try/catch
+  // keeps a failure from breaking the orchestrator tick.
+  if (hour % 4 === 0) {
+    try {
+      const result = await dispatchWorkflow(env, {
+        workflow: env.NEXUS_RUN,
+        workflowName: 'nexus-run',
+        agentId: 'nexus',
+      });
+      logger.info('nexus_workflow_dispatch', { outcome: result.kind, ...(result.kind === 'dispatched' ? { instance_id: result.instance_id } : {}) });
+    } catch (err) {
+      logger.error('nexus_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   const results: CronJobResult[] = [];
 
   // Threat feed scan + full agent mesh — runs every hourly tick.
@@ -843,34 +874,10 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     }
   }
 
-  // NEXUS — every 4 hours (0, 4, 8, 12, 16, 20).
-  //
-  // Dispatched as a Cloudflare Workflow (NEXUS_RUN) via the
-  // supervision helper in lib/workflow-dispatch.ts. The workflow
-  // gets its own durable CPU budget so nexus's heavy ASN-correlation
-  // queries don't compete with the orchestrator's other inline work
-  // (sentinel, analyst, curator, attributor) for the parent worker's
-  // CPU. This reverts the Apr 22 fallback (commit 06881d0d) now that
-  // PR-A's supervisor will surface any future silent-stop the way
-  // the original switchback was forced to discover the hard way.
-  //
-  // The agent module (agents/nexus.ts) stays available as the manual
-  // trigger fallback at /api/internal/agents/nexus/run, so operators
-  // can still force an inline run if the workflows platform is down.
-  if (hour % 4 === 0) {
-    try {
-      const result = await dispatchWorkflow(env, {
-        workflow: env.NEXUS_RUN,
-        workflowName: 'nexus-run',
-        agentId: 'nexus',
-      });
-      logger.info('nexus_workflow_dispatch', { outcome: result.kind, ...(result.kind === 'dispatched' ? { instance_id: result.instance_id } : {}) });
-    } catch (err) {
-      // dispatchWorkflow() catches CF errors internally; this catch
-      // is for unexpected throws (e.g. KV outage, binding missing).
-      logger.error('nexus_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
-    }
-  }
+  // NEXUS workflow dispatch was relocated to handleScheduled() — fires
+  // BEFORE runThreatFeedScan is entered so it isn't blocked behind the
+  // analyst inline-await that exhausts the parent worker's CPU budget
+  // (see the comment block above the dispatch site in handleScheduled).
 
   // Attributor — Phase C of the Threat Actors rebuild. Classifies
   // NEXUS clusters by responsible threat actor via Haiku, then writes

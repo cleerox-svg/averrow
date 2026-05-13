@@ -220,6 +220,69 @@ Verify cartographer still keeps them fresh:
 
 Expected: non-zero numbers that change over the next 24h.
 
+## Verification (PR-D landing)
+
+PR-D fixes two issues observed after PR-B/C deployed (2026-05-13):
+
+1. **Orchestrator never reaches the nexus dispatch line.** runThreatFeedScan's analyst inline-await (~113s) exhausted the parent worker's CPU budget before line ~860 fired. Zero `workflow_dispatched` activity rows for nexus across 12:07, 16:07 cron ticks.
+2. **FC `recoverStalledAgents` perpetuates the loop.** Each hour FC sees nexus has a stuck partial row, dispatches `executeAgent('nexus')` inline → another stuck partial → next FC tick recovers it → loop.
+
+PR-D moves `dispatchWorkflow(nexus)` from inside `runThreatFeedScan` to `handleScheduled` immediately after the `hour` calculation — fires before any heavy inline await. PR-D also adds an explicit nexus skip in `recoverStalledAgents` (rationale: PR-A's workflow_dispatch_supervisor IS the recovery signal; inline recovery double-dips).
+
+### 1. Next `hour % 4 === 0 :07` tick writes a `workflow_dispatched` row
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT created_at, event_type, substr(message,1,120) AS message
+  FROM agent_activity_log
+  WHERE agent_id = 'nexus'
+    AND event_type IN ('workflow_dispatched','workflow_dispatch_failed','workflow_cooldown_skip')
+  ORDER BY created_at DESC LIMIT 3"
+```
+
+Expected after 00/04/08/12/16/20 UTC :07: a fresh `workflow_dispatched` row with an instance id.
+
+### 2. FC no longer creates new nexus agent_runs partials
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT COUNT(*) AS partials_today
+  FROM agent_runs
+  WHERE agent_id = 'nexus'
+    AND status = 'partial'
+    AND completed_at IS NULL
+    AND started_at >= date('now')"
+```
+
+Expected: 0 (after PR-D landing + the cleanup UPDATE that retired the 7 pre-fix stuck rows).
+
+### 3. FC recovery log no longer lists nexus
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT COUNT(*) AS nexus_recoveries
+  FROM agent_activity_log
+  WHERE agent_id = 'flight_control'
+    AND event_type = 'recovery'
+    AND message LIKE '%nexus%'
+    AND created_at >= datetime('now','-1 hour')"
+```
+
+Expected: 0 from the first post-deploy FC tick onward.
+
+### 4. Workflow completion writes back to `agent_runs`
+
+The workflow body itself writes a `'success'` row at completion (see `agents/nexus.ts` line ~606 — the duplicate-insert is harmless because the inline path is now manual-only).
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT status, duration_ms/1000.0 AS sec, records_processed
+  FROM agent_runs WHERE agent_id='nexus' AND status='success'
+  ORDER BY started_at DESC LIMIT 1"
+```
+
+Expected after the workflow finishes: `status='success'`, `sec < 600`, `records_processed > 0`.
+
 ## Operator actions when alert fires
 
 | Symptom | Action |
