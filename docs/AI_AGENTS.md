@@ -231,8 +231,9 @@ Sparrow identifies active threats with high confidence and drafts takedown notic
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/nexus.ts` |
-| **Trigger** | Scheduled — every 4 hours (hours 0/4/8/12/16/20, dispatched as `NexusWorkflow`) |
+| **Workflow** | `packages/trust-radar/src/workflows/nexusRun.ts` (class `NexusWorkflow`, binding `NEXUS_RUN`) |
+| **Agent module (fallback)** | `packages/trust-radar/src/agents/nexus.ts` (manual trigger only at `/api/internal/agents/nexus/run`) |
+| **Trigger** | Scheduled — every 4 hours (hours 0/4/8/12/16/20). Cron at `hour % 4 === 0` calls `dispatchWorkflow()` in `lib/workflow-dispatch.ts`, which has KV cooldown on `WorkflowInternalError` + last-dispatch stamp watched by FC supervisor. |
 | **Purpose** | Infrastructure cluster detection — the operations layer |
 
 Nexus correlates shared infrastructure (IPs, ASNs, certificates, registrars, naming patterns) into `infrastructure_clusters` rows that represent distinct threat actor operations. Pivot detection emits immediate events for Observer.

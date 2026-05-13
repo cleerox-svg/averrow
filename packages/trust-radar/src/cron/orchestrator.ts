@@ -3,6 +3,7 @@ import { feedModules, enrichmentModules, socialModules } from '../feeds/index';
 import { createAlert } from '../lib/alerts';
 import { cubeHealerAgent } from '../agents/cube-healer';
 import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platform-templates';
+import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
 
 interface CronJobResult {
@@ -843,22 +844,30 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   }
 
   // NEXUS — every 4 hours (0, 4, 8, 12, 16, 20).
-  // Dispatched via the agent module (writes to agent_runs) rather than
-  // the Workflow path. The Workflow-based dispatch stopped firing around
-  // Apr 19 (1 start in 7 days vs expected ~42); the agent module runs
-  // the same core logic (runNexus) and takes ~60s which fits comfortably
-  // under the cron CPU ceiling.
   //
-  // Inline await for the same reason as sparrow / strategist (PR #832) —
-  // ctx.waitUntil silently drops runs when the orchestrator invocation
-  // is killed first.
+  // Dispatched as a Cloudflare Workflow (NEXUS_RUN) via the
+  // supervision helper in lib/workflow-dispatch.ts. The workflow
+  // gets its own durable CPU budget so nexus's heavy ASN-correlation
+  // queries don't compete with the orchestrator's other inline work
+  // (sentinel, analyst, curator, attributor) for the parent worker's
+  // CPU. This reverts the Apr 22 fallback (commit 06881d0d) now that
+  // PR-A's supervisor will surface any future silent-stop the way
+  // the original switchback was forced to discover the hard way.
+  //
+  // The agent module (agents/nexus.ts) stays available as the manual
+  // trigger fallback at /api/internal/agents/nexus/run, so operators
+  // can still force an inline run if the workflows platform is down.
   if (hour % 4 === 0) {
     try {
-      const mod = allAgents["nexus"];
-      if (mod) {
-        await executeAgent(env, mod, {}, "cron", "scheduled");
-      }
+      const result = await dispatchWorkflow(env, {
+        workflow: env.NEXUS_RUN,
+        workflowName: 'nexus-run',
+        agentId: 'nexus',
+      });
+      logger.info('nexus_workflow_dispatch', { outcome: result.kind, ...(result.kind === 'dispatched' ? { instance_id: result.instance_id } : {}) });
     } catch (err) {
+      // dispatchWorkflow() catches CF errors internally; this catch
+      // is for unexpected throws (e.g. KV outage, binding missing).
       logger.error('nexus_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
     }
   }
