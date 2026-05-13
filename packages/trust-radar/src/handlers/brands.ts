@@ -177,6 +177,21 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
       LIMIT 1
     `).first<{ threat_type: string; cnt: number; pct: number }>();
 
+    // Sector mix for the donut on /v2/brands. The UI was rendering
+    // "Sector classification pending for X brands" for every visitor
+    // because this handler never returned `sector_breakdown` — even
+    // though ~6% of brands (4.7K of 78K) have a sector populated. Top
+    // 8 buckets are enough for the donut + the "+N more" rollup the
+    // chart already handles.
+    const sectorBreakdown = await session.prepare(`
+      SELECT sector, COUNT(*) AS count
+      FROM brands
+      WHERE sector IS NOT NULL AND sector != ''
+      GROUP BY sector
+      ORDER BY count DESC
+      LIMIT 8
+    `).all<{ sector: string; count: number }>();
+
     const data = {
       success: true,
       data: {
@@ -186,11 +201,14 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
         fastest_rising_pct: fastestRising?.cnt ?? 0,
         top_threat_type: topType?.threat_type ?? null,
         top_threat_type_pct: topType?.pct ?? 0,
+        sector_breakdown: sectorBreakdown.results ?? [],
       },
     };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
-    // 4 sequential .first() queries — meta isn't exposed.
-    tally.queries += 4;
+    // 5 sequential queries — meta isn't exposed for .first(), tally
+    // the breakdown's .all() rows from its meta.
+    tally.queries += 5;
+    addToTally(tally, sectorBreakdown.meta);
     recordD1Reads(env, "brand_stats", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
