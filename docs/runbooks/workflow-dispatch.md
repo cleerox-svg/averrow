@@ -283,6 +283,43 @@ wrangler d1 execute trust-radar-v2 --remote --command "
 
 Expected after the workflow finishes: `status='success'`, `sec < 600`, `records_processed > 0`.
 
+## Verification (PR-E landing)
+
+PR-E moves enricher to its own `8 * * * *` cron trigger so it runs in a dedicated Worker invocation with a fresh 5-min CPU + 15-min wall budget. Same root cause as the nexus issue PR-D fixed: enricher's inline placement in `handleScheduled` after `runThreatFeedScan` was unreachable on ticks where analyst's inline-await exhausted the parent worker's CPU. Drop rate 30-50% over the prior 3 days (13-16 actual runs vs 24 expected).
+
+### 1. New cron entry visible in CF dashboard
+
+After `wrangler deploy` from master, the Worker's Cron Triggers list should show 5 entries: `*/5 * * * *`, `7 * * * *`, **`8 * * * *`**, `12 */6 * * *`, `13 13 * * *`.
+
+### 2. Enricher fires every hour at :08
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT date(started_at) AS day,
+         COUNT(*) AS runs,
+         SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS ok
+  FROM agent_runs
+  WHERE agent_id = 'enricher'
+    AND started_at >= datetime('now','-2 days')
+  GROUP BY day ORDER BY day DESC"
+```
+
+Expected: `runs ≈ 24` per day after PR-E lands (vs 13-16 pre-fix). Success rate ≈ 95%+ (only blips on transient external-API failures).
+
+### 3. No enricher rows from the orchestrator cron path
+
+Orchestrator (`7 * * * *`) no longer dispatches enricher inline; the dedicated cron (`8 * * * *`) is the sole driver. Verify by checking the started_at minute distribution:
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT strftime('%M', started_at) AS minute, COUNT(*) AS n
+  FROM agent_runs
+  WHERE agent_id='enricher' AND started_at >= datetime('now','-1 day')
+  GROUP BY minute ORDER BY n DESC LIMIT 5"
+```
+
+Expected: minute=`08` dominates. Some `09` is fine (cron jitter).
+
 ## Operator actions when alert fires
 
 | Symptom | Action |

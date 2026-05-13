@@ -107,6 +107,34 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Enricher tick: dedicated invocation (8 * * * *, +1 min after orchestrator) ───
+  //
+  // Enricher (domain_geo, brand_logo_hq, brand_sector_rdap, brand_firmographic)
+  // averages ~231s wall with a 12-min walltime cap on domain_geo alone.
+  // Previously dispatched inline from the orchestrator after runThreatFeedScan
+  // — but the orchestrator's analyst inline await (~113s) was exhausting the
+  // parent worker's CPU budget before enricher's line was reached, leaving
+  // enricher dropped on 30-50% of ticks (13/24, 16/24, 15/24 over the prior
+  // 3 days).
+  //
+  // Running enricher under its own cron trigger gives it a fresh Worker
+  // invocation with the full 5-min CPU + 15-min wall budget, completely
+  // decoupled from the orchestrator's contention. Same pattern Cube Healer
+  // uses (12 */6 * * *). :08 placement chosen so it lands right after the
+  // orchestrator's :07 tick — same hour cadence as before.
+  if (event.cron === '8 * * * *') {
+    try {
+      const { enricherAgent } = await import('./enricher');
+      const { executeAgent } = await import('../lib/agentRunner');
+      await executeAgent(env, enricherAgent, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('enricher_dispatch_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a
@@ -216,24 +244,11 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     results.push(result);
   }
 
-  // Enricher runs every cron tick — owns domain_geo, brand_logo_hq,
-  // brand_sector_rdap. Decoupled from feed ingest so its failures
-  // don't poison feeds and vice versa.
-  //
-  // Phase 2.5 of agent audit: enricher is now a standard AgentModule
-  // dispatched through executeAgent — agent_runs row, FC supervision,
-  // circuit breaker all uniform with every other agent. The legacy
-  // agent_activity_log per-job rows are replaced by agent_outputs
-  // entries (severity='high' on failure, 'info' on non-zero progress).
-  try {
-    const { enricherAgent } = await import('./enricher');
-    const { executeAgent } = await import('../lib/agentRunner');
-    await executeAgent(env, enricherAgent, {}, 'cron', 'scheduled');
-  } catch (err) {
-    logger.error('enricher_dispatch_error', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // Enricher dispatch was relocated to the dedicated `8 * * * *` cron
+  // trigger so it runs in its own Worker invocation with a fresh CPU
+  // budget. The previous inline-await placement here was dropped on
+  // 30-50% of ticks because the orchestrator's analyst inline-await
+  // exhausted the parent worker before this line was reached.
 
   // Every 6 hours (hours 0/6/12/18): Social discovery + monitoring
   if (hour % 6 === 0) {
