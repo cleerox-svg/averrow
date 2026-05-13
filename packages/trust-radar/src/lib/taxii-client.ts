@@ -70,7 +70,14 @@ export function buildObjectsUrl(
   // are spec'd to be slash-terminated).
   const root = rootUrl.endsWith("/") ? rootUrl : `${rootUrl}/`;
   const url = new URL(`collections/${encodeURIComponent(collectionId)}/objects/`, root);
-  if (addedAfter) url.searchParams.set("added_after", addedAfter);
+  // Treat the literal strings "None" / "null" as a missing cursor.
+  // A previous bug serialized a Python-style `None` into feed_configs;
+  // the resulting URL `?added_after=None` made AlienVault reply HTTP 500
+  // and auto-paused the feed (2026-05-13).
+  const cursor = addedAfter?.trim();
+  if (cursor && cursor !== "None" && cursor !== "null") {
+    url.searchParams.set("added_after", cursor);
+  }
   if (limit && limit > 0) url.searchParams.set("limit", String(limit));
   return url.toString();
 }
