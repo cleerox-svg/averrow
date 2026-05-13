@@ -187,7 +187,7 @@ The Cartographer operates in two phases:
 Also runs email security scans for monitored brands via `packages/trust-radar/src/email-security.ts`.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
-**Outputs:** Enriched threat records; provider reputation scores; `agent_outputs` entries
+**Outputs:** Enriched threat records; provider reputation scores; `agent_outputs` entries; `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
 
 ---
 

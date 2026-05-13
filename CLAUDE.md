@@ -589,6 +589,7 @@ threat_cube_geo           ← OLAP cube: hourly geo aggregates
 threat_cube_provider      ← OLAP cube: hourly provider aggregates
 threat_cube_brand         ← OLAP cube: hourly brand aggregates
 hosting_providers         ← Provider registry with pre-computed threat counts
+provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results
 alerts                    ← Platform alerts
 agent_runs                ← Agent execution log
