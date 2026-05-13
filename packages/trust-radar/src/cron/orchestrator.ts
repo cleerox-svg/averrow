@@ -107,6 +107,40 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Cartographer tick: dedicated invocation (9 * * * *, +2 min after orchestrator) ───
+  //
+  // Cartographer's hourly maintenance work (AI provider scoring, email
+  // security scans, provider stats aggregation, plus one enrichment
+  // batch) used to run only from FC's scaleAgents which shares the
+  // orchestrator parent worker's CPU. 24% failure rate observed
+  // 2026-05-13 over a 2-day window (14 failed / 58 total at :07-:12).
+  //
+  // Same fix as PR-E (enricher): own cron trigger = own Worker
+  // invocation = fresh 5-min CPU / 15-min wall budget. FC scaleAgents
+  // continues to fire ADDITIONAL cart instances on top when the
+  // backlog warrants — those still share the orchestrator's CPU but
+  // they're now backlog-scaling on top of a guaranteed baseline run,
+  // not the only path.
+  //
+  // Overlap with FC's scaleAgents instances is harmless: cart writes
+  // are idempotent (ON CONFLICT on provider_threat_stats; per-row
+  // UPDATEs on threats; brand-by-brand idempotent scans on
+  // email_security_scans). Worst case is wasted ip-api subrequests
+  // when two instances hit the same unenriched rows — quantifiable
+  // and below the 50K subrequest cap.
+  if (event.cron === '9 * * * *') {
+    try {
+      const { cartographerAgent } = await import('../agents/cartographer');
+      const { executeAgent } = await import('../lib/agentRunner');
+      await executeAgent(env, cartographerAgent, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('cartographer_dispatch_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   // ─── Enricher tick: dedicated invocation (8 * * * *, +1 min after orchestrator) ───
   //
   // Enricher (domain_geo, brand_logo_hq, brand_sector_rdap, brand_firmographic)

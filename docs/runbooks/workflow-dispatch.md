@@ -320,6 +320,43 @@ wrangler d1 execute trust-radar-v2 --remote --command "
 
 Expected: minute=`08` dominates. Some `09` is fine (cron jitter).
 
+## Verification (PR-F landing)
+
+PR-F gives cartographer its own `9 * * * *` cron — same pattern as PR-E for enricher. Addresses 24% failure rate observed at the orchestrator's :07-:12 window over a 2-day window (14 failed / 58 total). FC `scaleAgents` continues to fire backlog-driven instances on top; the dedicated cron just guarantees a baseline maintenance run with a fresh Worker budget.
+
+### 1. New cron entry visible
+
+After deploy, the Worker's Cron Triggers list should show **6** entries:
+`*/5`, `7`, `8`, `9`, `12 */6`, `13 13`.
+
+### 2. Cartographer success rate jumps at the :09 window
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT strftime('%M', started_at) AS minute,
+         COUNT(*) AS runs,
+         SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS ok
+  FROM agent_runs
+  WHERE agent_id='cartographer' AND started_at >= datetime('now','-1 day')
+  GROUP BY minute ORDER BY runs DESC LIMIT 5"
+```
+
+Expected: `:09` window shows ~24 runs / >95% success. `:08`/`:10` etc still have some runs from FC scaleAgents — should be roughly the same baseline rate as today (the dedicated cron is additive).
+
+### 3. Cartographer maintenance work continues
+
+The summary line in `agent_outputs` should keep landing with provider counts and email-scan counts (proving the dedicated cron's run does the AI / email work, not just enrichment).
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT created_at, summary FROM agent_outputs
+  WHERE agent_id='cartographer'
+    AND summary LIKE 'Cartographer:%'
+  ORDER BY created_at DESC LIMIT 3"
+```
+
+Expected: rows from the past hour, with strings like `50 providers scored (50 AI)` and `50 email security scans`.
+
 ## Operator actions when alert fires
 
 | Symptom | Action |

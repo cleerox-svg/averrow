@@ -291,6 +291,12 @@ enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't shar
                              with the orchestrator's analyst inline-await. Decoupled
                              from orchestrator after PR-E because inline placement
                              was dropping ~30-50% of ticks.)
+cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with own
+                             worker budget. Maintains AI provider scoring + email
+                             security scans + provider stats. FC scaleAgents still
+                             fires ADDITIONAL instances on top for backlog drain.
+                             Dedicated cron added in PR-F after 24% failure rate
+                             observed at the orchestrator's :07-:12 window.)
 cube-healer:  12 */6 * * *  (every 6 hours at :12 — 30-day bulk cube rebuild)
 auto-seeder:  (no dedicated cron — gated inside the hourly orchestrator
                on Sundays at hour===5, runs at 05:07 UTC. CF rejects
@@ -305,6 +311,8 @@ Time gates use `event.scheduledTime` hour-only — **no minute gates** (see cron
 ```
 Always (every tick):  Flight Control, Incident recovery sweep, CertStream health, agent_events consumer
                       (Enricher moved to its own `8 * * * *` cron — see schedule above)
+                      (Cartographer's baseline maintenance moved to its own `9 * * * *` cron in PR-F.
+                       FC scaleAgents still fires additional cart instances for backlog drain.)
 Always (every tick):  Feed ingestion, brand match, email security, Cartographer, Analyst
 Sentinel:             after feed ingestion if totalNew > 0 (inline await)
 Cartographer:         after Sentinel OR as fallback (dispatched as Workflow)
