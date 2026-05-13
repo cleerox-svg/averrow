@@ -217,36 +217,60 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   }
 
   // --- Correlation 2: Update hosting_providers trend data ---
+  //
+  // Mirrors workflows/nexusRun.ts:130-181 — reads pre-aggregated counts
+  // from threat_cube_provider (bounded by cube row count, not by the
+  // threats table). The previous version had four correlated subqueries
+  // scanning the threats table per provider, which scaled linearly with
+  // the threats row count and tipped over once threats reached ~275K:
+  //
+  //   2026-05-01 success @ 212s avg → 2026-05-12 success @ 667s
+  //   → 2026-05-13 every cron run reaped at the 390min ceiling
+  //
+  // active_threat_count + total_threat_count are intentionally NOT
+  // updated here. Those pre-computed columns are maintained by
+  // cartographer Phase 5 (handlers/admin.ts:1309); duplicating the
+  // work here was the original bug the cube migration in PR-B (#1278)
+  // fixed for the workflow path. Same reasoning here.
+  //
+  // Writes are batched 20 at a time so a transient DB hiccup affects
+  // at most one chunk of 20 providers rather than the full set.
   let providersUpdated = 0;
   try {
-    await db.prepare(`
-      UPDATE hosting_providers SET
-        trend_7d = (
-          SELECT COUNT(*) FROM threats
-          WHERE hosting_provider_id = hosting_providers.id
-            AND first_seen >= datetime('now', '-7 days')
-        ),
-        trend_30d = (
-          SELECT COUNT(*) FROM threats
-          WHERE hosting_provider_id = hosting_providers.id
-            AND first_seen >= datetime('now', '-30 days')
-        ),
-        active_threat_count = (
-          SELECT COUNT(*) FROM threats
-          WHERE hosting_provider_id = hosting_providers.id
-            AND status = 'active'
-        ),
-        total_threat_count = (
-          SELECT COUNT(*) FROM threats
-          WHERE hosting_provider_id = hosting_providers.id
-        )
-      WHERE id IN (SELECT DISTINCT hosting_provider_id FROM threats WHERE hosting_provider_id IS NOT NULL)
-    `).run();
+    const agg = await db.prepare(`
+      SELECT
+        hosting_provider_id,
+        SUM(CASE WHEN hour_bucket >= datetime('now', '-7 days')
+                 THEN threat_count ELSE 0 END) as count_7d,
+        SUM(CASE WHEN hour_bucket >= datetime('now', '-30 days')
+                 THEN threat_count ELSE 0 END) as count_30d
+      FROM threat_cube_provider
+      WHERE hour_bucket >= datetime('now', '-30 days')
+      GROUP BY hosting_provider_id
+    `).all<{
+      hosting_provider_id: string;
+      count_7d: number;
+      count_30d: number;
+    }>();
 
-    const updatedCount = await db.prepare(
-      "SELECT COUNT(*) as n FROM hosting_providers WHERE trend_7d > 0 OR total_threat_count > 0"
-    ).first<{ n: number }>();
-    providersUpdated = updatedCount?.n ?? 0;
+    const BATCH = 20;
+    for (let i = 0; i < agg.results.length; i += BATCH) {
+      const chunk = agg.results.slice(i, i + BATCH);
+      const stmts = chunk.map(r =>
+        db.prepare(`
+          UPDATE hosting_providers SET
+            trend_7d = ?,
+            trend_30d = ?
+          WHERE id = ?
+        `).bind(r.count_7d, r.count_30d, r.hosting_provider_id)
+      );
+      try {
+        await db.batch(stmts);
+        providersUpdated += chunk.length;
+      } catch (batchErr) {
+        console.error('[nexus] provider trend batch failed:', batchErr);
+      }
+    }
   } catch (err) {
     console.error('[nexus] provider trend update error:', err);
   }

@@ -158,6 +158,68 @@ curl -sS -X POST -H "Authorization: Bearer ${AVERROW_INTERNAL_SECRET}" \
 Expected: a synchronous response with `runId` — the inline path is
 preserved as the operator fallback for when CF Workflows is degraded.
 
+## Verification (PR-C landing)
+
+PR-C replaces the heavy correlated-subquery `UPDATE hosting_providers`
+block in `agents/nexus.ts` with the cube-based version mirrored from
+`workflows/nexusRun.ts`. The agent module is the manual-trigger
+fallback at `/api/internal/agents/nexus/run`; PR-C keeps it cheap
+enough to actually use if Cloudflare Workflows is degraded and we
+need to force a run.
+
+Live cube numbers (2026-05-13):
+- threats: 276,106 (and growing)
+- threat_cube_provider 30d slice: **15,719 rows**
+- distinct providers in cube: **2,654** (vs 5,173 total)
+
+EXPLAIN QUERY PLAN: `SCAN threat_cube_provider USING INDEX idx_cube_provider_id_hour` — single covering-index scan, ~15.7K rows. Down from millions of correlated-subquery reads.
+
+### 1. Manual nexus run via inline path completes in <60s
+
+Trigger the inline agent module (the path PR-C defends):
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer ${AVERROW_INTERNAL_SECRET}" \
+  "https://averrow.com/api/internal/agents/nexus/run" | jq
+
+# Then immediately:
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT id, status, duration_ms/1000.0 AS sec, records_processed
+  FROM agent_runs WHERE agent_id='nexus'
+  ORDER BY started_at DESC LIMIT 1"
+```
+
+Expected: `status='success'`, `sec < 60`, `records_processed > 0`.
+Pre-PR-C the same call would tip into `partial`+reap after >180 min.
+
+### 2. providersUpdated count is sensible
+
+After a successful run, count providers whose `trend_7d` or `trend_30d`
+were set (the new code only writes when the cube has a row):
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT COUNT(*) AS providers_with_trend
+  FROM hosting_providers
+  WHERE trend_7d > 0 OR trend_30d > 0"
+```
+
+Expected: a value in the low-thousands — matches the cube's distinct
+hosting_provider_id count (currently ~2,654).
+
+### 3. active_threat_count / total_threat_count still maintained
+
+These columns are owned by cartographer Phase 5 (see commit comment
+in `agents/nexus.ts` correlation 2). PR-C drops them from nexus.
+Verify cartographer still keeps them fresh:
+
+```bash
+./scripts/platform-diagnostics.sh | \
+  jq '.data.enrichment_pipeline | { total_enriched, active_threats }'
+```
+
+Expected: non-zero numbers that change over the next 24h.
+
 ## Operator actions when alert fires
 
 | Symptom | Action |
