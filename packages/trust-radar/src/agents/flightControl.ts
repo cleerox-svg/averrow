@@ -26,7 +26,9 @@ import {
   renderPlatformCronMissed,
   renderPlatformEnrichmentStuck,
   renderPlatformGeoipRefreshStalled,
+  renderPlatformWorkflowDispatchSilent,
 } from "../lib/platform-templates";
+import { getLastDispatchAt, getCooldownUntil } from "../lib/workflow-dispatch";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
@@ -860,6 +862,65 @@ export const flightControlAgent: AgentModule = {
     }
 
     mark('geoip_refresh_supervisor');
+
+    // ── Workflow dispatch supervisor ───────────────────────────────
+    // Watches the `wf_last_dispatch:<workflow>` KV stamp written by
+    // dispatchWorkflow() in lib/workflow-dispatch.ts. If a workflow
+    // hasn't dispatched in expected_interval × 3, emit the
+    // platform_workflow_dispatch_silent alert. This is the signal
+    // that was missing on 2026-04-19 (commit 06881d0d) when nexus-run
+    // and cartographer-backfill silently stopped firing.
+    //
+    // Skipped while nothing calls dispatchWorkflow() yet (the KV stamp
+    // returns null). After PR-B switches cron over, the stamp gets
+    // refreshed on every successful dispatch.
+    const WORKFLOW_SUPERVISORS: Array<{
+      name: 'cartographer-backfill' | 'nexus-run';
+      expected_interval_hours: number;
+    }> = [
+      // Cartographer-backfill is dispatched after Sentinel feed pulls
+      // (hourly when totalNew > 0). 3× = 3h before alerting.
+      { name: 'cartographer-backfill', expected_interval_hours: 1 },
+      // Nexus-run fires at hour % 4 === 0 — 6 dispatches per 24h.
+      // 3× the interval = 12h.
+      { name: 'nexus-run', expected_interval_hours: 4 },
+    ];
+    if (env.CACHE) {
+      for (const wf of WORKFLOW_SUPERVISORS) {
+        try {
+          const lastDispatch = await getLastDispatchAt(env.CACHE, wf.name);
+          const cooldownUntil = await getCooldownUntil(env.CACHE, wf.name);
+          const cooldownActive = cooldownUntil !== null && cooldownUntil.getTime() > Date.now();
+
+          // Skip when there's no stamp yet (workflow has never been
+          // dispatched via the helper). This is the expected state
+          // until PR-B is merged. Once dispatch begins, a missing
+          // stamp would mean the dispatch path was never called —
+          // not detectable here, but FC's other heartbeat surfaces
+          // (cron_health, agent_runs) will flag it.
+          if (lastDispatch === null) continue;
+
+          const hoursSince = Math.floor((Date.now() - lastDispatch.getTime()) / (1000 * 60 * 60));
+          const thresholdHours = wf.expected_interval_hours * 3;
+          if (hoursSince >= thresholdHours) {
+            await emitPlatformNotification(env, 'platform_workflow_dispatch_silent',
+              renderPlatformWorkflowDispatchSilent({
+                workflow: wf.name,
+                hours_since_last_dispatch: hoursSince,
+                expected_interval_hours: wf.expected_interval_hours,
+                cooldown_active: cooldownActive,
+              }),
+            );
+          }
+        } catch {
+          // Per-workflow failure shouldn't break the FC tick. The
+          // KV read or emit could fail (KV momentary unavailability,
+          // notification table issue) but we'd rather skip than throw.
+        }
+      }
+    }
+
+    mark('workflow_dispatch_supervisor');
 
     // ── C2 infrastructure overlap detection ────────────────────────
     try {

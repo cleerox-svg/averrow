@@ -76,6 +76,13 @@ export interface PlatformGeoipRefreshStalledVars {
   source_version: string | null;
 }
 
+export interface PlatformWorkflowDispatchSilentVars {
+  workflow: 'cartographer-backfill' | 'nexus-run';
+  hours_since_last_dispatch: number | null;
+  expected_interval_hours: number;
+  cooldown_active: boolean;
+}
+
 export interface PlatformCronMissedVars {
   cron: 'orchestrator' | 'navigator';
   expected_interval_minutes: number;
@@ -276,6 +283,43 @@ export function renderPlatformGeoipRefreshStalled(v: PlatformGeoipRefreshStalled
       `or POST /api/admin/geoip-refresh with { forceReload: true }.`,
     link: PLATFORM_AGENTS_LINK,
     group_key: `platform_geoip_refresh_stalled:${v.refresh_log_id}`,
+    audience: 'super_admin',
+    severity: 'high',
+  };
+}
+
+/**
+ * Workflow dispatch went silent — no `.create()` call recorded in
+ * the KV stamp for longer than expected_interval × 3. This is the
+ * exact signal we lost on 2026-04-19 when nexus-run + cartographer-
+ * backfill stopped firing for 3 days without any operator-visible
+ * trace (see commit 06881d0d). With workflow-dispatch.ts in place,
+ * each successful .create() bumps a KV key; this template fires
+ * when the supervisor finds that key stale.
+ *
+ * Dedup is per-workflow so cartographer and nexus stalls don't
+ * collapse into one notification.
+ */
+export function renderPlatformWorkflowDispatchSilent(v: PlatformWorkflowDispatchSilentVars): RenderedTemplate {
+  const sinceText = v.hours_since_last_dispatch === null
+    ? 'no dispatch on record'
+    : `${v.hours_since_last_dispatch}h since last dispatch`;
+  const cooldownText = v.cooldown_active
+    ? ' (Cloudflare Workflows cooldown active — recent .create() returned WorkflowInternalError)'
+    : '';
+  return {
+    title: `Workflow ${v.workflow} dispatch silent`,
+    message:
+      `Expected ${v.workflow} to dispatch every ${v.expected_interval_hours}h. ` +
+      `${sinceText}${cooldownText}.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action:
+      `Check Cloudflare Workflows status. If platform is healthy, hit the manual ` +
+      `dispatch endpoint (POST /api/internal/agents/${v.workflow.replace('-run','').replace('-backfill','')}/workflow). ` +
+      `If a cooldown KV key (\`wf_cooldown:${v.workflow}\`) is present, it'll auto-expire ` +
+      `within 1h — or delete it to retry immediately.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_workflow_dispatch_silent:${v.workflow}`,
     audience: 'super_admin',
     severity: 'high',
   };

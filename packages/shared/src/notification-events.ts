@@ -48,6 +48,7 @@ export type NotificationEventKey =
   | 'platform_feed_silent'
   | 'platform_agent_stalled'
   | 'platform_geoip_refresh_stalled'
+  | 'platform_workflow_dispatch_silent'
   | 'platform_cron_orchestrator_missed'
   | 'platform_cron_navigator_missed'
   | 'platform_enrichment_stuck_pile'
@@ -268,6 +269,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_geoip_refresh_stalled',
     label: 'GeoIP Refresh Stalled',
     description: 'GeoIP MaxMind refresh workflow stuck >60 min — Flight Control auto-recovered',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_workflow_dispatch_silent',
+    label: 'Workflow Dispatch Silent',
+    description: 'No .create() call recorded for a Cloudflare Workflow in 3× its expected dispatch interval — see lib/workflow-dispatch.ts',
     dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,
