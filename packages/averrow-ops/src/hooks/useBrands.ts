@@ -54,8 +54,7 @@ interface BrandStats {
   fastest_rising_pct: number;
   top_threat_type: string | null;
   top_threat_type_pct: number;
-  second_threat_type: string | null;
-  third_threat_type: string | null;
+  threat_type_breakdown: { threat_type: string; count: number; pct: number }[] | null;
   sector_breakdown: { sector: string; count: number }[] | null;
 }
 

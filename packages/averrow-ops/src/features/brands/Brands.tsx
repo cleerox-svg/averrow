@@ -408,59 +408,88 @@ function SectorDonut({ breakdown, totalTracked }: {
 }
 
 // ── ThreatTypeBreakdown ──────────────────────────────────────────────
-// Bar-chart of the top 3 threat types from useBrandStats. Replaces
-// the implicit "Top attack" tile-only treatment with explicit ranking
-// so an operator sees the full breakdown at a glance.
-function ThreatTypeBreakdown({ stats }: { stats: any }) {
-  const types: Array<{ name: string; pct: number; rank: number }> = [];
-  if (stats?.top_threat_type) {
-    types.push({ name: stats.top_threat_type, pct: stats.top_threat_type_pct ?? 0, rank: 1 });
-  }
-  if (stats?.second_threat_type) {
-    types.push({ name: stats.second_threat_type, pct: 0, rank: 2 });
-  }
-  if (stats?.third_threat_type) {
-    types.push({ name: stats.third_threat_type, pct: 0, rank: 3 });
-  }
+// Donut of the full top-8 threat-type breakdown from useBrandStats.
+// PR-U replaced the previous bar-chart treatment: it could only render
+// the #1 row with a real % because the backend returned a single
+// {top_threat_type, top_threat_type_pct} pair and the bar component
+// was reaching for `second_threat_type`/`third_threat_type` fields
+// that the handler never returned. Now mirrors SectorDonut's layout
+// (pie + legend) so the operator sees the whole distribution at a
+// glance — phishing vs malware vs typosquatting vs ATO etc.
+const THREAT_TYPE_COLORS = [
+  '#C83C3C', '#E8923C', '#E5A832', '#0A8AB5', '#3CB878',
+  '#9B59B6', '#1ABC9C', '#34495E',
+];
 
-  // Bar widths: top one is the actual %, 2nd/3rd are scaled relative
-  // to top so the visual hierarchy matches even when 2nd/3rd %s
-  // aren't published by the endpoint.
-  const topPct = types[0]?.pct ?? 0;
+function ThreatTypeBreakdown({ stats }: { stats: any }) {
+  const raw: Array<{ threat_type: string; count: number; pct: number }> =
+    stats?.threat_type_breakdown ?? [];
+  const data = raw.slice(0, 8);
+  const total = data.reduce((s, x) => s + x.count, 0);
+
+  if (data.length === 0) {
+    return (
+      <Card hover={false} style={{ minHeight: 220 }}>
+        <SectionLabel>Attack types</SectionLabel>
+        <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
+          <span className="text-xs text-[var(--text-tertiary)]">
+            No threat type data yet
+          </span>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card hover={false}>
-      <SectionLabel>Attack types</SectionLabel>
-      <div className="mt-3 space-y-2.5">
-        {types.length === 0 && (
-          <div className="text-xs text-[var(--text-tertiary)] py-4 text-center">
-            No threat type data yet
-          </div>
-        )}
-        {types.map((t, i) => {
-          const barPct = i === 0 ? topPct : Math.max(10, topPct - (i * 18));
-          const accent = i === 0 ? '#C83C3C' : i === 1 ? '#E8923C' : '#DCAA32';
-          return (
-            <div key={t.name}>
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-[var(--text-primary)] capitalize">
-                  {humanizeThreatType(t.name)}
-                </span>
-                <span className="text-[var(--text-tertiary)]">
-                  {i === 0 ? `${t.pct}%` : `#${t.rank}`}
+      <div className="flex items-center justify-between">
+        <SectionLabel>Attack types</SectionLabel>
+        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          {formatNumber(total)} signals
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 items-center">
+        <div style={{ height: 160 }}>
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie data={data} dataKey="count" nameKey="threat_type"
+                innerRadius={42} outerRadius={68} paddingAngle={2} stroke="none">
+                {data.map((_, i) => (
+                  <Cell key={i} fill={THREAT_TYPE_COLORS[i % THREAT_TYPE_COLORS.length]} />
+                ))}
+              </Pie>
+              <RTooltip
+                formatter={(value, _name, entry: any) => [
+                  `${formatNumber(Number(value) || 0)} (${entry?.payload?.pct ?? 0}%)`,
+                  humanizeThreatType(entry?.payload?.threat_type ?? ''),
+                ]}
+                contentStyle={{
+                  background: 'var(--bg-card)', border: '1px solid var(--border-base)',
+                  borderRadius: 6, fontSize: 11, fontFamily: 'monospace',
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-1">
+          {data.map((t, i) => (
+            <div key={t.threat_type} className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-2 min-w-0">
+                <span style={{
+                  width: 8, height: 8, borderRadius: 2,
+                  background: THREAT_TYPE_COLORS[i % THREAT_TYPE_COLORS.length],
+                  flexShrink: 0,
+                }} />
+                <span className="font-mono text-[var(--text-secondary)] truncate capitalize">
+                  {humanizeThreatType(t.threat_type)}
                 </span>
               </div>
-              <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                <div className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${barPct}%`,
-                    background: `linear-gradient(90deg, ${accent}, ${accent}80)`,
-                    boxShadow: i === 0 ? `0 0 8px ${accent}55` : 'none',
-                  }} />
-              </div>
+              <span className="font-mono text-[var(--text-tertiary)] flex-shrink-0">
+                {t.pct}%
+              </span>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </Card>
   );

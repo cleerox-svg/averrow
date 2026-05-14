@@ -160,7 +160,13 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     // index-driven query that's O(distinct(threat_type)) regardless
     // of platform threat count. Pre-migration this was 30.8M rows
     // read across 68 calls/24h.
-    const topType = await session.prepare(`
+    //
+    // PR-U: returns the full top-8 breakdown for the donut chart on
+    // /v2/brands. Previously only the #1 row was extracted, which
+    // left the Attack-types card showing one bar with the real %
+    // and 2nd/3rd entries reaching for `second_threat_type` /
+    // `third_threat_type` fields that this handler never returned.
+    const threatTypeBreakdown = await session.prepare(`
       WITH type_totals AS (
         SELECT threat_type, SUM(threat_count) AS cnt
         FROM threat_cube_status
@@ -170,12 +176,15 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
         SELECT MAX(1, SUM(cnt)) AS total FROM type_totals
       )
       SELECT tt.threat_type,
-             tt.cnt,
+             tt.cnt AS count,
              ROUND(tt.cnt * 100.0 / grand.total, 1) AS pct
       FROM type_totals tt, grand
+      WHERE tt.threat_type IS NOT NULL AND tt.threat_type != ''
       ORDER BY tt.cnt DESC
-      LIMIT 1
-    `).first<{ threat_type: string; cnt: number; pct: number }>();
+      LIMIT 8
+    `).all<{ threat_type: string; count: number; pct: number }>();
+
+    const topType = threatTypeBreakdown.results?.[0] ?? null;
 
     // Sector mix for the donut on /v2/brands. The UI was rendering
     // "Sector classification pending for X brands" for every visitor
@@ -201,14 +210,16 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
         fastest_rising_pct: fastestRising?.cnt ?? 0,
         top_threat_type: topType?.threat_type ?? null,
         top_threat_type_pct: topType?.pct ?? 0,
+        threat_type_breakdown: threatTypeBreakdown.results ?? [],
         sector_breakdown: sectorBreakdown.results ?? [],
       },
     };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
     // 5 sequential queries — meta isn't exposed for .first(), tally
-    // the breakdown's .all() rows from its meta.
+    // the breakdown queries' .all() rows from their meta.
     tally.queries += 5;
     addToTally(tally, sectorBreakdown.meta);
+    addToTally(tally, threatTypeBreakdown.meta);
     recordD1Reads(env, "brand_stats", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
