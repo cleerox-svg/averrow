@@ -39,6 +39,9 @@ export interface D1Metrics24h {
 export interface D1TopQuery {
   query_hash: string;
   query_sample: string;
+  /** Database the query ran against. `null` for rows ingested before
+   *  PR-Y added the dimension. */
+  database_id: string | null;
   rows_read: number;
   rows_written: number;
   query_count: number;
