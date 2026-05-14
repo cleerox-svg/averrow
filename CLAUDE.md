@@ -267,13 +267,45 @@ All three self-gate internally. Don't add per-route logic to control them.
 4. Handle errors — catch all exceptions, log to `agent_runs.error_message`
 
 ### Agent trigger chain:
+
+The platform uses **cron + orchestrator** as the canonical control
+flow. The `agent_events` table is mostly **telemetry** — a forensic
+record of agent completions — with one event-driven dispatch
+(`pivot_detected` → Observer) for low-latency operational alerting.
+
+Events with `target_agent` set are dispatched by `processAgentEvents`
+in the orchestrator. Events with `target_agent=NULL` are written for
+operator traceability but no auto-dispatch happens (PR-L:1306).
+
 ```
-Sentinel      → [feed_pulled]        → Cartographer
-Cartographer  → [threats_enriched]   → Nexus
-Nexus         → [cluster_detected]   → Analyst + Observer (high severity)
-Nexus         → [pivot_detected]     → Observer (immediate)
-Analyst       → [scores_updated]     → Pathfinder (new high-value leads)
+Active edges (event-driven):
+  Nexus → [pivot_detected]   → Observer    (target_agent='observer')
+
+Telemetry only (target_agent=NULL):
+  Sentinel      → [feed_pulled]       — operator sees "new items found"
+  Cartographer  → [threats_enriched]  — operator sees enrichment progress
+  Nexus         → [nexus_complete]    — operator sees workflow completion
+
+Cron-driven dispatch (no event needed):
+  Cartographer  every hour via dedicated `9 * * * *` cron (PR-F)
+                + FC scaleAgents for backlog drain
+  Nexus         every 4h via NEXUS_RUN workflow (PR-B/D)
+  Analyst       every hour via orchestrator inline await
+  Strategist    every 6h via orchestrator
+  Sparrow       every 6h via orchestrator
+  Observer      daily at hour===0 via orchestrator
+                + pivot_detected event for immediate dispatch
+
+Not wired (historically declared but never implemented):
+  Nexus    → [cluster_detected]  → Analyst + Observer  (never emitted)
+  Analyst  → [scores_updated]    → Pathfinder          (Pathfinder demoted to manual 2026-04-29)
 ```
+
+Industry guidance ([StartupHub.ai 2026](https://www.startuphub.ai/ai-news/artificial-intelligence/2026/multi-agent-orchestration-patterns))
+calls hybrid models without explicit lanes the #1 cause of
+multi-agent system failure. Trust-Radar is explicitly orchestrator-
+pattern with a single event-driven exception (pivot_detected, where
+sub-hourly latency matters).
 
 ### AI usage rules:
 - **Haiku:** classification, scoring, short summaries — high volume
