@@ -194,17 +194,18 @@ function DatabaseCard({ rank, db, pctOfTotal }: { rank: number; db: D1DatabaseUs
 }
 
 // Resolve a friendlier label from the database id. The three databases
-// the worker binds are kept in `wrangler.toml`; anything else gets the
-// truncated id. Hard-coded here to avoid passing the binding through
-// every layer of the diagnostics stack — matches the same pattern
-// used in `lib/d1-budget.ts` for D1_DATABASE_ID.
+// the worker binds are kept in `wrangler.toml`; anything else is an
+// account-level D1 database that trust-radar doesn't touch (the imprsn8
+// worker on the same account, or an orphan from earlier development).
+// Surfacing those as "external · <8-char-id>" makes it obvious in the
+// UI that the row isn't coming from this worker's bindings.
 function friendlyDatabaseName(id: string): string {
   const map: Record<string, string> = {
     'a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6': 'trust-radar-v2 (DB)',
     '55d58eff-47f3-4533-afa4-e52d494376e0': 'trust-radar-v2-audit (AUDIT_DB)',
     'f47a6b18-b343-46d9-87e8-ef8ef4aa8521': 'geoip-db (GEOIP_DB)',
   };
-  return map[id] ?? id.slice(0, 8);
+  return map[id] ?? `external · ${id.slice(0, 8)}`;
 }
 
 function formatCycleRange(startIso: string, endIso: string): string {
@@ -391,6 +392,25 @@ function QueryCard({
         {query.query_sample.replace(/\s+/g, ' ').trim()}
       </div>
 
+      {/* PR-Y: which database this query came from. Helps the operator
+          distinguish trust-radar-v2 / AUDIT_DB / GEOIP_DB / other
+          account DBs in the same top-queries leaderboard. */}
+      {query.database_id && (
+        <div
+          className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono"
+          style={{
+            background: 'var(--bg-input)',
+            color:      'var(--text-secondary)',
+            border:     '1px solid var(--border-base)',
+            maxWidth:   '100%',
+          }}
+          title={query.database_id}
+        >
+          <span style={{ color: 'var(--text-muted)' }}>db</span>
+          <span className="truncate">{friendlyDatabaseName(query.database_id)}</span>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mt-1.5 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
         <span>{query.query_count.toLocaleString()} runs</span>
         <span>·</span>
@@ -412,6 +432,17 @@ function QueryDetail({ query, pctOfTotal }: { query: D1TopQuery; pctOfTotal: num
         <Stat label="Avg rows / run" value={formatBig(query.avg_rows_per_query)} />
         <Stat label="Rows written" value={query.rows_written.toLocaleString()} />
         <Stat label="Query hash" value={query.query_hash.slice(0, 12)} mono />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+        <Stat
+          label="Database"
+          value={query.database_id ? friendlyDatabaseName(query.database_id) : 'unknown'}
+        />
+        <Stat
+          label="Database id"
+          value={query.database_id ?? '—'}
+          mono
+        />
       </div>
       <div>
         <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>

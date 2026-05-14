@@ -208,6 +208,11 @@ export interface D1QueryStat {
   query_hash: string;
   /** Truncated sample of the SQL text. May be null when CF doesn't surface it. */
   query_sample: string | null;
+  /** Database the query ran against. PR-Y added the dimension; queries
+   *  predating the change carry `null`. UI maps known IDs to friendly
+   *  names (trust-radar-v2 / AUDIT_DB / GEOIP_DB) and falls back to a
+   *  truncated id for any other accounts-on-this-platform databases. */
+  database_id: string | null;
   rows_read: number;
   rows_written: number;
   query_count: number;
@@ -235,22 +240,27 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
   if (!token || !accountId) {
     return { queries: [], error: "CF_API_TOKEN or CF_ACCOUNT_ID not configured" };
   }
-  const databaseId = D1_DATABASE_ID;
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   // Cloudflare's per-query analytics dataset.
   //
+  // PR-Y: dropped the `databaseId` filter so top queries reflect spend
+  // across ALL D1 databases on the account, not just the primary
+  // `DB` binding. Added `databaseId` to dimensions so each row tells
+  // the operator which DB it came from. The previous single-DB filter
+  // hid the dominant spender — one account-level DB outside this
+  // worker's bindings was running ~70% of total cycle reads with no
+  // visibility in the metrics UI.
+  //
   // `sum.queries` from PR #864 doesn't exist — CF rejects with
   // `unknown field "queries"`. The query count is on the top-level
-  // `count` field (number of analytics samples in the group),
-  // sibling of `sum` and `dimensions` — same pattern as the
-  // workers/pages adaptive groups.
+  // `count` field (number of analytics samples in the group).
   const query = `
     query {
       viewer {
         accounts(filter: { accountTag: "${accountId}" }) {
           d1QueriesAdaptiveGroups(
-            filter: { datetimeHour_geq: "${since}", databaseId: "${databaseId}" }
+            filter: { datetimeHour_geq: "${since}" }
             orderBy: [sum_rowsRead_DESC]
             limit: ${limit}
           ) {
@@ -261,6 +271,7 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
             }
             dimensions {
               query
+              databaseId
             }
           }
         }
@@ -289,7 +300,7 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
             d1QueriesAdaptiveGroups?: Array<{
               count: number;
               sum: { rowsRead: number; rowsWritten: number };
-              dimensions: { query: string };
+              dimensions: { query: string; databaseId?: string };
             }>;
           }>;
         };
@@ -311,6 +322,7 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
     const queries = groups.map((g) => ({
       query_hash: g.dimensions.query,
       query_sample: g.dimensions.query,
+      database_id: g.dimensions.databaseId ?? null,
       rows_read: g.sum.rowsRead,
       rows_written: g.sum.rowsWritten,
       query_count: g.count,
