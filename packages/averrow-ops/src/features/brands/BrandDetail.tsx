@@ -380,12 +380,136 @@ function RiskTab({
         </div>
       </Card>
 
+      <TyposquatsSection threats={threats} />
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <DimensionalButton variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
           {aiPending ? 'ANALYZING…' : 'AI DEEP SCAN'}
         </DimensionalButton>
       </div>
     </div>
+  );
+}
+
+// ── TYPOSQUATS SURFACE ──────────────────────────────────────────────────
+// Read-only list of typosquatting threats attributed to this brand.
+// Sourced from the brand's threats array (pre-loaded at the tab parent),
+// filtered by threat_type='typosquatting'. Customer-side takedown
+// submission lives on the tenant view; staff observe here.
+
+function TyposquatsSection({ threats }: { threats: any[] }) {
+  const rows = useMemo(
+    () =>
+      (threats ?? [])
+        .filter((t) => t.threat_type === 'typosquatting' && t.status === 'active')
+        .sort((a, b) => {
+          const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+          const aw = sevOrder[a.severity ?? 'low'] ?? 4;
+          const bw = sevOrder[b.severity ?? 'low'] ?? 4;
+          if (aw !== bw) return aw - bw;
+          return new Date(b.first_seen ?? 0).getTime() - new Date(a.first_seen ?? 0).getTime();
+        })
+        .slice(0, 100),
+    [threats],
+  );
+
+  if (rows.length === 0) {
+    return (
+      <Card hover={false}>
+        <SectionLabel>Typosquats</SectionLabel>
+        <div className="mt-3 text-[12px] text-[var(--text-tertiary)] font-mono">
+          No active typosquatting threats attributed to this brand.
+        </div>
+      </Card>
+    );
+  }
+
+  const critical = rows.filter((r) => r.severity === 'critical').length;
+  const high     = rows.filter((r) => r.severity === 'high').length;
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-baseline justify-between">
+        <SectionLabel>Typosquats <span className="text-[var(--text-muted)]">({rows.length})</span></SectionLabel>
+        {(critical > 0 || high > 0) && (
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
+            {critical > 0 && <span className="text-[var(--sev-critical)]">{critical} critical</span>}
+            {high > 0 && <span className="text-[var(--amber)]">{high} high</span>}
+          </div>
+        )}
+      </div>
+      <div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+        <table className="w-full text-[12px]">
+          <thead className="border-b border-white/[0.06] bg-white/[0.02]">
+            <tr className="text-left">
+              <TsTh>Domain</TsTh>
+              <TsTh>Severity</TsTh>
+              <TsTh>Source</TsTh>
+              <TsTh>Hosting</TsTh>
+              <TsTh>First seen</TsTh>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0">
+                <TsTd className="font-mono">
+                  <span className="text-[var(--text-primary)]">{r.malicious_domain ?? r.malicious_url ?? '—'}</span>
+                </TsTd>
+                <TsTd><TsSeverityPill severity={r.severity ?? 'low'} /></TsTd>
+                <TsTd>
+                  <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                    {tsShortSource(r.source_feed)}
+                  </span>
+                </TsTd>
+                <TsTd className="text-[var(--text-secondary)] truncate max-w-[180px]">
+                  {r.hosting_provider ?? <span className="text-[var(--text-muted)]">unknown</span>}
+                  {r.country_code && (
+                    <span className="ml-1.5 text-[10px] font-mono text-[var(--text-muted)]">{r.country_code}</span>
+                  )}
+                </TsTd>
+                <TsTd className="text-[var(--text-muted)] font-mono text-[11px]">
+                  {r.first_seen ? new Date(r.first_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                </TsTd>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono">
+        Customer-side takedown submission is in the tenant Domain Findings view.
+      </div>
+    </Card>
+  );
+}
+
+function tsShortSource(source: string | null | undefined): string {
+  if (!source) return 'unknown';
+  return source === 'typosquat_scanner'      ? 'scanner'
+       : source === 'ct_logs'                 ? 'CT logs'
+       : source === 'numbered_variant_scan'   ? 'numbered'
+       : source === 'nrd_hagezi'              ? 'NRD'
+       : source.replace(/_/g, ' ');
+}
+
+function TsTh({ children }: { children: React.ReactNode }) {
+  return <th className="px-3 py-2 text-[10px] uppercase tracking-widest font-mono text-[var(--text-tertiary)] font-normal">{children}</th>;
+}
+
+function TsTd({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <td className={`px-3 py-2.5 ${className}`}>{children}</td>;
+}
+
+function TsSeverityPill({ severity }: { severity: string }) {
+  const sev = severity.toLowerCase();
+  const tone =
+    sev === 'critical' ? 'text-[var(--sev-critical)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
+    sev === 'high'     ? 'text-[var(--amber)]        bg-[var(--sev-high-bg)]   border-amber/[0.20]'                  :
+    sev === 'medium'   ? 'text-[var(--sev-medium)]   bg-[var(--sev-medium-bg)] border-amber/[0.10]'                  :
+                         'text-[var(--text-secondary)] bg-white/[0.04]        border-white/[0.08]';
+  return (
+    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+      {sev}
+    </span>
   );
 }
 

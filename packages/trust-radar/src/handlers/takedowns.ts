@@ -109,6 +109,42 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
     }
   }
 
+  // Typosquat takedown — source_type='threat' resolves the row from
+  // the threats table. Pulls severity + a sensible evidence draft
+  // built from the row's intel (source feed, hosting provider, first
+  // seen). The provider auto-detect block below the source switch
+  // already pulls hosting_provider + abuse contact when targetType is
+  // 'domain', so we don't need to duplicate that here.
+  if (body.source_type === "threat" && body.source_id) {
+    const threat = await env.DB.prepare(
+      `SELECT severity, source_feed, threat_type, malicious_domain,
+              hosting_provider, country_code, first_seen
+       FROM threats WHERE id = ? AND target_brand_id = ?`
+    ).bind(body.source_id, brandId).first<{
+      severity: string | null;
+      source_feed: string;
+      threat_type: string;
+      malicious_domain: string | null;
+      hosting_provider: string | null;
+      country_code: string | null;
+      first_seen: string | null;
+    }>();
+    if (threat) {
+      severity = (threat.severity ?? severity).toUpperCase();
+      if (!evidenceDetail) {
+        const parts = [
+          `Threat type: ${threat.threat_type}`,
+          `Detected by: ${threat.source_feed}`,
+          threat.malicious_domain ? `Malicious domain: ${threat.malicious_domain}` : null,
+          threat.hosting_provider ? `Hosting provider: ${threat.hosting_provider}` : null,
+          threat.country_code ? `Country: ${threat.country_code}` : null,
+          threat.first_seen ? `First seen: ${threat.first_seen}` : null,
+        ].filter(Boolean);
+        evidenceDetail = parts.join("\n");
+      }
+    }
+  }
+
   // Auto-detect provider abuse contact
   let providerName: string | null = null;
   let providerAbuseContact: string | null = null;

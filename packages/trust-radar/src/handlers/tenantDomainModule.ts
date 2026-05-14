@@ -168,6 +168,32 @@ export interface CertRow {
   created_at:    string;
 }
 
+/**
+ * Typosquat threats attributed to the brand — sourced from the
+ * `threats` table where threat_type='typosquatting' AND
+ * target_brand_id matches. Layered onto the GET response so the
+ * tenant Domain Findings page can surface the production threat-intel
+ * volume (24K+ rows across the platform) alongside the smaller
+ * curated lookalike_domains workspace.
+ *
+ * `takedown_status` is LEFT-JOINed from takedown_requests so the UI
+ * can swap the "Request takedown" CTA for a status badge when one
+ * is already in-flight.
+ */
+export interface TyposquatRow {
+  id:               string;
+  malicious_domain: string;
+  source_feed:      string;
+  severity:         string;
+  status:           string;
+  first_seen:       string | null;
+  last_seen:        string | null;
+  hosting_provider: string | null;
+  country_code:     string | null;
+  takedown_status:  string | null;
+  takedown_id:      string | null;
+}
+
 export async function handleGetBrandDomainFindings(
   request: Request,
   env:     Env,
@@ -218,10 +244,16 @@ export async function handleGetBrandDomainFindings(
     return json({ success: false, error: "Brand not found" }, 404, origin);
   }
 
-  // Read both finding types in parallel. Cap at a sensible page
+  // Read all three finding types in parallel. Cap at a sensible page
   // size; a future "view all" page can paginate.
+  //
+  // Typosquats: LEFT JOIN takedown_requests so the UI can render a
+  // takedown-status badge when one is already in-flight (and hide the
+  // "Request takedown" CTA). Match is by (org_id, target_value=domain)
+  // — taking the most recent request if there are multiple historical
+  // ones for the same domain.
   const FINDINGS_LIMIT = 100;
-  const [lookalikes, certs] = await Promise.all([
+  const [lookalikes, certs, typosquats] = await Promise.all([
     env.DB.prepare(
       `SELECT id, brand_id, domain, permutation_type, registered, resolves_to,
               has_mx, has_web, first_seen, last_checked, threat_level,
@@ -238,6 +270,24 @@ export async function handleGetBrandDomainFindings(
        ORDER BY suspicious DESC, created_at DESC
        LIMIT ?`,
     ).bind(brandId, FINDINGS_LIMIT).all<CertRow>(),
+    env.DB.prepare(
+      `SELECT t.id, t.malicious_domain, t.source_feed, t.severity, t.status,
+              t.first_seen, t.last_seen, t.hosting_provider, t.country_code,
+              tr.status AS takedown_status, tr.id AS takedown_id
+       FROM threats t
+       LEFT JOIN takedown_requests tr
+         ON tr.source_type = 'threat'
+        AND tr.source_id = t.id
+        AND tr.org_id = ?
+       WHERE t.threat_type = 'typosquatting'
+         AND t.target_brand_id = ?
+         AND t.status = 'active'
+       ORDER BY
+         CASE t.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                          WHEN 'medium' THEN 2 ELSE 3 END,
+         t.first_seen DESC
+       LIMIT ?`,
+    ).bind(orgIdNum, brandId, FINDINGS_LIMIT).all<TyposquatRow>(),
   ]);
 
   return json({
@@ -246,6 +296,7 @@ export async function handleGetBrandDomainFindings(
       brand_id: brandId,
       lookalikes: lookalikes.results,
       certs: certs.results,
+      typosquats: typosquats.results,
       page_size: FINDINGS_LIMIT,
     },
   }, 200, origin);
