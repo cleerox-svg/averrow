@@ -382,6 +382,13 @@ app_store:    13 */6 * * * (every 6h at :13 — dedicated cron PR-Q)
 dark_web:     14 */6 * * * (every 6h at :14 — dedicated cron PR-Q)
 social:       15 */6 * * * (every 6h at :15 — dispatches social_discovery + social_monitor
                              paired, discovery-first — dedicated cron PR-Q)
+brand_scores: 16 0 * * *   (daily at 00:16 UTC — computeBrandScoresBatch over the
+                             full brand catalog; writes one brand_score_snapshots
+                             row per brand. Was gated on `hour === 0` inside the
+                             orchestrator but starved by analyst inline-await, so
+                             brand_score_snapshots sat at 0 rows and the Brands
+                             page Improving/Declining cards were permanently
+                             empty. Dedicated cron PR-T — same pattern as PR-E/F/Q.)
 auto-seeder:  (no dedicated cron — gated inside the hourly orchestrator
                on Sundays at hour===5, runs at 05:07 UTC. CF rejects
                the 5-field cron `23 5 * * 0` with code 10100, so this

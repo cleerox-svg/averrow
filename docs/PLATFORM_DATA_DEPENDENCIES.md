@@ -222,3 +222,22 @@ When adding a new workflow-dispatched agent:
 | PR-N | 2026-05-14 | Deterministic `anthropic-idempotency-key` header on every Anthropic call |
 | PR-Q | 2026-05-14 | 5 agents (strategist + sparrow + 3 monitors) → dedicated 6-hourly crons |
 | PR-R | 2026-05-14 | Shared `lib/workflow-agent-stats.ts` helper; applied to `/api/agents`, FC `getAgentHealth`, platform-status realtime |
+| PR-S | 2026-05-14 | Brands top-level Lookalikes card → query `threats` (27K+ attributed typosquats) instead of empty `lookalike_domains` (PR-H pattern for the ops Brands page); documented dark-web data gap |
+| PR-T | 2026-05-14 | Daily brand-score batch (`computeBrandScoresBatch`) → dedicated `16 0 * * *` cron after a starvation diagnosis showed `brand_score_snapshots` at 0 rows since launch (orchestrator hour===0 inline await never reached the block). Movers SQL in `lib/brand-aggregates.ts` loosened from strict 6-8 day window to "oldest snapshot in 1-8 days" so the Brands page Improving/Declining cards light up as soon as ≥1 day of history exists and naturally extend to the full 7-day diff. |
+
+---
+
+## 9. Known data gaps (modules with no live data)
+
+Surfaces that render a card / endpoint but currently have no data because the ingestion path isn't built or isn't wired:
+
+| Surface | Backing table | Card behaviour today | Build status |
+|---|---|---|---|
+| Brands top-level "Dark-web mentions" card | `dark_web_mentions` | "No signal yet" — table has 0 rows | The `dark_web_monitor` agent runs every 6h (PR-Q) but its current implementation in `scanners/dark-web-monitor.ts` operates against `brand_monitor_schedule` rows for a small monitored-brands subset. Pastebin (PSBDMP) is the only configured source; HIBP / Telegram / Flare integrations have NOT been built. Card lights up automatically the moment rows start landing — query is correct, just no data. |
+| Brands top-level "Improving / Declining" cards | `brand_score_snapshots` | Empty until `16 0 * * *` cron has fired ≥1 time (PR-T). First night after deploy: empty. Second night onwards: populates as 1-day-delta movers, naturally extending toward 7-day diff as history accumulates. | Self-healing — no further build needed. Diagnose via `SELECT COUNT(*), MAX(snapshot_day) FROM brand_score_snapshots`. If still empty 48h after deploy, check `agent_runs.agent_id='brand_score_batch'` / `logger.info('brand_scores_daily_batch')` log line for cron firing. |
+
+**Recovery checklist when one of these gaps is closed (new module ingests data):**
+1. Verify the relevant `pressureAggregate` / `intelAggregate` query in `lib/brand-aggregates.ts` reads from the right table
+2. Smoke-test the affected card on `/brands` (ops) and `/modules` (tenant)
+3. Update this table to remove the entry
+4. If the new module is workflow-dispatched, ensure `workflow-agent-stats.ts` event types cover it (§2)

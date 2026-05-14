@@ -106,8 +106,27 @@ export async function pressureAggregate(env: Env): Promise<PressureAggregate> {
         LIMIT 8
       `;
 
+      // Lookalikes: query threats table (where the production
+      // typosquat-scanner output lands — 27K+ rows attributed by
+      // target_brand_id), not lookalike_domains (a 30-row curated
+      // workspace that's mostly empty under the registered=1 +
+      // status='monitoring' filter). Same root cause + pattern as
+      // PR-H fixed for the tenant Domain Findings page. Aliasing
+      // target_brand_id as brand_id so it shapes-matches baseSelect.
+      const lookalikesSql = `
+        SELECT b.id AS brand_id, b.name AS brand_name, b.canonical_domain, b.logo_url, COUNT(*) AS count
+        FROM threats t
+        JOIN brands b ON b.id = t.target_brand_id
+        WHERE t.threat_type = 'typosquatting'
+          AND t.target_brand_id IS NOT NULL
+          AND t.status = 'active'
+        GROUP BY b.id, b.name, b.canonical_domain, b.logo_url
+        ORDER BY count DESC
+        LIMIT 8
+      `;
+
       const [lookalikes, social, apps, dark] = await Promise.all([
-        env.DB.prepare(baseSelect('lookalike_domains', "WHERE t.registered = 1 AND t.status = 'monitoring'"))
+        env.DB.prepare(lookalikesSql)
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
         env.DB.prepare(baseSelect('social_profiles',
           "WHERE t.classification IN ('impersonation','suspicious') AND COALESCE(t.status,'active') = 'active'"))
@@ -115,6 +134,11 @@ export async function pressureAggregate(env: Env): Promise<PressureAggregate> {
         env.DB.prepare(baseSelect('app_store_listings',
           "WHERE t.classification IN ('impersonation','suspicious') AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
+        // dark_web_mentions ingestion isn't built yet — table is
+        // empty (verified 2026-05-14). Keeping the query in place so
+        // the card lights up the moment data starts landing; for now
+        // it returns zero rows and the UI shows "No signal yet". See
+        // docs/PLATFORM_DATA_DEPENDENCIES.md §6.
         env.DB.prepare(baseSelect('dark_web_mentions',
           "WHERE t.classification = 'confirmed' AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
@@ -268,9 +292,17 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
         `).first<{ n: number }>(),
       ]);
 
-      // Improving / declining: compare latest snapshot to the
-      // snapshot from 7 days ago. brand_score_snapshots is keyed
-      // by (brand_id, snapshot_day) so the windowed CTE is cheap.
+      // Improving / declining: compare latest snapshot to the OLDEST
+      // snapshot within the last 1-8 days. PR-T loosened this from a
+      // strict 6-8 day window because brand_score_snapshots was empty
+      // for months (orchestrator hour===0 starvation; see cron handler
+      // for `16 0 * * *`) and even after the dedicated cron started
+      // populating it, customers wouldn't see Improving/Declining
+      // cards for a full week. Loosened window lights them up as soon
+      // as ≥1 day of history exists, then naturally extends to the
+      // full 7-day diff as history accumulates. brand_score_snapshots
+      // is keyed by (brand_id, snapshot_day) so the windowed CTE is
+      // cheap (index seek per brand).
       const movers = await env.DB.prepare(`
         WITH paired AS (
           SELECT
@@ -279,8 +311,9 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
             (SELECT brand_health_score
              FROM brand_score_snapshots s2
              WHERE s2.brand_id = s.brand_id
-               AND julianday('now') - julianday(s2.snapshot_day) BETWEEN 6 AND 8
-             ORDER BY s2.snapshot_day DESC LIMIT 1) AS prev
+               AND julianday('now') - julianday(s2.snapshot_day) BETWEEN 1 AND 8
+               AND s2.snapshot_day <> s.snapshot_day
+             ORDER BY s2.snapshot_day ASC LIMIT 1) AS prev
           FROM brand_score_snapshots s
           WHERE s.snapshot_day = (
             SELECT MAX(snapshot_day) FROM brand_score_snapshots

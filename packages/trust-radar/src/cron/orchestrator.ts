@@ -244,6 +244,33 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Daily brand-score batch (PR-T) ───
+  //
+  // Scores the entire brand catalog (~78K brands) and writes a
+  // brand_score_snapshots row per scored brand. Pre-PR-T this was
+  // gated on `hour === 0` inside runThreatFeedScan — same starvation
+  // pattern as nexus/strategist/sparrow before PR-D/Q. The orchestrator's
+  // analyst inline-await routinely exhausted the worker before reaching
+  // the hour===0 block; the snapshot table sat at 0 rows for the entire
+  // post-deploy window, which left the Brands page's Improving /
+  // Declining cards forever empty.
+  //
+  // Dedicated cron at 00:16 UTC gives it a fresh Worker invocation
+  // with the full 5-min CPU + 15-min wall budget, decoupled from the
+  // orchestrator. Snapshots accumulate from day 1; PR-T's part D
+  // (lib/brand-aggregates.ts) loosens the diff window so the cards
+  // light up as soon as ≥1 day of history exists.
+  if (event.cron === '16 0 * * *') {
+    try {
+      const { computeBrandScoresBatch } = await import('../lib/brand-scoring');
+      const summary = await computeBrandScoresBatch(env);
+      logger.info('brand_scores_daily_batch', summary);
+    } catch (err) {
+      logger.error('brand_scores_daily_batch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a
@@ -1086,25 +1113,19 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     logger.error('threat_feed_scan_snapshots_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // Daily brand-score snapshot (Brand Health + Exposure split per v3 §9.6).
-  // Runs once at hour===0. Scores the ENTIRE brand catalog (~78K brands)
-  // via concurrent waves under a 12-min wall-clock budget — see
-  // computeBrandScoresBatch for the rationale. Per-brand recompute on
-  // signal change still happens via computeBrandExposureScore from the
-  // analyst/scanner paths.
-  if (hour === 0) {
-    try {
-      const { computeBrandScoresBatch } = await import('../lib/brand-scoring');
-      const summary = await computeBrandScoresBatch(env);
-      logger.info('brand_scores_daily_batch', summary);
-    } catch (err) {
-      logger.error('brand_scores_daily_batch_error', { error: err instanceof Error ? err.message : String(err) });
-    }
+  // NOTE: daily brand-score batch (computeBrandScoresBatch) was
+  // gated on `hour === 0` here but routinely never executed —
+  // analyst inline-await + scan workload exhausted the worker
+  // before reaching this line, leaving `brand_score_snapshots`
+  // at 0 rows since the feature shipped (and the Brands page
+  // Improving/Declining cards permanently empty). PR-T moved
+  // it to a dedicated `16 0 * * *` cron with its own CPU budget.
 
-    // CT-driven brand candidate aggregator. Runs once daily at hour===0.
-    // Surfaces apex domains seen ≥3x across ≥2 distinct issuers in the
-    // last 30 days as proposed brand candidates for operator review.
-    // Existing brands and existing candidates are skipped.
+  // CT-driven brand candidate aggregator. Runs once daily at hour===0.
+  // Surfaces apex domains seen ≥3x across ≥2 distinct issuers in the
+  // last 30 days as proposed brand candidates for operator review.
+  // Existing brands and existing candidates are skipped.
+  if (hour === 0) {
     try {
       const { aggregateBrandCandidates } = await import('../lib/brand-candidates');
       const summary = await aggregateBrandCandidates(env);
