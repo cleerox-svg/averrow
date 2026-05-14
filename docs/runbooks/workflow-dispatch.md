@@ -3,6 +3,10 @@
 Companion runbook for `packages/trust-radar/src/lib/workflow-dispatch.ts`
 and the FC supervisor block that watches it.
 
+**See also:** [`PLATFORM_DATA_DEPENDENCIES.md`](../PLATFORM_DATA_DEPENDENCIES.md) for the
+cross-surface map of where workflow-dispatched agents (nexus, future cart)
+need to be reconciled vs `agent_runs` (PR-J / PR-R).
+
 Three workflows live in the trust-radar worker:
 
 | Binding | Class | wrangler.toml `name` |

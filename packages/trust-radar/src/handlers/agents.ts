@@ -5,6 +5,7 @@ import type { AgentName, TriggerType } from "../lib/agentRunner";
 import { agentModules, trustbotAgent } from "../agents";
 import { BudgetManager } from "../lib/budgetManager";
 import { handler, parsePagination, parseFilters, buildWhereClause, paginatedResponse, success, error, parseBody } from "../lib/handler-utils";
+import { getWorkflowAgentStats, type WorkflowAgentStats } from "../lib/workflow-agent-stats";
 import type { Env } from "../types";
 
 // ─── Derive agent definitions from modules ──────────────────────
@@ -75,7 +76,7 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   }
   const tally = newTally();
 
-  const [latestRuns, runStats24h, outputStats24h, hourlyActivity, hourlyOutputs, recentTickRows, lastOutputTimes, avgDurations, agentConfigs] = await Promise.all([
+  const [latestRuns, runStats24h, outputStats24h, hourlyActivity, hourlyOutputs, recentTickRows, lastOutputTimes, avgDurations, agentConfigs, workflowAgentStats] = await Promise.all([
     env.DB.prepare(
       `SELECT agent_id, status, started_at, completed_at, duration_ms, error_message
        FROM agent_runs
@@ -206,6 +207,12 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       consecutive_failures: number; consecutive_failure_threshold: number | null;
       paused_at: string | null; paused_after_n_failures: number | null;
     }>(),
+
+    // Workflow-dispatched agents (nexus + future) write to
+    // agent_activity_log not agent_runs. PR-R adds the shared
+    // getWorkflowAgentStats helper so every consumer applies the
+    // same reconciliation. See lib/workflow-agent-stats.ts.
+    getWorkflowAgentStats(env.DB),
   ]);
 
   const latestRunMap = new Map(latestRuns.results.map((r) => [r.agent_id, r]));
@@ -214,6 +221,9 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   const lastOutputMap = new Map(lastOutputTimes.results.map((r) => [r.agent_id, r.last_output_at]));
   const avgDurMap = new Map(avgDurations.results.map((r) => [r.agent_id, r.avg_duration_ms]));
   const configMap = new Map(agentConfigs.results.map((r) => [r.agent_id, r]));
+  // workflowAgentStats is already a Map<agent_id, WorkflowAgentStats>
+  // straight from the helper (PR-R).
+  const workflowAgentMap = workflowAgentStats;
 
   const activityMap       = new Map<string, number[]>();
   const errorsPerHourMap  = new Map<string, number[]>();
@@ -300,6 +310,26 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   }
 
   function deriveStatus(agentName: string): string {
+    // Workflow-dispatched agents (nexus + future): canonical status
+    // lives in agent_activity_log. Use the most recent batch_complete
+    // (success) or workflow_dispatch_failed (error) event over the
+    // 24h window; fall back to agent_runs only when no workflow
+    // events exist.
+    const wf = workflowAgentMap.get(agentName);
+    if (wf && wf.last_event_at) {
+      // Most recent failure newer than most recent success → error
+      const lastSuccess = wf.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
+      const lastFailure = wf.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
+      if (lastFailure > lastSuccess && wf.dispatch_failed > 0) return "error";
+      const lastEvent = new Date(wf.last_event_at).getTime();
+      const ageMs = Date.now() - lastEvent;
+      const sixHours = 6 * 60 * 60 * 1000;
+      // Workflow agents run on their own cadence (nexus = every 4h).
+      // 6h freshness window is slightly longer than the slowest one
+      // so a healthy nexus reads as 'active' between dispatches.
+      return ageMs < sixHours ? "active" : "idle";
+    }
+
     const latest = latestRunMap.get(agentName);
     if (!latest) return "idle";
     if (latest.status === "failed") return "error";
@@ -314,7 +344,22 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     const stats = statsMap.get(def.name);
     const latestRun = latestRunMap.get(def.name);
     const config = configMap.get(def.name);
+    const wf = workflowAgentMap.get(def.name);
     const isTripped = config?.enabled === 0 && config.paused_reason === 'auto:consecutive_failures';
+
+    // Workflow-dispatched agents (PR-R reconciliation): prefer
+    // agent_activity_log workflow events over the stale agent_runs
+    // rows. last_run_at + last_run_status are the key fields the UI
+    // renders for the FAILING/ACTIVE pill.
+    const lastWfFailureMs = wf?.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
+    const lastWfSuccessMs = wf?.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
+    const wfLastRunAt = wf?.last_event_at ?? null;
+    const wfLastRunStatus = wf
+      ? (lastWfFailureMs > lastWfSuccessMs && wf.dispatch_failed > 0 ? 'failed' :
+         wf.completed > 0 ? 'success' :
+         wf.dispatched > 0 ? 'partial' : null)
+      : null;
+
     return {
       agent_id: def.name,
       name: def.name,
@@ -325,9 +370,9 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       requiresApproval: def.requiresApproval,
       status: deriveStatus(def.name),
       schedule: AGENT_SCHEDULES[def.name] ?? "-",
-      jobs_24h: stats?.jobs_24h ?? 0,
+      jobs_24h: wf ? wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped : (stats?.jobs_24h ?? 0),
       outputs_24h: outputMap.get(def.name) ?? 0,
-      error_count_24h: stats?.error_count_24h ?? 0,
+      error_count_24h: wf ? wf.dispatch_failed : (stats?.error_count_24h ?? 0),
       activity:         activityMap.get(def.name)       ?? new Array(24).fill(0),
       // Hourly arrays for the multi-series card chart (mirrors
       // useAgentHealth's per-hour shape but rides this handler's
@@ -335,12 +380,13 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       outputs_per_hour: outputsPerHourMap.get(def.name)  ?? new Array(24).fill(0),
       errors_per_hour:  errorsPerHourMap.get(def.name)   ?? new Array(24).fill(0),
       recent_ticks: recentTicksFor(def.name),
-      last_run_at: latestRun?.started_at ?? null,
-      last_run_status: latestRun?.status ?? null,
-      last_run_duration_ms: latestRun?.duration_ms ?? null,
-      last_run_error: latestRun?.error_message ?? null,
+      last_run_at: wfLastRunAt ?? latestRun?.started_at ?? null,
+      last_run_status: wfLastRunStatus ?? latestRun?.status ?? null,
+      last_run_duration_ms: wf ? null : (latestRun?.duration_ms ?? null),
+      last_run_error: (wf && wfLastRunStatus === 'failed') ? (wf.last_error ?? null) : (latestRun?.error_message ?? null),
       last_output_at: lastOutputMap.get(def.name) ?? null,
       avg_duration_ms: avgDurMap.get(def.name) ?? null,
+      dispatch_source: wf ? ('workflow' as const) : ('agent_runs' as const),
       // Circuit breaker state
       circuit_enabled: config?.enabled ?? 1,
       circuit_state: isTripped ? 'tripped' : (config?.enabled === 0 ? 'manual_pause' : 'closed'),
@@ -442,6 +488,7 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     last_run_error: navLatest?.error_message ?? null,
     last_output_at: navLastOutput,
     avg_duration_ms: navAvgDur,
+    dispatch_source: 'agent_runs' as const,
     // Navigator has no circuit breaker — FC observes, does not manage.
     circuit_enabled: 1,
     circuit_state: 'closed',

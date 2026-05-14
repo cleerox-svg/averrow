@@ -14,6 +14,9 @@ Before writing any code, read:
 
 If the task touches agents or backend:
 4. `docs/AI_AGENTS.md` — agent architecture and rules
+5. `docs/PLATFORM_DATA_DEPENDENCIES.md` — cross-surface data flow (what reads from
+   `agent_runs` vs `agent_activity_log`, how Status/Notifications/APIs/Agents
+   depend on each other, the workflow-agent reconciliation rule)
 
 If the task touches login, profile, push, biometric, or PWA install:
 5. `docs/SHARED_LOGIN_SPEC.md` — the canonical Averrow ↔ FarmTrack

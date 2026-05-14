@@ -17,6 +17,7 @@
 // captured here.
 
 import type { Env } from "../types";
+import { getWorkflowAgentStats } from "./workflow-agent-stats";
 
 // Shared types live in @averrow/shared so the React UI consumes the
 // exact same shape the worker emits. Re-exported here so existing
@@ -161,6 +162,14 @@ interface AgentDayRow {
   successes: number;
 }
 
+// PR-R note: computeAgentsDaily reads agent_runs grouped by date over
+// 30 days. For workflow-dispatched agents (nexus + future) the historical
+// daily uptime is derived from agent_runs rows that don't exist. The
+// realtime check above (computeAgentsRealtime) is what drives the
+// `current` status pill on the status page; the daily series is for
+// the trailing trend chart. Acceptable to leave the daily series
+// agent_runs-only for now — the chart's dip during nexus's pre-workflow
+// outage is historically accurate.
 async function computeAgentsDaily(env: Env, days: string[]): Promise<DailyPoint[]> {
   const earliest = days[0]!;
   const rows = await env.DB.prepare(`
@@ -286,15 +295,37 @@ async function computeFeedsRealtime(env: Env): Promise<{ status: CategoryStatus;
 }
 
 async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus; note: string }> {
-  const row = await env.DB.prepare(`
-    SELECT COUNT(*) AS total,
-           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
-      FROM agent_runs
-     WHERE started_at >= datetime('now', '-6 hours')
-  `).first<{ total: number; successes: number }>();
+  // PR-R reconciliation: workflow-dispatched agents (nexus + future)
+  // write to agent_activity_log not agent_runs. Without this, an
+  // hour where nexus successfully fired its workflow shows as
+  // 0/0 → "no agent runs in 6h" → status='outage'. Add the workflow
+  // event counts in alongside the agent_runs counts.
+  const [runRow, wfStats] = await Promise.all([
+    env.DB.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+        FROM agent_runs
+       WHERE started_at >= datetime('now', '-6 hours')
+    `).first<{ total: number; successes: number }>(),
+    getWorkflowAgentStats(env.DB, 6),
+  ]);
 
-  const total = row?.total ?? 0;
-  const successes = row?.successes ?? 0;
+  const runsTotal = runRow?.total ?? 0;
+  const runsSuccess = runRow?.successes ?? 0;
+
+  // Workflow contributions: dispatched + dispatch_failed + cooldown_skipped
+  // are "attempts"; completed are "successes." Cooldown skips count as
+  // attempts (the platform tried) but not as successes (no work landed).
+  let wfAttempts = 0;
+  let wfSuccesses = 0;
+  for (const wf of wfStats.values()) {
+    wfAttempts += wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped;
+    wfSuccesses += wf.completed;
+  }
+
+  const total = runsTotal + wfAttempts;
+  const successes = runsSuccess + wfSuccesses;
+
   if (total === 0) {
     return { status: "outage", note: "no agent runs in 6h" };
   }
