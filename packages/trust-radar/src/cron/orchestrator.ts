@@ -169,6 +169,81 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── 6-hourly agents on dedicated crons (PR-Q) ─────────────────────
+  //
+  // Five agents (strategist, sparrow, app_store_monitor, dark_web_monitor,
+  // social_discovery+social_monitor) used to be dispatched from the
+  // orchestrator's hourly tick gated on `hour % 6 === 0`. They sit AFTER
+  // analyst's 113s inline-await in runThreatFeedScan, so on heavy ticks
+  // the parent worker hit its CPU ceiling before reaching their dispatch
+  // lines. FC's recoverStalledAgents was firing 5-7 recoveries per tick
+  // to catch them up.
+  //
+  // Same pattern as PR-E (enricher) and PR-F (cartographer): give each
+  // its own cron trigger so it runs in its own Worker invocation with a
+  // fresh 5-min CPU + 15-min wall budget. Cadence preserved (every 6h
+  // at hours 0/6/12/18, just at different minutes to spread load).
+  //
+  // Each branch returns early so a single cron tick stays focused on
+  // one agent.
+
+  if (event.cron === '10 */6 * * *') {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['strategist'];
+      if (mod) await executeAgent(env, mod, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('strategist_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '11 */6 * * *') {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['sparrow'];
+      if (mod) await executeAgent(env, mod, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('sparrow_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '13 */6 * * *') {
+    try {
+      await runAppStoreMonitor(env);
+    } catch (err) {
+      logger.error('app_store_monitor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '14 */6 * * *') {
+    try {
+      await runDarkWebMonitor(env);
+    } catch (err) {
+      logger.error('dark_web_monitor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '15 */6 * * *') {
+    // Discovery first — newly found handles get monitored in the same cycle.
+    try {
+      await runSocialDiscovery(env);
+    } catch (err) {
+      logger.error('social_discovery_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    try {
+      await runSocialMonitor(env);
+    } catch (err) {
+      logger.error('social_monitor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a
@@ -284,33 +359,20 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
   // 30-50% of ticks because the orchestrator's analyst inline-await
   // exhausted the parent worker before this line was reached.
 
-  // Every 6 hours (hours 0/6/12/18): Social discovery + monitoring
+  // 6-hourly agents — social_discovery + social_monitor + app_store_monitor
+  // + dark_web_monitor were relocated to their own cron triggers in PR-Q
+  // (15/13/14 */6 * * * respectively). They used to fire here gated on
+  // hour % 6 === 0 but the orchestrator's analyst inline-await was
+  // routinely exhausting the parent worker's CPU before reaching them,
+  // forcing FC's recoverStalledAgents to catch up the gap. Now each runs
+  // in its own Worker invocation with a fresh budget.
+  //
+  // Sentinel AI assessment of social mentions stays inline here because
+  // it's a background ctx.waitUntil that doesn't block the cron mesh
+  // and it depends on the freshly-pulled feed_pulled events from the
+  // 7 * * * * tick (Sentinel/social-monitor handoff). Keeping it
+  // attached to the hourly tick preserves the timing.
   if (hour % 6 === 0) {
-    // Discovery first — so newly found handles get monitored in the same cycle
-    const discoveryResult = await runJob('social_discovery', () => runSocialDiscovery(env));
-    results.push(discoveryResult);
-
-    const result = await runJob('social_monitor', () => runSocialMonitor(env));
-    results.push(result);
-
-    // App-store impersonation monitor — iOS only for now (iTunes Search API).
-    // Runs after social so the two share the same per-brand rhythm. Capped at
-    // 20 brands/tick inside the scanner, iTunes is cached at the CF edge, so
-    // awaiting inline is safe.
-    const appStoreResult = await runJob('app_store_monitor', () => runAppStoreMonitor(env));
-    results.push(appStoreResult);
-
-    // Dark-web mention monitor — pastebin archives (PSBDMP) only for now.
-    // Capped at 15 brands/tick inside the scanner; paste bodies are fetched
-    // sequentially so the walk is bounded. Future Telegram / HIBP / Flare
-    // sources add their own brand_monitor_schedule platform rows without
-    // touching this call site.
-    const darkWebResult = await runJob('dark_web_monitor', () => runDarkWebMonitor(env));
-    results.push(darkWebResult);
-
-    // Run Sentinel AI assessment in the background — it doesn't need to block the
-    // cron mesh, and moving it to waitUntil frees up the hourly CPU ceiling for
-    // other jobs (CT monitor, lookalike check, etc.).
     const { runSentinelSocialAssessment } = await import('../agents/sentinel');
     ctx.waitUntil(
       runSentinelSocialAssessment(env).catch(err =>
@@ -923,23 +985,11 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
 
   // Cartographer: see note above. Flight Control handles it via scaleAgents.
 
-  // Strategist — every 6 hours (0, 6, 12, 18).
-  // Inline await so missed runs are visible in agent_runs. Was previously
-  // ctx.waitUntil() which silently dropped runs when the orchestrator
-  // invocation was killed before waitUntil resolved (observed 2026-04-27:
-  // 18:07 cron tick fired but strategist's run never appeared, even though
-  // adjacent agents like social_monitor did). Strategist's avg duration
-  // is 264ms — negligible against the cron's 15-min CPU ceiling.
-  if (hour % 6 === 0) {
-    try {
-      const mod = allAgents["strategist"];
-      if (mod) {
-        await executeAgent(env, mod, {}, "cron", "scheduled");
-      }
-    } catch (err) {
-      logger.error('threat_feed_scan_strategist_error', { error: err instanceof Error ? err.message : String(err) });
-    }
-  }
+  // Strategist relocated to dedicated `10 */6 * * *` cron in PR-Q.
+  // Was here as `hour % 6 === 0` inline await but routinely failed to
+  // run when the orchestrator's parent worker exhausted its CPU budget
+  // on analyst's 113s inline await above. FC's recoverStalledAgents
+  // was catching up the gap — now unnecessary.
 
   // NEXUS workflow dispatch was relocated to handleScheduled() — fires
   // BEFORE runThreatFeedScan is entered so it isn't blocked behind the
@@ -987,22 +1037,9 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     }
   }
 
-  // Sparrow (takedown agent) — every 6 hours (0, 6, 12, 18).
-  // Inline await for the same reason as strategist above — ctx.waitUntil
-  // silently dropped runs when the orchestrator invocation was killed
-  // before waitUntil resolved. Sparrow's avg duration is ~30s, well
-  // under the 15-min cron CPU ceiling. Same shape as the analyst dispatch
-  // pattern (which is the next conversion candidate).
-  if (hour % 6 === 0) {
-    try {
-      const mod = allAgents["sparrow"];
-      if (mod) {
-        await executeAgent(env, mod, {}, "cron", "scheduled");
-      }
-    } catch (err) {
-      logger.error('cron_sparrow_error', { error: err instanceof Error ? err.message : String(err) });
-    }
-  }
+  // Sparrow relocated to dedicated `11 */6 * * *` cron in PR-Q.
+  // Same rationale as strategist above — was getting starved by the
+  // orchestrator's heavy inline awaits.
 
   // Observer + daily assessments — daily at midnight UTC
   if (hour === 0) {
