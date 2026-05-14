@@ -7,7 +7,7 @@
 
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
-import { getBudgetDiagnostics, fetchD1TopQueries } from "../lib/d1-budget";
+import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import type { Env } from "../types";
 
@@ -358,11 +358,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // Cartographer queue — matches actual Phase 0 query (private IPs and
     // attempts-exhausted threats excluded — see migration 0110).
     //
-    // All three carto-queue counts route through cachedCount with a 60s
+    // All three carto-queue counts route through cachedCount with a 300s
     // TTL — diag is operator-facing and called multiple times per session
-    // (script + dashboard + ad-hoc curl). 60s freshness is well within
-    // tolerance and avoids three full-table scans per call.
-    const cartoQueueP = cachedCount(env, 'count.threats.carto_queue', 60, async () => {
+    // (script + dashboard + ad-hoc curl). 5-min freshness is well within
+    // tolerance and avoids three full-table scans per call. PR-V bumped
+    // from 60s → 300s after the cache hit-rate stayed at ~22% (the
+    // diagnostics endpoint's own short-TTL counters were dominating
+    // the miss ring and re-firing scans every minute).
+    const cartoQueueP = cachedCount(env, 'count.threats.carto_queue', 300, async () => {
       const row = await env.DB.prepare(`
         SELECT COUNT(*) AS n FROM threats
         WHERE enriched_at IS NULL
@@ -374,7 +377,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     }).then((n) => ({ n }));
 
     // Cartographer queue WITHOUT private IP filter (for comparison — shows inflation)
-    const cartoQueueRawP = cachedCount(env, 'count.threats.carto_queue_raw', 60, async () => {
+    const cartoQueueRawP = cachedCount(env, 'count.threats.carto_queue_raw', 300, async () => {
       const row = await env.DB.prepare(`
         SELECT COUNT(*) AS n FROM threats
         WHERE enriched_at IS NULL
@@ -388,7 +391,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // These exit the active queue but stay in `threats`. A growing exhausted
     // count means ip-api can't enrich a meaningful share of the new threat
     // mix; consider adding a fallback geo source.
-    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted', 60, async () => {
+    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted', 300, async () => {
       const row = await env.DB.prepare(`
         SELECT COUNT(*) AS n FROM threats
         WHERE enriched_at IS NULL
@@ -704,6 +707,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // is down or CF_API_TOKEN isn't configured.
     const d1BudgetStateP = getBudgetDiagnostics(env);
     const d1TopQueriesP = fetchD1TopQueries(env, 20);
+    // PR-X: billing-cycle (18th-17th) reads summed across all D1 DBs
+    // on the account. Replaces the rolling-24h × 30 projection in the
+    // monthly meter — see lib/d1-budget.ts header for why.
+    const d1BillingCycleP = fetchBillingCycleMetrics(env);
 
     // ─── 9. Module entitlements (v3 Phase A) ────────────────────────
     // Per-module count of orgs in each status. With 7 modules and a
@@ -731,7 +738,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealth, feedStatus, feedErrors,
       agentMesh, workflowAgentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
-      d1BudgetState, d1TopQueries,
+      d1BudgetState, d1TopQueries, d1BillingCycle,
       cachedCountStats,
       moduleEntitlements,
     ] = await Promise.all([
@@ -740,7 +747,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, workflowAgentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
-      d1BudgetStateP, d1TopQueriesP,
+      d1BudgetStateP, d1TopQueriesP, d1BillingCycleP,
       getCachedCountStats(env),
       moduleEntitlementsP,
     ]);
@@ -1175,6 +1182,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // setup_required: true when CF_API_TOKEN / CF_ACCOUNT_ID aren't
         // configured — set them via `wrangler secret put` to enable.
         d1_metrics_24h: d1Metrics,
+
+        // PR-X: Cloudflare billing-cycle (18th → 17th) tracker. Sums
+        // rows_read/written across ALL D1 databases on the account
+        // (the rolling-24h block above only covers the primary DB).
+        // Drives the "Billing-cycle projection" meter on /admin/metrics
+        // and gives operators an honest "X of 30 days elapsed, on pace
+        // for Y% of the 25B ceiling" read.
+        d1_billing_cycle: d1BillingCycle,
 
         // Per-endpoint D1 read attribution from Workers Analytics Engine.
         // Reads from the trust_radar_d1_reads dataset that opt-in handlers

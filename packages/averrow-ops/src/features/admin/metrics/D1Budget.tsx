@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ChevronDown } from 'lucide-react';
 import { useD1Budget } from '@/hooks/useMetrics';
 import type {
-  D1BudgetPayload, D1TopQuery, D1EndpointAttribution,
+  D1BudgetPayload, D1TopQuery, D1EndpointAttribution, D1DatabaseUsage,
 } from '@/hooks/useMetrics';
 
 export function D1Budget() {
@@ -50,6 +50,7 @@ export function D1Budget() {
   return (
     <div className="space-y-6">
       <BudgetMeters payload={data} />
+      <BillingCycleBreakdown payload={data} />
       <TopQueriesGrid payload={data} />
       <TopEndpointsGrid payload={data} />
     </div>
@@ -59,7 +60,7 @@ export function D1Budget() {
 // ─── Budget meters ───────────────────────────────────────────────
 function BudgetMeters({ payload }: { payload: D1BudgetPayload }) {
   const daily = payload.budget_state;
-  const monthly = payload.metrics_24h;
+  const cycle = payload.billing_cycle;
 
   const dailyTone =
     daily.threshold_state === 'skip' ? 'critical' :
@@ -72,15 +73,34 @@ function BudgetMeters({ payload }: { payload: D1BudgetPayload }) {
     daily.threshold_state === 'ok'   ? null :
                                        { sev: 'medium'   as const, label: 'NO DATA' };
 
-  const monthlyPct = monthly.pct_of_25b_plan_ceiling ?? 0;
-  const monthlyTone =
-    monthlyPct >= 90 ? 'critical' :
-    monthlyPct >= 75 ? 'high' :
-                       'green';
-  const monthlyBadge =
-    monthlyPct >= 90 ? { sev: 'critical' as const, label: 'AT RISK' } :
-    monthlyPct >= 75 ? { sev: 'high'     as const, label: 'WATCH'   } :
+  // PR-X: cycle-aware monthly meter. The previous version used a 24h × 30
+  // rolling projection that filtered on a single databaseId and under-
+  // reported by ~6x vs the actual Cloudflare invoice. The cycle meter
+  // sums across all D1 databases on the account over the actual cycle
+  // window (18th → 17th).
+  const cyclePct = cycle.setup_required || cycle.error ? null : cycle.pct_of_25b_plan_ceiling;
+  const cycleTone: Tone =
+    cyclePct == null     ? 'muted' :
+    cyclePct >= 100      ? 'critical' :
+    cyclePct >= 90       ? 'critical' :
+    cyclePct >= 75       ? 'high'     :
+                           'green';
+  const cycleBadge =
+    cyclePct == null ? { sev: 'medium' as const, label: 'NO DATA' } :
+    cyclePct >= 100  ? { sev: 'critical' as const, label: 'OVER' }    :
+    cyclePct >= 90   ? { sev: 'critical' as const, label: 'AT RISK' } :
+    cyclePct >= 75   ? { sev: 'high'     as const, label: 'WATCH'   } :
                        null;
+
+  const cycleSublabel = cycle.setup_required
+    ? cycle.setup_instructions ?? 'CF credentials not configured'
+    : cycle.error
+      ? `error: ${cycle.error.slice(0, 60)}`
+      : `${formatBig(cycle.cycle_projection_rows_read)} projected of 25B ceiling`;
+
+  const cycleFootnote = cycle.setup_required || cycle.error
+    ? ''
+    : `${formatBig(cycle.rows_read_cycle)} so far · day ${cycle.cycle.days_elapsed} of ${cycle.cycle.days_total} · cycle ${formatCycleRange(cycle.cycle.start, cycle.cycle.end)}`;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -98,20 +118,98 @@ function BudgetMeters({ payload }: { payload: D1BudgetPayload }) {
           : 'No Navigator skips in last 24h'}
       />
       <Meter
-        label="Monthly projection"
-        primary={monthly.pct_of_25b_plan_ceiling != null ? `${monthly.pct_of_25b_plan_ceiling}%` : '—'}
-        sublabel={monthly.monthly_rows_read_projection != null
-          ? `${formatBig(monthly.monthly_rows_read_projection)} of 25B plan ceiling`
-          : 'no data'}
-        pct={monthly.pct_of_25b_plan_ceiling}
-        tone={monthlyTone}
-        badge={monthlyBadge}
-        footnote={monthly.read_queries_24h != null && monthly.write_queries_24h != null
-          ? `${monthly.read_queries_24h.toLocaleString()} reads · ${monthly.write_queries_24h.toLocaleString()} writes (24h)`
-          : ''}
+        label="Billing-cycle projection"
+        primary={cyclePct != null ? `${cyclePct}%` : '—'}
+        sublabel={cycleSublabel}
+        pct={cyclePct}
+        tone={cycleTone}
+        badge={cycleBadge}
+        footnote={cycleFootnote}
       />
     </div>
   );
+}
+
+// ─── Billing-cycle breakdown ────────────────────────────────────
+// Per-D1-database rows_read/written split across the current cycle.
+// Surfaces "which database is eating budget?" — historically the
+// monthly meter filtered on the primary DB only, so the audit + geoip
+// DBs were invisible even when they spiked.
+function BillingCycleBreakdown({ payload }: { payload: D1BudgetPayload }) {
+  const cycle = payload.billing_cycle;
+  if (cycle.setup_required || cycle.error || cycle.per_database.length === 0) return null;
+
+  const total = cycle.rows_read_cycle || 1;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeader title="Billing cycle · per-database reads" count={cycle.per_database.length} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {cycle.per_database.map((db, i) => {
+          const pct = (db.rows_read / total) * 100;
+          return <DatabaseCard key={db.database_id} rank={i + 1} db={db} pctOfTotal={pct} />;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DatabaseCard({ rank, db, pctOfTotal }: { rank: number; db: D1DatabaseUsage; pctOfTotal: number }) {
+  const tone: Tone =
+    pctOfTotal >= 50 ? 'critical' :
+    pctOfTotal >= 25 ? 'high' :
+                       'green';
+  const variant: 'elevated' | 'critical' = tone === 'critical' ? 'critical' : 'elevated';
+  const barColor = toneColor(tone);
+  const name = friendlyDatabaseName(db.database_id);
+  return (
+    <Card variant={variant} className="p-3">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
+        >
+          {rank}
+        </span>
+        <span className="font-display text-base font-bold flex-1" style={{ color: 'var(--text-primary)' }}>
+          {formatBig(db.rows_read)}
+        </span>
+        <span className="font-mono text-[10px] font-bold flex-shrink-0" style={{ color: barColor }}>
+          {pctOfTotal.toFixed(0)}%
+        </span>
+      </div>
+      <div className="rounded-full overflow-hidden mb-2" style={{ height: 3, background: 'var(--border-base)' }}>
+        <div style={{ height: '100%', width: `${Math.min(100, pctOfTotal)}%`, background: barColor }} />
+      </div>
+      <div className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }} title={db.database_id}>
+        {name}
+      </div>
+      <div className="flex items-center gap-3 mt-1.5 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+        <span>{formatBig(db.rows_written)} writes</span>
+        <span>·</span>
+        <span>{db.read_queries.toLocaleString()} read queries</span>
+      </div>
+    </Card>
+  );
+}
+
+// Resolve a friendlier label from the database id. The three databases
+// the worker binds are kept in `wrangler.toml`; anything else gets the
+// truncated id. Hard-coded here to avoid passing the binding through
+// every layer of the diagnostics stack — matches the same pattern
+// used in `lib/d1-budget.ts` for D1_DATABASE_ID.
+function friendlyDatabaseName(id: string): string {
+  const map: Record<string, string> = {
+    'a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6': 'trust-radar-v2 (DB)',
+    '55d58eff-47f3-4533-afa4-e52d494376e0': 'trust-radar-v2-audit (AUDIT_DB)',
+    'f47a6b18-b343-46d9-87e8-ef8ef4aa8521': 'geoip-db (GEOIP_DB)',
+  };
+  return map[id] ?? id.slice(0, 8);
+}
+
+function formatCycleRange(startIso: string, endIso: string): string {
+  const fmt = (d: Date) => `${d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} ${d.getUTCDate()}`;
+  return `${fmt(new Date(startIso))} → ${fmt(new Date(endIso))}`;
 }
 
 type Tone = 'critical' | 'high' | 'green' | 'muted';

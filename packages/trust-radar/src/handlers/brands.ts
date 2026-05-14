@@ -16,6 +16,7 @@ import { generateBrandKeywords } from "../lib/brand-utils";
 import { getBrandById, getBrandByDomain, getBrandThreatCount } from "../db/brands";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { cachedCount } from "../lib/cached-count";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -126,11 +127,20 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     }
 
     const tally = newTally();
-    const total = await session.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
-
-    const newThisWeek = await session.prepare(
-      "SELECT COUNT(*) AS n FROM brands WHERE first_seen >= datetime('now', '-7 days')"
-    ).first<{ n: number }>();
+    // PR-V: route catalog-wide brand counts through the KV cache. These
+    // are 78K-row table scans that previously fired on every brand_stats
+    // call (~343 calls/24h per top-endpoint attribution = 27M unnecessary
+    // reads/day). Brands rarely change — 1h TTL is fine.
+    const total = { n: await cachedCount(env, 'count.brands.total', 3600, async () => {
+      const r = await session.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
+      return r?.n ?? 0;
+    }) };
+    const newThisWeek = { n: await cachedCount(env, 'count.brands.new_this_week', 1800, async () => {
+      const r = await session.prepare(
+        "SELECT COUNT(*) AS n FROM brands WHERE first_seen >= datetime('now', '-7 days')"
+      ).first<{ n: number }>();
+      return r?.n ?? 0;
+    }) };
 
     // Phase 2 D1 migration: aggregate from threat_cube_brand instead
     // of JOIN+GROUP BY scanning the full 24h threats slice. The cube
