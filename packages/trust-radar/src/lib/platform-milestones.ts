@@ -19,6 +19,9 @@
 // each is a single aggregate query + one SELECT on the milestone
 // table + ≤ 1 INSERT per crossing. Idempotent under composite PK.
 
+import type { Env } from '../types';
+import { cachedCount } from './cached-count';
+
 const MILESTONE_VALUES = [
   100_000,
   250_000,
@@ -94,34 +97,47 @@ async function fireCrossings(
 
 /**
  * threats_ingested — `COUNT(*) FROM threats` against MILESTONE_VALUES.
+ *
+ * Called from Navigator on every 5-min tick (288x/day). Pre-PR-I this
+ * was a bare `SELECT COUNT(*) FROM threats` that scanned the full table
+ * each call — diag 2026-05-14 attributed ~87M rows-read across 306
+ * calls (avg 285K rows/call). Now routed through cachedCount with a
+ * 4-min TTL, so the 5-min cron hits cache ~4× out of 5. Milestone
+ * thresholds advance slowly (next is 500K, current 299K), so 4-min
+ * staleness is well within tolerance.
  */
 export async function checkAndFireThreatMilestones(
-  db: D1Database,
+  env: Env,
   agentRunId?: string | null,
 ): Promise<MilestoneCheckResult> {
-  const total = await db
-    .prepare(`SELECT COUNT(*) AS n FROM threats`)
-    .first<{ n: number }>();
-  const current = total?.n ?? 0;
-  const fired = await fireCrossings(db, "threats_ingested", current, agentRunId);
+  const current = await cachedCount(env, 'count.threats.total', 240, async () => {
+    const row = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM threats`)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  });
+  const fired = await fireCrossings(env.DB, "threats_ingested", current, agentRunId);
   return { metric: "threats_ingested", current, fired };
 }
 
 /**
  * total_ingested — `SUM(records_ingested) FROM feed_pull_history`
  * against MILESTONE_VALUES. Same number the /feeds page surfaces.
+ *
+ * Same Navigator dispatch pattern as checkAndFireThreatMilestones —
+ * cached for 4 min so the 5-min cron mostly hits.
  */
 export async function checkAndFireIngestionMilestones(
-  db: D1Database,
+  env: Env,
   agentRunId?: string | null,
 ): Promise<MilestoneCheckResult> {
-  const total = await db
-    .prepare(
-      `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`,
-    )
-    .first<{ n: number }>();
-  const current = total?.n ?? 0;
-  const fired = await fireCrossings(db, "total_ingested", current, agentRunId);
+  const current = await cachedCount(env, 'count.feed_pulls.total_ingested', 240, async () => {
+    const row = await env.DB
+      .prepare(`SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  });
+  const fired = await fireCrossings(env.DB, "total_ingested", current, agentRunId);
   return { metric: "total_ingested", current, fired };
 }
 

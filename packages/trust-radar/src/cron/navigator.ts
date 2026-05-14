@@ -507,12 +507,12 @@ export const navigatorAgent: AgentModule = {
     let threatMilestones = { metric: 'threats_ingested', current: 0, fired: [] as number[] };
     let ingestMilestones = { metric: 'total_ingested',   current: 0, fired: [] as number[] };
     try {
-      threatMilestones = await checkAndFireThreatMilestones(ctx.env.DB, ctx.runId);
+      threatMilestones = await checkAndFireThreatMilestones(ctx.env, ctx.runId);
     } catch (err) {
       console.error('[navigator] threat milestone check failed:', err);
     }
     try {
-      ingestMilestones = await checkAndFireIngestionMilestones(ctx.env.DB, ctx.runId);
+      ingestMilestones = await checkAndFireIngestionMilestones(ctx.env, ctx.runId);
     } catch (err) {
       console.error('[navigator] ingestion milestone check failed:', err);
     }

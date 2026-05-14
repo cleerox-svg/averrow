@@ -8,7 +8,7 @@
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { getBudgetDiagnostics, fetchD1TopQueries } from "../lib/d1-budget";
-import { getCachedCountStats } from "../lib/cached-count";
+import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import type { Env } from "../types";
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
@@ -356,33 +356,47 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     `).first<{ n: number }>();
 
     // Cartographer queue — matches actual Phase 0 query (private IPs and
-    // attempts-exhausted threats excluded — see migration 0110)
-    const cartoQueueP = env.DB.prepare(`
-      SELECT COUNT(*) AS n FROM threats
-      WHERE enriched_at IS NULL
-        AND ip_address IS NOT NULL AND ip_address != ''
-        AND enrichment_attempts < 5
-        ${PRIVATE_IP_SQL_FILTER}
-    `).first<{ n: number }>();
+    // attempts-exhausted threats excluded — see migration 0110).
+    //
+    // All three carto-queue counts route through cachedCount with a 60s
+    // TTL — diag is operator-facing and called multiple times per session
+    // (script + dashboard + ad-hoc curl). 60s freshness is well within
+    // tolerance and avoids three full-table scans per call.
+    const cartoQueueP = cachedCount(env, 'count.threats.carto_queue', 60, async () => {
+      const row = await env.DB.prepare(`
+        SELECT COUNT(*) AS n FROM threats
+        WHERE enriched_at IS NULL
+          AND ip_address IS NOT NULL AND ip_address != ''
+          AND enrichment_attempts < 5
+          ${PRIVATE_IP_SQL_FILTER}
+      `).first<{ n: number }>();
+      return row?.n ?? 0;
+    }).then((n) => ({ n }));
 
     // Cartographer queue WITHOUT private IP filter (for comparison — shows inflation)
-    const cartoQueueRawP = env.DB.prepare(`
-      SELECT COUNT(*) AS n FROM threats
-      WHERE enriched_at IS NULL
-        AND ip_address IS NOT NULL AND ip_address != ''
-        AND enrichment_attempts < 5
-    `).first<{ n: number }>();
+    const cartoQueueRawP = cachedCount(env, 'count.threats.carto_queue_raw', 60, async () => {
+      const row = await env.DB.prepare(`
+        SELECT COUNT(*) AS n FROM threats
+        WHERE enriched_at IS NULL
+          AND ip_address IS NOT NULL AND ip_address != ''
+          AND enrichment_attempts < 5
+      `).first<{ n: number }>();
+      return row?.n ?? 0;
+    }).then((n) => ({ n }));
 
     // Threats exhausted by cartographer — hit the attempts cap with no geo.
     // These exit the active queue but stay in `threats`. A growing exhausted
     // count means ip-api can't enrich a meaningful share of the new threat
     // mix; consider adding a fallback geo source.
-    const cartoExhaustedP = env.DB.prepare(`
-      SELECT COUNT(*) AS n FROM threats
-      WHERE enriched_at IS NULL
-        AND ip_address IS NOT NULL AND ip_address != ''
-        AND enrichment_attempts >= 5
-    `).first<{ n: number }>();
+    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted', 60, async () => {
+      const row = await env.DB.prepare(`
+        SELECT COUNT(*) AS n FROM threats
+        WHERE enriched_at IS NULL
+          AND ip_address IS NOT NULL AND ip_address != ''
+          AND enrichment_attempts >= 5
+      `).first<{ n: number }>();
+      return row?.n ?? 0;
+    }).then((n) => ({ n }));
 
     // Geo-enrichment coverage — mapped vs total threats per window. The
     // home tile reads `threats_mapped` from threat_cube_geo (lat/lng

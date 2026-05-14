@@ -565,7 +565,14 @@ Rules:
 - Hit/miss rate is surfaced under `cached_count` in
   `/api/internal/platform-diagnostics`. After deploy, hit_rate >70% is
   the steady-state expectation; under that, TTLs are too short.
-- Direct `SELECT COUNT(*) FROM threats` is a code-review red flag.
+- Direct `SELECT COUNT(*) FROM threats` is a code-review red flag in
+  any path called >1× per TTL window. Sites called *less often than
+  their natural TTL* (e.g. hourly-or-less inside the orchestrator
+  cron) skip cachedCount intentionally — the cache would never hit,
+  and the wrapper adds a KV read on top of the same D1 read. For
+  high-frequency callers (Navigator's 5-min tick, page-load handlers,
+  diagnostics, FC's per-tick reads): wrap. For once-per-hour or
+  once-per-day cron paths: bare is fine.
   Either swap to `cachedCount` or use a cube/pre-computed column when
   the dimension exists (see "OLAP Cubes" and "Pre-computed columns"
   above).
