@@ -266,6 +266,39 @@ All three self-gate internally. Don't add per-route logic to control them.
 3. Emit to `agent_events` after completion
 4. Handle errors — catch all exceptions, log to `agent_runs.error_message`
 
+### Agent status field (`AgentModule.status`)
+
+The `status` value on each AgentModule registration controls how the
+agent is treated by the runtime:
+
+| Value | Meaning |
+|---|---|
+| `active` | Normal operation — dispatched per its trigger field |
+| `paused` | Temporarily halted — FC supervises but doesn't dispatch |
+| `shadow` | Dispatched but writes go to a side table (A/B comparison) |
+| `retired` | No real usage; kept callable for backward-compat / re-activation |
+
+**Retired-as-of 2026-05-14 (PR-P, item #9 from morning audit)**:
+audit of `agent_runs` showed 11 manual/api agents with zero traffic
+since 2026-04-30 (a one-time test harness produced ~32 runs each,
+then nothing). Files and API routes remain; only the status field
+was flipped:
+
+```
+admin_classify, brand_analysis, brand_deep_scan, brand_report,
+geo_campaign_assessment, honeypot_generator, public_trust_check,
+qualified_report, scan_report, social_ai_assessor, url_scan
+```
+
+To re-activate: flip the agent's status back to `"active"` and remove
+the PR-P retirement comment. Operators expecting any of these to
+"just work" should be aware they're flagged dormant.
+
+Distinct from `pathfinder` — that agent was explicitly demoted to
+`trigger: "manual"` in April after producing 1 run / 7 days under
+cron. Pathfinder stays `active` so the existing manual endpoint
+keeps working.
+
 ### Agent trigger chain:
 
 The platform uses **cron + orchestrator** as the canonical control
