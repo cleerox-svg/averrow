@@ -676,7 +676,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `feeds.per_feed[]` | Per-feed: `pulls`, `success`, `partial`, `failed`, `failure_rate_pct`, `records_ingested`, `last_success_at`, `last_failure_at`, `enabled`, `paused_reason` |
 | `feeds.at_risk[]` | Feeds approaching auto-pause threshold (>=60% of consecutive failure limit). Shows `pct_to_auto_pause`. |
 | `feeds.recent_errors[]` | Last 20 failed pull error messages with timestamps |
-| `agent_mesh.per_agent[]` | Per-agent: `total_runs`, `success`, `partial`, `failed`, `running`, `last_completed_at`, `last_error`, `total_records_processed`, `avg_duration_ms` |
+| `agent_mesh.per_agent[]` | Per-agent: `total_runs`, `success`, `partial`, `failed`, `running`, `last_completed_at`, `last_error`, `total_records_processed`, `avg_duration_ms`, `dispatch_source` (`agent_runs` or `workflow`), `cooldown_skipped` (workflow-only), `legacy_inline` (only when an agent has BOTH workflow runs AND historical `agent_runs` rows — e.g. nexus pre-PR-D inline-recovery rows). Workflow-dispatched agents (currently just nexus) read from `agent_activity_log` event types `workflow_dispatched` / `batch_complete` / `workflow_dispatch_failed` / `workflow_cooldown_skip` rather than `agent_runs`. |
 | `agent_mesh.stalled[]` | Runs stuck in 'running' state >15 minutes |
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |

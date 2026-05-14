@@ -560,6 +560,43 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       avg_duration_ms: number | null;
     }>();
 
+    // Workflow-agent rollup from agent_activity_log. The Workflow path
+    // (lib/workflow-dispatch.ts + workflows/*.ts) does NOT write to
+    // agent_runs — it writes structured events to agent_activity_log:
+    //
+    //   workflow_dispatched / workflow_dispatch_failed / workflow_cooldown_skip
+    //     written by dispatchWorkflow() at dispatch time
+    //   started / batch_complete
+    //     written by the workflow body itself once it begins running
+    //
+    // Without this rollup, the agent_runs query above counts 0 runs
+    // and 0 successes for nexus (and any other workflow agent) — even
+    // when nexus is firing successfully every 4h. PR-J reconciles
+    // workflow agents into the same agent_mesh.per_agent shape so the
+    // dashboard reflects reality.
+    const workflowAgentMeshP = env.DB.prepare(`
+      SELECT
+        agent_id,
+        SUM(CASE WHEN event_type = 'workflow_dispatched' THEN 1 ELSE 0 END) AS dispatched,
+        SUM(CASE WHEN event_type = 'batch_complete' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN event_type = 'workflow_dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed,
+        SUM(CASE WHEN event_type = 'workflow_cooldown_skip' THEN 1 ELSE 0 END) AS cooldown_skipped,
+        MAX(CASE WHEN event_type = 'batch_complete' THEN created_at END) AS last_completed_at,
+        MAX(CASE WHEN event_type = 'workflow_dispatch_failed' THEN message END) AS last_error
+      FROM agent_activity_log
+      WHERE created_at >= datetime('now', '-' || ? || ' hours')
+        AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip')
+      GROUP BY agent_id
+    `).bind(hoursBack).all<{
+      agent_id: string;
+      dispatched: number;
+      completed: number;
+      dispatch_failed: number;
+      cooldown_skipped: number;
+      last_completed_at: string | null;
+      last_error: string | null;
+    }>();
+
     // Stalled agents — started but never completed in the last N hours
     const stalledP = env.DB.prepare(`
       SELECT agent_id, id AS run_id, started_at,
@@ -692,7 +729,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
       geoCoverage,
       feedHealth, feedStatus, feedErrors,
-      agentMesh, stalled, backlog,
+      agentMesh, workflowAgentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries,
       cachedCountStats,
@@ -701,12 +738,66 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
       feedHealthP, feedStatusP, feedErrorsP,
-      agentMeshP, stalledP, backlogP,
+      agentMeshP, workflowAgentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
       d1BudgetStateP, d1TopQueriesP,
       getCachedCountStats(env),
       moduleEntitlementsP,
     ]);
+
+    // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
+    // For each workflow agent (anything with workflow_* events in
+    // agent_activity_log), build a synthetic row matching the agent_runs
+    // rollup shape. If an agent appears in BOTH agent_runs and the
+    // workflow rollup (e.g. nexus has historical inline-recovery rows in
+    // agent_runs from before PR-D's deploy), the workflow-derived numbers
+    // win because workflow dispatch is the canonical path going forward.
+    // The agent_runs side gets surfaced as a `legacy_inline` field for
+    // operator awareness (so a partial stuck-row backlog from before the
+    // workflow cutover doesn't go invisible).
+    type AgentMeshRow = typeof agentMesh.results[number] & {
+      dispatch_source?: 'agent_runs' | 'workflow';
+      cooldown_skipped?: number;
+      legacy_inline?: {
+        total_runs: number;
+        success: number;
+        failed: number;
+        partial: number;
+        killed_runs: number;
+      };
+    };
+    const agentMeshMerged: AgentMeshRow[] = (() => {
+      const byAgent: Record<string, AgentMeshRow> = {};
+      for (const row of agentMesh.results) {
+        byAgent[row.agent_id] = { ...row, dispatch_source: 'agent_runs' };
+      }
+      for (const wf of workflowAgentMesh.results) {
+        const inlineLegacy = byAgent[wf.agent_id];
+        byAgent[wf.agent_id] = {
+          agent_id: wf.agent_id,
+          total_runs: wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped,
+          success: wf.completed,
+          partial: 0,
+          killed_runs: 0,
+          failed: wf.dispatch_failed,
+          running: Math.max(0, wf.dispatched - wf.completed - wf.dispatch_failed),
+          last_completed_at: wf.last_completed_at,
+          last_error: wf.last_error,
+          total_records_processed: 0, // workflows don't write records_processed
+          avg_duration_ms: null,
+          dispatch_source: 'workflow',
+          cooldown_skipped: wf.cooldown_skipped,
+          ...(inlineLegacy ? { legacy_inline: {
+            total_runs: inlineLegacy.total_runs,
+            success: inlineLegacy.success,
+            failed: inlineLegacy.failed,
+            partial: inlineLegacy.partial,
+            killed_runs: inlineLegacy.killed_runs,
+          } } : {}),
+        };
+      }
+      return Object.values(byAgent).sort((a, b) => a.agent_id.localeCompare(b.agent_id));
+    })();
 
     // ── Build backlog trend map ─────────────────────────────────────
     const backlogTrends: Record<string, { current: number; previous: number | null; trend: number | null; measured_at: string | null }> = {};
@@ -932,7 +1023,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 7,
+          endpoint_version: 8,
         },
 
         geo_coverage: {
@@ -1007,13 +1098,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
 
         agent_mesh: {
           summary: {
-            total_agents_active: agentMesh.results.length,
-            total_runs: agentMesh.results.reduce((s, a) => s + a.total_runs, 0),
-            total_failures: agentMesh.results.reduce((s, a) => s + a.failed, 0),
-            total_killed: agentMesh.results.reduce((s, a) => s + (a.killed_runs ?? 0), 0),
+            total_agents_active: agentMeshMerged.length,
+            total_runs: agentMeshMerged.reduce((s, a) => s + a.total_runs, 0),
+            total_failures: agentMeshMerged.reduce((s, a) => s + a.failed, 0),
+            total_killed: agentMeshMerged.reduce((s, a) => s + (a.killed_runs ?? 0), 0),
             stalled_count: stalled.results.length,
           },
-          per_agent: agentMesh.results,
+          per_agent: agentMeshMerged,
           stalled: stalled.results,
         },
 
