@@ -53,9 +53,41 @@ export interface D1EndpointAttribution {
   avg_rows_per_request: number;
 }
 
+// PR-X: Cloudflare billing-cycle (18th → 17th of next month) tracker.
+// Replaces the 24h × 30 projection on the monthly meter — see backend
+// header in `lib/d1-budget.ts` for the under-counting story.
+export interface D1BillingCycleWindow {
+  start: string;
+  end: string;
+  days_elapsed: number;
+  days_total: number;
+  pct_elapsed: number;
+}
+export interface D1DatabaseUsage {
+  database_id: string;
+  rows_read: number;
+  rows_written: number;
+  read_queries: number;
+  write_queries: number;
+}
+export interface D1BillingCycle {
+  cycle: D1BillingCycleWindow;
+  rows_read_cycle: number;
+  rows_written_cycle: number;
+  read_queries_cycle: number;
+  write_queries_cycle: number;
+  cycle_projection_rows_read: number;
+  pct_of_25b_plan_ceiling: number;
+  per_database: D1DatabaseUsage[];
+  setup_required: boolean;
+  setup_instructions?: string;
+  error?: string;
+}
+
 export interface D1BudgetPayload {
   budget_state: D1BudgetState;
   metrics_24h: D1Metrics24h;
+  billing_cycle: D1BillingCycle;
   top_queries: D1TopQuery[];
   top_queries_error: string | null;
   attribution: {

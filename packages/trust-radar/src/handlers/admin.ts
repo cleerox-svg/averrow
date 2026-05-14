@@ -371,21 +371,27 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
        FROM users`,
     ).first<{ total: number; super_admins: number; admins: number; analysts: number; clients: number; active: number }>(),
-    adminCachedCount('admin.threats_total', 900, "SELECT COUNT(*) AS n FROM threats"),
-    adminCachedCount('admin.threats_active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
+    // PR-V: keys aligned with the canonical `count.threats.*` namespace
+    // used by sentinel/dashboard/stats/public-stats. Previously admin used
+    // its own `admin.threats_*` keys with 900s TTL — same query, same
+    // value, but a duplicate cache population. Sharing keys gives the
+    // admin dashboard whichever value is freshest across all callers
+    // and eliminates one compute path per TTL window.
+    adminCachedCount('count.threats.total', 900, "SELECT COUNT(*) AS n FROM threats"),
+    adminCachedCount('count.threats.active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
     env.DB.prepare(
       "SELECT COUNT(*) AS active_sessions FROM sessions WHERE expires_at > datetime('now') AND revoked_at IS NULL",
     ).first<{ active_sessions: number }>(),
-    // Agent backlogs — cached individually
-    adminCachedCount('admin.sentinel_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND created_at > datetime('now', '-1 hour')"),
-    adminCachedCount('admin.analyst_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND severity IS NULL"),
-    adminCachedCount('admin.cartographer_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND ip_address IS NOT NULL AND lat IS NULL"),
-    adminCachedCount('admin.strategist_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND campaign_id IS NULL AND threat_type IN ('phishing','typosquatting')"),
+    // Agent backlogs — admin-specific shapes, keep their own keys.
+    adminCachedCount('count.threats.sentinel_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND created_at > datetime('now', '-1 hour')"),
+    adminCachedCount('count.threats.analyst_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND severity IS NULL"),
+    adminCachedCount('count.threats.cartographer_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND ip_address IS NOT NULL AND lat IS NULL"),
+    adminCachedCount('count.threats.strategist_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND campaign_id IS NULL AND threat_type IN ('phishing','typosquatting')"),
     env.DB.prepare(
       "SELECT MAX(created_at) AS last_run FROM agent_outputs WHERE agent_id = 'observer' AND type != 'diagnostic'",
     ).first<{ last_run: string | null }>().catch(() => null),
-    adminCachedCount('admin.ai_attr_pending', 900, "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')").catch(() => null),
-    adminCachedCount('admin.brands_total', 3600, "SELECT COUNT(*) AS n FROM brands").catch(() => null),
+    adminCachedCount('count.threats.ai_attr_pending', 900, "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')").catch(() => null),
+    adminCachedCount('count.brands.total', 3600, "SELECT COUNT(*) AS n FROM brands").catch(() => null),
   ]);
 
   const threats = { total: threatsTotal.n, active_threats: threatsActive.n };
@@ -2778,20 +2784,22 @@ export async function handleD1Budget(request: Request, env: Env): Promise<Respon
   // handlers/diagnostics.ts) so the section stays in sync with
   // platform-diagnostics output. No duplication.
   const { fetchD1Metrics, fetchD1EndpointAttribution } = await import("./diagnostics");
-  const { getBudgetDiagnostics, fetchD1TopQueries } = await import("../lib/d1-budget");
+  const { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics } = await import("../lib/d1-budget");
 
   const D1_DATABASE_ID = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
 
-  const [budget, metrics, attribution, topQueries] = await Promise.all([
+  const [budget, metrics, attribution, topQueries, billingCycle] = await Promise.all([
     getBudgetDiagnostics(env),
     fetchD1Metrics(env, D1_DATABASE_ID),
     fetchD1EndpointAttribution(env),
     fetchD1TopQueries(env),
+    fetchBillingCycleMetrics(env),
   ]);
 
   const data = {
     budget_state: budget,
     metrics_24h: metrics,
+    billing_cycle: billingCycle,
     top_queries: topQueries.queries.slice(0, 10),
     top_queries_error: topQueries.error ?? null,
     attribution: {

@@ -1,8 +1,21 @@
-// Daily D1 read-budget soft-cap.
+// Daily D1 read-budget soft-cap + billing-cycle tracker.
 //
 // Cloudflare's free-plan ceiling is 25B rows_read/month. Spread evenly
 // that's ~833M/day. We keep 5% headroom and start skipping non-essential
 // pre-warms once the rolling-24h read total crosses the SKIP threshold.
+//
+// Two orthogonal surfaces:
+//   1. Daily soft-cap (this is the original purpose): rolling 24h reads
+//      vs DAILY_BUDGET — drives Navigator's skip-non-essential decision.
+//   2. Billing-cycle tracker (PR-X): cycle-to-date reads vs the 25B
+//      monthly cap, where the cycle runs day 18 → day 17 of the next
+//      month (Cloudflare's invoice window). Drives the "Billing-cycle
+//      projection" meter on /admin/metrics and the platform-diagnostics
+//      `billing_cycle` block. Sums across ALL D1 databases the account
+//      bills against — not just the primary `DB` binding — because the
+//      under-count we observed (778M/24h reported vs 4.98B/day actual
+//      from the CF invoice) traced to the diagnostics fetcher filtering
+//      on a single databaseId.
 //
 // The number that drives the decision comes from CF GraphQL's
 // d1AnalyticsAdaptiveGroups (same endpoint platform-diagnostics uses).
@@ -358,5 +371,246 @@ async function fetchRowsRead24h(token: string, accountId: string, databaseId: st
     return groups.reduce((acc, g) => acc + (g.sum?.rowsRead ?? 0), 0);
   } catch {
     return null;
+  }
+}
+
+// ─── Billing-cycle tracker (PR-X) ────────────────────────────────────
+//
+// Cloudflare bills D1 reads on a monthly cycle that runs from the 18th
+// of one month through the 17th of the next. The "Monthly projection"
+// surface previously used a rolling-24h × 30 extrapolation against the
+// 25B plan ceiling — which under-reported by ~6x because:
+//   1. It filtered on a single databaseId (the primary `DB` binding)
+//      and excluded `AUDIT_DB`, `GEOIP_DB` etc. that bill against the
+//      same account ceiling.
+//   2. The 24h × 30 projection lost intra-cycle context — operators
+//      couldn't tell "are we ahead of pace or behind?" at day 27 of
+//      the cycle vs day 3 of the next cycle.
+// The billing-cycle helpers below replace that with the actual cycle
+// window + actual cycle-to-date reads summed across all account
+// databases.
+
+/** Day of month that the Cloudflare billing cycle starts on. */
+export const BILLING_CYCLE_START_DAY = 18;
+
+export interface BillingCycleWindow {
+  /** ISO timestamp at the start of the current cycle (00:00 UTC). */
+  start: string;
+  /** ISO timestamp at the end of the current cycle (23:59:59.999 UTC). */
+  end: string;
+  /** Whole days elapsed in the cycle as of `now` (0..days_total). */
+  days_elapsed: number;
+  /** Total days in the current cycle (typically 28-31 depending on month length). */
+  days_total: number;
+  /** `days_elapsed / days_total * 100`, rounded to 1dp. */
+  pct_elapsed: number;
+}
+
+/**
+ * Compute the current Cloudflare billing-cycle window relative to `now`.
+ *
+ * Cycle definition: starts at 00:00 UTC on day {@link BILLING_CYCLE_START_DAY}
+ * of some month, ends at 23:59:59.999 UTC on day {BILLING_CYCLE_START_DAY-1}
+ * of the next month. If today is on or after the 18th, the cycle started
+ * this month; otherwise it started last month.
+ */
+export function computeBillingCycle(now: Date = new Date()): BillingCycleWindow {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+
+  // Start of the current cycle.
+  let startY = y;
+  let startM = m;
+  if (d < BILLING_CYCLE_START_DAY) {
+    // We're before this month's anchor day — cycle started last month.
+    startM = m - 1;
+    if (startM < 0) {
+      startM = 11;
+      startY = y - 1;
+    }
+  }
+  const start = new Date(Date.UTC(startY, startM, BILLING_CYCLE_START_DAY, 0, 0, 0, 0));
+
+  // End: the day before the next anchor, 23:59:59.999.
+  const end = new Date(Date.UTC(startY, startM + 1, BILLING_CYCLE_START_DAY, 0, 0, 0, 0));
+  end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysTotal = Math.round((end.getTime() - start.getTime() + 1) / msPerDay);
+  const daysElapsed = Math.min(
+    daysTotal,
+    Math.max(1, Math.floor((now.getTime() - start.getTime()) / msPerDay) + 1),
+  );
+  const pctElapsed = Math.round((daysElapsed / daysTotal) * 1000) / 10;
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    days_elapsed: daysElapsed,
+    days_total: daysTotal,
+    pct_elapsed: pctElapsed,
+  };
+}
+
+/** Per-database usage in the current billing cycle. */
+export interface D1DatabaseUsageRow {
+  database_id: string;
+  rows_read: number;
+  rows_written: number;
+  read_queries: number;
+  write_queries: number;
+}
+
+export interface BillingCycleMetrics {
+  cycle: BillingCycleWindow;
+  /** Total rows_read across all D1 databases in the cycle so far. */
+  rows_read_cycle: number;
+  rows_written_cycle: number;
+  read_queries_cycle: number;
+  write_queries_cycle: number;
+  /** Linear extrapolation of cycle reads to full cycle (assumes pace holds). */
+  cycle_projection_rows_read: number;
+  /** projection ÷ 25B × 100, rounded to 1dp. */
+  pct_of_25b_plan_ceiling: number;
+  /** Per-database breakdown, ordered desc by rows_read. */
+  per_database: D1DatabaseUsageRow[];
+  setup_required: boolean;
+  setup_instructions?: string;
+  error?: string;
+}
+
+/** Plan ceiling: 25B rows_read/month. Re-exported for the diagnostics layer. */
+export const BILLING_CYCLE_PLAN_CEILING = 25_000_000_000;
+
+/**
+ * Fetch billing-cycle D1 metrics summed across ALL D1 databases on the
+ * account. Returns a setup_required stub if CF credentials are missing.
+ *
+ * Queries `d1AnalyticsAdaptiveGroups` with `dimensions { databaseId }`
+ * so we get a per-database breakdown in one round-trip. The previous
+ * implementation filtered on a single databaseId and missed account
+ * databases like `AUDIT_DB` and `GEOIP_DB` — see header comment.
+ */
+export async function fetchBillingCycleMetrics(env: Env, now: Date = new Date()): Promise<BillingCycleMetrics> {
+  const cycle = computeBillingCycle(now);
+  const empty = (): BillingCycleMetrics => ({
+    cycle,
+    rows_read_cycle: 0,
+    rows_written_cycle: 0,
+    read_queries_cycle: 0,
+    write_queries_cycle: 0,
+    cycle_projection_rows_read: 0,
+    pct_of_25b_plan_ceiling: 0,
+    per_database: [],
+    setup_required: true,
+  });
+
+  const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
+  const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
+  if (!token || !accountId) {
+    return {
+      ...empty(),
+      setup_instructions:
+        "Set CF_API_TOKEN (Account Analytics: Read) and CF_ACCOUNT_ID via " +
+        "`wrangler secret put` to enable billing-cycle D1 tracking.",
+    };
+  }
+
+  const query = `
+    query {
+      viewer {
+        accounts(filter: { accountTag: "${accountId}" }) {
+          d1AnalyticsAdaptiveGroups(
+            filter: { datetimeHour_geq: "${cycle.start}", datetimeHour_lt: "${cycle.end}" }
+            limit: 10000
+          ) {
+            sum {
+              rowsRead
+              rowsWritten
+              readQueries
+              writeQueries
+            }
+            dimensions {
+              databaseId
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { ...empty(), setup_required: false, error: `CF GraphQL HTTP ${res.status}: ${body.slice(0, 200)}` };
+    }
+    const parsed = (await res.json()) as {
+      data?: {
+        viewer?: {
+          accounts?: Array<{
+            d1AnalyticsAdaptiveGroups?: Array<{
+              sum: { rowsRead: number; rowsWritten: number; readQueries: number; writeQueries: number };
+              dimensions: { databaseId: string };
+            }>;
+          }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (parsed.errors?.length) {
+      return { ...empty(), setup_required: false, error: parsed.errors.map((e) => e.message).slice(0, 3).join("; ") };
+    }
+    const groups = parsed.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups ?? [];
+
+    // Aggregate per databaseId — the adaptive groups roll up by hour AND
+    // by databaseId, so multiple hourly rows can share a databaseId.
+    const perDb = new Map<string, D1DatabaseUsageRow>();
+    for (const g of groups) {
+      const dbId = g.dimensions.databaseId;
+      const cur = perDb.get(dbId) ?? {
+        database_id: dbId,
+        rows_read: 0,
+        rows_written: 0,
+        read_queries: 0,
+        write_queries: 0,
+      };
+      cur.rows_read += g.sum.rowsRead ?? 0;
+      cur.rows_written += g.sum.rowsWritten ?? 0;
+      cur.read_queries += g.sum.readQueries ?? 0;
+      cur.write_queries += g.sum.writeQueries ?? 0;
+      perDb.set(dbId, cur);
+    }
+    const perDatabase = Array.from(perDb.values()).sort((a, b) => b.rows_read - a.rows_read);
+
+    const rowsReadCycle = perDatabase.reduce((s, d) => s + d.rows_read, 0);
+    const rowsWrittenCycle = perDatabase.reduce((s, d) => s + d.rows_written, 0);
+    const readQueriesCycle = perDatabase.reduce((s, d) => s + d.read_queries, 0);
+    const writeQueriesCycle = perDatabase.reduce((s, d) => s + d.write_queries, 0);
+
+    const pctElapsedFraction = cycle.days_elapsed / cycle.days_total;
+    const cycleProjection = pctElapsedFraction > 0
+      ? Math.round(rowsReadCycle / pctElapsedFraction)
+      : rowsReadCycle;
+    const pctOfCeiling = Math.round((cycleProjection / BILLING_CYCLE_PLAN_CEILING) * 1000) / 10;
+
+    return {
+      cycle,
+      rows_read_cycle: rowsReadCycle,
+      rows_written_cycle: rowsWrittenCycle,
+      read_queries_cycle: readQueriesCycle,
+      write_queries_cycle: writeQueriesCycle,
+      cycle_projection_rows_read: cycleProjection,
+      pct_of_25b_plan_ceiling: pctOfCeiling,
+      per_database: perDatabase,
+      setup_required: false,
+    };
+  } catch (err) {
+    return { ...empty(), setup_required: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
