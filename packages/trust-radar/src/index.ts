@@ -34,6 +34,7 @@ import { registerThreatActorRoutes } from "./routes/threatActors";
 export { ThreatPushHub } from "./durableObjects/ThreatPushHub";
 export { CertStreamMonitor } from "./durableObjects/CertStreamMonitor";
 export { CartographerBackfillWorkflow } from "./workflows/cartographerBackfill";
+export { CartographerMainWorkflow } from "./workflows/cartographerMain";
 export { NexusWorkflow } from "./workflows/nexusRun";
 export { GeoipRefreshWorkflow } from "./workflows/geoipRefresh";
 
@@ -431,6 +432,16 @@ export default {
         if (url.pathname === '/api/internal/agents/nexus/workflow') {
           const id = crypto.randomUUID();
           const instance = await env.NEXUS_RUN.create({ id, params: {} });
+          return Response.json({ triggered: true, instanceId: instance.id });
+        }
+
+        // Cartographer main workflow — on-demand cart run via the
+        // durable workflow path. PR-M ships this as the manual
+        // validation hook before PR-O flips the cron over. Identical
+        // behavior to the cron path post-PR-O.
+        if (url.pathname === '/api/internal/agents/cartographer/main-workflow') {
+          const id = crypto.randomUUID();
+          const instance = await env.CARTOGRAPHER_MAIN.create({ id, params: {} });
           return Response.json({ triggered: true, instanceId: instance.id });
         }
       }

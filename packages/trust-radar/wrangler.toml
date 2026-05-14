@@ -75,6 +75,17 @@ name = "cartographer-backfill"
 binding = "CARTOGRAPHER_BACKFILL"
 class_name = "CartographerBackfillWorkflow"
 
+# CARTOGRAPHER_MAIN — durable wrapper for the cart agent's full
+# 7-phase execute(). PR-M (2026-05-14) added the workflow class +
+# binding + manual endpoint. PR-O will switch the `9 * * * *` cron
+# from inline executeAgent to dispatchWorkflow against this binding.
+# Until then, this binding is only invoked manually via
+# POST /api/internal/agents/cartographer/main-workflow.
+[[workflows]]
+name = "cartographer-main"
+binding = "CARTOGRAPHER_MAIN"
+class_name = "CartographerMainWorkflow"
+
 [[workflows]]
 name = "nexus-run"
 binding = "NEXUS_RUN"

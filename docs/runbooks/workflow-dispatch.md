@@ -357,6 +357,78 @@ wrangler d1 execute trust-radar-v2 --remote --command "
 
 Expected: rows from the past hour, with strings like `50 providers scored (50 AI)` and `50 email security scans`.
 
+## Verification (PR-M landing — CartographerMainWorkflow staging)
+
+PR-M adds the `CartographerMainWorkflow` class + `CARTOGRAPHER_MAIN`
+wrangler binding + manual dispatch endpoint. The `9 * * * *` cron
+**is NOT yet flipped** — that's the planned PR-O follow-up. Until
+PR-O, this workflow is only invoked manually.
+
+### 1. CF dashboard shows 4 cron triggers + 4 workflow bindings
+
+After deploy:
+- Cron triggers: `*/5`, `7`, `8`, `9`, `12 */6`, `13 13`
+- Workflow bindings: `CARTOGRAPHER_BACKFILL`, **`CARTOGRAPHER_MAIN`** (new),
+  `NEXUS_RUN`, `GEOIP_REFRESH`
+
+### 2. Manual dispatch creates a workflow instance
+
+```bash
+curl -sS -X POST \
+  -H "Authorization: Bearer ${AVERROW_INTERNAL_SECRET}" \
+  https://averrow.com/api/internal/agents/cartographer/main-workflow | jq
+```
+
+Expected: `{ "triggered": true, "instanceId": "..." }`.
+
+Then check `agent_activity_log`:
+
+```bash
+wrangler d1 execute trust-radar-v2 --remote --command "
+  SELECT created_at, event_type, substr(message,1,120) AS message
+  FROM agent_activity_log
+  WHERE agent_id='cartographer'
+    AND event_type IN ('started','batch_complete','workflow_dispatched')
+  ORDER BY created_at DESC LIMIT 5"
+```
+
+Expected: a `started` row from the workflow's `log-start` step,
+followed (within ~10 min) by a `batch_complete` row from the
+`log-complete` step. The `executeAgent` call inside the workflow's
+single big `step.do` still writes an `agent_runs` row, so cart's
+existing telemetry pipeline keeps working.
+
+### 3. Workflow runtime catches failures + retries
+
+The single `step.do` is configured with
+`{ retries: { limit: 2, delay: '60 seconds', backoff: 'exponential' }, timeout: '14 minutes' }`.
+If a transient failure (CF Workflows internal error, D1 hiccup) hits
+the run, Workflows retries automatically up to 2 times. Workflow
+instance status reflects the final outcome — visible via
+`wrangler workflows instance describe cartographer-main <instanceId>`.
+
+## Planned PR-O — cron cutover
+
+When manual validation looks healthy (a few successful manual runs +
+no leftover failed instances), PR-O is a one-line change in
+`cron/orchestrator.ts`:
+
+```diff
+-      const { cartographerAgent } = await import('../agents/cartographer');
+-      const { executeAgent } = await import('../lib/agentRunner');
+-      await executeAgent(env, cartographerAgent, {}, 'cron', 'scheduled');
++      const result = await dispatchWorkflow(env, {
++        workflow: env.CARTOGRAPHER_MAIN,
++        workflowName: 'cartographer-main',
++        agentId: 'cartographer',
++      });
++      logger.info('cartographer_workflow_dispatch', { outcome: result.kind });
+```
+
+**Rollback:** revert the diff. Cart goes back to inline dispatch
+immediately on the next `9 * * * *` tick. The agent module path is
+untouched.
+
 ## Operator actions when alert fires
 
 | Symptom | Action |

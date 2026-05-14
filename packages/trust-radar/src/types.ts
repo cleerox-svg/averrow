@@ -20,6 +20,7 @@ export interface Env {
   THREAT_PUSH_HUB: DurableObjectNamespace;
   CERTSTREAM_MONITOR: DurableObjectNamespace;
   CARTOGRAPHER_BACKFILL: Workflow;
+  CARTOGRAPHER_MAIN: Workflow;
   NEXUS_RUN: Workflow;
   /** Durable refresh of the GeoLite2-City CSVs into GEOIP_DB.
    *  Optional because the binding is provisioned alongside the
