@@ -155,7 +155,7 @@ export const brandDeepScanAgent: AgentModule = {
   reads: [],
   writes: [],
   outputs: [{ type: "classification" }, { type: "diagnostic" }],
-  status: "active",
+  status: "retired",  // PR-P 2026-05-14: zero real usage in 14d (last call 2026-04-30 from a one-time test harness). Doc-only retirement — file + API route intact, re-activate by flipping status back.
   category: "sync",
   pipelinePosition: 26,
 
