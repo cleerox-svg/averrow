@@ -30,7 +30,7 @@ import {
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
-import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour } from '../lib/cube-builder';
+import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryOperations } from '../handlers/observatory';
 import { handleDashboardOverview, handleDashboardTopBrands } from '../handlers/dashboard';
@@ -185,14 +185,14 @@ async function runNavigatorImpl(
   // the outer try is purely defensive. A cube failure never fails Navigator
   // overall — it just downgrades status from 'success' to 'partial'.
   const cubeResults: {
-    currentHour: { geo: CubeBuildResult | null; provider: CubeBuildResult | null; brand: CubeBuildResult | null; status: CubeBuildResult | null };
-    prevHour: { geo: CubeBuildResult | null; provider: CubeBuildResult | null; brand: CubeBuildResult | null; status: CubeBuildResult | null };
+    currentHour: { geo: CubeBuildResult | null; provider: CubeBuildResult | null; brand: CubeBuildResult | null; status: CubeBuildResult | null; arcs: CubeBuildResult | null };
+    prevHour: { geo: CubeBuildResult | null; provider: CubeBuildResult | null; brand: CubeBuildResult | null; status: CubeBuildResult | null; arcs: CubeBuildResult | null };
     totalRows: number;
     totalMs: number;
     errors: string[];
   } = {
-    currentHour: { geo: null, provider: null, brand: null, status: null },
-    prevHour: { geo: null, provider: null, brand: null, status: null },
+    currentHour: { geo: null, provider: null, brand: null, status: null, arcs: null },
+    prevHour: { geo: null, provider: null, brand: null, status: null, arcs: null },
     totalRows: 0,
     totalMs: 0,
     errors: [],
@@ -236,6 +236,14 @@ async function runNavigatorImpl(
           if (r.error) cubeResults.errors.push(`status ${currentHourBucket}: ${r.error}`);
           else cubeResults.totalRows += r.rowsWritten;
         }
+        // Current hour — arcs (PR-Z)
+        if (!isOverCap()) {
+          const r = await buildArcsCubeForHour(env, currentHourBucket);
+          cubeResults.currentHour.arcs = r;
+          cubeResults.totalMs += r.durationMs;
+          if (r.error) cubeResults.errors.push(`arcs ${currentHourBucket}: ${r.error}`);
+          else cubeResults.totalRows += r.rowsWritten;
+        }
         // Previous hour — geo
         if (!isOverCap()) {
           const r = await buildGeoCubeForHour(env, prevHourBucket);
@@ -266,6 +274,14 @@ async function runNavigatorImpl(
           cubeResults.prevHour.status = r;
           cubeResults.totalMs += r.durationMs;
           if (r.error) cubeResults.errors.push(`status ${prevHourBucket}: ${r.error}`);
+          else cubeResults.totalRows += r.rowsWritten;
+        }
+        // Previous hour — arcs (PR-Z)
+        if (!isOverCap()) {
+          const r = await buildArcsCubeForHour(env, prevHourBucket);
+          cubeResults.prevHour.arcs = r;
+          cubeResults.totalMs += r.durationMs;
+          if (r.error) cubeResults.errors.push(`arcs ${prevHourBucket}: ${r.error}`);
           else cubeResults.totalRows += r.rowsWritten;
         }
       } else {

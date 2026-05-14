@@ -530,3 +530,113 @@ export async function buildAppStoreBrandSummary(env: Env): Promise<CubeBuildResu
     };
   }
 }
+
+/**
+ * Build (or rebuild) a single hour of the arcs cube.
+ *
+ * Window: [hourBucket, hourBucket + 1 hour)
+ * Source: threats WHERE status='active'
+ *                   AND target_brand_id IS NOT NULL
+ *                   AND lat IS NOT NULL AND lng IS NOT NULL
+ * Grain : (hour, country_code, target_brand_id, threat_type, severity, source_feed)
+ *
+ * Aggregates `threat_count`, `source_lat`, `source_lng` (centroid of
+ * attacking IPs in the country bucket — better than the previous arcs
+ * SQL's arbitrary-pick), `first_seen` (MIN created_at), `last_seen`
+ * (MAX created_at).
+ *
+ * Replaces the per-request 43K-row scan in handleObservatoryArcs +
+ * handleObservatoryBrandArcs with a single index lookup against this cube.
+ */
+export async function buildArcsCubeForHour(
+  env: Env,
+  hourBucket: string,
+): Promise<CubeBuildResult> {
+  const start = Date.now();
+  try {
+    const windowEnd = nextHour(hourBucket);
+    const result = await env.DB.prepare(`
+      INSERT OR REPLACE INTO threat_cube_arcs
+        (hour_bucket, country_code, target_brand_id, threat_type, severity, source_feed,
+         threat_count, source_lat, source_lng, first_seen, last_seen, updated_at)
+      SELECT
+        ?1,
+        COALESCE(country_code, 'XX'),
+        target_brand_id,
+        COALESCE(threat_type, 'unknown'),
+        COALESCE(severity, 'unknown'),
+        COALESCE(source_feed, 'unknown'),
+        COUNT(*),
+        ROUND(AVG(lat), 1),
+        ROUND(AVG(lng), 1),
+        MIN(created_at),
+        MAX(created_at),
+        datetime('now')
+      FROM threats
+      WHERE created_at >= ?2
+        AND created_at < ?3
+        AND status = 'active'
+        AND lat IS NOT NULL
+        AND lng IS NOT NULL
+        AND target_brand_id IS NOT NULL
+      GROUP BY 2, 3, 4, 5, 6
+    `).bind(hourBucket, hourBucket, windowEnd).run();
+
+    return {
+      rowsWritten: extractRowsWritten(result.meta),
+      durationMs: Date.now() - start,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      rowsWritten: 0,
+      durationMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Dry-run equivalent of buildArcsCubeForHour — see countGeoCubeForHour.
+ */
+export async function countArcsCubeForHour(
+  env: Env,
+  hourBucket: string,
+): Promise<CubeBuildResult & { groupedRows: number }> {
+  const start = Date.now();
+  try {
+    const windowEnd = nextHour(hourBucket);
+    const row = await env.DB.prepare(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT 1
+        FROM threats
+        WHERE created_at >= ?1
+          AND created_at < ?2
+          AND status = 'active'
+          AND lat IS NOT NULL
+          AND lng IS NOT NULL
+          AND target_brand_id IS NOT NULL
+        GROUP BY
+          COALESCE(country_code, 'XX'),
+          target_brand_id,
+          COALESCE(threat_type, 'unknown'),
+          COALESCE(severity, 'unknown'),
+          COALESCE(source_feed, 'unknown')
+      )
+    `).bind(hourBucket, windowEnd).first<{ n: number }>();
+
+    return {
+      rowsWritten: 0,
+      groupedRows: row?.n ?? 0,
+      durationMs: Date.now() - start,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      rowsWritten: 0,
+      groupedRows: 0,
+      durationMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}

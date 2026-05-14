@@ -127,6 +127,38 @@ const STATUS_HEAL_SQL = `
   GROUP BY 1, 2, 3, 4, 5
 `;
 
+// Arcs cube heal — PR-Z. Same 30-day window as the other cubes.
+// Source filter mirrors buildArcsCubeForHour: status='active',
+// target_brand_id NOT NULL, lat/lng NOT NULL. Aggregates source_lat/
+// source_lng as the centroid of attacking IPs in each (country, brand,
+// type, severity, source_feed) bucket.
+const ARCS_HEAL_SQL = `
+  INSERT OR REPLACE INTO threat_cube_arcs
+    (hour_bucket, country_code, target_brand_id, threat_type, severity, source_feed,
+     threat_count, source_lat, source_lng, first_seen, last_seen, updated_at)
+  SELECT
+    strftime('%Y-%m-%d %H:00:00', created_at),
+    COALESCE(country_code, 'XX'),
+    target_brand_id,
+    COALESCE(threat_type, 'unknown'),
+    COALESCE(severity, 'unknown'),
+    COALESCE(source_feed, 'unknown'),
+    COUNT(*),
+    ROUND(AVG(lat), 1),
+    ROUND(AVG(lng), 1),
+    MIN(created_at),
+    MAX(created_at),
+    datetime('now')
+  FROM threats
+  WHERE created_at >= datetime('now', '-30 days')
+    AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+    AND status = 'active'
+    AND lat IS NOT NULL
+    AND lng IS NOT NULL
+    AND target_brand_id IS NOT NULL
+  GROUP BY 1, 2, 3, 4, 5, 6
+`;
+
 // ─── Agent module ────────────────────────────────────────────────
 
 export const cubeHealerAgent: AgentModule = {
@@ -150,6 +182,7 @@ export const cubeHealerAgent: AgentModule = {
     { kind: 'd1_table', name: 'threat_cube_geo' },
     { kind: 'd1_table', name: 'threat_cube_provider' },
     { kind: 'd1_table', name: 'threat_cube_status' },
+    { kind: 'd1_table', name: 'threat_cube_arcs' },
   ],
   outputs: [],
   status: 'active',
@@ -215,6 +248,23 @@ export const cubeHealerAgent: AgentModule = {
         summary: `cube_healer status heal failed (${rowsWritten} rows so far)`,
         severity: 'high',
         details: { error: errMsg, stage: 'status', rowsLanded: rowsWritten },
+      });
+    }
+
+    // ── Arcs heal (PR-Z) ────────────────────────────────────────
+    // Country × brand × type × severity slice for the Observatory
+    // globe arcs. Same partial-failure handling as the others —
+    // arcs failure doesn't kill the whole heal cycle.
+    try {
+      const arcsResult = await env.DB.prepare(ARCS_HEAL_SQL).run();
+      rowsWritten += arcsResult.meta?.changes ?? 0;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      partialFailures.push({
+        type: 'diagnostic',
+        summary: `cube_healer arcs heal failed (${rowsWritten} rows so far)`,
+        severity: 'high',
+        details: { error: errMsg, stage: 'arcs', rowsLanded: rowsWritten },
       });
     }
 

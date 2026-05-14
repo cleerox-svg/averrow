@@ -558,9 +558,11 @@ context is the column name, not the value.
 - **threat_cube_geo** — geographic aggregates by hour (country, threat_type, severity, source_feed)
 - **threat_cube_provider** — provider aggregates by hour (hosting_provider_id, threat_type, severity, source_feed)
 - **threat_cube_brand** — brand aggregates by hour (target_brand_id, threat_type, severity, source_feed)
+- **threat_cube_status** — status aggregates by hour (threat_type, severity, source_feed, status)
+- **threat_cube_arcs** — country × brand arc corridors by hour (country_code, target_brand_id, threat_type, severity, source_feed) with source_lat/source_lng centroid + first_seen/last_seen aggregates. Powers `/api/observatory/arcs` + `/api/observatory/brand-arcs`. Added in PR-Z.
 - For aggregate counts (by country, provider, brand, severity, type) **always query cubes instead of raw threats table**
 - Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and full 30-day rebuild every 6 hours by cube-healer
-- Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`
+- Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`, `buildStatusCubeForHour()`, `buildArcsCubeForHour()`
 
 ### Pre-computed columns — use them, don't re-derive
 - `brands.threat_count`, `brands.last_threat_seen` — use instead of `COUNT(*) FROM threats WHERE target_brand_id = ?`
@@ -723,6 +725,7 @@ threats                   ← Core threat intelligence (113K+ rows)
 threat_cube_geo           ← OLAP cube: hourly geo aggregates
 threat_cube_provider      ← OLAP cube: hourly provider aggregates
 threat_cube_brand         ← OLAP cube: hourly brand aggregates
+threat_cube_arcs          ← OLAP cube: hourly country × brand arc corridors (PR-Z)
 hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results

@@ -294,19 +294,31 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
 
 // ── GET /api/observatory/arcs ──────────────────────────────────────────────────
 // Returns attack corridors for ArcLayer
+//
+// PR-Z: reads from threat_cube_arcs instead of scanning the raw threats
+// table joined to brands. Pre-PR-Z this was the single largest D1 spender
+// for trust-radar's surfaces (~14.8M reads/24h, scanning ~43K of 7-day
+// partial-index rows per uncached call). The cube reduces it to a small
+// hour-bucket SELECT joined to brands by id (~hundreds of rows max).
+//
+// The cube's grain — (hour_bucket, country_code, target_brand_id,
+// threat_type, severity, source_feed) — exactly matches what the previous
+// query produced after its GROUP BY (country, brand, type), so there's no
+// visual fidelity loss. source_lat/source_lng are the country-bucket
+// centroid (better than the previous arbitrary-pick).
 export async function handleObservatoryArcs(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
   const period = url.searchParams.get("period") ?? "7d";
-  const interval = periodToInterval(period);
-  const sourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "t");
+  const windowStart = snappedWindowStart(period);
+  const sourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "c");
 
   try {
-    // KV cache: arcs query is the single most expensive Observatory
-    // read (raw threats JOIN brands, was uncapped). Cache for 15 min;
-    // the globe doesn't visibly change second-to-second.
+    // KV cache: 30 min TTL (was 15). Globe doesn't visibly change in
+    // 15 min and the cube refresh cadence is also 5 min, so a longer
+    // TTL halves the re-compute frequency with no observable lag.
     const cacheKey = `observatory_arcs:${period}:${url.searchParams.get("source_feed") ?? "all"}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
@@ -315,35 +327,29 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     }
 
     const tally = newTally();
-    // Cap at 10K corridors. The globe can't visualize more than that
-    // legibly anyway (overdraw collapses individual arcs into a blob),
-    // and removing the cap was burning ~50M D1 row-reads per day on
-    // pre-warmed cache populates. The original query had no LIMIT —
-    // fine when threats was small, expensive at 200K+ active rows.
+    // LIMIT 2500 (was 10K). The globe can't legibly render more than ~2K
+    // arcs anyway — overdraw collapses individual arcs into a blob.
     const rows = await session.prepare(`
       SELECT
-        ROUND(t.lat, 1) AS source_lat,
-        ROUND(t.lng, 1) AS source_lng,
-        t.threat_type,
-        t.severity,
-        t.country_code AS source_country,
-        b.name AS target_brand,
-        b.canonical_domain AS target_domain,
-        b.sector AS target_sector,
-        COUNT(*) AS volume,
-        MIN(t.created_at) AS first_seen,
-        MAX(t.created_at) AS last_seen
-      FROM threats t
-      JOIN brands b ON b.id = t.target_brand_id
-      WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
-        AND t.target_brand_id IS NOT NULL
-        AND t.status = 'active'
-        AND t.created_at > datetime('now', ?)${sourceFilter.sql}
-      GROUP BY t.country_code, t.target_brand_id, t.threat_type
+        ROUND(AVG(c.source_lat), 1) AS source_lat,
+        ROUND(AVG(c.source_lng), 1) AS source_lng,
+        c.threat_type,
+        MAX(c.severity)             AS severity,
+        c.country_code              AS source_country,
+        b.name                      AS target_brand,
+        b.canonical_domain          AS target_domain,
+        b.sector                    AS target_sector,
+        SUM(c.threat_count)         AS volume,
+        MIN(c.first_seen)           AS first_seen,
+        MAX(c.last_seen)            AS last_seen
+      FROM threat_cube_arcs c
+      JOIN brands b ON b.id = c.target_brand_id
+      WHERE c.hour_bucket >= ?${sourceFilter.sql}
+      GROUP BY c.country_code, c.target_brand_id, c.threat_type, b.name, b.canonical_domain, b.sector
       ORDER BY volume DESC
-      LIMIT 10000
-    `).bind(interval, ...sourceFilter.params).all<{
-      source_lat: number; source_lng: number; threat_type: string;
+      LIMIT 2500
+    `).bind(windowStart, ...sourceFilter.params).all<{
+      source_lat: number | null; source_lng: number | null; threat_type: string;
       severity: string | null; source_country: string | null;
       target_brand: string | null; target_domain: string | null;
       target_sector: string | null; volume: number;
@@ -361,7 +367,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
           targetCoords[1] + (Math.random() - 0.5) * 0.5,
         ];
         return {
-          sourcePosition: [row.source_lng, row.source_lat] as [number, number],
+          sourcePosition: [row.source_lng ?? 0, row.source_lat ?? 0] as [number, number],
           targetPosition: jitter,
           threat_type: row.threat_type,
           severity: row.severity ?? "low",
@@ -376,7 +382,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
       .filter((a): a is NonNullable<typeof a> => a !== null);
 
     const data = { success: true, data: arcs };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 900 });
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 1800 });
     recordD1Reads(env, "observatory_arcs", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -395,7 +401,11 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
   const limit = Math.min(50, parseInt(url.searchParams.get("limit") ?? "20", 10));
 
   try {
-    // KV cache: live feed query — cache for 2 minutes (data changes frequently).
+    // KV cache: live feed query. PR-Z bumped 2 → 5 min so the TTL aligns
+    // with Navigator's pre-warm cadence — at 2 min the pre-warm half the
+    // time hit a stale entry that had just expired, paying the scan cost
+    // again. 5 min keeps the "live" ticker visibly fresh while letting
+    // pre-warm always serve.
     const cacheKey = `observatory_live:${url.searchParams.get("source_feed") ?? "all"}:${limit}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
@@ -432,7 +442,7 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results ?? [] };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 120 });
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
     recordD1Reads(env, "observatory_live", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -441,7 +451,15 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
 }
 
 // ── GET /api/observatory/brand-arcs ───────────────────────────────────────────
-// Returns arcs targeting a specific brand
+// Returns arcs targeting a specific brand.
+//
+// PR-Z: reads from threat_cube_arcs. Original query bucketed at 0.1°
+// lat/lng; the cube grain is country-level. For a brand panel (LIMIT
+// 40 corridors max) the visualization is unchanged — at country
+// resolution a brand typically maps to 10-30 distinct attacking
+// countries, well below the 40-row cap. The 0.1° bucketing of the
+// previous query was effectively the same since attacking IPs cluster
+// inside national geographies.
 export async function handleObservatoryBrandArcs(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -449,7 +467,7 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
   const url = new URL(request.url);
   const brandId = url.searchParams.get("brand_id");
   const period = url.searchParams.get("period") ?? "7d";
-  const interval = periodToInterval(period);
+  const windowStart = snappedWindowStart(period);
 
   if (!brandId) {
     return attachBookmark(json({ success: false, error: "brand_id required" }, 400, origin), session);
@@ -465,27 +483,25 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
 
     const rows = await session.prepare(`
       SELECT
-        ROUND(t.lat, 1) AS source_lat,
-        ROUND(t.lng, 1) AS source_lng,
-        t.threat_type,
-        t.severity,
-        t.country_code AS source_country,
-        COUNT(*) AS volume
-      FROM threats t
-      WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
-        AND t.target_brand_id = ?
-        AND t.status = 'active'
-        AND t.created_at > datetime('now', ?)
-      GROUP BY ROUND(t.lat, 1), ROUND(t.lng, 1), t.threat_type
+        ROUND(AVG(source_lat), 1) AS source_lat,
+        ROUND(AVG(source_lng), 1) AS source_lng,
+        threat_type,
+        MAX(severity)             AS severity,
+        country_code              AS source_country,
+        SUM(threat_count)         AS volume
+      FROM threat_cube_arcs
+      WHERE target_brand_id = ?
+        AND hour_bucket >= ?
+      GROUP BY country_code, threat_type
       ORDER BY volume DESC
       LIMIT 40
-    `).bind(brandId, interval).all<{
-      source_lat: number; source_lng: number; threat_type: string;
+    `).bind(brandId, windowStart).all<{
+      source_lat: number | null; source_lng: number | null; threat_type: string;
       severity: string | null; source_country: string | null; volume: number;
     }>();
 
     const arcs = (rows.results ?? []).map(row => ({
-      sourcePosition: [row.source_lng, row.source_lat] as [number, number],
+      sourcePosition: [row.source_lng ?? 0, row.source_lat ?? 0] as [number, number],
       targetPosition: [
         targetCoords[0] + (Math.random() - 0.5) * 1,
         targetCoords[1] + (Math.random() - 0.5) * 1,

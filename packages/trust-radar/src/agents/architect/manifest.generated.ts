@@ -197,14 +197,15 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "writes": [
+        "threat_cube_arcs",
         "threat_cube_brand",
         "threat_cube_geo",
         "threat_cube_provider",
         "threat_cube_status"
       ],
       "ai_models_referenced": [],
-      "loc": 302,
-      "last_modified": "2026-05-11T18:19:48.038Z"
+      "loc": 352,
+      "last_modified": "2026-05-14T23:44:01.885Z"
     },
     {
       "name": "curator",

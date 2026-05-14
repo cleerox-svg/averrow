@@ -224,6 +224,11 @@ When adding a new workflow-dispatched agent:
 | PR-R | 2026-05-14 | Shared `lib/workflow-agent-stats.ts` helper; applied to `/api/agents`, FC `getAgentHealth`, platform-status realtime |
 | PR-S | 2026-05-14 | Brands top-level Lookalikes card → query `threats` (27K+ attributed typosquats) instead of empty `lookalike_domains` (PR-H pattern for the ops Brands page); documented dark-web data gap |
 | PR-T | 2026-05-14 | Daily brand-score batch (`computeBrandScoresBatch`) → dedicated `16 0 * * *` cron after a starvation diagnosis showed `brand_score_snapshots` at 0 rows since launch (orchestrator hour===0 inline await never reached the block). Movers SQL in `lib/brand-aggregates.ts` loosened from strict 6-8 day window to "oldest snapshot in 1-8 days" so the Brands page Improving/Declining cards light up as soon as ≥1 day of history exists and naturally extend to the full 7-day diff. |
+| PR-U | 2026-05-14 | Brands "Attack types" card → donut over backend-supplied top-8 `threat_type_breakdown` instead of single-value bar treatment. |
+| PR-V | 2026-05-14 | Cache-discipline pass: wrap brands count, unify `admin.threats_*` → `count.threats.*`, bump diagnostics carto-queue TTLs 60→300s. |
+| PR-X | 2026-05-14 | Billing-cycle (18th-17th) D1 tracker. New `fetchBillingCycleMetrics` aggregates rows_read across all account D1 databases, replaces 24h × 30 projection. UI surfaces per-database breakdown. |
+| PR-Y | 2026-05-14 | Top-queries leaderboard now includes `databaseId` dimension — each card shows which DB the query came from. |
+| PR-Z | 2026-05-14 | New `threat_cube_arcs` (country × brand × type × severity per hour). `handleObservatoryArcs` + `handleObservatoryBrandArcs` swapped to read from cube — eliminates the largest D1 spender on the trust-radar side (~14M reads/24h → ~0.5M). Same OLAP-cubes pattern as `threat_cube_geo` / `threat_cube_brand` / `threat_cube_provider` / `threat_cube_status`. |
 
 ---
 
