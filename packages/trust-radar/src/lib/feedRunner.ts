@@ -111,6 +111,34 @@ interface FeedStatusRow {
   feed_name: string;
   last_successful_pull: string | null;
   health_status: string;
+  next_retry_at: string | null;
+}
+
+/**
+ * Per-feed circuit breaker — exponential backoff with jitter applied
+ * after each consecutive failure, computed from `consecutive_failures`.
+ *
+ * Schedule (base, before jitter):
+ *   Fail #1  →   5 min
+ *   Fail #2  →  15 min
+ *   Fail #3  →  45 min
+ *   Fail #4+ → 120 min (cap — same as the hourly cadence boundary;
+ *                       past this the auto-pause threshold owns recovery)
+ *
+ * Jitter: ±25%, deterministic-per-call via crypto.getRandomValues so
+ * multiple feeds failing simultaneously don't thunder-herd back at the
+ * exact same minute. The 2026 best-practice consensus (Fastio, Adaline,
+ * Google Vertex AI retry docs) all stress the jitter.
+ */
+export function computeFeedRetryAt(consecutiveFailures: number, now: Date = new Date()): string {
+  const baseMs =
+    consecutiveFailures <= 1 ?  5 * 60_000 :
+    consecutiveFailures === 2 ? 15 * 60_000 :
+    consecutiveFailures === 3 ? 45 * 60_000 :
+                                120 * 60_000;
+  const jitter = (Math.random() - 0.5) * 0.5 * baseMs; // ±25%
+  const retryAt = new Date(now.getTime() + baseMs + jitter);
+  return retryAt.toISOString().replace('T', ' ').slice(0, 19); // SQLite datetime
 }
 
 // ─── Auto-pause threshold ────────────────────────────────────────
@@ -197,13 +225,19 @@ export async function runFeed(
     // consecutive_failures resets unconditionally on HTTP/parse success — feeds
     // like cisa_kev legitimately return zero most pulls, so we do NOT gate the
     // reset on itemsFetched > 0.
+    //
+    // next_retry_at also cleared on success: the circuit breaker closes
+    // immediately when the upstream is healthy again. This is the
+    // half-open → closed transition. (Open → half-open is implicit —
+    // when the retry window passes, the feed pulls again.)
     const statusUpdate = await env.DB.prepare(
       `UPDATE feed_status SET
          last_successful_pull = datetime('now'),
          records_ingested_today = records_ingested_today + ?,
          health_status = CASE WHEN ? > 0 THEN 'healthy' ELSE health_status END,
          last_error = NULL,
-         consecutive_failures = 0
+         consecutive_failures = 0,
+         next_retry_at = NULL
        WHERE feed_name = ?`
     ).bind(result.itemsNew, result.itemsFetched, config.feed_name).run();
 
@@ -229,15 +263,20 @@ export async function runFeed(
 
     const newFailureCount = (prevStatus?.consecutive_failures ?? 0) + 1;
 
-    // Update feed_status to degraded with error message + incremented counter
+    // Update feed_status to degraded with error message + incremented counter.
+    // Stamp next_retry_at so the next runAllFeeds tick skips this feed
+    // until the backoff window expires. Exponential schedule with jitter
+    // applied in computeFeedRetryAt() above.
+    const nextRetryAt = computeFeedRetryAt(newFailureCount);
     await env.DB.prepare(
       `UPDATE feed_status SET
          last_failure = datetime('now'),
          health_status = 'degraded',
          last_error = ?,
-         consecutive_failures = ?
+         consecutive_failures = ?,
+         next_retry_at = ?
        WHERE feed_name = ?`
-    ).bind(errorMsg.slice(0, 500), newFailureCount, config.feed_name).run();
+    ).bind(errorMsg.slice(0, 500), newFailureCount, nextRetryAt, config.feed_name).run();
 
     // Notify only on status CHANGE (healthy → degraded)
     if (prevStatus?.health_status === 'healthy') {
@@ -564,6 +603,17 @@ export async function runAllFeeds(
  */
 function shouldRunNow(config: FeedConfigRow, status: FeedStatusRow | undefined, now: Date): boolean {
   if (!status) return true; // No status row = never run before
+
+  // Circuit breaker: if a previous failure stamped a next_retry_at in
+  // the future, skip this tick. The retry window auto-opens once now
+  // crosses next_retry_at — at that point the feed pulls again
+  // (half-open → either closed-on-success or longer-backoff-on-failure).
+  if (status.next_retry_at) {
+    const retryAt = status.next_retry_at;
+    const retryMs = new Date(retryAt.includes('Z') || retryAt.includes('+') ? retryAt : retryAt + 'Z').getTime();
+    if (now.getTime() < retryMs) return false;
+  }
+
   if (!status.last_successful_pull) return true; // Never succeeded
 
   // Parse interval from cron: "*/5 * * * *" → 5 min, "0 * * * *" → 60 min, "0 */12 * * *" → 720 min
