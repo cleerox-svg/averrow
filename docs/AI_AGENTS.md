@@ -5,6 +5,7 @@ Trust Radar uses a mesh of AI agents plus infrastructure agents (Navigator, Cube
 **Companion docs:**
 - [`AGENT_STANDARD.md`](./AGENT_STANDARD.md) — the contract every agent must satisfy (lifecycle, resource declarations, output schemas, per-agent budgets, approval gates, tests).
 - [`AGENT_AUDIT.md`](./AGENT_AUDIT.md) — read-only audit findings against the standard. Phase 2 + Phase 3 closed (2026-05-09 refresh); Phase 4 + Phase 5 in progress.
+- [`PLATFORM_DATA_DEPENDENCIES.md`](./PLATFORM_DATA_DEPENDENCIES.md) — cross-surface map of which UI / API / notification path reads from which table, the workflow-agent reconciliation rule, and the checklist when adding a new surface that derives agent status.
 
 This doc is the canonical "what does each agent do" reference. For "what's the status of agent X against the standard," consult the audit. For "how do I write a new agent," consult the standard.
 

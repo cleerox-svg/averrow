@@ -29,6 +29,7 @@ import {
   renderPlatformWorkflowDispatchSilent,
 } from "../lib/platform-templates";
 import { getLastDispatchAt, getCooldownUntil } from "../lib/workflow-dispatch";
+import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
@@ -1443,7 +1444,7 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
   const placeholders = agentIds.map(() => '?').join(',');
   const stallThresholds = await getStallThresholdMap();
 
-  const [results, avgResults, configResults] = await Promise.all([
+  const [results, avgResults, configResults, workflowAgentStats] = await Promise.all([
     db.prepare(`
       SELECT
         agent_id,
@@ -1478,6 +1479,12 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
       consecutive_failures: number; paused_at: string | null;
       paused_after_n_failures: number | null;
     }>(),
+
+    // PR-R reconciliation: workflow-dispatched agents (nexus + future)
+    // write to agent_activity_log not agent_runs. Without this,
+    // is_stalled comes back true for healthy workflow agents → false
+    // platform_agent_stalled notifications fire every FC tick.
+    getWorkflowAgentStats(db),
   ]);
 
   const avgMap = new Map(avgResults.results.map(r => [r.agent_id, r.avg_ms]));
@@ -1486,20 +1493,37 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
   return agentIds.map(agentId => {
     const latest = results.results.find(r => r.agent_id === agentId);
     const config = configMap.get(agentId);
+    const wf = workflowAgentStats.get(agentId);
     const thresholdMs = (stallThresholds.get(agentId) ?? 60) * 60 * 1000;
-    const lastRunAge = latest?.last_run_at
-      ? Date.now() - new Date(latest.last_run_at + 'Z').getTime()
-      : Infinity;
+
+    // For workflow-dispatched agents, last-run age is computed from
+    // agent_activity_log's batch_complete event, not agent_runs.
+    // last_run_status follows the same rollup as PR-J/handleListAgents.
+    const wfLastFailureMs = wf?.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
+    const wfLastSuccessMs = wf?.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
+    const wfLastEventMs = wf?.last_event_at ? new Date(wf.last_event_at).getTime() : 0;
+    const wfLastRunStatus = wf
+      ? (wfLastFailureMs > wfLastSuccessMs && wf.dispatch_failed > 0 ? 'failed' :
+         wf.completed > 0 ? 'success' :
+         wf.dispatched > 0 ? 'partial' : null)
+      : null;
+
+    const lastRunAge = wf && wfLastEventMs > 0
+      ? Date.now() - wfLastEventMs
+      : latest?.last_run_at
+        ? Date.now() - new Date(latest.last_run_at + 'Z').getTime()
+        : Infinity;
+    const effectiveLastStatus = wf ? wfLastRunStatus : latest?.last_run_status;
     const isStalled = lastRunAge > thresholdMs ||
-      (latest?.last_run_status === 'partial' && lastRunAge > 45 * 60 * 1000);
+      (effectiveLastStatus === 'partial' && lastRunAge > 45 * 60 * 1000);
 
     // Derive circuit state from agent_configs
     const isTripped = config?.enabled === 0 && config.paused_reason === 'auto:consecutive_failures';
 
     return {
       agent_id: agentId,
-      last_run_at: latest?.last_run_at ?? null,
-      last_run_status: latest?.last_run_status ?? null,
+      last_run_at: (wf?.last_event_at) ?? latest?.last_run_at ?? null,
+      last_run_status: wfLastRunStatus ?? latest?.last_run_status ?? null,
       avg_duration_ms: Math.round(avgMap.get(agentId) ?? 0),
       is_stalled: isStalled,
       circuit_state: isTripped ? 'tripped' as const : 'closed' as const,

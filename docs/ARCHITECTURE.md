@@ -2,6 +2,8 @@
 
 Averrow is a monorepo-based platform built on Cloudflare Workers, D1, and KV. This document covers the system architecture, routing, data layer, and frontend serving strategy.
 
+**See also:** [`PLATFORM_DATA_DEPENDENCIES.md`](./PLATFORM_DATA_DEPENDENCIES.md) — what UI/API/notification surface reads from which D1 table, the workflow-agent reconciliation rule (PR-J / PR-R), and the checklist when adding a new surface that derives agent status.
+
 ## Monorepo Structure
 
 The repository uses Turborepo with pnpm workspaces. Configuration lives in `turbo.json` and `pnpm-workspace.yaml` at the root.
