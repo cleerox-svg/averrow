@@ -349,6 +349,30 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 - **ctx.waitUntil:** Analyst, Strategist, Sparrow run in parallel without blocking the cron mesh
 - **Inline await:** Observer, Pathfinder run sequentially (quiet times, fast execution)
 
+### Feed circuit breaker (`lib/feedRunner.ts:computeFeedRetryAt`)
+
+Each feed has a per-feed circuit breaker via `feed_status.next_retry_at`.
+On failure, the column is stamped with an exponential-backoff timestamp
+(+ ±25% jitter) so the next `runAllFeeds` tick skips the feed until
+the window expires. On any successful pull, the column is cleared
+(half-open → closed transition). Cleared independently of the auto-pause
+threshold below, which still owns hard pauses after N consecutive failures.
+
+Backoff schedule (base, before jitter):
+
+| Consecutive failures | Backoff |
+|---|---|
+| 1 | 5 min |
+| 2 | 15 min |
+| 3 | 45 min |
+| 4+ | 120 min (cap) |
+
+Jitter (±25%) is critical: without it, multiple feeds failing on the
+same upstream at the same time would all retry at the exact same
+minute. Industry guidance: [Fastio retry patterns 2026](https://fast.io/resources/ai-agent-retry-patterns/),
+[Google Vertex AI retry docs](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy).
+
+
 ---
 
 ## 7. API Conventions
