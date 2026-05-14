@@ -454,13 +454,22 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
 
       try {
         const payload = event.payload_json ? JSON.parse(event.payload_json) as Record<string, unknown> : {};
-        const mod = agentModules[event.target_agent];
+        // Telemetry-only events carry target_agent=NULL or an empty
+        // string. They're written to give operators a forensic record
+        // of agent completions (e.g. threats_enriched, nexus_complete)
+        // but don't drive control flow — cron + FC already dispatch the
+        // relevant downstream work on a fixed cadence. Mark as 'done'
+        // without trying to dispatch and without warning.
+        const isTelemetry = !event.target_agent || event.target_agent.length === 0;
+        const mod = isTelemetry ? undefined : agentModules[event.target_agent];
 
         if (mod) {
           ctx.waitUntil(
             executeAgent(env, mod, { ...payload, triggeredByEvent: event.event_type }, "cron", "event")
           );
-        } else {
+        } else if (!isTelemetry) {
+          // target_agent was set but we don't have a module for it —
+          // genuine misconfiguration worth surfacing.
           logger.warn('agent_event_unknown_target', {
             event_id: event.id,
             target_agent: event.target_agent,
@@ -868,11 +877,20 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       logger.error('threat_feed_scan_sentinel_error', { error: err instanceof Error ? err.message : String(err) });
     }
 
-    // Write feed_pulled event for traceability
+    // Write feed_pulled event for traceability ONLY (target_agent = NULL).
+    //
+    // Pre-PR-L this was target_agent='cartographer' so the agent_events
+    // consumer would dispatch cart on every feed pull. Now redundant —
+    // cart runs from its own `9 * * * *` cron (PR-F) AND from FC's
+    // scaleAgents on backlog growth. The event-driven dispatch was
+    // creating a 3rd cart instance per hour for no incremental
+    // throughput. Keeping the event as a forensic record of "sentinel
+    // just produced N new items" — operators read it via
+    // agent_activity_log / diagnostics, no auto-dispatch needed.
     try {
       await env.DB.prepare(`
         INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
-        VALUES (?, 'feed_pulled', 'sentinel', 'cartographer', ?, 2, 'pending')
+        VALUES (?, 'feed_pulled', 'sentinel', NULL, ?, 2, 'pending')
       `).bind(crypto.randomUUID(), JSON.stringify({ newItems: feedResult.totalNew, trigger: 'immediate' })).run();
     } catch (err) {
       logger.error('sentinel_event_write_error', { error: err instanceof Error ? err.message : String(err) });
