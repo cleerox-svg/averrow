@@ -92,11 +92,14 @@ export const REPO_MANIFEST: RepoInventory = {
       "triggers": [
         "cron"
       ],
-      "reads": [],
+      "reads": [
+        "DB",
+        "seed_domains"
+      ],
       "writes": [],
       "ai_models_referenced": [],
-      "loc": 106,
-      "last_modified": "2026-05-11T18:19:48.038Z"
+      "loc": 141,
+      "last_modified": "2026-05-15T11:45:17.353Z"
     },
     {
       "name": "brand-analysis",

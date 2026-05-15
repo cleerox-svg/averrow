@@ -11,7 +11,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Report Brand Abuse — Averrow"
-  description="Report phishing emails, brand impersonation, lookalike domains, or counterfeit activity to Averrow. Forward suspicious messages to phishing@averrow.com or email abuse@averrow.com directly."
+  description="Report phishing emails, brand impersonation, lookalike domains, or counterfeit activity to Averrow. Forward suspicious messages to phishing@averrow.ca or email abuse@averrow.ca directly."
 >
   <section class="abuse-hero">
     <div class="container">
@@ -46,12 +46,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <li>Or paste the full source if forwarding isn&rsquo;t possible</li>
         <li>Don&rsquo;t click links or open attachments first</li>
       </ul>
-      <a class="abuse-mailto" href="mailto:phishing@averrow.com?subject=Phishing%20report">
+      <a class="abuse-mailto" href="mailto:phishing@averrow.ca?subject=Phishing%20report">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M3 5h18v14H3z" />
           <path d="M3 5l9 8 9-8" />
         </svg>
-        phishing@averrow.com
+        phishing@averrow.ca
       </a>
     </div>
 
@@ -74,12 +74,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <li>Screenshots of the impersonating profile or site</li>
         <li>The brand being impersonated</li>
       </ul>
-      <a class="abuse-mailto" href="mailto:abuse@averrow.com?subject=Impersonation%20report">
+      <a class="abuse-mailto" href="mailto:abuse@averrow.ca?subject=Impersonation%20report">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M3 5h18v14H3z" />
           <path d="M3 5l9 8 9-8" />
         </svg>
-        abuse@averrow.com
+        abuse@averrow.ca
       </a>
     </div>
 
@@ -101,12 +101,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <li>Invoice or message text if you have it</li>
         <li>Brand affected and any payment instructions sent to you</li>
       </ul>
-      <a class="abuse-mailto" href="mailto:abuse@averrow.com?subject=Counterfeit%20or%20fraud%20report">
+      <a class="abuse-mailto" href="mailto:abuse@averrow.ca?subject=Counterfeit%20or%20fraud%20report">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M3 5h18v14H3z" />
           <path d="M3 5l9 8 9-8" />
         </svg>
-        abuse@averrow.com
+        abuse@averrow.ca
       </a>
     </div>
   </div>
@@ -114,23 +114,23 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="abuse-process">
     <div class="section-label" style="text-align:center;">What Happens Next</div>
     <h2>Every report goes through the same three steps.</h2>
-    <p>No automated bounce-back &mdash; a human reviews every submission within one business day.</p>
+    <p>Fully automated. You&rsquo;ll get an acknowledgment within seconds and a determination within an hour.</p>
 
     <div class="abuse-process-grid">
       <div class="abuse-step">
         <div class="abuse-step-num">Step 01</div>
-        <div class="abuse-step-title">Triage</div>
-        <div class="abuse-step-desc">Within one business day, an analyst confirms receipt and tags the report by abuse type, brand affected, and severity.</div>
+        <div class="abuse-step-title">Instant acknowledgment</div>
+        <div class="abuse-step-desc">Within seconds you receive an email confirming we got your submission, with a tracking reference for any follow-up.</div>
       </div>
       <div class="abuse-step">
         <div class="abuse-step-num">Step 02</div>
-        <div class="abuse-step-title">Ingest &amp; correlate</div>
-        <div class="abuse-step-desc">Confirmed indicators (URLs, domains, handles, sender IPs) feed the Averrow threat platform so other monitored brands benefit too.</div>
+        <div class="abuse-step-title">Deep inspection</div>
+        <div class="abuse-step-desc">The Averrow platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message, and correlates it against our threat-intel feeds. Typically completes within the hour.</div>
       </div>
       <div class="abuse-step">
         <div class="abuse-step-num">Step 03</div>
-        <div class="abuse-step-title">Take action</div>
-        <div class="abuse-step-desc">For impersonation we generate takedown evidence; for phishing we add to our seed-trap and signal partners. We follow up with you on the outcome.</div>
+        <div class="abuse-step-title">Determination email</div>
+        <div class="abuse-step-desc">You receive a follow-up with our verdict &mdash; malicious content discovered, or we believe it&rsquo;s safe &mdash; plus confidence and any action we&rsquo;ve taken (IOCs into platform intel, takedown evidence, partner signal).</div>
       </div>
     </div>
   </section>

@@ -128,6 +128,34 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleAdminAbuseMailboxMessages(request, env, ctx);
   });
 
+  // Wave 2.1 PR-AF — seed-domain config (admin-gated). Operator
+  // surface for the auto-seeder target list. See
+  // docs/SEED_DOMAINS_RUNBOOK.md for the workflow.
+  router.get("/api/admin/seed-domains", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleListSeedDomains } = await import("../handlers/seedDomains");
+    return handleListSeedDomains(request, env);
+  });
+  router.post("/api/admin/seed-domains", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleAddSeedDomain } = await import("../handlers/seedDomains");
+    return handleAddSeedDomain(request, env);
+  });
+  router.patch("/api/admin/seed-domains/:domain", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handlePatchSeedDomain } = await import("../handlers/seedDomains");
+    return handlePatchSeedDomain(request, env);
+  });
+  router.delete("/api/admin/seed-domains/:domain", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleDeleteSeedDomain } = await import("../handlers/seedDomains");
+    return handleDeleteSeedDomain(request, env);
+  });
+
   router.get("/api/admin/system-health", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

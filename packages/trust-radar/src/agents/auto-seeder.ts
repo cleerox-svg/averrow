@@ -21,16 +21,47 @@
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { plantBatch, cohortTag } from "../lib/auto-seeder-planter";
 
-const SEEDS_PER_PAGE = 6;
+// Default per-page seed count, used when seed_domains.seeds_per_page is NULL.
+const DEFAULT_SEEDS_PER_PAGE = 6;
 
-// Each entry is one (domain, page) target — addresses planted under
-// the matching seeded_location are surfaced on that page's render.
-// Adding a new honeypot page is two changes: a new entry here + a
-// matching readRoster() call in the page handler.
-const TARGETS: Array<{ domain: string; page: string }> = [
-  { domain: "averrow.com", page: "/admin-portal" },
-  { domain: "averrow.com", page: "/internal-staff" },
+// Fallback used only when seed_domains is empty or unreachable (migration 0181
+// not applied, transient D1 error). Keeps the agent from no-oping silently on
+// a fresh deploy. After migration 0181 these targets come from D1.
+const FALLBACK_TARGETS: Array<{ domain: string; page: string; seedsPerPage: number }> = [
+  { domain: "averrow.com", page: "/admin-portal",   seedsPerPage: DEFAULT_SEEDS_PER_PAGE },
+  { domain: "averrow.com", page: "/internal-staff", seedsPerPage: DEFAULT_SEEDS_PER_PAGE },
 ];
+
+interface SeedDomainRow {
+  domain:         string;
+  pages:          string;
+  seeds_per_page: number;
+}
+
+async function loadActiveTargets(
+  env: AgentContext['env'],
+): Promise<Array<{ domain: string; page: string; seedsPerPage: number }>> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT domain, pages, seeds_per_page
+       FROM seed_domains
+       WHERE status = 'active'
+       ORDER BY domain ASC`,
+    ).all<SeedDomainRow>();
+    const out: Array<{ domain: string; page: string; seedsPerPage: number }> = [];
+    for (const r of rows.results) {
+      const pages = (r.pages ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+      const spp = r.seeds_per_page > 0 ? r.seeds_per_page : DEFAULT_SEEDS_PER_PAGE;
+      for (const page of pages) {
+        out.push({ domain: r.domain, page, seedsPerPage: spp });
+      }
+    }
+    if (out.length > 0) return out;
+  } catch {
+    // migration 0181 not applied or D1 transient — fall through to fallback.
+  }
+  return FALLBACK_TARGETS;
+}
 
 export const autoSeederAgent: AgentModule = {
   name: "auto_seeder",
@@ -45,8 +76,11 @@ export const autoSeederAgent: AgentModule = {
   // No AI calls — auto-seeder plants spam-trap addresses. Cap at 0
   // so the diagnostic flags any unexpected AI spend as a regression.
   budget: { monthlyTokenCap: 0 },
-  // Delegates SQL to lib/auto-seeder-planter.
-  reads: [],
+  // Most SQL delegated to lib/auto-seeder-planter; seed_domains read
+  // happens inline (loadActiveTargets) for the target list.
+  reads: [
+    { kind: "d1_table", name: "seed_domains" },
+  ],
   writes: [],
   outputs: [{ type: "insight" }, { type: "diagnostic" }],
   status: "active",
@@ -60,22 +94,23 @@ export const autoSeederAgent: AgentModule = {
     let totalCreated = 0;
     const perTarget: Array<{ location: string; planted: number }> = [];
 
-    for (const target of TARGETS) {
+    // Wave-2.1 PR-AF: targets now come from seed_domains (operator-
+    // editable). Falls back to the legacy hardcoded list when the
+    // table is empty or unreachable.
+    const targets = await loadActiveTargets(env);
+
+    for (const target of targets) {
       const seedLocationKey = `auto-seeder:${target.domain}:${target.page}`;
       try {
         const planted = await plantBatch(env, {
           domain: target.domain,
           seedLocationKey,
-          count: SEEDS_PER_PAGE,
+          count: target.seedsPerPage,
           cohortTag: tag,
         });
         totalCreated += planted.length;
         perTarget.push({ location: seedLocationKey, planted: planted.length });
       } catch (err) {
-        // Defensive: plantBatch already catches per-row errors. A
-        // throw here means something further upstream failed (eg D1
-        // unavailable). Record per-target so the operator can tell
-        // whether the run was a total wash or just one bucket.
         const errMsg = err instanceof Error ? err.message : String(err);
         outputs.push({
           type: "diagnostic",
@@ -89,13 +124,13 @@ export const autoSeederAgent: AgentModule = {
 
     outputs.push({
       type: "insight",
-      summary: `Recon planted ${totalCreated} spam-trap addresses across ${TARGETS.length} honeypot pages (cohort ${tag})`,
+      summary: `Recon planted ${totalCreated} spam-trap addresses across ${targets.length} honeypot pages (cohort ${tag})`,
       severity: "info",
-      details: { cohortTag: tag, perTarget, seeds_per_page: SEEDS_PER_PAGE },
+      details: { cohortTag: tag, perTarget, target_count: targets.length },
     });
 
     return {
-      itemsProcessed: TARGETS.length,
+      itemsProcessed: targets.length,
       itemsCreated: totalCreated,
       itemsUpdated: 0,
       output: { cohortTag: tag, perTarget },

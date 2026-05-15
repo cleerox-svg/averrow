@@ -478,6 +478,14 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/spam-trap/seed/initial` | Admin | Initial trap seeding |
 | POST | `/api/spam-trap/strategist/run` | Admin | Run seed strategist |
 | POST | `/api/spam-trap/reparse-auth` | Admin | Re-parse DMARC / DKIM / SPF fields on existing captures |
+| POST | `/api/spam-trap/seeds/:id/retire` | Admin | Soft-retire a dead seed address (Wave-1 PR-AB) |
+| GET | `/api/spam-trap/insights` | Admin | Bundled trends / correlations / strategy datasets (Wave-4 PR-AE) |
+| GET | `/api/admin/seed-domains` | Admin | List seed-domain config (Wave-2.1 PR-AF) |
+| POST | `/api/admin/seed-domains` | Admin | Add seed domain to auto-seeder rotation |
+| PATCH | `/api/admin/seed-domains/:domain` | Admin | Update status / pages / notes |
+| DELETE | `/api/admin/seed-domains/:domain` | Super-admin | Hard delete (prefer status='retired') |
+| GET | `/api/admin/abuse-mailbox` | Super-admin | Averrow self abuse-mailbox summary (PR-AA) |
+| GET | `/api/admin/abuse-mailbox/messages` | Super-admin | Averrow self abuse-mailbox messages list |
 
 ## Data Export
 
