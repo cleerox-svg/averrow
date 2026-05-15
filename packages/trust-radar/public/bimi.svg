@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     baseProfile="tiny-ps"
+     version="1.2"
+     viewBox="0 0 32 32">
+  <title>Averrow</title>
+  <rect width="32" height="32" rx="6" fill="#080E18"/>
+  <defs>
+    <linearGradient id="averrow-mark" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6B1010"/>
+      <stop offset="1" stop-color="#C83C3C"/>
+    </linearGradient>
+  </defs>
+  <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#averrow-mark)"/>
+  <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
+</svg>
