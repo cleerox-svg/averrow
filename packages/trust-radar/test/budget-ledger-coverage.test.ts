@@ -290,10 +290,19 @@ describe("budget_ledger coverage — every migrated surface lands a row", () => 
   });
 
   it("honeypot-generator writes THREE ledger rows (index + contact + team) with agentId='honeypot-generator'", async () => {
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse(buildTextReply("<!DOCTYPE html><html>index</html>")))
-      .mockResolvedValueOnce(jsonResponse(buildTextReply("<!DOCTYPE html><html>contact</html>")))
-      .mockResolvedValueOnce(jsonResponse(buildTextReply("<!DOCTYPE html><html>team</html>")));
+    // honeypot-generator dispatches the three Haiku calls via Promise.all.
+    // Each call awaits crypto.subtle.digest (idempotency key) before reaching
+    // fetch, so the order the three fetch invocations consume the mock queue
+    // is non-deterministic. Route by inspecting the user message — the
+    // prompts contain "MAIN PAGE", "CONTACT PAGE", and "TEAM PAGE" markers.
+    fetchSpy.mockImplementation(async (_input: unknown, init?: { body?: string }) => {
+      const body = init?.body ?? "";
+      let text = "<!DOCTYPE html><html>unknown</html>";
+      if (body.includes("MAIN PAGE"))         text = "<!DOCTYPE html><html>index</html>";
+      else if (body.includes("CONTACT PAGE")) text = "<!DOCTYPE html><html>contact</html>";
+      else if (body.includes("TEAM/STAFF"))   text = "<!DOCTYPE html><html>team</html>";
+      return jsonResponse(buildTextReply(text));
+    });
 
     const { db, rows } = makeFakeDb();
     const out = await generateHoneypotSite(makeEnv(db) as never, {
