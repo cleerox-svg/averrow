@@ -18,6 +18,8 @@
     "db:migrate:prod": "wrangler d1 migrations apply DB --remote",
     "db:migrate:audit:local": "wrangler d1 migrations apply AUDIT_DB --local",
     "db:migrate:audit:prod": "wrangler d1 migrations apply AUDIT_DB --remote",
+    "db:migrate:status:prod": "wrangler d1 migrations list DB --remote",
+    "db:verify:prod": "tsx scripts/verify-db-seed.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

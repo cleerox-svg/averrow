@@ -113,6 +113,30 @@ jobs:
           migrate_with_retry "pnpm run db:migrate:prod" "DB migration"
           migrate_with_retry "pnpm run db:migrate:audit:prod" "Audit migration"
 
+      # PR-AI: post-migration seed verification. wrangler reports
+      # `migrations apply` as successful when statements don't error,
+      # even if INSERT OR IGNORE silently no-op'd. This step asserts
+      # specific seeded rows exist after migration and fails the
+      # workflow loudly when they don't. Add new assertions for each
+      # new migration that seeds data. See scripts/verify-db-seed.ts.
+      - name: Verify seeded rows landed
+        working-directory: packages/trust-radar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run db:verify:prod
+
+      # Drift visibility — surface applied/pending migrations in the
+      # workflow log so a human glancing at the deploy can spot any
+      # pending migrations at a glance.
+      - name: Show migration status
+        working-directory: packages/trust-radar
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run db:migrate:status:prod || true
+
       - name: Deploy Worker + Assets
         working-directory: packages/trust-radar
         env:
