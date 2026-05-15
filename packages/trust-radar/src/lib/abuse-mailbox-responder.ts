@@ -101,6 +101,89 @@ async function sendViaResend(
   }
 }
 
+// ─── Brand layout (shared by ack + determination) ──────────────
+//
+// Branded HTML email layout used by both responders. Built for inline-
+// only styling (no external CSS, no web fonts) because most clients
+// (Gmail, Outlook, Apple Mail) strip <link>/<style> tags and refuse
+// external font loads. Logo is inline SVG so we don't depend on a
+// hosted image.
+//
+// Brand language follows AVERROW_UI_STANDARD.md and CLAUDE.md §5:
+//   - amber #E5A832 for accents + brand colour
+//   - dark slate header (#0F1828) matching --bg-page
+//   - off-white body for readability in email clients
+//   - serif/display for headline, system sans for body
+//   - mono for technical fields (id, alias)
+//
+// Layout: 600px-wide centered card on a neutral background. Header
+// bar with logo + product name. Optional accent stripe (amber by
+// default; verdict-tinted on determination). Body. Footer with
+// "Why am I getting this" + brand line.
+
+const AVERROW_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" style="display:block;">
+  <path d="M14 2 L25 24 H3 Z" fill="#E5A832" stroke="#E5A832" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M14 9 L20 22 H8 Z" fill="#0F1828" stroke="#0F1828" stroke-width="1" stroke-linejoin="round"/>
+</svg>`;
+
+interface BrandLayoutOptions {
+  /** Hex colour for the 4px accent stripe under the header. Default amber. */
+  accent?: string;
+  /** Tag printed above the headline (e.g. "Report received" or "Determination"). */
+  preheaderTag: string;
+  /** The bold headline text. */
+  headline: string;
+  /** Inner HTML for the main body. Assume well-formed inline-styled blocks. */
+  bodyHtml: string;
+}
+
+function brandLayout(opts: BrandLayoutOptions): string {
+  const accent = opts.accent ?? "#E5A832";
+  return `<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(opts.headline)} — Averrow</title>
+</head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1A2536;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(opts.preheaderTag)} — Averrow Abuse Triage</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3F4F6;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0 4px 20px rgba(15,24,40,0.08);overflow:hidden;">
+        <tr><td style="background:#0F1828;padding:18px 24px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="vertical-align:middle;width:36px;">${AVERROW_LOGO_SVG}</td>
+              <td style="vertical-align:middle;padding-left:10px;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:18px;font-weight:700;color:#FFFFFF;letter-spacing:0.01em;">Averrow</div>
+                <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#E5A832;font-weight:600;margin-top:2px;">Abuse Triage</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+        <tr><td style="height:4px;background:${accent};line-height:4px;font-size:0;">&nbsp;</td></tr>
+        <tr><td style="padding:28px 32px 8px;">
+          <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#8895AA;font-weight:600;">${escapeHtml(opts.preheaderTag)}</div>
+          <h1 style="margin:6px 0 0;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:700;color:#0F1828;line-height:1.25;letter-spacing:-0.01em;">${escapeHtml(opts.headline)}</h1>
+        </td></tr>
+        <tr><td style="padding:16px 32px 28px;font-size:15px;line-height:1.6;color:#1A2536;">
+          ${opts.bodyHtml}
+        </td></tr>
+        <tr><td style="padding:18px 32px 22px;border-top:1px solid #E5E8EE;background:#FAFBFC;">
+          <p style="margin:0 0 6px;font-size:11px;color:#8895AA;line-height:1.5;">
+            You're receiving this because your address sent or forwarded a message to one of Averrow's public abuse mailboxes. Not yours? Ignore this email — no action needed.
+          </p>
+          <p style="margin:0;font-size:11px;color:#8895AA;line-height:1.5;">
+            <a href="https://averrow.com" style="color:#8895AA;text-decoration:none;font-weight:600;">Averrow</a> — threat intelligence + brand protection ·
+            <a href="https://averrow.com/report-abuse" style="color:#8895AA;text-decoration:underline;">report-abuse</a>
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
 // ─── Ack-on-receipt ─────────────────────────────────────────────
 
 interface AckContext {
@@ -115,31 +198,44 @@ interface AckContext {
 }
 
 function ackHtml(ctx: AckContext): string {
+  // PR-AN: brand-aligned ack copy. Honest about automation per the
+  // marketing page promise — submission goes through automated AI
+  // triage, determination email follows within ~1 hour, not 24h or
+  // via a human analyst.
   const echoSubject = ctx.originalSubject
-    ? `<p style="margin:1.2em 0 0.5em;">Subject we received:</p>
-       <blockquote style="margin:0;padding:0.6em 1em;border-left:3px solid #E5A832;color:#666;background:#f7f7f7;font-family:ui-monospace,Menlo,monospace;font-size:13px;">${escapeHtml(ctx.originalSubject)}</blockquote>`
+    ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we received</div>
+       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid #E5A832;background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
     : "";
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Report received — Averrow Abuse Triage</title></head>
-<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#222;line-height:1.55;max-width:640px;margin:32px auto;padding:0 16px;">
-  <p style="margin:0 0 1em;font-size:16px;"><strong>Thanks for the report.</strong></p>
-  <p style="margin:0 0 1em;">A human analyst will review your submission. You'll get a determination email back within 24 hours with our triage result and any action we're taking.</p>
-  ${echoSubject}
-  <p style="margin:1.4em 0 0.4em;font-size:13px;color:#777;">Confirmation: <code style="font-family:ui-monospace,Menlo,monospace;background:#f3f3f3;padding:2px 6px;border-radius:3px;font-size:12px;">${escapeHtml(ctx.messageId)}</code></p>
-  <p style="margin:0 0 0.4em;font-size:13px;color:#777;">Reached us via <code style="font-family:ui-monospace,Menlo,monospace;background:#f3f3f3;padding:2px 6px;border-radius:3px;font-size:12px;">${escapeHtml(ctx.inboundAlias)}</code></p>
-  <hr style="margin:2em 0;border:none;border-top:1px solid #e5e5e5;">
-  <p style="font-size:12px;color:#999;margin:0;">Averrow — threat intelligence + brand protection. <a href="https://averrow.com/report-abuse" style="color:#999;">averrow.com/report-abuse</a></p>
-</body></html>`;
+  const body = `
+    <p style="margin:0 0 14px;">Thanks for the report. Your submission is in our system and queued for automated inspection.</p>
+    <p style="margin:0 0 14px;color:#4A5868;">The Averrow platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.</p>
+    ${echoSubject}
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
+      <tr>
+        <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Reference</td>
+        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#0F1828;">${escapeHtml(ctx.messageId)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Inbox</td>
+        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#E5A832;">${escapeHtml(ctx.inboundAlias)}</td>
+      </tr>
+    </table>
+  `;
+  return brandLayout({
+    preheaderTag: "Report received",
+    headline: "Thanks — your report is in",
+    bodyHtml: body,
+  });
 }
 
 function ackText(ctx: AckContext): string {
   const echo = ctx.originalSubject ? `\n\nSubject we received:\n  ${ctx.originalSubject}` : "";
-  return `Thanks for the report.
+  return `Thanks — your report is in.
 
-A human analyst will review your submission. You'll get a determination email back within 24 hours with our triage result and any action we're taking.${echo}
+Your submission is queued for automated inspection. The Averrow platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.${echo}
 
-Confirmation: ${ctx.messageId}
-Reached us via ${ctx.inboundAlias}
+Reference: ${ctx.messageId}
+Inbox: ${ctx.inboundAlias}
 
 — Averrow Abuse Triage
 https://averrow.com/report-abuse
@@ -161,7 +257,7 @@ export async function sendAck(
   if (!decision.send) return { ok: false, reason: decision.reason };
   if (!env.RESEND_API_KEY) return { ok: false, reason: "no-resend-key" };
 
-  const subject = `[Averrow] Report received — ${ctx.originalSubject ?? "your forwarded message"}`.slice(0, 140);
+  const subject = `Averrow · Report received — ${ctx.originalSubject ?? "your forwarded message"}`.slice(0, 140);
   const html = ackHtml(ctx);
   const text = ackText(ctx);
   const res = await sendViaResend(env.RESEND_API_KEY, toAddress!.trim().toLowerCase(), subject, html, text);
@@ -183,45 +279,85 @@ interface DeterminationContext {
   action: string;           // safe | review | escalate | takedown
 }
 
-const VERDICT_COPY: Record<string, { label: string; line: string }> = {
-  phishing:  { label: "PHISHING CONFIRMED",   line: "We identified this as a phishing attempt. Don't engage with the sender; the URLs and headers are now in our threat intelligence so other monitored brands benefit too." },
-  malware:   { label: "MALWARE INDICATORS",   line: "We found malware indicators in the attached or linked content. Don't open attachments or click links from the original message." },
-  spam:      { label: "SPAM",                 line: "We classified this as unsolicited commercial email rather than a targeted threat. Your address is in a bulk list — consider unsubscribing or filtering at your provider." },
-  benign:    { label: "BENIGN",               line: "After review we don't believe this message is a threat. It may be a legitimate but unfamiliar sender, or a marketing send from an opted-in list." },
-  ambiguous: { label: "NEEDS HUMAN REVIEW",   line: "Our automated triage couldn't reach a confident verdict. A human analyst will reach out separately if we need more context from you." },
+interface VerdictDef {
+  label: string;
+  line: string;
+  /** Accent stripe colour under the brand header. */
+  accent: string;
+  /** Verdict-tone callout colour (for the "Verdict" pill block). */
+  pillBg: string;
+  pillFg: string;
+  pillBorder: string;
+}
+const VERDICT_COPY: Record<string, VerdictDef> = {
+  phishing: {
+    label: "Phishing confirmed",
+    line: "We identified this as a phishing attempt. Don't engage with the sender. The URLs, headers, and sending IP are now in our threat intelligence so other monitored brands benefit from your report too.",
+    accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
+  },
+  malware: {
+    label: "Malware indicators found",
+    line: "We found malware indicators in the attached or linked content. Don't open attachments or click links from the original message. If you've already clicked, run an antivirus scan and consider rotating any credentials you entered.",
+    accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
+  },
+  spam: {
+    label: "Spam",
+    line: "We classified this as unsolicited commercial email rather than a targeted threat. Your address is on a bulk list — consider unsubscribing if the sender is legitimate, or filtering at your provider if not.",
+    accent: "#E5A832", pillBg: "#FCF4E0", pillFg: "#7E5A12", pillBorder: "#EBD9A7",
+  },
+  benign: {
+    label: "Likely safe",
+    line: "After review we don't believe this message is a threat. It may be a legitimate but unfamiliar sender, or a marketing send from an opted-in list. If something still feels off, reply to this email and we'll re-inspect.",
+    accent: "#3CB878", pillBg: "#E6F5EC", pillFg: "#1A6B3C", pillBorder: "#A6D9BB",
+  },
+  ambiguous: {
+    label: "Needs human review",
+    line: "Our automated triage couldn't reach a confident verdict on its own. A human analyst will reach out separately if we need more context from you. No further action needed on your side for now.",
+    accent: "#A78BFA", pillBg: "#F0EBFD", pillFg: "#4C2D9E", pillBorder: "#CBBBF0",
+  },
 };
 
 function determinationHtml(ctx: DeterminationContext): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echoSubject = ctx.originalSubject
-    ? `<p style="margin:1.2em 0 0.5em;">Subject we triaged:</p>
-       <blockquote style="margin:0;padding:0.6em 1em;border-left:3px solid #E5A832;color:#666;background:#f7f7f7;font-family:ui-monospace,Menlo,monospace;font-size:13px;">${escapeHtml(ctx.originalSubject)}</blockquote>`
+    ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we triaged</div>
+       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${v.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
     : "";
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Determination — Averrow Abuse Triage</title></head>
-<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#222;line-height:1.55;max-width:640px;margin:32px auto;padding:0 16px;">
-  <p style="margin:0 0 0.4em;font-size:12px;letter-spacing:0.12em;color:#888;text-transform:uppercase;font-weight:600;">Determination</p>
-  <p style="margin:0 0 0.8em;font-size:22px;font-weight:700;color:#222;">${escapeHtml(v.label)}</p>
-  <p style="margin:0 0 1em;">${escapeHtml(v.line)}</p>
-  ${echoSubject}
-  <p style="margin:1.4em 0 0.5em;font-size:13px;color:#666;"><strong>Analyst notes:</strong> ${escapeHtml(ctx.reasoning)}</p>
-  <p style="margin:0 0 0.4em;font-size:13px;color:#777;">Confidence: <strong style="color:#222;">${ctx.confidence}%</strong></p>
-  <p style="margin:0 0 0.4em;font-size:13px;color:#777;">Action taken: <code style="font-family:ui-monospace,Menlo,monospace;background:#f3f3f3;padding:2px 6px;border-radius:3px;font-size:12px;">${escapeHtml(ctx.action)}</code></p>
-  <p style="margin:1.4em 0 0.4em;font-size:13px;color:#777;">Reference: <code style="font-family:ui-monospace,Menlo,monospace;background:#f3f3f3;padding:2px 6px;border-radius:3px;font-size:12px;">${escapeHtml(ctx.messageId)}</code></p>
-  <hr style="margin:2em 0;border:none;border-top:1px solid #e5e5e5;">
-  <p style="font-size:12px;color:#999;margin:0;">Averrow — threat intelligence + brand protection. <a href="https://averrow.com/report-abuse" style="color:#999;">averrow.com/report-abuse</a></p>
-</body></html>`;
+  const body = `
+    <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Verdict · ${ctx.confidence}% confidence</div>
+    <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.line)}</p>
+    ${echoSubject}
+    <div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Analyst notes</div>
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(ctx.reasoning)}</p>
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
+      <tr>
+        <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Action taken</td>
+        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#0F1828;">${escapeHtml(ctx.action)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Reference</td>
+        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#0F1828;">${escapeHtml(ctx.messageId)}</td>
+      </tr>
+    </table>
+  `;
+  return brandLayout({
+    accent: v.accent,
+    preheaderTag: "Determination",
+    headline: v.label,
+    bodyHtml: body,
+  });
 }
 
 function determinationText(ctx: DeterminationContext): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${ctx.originalSubject}` : "";
-  return `Determination: ${v.label}
+  return `Determination: ${v.label} (${ctx.confidence}% confidence)
 
 ${v.line}${echo}
 
 Analyst notes: ${ctx.reasoning}
-Confidence: ${ctx.confidence}%
 Action taken: ${ctx.action}
 
 Reference: ${ctx.messageId}
@@ -246,7 +382,7 @@ export async function sendDetermination(
   if (!env.RESEND_API_KEY) return { ok: false, reason: "no-resend-key" };
 
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
-  const subject = `[Averrow] Determination: ${v.label} — ${ctx.originalSubject ?? "your forwarded message"}`.slice(0, 140);
+  const subject = `Averrow · ${v.label} — ${ctx.originalSubject ?? "your forwarded report"}`.slice(0, 140);
   const res = await sendViaResend(
     env.RESEND_API_KEY,
     toAddress!.trim().toLowerCase(),
