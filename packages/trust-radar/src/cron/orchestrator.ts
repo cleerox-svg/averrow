@@ -1113,6 +1113,38 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     logger.error('threat_feed_scan_snapshots_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
+  // ── Abuse mailbox classifier (PR-AG) ───────────────────────────
+  // Runs every hourly tick. Gated on a pending count > 0 so it's a
+  // free no-op when the inbox is empty. Closes the loop the marketing
+  // /report-abuse page promises: ack on arrival (fires from the email
+  // handler) + determination email within ~hour of classification
+  // (was a manual /api/admin path before this hook).
+  //
+  // Bounded at 50 messages per tick — typical inbox is <10 messages
+  // per hour, so the budget is fine; spikes drain over multiple ticks.
+  // The handler emits its own logging; we just catch+swallow here so
+  // a classifier-cost issue can't block the orchestrator's later steps.
+  try {
+    const pendingCount = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
+    ).first<{ n: number }>();
+    if ((pendingCount?.n ?? 0) > 0) {
+      const { runAbuseClassifierBackfill } = await import('../lib/abuse-mailbox-classifier');
+      const result = await runAbuseClassifierBackfill(env, { limit: 50, offset: 0 });
+      logger.info('abuse_mailbox_classifier_tick', {
+        pending_before: pendingCount?.n ?? 0,
+        scanned: result.scanned,
+        classified: result.classified,
+        failed: result.failed,
+        by_classification: result.by_classification,
+      });
+    }
+  } catch (err) {
+    logger.error('abuse_mailbox_classifier_tick_error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // NOTE: daily brand-score batch (computeBrandScoresBatch) was
   // gated on `hour === 0` here but routinely never executed —
   // analyst inline-await + scan workload exhausted the worker
