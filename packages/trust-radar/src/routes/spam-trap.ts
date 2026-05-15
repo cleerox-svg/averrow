@@ -8,7 +8,7 @@ import {
   handleCreateSpamTrapCampaign, handleExecuteSpamTrapCampaign,
   handleUpdateSpamTrapCampaign, handleSpamTrapAddresses, handleInitialSeed,
   handleRunStrategist, handleSpamTrapReparseAuth, handleSpamTrapSeedingSources,
-  handleRetireSeedAddress,
+  handleRetireSeedAddress, handleSpamTrapInsights,
 } from "../handlers/spamTrap";
 
 export function registerSpamTrapRoutes(router: RouterType<IRequest>): void {
@@ -88,5 +88,12 @@ export function registerSpamTrapRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRetireSeedAddress(request, env);
+  });
+  // Wave-4 PR-AE: bundled trends + correlations + strategy data
+  // for the new tabs on /admin/spam-trap.
+  router.get("/api/spam-trap/insights", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleSpamTrapInsights(request, env);
   });
 }

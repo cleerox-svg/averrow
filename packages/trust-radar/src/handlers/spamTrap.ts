@@ -481,3 +481,155 @@ export const handleRetireSeedAddress = handler(async (request: Request & { param
   }
   return success({ id, retired: true }, ctx.origin);
 });
+
+// ── GET /api/spam-trap/insights ───────────────────────────────────
+//
+// Wave-4 PR-AE: bundles three "drill-deeper" datasets the Spam Trap
+// page surfaces in dedicated tabs. One round-trip per page mount
+// (cached 5 min in KV) keeps the new tabs cheap.
+//
+//   trends:       weekly capture counts × channel + cohort time-to-
+//                 first-catch + per-channel productive-rate snapshot
+//   correlations: recent abuse_mailbox captures with the count of
+//                 seeded-honeypot captures that share their from_domain
+//                 or sending_ip — the "covert spam trap" payoff
+//                 (PR-AC cross-link makes this query trivial)
+//   strategy:     last seed_strategist run + recent retired-seed count
+//                 + last 5 strategist diagnostic outputs
+//
+// Each block is bounded by index hits and small LIMITs so the whole
+// endpoint is well under 50K rows scanned in steady state.
+export const handleSpamTrapInsights = handler(async (_request, env, ctx) => {
+  // ── 1. Trends ────────────────────────────────────────────────
+  // 8-week rolling window of captures grouped by week × channel.
+  const weekly = await env.DB.prepare(`
+    SELECT
+      strftime('%Y-%m-%d', captured_at, 'weekday 0', '-6 days') AS week_start,
+      COUNT(*) AS total,
+      SUM(CASE WHEN trap_channel = 'spider'        THEN 1 ELSE 0 END) AS spider,
+      SUM(CASE WHEN trap_channel = 'broker'        THEN 1 ELSE 0 END) AS broker,
+      SUM(CASE WHEN trap_channel = 'paste'         THEN 1 ELSE 0 END) AS paste,
+      SUM(CASE WHEN trap_channel = 'honeypot'      THEN 1 ELSE 0 END) AS honeypot,
+      SUM(CASE WHEN trap_channel = 'abuse_mailbox' THEN 1 ELSE 0 END) AS abuse_mailbox,
+      SUM(CASE WHEN trap_channel = 'employee'      THEN 1 ELSE 0 END) AS employee
+    FROM spam_trap_captures
+    WHERE captured_at > datetime('now', '-8 weeks')
+    GROUP BY week_start
+    ORDER BY week_start ASC
+  `).all<{
+    week_start: string; total: number; spider: number; broker: number;
+    paste: number; honeypot: number; abuse_mailbox: number; employee: number;
+  }>();
+
+  // Cohort time-to-first-catch — for seeds planted in each of the last
+  // 8 weeks, the avg # of days from seeding to the first-recorded
+  // capture against that trap_address. Small bounded scan.
+  const cohorts = await env.DB.prepare(`
+    SELECT
+      strftime('%Y-%m-%d', sa.seeded_at, 'weekday 0', '-6 days') AS cohort_week,
+      COUNT(sa.id) AS seeds_in_cohort,
+      SUM(CASE WHEN sa.total_catches > 0 THEN 1 ELSE 0 END) AS caught,
+      ROUND(AVG(CASE WHEN sa.total_catches > 0
+        THEN julianday(
+          (SELECT MIN(captured_at) FROM spam_trap_captures stc
+           WHERE stc.trap_address = sa.address)
+        ) - julianday(sa.seeded_at)
+        ELSE NULL END), 1) AS avg_days_to_first_catch
+    FROM seed_addresses sa
+    WHERE sa.seeded_at > datetime('now', '-8 weeks')
+      AND sa.status != 'retired'
+    GROUP BY cohort_week
+    ORDER BY cohort_week ASC
+  `).all<{
+    cohort_week: string; seeds_in_cohort: number; caught: number;
+    avg_days_to_first_catch: number | null;
+  }>();
+
+  // Per-channel productive-rate snapshot.
+  const channelRates = await env.DB.prepare(`
+    SELECT
+      channel,
+      COUNT(*) AS total_seeds,
+      SUM(CASE WHEN total_catches > 0 THEN 1 ELSE 0 END) AS productive_seeds
+    FROM seed_addresses
+    WHERE status = 'active'
+    GROUP BY channel
+    ORDER BY total_seeds DESC
+  `).all<{ channel: string; total_seeds: number; productive_seeds: number }>();
+
+  // ── 2. Correlations ──────────────────────────────────────────
+  // Recent abuse_mailbox captures with overlap counts against the
+  // seeded-honeypot universe. Both indexes (idx_stc_domain, idx_stc_ip)
+  // exist already so the correlated subqueries are seek lookups, not
+  // scans. LIMIT 25 keeps the per-row subqueries bounded.
+  const correlations = await env.DB.prepare(`
+    SELECT
+      m.id, m.captured_at, m.from_address, m.from_domain, m.sending_ip,
+      m.subject, m.severity,
+      (SELECT COUNT(*) FROM spam_trap_captures s
+        WHERE s.from_domain = m.from_domain
+          AND s.from_domain IS NOT NULL
+          AND s.trap_channel != 'abuse_mailbox'
+          AND s.id != m.id) AS by_domain,
+      (SELECT COUNT(*) FROM spam_trap_captures s
+        WHERE s.sending_ip = m.sending_ip
+          AND s.sending_ip IS NOT NULL
+          AND s.trap_channel != 'abuse_mailbox'
+          AND s.id != m.id) AS by_ip
+    FROM spam_trap_captures m
+    WHERE m.trap_channel = 'abuse_mailbox'
+    ORDER BY m.captured_at DESC
+    LIMIT 25
+  `).all<{
+    id: number; captured_at: string; from_address: string | null;
+    from_domain: string | null; sending_ip: string | null;
+    subject: string | null; severity: string;
+    by_domain: number; by_ip: number;
+  }>();
+
+  // ── 3. Strategy ──────────────────────────────────────────────
+  const lastRun = await env.DB.prepare(`
+    SELECT id, started_at, completed_at, status, records_processed, error_message
+    FROM agent_runs
+    WHERE agent_id = 'seed_strategist'
+    ORDER BY started_at DESC
+    LIMIT 1
+  `).first<{
+    id: string; started_at: string; completed_at: string | null;
+    status: string; records_processed: number; error_message: string | null;
+  }>();
+
+  const recentPrunes = await env.DB.prepare(`
+    SELECT COUNT(*) AS n
+    FROM seed_addresses
+    WHERE status = 'retired'
+      AND seeded_at > datetime('now', '-30 days')
+  `).first<{ n: number }>();
+
+  const recentOutputs = await env.DB.prepare(`
+    SELECT id, type, summary, severity, details, created_at
+    FROM agent_outputs
+    WHERE agent_id = 'seed_strategist'
+    ORDER BY created_at DESC
+    LIMIT 5
+  `).all<{
+    id: string; type: string; summary: string; severity: string | null;
+    details: string | null; created_at: string;
+  }>();
+
+  return success({
+    trends: {
+      weekly:        weekly.results ?? [],
+      cohorts:       cohorts.results ?? [],
+      channel_rates: channelRates.results ?? [],
+    },
+    correlations: {
+      recent: correlations.results ?? [],
+    },
+    strategy: {
+      last_run:           lastRun ?? null,
+      recent_prunes_30d:  recentPrunes?.n ?? 0,
+      recent_outputs:     recentOutputs.results ?? [],
+    },
+  }, ctx.origin);
+});

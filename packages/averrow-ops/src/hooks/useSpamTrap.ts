@@ -269,6 +269,83 @@ export function useRunStrategist() {
   });
 }
 
+// Wave-4 PR-AE: bundled trends + correlations + strategy datasets.
+// One round-trip per page mount; backend caches at 5 min.
+export interface SpamTrapInsightsTrendsWeek {
+  week_start: string;
+  total: number;
+  spider: number;
+  broker: number;
+  paste: number;
+  honeypot: number;
+  abuse_mailbox: number;
+  employee: number;
+}
+export interface SpamTrapInsightsCohort {
+  cohort_week: string;
+  seeds_in_cohort: number;
+  caught: number;
+  avg_days_to_first_catch: number | null;
+}
+export interface SpamTrapInsightsChannelRate {
+  channel: string;
+  total_seeds: number;
+  productive_seeds: number;
+}
+export interface SpamTrapInsightsCorrelation {
+  id: number;
+  captured_at: string;
+  from_address: string | null;
+  from_domain: string | null;
+  sending_ip: string | null;
+  subject: string | null;
+  severity: string;
+  by_domain: number;
+  by_ip: number;
+}
+export interface SpamTrapInsightsStrategyRun {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  records_processed: number;
+  error_message: string | null;
+}
+export interface SpamTrapInsightsStrategyOutput {
+  id: string;
+  type: string;
+  summary: string;
+  severity: string | null;
+  details: string | null;
+  created_at: string;
+}
+export interface SpamTrapInsights {
+  trends: {
+    weekly: SpamTrapInsightsTrendsWeek[];
+    cohorts: SpamTrapInsightsCohort[];
+    channel_rates: SpamTrapInsightsChannelRate[];
+  };
+  correlations: {
+    recent: SpamTrapInsightsCorrelation[];
+  };
+  strategy: {
+    last_run: SpamTrapInsightsStrategyRun | null;
+    recent_prunes_30d: number;
+    recent_outputs: SpamTrapInsightsStrategyOutput[];
+  };
+}
+
+export function useSpamTrapInsights() {
+  return useQuery({
+    queryKey: ['spam-trap-insights'],
+    queryFn: async () => {
+      const res = await api.get<SpamTrapInsights>('/api/spam-trap/insights');
+      return res.data ?? null;
+    },
+    refetchInterval: 60_000,
+  });
+}
+
 // Wave-1 PR-AB: REPLANT — soft-retire a dead seed address. Server-side
 // the row stays (historical attribution); status flips to 'retired' so
 // it disappears from the dead-seeds list. Refresh queries on success.
