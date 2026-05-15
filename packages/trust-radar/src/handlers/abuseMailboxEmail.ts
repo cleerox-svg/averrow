@@ -84,9 +84,22 @@ export async function handleAbuseMailboxEmail(
   //   To: victim@acme.com
   //
   //   <original body>
-  // ...with variations across clients. We extract what we can;
-  // fields that don't match stay null.
-  const original = extractForwardedOriginal(body);
+  // ...with variations across clients.
+  //
+  // PR-AO: when extractForwardedOriginal() returns nulls (no forwarded
+  // section found — submitter wrote a fresh report instead of forwarding
+  // an existing mail), fall back to the OUTER envelope as the "original".
+  // For a fresh report, the outer From IS the original sender and the
+  // outer Subject IS what the user wrote. Without this fallback the UI
+  // displayed "(no subject) · from —" for every direct submission.
+  const inner = extractForwardedOriginal(body);
+  const outerSubjectRaw = (outerHeaders["subject"] ?? "").trim() || null;
+  const outerBodySnippet = body.slice(0, SNIPPET_LIMIT) || null;
+  const original = {
+    from: inner.from ?? forwardedBy,
+    subject: inner.subject ?? outerSubjectRaw,
+    bodySnippet: inner.bodySnippet ?? outerBodySnippet,
+  };
 
   // 5. Count URLs + attachments in the body.
   const urlCount = countUrls(body);

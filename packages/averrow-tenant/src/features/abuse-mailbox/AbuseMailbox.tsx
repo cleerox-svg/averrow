@@ -299,23 +299,28 @@ function MessageRow({ message: m }: { message: AbuseInboxMessageRow }) {
         <ClassificationPill classification={m.classification} />
         <StatusPill status={m.status} />
         {m.url_count > 0 && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/45">
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/70">
             {m.url_count} URL{m.url_count === 1 ? '' : 's'}
           </span>
         )}
         {m.attachment_count > 0 && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/45">
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/70">
             {m.attachment_count} attachment{m.attachment_count === 1 ? '' : 's'}
           </span>
         )}
       </div>
 
-      <div className="text-sm font-semibold text-white/90 truncate">{m.original_subject ?? '(no subject)'}</div>
-      <div className="text-[12px] text-white/55 mt-0.5">
-        from <span className="font-mono">{m.original_from ?? 'unknown'}</span>
-        {m.forwarded_by_email && (
+      {/* PR-AO: text contrast bumped (90→95, 55→75). Sender fallback to
+          forwarded_by_email when original_from is null so direct
+          submissions (no forwarded chunk) show a sender anyway. */}
+      <div className="text-sm font-semibold text-white/95 truncate">
+        {m.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
+      </div>
+      <div className="text-[12px] text-white/75 mt-0.5">
+        from <span className="font-mono text-[var(--amber)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
+        {m.original_from && m.forwarded_by_email && m.original_from !== m.forwarded_by_email && (
           <>
-            {' '}· forwarded by <span className="font-mono">{m.forwarded_by_email}</span>
+            {' '}· forwarded by <span className="font-mono text-white/90">{m.forwarded_by_email}</span>
           </>
         )}
       </div>

@@ -106,25 +106,23 @@ async function sendViaResend(
 // Branded HTML email layout used by both responders. Built for inline-
 // only styling (no external CSS, no web fonts) because most clients
 // (Gmail, Outlook, Apple Mail) strip <link>/<style> tags and refuse
-// external font loads. Logo is inline SVG so we don't depend on a
-// hosted image.
+// external font loads.
+//
+// PR-AO: replaced the SVG-only logo with a hybrid HTML/CSS treatment.
+// Gmail and several enterprise clients strip SVG defensively, leaving
+// the slot blank. The current approach uses a coloured square + serif
+// "A" mark which is bare-CSS and renders identically everywhere.
 //
 // Brand language follows AVERROW_UI_STANDARD.md and CLAUDE.md §5:
 //   - amber #E5A832 for accents + brand colour
 //   - dark slate header (#0F1828) matching --bg-page
 //   - off-white body for readability in email clients
-//   - serif/display for headline, system sans for body
+//   - serif/display (Georgia fallback) for headline + logo mark
 //   - mono for technical fields (id, alias)
 //
 // Layout: 600px-wide centered card on a neutral background. Header
-// bar with logo + product name. Optional accent stripe (amber by
-// default; verdict-tinted on determination). Body. Footer with
-// "Why am I getting this" + brand line.
-
-const AVERROW_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" style="display:block;">
-  <path d="M14 2 L25 24 H3 Z" fill="#E5A832" stroke="#E5A832" stroke-width="1" stroke-linejoin="round"/>
-  <path d="M14 9 L20 22 H8 Z" fill="#0F1828" stroke="#0F1828" stroke-width="1" stroke-linejoin="round"/>
-</svg>`;
+// bar with logo + product name. Accent stripe under header. Body.
+// Footer with marketing-page link + "why am I getting this".
 
 interface BrandLayoutOptions {
   /** Hex colour for the 4px accent stripe under the header. Default amber. */
@@ -139,6 +137,14 @@ interface BrandLayoutOptions {
 
 function brandLayout(opts: BrandLayoutOptions): string {
   const accent = opts.accent ?? "#E5A832";
+  // Inline logo: amber square with serif "A" — bare HTML/CSS, no SVG.
+  // Most reliable across Gmail / Outlook / Apple Mail / clients with
+  // aggressive SVG stripping. The triangle-style brand mark we use in
+  // the platform UI doesn't survive Gmail's HTML sanitiser.
+  const logoCell = `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+      <tr><td style="width:34px;height:34px;background:#E5A832;border-radius:6px;text-align:center;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:700;color:#0F1828;line-height:34px;">A</td></tr>
+    </table>`;
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
@@ -150,13 +156,13 @@ function brandLayout(opts: BrandLayoutOptions): string {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3F4F6;padding:32px 16px;">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0 4px 20px rgba(15,24,40,0.08);overflow:hidden;">
-        <tr><td style="background:#0F1828;padding:18px 24px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr><td style="background:#0F1828;padding:20px 24px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
             <tr>
-              <td style="vertical-align:middle;width:36px;">${AVERROW_LOGO_SVG}</td>
-              <td style="vertical-align:middle;padding-left:10px;">
-                <div style="font-family:Georgia,'Times New Roman',serif;font-size:18px;font-weight:700;color:#FFFFFF;letter-spacing:0.01em;">Averrow</div>
-                <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#E5A832;font-weight:600;margin-top:2px;">Abuse Triage</div>
+              <td style="vertical-align:middle;">${logoCell}</td>
+              <td style="vertical-align:middle;padding-left:12px;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:700;color:#FFFFFF;letter-spacing:-0.01em;line-height:1.1;">Averrow</div>
+                <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#E5A832;font-weight:700;margin-top:3px;line-height:1;">Abuse Triage</div>
               </td>
             </tr>
           </table>
@@ -169,13 +175,16 @@ function brandLayout(opts: BrandLayoutOptions): string {
         <tr><td style="padding:16px 32px 28px;font-size:15px;line-height:1.6;color:#1A2536;">
           ${opts.bodyHtml}
         </td></tr>
-        <tr><td style="padding:18px 32px 22px;border-top:1px solid #E5E8EE;background:#FAFBFC;">
+        <tr><td style="padding:20px 32px 22px;border-top:1px solid #E5E8EE;background:#FAFBFC;">
+          <p style="margin:0 0 10px;font-size:13px;color:#1A2536;line-height:1.5;font-weight:600;">
+            <a href="https://averrow.com" style="color:#0F1828;text-decoration:none;font-weight:700;">averrow.com</a>
+            <span style="color:#8895AA;font-weight:400;"> · threat intelligence + brand protection</span>
+          </p>
           <p style="margin:0 0 6px;font-size:11px;color:#8895AA;line-height:1.5;">
-            You're receiving this because your address sent or forwarded a message to one of Averrow's public abuse mailboxes. Not yours? Ignore this email — no action needed.
+            Report another threat → <a href="https://averrow.com/report-abuse" style="color:#E5A832;text-decoration:underline;font-weight:600;">averrow.com/report-abuse</a>
           </p>
           <p style="margin:0;font-size:11px;color:#8895AA;line-height:1.5;">
-            <a href="https://averrow.com" style="color:#8895AA;text-decoration:none;font-weight:600;">Averrow</a> — threat intelligence + brand protection ·
-            <a href="https://averrow.com/report-abuse" style="color:#8895AA;text-decoration:underline;">report-abuse</a>
+            You received this because your address sent or forwarded a message to one of Averrow's public abuse mailboxes. Not yours? Ignore this email — no action needed.
           </p>
         </td></tr>
       </table>
