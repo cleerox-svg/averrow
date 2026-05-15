@@ -137,13 +137,23 @@ interface BrandLayoutOptions {
 
 function brandLayout(opts: BrandLayoutOptions): string {
   const accent = opts.accent ?? "#E5A832";
-  // Inline logo: amber square with serif "A" — bare HTML/CSS, no SVG.
-  // Most reliable across Gmail / Outlook / Apple Mail / clients with
-  // aggressive SVG stripping. The triangle-style brand mark we use in
-  // the platform UI doesn't survive Gmail's HTML sanitiser.
+  // Inline platform logo: red Avro Arrow on dark navy, same as
+  // public/favicon.svg. Gmail / Apple Mail / Outlook 365 web all
+  // render inline SVG when the markup is clean (no <defs> linkage,
+  // no external <use>). Linear gradient inlined as a `fill` instead
+  // of a gradient def — Gmail's sanitiser strips <defs> + url() refs.
+  // The visible result is a solid #C83C3C arrow, which matches the
+  // bottom-of-gradient red from the source SVG (#6B1010 → #C83C3C).
+  // A small cutout produces the "A"-style negative space identical
+  // to the platform favicon.
   const logoCell = `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
-      <tr><td style="width:34px;height:34px;background:#E5A832;border-radius:6px;text-align:center;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:700;color:#0F1828;line-height:34px;">A</td></tr>
+      <tr><td style="width:38px;height:38px;background:#080E18;border-radius:6px;text-align:center;vertical-align:middle;padding:0;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="28" height="28" style="display:block;margin:0 auto;">
+          <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="#C83C3C"/>
+          <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
+        </svg>
+      </td></tr>
     </table>`;
   return `<!doctype html>
 <html><head>
