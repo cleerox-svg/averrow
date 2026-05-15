@@ -12,10 +12,14 @@ import { ArrowLeft, AlertTriangle, ShieldCheck, Mail, Inbox, Copy, Check, Chevro
 import {
   useAbuseMailboxSummary,
   useAbuseInboxMessages,
+  useAbuseInboxMessageDetail,
   type AbuseMailboxBrandSummary,
   type AbuseMailboxTotals,
   type AbuseAlias,
   type AbuseInboxMessageRow,
+  type AbuseInboxMessageDetail,
+  type ExtractedUrl,
+  type ExtractedAttachment,
 } from '@/lib/abuseMailboxModule';
 
 export function AbuseMailbox() {
@@ -383,12 +387,13 @@ function MessageRow({ message: m, expanded, onToggle }: {
   );
 }
 
-// PR-AO drill-down: tenant version of MessageDetail. Same fields as
-// the ops surface (AdminAbuseMailbox.tsx) so the two stay structurally
-// uniform. Tenant tokens differ from ops slightly (bg-bg-card,
-// border-amber/30, tenant uses Tailwind tokens rather than CSS vars
-// directly), but the data shape and field order are identical.
+// PR-AO drill-down + PR-AS raw capture. Tenant version of
+// MessageDetail — structurally uniform with the ops surface
+// (AdminAbuseMailbox.tsx). Raw fields (full body, headers, URL list,
+// attachments) are lazy-loaded on expand via the detail endpoint.
 function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) {
+  const detailQ = useAbuseInboxMessageDetail(m.id);
+  const detail = detailQ.data;
   return (
     <article className="rounded-xl border bg-bg-card p-5 -mt-1 border-amber/30">
       <div className="mb-4">
@@ -413,6 +418,9 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         <TenantDetailField label="Attachments"       value={String(m.attachment_count)} />
         <TenantDetailField label="Ack sent"          value={m.ack_sent_at} />
         <TenantDetailField label="Determination sent" value={m.determination_sent_at} />
+        {detail?.raw_size_bytes != null && (
+          <TenantDetailField label="Raw size" value={formatBytes(detail.raw_size_bytes)} mono />
+        )}
       </div>
 
       {(m.classification_reason || m.ai_assessment) && (
@@ -429,17 +437,7 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       )}
 
-      {m.original_body_snippet && (
-        <div>
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Body snippet (first 500 chars)</div>
-          <pre
-            className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono bg-black/30 border border-white/[0.05]"
-            style={{ maxHeight: 240, overflow: 'auto' }}
-          >
-            {m.original_body_snippet}
-          </pre>
-        </div>
-      )}
+      <TenantRawCaptureSections detailQ={detailQ} detail={detail} snippet={m.original_body_snippet} />
 
       <div className="mt-4 pt-3 border-t border-white/[0.06]">
         <div className="flex items-center gap-2 text-[10px] font-mono text-white/55">
@@ -449,6 +447,185 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
       </div>
     </article>
   );
+}
+
+// ─── PR-AS raw-capture sections (tenant parity with ops) ────────
+
+type TenantRawTab = 'body' | 'urls' | 'headers' | 'attachments';
+
+function TenantRawCaptureSections({
+  detailQ, detail, snippet,
+}: {
+  detailQ: ReturnType<typeof useAbuseInboxMessageDetail>;
+  detail:  AbuseInboxMessageDetail | null | undefined;
+  snippet: string | null;
+}) {
+  const [tab, setTab] = useState<TenantRawTab>('body');
+  const urls = detail?.extracted_urls ?? [];
+  const attachments = detail?.attachment_names ?? [];
+  const headerEntries: Array<[string, string]> = detail?.raw_headers
+    ? Object.entries(detail.raw_headers)
+    : [];
+  const counts = {
+    body:        detail?.raw_body ? formatBytes(detail.raw_body.length) : (snippet ? '500' : '—'),
+    urls:        String(urls.length),
+    headers:     String(headerEntries.length),
+    attachments: String(attachments.length),
+  };
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1 mb-3 border-b border-white/[0.06] pb-2">
+        <TenantRawTabButton label="Body"        count={counts.body}        active={tab === 'body'}        onClick={() => setTab('body')} />
+        <TenantRawTabButton label="URLs"        count={counts.urls}        active={tab === 'urls'}        onClick={() => setTab('urls')} />
+        <TenantRawTabButton label="Headers"     count={counts.headers}     active={tab === 'headers'}     onClick={() => setTab('headers')} />
+        <TenantRawTabButton label="Attachments" count={counts.attachments} active={tab === 'attachments'} onClick={() => setTab('attachments')} />
+        {detailQ.isLoading && (
+          <span className="ml-auto text-[10px] font-mono text-white/45">loading…</span>
+        )}
+      </div>
+
+      {tab === 'body' && <TenantBodyPanel rawBody={detail?.raw_body ?? null} snippet={snippet} />}
+      {tab === 'urls' && <TenantUrlsPanel urls={urls} loading={detailQ.isLoading} />}
+      {tab === 'headers' && <TenantHeadersPanel entries={headerEntries} loading={detailQ.isLoading} />}
+      {tab === 'attachments' && <TenantAttachmentsPanel attachments={attachments} loading={detailQ.isLoading} />}
+    </div>
+  );
+}
+
+function TenantRawTabButton({
+  label, count, active, onClick,
+}: { label: string; count: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors border ${
+        active
+          ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+          : 'bg-transparent text-white/65 border-transparent hover:text-white/85'
+      }`}
+    >
+      <span className="uppercase tracking-wider">{label}</span>
+      <span className="ml-1.5 text-white/45">{count}</span>
+    </button>
+  );
+}
+
+function TenantBodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: string | null }) {
+  const content = rawBody ?? snippet;
+  if (!content) return <TenantEmptyPanel text="No body captured" />;
+  return (
+    <div>
+      {!rawBody && snippet && (
+        <p className="text-[10px] text-white/45 mb-2 font-mono">
+          Raw body not captured for this message. Showing the 500-char snippet.
+        </p>
+      )}
+      <pre
+        className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono bg-black/30 border border-white/[0.05]"
+        style={{ maxHeight: 360, overflow: 'auto' }}
+      >
+        {content}
+      </pre>
+    </div>
+  );
+}
+
+function TenantUrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }) {
+  if (loading) return <TenantLoadingPanel />;
+  if (urls.length === 0) return <TenantEmptyPanel text="No URLs found in the body" />;
+  return (
+    <div className="rounded-lg overflow-hidden bg-black/30 border border-white/[0.05]">
+      <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
+        {urls.map((u, i) => (
+          <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
+            {u.domain && (
+              <span className="text-[10px] font-mono uppercase tracking-wider text-amber min-w-0 shrink-0">
+                {u.domain}
+              </span>
+            )}
+            {u.count > 1 && (
+              <span className="text-[9px] font-mono text-white/45 shrink-0">×{u.count}</span>
+            )}
+            <code className="text-[11px] text-white/85 font-mono break-all flex-1 min-w-0">{u.url}</code>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TenantHeadersPanel({ entries, loading }: { entries: Array<[string, string]>; loading: boolean }) {
+  if (loading) return <TenantLoadingPanel />;
+  if (entries.length === 0) return <TenantEmptyPanel text="No headers captured" />;
+  const PRIORITY = ['from', 'to', 'subject', 'date', 'reply-to', 'return-path',
+    'received', 'authentication-results', 'dkim-signature', 'message-id'];
+  const priorityIdx = (k: string) => {
+    const i = PRIORITY.indexOf(k.toLowerCase());
+    return i === -1 ? 999 : i;
+  };
+  const sorted = [...entries].sort((a, b) => {
+    const da = priorityIdx(a[0]); const db = priorityIdx(b[0]);
+    if (da !== db) return da - db;
+    return a[0].localeCompare(b[0]);
+  });
+  return (
+    <div className="rounded-lg overflow-hidden bg-black/30 border border-white/[0.05]">
+      <div className="max-h-72 overflow-auto">
+        <table className="w-full text-[11px] font-mono">
+          <tbody className="divide-y divide-white/[0.04]">
+            {sorted.map(([k, v]) => (
+              <tr key={k}>
+                <td className="align-top px-3 py-1.5 text-amber whitespace-nowrap">{k}</td>
+                <td className="align-top px-3 py-1.5 text-white/85 break-all">{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TenantAttachmentsPanel({ attachments, loading }: { attachments: ExtractedAttachment[]; loading: boolean }) {
+  if (loading) return <TenantLoadingPanel />;
+  if (attachments.length === 0) return <TenantEmptyPanel text="No attachments" />;
+  return (
+    <div className="rounded-lg overflow-hidden bg-black/30 border border-white/[0.05]">
+      <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
+        {attachments.map((a, i) => (
+          <div key={`${a.filename}-${i}`} className="px-3 py-2 flex items-center gap-3">
+            <code className="text-[11px] text-white/90 font-mono break-all flex-1 min-w-0">{a.filename}</code>
+            {a.mime_type && (
+              <span className="text-[10px] font-mono text-white/55 shrink-0">{a.mime_type}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TenantEmptyPanel({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono bg-black/20 border border-white/[0.04]">
+      {text}
+    </div>
+  );
+}
+
+function TenantLoadingPanel() {
+  return (
+    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono bg-black/20 border border-white/[0.04]">
+      Loading…
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function TenantDetailField({ label, value, mono, accent, uppercase }: {

@@ -127,6 +127,13 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const { handleAdminAbuseMailboxMessages } = await import("../handlers/adminAbuseMailbox");
     return handleAdminAbuseMailboxMessages(request, env, ctx);
   });
+  // PR-AS — per-message detail (raw body / headers / URL list / attachments)
+  router.get("/api/admin/abuse-mailbox/messages/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleAdminAbuseMailboxMessageDetail } = await import("../handlers/adminAbuseMailbox");
+    return handleAdminAbuseMailboxMessageDetail(request, env, request.params["id"] ?? "", ctx);
+  });
 
   // Wave 2.1 PR-AF — seed-domain config (admin-gated). Operator
   // surface for the auto-seeder target list. See

@@ -43,6 +43,17 @@ interface EmailMessage {
 const SNIPPET_LIMIT     = 500;
 const RAW_BODY_SCAN_MAX = 32_768;   // Skip past attachments; first ~32KB has the prose
 
+// ─── PR-AS raw-capture caps ─────────────────────────────────────
+// Caps enforced before INSERT to stay under D1's 1MB row limit.
+// See migration 0184_abuse_mailbox_raw_capture.sql for the budget.
+const RAW_BODY_STORE_MAX    = 256 * 1024;   // 256 KB plaintext body
+const RAW_HEADERS_STORE_MAX = 64 * 1024;    // 64 KB headers JSON
+const URLS_STORE_MAX        = 32 * 1024;    // 32 KB URL-list JSON
+const ATTACHMENTS_STORE_MAX = 16 * 1024;    // 16 KB attachment-list JSON
+const URL_LIST_MAX_ENTRIES  = 200;
+const ATTACHMENT_MAX_ENTRIES = 50;
+const SINGLE_URL_MAX        = 2_048;        // truncate any single URL beyond this
+
 export async function handleAbuseMailboxEmail(
   message: EmailMessage,
   env:     Env,
@@ -101,9 +112,20 @@ export async function handleAbuseMailboxEmail(
     bodySnippet: inner.bodySnippet ?? outerBodySnippet,
   };
 
-  // 5. Count URLs + attachments in the body.
-  const urlCount = countUrls(body);
-  const attachmentCount = countAttachments(rawText);
+  // 5. Count + extract URLs and attachments.
+  //
+  // PR-AS: in addition to the existing counts (kept for the list
+  // view's quick-read columns), capture the dereferenced URL list,
+  // attachment filenames + MIME types, full body, and full headers
+  // for drill-down + downstream AI analysis.
+  const extractedUrls   = extractUrls(body);
+  const urlCount        = extractedUrls.length;
+  const attachmentList  = extractAttachments(rawText);
+  const attachmentCount = attachmentList.length;
+  const rawBody         = truncate(body, RAW_BODY_STORE_MAX);
+  const rawHeadersJson  = capJson(outerHeaders, RAW_HEADERS_STORE_MAX);
+  const urlsJson        = capJson(extractedUrls.slice(0, URL_LIST_MAX_ENTRIES), URLS_STORE_MAX);
+  const attachmentsJson = capJson(attachmentList.slice(0, ATTACHMENT_MAX_ENTRIES), ATTACHMENTS_STORE_MAX);
 
   // 6. Insert the row.
   const messageId = crypto.randomUUID();
@@ -112,9 +134,10 @@ export async function handleAbuseMailboxEmail(
        id, org_id, brand_id, received_at, forwarded_by_email, inbound_alias,
        original_from, original_subject, original_body_snippet,
        attachment_count, url_count,
+       raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes,
        classification, severity, status,
        created_at, updated_at
-     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
@@ -125,6 +148,11 @@ export async function handleAbuseMailboxEmail(
     original.bodySnippet,
     attachmentCount,
     urlCount,
+    rawBody,
+    rawHeadersJson,
+    urlsJson,
+    attachmentsJson,
+    message.rawSize,
   ).run();
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
@@ -336,16 +364,132 @@ function parseEmailAddress(value: string | null): string | null {
   return null;
 }
 
-const URL_RE = /https?:\/\/[^\s<>"']+/gi;
-function countUrls(body: string): number {
-  return (body.match(URL_RE) ?? []).length;
+// ─── URL extraction ─────────────────────────────────────────────
+//
+// PR-AS: emit a dedup'd list of {url, domain, count} per message
+// instead of just a count. URL is normalised (trailing punctuation
+// stripped, capped to SINGLE_URL_MAX). Domain best-effort parsed
+// from the URL (skipped if URL constructor throws).
+
+export interface ExtractedUrl {
+  url:    string;
+  domain: string | null;
+  count:  number;
 }
 
-function countAttachments(rawText: string): number {
-  // Each attachment shows a Content-Disposition: attachment header.
-  // Cap the search to RAW_BODY_SCAN_MAX*2 so we don't blow CPU on
-  // huge messages.
-  const window = rawText.slice(0, 65_536);
-  const matches = window.match(/Content-Disposition:\s*attachment/gi);
-  return matches?.length ?? 0;
+const URL_RE = /https?:\/\/[^\s<>"'\]]+/gi;
+
+function stripTrailingJunk(u: string): string {
+  // Strip RFC822 / Markdown trailers commonly glued to the URL by the
+  // sender's mail client: ),.,;.,!,?,>,",',],[,space-collapsed etc.
+  return u.replace(/[)\].,;:!?'"]+$/g, "");
+}
+
+export function extractUrls(body: string): ExtractedUrl[] {
+  const matches = body.match(URL_RE) ?? [];
+  const buckets = new Map<string, { url: string; domain: string | null; count: number }>();
+  for (const raw of matches) {
+    const cleaned = stripTrailingJunk(raw).slice(0, SINGLE_URL_MAX);
+    if (cleaned.length < 8) continue;
+    let domain: string | null = null;
+    try {
+      domain = new URL(cleaned).hostname.toLowerCase() || null;
+    } catch {
+      // Malformed — keep the URL but no domain.
+    }
+    const key = cleaned.toLowerCase();
+    const existing = buckets.get(key);
+    if (existing) existing.count++;
+    else buckets.set(key, { url: cleaned, domain, count: 1 });
+  }
+  return Array.from(buckets.values()).sort((a, b) => b.count - a.count);
+}
+
+// ─── Attachment extraction ─────────────────────────────────────
+//
+// PR-AS: emit a list of {filename, mime_type} per attachment header
+// found in the raw text. Filename is decoded from MIME-encoded /
+// RFC2231 forms where straightforward; falls back to the raw value
+// otherwise. MIME type pulled from the nearest Content-Type header
+// inside the same MIME part.
+
+export interface ExtractedAttachment {
+  filename:  string;
+  mime_type: string | null;
+}
+
+export function extractAttachments(rawText: string): ExtractedAttachment[] {
+  // Cap the scan window so we don't blow CPU on huge base64 payloads.
+  // Attachments appear early in the multipart structure; 256KB covers
+  // the headers of all reasonable forwards.
+  const window = rawText.slice(0, 256 * 1024);
+  const out: ExtractedAttachment[] = [];
+  // Match each "Content-Disposition: attachment; filename=..." occurrence
+  // and walk backwards to find the Content-Type for that MIME part.
+  const re = /Content-Disposition:\s*attachment[^\n]*?filename\*?=([^;\r\n]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(window)) !== null) {
+    if (out.length >= ATTACHMENT_MAX_ENTRIES) break;
+    const rawValue = (m[1] ?? "").trim();
+    const filename = decodeAttachmentFilename(rawValue);
+    if (!filename) continue;
+    // Look back up to 2KB for the preceding Content-Type header.
+    const lookbackStart = Math.max(0, m.index - 2_048);
+    const lookback = window.slice(lookbackStart, m.index);
+    const ctMatch = /Content-Type:\s*([^;\r\n]+)/i.exec(lookback);
+    const mimeType = ctMatch?.[1]?.trim().toLowerCase() ?? null;
+    out.push({ filename, mime_type: mimeType });
+  }
+  return out;
+}
+
+function decodeAttachmentFilename(raw: string): string | null {
+  if (!raw) return null;
+  // Strip outer quotes.
+  let v = raw.trim();
+  if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+  // RFC 2231: filename*=UTF-8''<percent-encoded>
+  if (v.toLowerCase().startsWith("utf-8''")) {
+    try { v = decodeURIComponent(v.slice(7)); } catch { /* fall through */ }
+  }
+  // RFC 2047 encoded-word: =?charset?B?...?= or =?charset?Q?...?=
+  // Light-touch decoder — only the common UTF-8/B and Q variants.
+  v = v.replace(/=\?([^?]+)\?([bBqQ])\?([^?]+)\?=/g, (_full, _cs, enc, payload) => {
+    try {
+      if (enc === "B" || enc === "b") {
+        return decodeBase64Utf8(payload);
+      }
+      // Q encoding — _ is space, =HH is hex
+      return payload
+        .replace(/_/g, " ")
+        .replace(/=([0-9A-Fa-f]{2})/g, (_q: string, hex: string) =>
+          String.fromCharCode(parseInt(hex, 16)));
+    } catch {
+      return payload;
+    }
+  });
+  v = v.trim();
+  if (!v) return null;
+  // Cap at 256 chars to keep stored JSON small.
+  return v.slice(0, 256);
+}
+
+function decodeBase64Utf8(b64: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+// ─── Storage caps ──────────────────────────────────────────────
+
+function truncate(s: string | null, max: number): string | null {
+  if (s == null) return null;
+  if (s.length <= max) return s;
+  return s.slice(0, max);
+}
+
+function capJson(value: unknown, max: number): string {
+  const s = JSON.stringify(value);
+  return s.length <= max ? s : s.slice(0, max);
 }

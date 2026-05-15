@@ -380,6 +380,15 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleListAbuseInboxMessages(request, env, request.params["orgId"] ?? "", ctx);
   });
+  // PR-AS — per-message detail (raw body / headers / URL list / attachments)
+  router.get("/api/orgs/:orgId/modules/abuse-mailbox/messages/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleGetAbuseInboxMessageDetail } = await import("../handlers/tenantAbuseMailboxModule");
+    return handleGetAbuseInboxMessageDetail(
+      request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx,
+    );
+  });
 
   // ─── Module surfaces — Trademark Infringement (v3 Phase B) ─────
   router.get("/api/orgs/:orgId/modules/trademark", async (request: Request & { params: Record<string, string> }, env: Env) => {

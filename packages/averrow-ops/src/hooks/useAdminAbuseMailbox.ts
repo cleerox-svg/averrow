@@ -93,3 +93,43 @@ export function useAdminAbuseMailboxMessages(brandId: string | null) {
     refetchInterval: 60_000,
   });
 }
+
+// ─── PR-AS detail (raw body / headers / URLs / attachments) ─────
+
+export interface ExtractedUrl {
+  url:    string;
+  domain: string | null;
+  count:  number;
+}
+
+export interface ExtractedAttachment {
+  filename:  string;
+  mime_type: string | null;
+}
+
+export interface AdminAbuseInboxMessageDetail extends AdminAbuseInboxMessage {
+  raw_body:         string | null;
+  raw_headers:      Record<string, string> | null;
+  extracted_urls:   ExtractedUrl[]        | null;
+  attachment_names: ExtractedAttachment[] | null;
+  raw_size_bytes:   number | null;
+}
+
+/**
+ * Fetch full per-message detail including the raw body, all headers,
+ * the extracted URL list, and attachment filenames. Lazy — only runs
+ * when an id is provided (the drill-down panel passes null otherwise).
+ */
+export function useAdminAbuseMailboxMessageDetail(messageId: string | null) {
+  return useQuery({
+    queryKey: ['admin-abuse-mailbox-message-detail', messageId],
+    queryFn: async () => {
+      const res = await api.get<AdminAbuseInboxMessageDetail>(
+        `/api/admin/abuse-mailbox/messages/${encodeURIComponent(messageId!)}`,
+      );
+      return res.data ?? null;
+    },
+    enabled: Boolean(messageId),
+    staleTime: 60_000,
+  });
+}

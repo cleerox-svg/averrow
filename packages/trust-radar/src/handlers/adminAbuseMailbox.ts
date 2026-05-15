@@ -19,6 +19,7 @@ import type { AuthContext } from "../middleware/auth";
 import {
   handleGetAbuseMailboxModuleSummary,
   handleListAbuseInboxMessages,
+  handleGetAbuseInboxMessageDetail,
 } from "./tenantAbuseMailboxModule";
 
 /** Reserved slug for the Averrow self-org. Seeded by migration 0180. */
@@ -95,4 +96,32 @@ export async function handleAdminAbuseMailboxMessages(
     }, 503, origin);
   }
   return handleListAbuseInboxMessages(request, env, String(selfOrgId), ctx);
+}
+
+/**
+ * GET /api/admin/abuse-mailbox/messages/:id
+ *
+ * Per-message detail with raw body / headers / URL list / attachment
+ * filenames (PR-AS). Same payload shape as the tenant detail endpoint,
+ * scoped to the Averrow self-org. Super_admin only.
+ */
+export async function handleAdminAbuseMailboxMessageDetail(
+  request:   Request,
+  env:       Env,
+  messageId: string,
+  ctx:       AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (ctx.role !== "super_admin") {
+    return json({ success: false, error: "super_admin required" }, 403, origin);
+  }
+  const selfOrgId = await getAverrowSelfOrgId(env);
+  if (selfOrgId === null) {
+    return json({
+      success: false,
+      error: "Averrow self-org not provisioned — run migration 0180_averrow_self_abuse_mailbox.sql",
+      code: "SELF_ORG_NOT_PROVISIONED",
+    }, 503, origin);
+  }
+  return handleGetAbuseInboxMessageDetail(request, env, String(selfOrgId), messageId, ctx);
 }

@@ -267,3 +267,102 @@ export async function handleListAbuseInboxMessages(
     },
   }, 200, origin);
 }
+
+// ─── GET /api/orgs/:orgId/modules/abuse-mailbox/messages/:id ────
+//
+// PR-AS: per-message detail endpoint. Returns the full row plus the
+// raw-capture fields (parsed JSON for headers / URL list / attachment
+// list). Kept separate from the list endpoint so the list payload
+// stays compact — bodies can be up to 256KB each.
+
+export interface ExtractedUrlRow {
+  url:    string;
+  domain: string | null;
+  count:  number;
+}
+
+export interface ExtractedAttachmentRow {
+  filename:  string;
+  mime_type: string | null;
+}
+
+export interface AbuseInboxMessageDetail extends AbuseInboxMessageRow {
+  raw_body:         string | null;
+  raw_headers:      Record<string, string> | null;
+  extracted_urls:   ExtractedUrlRow[]        | null;
+  attachment_names: ExtractedAttachmentRow[] | null;
+  raw_size_bytes:   number | null;
+}
+
+interface AbuseInboxMessageDetailRow extends AbuseInboxMessageRow {
+  raw_body:         string | null;
+  raw_headers:      string | null;
+  extracted_urls:   string | null;
+  attachment_names: string | null;
+  raw_size_bytes:   number | null;
+}
+
+function safeJsonParse<T>(value: string | null): T | null {
+  if (!value) return null;
+  try { return JSON.parse(value) as T; } catch { return null; }
+}
+
+export async function handleGetAbuseInboxMessageDetail(
+  request:   Request,
+  env:       Env,
+  orgId:     string,
+  messageId: string,
+  ctx:       AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) {
+    return json({ success: false, error: "Invalid organization id" }, 400, origin);
+  }
+  if (!messageId || messageId.length > 64) {
+    return json({ success: false, error: "Invalid message id" }, 400, origin);
+  }
+
+  try {
+    if (ctx.role !== "super_admin") {
+      await requireModule(env, orgIdNum, "abuse_mailbox");
+    }
+  } catch (err) {
+    if (err instanceof ModuleNotEntitledError) {
+      return json({
+        success: false,
+        error: "Abuse Mailbox isn't enabled for your organization.",
+        code: "MODULE_NOT_ENTITLED",
+      }, 403, origin);
+    }
+    throw err;
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT id, org_id, brand_id, received_at, forwarded_by_email, inbound_alias,
+            original_from, original_subject, original_body_snippet,
+            attachment_count, url_count,
+            classification, classified_by, classification_confidence,
+            classification_reason, ai_assessment, ai_action,
+            severity, status, ack_sent_at, determination_sent_at,
+            raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes
+     FROM abuse_inbox_messages
+     WHERE id = ? AND org_id = ?`,
+  ).bind(messageId, orgIdNum).first<AbuseInboxMessageDetailRow>();
+
+  if (!row) {
+    return json({ success: false, error: "Message not found" }, 404, origin);
+  }
+
+  const detail: AbuseInboxMessageDetail = {
+    ...row,
+    raw_headers:      safeJsonParse<Record<string, string>>(row.raw_headers),
+    extracted_urls:   safeJsonParse<ExtractedUrlRow[]>(row.extracted_urls),
+    attachment_names: safeJsonParse<ExtractedAttachmentRow[]>(row.attachment_names),
+  };
+
+  return json({ success: true, data: detail }, 200, origin);
+}

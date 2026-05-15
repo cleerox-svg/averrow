@@ -22,9 +22,13 @@ import { PageLoader } from '@/components/ui/PageLoader';
 import {
   useAdminAbuseMailboxSummary,
   useAdminAbuseMailboxMessages,
+  useAdminAbuseMailboxMessageDetail,
   type AdminAbuseAlias,
   type AdminAbuseMailboxTotals,
   type AdminAbuseInboxMessage,
+  type AdminAbuseInboxMessageDetail,
+  type ExtractedUrl,
+  type ExtractedAttachment,
 } from '@/hooks/useAdminAbuseMailbox';
 import { relativeTime } from '@/lib/time';
 
@@ -382,13 +386,16 @@ function MessageRow({ message, expanded, onToggle }: {
   );
 }
 
-// ─── MessageDetail (PR-AO drill-down) ────────────────────────────
-// Inline-expanding panel that surfaces every field stored on the
-// abuse_inbox_messages row + the classification rationale + send
-// timestamps + raw body snippet. Renders below the clicked row.
+// ─── MessageDetail (PR-AO drill-down + PR-AS raw capture) ────────
+// Inline-expanding panel that surfaces every field on the row.
+// Heavy fields (full body, all headers, URL list, attachment list)
+// are lazy-loaded via the detail endpoint when the row expands —
+// the list payload stays compact even with 100 rows in the table.
 function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
   const sev = (message.severity ?? 'LOW').toUpperCase();
   const sevColor = SEVERITY_COLORS[sev] ?? '#78A0C8';
+  const detailQ = useAdminAbuseMailboxMessageDetail(message.id);
+  const detail = detailQ.data;
   return (
     <div
       className="rounded-xl px-5 py-4 -mt-1 animate-fade-in"
@@ -424,6 +431,9 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         <DetailField label="Attachments"      value={String(message.attachment_count)} />
         <DetailField label="Ack sent"         value={message.ack_sent_at} />
         <DetailField label="Determination sent" value={message.determination_sent_at} />
+        {detail?.raw_size_bytes != null && (
+          <DetailField label="Raw size" value={formatBytes(detail.raw_size_bytes)} mono />
+        )}
       </div>
 
       {/* AI reasoning */}
@@ -441,23 +451,8 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         </div>
       )}
 
-      {/* Body snippet */}
-      {message.original_body_snippet && (
-        <div>
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Body snippet (first 500 chars)</div>
-          <pre
-            className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono"
-            style={{
-              background: 'rgba(0,0,0,0.30)',
-              border: '1px solid rgba(255,255,255,0.05)',
-              maxHeight: 240,
-              overflow: 'auto',
-            }}
-          >
-            {message.original_body_snippet}
-          </pre>
-        </div>
-      )}
+      {/* PR-AS — Raw capture sections (Body / URLs / Headers / Attachments) */}
+      <RawCaptureSections detailQ={detailQ} detail={detail} snippet={message.original_body_snippet} />
 
       {/* Reference id */}
       <div className="mt-4 pt-3 border-t border-white/[0.06]">
@@ -468,6 +463,215 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       </div>
     </div>
   );
+}
+
+// ─── PR-AS raw-capture sections (admin parity) ──────────────────
+//
+// Shown below the metadata grid. Tabs through Body / URLs / Headers /
+// Attachments. Falls back to the snippet column when raw_body is null
+// (pre-PR-AS rows, or detail endpoint pending).
+
+type RawTab = 'body' | 'urls' | 'headers' | 'attachments';
+
+function RawCaptureSections({
+  detailQ, detail, snippet,
+}: {
+  detailQ: ReturnType<typeof useAdminAbuseMailboxMessageDetail>;
+  detail:  AdminAbuseInboxMessageDetail | null | undefined;
+  snippet: string | null;
+}) {
+  const [tab, setTab] = useState<RawTab>('body');
+  const urls = detail?.extracted_urls ?? [];
+  const attachments = detail?.attachment_names ?? [];
+  const headerEntries: Array<[string, string]> = detail?.raw_headers
+    ? Object.entries(detail.raw_headers)
+    : [];
+  const counts = {
+    body:        detail?.raw_body ? `${formatBytes(detail.raw_body.length)}` : (snippet ? '500' : '—'),
+    urls:        String(urls.length),
+    headers:     String(headerEntries.length),
+    attachments: String(attachments.length),
+  };
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1 mb-3 border-b border-white/[0.06] pb-2">
+        <RawTabButton label="Body"        count={counts.body}        active={tab === 'body'}        onClick={() => setTab('body')} />
+        <RawTabButton label="URLs"        count={counts.urls}        active={tab === 'urls'}        onClick={() => setTab('urls')} />
+        <RawTabButton label="Headers"     count={counts.headers}     active={tab === 'headers'}     onClick={() => setTab('headers')} />
+        <RawTabButton label="Attachments" count={counts.attachments} active={tab === 'attachments'} onClick={() => setTab('attachments')} />
+        {detailQ.isLoading && (
+          <span className="ml-auto text-[10px] font-mono text-white/45">loading…</span>
+        )}
+      </div>
+
+      {tab === 'body' && <BodyPanel rawBody={detail?.raw_body ?? null} snippet={snippet} />}
+      {tab === 'urls' && <UrlsPanel urls={urls} loading={detailQ.isLoading} />}
+      {tab === 'headers' && <HeadersPanel entries={headerEntries} loading={detailQ.isLoading} />}
+      {tab === 'attachments' && <AttachmentsPanel attachments={attachments} loading={detailQ.isLoading} />}
+    </div>
+  );
+}
+
+function RawTabButton({
+  label, count, active, onClick,
+}: { label: string; count: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
+      style={{
+        background:    active ? 'rgba(229,168,50,0.10)' : 'transparent',
+        color:         active ? 'var(--amber)' : 'rgba(255,255,255,0.65)',
+        border:        active ? '1px solid rgba(229,168,50,0.30)' : '1px solid transparent',
+      }}
+    >
+      <span className="uppercase tracking-wider">{label}</span>
+      <span className="ml-1.5 text-white/45">{count}</span>
+    </button>
+  );
+}
+
+function BodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: string | null }) {
+  const content = rawBody ?? snippet;
+  if (!content) {
+    return <EmptyPanel text="No body captured" />;
+  }
+  return (
+    <div>
+      {!rawBody && snippet && (
+        <p className="text-[10px] text-white/45 mb-2 font-mono">
+          Raw body not captured for this message (pre-PR-AS). Showing the 500-char snippet.
+        </p>
+      )}
+      <pre
+        className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono"
+        style={{
+          background: 'rgba(0,0,0,0.30)',
+          border: '1px solid rgba(255,255,255,0.05)',
+          maxHeight: 360,
+          overflow: 'auto',
+        }}
+      >
+        {content}
+      </pre>
+    </div>
+  );
+}
+
+function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }) {
+  if (loading) return <LoadingPanel />;
+  if (urls.length === 0) return <EmptyPanel text="No URLs found in the body" />;
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+    >
+      <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
+        {urls.map((u, i) => (
+          <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
+            {u.domain && (
+              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--amber)] min-w-0 shrink-0">
+                {u.domain}
+              </span>
+            )}
+            {u.count > 1 && (
+              <span className="text-[9px] font-mono text-white/45 shrink-0">×{u.count}</span>
+            )}
+            <code className="text-[11px] text-white/85 font-mono break-all flex-1 min-w-0">
+              {u.url}
+            </code>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; loading: boolean }) {
+  if (loading) return <LoadingPanel />;
+  if (entries.length === 0) return <EmptyPanel text="No headers captured" />;
+  // Sort: surface the key ones first.
+  const PRIORITY = ['from', 'to', 'subject', 'date', 'reply-to', 'return-path',
+    'received', 'authentication-results', 'dkim-signature', 'message-id'];
+  const priorityIdx = (k: string) => {
+    const i = PRIORITY.indexOf(k.toLowerCase());
+    return i === -1 ? 999 : i;
+  };
+  const sorted = [...entries].sort((a, b) => {
+    const da = priorityIdx(a[0]); const db = priorityIdx(b[0]);
+    if (da !== db) return da - db;
+    return a[0].localeCompare(b[0]);
+  });
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+    >
+      <div className="max-h-72 overflow-auto">
+        <table className="w-full text-[11px] font-mono">
+          <tbody className="divide-y divide-white/[0.04]">
+            {sorted.map(([k, v]) => (
+              <tr key={k}>
+                <td className="align-top px-3 py-1.5 text-[var(--amber)] whitespace-nowrap">{k}</td>
+                <td className="align-top px-3 py-1.5 text-white/85 break-all">{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAttachment[]; loading: boolean }) {
+  if (loading) return <LoadingPanel />;
+  if (attachments.length === 0) return <EmptyPanel text="No attachments" />;
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+    >
+      <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
+        {attachments.map((a, i) => (
+          <div key={`${a.filename}-${i}`} className="px-3 py-2 flex items-center gap-3">
+            <code className="text-[11px] text-white/90 font-mono break-all flex-1 min-w-0">{a.filename}</code>
+            {a.mime_type && (
+              <span className="text-[10px] font-mono text-white/55 shrink-0">{a.mime_type}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmptyPanel({ text }: { text: string }) {
+  return (
+    <div
+      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono"
+      style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.04)' }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function LoadingPanel() {
+  return (
+    <div
+      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono"
+      style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.04)' }}
+    >
+      Loading…
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function DetailField({
