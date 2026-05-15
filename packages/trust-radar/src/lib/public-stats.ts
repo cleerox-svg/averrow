@@ -71,7 +71,7 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
         ).first<{ n: number }>();
         return r?.n ?? 0;
       }).then((n) => ({ n })),
-      cachedCount(env, 'count.threats.total', 900, async () => {
+      cachedCount(env, 'count.threats.total', 3600, async () => {
         const r = await env.DB.prepare(
           "SELECT COUNT(*) AS n FROM threats",
         ).first<{ n: number }>();

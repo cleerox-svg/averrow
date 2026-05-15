@@ -379,7 +379,7 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
     // value, but a duplicate cache population. Sharing keys gives the
     // admin dashboard whichever value is freshest across all callers
     // and eliminates one compute path per TTL window.
-    adminCachedCount('count.threats.total', 900, "SELECT COUNT(*) AS n FROM threats"),
+    adminCachedCount('count.threats.total', 3600, "SELECT COUNT(*) AS n FROM threats"),
     adminCachedCount('count.threats.active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
     env.DB.prepare(
       "SELECT COUNT(*) AS active_sessions FROM sessions WHERE expires_at > datetime('now') AND revoked_at IS NULL",

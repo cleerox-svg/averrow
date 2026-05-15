@@ -626,3 +626,125 @@ export async function fetchBillingCycleMetrics(env: Env, now: Date = new Date())
     return { ...empty(), setup_required: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+// ─── Arbitrary-window per-DB metrics (PR-AM) ─────────────────────
+//
+// Same shape as fetchBillingCycleMetrics but over a caller-specified
+// hours window. Used to expose recent (e.g. 12h or 24h) per-database
+// activity in the platform-diagnostics endpoint, so operators can see
+// whether a recent change to a specific worker's spend has taken
+// effect without waiting for the cycle aggregate to update.
+
+export interface RecentWindowMetrics {
+  window_hours:     number;
+  start:            string;
+  end:              string;
+  rows_read:        number;
+  rows_written:     number;
+  read_queries:     number;
+  write_queries:    number;
+  per_database:     D1DatabaseUsageRow[];
+  setup_required:   boolean;
+  setup_instructions?: string;
+  error?:           string;
+}
+
+export async function fetchRecentWindowMetrics(
+  env: Env,
+  hoursBack: number = 12,
+  now: Date = new Date(),
+): Promise<RecentWindowMetrics> {
+  const start = new Date(now.getTime() - hoursBack * 60 * 60 * 1000).toISOString();
+  const end = now.toISOString();
+  const empty = (): RecentWindowMetrics => ({
+    window_hours: hoursBack,
+    start,
+    end,
+    rows_read: 0,
+    rows_written: 0,
+    read_queries: 0,
+    write_queries: 0,
+    per_database: [],
+    setup_required: true,
+  });
+
+  const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
+  const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
+  if (!token || !accountId) {
+    return {
+      ...empty(),
+      setup_instructions: "Set CF_API_TOKEN + CF_ACCOUNT_ID to enable.",
+    };
+  }
+
+  const query = `
+    query {
+      viewer {
+        accounts(filter: { accountTag: "${accountId}" }) {
+          d1AnalyticsAdaptiveGroups(
+            filter: { datetimeHour_geq: "${start}", datetimeHour_lt: "${end}" }
+            limit: 10000
+          ) {
+            sum { rowsRead rowsWritten readQueries writeQueries }
+            dimensions { databaseId }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { ...empty(), setup_required: false, error: `CF GraphQL HTTP ${res.status}: ${body.slice(0, 200)}` };
+    }
+    const parsed = (await res.json()) as {
+      data?: {
+        viewer?: {
+          accounts?: Array<{
+            d1AnalyticsAdaptiveGroups?: Array<{
+              sum: { rowsRead: number; rowsWritten: number; readQueries: number; writeQueries: number };
+              dimensions: { databaseId: string };
+            }>;
+          }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (parsed.errors?.length) {
+      return { ...empty(), setup_required: false, error: parsed.errors.map((e) => e.message).slice(0, 3).join("; ") };
+    }
+    const groups = parsed.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups ?? [];
+
+    const perDb = new Map<string, D1DatabaseUsageRow>();
+    for (const g of groups) {
+      const dbId = g.dimensions.databaseId;
+      const cur = perDb.get(dbId) ?? { database_id: dbId, rows_read: 0, rows_written: 0, read_queries: 0, write_queries: 0 };
+      cur.rows_read += g.sum.rowsRead ?? 0;
+      cur.rows_written += g.sum.rowsWritten ?? 0;
+      cur.read_queries += g.sum.readQueries ?? 0;
+      cur.write_queries += g.sum.writeQueries ?? 0;
+      perDb.set(dbId, cur);
+    }
+    const perDatabase = Array.from(perDb.values()).sort((a, b) => b.rows_read - a.rows_read);
+
+    return {
+      window_hours: hoursBack,
+      start,
+      end,
+      rows_read:     perDatabase.reduce((s, d) => s + d.rows_read, 0),
+      rows_written:  perDatabase.reduce((s, d) => s + d.rows_written, 0),
+      read_queries:  perDatabase.reduce((s, d) => s + d.read_queries, 0),
+      write_queries: perDatabase.reduce((s, d) => s + d.write_queries, 0),
+      per_database:  perDatabase,
+      setup_required: false,
+    };
+  } catch (err) {
+    return { ...empty(), setup_required: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}

@@ -182,7 +182,10 @@ export const sentinelAgent: AgentModule = {
     // row to the system_metrics table on every check — that itself
     // burned a D1 read. cachedCount stores in KV, so cache lookups
     // cost zero D1 reads.
-    const totalCount = { n: await cachedCount(env, 'count.threats.total', 900, async () => {
+    // PR-AM: TTL bumped 900s → 3600s. Total threat count drifts very
+    // slowly (~5% per hour during ingest peaks); a 1h cache window is
+    // well within tolerance and quadruples the hit rate.
+    const totalCount = { n: await cachedCount(env, 'count.threats.total', 3600, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats").first<{ n: number }>();
       return row?.n ?? 0;
     }) };

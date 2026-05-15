@@ -591,8 +591,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 663,
-      "last_modified": "2026-05-11T18:19:48.050Z"
+      "loc": 666,
+      "last_modified": "2026-05-15T14:45:26.538Z"
     },
     {
       "name": "social-ai-assessor",
@@ -1033,8 +1033,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/trust-radar/src/feeds/spamhausDrop.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 144,
-      "last_modified": "2026-05-11T18:19:48.078Z"
+      "loc": 171,
+      "last_modified": "2026-05-15T14:44:19.154Z"
     },
     {
       "name": "sslbl",

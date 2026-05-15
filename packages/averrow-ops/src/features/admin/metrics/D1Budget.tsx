@@ -193,17 +193,24 @@ function DatabaseCard({ rank, db, pctOfTotal }: { rank: number; db: D1DatabaseUs
   );
 }
 
-// Resolve a friendlier label from the database id. The three databases
-// the worker binds are kept in `wrangler.toml`; anything else is an
-// account-level D1 database that trust-radar doesn't touch (the imprsn8
-// worker on the same account, or an orphan from earlier development).
-// Surfacing those as "external · <8-char-id>" makes it obvious in the
-// UI that the row isn't coming from this worker's bindings.
+// Resolve a friendlier label from the database id. Covers every D1
+// database on the Cloudflare account `cleerox@gmail.com` per the
+// dashboard snapshot — `trust-radar-v2` is this Worker's primary
+// binding (DB in wrangler.toml); the others belong to sibling
+// workers (imprsn8-db, mtrade-db, farmtrack-db) or are reference
+// databases (geoip-db).
+//
+// Anything else is genuinely external (a future worker, an orphan
+// from a deleted binding, etc.) — surfaced as `external · <id>`
+// so the operator can tell at a glance it's not one of ours.
 function friendlyDatabaseName(id: string): string {
   const map: Record<string, string> = {
     'a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6': 'trust-radar-v2 (DB)',
     '55d58eff-47f3-4533-afa4-e52d494376e0': 'trust-radar-v2-audit (AUDIT_DB)',
     'f47a6b18-b343-46d9-87e8-ef8ef4aa8521': 'geoip-db (GEOIP_DB)',
+    '54ffc831-f9ff-4d24-bfbf-1b6f8f580261': 'mtrade-db',
+    '57191073-aec7-4035-8cbb-689d4de647e6': 'farmtrack-db',
+    'adf45280-e596-4e44-a9c2-963342ac4596': 'imprsn8-db',
   };
   return map[id] ?? `external · ${id.slice(0, 8)}`;
 }
