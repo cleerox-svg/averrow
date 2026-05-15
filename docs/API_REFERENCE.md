@@ -486,6 +486,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | DELETE | `/api/admin/seed-domains/:domain` | Super-admin | Hard delete (prefer status='retired') |
 | GET | `/api/admin/abuse-mailbox` | Super-admin | Averrow self abuse-mailbox summary (PR-AA) |
 | GET | `/api/admin/abuse-mailbox/messages` | Super-admin | Averrow self abuse-mailbox messages list |
+| GET | `/api/admin/abuse-mailbox/messages/:id` | Super-admin | Per-message detail with raw body / headers / URL list / attachments (PR-AS) |
 
 ## Data Export
 

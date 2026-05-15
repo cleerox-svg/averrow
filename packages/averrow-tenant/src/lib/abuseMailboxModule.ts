@@ -105,3 +105,40 @@ export function useAbuseInboxMessages(brandId: string | null = null) {
     staleTime: 30_000,
   });
 }
+
+// ─── PR-AS detail (raw body / headers / URLs / attachments) ─────
+
+export interface ExtractedUrl {
+  url:    string;
+  domain: string | null;
+  count:  number;
+}
+
+export interface ExtractedAttachment {
+  filename:  string;
+  mime_type: string | null;
+}
+
+export interface AbuseInboxMessageDetail extends AbuseInboxMessageRow {
+  raw_body:         string | null;
+  raw_headers:      Record<string, string> | null;
+  extracted_urls:   ExtractedUrl[]        | null;
+  attachment_names: ExtractedAttachment[] | null;
+  raw_size_bytes:   number | null;
+}
+
+export function useAbuseInboxMessageDetail(messageId: string | null) {
+  const { user, hasOrg } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useQuery<AbuseInboxMessageDetail | null>({
+    queryKey: ['abuse-mailbox-message-detail', orgId, messageId],
+    queryFn: async () => {
+      const res = await apiGet<AbuseInboxMessageDetail>(
+        `/api/orgs/${orgId}/modules/abuse-mailbox/messages/${encodeURIComponent(messageId!)}`,
+      );
+      return res.data ?? null;
+    },
+    enabled: hasOrg && !!orgId && Boolean(messageId),
+    staleTime: 60_000,
+  });
+}
