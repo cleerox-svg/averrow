@@ -29,6 +29,7 @@
 // Phase B-followup, post-launch.
 
 import type { Env } from "../types";
+import { decideAbuseMailboxThrottle, extractSenderDomain } from "../lib/abuse-mailbox-throttle";
 
 interface EmailMessage {
   from:     string;
@@ -127,21 +128,42 @@ export async function handleAbuseMailboxEmail(
   const urlsJson        = capJson(extractedUrls.slice(0, URL_LIST_MAX_ENTRIES), URLS_STORE_MAX);
   const attachmentsJson = capJson(attachmentList.slice(0, ATTACHMENT_MAX_ENTRIES), ATTACHMENTS_STORE_MAX);
 
+  // 5b. Throttle decision (PR-AT bad-actor protection).
+  //
+  // Reads per-sender + per-domain rolling-60-min counts. When fired,
+  // the row is still INSERTed (forensic capture preserved) but the
+  // downstream cost paths skip:
+  //   - sendAck below
+  //   - the AI classifier (filters throttled rows in runAbuseClassifierBackfill)
+  //   - the determination email (gated on classification completing)
+  const throttle = await decideAbuseMailboxThrottle(env, forwardedBy);
+  const forwardedByDomain = extractSenderDomain(forwardedBy);
+  if (throttle.throttled) {
+    console.warn(
+      `[abuse-mailbox] throttled — reason=${throttle.reason} ` +
+      `sender=${forwardedBy} domain=${forwardedByDomain} ` +
+      `sender_count=${throttle.sender_count_last_window} ` +
+      `domain_count=${throttle.domain_count_last_window}`,
+    );
+  }
+
   // 6. Insert the row.
   const messageId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO abuse_inbox_messages (
-       id, org_id, brand_id, received_at, forwarded_by_email, inbound_alias,
+       id, org_id, brand_id, received_at, forwarded_by_email, forwarded_by_domain, inbound_alias,
        original_from, original_subject, original_body_snippet,
        attachment_count, url_count,
        raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes,
+       throttled, throttle_reason,
        classification, severity, status,
        created_at, updated_at
-     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
     forwardedBy,
+    forwardedByDomain,
     aliasRow.alias,
     original.from,
     original.subject,
@@ -153,6 +175,8 @@ export async function handleAbuseMailboxEmail(
     urlsJson,
     attachmentsJson,
     message.rawSize,
+    throttle.throttled ? 1 : 0,
+    throttle.reason,
   ).run();
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
@@ -165,21 +189,27 @@ export async function handleAbuseMailboxEmail(
   //
   // We DON'T retry on failure — the determination email arrives
   // within 24h regardless, and Resend transient failures are rare.
-  try {
-    const { sendAck } = await import("../lib/abuse-mailbox-responder");
-    const ackResult = await sendAck(env, forwardedBy, {
-      messageId,
-      originalSubject: original.subject,
-      inboundAlias: aliasRow.alias,
-    });
-    if (ackResult.ok) {
-      await env.DB.prepare(
-        `UPDATE abuse_inbox_messages SET ack_sent_at = datetime('now') WHERE id = ?`,
-      ).bind(messageId).run();
+  //
+  // PR-AT: skip when throttle.throttled. Sending an ack to a flooding
+  // sender just gives them feedback that the alias is live and burns
+  // Resend quota; the row is still captured for forensic purposes.
+  if (!throttle.throttled) {
+    try {
+      const { sendAck } = await import("../lib/abuse-mailbox-responder");
+      const ackResult = await sendAck(env, forwardedBy, {
+        messageId,
+        originalSubject: original.subject,
+        inboundAlias: aliasRow.alias,
+      });
+      if (ackResult.ok) {
+        await env.DB.prepare(
+          `UPDATE abuse_inbox_messages SET ack_sent_at = datetime('now') WHERE id = ?`,
+        ).bind(messageId).run();
+      }
+      // Suppression / failure logged inside sendAck; no extra noise here.
+    } catch (err) {
+      console.warn("[abuse-mailbox] ack send threw:", err);
     }
-    // Suppression / failure logged inside sendAck; no extra noise here.
-  } catch (err) {
-    console.warn("[abuse-mailbox] ack send threw:", err);
   }
 
   // ─── Wave-2 PR-AC: cross-link to spam_trap_captures ────────────

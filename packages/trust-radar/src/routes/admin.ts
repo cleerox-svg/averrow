@@ -828,6 +828,32 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     }
   });
 
+  // PR-AT — manual unthrottle. Clears the rate-limit flag on a specific
+  // message so the next classifier backfill pass picks it up. Useful
+  // when a legit submitter happens to share a sending domain with a
+  // bad actor, or when an operator wants to inspect a throttled flood
+  // sample after review.
+  router.post("/api/admin/abuse-mailbox/messages/:id/unthrottle", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const id = request.params["id"] ?? "";
+    if (!id || id.length > 64) {
+      return new Response(JSON.stringify({ success: false, error: "Invalid message id" }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const res = await env.DB.prepare(
+      `UPDATE abuse_inbox_messages
+       SET throttled = 0, throttle_reason = NULL, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).bind(id).run();
+    return new Response(JSON.stringify({
+      success: true,
+      data: { id, rows_changed: res.meta?.changes ?? 0 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
+
   router.post("/api/admin/alerts/backfill-triage", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

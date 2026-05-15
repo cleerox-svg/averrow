@@ -50,6 +50,7 @@ export interface AbuseInboxMessageRow {
   brand_id:                 string | null;
   received_at:              string;
   forwarded_by_email:       string | null;
+  forwarded_by_domain:      string | null;
   inbound_alias:            string | null;
   original_from:            string | null;
   original_subject:         string | null;
@@ -66,6 +67,8 @@ export interface AbuseInboxMessageRow {
   status:                   string;
   ack_sent_at:              string | null;
   determination_sent_at:    string | null;
+  throttled:                number;        // 0 | 1 — PR-AT
+  throttle_reason:          string | null; // 'sender_rate_limit' | 'domain_rate_limit' | null
 }
 
 export interface AbuseInboxMessages {

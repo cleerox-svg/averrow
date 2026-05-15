@@ -85,16 +85,34 @@ describe("handleAbuseMailboxEmail", () => {
 
     const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
     expect(insert).toBeDefined();
-    // bind order: id, org_id, forwarded_by_email, inbound_alias,
-    //             original_from, original_subject, original_body_snippet,
-    //             attachment_count, url_count
+    // bind order (PR-AT, post-forwarded_by_domain insertion):
+    //   0  id
+    //   1  org_id
+    //   2  forwarded_by_email
+    //   3  forwarded_by_domain
+    //   4  inbound_alias
+    //   5  original_from
+    //   6  original_subject
+    //   7  original_body_snippet
+    //   8  attachment_count
+    //   9  url_count
+    //  10  raw_body
+    //  11  raw_headers (JSON)
+    //  12  extracted_urls (JSON)
+    //  13  attachment_names (JSON)
+    //  14  raw_size_bytes
+    //  15  throttled (0/1)
+    //  16  throttle_reason
     expect(insert?.binds[1]).toBe(42);                                  // org_id
-    expect(insert?.binds[2]).toBe("alice@acme.com");                    // forwarded_by_email (parsed from From)
-    expect(insert?.binds[3]).toBe("verify-acme@averrow.com");           // inbound_alias
-    expect(insert?.binds[4]).toBe("notify@bad-acme.example");           // original_from (extracted from forward)
-    expect(insert?.binds[5]).toContain("URGENT");                       // original_subject
-    expect(insert?.binds[6]).toContain("Acme Bank");                    // body snippet
-    expect(insert?.binds[8]).toBe(2);                                   // url_count (2 https:// in body)
+    expect(insert?.binds[2]).toBe("alice@acme.com");                    // forwarded_by_email
+    expect(insert?.binds[3]).toBe("acme.com");                          // forwarded_by_domain
+    expect(insert?.binds[4]).toBe("verify-acme@averrow.com");           // inbound_alias
+    expect(insert?.binds[5]).toBe("notify@bad-acme.example");           // original_from
+    expect(insert?.binds[6]).toContain("URGENT");                       // original_subject
+    expect(insert?.binds[7]).toContain("Acme Bank");                    // body snippet
+    expect(insert?.binds[9]).toBe(2);                                   // url_count
+    expect(insert?.binds[15]).toBe(0);                                  // throttled (legit single message)
+    expect(insert?.binds[16]).toBeNull();                               // throttle_reason
   });
 
   it("treats the alias case-insensitively", async () => {
@@ -120,7 +138,7 @@ describe("handleAbuseMailboxEmail", () => {
     const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
     expect(insert).toBeDefined();
     // original_from / subject may be null; body snippet still set
-    expect(insert?.binds[8]).toBe(1);  // url_count
+    expect(insert?.binds[9]).toBe(1);  // url_count
   });
 
   it("counts attachments via Content-Disposition header", async () => {
@@ -146,6 +164,6 @@ describe("handleAbuseMailboxEmail", () => {
     const msg = makeMessage("verify-acme@averrow.com", "alice@acme.com", raw);
     await handleAbuseMailboxEmail(msg, env);
     const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
-    expect(insert?.binds[7]).toBe(1);  // attachment_count
+    expect(insert?.binds[8]).toBe(1);  // attachment_count
   });
 });

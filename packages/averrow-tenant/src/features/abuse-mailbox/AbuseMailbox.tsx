@@ -321,6 +321,14 @@ function MessageRow({ message: m, expanded, onToggle }: {
         <SeverityPill level={m.severity} />
         <ClassificationPill classification={m.classification} />
         <StatusPill status={m.status} />
+        {m.throttled === 1 && (
+          <span
+            className="text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.30] rounded px-1.5 py-0.5"
+            title={tenantThrottleReasonLabel(m.throttle_reason)}
+          >
+            rate-limited
+          </span>
+        )}
         {m.url_count > 0 && (
           <span className="text-[10px] uppercase tracking-widest font-mono text-white/70">
             {m.url_count} URL{m.url_count === 1 ? '' : 's'}
@@ -418,6 +426,9 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         <TenantDetailField label="Attachments"       value={String(m.attachment_count)} />
         <TenantDetailField label="Ack sent"          value={m.ack_sent_at} />
         <TenantDetailField label="Determination sent" value={m.determination_sent_at} />
+        {m.throttled === 1 && (
+          <TenantDetailField label="Rate-limited" value={tenantThrottleReasonLabel(m.throttle_reason)} accent />
+        )}
         {detail?.raw_size_bytes != null && (
           <TenantDetailField label="Raw size" value={formatBytes(detail.raw_size_bytes)} mono />
         )}
@@ -626,6 +637,12 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function tenantThrottleReasonLabel(reason: string | null | undefined): string {
+  if (reason === 'sender_rate_limit') return 'Sender exceeded 20 messages in the last 60 minutes';
+  if (reason === 'domain_rate_limit') return 'Sending domain exceeded 50 messages in the last 60 minutes';
+  return 'Rate-limited at capture';
 }
 
 function TenantDetailField({ label, value, mono, accent, uppercase }: {

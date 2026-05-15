@@ -23,6 +23,7 @@ import {
   useAdminAbuseMailboxSummary,
   useAdminAbuseMailboxMessages,
   useAdminAbuseMailboxMessageDetail,
+  useUnthrottleAbuseMessage,
   type AdminAbuseAlias,
   type AdminAbuseMailboxTotals,
   type AdminAbuseInboxMessage,
@@ -339,6 +340,19 @@ function MessageRow({ message, expanded, onToggle }: {
               </span>
             </>
           )}
+          {message.throttled === 1 && (
+            <span
+              className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ml-1"
+              style={{
+                color: '#fbbf24',
+                background: 'rgba(229,168,50,0.10)',
+                border: '1px solid rgba(229,168,50,0.30)',
+              }}
+              title={throttleReasonLabel(message.throttle_reason)}
+            >
+              rate-limited
+            </span>
+          )}
         </div>
         <span className="text-[10px] font-mono text-white/60 shrink-0">
           {relativeTime(message.received_at)}
@@ -431,6 +445,9 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         <DetailField label="Attachments"      value={String(message.attachment_count)} />
         <DetailField label="Ack sent"         value={message.ack_sent_at} />
         <DetailField label="Determination sent" value={message.determination_sent_at} />
+        {message.throttled === 1 && (
+          <DetailField label="Rate-limited" value={throttleReasonLabel(message.throttle_reason)} color="#fbbf24" />
+        )}
         {detail?.raw_size_bytes != null && (
           <DetailField label="Raw size" value={formatBytes(detail.raw_size_bytes)} mono />
         )}
@@ -454,14 +471,35 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       {/* PR-AS — Raw capture sections (Body / URLs / Headers / Attachments) */}
       <RawCaptureSections detailQ={detailQ} detail={detail} snippet={message.original_body_snippet} />
 
-      {/* Reference id */}
-      <div className="mt-4 pt-3 border-t border-white/[0.06]">
+      {/* Reference id + admin actions */}
+      <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-[10px] font-mono text-white/55">
           <span>ref:</span>
           <code className="text-white/85">{message.id}</code>
         </div>
+        {message.throttled === 1 && <UnthrottleButton messageId={message.id} />}
       </div>
     </div>
+  );
+}
+
+function UnthrottleButton({ messageId }: { messageId: string }) {
+  const mutate = useUnthrottleAbuseMessage();
+  return (
+    <button
+      type="button"
+      onClick={() => mutate.mutate(messageId)}
+      disabled={mutate.isPending}
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
+      style={{
+        color: '#fbbf24',
+        background: 'rgba(229,168,50,0.10)',
+        border: '1px solid rgba(229,168,50,0.30)',
+      }}
+      title="Clear the rate-limit flag and queue this row for the next classifier pass"
+    >
+      {mutate.isPending ? 'unthrottling…' : 'unthrottle + reprocess'}
+    </button>
   );
 }
 
@@ -672,6 +710,12 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function throttleReasonLabel(reason: string | null | undefined): string {
+  if (reason === 'sender_rate_limit') return 'Sender exceeded 20 messages in the last 60 minutes';
+  if (reason === 'domain_rate_limit') return 'Sending domain exceeded 50 messages in the last 60 minutes';
+  return 'Rate-limited at capture';
 }
 
 function DetailField({

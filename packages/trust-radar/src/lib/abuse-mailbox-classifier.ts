@@ -251,12 +251,17 @@ export async function runAbuseClassifierBackfill(
   const limit  = Math.min(200, opts?.limit  ?? 50);
   const offset = Math.max(0,   opts?.offset ?? 0);
 
+  // PR-AT: skip rate-limited rows. Each row carries forensic evidence
+  // of the flood but doesn't pay for Haiku classification or the
+  // Resend determination email. Operator can unset abuse_inbox_messages
+  // .throttled = 0 to opt-in a specific message back into the pipeline.
   const rows = await env.DB.prepare(`
     SELECT id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
            forwarded_by_email, inbound_alias, determination_sent_at
     FROM abuse_inbox_messages
     WHERE classification = 'pending'
+      AND COALESCE(throttled, 0) = 0
     ORDER BY received_at ASC
     LIMIT ? OFFSET ?
   `).bind(limit, offset).all<MessageRow>();

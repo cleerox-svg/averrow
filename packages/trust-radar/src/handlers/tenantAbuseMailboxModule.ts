@@ -159,6 +159,7 @@ export interface AbuseInboxMessageRow {
   brand_id:                 string | null;
   received_at:              string;
   forwarded_by_email:       string | null;
+  forwarded_by_domain:      string | null;
   inbound_alias:            string | null;
   original_from:            string | null;
   original_subject:         string | null;
@@ -175,6 +176,8 @@ export interface AbuseInboxMessageRow {
   status:                   string;
   ack_sent_at:              string | null;
   determination_sent_at:    string | null;
+  throttled:                number;          // 0 | 1 — PR-AT
+  throttle_reason:          string | null;   // 'sender_rate_limit' | 'domain_rate_limit' | null
 }
 
 export async function handleListAbuseInboxMessages(
@@ -224,12 +227,13 @@ export async function handleListAbuseInboxMessages(
 
   const MESSAGES_LIMIT = 100;
   const baseSelect = `
-    SELECT id, org_id, brand_id, received_at, forwarded_by_email, inbound_alias,
+    SELECT id, org_id, brand_id, received_at, forwarded_by_email, forwarded_by_domain, inbound_alias,
            original_from, original_subject, original_body_snippet,
            attachment_count, url_count,
            classification, classified_by, classification_confidence,
            classification_reason, ai_assessment, ai_action,
-           severity, status, ack_sent_at, determination_sent_at
+           severity, status, ack_sent_at, determination_sent_at,
+           COALESCE(throttled, 0) AS throttled, throttle_reason
     FROM abuse_inbox_messages
     WHERE org_id = ?
   `;
@@ -342,12 +346,13 @@ export async function handleGetAbuseInboxMessageDetail(
   }
 
   const row = await env.DB.prepare(
-    `SELECT id, org_id, brand_id, received_at, forwarded_by_email, inbound_alias,
+    `SELECT id, org_id, brand_id, received_at, forwarded_by_email, forwarded_by_domain, inbound_alias,
             original_from, original_subject, original_body_snippet,
             attachment_count, url_count,
             classification, classified_by, classification_confidence,
             classification_reason, ai_assessment, ai_action,
             severity, status, ack_sent_at, determination_sent_at,
+            COALESCE(throttled, 0) AS throttled, throttle_reason,
             raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes
      FROM abuse_inbox_messages
      WHERE id = ? AND org_id = ?`,

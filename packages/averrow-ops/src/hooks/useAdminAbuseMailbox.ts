@@ -4,7 +4,7 @@
 // Same payload shape as the tenant module endpoints — see
 // `src/handlers/adminAbuseMailbox.ts` for the wrapping rationale.
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export interface AdminAbuseAlias {
@@ -49,6 +49,7 @@ export interface AdminAbuseInboxMessage {
   brand_id:                 string | null;
   received_at:              string;
   forwarded_by_email:       string | null;
+  forwarded_by_domain:      string | null;
   inbound_alias:            string | null;
   original_from:            string | null;
   original_subject:         string | null;
@@ -65,6 +66,8 @@ export interface AdminAbuseInboxMessage {
   status:                   string;
   ack_sent_at:              string | null;
   determination_sent_at:    string | null;
+  throttled:                number;        // 0 | 1 — PR-AT
+  throttle_reason:          string | null; // 'sender_rate_limit' | 'domain_rate_limit' | null
 }
 
 export function useAdminAbuseMailboxSummary() {
@@ -131,5 +134,27 @@ export function useAdminAbuseMailboxMessageDetail(messageId: string | null) {
     },
     enabled: Boolean(messageId),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Clear the rate-limit flag on a specific message. Caller can re-run
+ * the classifier afterwards to pick it up. Used from the drill-down
+ * UI when a legit submission was caught in a flood.
+ */
+export function useUnthrottleAbuseMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (messageId: string) => {
+      const res = await api.post<{ id: string; rows_changed: number }>(
+        `/api/admin/abuse-mailbox/messages/${encodeURIComponent(messageId)}/unthrottle`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: (_data, messageId) => {
+      qc.invalidateQueries({ queryKey: ['admin-abuse-mailbox-message-detail', messageId] });
+      qc.invalidateQueries({ queryKey: ['admin-abuse-mailbox-messages'] });
+    },
   });
 }
