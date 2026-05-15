@@ -7,7 +7,7 @@
 
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
-import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics } from "../lib/d1-budget";
+import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import type { Env } from "../types";
 
@@ -711,6 +711,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // on the account. Replaces the rolling-24h × 30 projection in the
     // monthly meter — see lib/d1-budget.ts header for why.
     const d1BillingCycleP = fetchBillingCycleMetrics(env);
+    // PR-AM: recent-window per-DB metrics (default 12h). Used to monitor
+    // post-fix activity without waiting for cycle aggregates. The `hours`
+    // query param on the endpoint controls the window — falls back to
+    // 12h when missing.
+    const d1RecentP = fetchRecentWindowMetrics(env, hoursBack);
 
     // ─── 9. Module entitlements (v3 Phase A) ────────────────────────
     // Per-module count of orgs in each status. With 7 modules and a
@@ -738,7 +743,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealth, feedStatus, feedErrors,
       agentMesh, workflowAgentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
-      d1BudgetState, d1TopQueries, d1BillingCycle,
+      d1BudgetState, d1TopQueries, d1BillingCycle, d1Recent,
       cachedCountStats,
       moduleEntitlements,
     ] = await Promise.all([
@@ -747,7 +752,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, workflowAgentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
-      d1BudgetStateP, d1TopQueriesP, d1BillingCycleP,
+      d1BudgetStateP, d1TopQueriesP, d1BillingCycleP, d1RecentP,
       getCachedCountStats(env),
       moduleEntitlementsP,
     ]);
@@ -1190,6 +1195,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // and gives operators an honest "X of 30 days elapsed, on pace
         // for Y% of the 25B ceiling" read.
         d1_billing_cycle: d1BillingCycle,
+
+        // PR-AM: per-database read/write activity over the requested
+        // window (defaults to 6h, capped at 48h via `hours` query
+        // param). Lets the operator see whether a recent fix to a
+        // specific worker has actually reduced its load, without
+        // waiting for the cycle aggregate to update.
+        d1_recent_window: d1Recent,
 
         // Per-endpoint D1 read attribution from Workers Analytics Engine.
         // Reads from the trust_radar_d1_reads dataset that opt-in handlers

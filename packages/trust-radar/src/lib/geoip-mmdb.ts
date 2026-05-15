@@ -31,6 +31,7 @@
  */
 
 import type { Env } from '../types';
+import { cachedCount } from './cached-count';
 
 // KV cache TTL — geographic data for a given IP changes on the order of
 // weeks/months. 24h is a good balance of freshness and cache hit rate.
@@ -246,8 +247,17 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
   }
 
   try {
+    // PR-AM: COUNT(*) over geo_ip_ranges scans the full 5M-row reference
+    // table. Pre-fix it ran 27 times/day from admin diagnostics surfaces,
+    // burning ~100M D1 reads/day (#1 query on the platform's billing).
+    // Wrapped with a 1-day TTL since the row count only changes on the
+    // weekly GeoIP refresh — operator sees fresh values within a day of
+    // each refresh, plenty for a status panel.
     const [count, shadowCount, lastRefresh, recentAttempts, runningStats] = await Promise.all([
-      db.prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`).first<{ n: number }>(),
+      cachedCount(env, 'count.geo_ip_ranges.total', 24 * 60 * 60, async () => {
+        const r = await db.prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`).first<{ n: number }>();
+        return r?.n ?? 0;
+      }).then((n) => ({ n })),
       // Shadow table only exists while a Workflow is mid-import.
       // When the swap step runs, geo_ip_ranges_new is renamed to
       // geo_ip_ranges and this query throws. We catch and report

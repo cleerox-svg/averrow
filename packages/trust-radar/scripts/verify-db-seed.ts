@@ -52,6 +52,12 @@ const ASSERTIONS: Assertion[] = [
     min: 4,
     source: "0181_seed_domains_config.sql",
   },
+  {
+    label: "threat_cube_arcs has rows (cube actively populated by Navigator + cube-healer)",
+    query: "SELECT COUNT(*) AS n FROM threat_cube_arcs",
+    min: 1,
+    source: "0179_cube_arcs.sql + cron/navigator.ts (current+prev hour builds) + agents/cube-healer.ts (30-day rebuild)",
+  },
 ];
 
 interface D1Row { n: number }

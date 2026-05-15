@@ -101,22 +101,49 @@ export const spamhaus_drop: FeedModule = {
       } catch { /* non-fatal */ }
     }
 
-    // Cross-reference: check if any existing threat IPs fall within DROP ranges
-    // Parse CIDRs to find /8, /16, /24 prefixes and check against threats
+    // Cross-reference: check if any existing threat IPs fall within DROP
+    // ranges. Pre-PR-AM this looped up to 100 CIDR prefixes per tick, each
+    // running its own `WHERE ip_address LIKE ?` scan over the threats table.
+    // Diagnostics tagged it at ~42M reads/day — for a purely informational
+    // diagnostic that only emits one agent_output row when overlap > 0.
+    //
+    // PR-AM: batch all prefixes into a single query with OR-LIKE and cap
+    // the prefix set at 20 (was 100). Reads ~20× threats per tick instead
+    // of 100× sequentially. Result is cached via KV with a 6-hour TTL so
+    // the cross-ref only runs ~4× per day even if the spamhaus feed pulls
+    // more often. Net: ~95% reduction on this query path.
     let overlapCount = 0;
     try {
-      for (const { cidr } of unique.slice(0, 100)) {
+      const cacheKey = `spamhaus_drop:overlap_count_24h`;
+      // For each CIDR prefix > /24, derive the /24 LIKE pattern.
+      // Cap at 20 prefixes (was 100) — diminishing returns past that.
+      const prefixes: string[] = [];
+      for (const { cidr } of unique.slice(0, 20)) {
         const [network, bits] = cidr.split("/");
         if (!network || !bits) continue;
         const prefix = parseInt(bits, 10);
-        // Only check /24 and smaller for efficient LIKE matching
         if (prefix >= 24) {
           const networkPrefix = network.split(".").slice(0, 3).join(".");
-          const result = await db.prepare(
-            `SELECT COUNT(*) as cnt FROM threats
-             WHERE ip_address LIKE ? AND source_feed != 'spamhaus_drop'`,
-          ).bind(`${networkPrefix}.%`).first<{ cnt: number }>();
-          overlapCount += result?.cnt ?? 0;
+          prefixes.push(`${networkPrefix}.%`);
+        }
+      }
+
+      if (prefixes.length > 0) {
+        const cached = await ctx.env.CACHE.get(cacheKey).catch(() => null);
+        if (cached) {
+          overlapCount = parseInt(cached, 10) || 0;
+        } else {
+          // Single batched query with N OR-LIKEs in place of N separate
+          // queries. SQLite optimises this into a single index scan over
+          // idx_threats_ip when present.
+          const orLikes = prefixes.map(() => "ip_address LIKE ?").join(" OR ");
+          const sql = `SELECT COUNT(*) AS cnt FROM threats
+                       WHERE (${orLikes}) AND source_feed != 'spamhaus_drop'`;
+          const result = await db.prepare(sql).bind(...prefixes).first<{ cnt: number }>();
+          overlapCount = result?.cnt ?? 0;
+          // 6h TTL — spamhaus DROP list changes slowly, threats accrue
+          // slowly enough that 6h staleness on a diagnostic counter is fine.
+          await ctx.env.CACHE.put(cacheKey, String(overlapCount), { expirationTtl: 6 * 60 * 60 }).catch(() => null);
         }
       }
     } catch { /* non-fatal cross-reference */ }
