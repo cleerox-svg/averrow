@@ -24,8 +24,12 @@ import { cachedCount } from './cached-count';
 
 const MILESTONE_VALUES = [
   100_000,
+  200_000,
   250_000,
+  300_000,
+  350_000,
   400_000,
+  450_000,
   500_000,
   750_000,
   1_000_000,
