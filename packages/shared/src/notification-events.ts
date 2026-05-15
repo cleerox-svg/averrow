@@ -55,6 +55,9 @@ export type NotificationEventKey =
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
+  // ── PR-AW — abuse mailbox family ──
+  | 'abuse_mailbox_verdict'
+  | 'abuse_mailbox_flood_detected'
   // ── N6c — digest envelope (§12.3) ──
   | 'notification_digest';
 
@@ -326,6 +329,34 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Daily Briefing Silent',
     description: 'Cron briefing has not delivered in 36+ hours',
     dedupWindow: '-12 hours',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+
+  // ─── PR-AW — abuse mailbox family ────────────────────────────────
+  // High/critical verdicts on captures sent to the org's abuse alias
+  // (or to Averrow's public aliases for the self-org case). System-
+  // event, not user-toggleable — these are operational signals, not
+  // engagement noise. Dedup is per-message via group_key; the window
+  // here is the fallback.
+  {
+    key: 'abuse_mailbox_verdict',
+    label: 'Abuse Mailbox Verdict',
+    description: 'High/critical phishing or malware verdict on a captured submission',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  // Fires once per (sender|domain) per hour when the rate-limit fires
+  // in handlers/abuseMailboxEmail.ts. Super_admin audience — back-end
+  // signal that someone is flooding the public aliases. Dedup via
+  // group_key on the throttle dimension keeps the notification quiet
+  // during the actual flood event.
+  {
+    key: 'abuse_mailbox_flood_detected',
+    label: 'Abuse Mailbox Flood Detected',
+    description: 'Per-sender or per-domain rate-limit triggered on the public abuse aliases',
+    dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,
   },

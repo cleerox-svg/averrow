@@ -210,6 +210,7 @@ export interface ClassifyBackfillResult {
 
 interface MessageRow {
   id:                    string;
+  org_id:                number;
   brand_id:              string | null;
   original_from:         string | null;
   original_subject:      string | null;
@@ -256,7 +257,7 @@ export async function runAbuseClassifierBackfill(
   // Resend determination email. Operator can unset abuse_inbox_messages
   // .throttled = 0 to opt-in a specific message back into the pipeline.
   const rows = await env.DB.prepare(`
-    SELECT id, brand_id, original_from, original_subject,
+    SELECT id, org_id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
            forwarded_by_email, inbound_alias, determination_sent_at
     FROM abuse_inbox_messages
@@ -361,6 +362,59 @@ export async function runAbuseClassifierBackfill(
         // Failures / suppressions logged inside sendDetermination.
       } catch (err) {
         console.warn(`[abuse-mailbox-classifier] determination send threw for ${m.id}:`, err);
+      }
+    }
+
+    // ─── PR-AW: in-app notification for HIGH/CRITICAL verdicts ─────
+    //
+    // Fires only for the verdicts that justify operator attention:
+    // phishing or malware at HIGH/CRITICAL severity. Benign / spam /
+    // ambiguous stay visible in the inbox UI without nagging.
+    //
+    // Audience routing:
+    //   - brand-bound capture → 'tenant' (notification_subscriptions
+    //     resolves to the brand's watchers in createNotification)
+    //   - unbound capture     → 'super_admin' (covers the Averrow
+    //     self-org, and any tenant submission the classifier couldn't
+    //     bind to a known brand — both surfaces want admins to know)
+    //
+    // Dedup: per-message via group_key — each verdict is unique, no
+    // time window collapsing needed.
+    if (
+      (verdict.classification === "phishing" || verdict.classification === "malware") &&
+      (severity === "HIGH" || severity === "CRITICAL")
+    ) {
+      try {
+        const { createNotification } = await import("./notifications");
+        const audience: "tenant" | "super_admin" = m.brand_id ? "tenant" : "super_admin";
+        const link = audience === "super_admin"
+          ? `/v2/admin/abuse-mailbox#msg-${m.id}`
+          : `/tenant/modules/abuse-mailbox#msg-${m.id}`;
+        const subjectPreview = (m.original_subject ?? "(no subject)").slice(0, 80);
+        await createNotification(env, {
+          type: "abuse_mailbox_verdict",
+          severity: severity === "CRITICAL" ? "critical" : "high",
+          title: `${verdict.classification === "phishing" ? "Phishing" : "Malware"} confirmed — ${subjectPreview}`,
+          message: verdict.reasoning,
+          link,
+          audience,
+          brandId: m.brand_id,
+          orgId: String(m.org_id),
+          groupKey: `abuse_mailbox_verdict:${m.id}`,
+          reasonText: m.brand_id
+            ? "A capture targeting one of your monitored brands was classified as a confirmed threat."
+            : "A capture sent to your abuse alias was classified as a confirmed threat.",
+          recommendedAction: "Open the message in the Abuse Mailbox to review indicators and take action.",
+          metadata: {
+            message_id: m.id,
+            inbound_alias: m.inbound_alias,
+            classification: verdict.classification,
+            confidence: verdict.confidence,
+            ai_action: verdict.action,
+          },
+        });
+      } catch (err) {
+        console.warn(`[abuse-mailbox-classifier] verdict notification failed for ${m.id}:`, err);
       }
     }
   }

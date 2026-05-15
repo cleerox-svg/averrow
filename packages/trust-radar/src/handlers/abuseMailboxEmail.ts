@@ -145,6 +145,43 @@ export async function handleAbuseMailboxEmail(
       `sender_count=${throttle.sender_count_last_window} ` +
       `domain_count=${throttle.domain_count_last_window}`,
     );
+    // PR-AW: notify super_admins when the throttle fires. Group-key dedup
+    // is per-(reason|sender|domain), so a flood from one source produces
+    // one notification per hour — not one per inbound message. Failures
+    // here are non-fatal (the capture row + console.warn above remain
+    // the source of truth).
+    try {
+      const { createNotification } = await import("../lib/notifications");
+      const throttleDim = throttle.reason === "sender_rate_limit"
+        ? `sender:${forwardedBy}`
+        : `domain:${forwardedByDomain ?? "unknown"}`;
+      const reasonLabel = throttle.reason === "sender_rate_limit"
+        ? `Sender exceeded 20 messages in 60 minutes`
+        : `Sending domain exceeded 50 messages in 60 minutes`;
+      await createNotification(env, {
+        type: "abuse_mailbox_flood_detected",
+        severity: "medium",
+        title: `Abuse mailbox flood detected — ${reasonLabel.toLowerCase()}`,
+        message: `${forwardedBy ?? "(no sender)"} via ${forwardedByDomain ?? "(no domain)"} — ` +
+          `${throttle.sender_count_last_window} from this sender / ` +
+          `${throttle.domain_count_last_window} from this domain in the last hour.`,
+        link: "/v2/admin/abuse-mailbox",
+        audience: "super_admin",
+        groupKey: `abuse_mailbox_flood_detected:${throttleDim}`,
+        reasonText: "A single sender or sending domain is exceeding the per-hour capture limit on the public abuse aliases.",
+        recommendedAction: "Open the Abuse Mailbox — flooding captures are still recorded but skip ack + classifier to preserve quota.",
+        metadata: {
+          throttle_reason: throttle.reason,
+          sender_email: forwardedBy,
+          sender_domain: forwardedByDomain,
+          sender_count_last_window: throttle.sender_count_last_window,
+          domain_count_last_window: throttle.domain_count_last_window,
+          inbound_alias: aliasRow.alias,
+        },
+      });
+    } catch (err) {
+      console.warn("[abuse-mailbox] flood notification threw:", err);
+    }
   }
 
   // 6. Insert the row.
