@@ -48,6 +48,17 @@ interface DbResults {
   brandRow?: { id: string } | null;
   alias?: { alias: string; forwarding_instructions: string | null } | null;
   unbound?: { unbound_total: number; unbound_pending: number } | null;
+  // PR-AU: totals are computed by a direct aggregate over
+  // abuse_inbox_messages, no longer summed from per-brand rollups.
+  totals?: {
+    messages_total:         number;
+    messages_phishing:      number;
+    messages_malware:       number;
+    messages_spam:          number;
+    messages_benign:        number;
+    messages_pending:       number;
+    messages_high_critical: number;
+  } | null;
 }
 
 function makeDb(results: DbResults) {
@@ -75,6 +86,17 @@ function makeDb(results: DbResults) {
           }
           if (sql.includes("FROM abuse_inbox_messages") && sql.includes("brand_id IS NULL")) {
             return (results.unbound ?? { unbound_total: 0, unbound_pending: 0 }) as T;
+          }
+          // PR-AU: direct totals aggregate over abuse_inbox_messages.
+          // Matches the COUNT(*) + CASE-WHEN aggregate added to
+          // tenantAbuseMailboxModule.ts.
+          if (sql.includes("FROM abuse_inbox_messages")
+              && sql.includes("COUNT(*) AS messages_total")) {
+            return (results.totals ?? {
+              messages_total: 0, messages_phishing: 0, messages_malware: 0,
+              messages_spam: 0, messages_benign: 0, messages_pending: 0,
+              messages_high_critical: 0,
+            }) as T;
           }
           if (sql.includes("FROM brands b") && sql.includes("JOIN org_brands ob")) {
             return (results.brandRow ?? null) as T | null;
@@ -144,7 +166,11 @@ describe("handleGetAbuseMailboxModuleSummary", () => {
     expect(body.data.unbound.pending).toBe(1);
   });
 
-  it("rolls up classification + severity counts across brands", async () => {
+  it("returns org-wide totals from the direct aggregate (includes unbound)", async () => {
+    // PR-AU: totals come from a direct COUNT/CASE-WHEN over all
+    // abuse_inbox_messages for the org, NOT from summing per-brand
+    // rollups. This catches the regression where unbound (brand_id
+    // IS NULL) rows were silently dropped from the KPI strip.
     const env = makeEnv(new MockKV(), makeDb({
       enabledModules: ENTITLED,
       brandSummaries: [
@@ -161,16 +187,33 @@ describe("handleGetAbuseMailboxModuleSummary", () => {
           messages_high_critical: 1,
         },
       ],
+      // 18 brand-bound + 16 unbound = 34 total. The pre-PR-AU code
+      // would have reported 18 here, dropping the unbound 16.
+      totals: {
+        messages_total: 34, messages_phishing: 5, messages_malware: 1,
+        messages_spam: 3, messages_benign: 4, messages_pending: 19,
+        messages_high_critical: 6,
+      },
+      unbound: { unbound_total: 16, unbound_pending: 16 },
     }));
     const res = await handleGetAbuseMailboxModuleSummary(makeRequest(), env, "42", ORG_42_MEMBER);
     expect(res.status).toBe(200);
     const body = await res.json() as {
-      data: { brands: unknown[]; totals: Record<string, number> };
+      data: {
+        brands: unknown[];
+        totals: Record<string, number>;
+        unbound: { total: number; pending: number };
+      };
     };
     expect(body.data.brands).toHaveLength(2);
-    expect(body.data.totals.messages_total).toBe(18);
+    // Totals reflect the org-wide aggregate, not the brand-rollup sum.
+    expect(body.data.totals.messages_total).toBe(34);
     expect(body.data.totals.messages_phishing).toBe(5);
+    expect(body.data.totals.messages_pending).toBe(19);
     expect(body.data.totals.messages_high_critical).toBe(6);
+    // Unbound shape unchanged.
+    expect(body.data.unbound.total).toBe(16);
+    expect(body.data.unbound.pending).toBe(16);
   });
 });
 

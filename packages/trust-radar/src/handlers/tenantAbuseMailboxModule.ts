@@ -41,6 +41,16 @@ interface AbuseMailboxBrandSummary {
   messages_high_critical:  number;
 }
 
+interface AbuseMailboxTotals {
+  messages_total:         number;
+  messages_phishing:      number;
+  messages_malware:       number;
+  messages_spam:          number;
+  messages_benign:        number;
+  messages_pending:       number;
+  messages_high_critical: number;
+}
+
 interface AliasRow {
   alias: string;
   forwarding_instructions: string | null;
@@ -106,19 +116,30 @@ export async function handleGetAbuseMailboxModuleSummary(
 
   const brands = result.results ?? [];
 
-  const totals = brands.reduce((acc, b) => ({
-    messages_total:         acc.messages_total         + b.messages_total,
-    messages_phishing:      acc.messages_phishing      + b.messages_phishing,
-    messages_malware:       acc.messages_malware       + b.messages_malware,
-    messages_spam:          acc.messages_spam          + b.messages_spam,
-    messages_benign:        acc.messages_benign        + b.messages_benign,
-    messages_pending:       acc.messages_pending       + b.messages_pending,
-    messages_high_critical: acc.messages_high_critical + b.messages_high_critical,
-  }), {
+  // Org-wide totals (PR-AT follow-up): compute directly over all
+  // org messages including unbound ones, not by summing brand rollups.
+  // The previous reduce-over-brands logic silently dropped every
+  // brand_id IS NULL row from the KPI strip, so an org with 16
+  // unclassified messages showed "Total Captures: 0" — see the
+  // operator-spotted regression on 2026-05-15.
+  const totalsRow = await env.DB.prepare(
+    `SELECT
+       COUNT(*) AS messages_total,
+       COUNT(CASE WHEN classification = 'phishing' THEN 1 END) AS messages_phishing,
+       COUNT(CASE WHEN classification = 'malware'  THEN 1 END) AS messages_malware,
+       COUNT(CASE WHEN classification = 'spam'     THEN 1 END) AS messages_spam,
+       COUNT(CASE WHEN classification = 'benign'   THEN 1 END) AS messages_benign,
+       COUNT(CASE WHEN classification = 'pending'  THEN 1 END) AS messages_pending,
+       COUNT(CASE WHEN LOWER(severity) IN ('high','critical') THEN 1 END) AS messages_high_critical
+     FROM abuse_inbox_messages
+     WHERE org_id = ?`,
+  ).bind(orgIdNum).first<AbuseMailboxTotals>();
+
+  const totals: AbuseMailboxTotals = totalsRow ?? {
     messages_total: 0, messages_phishing: 0, messages_malware: 0,
     messages_spam: 0, messages_benign: 0, messages_pending: 0,
     messages_high_critical: 0,
-  });
+  };
 
   // Messages that arrived for the org but the classifier couldn't bind to a known brand.
   const unbound = await env.DB.prepare(
