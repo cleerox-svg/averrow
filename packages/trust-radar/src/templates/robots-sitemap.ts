@@ -17,6 +17,8 @@ Disallow: /api/
 Disallow: /admin-portal/
 Disallow: /internal-staff/
 Disallow: /internal-docs/
+Disallow: /team-directory/
+Disallow: /staff-contacts/
 
 # Sitemap
 Sitemap: https://averrow.com/sitemap.xml

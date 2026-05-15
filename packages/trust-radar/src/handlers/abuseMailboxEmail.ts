@@ -113,8 +113,73 @@ export async function handleAbuseMailboxEmail(
     urlCount,
   ).run();
 
+  // ─── Wave-2 PR-AC: cross-link to spam_trap_captures ────────────
+  //
+  // When the alias resolves to the Averrow self-org (`_averrow_platform`
+  // seeded by migration 0180), also insert a row into spam_trap_captures
+  // with trap_channel='abuse_mailbox'. This surfaces the submission on
+  // the unified Spam Trap view alongside seeded-honeypot captures —
+  // covert spam trap framing from the audit. Tenant rows are NOT
+  // cross-linked (their captures stay in the tenant's abuse_inbox
+  // surface only; no platform-wide intel leak).
+  //
+  // We resolve the self-org id by slug at write time. Cheap (indexed,
+  // org_id is the PK of org_abuse_aliases). Cached in-process for the
+  // worker isolate lifetime.
+  const selfOrgId = await getAverrowSelfOrgId(env);
+  if (selfOrgId !== null && aliasRow.org_id === selfOrgId) {
+    try {
+      const fromAddr = parseEmailAddress(original.from ?? "");
+      const fromDomain = fromAddr ? (fromAddr.split("@")[1] ?? null) : null;
+      const trapDomain = aliasRow.alias.split("@")[1] ?? "averrow.com";
+      await env.DB.prepare(
+        `INSERT INTO spam_trap_captures (
+           trap_address, trap_domain, trap_channel,
+           from_address, from_domain,
+           subject,
+           url_count, attachment_count,
+           category, severity,
+           captured_at
+         ) VALUES (?, ?, 'abuse_mailbox', ?, ?, ?, ?, ?, 'phishing', 'medium', datetime('now'))`,
+      ).bind(
+        aliasRow.alias,
+        trapDomain,
+        fromAddr || null,
+        fromDomain,
+        original.subject,
+        urlCount,
+        attachmentCount,
+      ).run();
+    } catch (err) {
+      console.warn(`[abuse-mailbox] cross-link to spam_trap_captures failed:`, err);
+      // Non-fatal — the abuse_inbox_messages row is already in.
+    }
+  }
+
   // Sprint follow-ups: AI classification + ack email + determination
   // email all hang off this row; they're separate cron / queue work.
+}
+
+// ─── Wave-2 PR-AC: in-process cache of the self-org id ──────────
+// Resolves the _averrow_platform org id once per worker isolate, then
+// short-circuits subsequent lookups. Matches the same pattern used in
+// handlers/adminAbuseMailbox.ts but kept local here so the email path
+// has zero import cost.
+let cachedSelfOrgId: number | null = null;
+async function getAverrowSelfOrgId(env: Env): Promise<number | null> {
+  if (cachedSelfOrgId !== null) return cachedSelfOrgId;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT id FROM organizations WHERE slug = '_averrow_platform'",
+    ).first<{ id: number }>();
+    if (row?.id) {
+      cachedSelfOrgId = row.id;
+      return cachedSelfOrgId;
+    }
+  } catch {
+    // Migration 0180 not yet applied — fall through to null.
+  }
+  return null;
 }
 
 // ─── Helpers (small + scoped to this file) ──────────────────────

@@ -7,7 +7,7 @@ import type { EmailMessage } from "./dmarc-receiver";
 import { handleSpamTrapEmail } from "./spam-trap";
 import { serveHoneypotPage } from "./honeypot";
 import { serveLrxRadarPage } from "./templates/honeypot-lrx";
-import { renderAdminPortalPage, renderInternalStaffPage } from "./templates/honeypot-pages";
+import { renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage, renderStaffContactsPage } from "./templates/honeypot-pages";
 import { logHoneypotVisit } from "./lib/honeypot-visit-logger";
 import type { Env } from "./types";
 import { handleScheduled } from "./cron/orchestrator";
@@ -183,22 +183,37 @@ export default {
         return applySecurityHeaders(serveLrxRadarPage(url.pathname));
       }
 
-      // Honeypot pages on averrow.com — /team, /careers, /admin-portal, /internal-staff
-      if (["averrow.com", "www.averrow.com"].includes(url.hostname)) {
+      // Honeypot pages — extended in Wave 2 to all four production
+      // domains and two new bait surfaces.
+      //
+      //   /team, /careers           → public-looking "team" pages
+      //   /admin-portal             → original Disallow-in-robots bait
+      //   /internal-staff           → original Disallow-in-robots bait
+      //   /team-directory   (PR-AC) → new bait surface, distinct content shape
+      //   /staff-contacts   (PR-AC) → new bait surface, distinct content shape
+      //
+      // Wave-2 widened the hostname check from averrow.com only to the
+      // full set of platform domains so harvesters that geolocate or
+      // pivot between our domains find bait on each. The roster
+      // location key still embeds the actual hostname so each
+      // (hostname, page) pair maintains its own rotated address list.
+      const HONEYPOT_HOSTNAMES = new Set([
+        "averrow.com", "www.averrow.com",
+        "averrow.ca", "www.averrow.ca",
+        "trustradar.ca", "www.trustradar.ca",
+        "lrxradar.com", "www.lrxradar.com",
+      ]);
+      if (HONEYPOT_HOSTNAMES.has(url.hostname)) {
+        const serveDomain = url.hostname.replace(/^www\./, "");
         const honeypotPages = ["/team", "/careers"];
         if (honeypotPages.includes(url.pathname)) {
-          const serveDomain = url.hostname.replace(/^www\./, "");
           ctx.waitUntil(logHoneypotVisit(env, request, url.pathname));
           return applySecurityHeaders(serveHoneypotPage(url.pathname.slice(1), serveDomain));
         }
         if (url.pathname === "/admin-portal") {
           ctx.waitUntil(logHoneypotVisit(env, request, "/admin-portal"));
-          // Pull the live roster (auto-seeded weekly by the Recon agent)
-          // so harvesters scraping us see a different set on each visit
-          // window. readRoster() is best-effort — DB errors fall through
-          // to the built-in default roster inside the renderer.
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, 'auto-seeder:averrow.com:/admin-portal', 16);
+          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/admin-portal`, 16);
           return applySecurityHeaders(new Response(renderAdminPortalPage(roster), {
             headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
           }));
@@ -206,8 +221,24 @@ export default {
         if (url.pathname === "/internal-staff") {
           ctx.waitUntil(logHoneypotVisit(env, request, "/internal-staff"));
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, 'auto-seeder:averrow.com:/internal-staff', 16);
+          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/internal-staff`, 16);
           return applySecurityHeaders(new Response(renderInternalStaffPage(roster), {
+            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+          }));
+        }
+        if (url.pathname === "/team-directory") {
+          ctx.waitUntil(logHoneypotVisit(env, request, "/team-directory"));
+          const { readRoster } = await import('./lib/auto-seeder-planter');
+          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/team-directory`, 16);
+          return applySecurityHeaders(new Response(renderTeamDirectoryPage(roster), {
+            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+          }));
+        }
+        if (url.pathname === "/staff-contacts") {
+          ctx.waitUntil(logHoneypotVisit(env, request, "/staff-contacts"));
+          const { readRoster } = await import('./lib/auto-seeder-planter');
+          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/staff-contacts`, 16);
+          return applySecurityHeaders(new Response(renderStaffContactsPage(roster), {
             headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
           }));
         }
