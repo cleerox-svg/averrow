@@ -147,10 +147,13 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
   // so the operator sees the full advertised surface, not just the
   // one the lookup happens to return.
   const publicMailboxes = [
-    { label: 'Phishing reports',           addr: 'phishing@averrow.com' },
-    { label: 'Brand impersonation',        addr: 'abuse@averrow.com' },
-    { label: 'General report',             addr: 'report@averrow.com' },
-    { label: 'Security disclosures',       addr: 'security@averrow.com' },
+    // PR-AG (post-merge follow-up): public mailboxes live on averrow.ca,
+    // not averrow.com — averrow.com stays on Google Workspace so
+    // CF Email Routing can't bind there. See docs/EMAIL_ROUTING_RUNBOOK.md.
+    { label: 'Phishing reports',           addr: 'phishing@averrow.ca' },
+    { label: 'Brand impersonation',        addr: 'abuse@averrow.ca' },
+    { label: 'General report',             addr: 'report@averrow.ca' },
+    { label: 'Security disclosures',       addr: 'security@averrow.ca' },
   ];
 
   const copy = async (addr: string) => {
@@ -357,7 +360,7 @@ function EmptyMessages() {
       </div>
       <div className="text-sm text-white/70 font-mono">No captures yet</div>
       <p className="text-[11px] text-white/45 mt-1 max-w-md mx-auto">
-        Mailboxes are listening. Submissions arrive when someone forwards to abuse@/phishing@/report@/security@averrow.com, or when an attacker probes those endpoints.
+        Mailboxes are listening. Submissions arrive when someone forwards to abuse@ / phishing@ / report@ / security@averrow.ca, or when an attacker probes those endpoints.
       </p>
     </div>
   );
