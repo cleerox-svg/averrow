@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useSpamTrapAddresses, useSeedingSources } from '@/hooks/useSpamTrap';
+import { useSpamTrapAddresses, useSeedingSources, useRetireSeedAddress } from '@/hooks/useSpamTrap';
 import type { SeedAddress, SeedingSource } from '@/hooks/useSpamTrap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Target, Search, ChevronDown, ChevronRight } from 'lucide-react';
@@ -100,6 +100,7 @@ const DEFAULT_EXPANDED: YieldBucket[] = ['caught', 'stale'];
 export function HoneypotNetworkPanel() {
   const { data: addresses, isLoading, isError, refetch } = useSpamTrapAddresses();
   const { data: seedingData } = useSeedingSources();
+  const retireSeed = useRetireSeedAddress();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'network' | 'sources' | 'activity'>('network');
   const [expanded, setExpanded] = useState<Set<YieldBucket>>(new Set(DEFAULT_EXPANDED));
@@ -698,10 +699,28 @@ export function HoneypotNetworkPanel() {
                                     </span>
                                   </td>
                                   <td className="py-1.5 pr-3 text-right">
-                                    <span
-                                      className={BUCKET_DOT_CLASS[addrBucket]}
-                                      title={`${BUCKET_LABEL[addrBucket]}: ${BUCKET_DESCRIPTION[addrBucket]}`}
-                                    />
+                                    <div className="inline-flex items-center gap-1.5">
+                                      {/* Wave-1 PR-AB: REPLANT CTA on dead-seed rows.
+                                          Soft-retires the address so the auto-seeder can recycle
+                                          the seeded_location on its next tick. No bulk-confirm
+                                          modal — per-row action is intentional so the operator
+                                          spot-prunes rather than carpet-bombing dead inventory. */}
+                                      {addrBucket === 'dead' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => retireSeed.mutate(addr.id)}
+                                          disabled={retireSeed.isPending}
+                                          className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-white/[0.10] text-white/55 hover:text-white/90 hover:border-white/[0.25] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                          title="Retire this seed so the auto-seeder can replant"
+                                        >
+                                          REPLANT
+                                        </button>
+                                      )}
+                                      <span
+                                        className={BUCKET_DOT_CLASS[addrBucket]}
+                                        title={`${BUCKET_LABEL[addrBucket]}: ${BUCKET_DESCRIPTION[addrBucket]}`}
+                                      />
+                                    </div>
                                   </td>
                                 </tr>
                               );

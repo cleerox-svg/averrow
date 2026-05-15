@@ -561,8 +561,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "seed_campaigns"
       ],
       "ai_models_referenced": [],
-      "loc": 231,
-      "last_modified": "2026-05-11T18:19:48.046Z"
+      "loc": 260,
+      "last_modified": "2026-05-15T04:24:04.411Z"
     },
     {
       "name": "sentinel",

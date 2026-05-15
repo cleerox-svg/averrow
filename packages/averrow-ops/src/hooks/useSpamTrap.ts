@@ -268,3 +268,20 @@ export function useRunStrategist() {
     },
   });
 }
+
+// Wave-1 PR-AB: REPLANT — soft-retire a dead seed address. Server-side
+// the row stays (historical attribution); status flips to 'retired' so
+// it disappears from the dead-seeds list. Refresh queries on success.
+export function useRetireSeedAddress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.post<{ id: number; retired: boolean }>(`/api/spam-trap/seeds/${id}/retire`);
+      return res.data ?? null;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['spam-trap-addresses'] });
+      qc.invalidateQueries({ queryKey: ['spam-trap-seeding-sources'] });
+    },
+  });
+}

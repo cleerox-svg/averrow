@@ -50,6 +50,35 @@ export const seedStrategistAgent: AgentModule = {
     let itemsCreated = 0;
     let itemsUpdated = 0;
 
+    // Wave-1 PR-AB: auto-prune stale-dead seeds. Any active seed that
+    // was planted >60 days ago and has never caught anything is
+    // retired so the auto-seeder can recycle the seeded_location for
+    // a fresh address. Threshold matches the UI's STALE_DAYS=30 and
+    // gives the seed twice the bucketing window before we declare it
+    // permanently unproductive.
+    try {
+      const pruneResult = await env.DB.prepare(`
+        UPDATE seed_addresses
+        SET status = 'retired'
+        WHERE status = 'active'
+          AND total_catches = 0
+          AND seeded_at IS NOT NULL
+          AND seeded_at < datetime('now', '-60 days')
+      `).run();
+      const pruned = (pruneResult.meta as { changes?: number } | undefined)?.changes ?? 0;
+      itemsUpdated += pruned;
+      if (pruned > 0) {
+        outputs.push({
+          type: "diagnostic",
+          summary: `Auto-pruned ${pruned} stale-dead seed addresses (>60d, 0 catches)`,
+          severity: "info",
+          details: { stale_dead_pruned: pruned, threshold_days: 60 },
+        });
+      }
+    } catch (err) {
+      console.warn(`[SeedStrategist] stale-dead prune failed:`, err);
+    }
+
     // Gather metrics
     const trapStats = await env.DB.prepare(`
       SELECT

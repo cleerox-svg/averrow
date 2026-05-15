@@ -8,6 +8,7 @@ import {
   handleCreateSpamTrapCampaign, handleExecuteSpamTrapCampaign,
   handleUpdateSpamTrapCampaign, handleSpamTrapAddresses, handleInitialSeed,
   handleRunStrategist, handleSpamTrapReparseAuth, handleSpamTrapSeedingSources,
+  handleRetireSeedAddress,
 } from "../handlers/spamTrap";
 
 export function registerSpamTrapRoutes(router: RouterType<IRequest>): void {
@@ -80,5 +81,12 @@ export function registerSpamTrapRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleSpamTrapReparseAuth(request, env);
+  });
+  // Wave-1 PR-AB: operator-driven REPLANT — soft-retire a dead seed
+  // address. Auto-seeder picks up retired locations on its next tick.
+  router.post("/api/spam-trap/seeds/:id/retire", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRetireSeedAddress(request, env);
   });
 }

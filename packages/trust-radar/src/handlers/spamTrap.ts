@@ -450,3 +450,34 @@ export const handleRunStrategist = handler(async (_request, env, ctx) => {
   const result = await executeAgent(env, seedStrategistAgent, {}, "manual", "manual");
   return success(result, ctx.origin);
 });
+
+// ── POST /api/spam-trap/seeds/:id/retire ──────────────────────────
+//
+// Wave-1 PR-AB: operator-driven retirement of dead seed addresses.
+// Sets `status = 'retired'` so the address no longer counts in the
+// caught/stale/pending/dead bucketing on the UI and the auto-seeder
+// can recycle the seeded_location for a fresh address.
+//
+// We DON'T delete the row — historical attribution matters (if a
+// previously-dead seed suddenly catches something, the row needs to
+// still exist for the catch to be recorded). Retirement is a soft
+// delete by design.
+//
+// Bulk auto-prune of stale-dead addresses (seeded > 60d AND
+// total_catches = 0) runs in the seed_strategist agent's tick — see
+// retireStaleDeadSeeds() in agents/seed-strategist.ts.
+export const handleRetireSeedAddress = handler(async (request: Request & { params?: Record<string, string> }, env, ctx) => {
+  const idRaw = request.params?.id ?? '';
+  const id = Number(idRaw);
+  if (!Number.isFinite(id) || id <= 0) {
+    return error('Invalid seed id', 400, ctx.origin);
+  }
+  const result = await env.DB.prepare(
+    `UPDATE seed_addresses SET status = 'retired' WHERE id = ? AND status != 'retired'`,
+  ).bind(id).run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  if (changes === 0) {
+    return error('Seed not found or already retired', 404, ctx.origin);
+  }
+  return success({ id, retired: true }, ctx.origin);
+});
