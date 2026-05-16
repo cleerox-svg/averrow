@@ -26,7 +26,7 @@ function buildNavItems(observatoryPath: string): NavItem[] {
     { id: 'home',   icon: '🏠', label: 'Home',   path: '/',                  exact: true },
     { id: 'obs',    icon: '🌐', label: 'Map',    path: observatoryPath },
     { id: 'brands', icon: '🛡', label: 'Brands', path: '/brands' },
-    { id: 'alerts', icon: '🔔', label: 'Signals', path: '/alerts' },
+    { id: 'alerts', icon: '📡', label: 'Signals', path: '/alerts' },
   ];
 }
 
@@ -50,7 +50,7 @@ function buildMoreSections(observatoryPath: string) {
     label: 'Response',
     items: [
       { icon: '⚖️', label: 'Takedowns', path: '/admin/takedowns' },
-      { icon: '🔔', label: 'Signals',   path: '/alerts' },
+      { icon: '📡', label: 'Signals',   path: '/alerts' },
       { icon: '📬', label: 'Spam Trap', path: '/admin/spam-trap' },
       { icon: '🎯', label: 'Leads',     path: '/leads' },
     ],

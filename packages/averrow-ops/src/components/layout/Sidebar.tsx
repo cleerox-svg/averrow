@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
-  Gavel, Bell, Inbox, Mail, Target, Siren,
+  Gavel, Bell, Inbox, Mail, Target, Siren, Radar,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
   Smartphone, EyeOff, BellRing, BarChart3, DollarSign,
   Sun, Moon, Laptop,
@@ -136,7 +136,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       items: [
         { label: 'Incidents',    path: '/admin/incidents',  icon: Siren },
         { label: 'Takedowns',    path: '/admin/takedowns',  icon: Gavel },
-        { label: 'Signals',      path: '/alerts',           icon: Bell, badge: alertCount },
+        { label: 'Signals',      path: '/alerts',           icon: Radar, badge: alertCount },
         { label: 'Spam Trap',    path: '/admin/spam-trap',  icon: Inbox },
         { label: 'Abuse Mailbox', path: '/admin/abuse-mailbox', icon: Mail },
         { label: 'Leads',       path: '/leads',            icon: Target },
