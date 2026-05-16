@@ -631,9 +631,24 @@ function computeReferenceDatasetVerdict(
   count: number,
   configured: boolean,
   rowsWritten: number,
+  // NX-geoip-card: refresh status + age give the card three more states.
+  refreshStatus?: string | null,
+  lastRefreshAt?: string | null,
 ): Verdict {
   if (!configured)  return { label: 'SETUP',   tone: 'pending'  };
   if (count === 0)  return { label: 'EMPTY',   tone: 'failed'   };
+  if (refreshStatus === 'running') return { label: 'REFRESHING', tone: 'pending' };
+  if (refreshStatus === 'failed' && lastRefreshAt) {
+    return { label: 'FAILED', tone: 'failed' };
+  }
+  // Reference-dataset staleness: MaxMind ships weekly; > 7d is stale,
+  // > 14d is stale-critical. Computed in JS to keep the helper pure.
+  if (lastRefreshAt) {
+    const ageMs = Date.now() - new Date(lastRefreshAt + 'Z').getTime();
+    const ageDays = ageMs / 86_400_000;
+    if (ageDays > 14) return { label: 'STALE',  tone: 'failed'  };
+    if (ageDays > 7)  return { label: 'STALE',  tone: 'pending' };
+  }
   if (rowsWritten > 0) return { label: 'UPDATED', tone: 'success' };
   return { label: 'STABLE', tone: 'inactive' };
 }
@@ -761,7 +776,13 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
         : rowCount === 0
           ? 'flat'
           : (rowsWritten > 0 ? 'up' : 'flat'),
-      verdict: computeReferenceDatasetVerdict(rowCount, geoipStatus.configured, rowsWritten),
+      verdict: computeReferenceDatasetVerdict(
+        rowCount,
+        geoipStatus.configured,
+        rowsWritten,
+        geoipStatus.last_refresh_status,
+        geoipStatus.last_refresh_at,
+      ),
       last_measured_at: geoipStatus.last_refresh_at,
       agent_last_run_at: geoipAgentRun?.last_run_at ?? null,
       agent_last_status: geoipStatus.last_refresh_status ?? geoipAgentRun?.status ?? null,
@@ -981,6 +1002,18 @@ async function handleGeoipDetail(
 
   const { getGeoMmdbStatus } = await import("../lib/geoip-mmdb");
   const status = await getGeoMmdbStatus(env);
+
+  // NX-geoip-card: surface the fields the operator actually needs
+  // (source release SHA, freshness age, in-flight shadow progress)
+  // as a dedicated `reference_dataset` block. The generic
+  // "backlog / drained / sparkline" treatment doesn't apply to a
+  // reference dataset and was rendering the card as "Not enough
+  // samples yet" — wasted real estate.
+  const lastRefreshAgeHours = status.last_refresh_at
+    ? Math.round((Date.now() - new Date(status.last_refresh_at + 'Z').getTime()) / 3_600_000)
+    : null;
+  const isRunning = status.last_refresh_status === 'running';
+
   const detail = {
     id: 'geoip',
     label: 'GeoIP Database',
@@ -1006,6 +1039,8 @@ async function handleGeoipDetail(
       status.row_count ?? 0,
       status.configured,
       status.last_refresh_rows_written ?? 0,
+      status.last_refresh_status,
+      status.last_refresh_at,
     ),
     last_run: status.last_refresh_at
       ? {
@@ -1019,9 +1054,31 @@ async function handleGeoipDetail(
       : null,
     failure_rate_24h: null,
     recent_attempts: status.recent_attempts.slice(0, 5),
+    // The new operator-focused block. UI renders this in place of the
+    // generic backlog sparkline.
+    reference_dataset: {
+      configured:                  status.configured,
+      row_count:                   status.row_count ?? 0,
+      shadow_row_count:            status.shadow_row_count,
+      shadow_table_present:        status.has_shadow_table ?? false,
+      source_version:              status.last_refresh_source ?? null,
+      last_refresh_at:             status.last_refresh_at,
+      last_refresh_age_hours:      lastRefreshAgeHours,
+      last_refresh_status:         status.last_refresh_status,
+      last_refresh_rows_written:   status.last_refresh_rows_written,
+      last_refresh_duration_ms:    status.last_refresh_duration_ms,
+      last_refresh_error:          status.last_refresh_error,
+      currently_running:           isRunning,
+      stale_threshold_days:        7,
+    },
   };
   const body = { success: true, data: detail };
-  await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 60 });
+  // Shorter TTL when a refresh is mid-flight so the in-flight progress
+  // updates while the operator watches. Falls back to the existing 60s
+  // cache otherwise.
+  await env.CACHE.put(cacheKey, JSON.stringify(body), {
+    expirationTtl: isRunning ? 15 : 60,
+  });
   return json(body, 200, origin);
 }
 
