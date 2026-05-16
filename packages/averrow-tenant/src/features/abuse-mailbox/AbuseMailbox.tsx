@@ -8,7 +8,7 @@
 
 import { Fragment, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, ShieldCheck, Mail, Inbox, Copy, Check, ChevronDown, ExternalLink, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ShieldCheck, Mail, MailCheck, MailX, Inbox, Copy, Check, ChevronDown, ExternalLink, type LucideIcon } from 'lucide-react';
 import {
   useAbuseMailboxSummary,
   useAbuseInboxMessages,
@@ -374,16 +374,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-2">
-          {m.ack_sent_at ? (
-            <span className="text-green/85">ack sent</span>
-          ) : (
-            <span className="text-white/30">ack pending</span>
-          )}
-          {m.determination_sent_at ? (
-            <span className="text-green/85">determination sent</span>
-          ) : (
-            <span className="text-white/30">determination pending</span>
-          )}
+          <TenantDeliveryTracker message={m} />
           <ChevronDown
             size={12}
             className="text-white/45"
@@ -720,6 +711,51 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// ─── PR-AZ: per-row delivery status tracker (tenant parity) ─────
+//
+// Two envelope icons replacing the previous verbose "ack sent ·
+// determination sent" text. Filled-green = sent, outline-gray =
+// pending, amber-X = intentionally skipped (rate-limit).
+
+function TenantDeliveryTracker({ message: m }: { message: AbuseInboxMessageRow }) {
+  const ack = !!m.ack_sent_at;
+  const verdict = !!m.determination_sent_at;
+  const throttled = m.throttled === 1;
+  const tooltip = throttled
+    ? `Rate-limited: ack + verdict emails intentionally skipped`
+    : [
+        `Ack: ${ack ? `sent ${formatShortTs(m.ack_sent_at)}` : "pending"}`,
+        `Verdict: ${verdict ? `sent ${formatShortTs(m.determination_sent_at)}` : "pending"}`,
+      ].join(" · ");
+  return (
+    <span className="inline-flex items-center gap-0.5" title={tooltip}>
+      <TenantStatusIcon kind="ack"     sent={ack}     throttled={throttled} />
+      <TenantStatusIcon kind="verdict" sent={verdict} throttled={throttled} />
+    </span>
+  );
+}
+
+function TenantStatusIcon({
+  kind, sent, throttled,
+}: { kind: "ack" | "verdict"; sent: boolean; throttled: boolean }) {
+  if (throttled) {
+    return <MailX size={13} className="text-amber/60" aria-label={`${kind} skipped — rate-limited`} />;
+  }
+  if (sent) {
+    return <MailCheck size={13} className="text-green" aria-label={`${kind} sent`} />;
+  }
+  return <Mail size={13} className="text-white/35" aria-label={`${kind} pending`} />;
+}
+
+function formatShortTs(ts: string | null | undefined): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
 }
 
 function tenantThrottleReasonLabel(reason: string | null | undefined): string {
