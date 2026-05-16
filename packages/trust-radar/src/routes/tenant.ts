@@ -389,6 +389,22 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx,
     );
   });
+  // PR-BD — status transition (new | investigating | resolved | dismissed)
+  router.patch("/api/orgs/:orgId/modules/abuse-mailbox/messages/:id/status", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleUpdateAbuseInboxMessageStatus } = await import("../handlers/tenantAbuseMailboxModule");
+    return handleUpdateAbuseInboxMessageStatus(
+      request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx,
+    );
+  });
+  // PR-BD — Intel summary aggregated over deep_analysis rows
+  router.get("/api/orgs/:orgId/modules/abuse-mailbox/intel", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleGetAbuseMailboxIntel } = await import("../handlers/tenantAbuseMailboxModule");
+    return handleGetAbuseMailboxIntel(request, env, request.params["orgId"] ?? "", ctx);
+  });
 
   // ─── Module surfaces — Trademark Infringement (v3 Phase B) ─────
   router.get("/api/orgs/:orgId/modules/trademark", async (request: Request & { params: Record<string, string> }, env: Env) => {

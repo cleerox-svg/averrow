@@ -134,6 +134,20 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const { handleAdminAbuseMailboxMessageDetail } = await import("../handlers/adminAbuseMailbox");
     return handleAdminAbuseMailboxMessageDetail(request, env, request.params["id"] ?? "", ctx);
   });
+  // PR-BD — status transition (new | investigating | resolved | dismissed)
+  router.patch("/api/admin/abuse-mailbox/messages/:id/status", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleAdminAbuseMailboxMessageStatusUpdate } = await import("../handlers/adminAbuseMailbox");
+    return handleAdminAbuseMailboxMessageStatusUpdate(request, env, request.params["id"] ?? "", ctx);
+  });
+  // PR-BD — Intel summary aggregated over deep_analysis rows
+  router.get("/api/admin/abuse-mailbox/intel", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleAdminAbuseMailboxIntel } = await import("../handlers/adminAbuseMailbox");
+    return handleAdminAbuseMailboxIntel(request, env, ctx);
+  });
 
   // Wave 2.1 PR-AF — seed-domain config (admin-gated). Operator
   // surface for the auto-seeder target list. See

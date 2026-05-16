@@ -414,3 +414,237 @@ export async function handleGetAbuseInboxMessageDetail(
 
   return json({ success: true, data: detail }, 200, origin);
 }
+
+// ─── PATCH /api/orgs/:orgId/modules/abuse-mailbox/messages/:id/status ──
+//
+// PR-BD: status transition for a single message. Used by per-row
+// actions in the drill-down UI ("mark resolved", "dismiss",
+// "escalate" → 'investigating'). Schema CHECK in 0150 allows
+// new | investigating | resolved | dismissed.
+
+const VALID_STATUS_TRANSITIONS = new Set([
+  "new", "investigating", "resolved", "dismissed",
+]);
+
+export async function handleUpdateAbuseInboxMessageStatus(
+  request:   Request,
+  env:       Env,
+  orgId:     string,
+  messageId: string,
+  ctx:       AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) {
+    return json({ success: false, error: "Invalid organization id" }, 400, origin);
+  }
+  if (!messageId || messageId.length > 64) {
+    return json({ success: false, error: "Invalid message id" }, 400, origin);
+  }
+
+  try {
+    if (ctx.role !== "super_admin") {
+      await requireModule(env, orgIdNum, "abuse_mailbox");
+    }
+  } catch (err) {
+    if (err instanceof ModuleNotEntitledError) {
+      return json({
+        success: false,
+        error: "Abuse Mailbox isn't enabled for your organization.",
+        code: "MODULE_NOT_ENTITLED",
+      }, 403, origin);
+    }
+    throw err;
+  }
+
+  let body: { status?: unknown };
+  try {
+    body = await request.json() as { status?: unknown };
+  } catch {
+    return json({ success: false, error: "Invalid JSON body" }, 400, origin);
+  }
+  if (typeof body.status !== "string" || !VALID_STATUS_TRANSITIONS.has(body.status)) {
+    return json({
+      success: false,
+      error: "status must be one of: new, investigating, resolved, dismissed",
+    }, 400, origin);
+  }
+
+  const res = await env.DB.prepare(
+    `UPDATE abuse_inbox_messages
+     SET status = ?, updated_at = datetime('now')
+     WHERE id = ? AND org_id = ?`,
+  ).bind(body.status, messageId, orgIdNum).run();
+
+  if ((res.meta?.changes ?? 0) === 0) {
+    return json({ success: false, error: "Message not found" }, 404, origin);
+  }
+
+  return json({ success: true, data: { id: messageId, status: body.status } }, 200, origin);
+}
+
+// ─── GET /api/orgs/:orgId/modules/abuse-mailbox/intel ──────────
+//
+// PR-BD: high-signal Intel summary for the top-level page. Aggregates
+// the deep_analysis output (PR-BC) across recent rows:
+//   - Active campaigns (deduped, ordered by recency)
+//   - Recent takedown recommendations (most recent N)
+//   - Hosting providers seen across recent confirmed verdicts
+//   - Counts: deep_analysis-eligible rows in the last 7/30 days
+//
+// Read-only aggregate; cheap (single SELECT over a small slice).
+
+interface IntelCampaignRow {
+  campaign_id:   string;
+  campaign_name: string | null;
+  first_seen:    string;
+  count:         number;
+}
+
+interface IntelTakedownRow {
+  message_id:           string;
+  received_at:          string;
+  original_subject:     string | null;
+  target:               string | null;
+  hosting_provider:     string | null;
+  hosting_country:      string | null;
+}
+
+interface IntelProviderRow {
+  hosting_provider: string;
+  hosting_country:  string | null;
+  count:            number;
+}
+
+export interface AbuseMailboxIntelSummary {
+  campaigns:                IntelCampaignRow[];
+  recent_takedowns:         IntelTakedownRow[];
+  hosting_providers:        IntelProviderRow[];
+  analyzed_count_7d:        number;
+  analyzed_count_30d:       number;
+}
+
+export async function handleGetAbuseMailboxIntel(
+  request: Request,
+  env:     Env,
+  orgId:   string,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) {
+    return json({ success: false, error: "Invalid organization id" }, 400, origin);
+  }
+
+  try {
+    if (ctx.role !== "super_admin") {
+      await requireModule(env, orgIdNum, "abuse_mailbox");
+    }
+  } catch (err) {
+    if (err instanceof ModuleNotEntitledError) {
+      return json({
+        success: false,
+        error: "Abuse Mailbox isn't enabled for your organization.",
+        code: "MODULE_NOT_ENTITLED",
+      }, 403, origin);
+    }
+    throw err;
+  }
+
+  // Pull the deep_analysis-bearing rows in the last 30 days for the
+  // org. Cap to 100 rows — anything beyond that is anomalous and
+  // the aggregator would lose meaning at higher volumes.
+  const rows = await env.DB.prepare(
+    `SELECT id, received_at, original_subject, deep_analysis
+     FROM abuse_inbox_messages
+     WHERE org_id = ?
+       AND deep_analysis IS NOT NULL
+       AND received_at > datetime('now', '-30 days')
+     ORDER BY received_at DESC
+     LIMIT 100`,
+  ).bind(orgIdNum).all<{ id: string; received_at: string; original_subject: string | null; deep_analysis: string }>();
+
+  const campaignsMap = new Map<string, IntelCampaignRow>();
+  const providersMap = new Map<string, IntelProviderRow>();
+  const takedowns: IntelTakedownRow[] = [];
+  let analyzed7d  = 0;
+  let analyzed30d = 0;
+
+  const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  for (const row of rows.results) {
+    analyzed30d++;
+    if (row.received_at >= cutoff7d) analyzed7d++;
+    let parsed: {
+      attribution?: {
+        hosting_provider?: string | null;
+        hosting_country?:  string | null;
+        correlated_campaigns?: Array<{ id: string; name: string | null; first_seen: string }>;
+      };
+      recommended_action?: { category?: string; target?: string | null };
+    };
+    try { parsed = JSON.parse(row.deep_analysis); } catch { continue; }
+    const attr = parsed.attribution ?? {};
+    const action = parsed.recommended_action ?? {};
+
+    // Campaign aggregation
+    for (const c of attr.correlated_campaigns ?? []) {
+      const existing = campaignsMap.get(c.id);
+      if (existing) {
+        existing.count++;
+      } else {
+        campaignsMap.set(c.id, {
+          campaign_id:   c.id,
+          campaign_name: c.name ?? null,
+          first_seen:    c.first_seen,
+          count:         1,
+        });
+      }
+    }
+
+    // Provider aggregation
+    if (attr.hosting_provider) {
+      const key = attr.hosting_provider;
+      const existing = providersMap.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        providersMap.set(key, {
+          hosting_provider: attr.hosting_provider,
+          hosting_country:  attr.hosting_country ?? null,
+          count:            1,
+        });
+      }
+    }
+
+    // Recent takedown recommendations — capture the first N we see
+    // (rows are already ordered by recency).
+    if (action.category === "takedown" && takedowns.length < 5) {
+      takedowns.push({
+        message_id:       row.id,
+        received_at:      row.received_at,
+        original_subject: row.original_subject,
+        target:           action.target ?? null,
+        hosting_provider: attr.hosting_provider ?? null,
+        hosting_country:  attr.hosting_country ?? null,
+      });
+    }
+  }
+
+  return json({
+    success: true,
+    data: {
+      campaigns:           [...campaignsMap.values()].sort((a, b) => b.count - a.count).slice(0, 5),
+      recent_takedowns:    takedowns,
+      hosting_providers:   [...providersMap.values()].sort((a, b) => b.count - a.count).slice(0, 5),
+      analyzed_count_7d:   analyzed7d,
+      analyzed_count_30d:  analyzed30d,
+    } satisfies AbuseMailboxIntelSummary,
+  }, 200, origin);
+}
