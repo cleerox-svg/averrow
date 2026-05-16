@@ -53,6 +53,10 @@ const SEVERITY_COLORS: Record<string, string> = {
 const V3_TABS = [
   { id: 'surface',  label: 'Surface',  hint: "What we know about you" },
   { id: 'risk',     label: 'Risk',     hint: "What's threatening you now" },
+  // NX3: Signals tab gives SOC analysts a brand-scoped view of every
+  // alert (impersonation, typosquat, BIMI/DMARC drift, dark-web, etc.)
+  // for this brand — same data the tenant sees on /alerts, scoped here.
+  { id: 'signals',  label: 'Signals',  hint: "Every brand signal for this brand (what tenants see on /alerts)" },
   { id: 'workflow', label: 'Workflow', hint: 'What needs your action' },
 ] as const;
 
@@ -77,8 +81,12 @@ export function BrandDetailV3() {
   const { data: darkWebData } = useDarkWebMentions(id);
   const { data: appStoreData } = useAppStoreMonitor(id);
   const { data: alertsData } = useAlerts({ brand_id: id, status: 'new' });
+  // NX3: full signal history for this brand (all statuses). Drives the
+  // Signals tab. Separate query so WorkflowTab keeps its triage scope.
+  const { data: allSignalsData } = useAlerts({ brand_id: id });
   const { data: takedownData } = useAdminTakedowns({ status: 'pending', limit: 200 });
   const alerts = alertsData?.alerts ?? [];
+  const allSignals = allSignalsData?.alerts ?? [];
   const darkWebMentions = darkWebData?.results ?? [];
   const appListings = appStoreData?.results ?? [];
 
@@ -223,12 +231,137 @@ export function BrandDetailV3() {
         />
       )}
 
+      {activeTab === 'signals' && (
+        <SignalsTab signals={allSignals} brandId={id} />
+      )}
+
       {activeTab === 'workflow' && (
         <WorkflowTab
           alerts={alerts}
           takedowns={brandTakedowns}
         />
       )}
+    </div>
+  );
+}
+
+// ── SIGNALS ──────────────────────────────────────────────────────────────
+// NX3: brand-scoped view of every alert (signal) against this brand.
+// Same data the tenant sees on /alerts, scoped to one brand so SOC
+// analysts can triage from inside the brand record. Read-only here;
+// status transitions happen on the main /alerts page or future
+// per-alert detail surface.
+function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive'>('all');
+  const [severityFilter, setSeverityFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
+
+  const filtered = signals.filter(s =>
+    (statusFilter === 'all' || s.status === statusFilter) &&
+    (severityFilter === 'all' || (s.severity ?? '').toLowerCase() === severityFilter)
+  );
+
+  // Group counts for the filter chip badges.
+  const byStatus = signals.reduce((acc: Record<string, number>, s) => {
+    acc[s.status] = (acc[s.status] ?? 0) + 1; return acc;
+  }, {});
+  const bySeverity = signals.reduce((acc: Record<string, number>, s) => {
+    const k = (s.severity ?? '').toLowerCase(); acc[k] = (acc[k] ?? 0) + 1; return acc;
+  }, {});
+
+  return (
+    <div className="space-y-4">
+      <DeepCard padding="lg">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-sm font-semibold text-[var(--text-primary)]">Signals</div>
+            <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+              {signals.length} total · brand signals (impersonation, typosquat, BIMI/DMARC drift, dark-web mentions)
+            </div>
+          </div>
+          <a
+            href={`/v2/alerts?brand_id=${encodeURIComponent(brandId)}`}
+            className="text-[11px] font-mono text-[var(--amber)] hover:underline"
+          >
+            Open in /alerts →
+          </a>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mt-3">
+          <SignalFilterRow
+            label="Status"
+            options={[
+              { key: 'all',           label: `All (${signals.length})` },
+              { key: 'new',           label: `New (${byStatus.new ?? 0})` },
+              { key: 'acknowledged',  label: `Ack (${byStatus.acknowledged ?? 0})` },
+              { key: 'investigating', label: `Investigating (${byStatus.investigating ?? 0})` },
+              { key: 'resolved',      label: `Resolved (${byStatus.resolved ?? 0})` },
+              { key: 'false_positive', label: `FP (${byStatus.false_positive ?? 0})` },
+            ]}
+            value={statusFilter}
+            onChange={v => setStatusFilter(v as typeof statusFilter)}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <SignalFilterRow
+            label="Severity"
+            options={[
+              { key: 'all',      label: `All` },
+              { key: 'critical', label: `Critical (${bySeverity.critical ?? 0})` },
+              { key: 'high',     label: `High (${bySeverity.high ?? 0})` },
+              { key: 'medium',   label: `Medium (${bySeverity.medium ?? 0})` },
+              { key: 'low',      label: `Low (${bySeverity.low ?? 0})` },
+            ]}
+            value={severityFilter}
+            onChange={v => setSeverityFilter(v as typeof severityFilter)}
+          />
+        </div>
+      </DeepCard>
+
+      {filtered.length === 0 ? (
+        <DeepCard padding="lg">
+          <div className="text-center text-sm text-[var(--text-secondary)] py-8">
+            {signals.length === 0
+              ? 'No signals for this brand yet. Scanners + abuse mailbox + spam-trap captures will land here as they fire.'
+              : 'No signals match these filters.'}
+          </div>
+        </DeepCard>
+      ) : (
+        <DeepCard padding="lg">
+          <div className="space-y-2">
+            {filtered.map((signal) => <AlertRow key={signal.id} alert={signal} />)}
+          </div>
+        </DeepCard>
+      )}
+    </div>
+  );
+}
+
+function SignalFilterRow({
+  label, options, value, onChange,
+}: {
+  label: string;
+  options: Array<{ key: string; label: string }>;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[10px] uppercase tracking-widest font-mono text-[var(--text-tertiary)] mr-1">
+        {label}
+      </span>
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={() => onChange(opt.key)}
+          className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors ${
+            value === opt.key
+              ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+              : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85'
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

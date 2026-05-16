@@ -1,11 +1,17 @@
-// Tenant Alerts inbox.
+// Tenant Signals inbox.
 //
-// Shows alerts across the org's brands with severity + status pills.
-// Backed by GET /api/orgs/:orgId/alerts.
+// NX3: this page was previously labelled "Alerts". The underlying
+// table is still `alerts` (rename deferred to NXF1) and the API path
+// is still `/api/orgs/:orgId/alerts` — only the user-facing language
+// is "Signals" on the tenant side, reflecting the conceptual model
+// that these are brand-signals belonging to the tenant, not ops alerts.
+//
+// Shows brand signals across the org's brands with severity + status
+// pills. Backed by GET /api/orgs/:orgId/alerts.
 //
 // Phase B sprint 2 — viewer-only for now. Mutations (acknowledge,
 // resolve, false-positive) port in subsequent sprints once the
-// per-alert detail page lands.
+// per-signal detail page lands.
 
 import { useState } from 'react';
 import { AlertTriangle, ShieldCheck, Bell, type LucideIcon } from 'lucide-react';
@@ -39,9 +45,9 @@ export function Alerts() {
   return (
     <div className="max-w-6xl space-y-6">
       <header>
-        <h1 className="text-[28px] font-bold text-white tracking-tight">Alerts</h1>
+        <h1 className="text-[28px] font-bold text-white tracking-tight">Signals</h1>
         <p className="mt-1 text-sm text-white/55">
-          Action-required findings for your brands. Sorted by severity, then recency.
+          Brand signals — impersonations, typosquats, email security drift, dark-web mentions. Sorted by severity, then recency.
         </p>
       </header>
 
@@ -219,23 +225,23 @@ function EmptyState({ status, severity }: { status: StatusFilter; severity: Seve
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-8 text-center">
       <ShieldCheck size={28} className="mx-auto text-white/30 mb-2" />
       <p className="text-sm text-white/70">
-        {filtersOn ? 'No alerts match these filters.' : 'No new alerts.'}
+        {filtersOn ? 'No signals match these filters.' : 'No new signals.'}
       </p>
       <p className="text-[11px] text-white/40 mt-1">
-        {filtersOn ? 'Try widening severity or status.' : 'You\'re caught up. New findings will land here.'}
+        {filtersOn ? 'Try widening severity or status.' : 'You\'re caught up. New brand signals will land here.'}
       </p>
     </div>
   );
 }
 
 function Loading() {
-  return <div className="text-white/40 text-sm font-mono py-12 text-center">Loading alerts…</div>;
+  return <div className="text-white/40 text-sm font-mono py-12 text-center">Loading signals…</div>;
 }
 
 function ErrorState({ error }: { error: string }) {
   return (
     <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
-      <h3 className="text-sm font-semibold text-white/90">Couldn't load alerts</h3>
+      <h3 className="text-sm font-semibold text-white/90">Couldn't load signals</h3>
       <p className="text-[12px] text-white/55 mt-1">{error}</p>
     </div>
   );

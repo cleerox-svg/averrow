@@ -144,7 +144,7 @@ function HeadlineStats({
         tone={dashboard.total_active_threats > 0 ? 'warn' : 'neutral'}
       />
       <Stat
-        label="Open alerts"
+        label="Open signals"
         value={dashboard.total_alerts_open}
         icon={AlertTriangle}
         tone={dashboard.total_alerts_open > 0 ? 'warn' : 'neutral'}
@@ -305,7 +305,7 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-white/90">Recent alerts</h2>
+        <h2 className="text-sm font-semibold text-white/90">Recent signals</h2>
         <Link to="/alerts" className="text-[11px] font-mono text-amber hover:underline">View all →</Link>
       </div>
       <div className="space-y-2">

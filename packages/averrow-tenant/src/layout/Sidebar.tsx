@@ -79,7 +79,7 @@ export function Sidebar() {
           </NavLink>
           <NavLink to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <AlertTriangle size={16} />
-            <span>Alerts</span>
+            <span>Signals</span>
           </NavLink>
           <NavLink to="/notifications" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Bell size={16} />
