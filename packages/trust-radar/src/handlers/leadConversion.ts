@@ -129,6 +129,7 @@ export async function handleConvertLeadToTenant(
   env: Env,
   leadId: string,
   userId: string,
+  workerCtx?: ExecutionContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -224,6 +225,17 @@ export async function handleConvertLeadToTenant(
       await env.DB.prepare(
         "INSERT INTO org_brands (org_id, brand_id, is_primary) VALUES (?, ?, 1)",
       ).bind(orgId, brandId).run();
+      // NX2: when an org claims a brand, retro-populate the last 90 days of
+      // alerts from the source tables so the tenant's Signals tab shows
+      // history immediately. Fire-and-forget via waitUntil so the response
+      // returns instantly; idempotent if it runs again on retry.
+      if (workerCtx) {
+        const { backfillAlertsForBrand } = await import("../lib/alert-backfill");
+        workerCtx.waitUntil(
+          backfillAlertsForBrand(env, brandId).catch(err =>
+            console.error('[leadConversion] alert backfill failed:', err)),
+        );
+      }
     } catch { /* dup, fine */ }
 
     // monitored_brands row links brand -> tenant scope. Per product spec,
