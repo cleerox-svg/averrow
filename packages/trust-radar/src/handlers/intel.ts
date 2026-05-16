@@ -383,3 +383,227 @@ export async function handleIntelHotlist(request: Request, env: Env): Promise<Re
   }
 }
 
+// ─── Critical Intel Banner ─────────────────────────────────────
+//
+// GET /api/intel/critical-banner
+//
+// Powers the red "Critical Intelligence" banner on Home. Replaces
+// the bare `alertStats.critical` count which conflated severity
+// (242 critical-by-rule alerts) with operator concern (3 open
+// alerts in the triage queue). The audit (2026-05-16) found those
+// two numbers diverging visibly across Home tiles.
+//
+// New treatment: surface the SINGLE most-urgent business-level
+// event right now, with a precise drill-down link instead of the
+// generic /alerts dump. Sources ranked by impact:
+//
+//   1. Provider surge  — most recent platform_provider_escalation
+//      notification fired in last 24h (Cloudflare 17× spike, etc.)
+//   2. Recent burst    — same brand + ≥25 threats in 1h, last 24h
+//   3. Mass-impersonation IP — `cluster_ip_*` cluster created in
+//      last 24h with brand_count ≥ 100 (PR-D auto-clusterer)
+//   4. New campaign    — `campaigns` row with first_seen in last
+//      24h AND threat_count ≥ 50
+//   5. Open critical alerts — `alerts WHERE severity='critical'
+//      AND status='new'` count (fallback path; matches what
+//      operators actually triage)
+//
+// KV-cached 60s — operators want freshness but the underlying
+// queries are bounded scans.
+export async function handleIntelCriticalBanner(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const cacheKey = "intel:critical-banner:v1";
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) return json(JSON.parse(cached), 200, origin);
+
+    const events: Array<{
+      kind: string;
+      title: string;
+      subtitle: string;
+      link: string;
+      severity: "critical" | "high" | "medium";
+      ts: string;
+    }> = [];
+
+    // 1. Provider surge — read the most recent
+    // platform_provider_escalation notification. FlightControl
+    // emits these with 24h dedup, so each row is a fresh surge
+    // worth surfacing.
+    try {
+      const surge = await env.DB.prepare(`
+        SELECT id, title, message, severity, link, created_at
+          FROM notifications
+         WHERE type = 'platform_provider_escalation'
+           AND created_at >= datetime('now', '-24 hours')
+         ORDER BY created_at DESC
+         LIMIT 1
+      `).first<{
+        id: string;
+        title: string;
+        message: string;
+        severity: string;
+        link: string | null;
+        created_at: string;
+      }>();
+      if (surge) {
+        events.push({
+          kind: "provider_surge",
+          title: surge.title,
+          subtitle: surge.message,
+          link: surge.link ?? "/providers",
+          severity: (surge.severity === "critical" ? "critical" : "high"),
+          ts: surge.created_at,
+        });
+      }
+    } catch { /* notifications table missing — skip */ }
+
+    // 2. Recent temporal burst — same brand + ≥25 threats in 1h.
+    try {
+      const burst = await env.DB.prepare(`
+        SELECT target_brand_id                          AS brand_id,
+               strftime('%Y-%m-%d %H:00', first_seen)   AS hour_bucket,
+               COUNT(*)                                  AS threat_count,
+               COUNT(DISTINCT malicious_domain)          AS distinct_domains
+          FROM threats
+         WHERE status = 'active'
+           AND first_seen >= datetime('now', '-24 hours')
+           AND target_brand_id IS NOT NULL
+         GROUP BY brand_id, hour_bucket
+        HAVING threat_count >= 25
+         ORDER BY threat_count DESC
+         LIMIT 1
+      `).first<{
+        brand_id: string;
+        hour_bucket: string;
+        threat_count: number;
+        distinct_domains: number;
+      }>();
+      if (burst) {
+        const brand = await env.DB.prepare(
+          `SELECT name FROM brands WHERE id = ? LIMIT 1`,
+        ).bind(burst.brand_id).first<{ name: string }>();
+        const brandName = brand?.name ?? burst.brand_id;
+        events.push({
+          kind: "burst",
+          title: `Burst: ${brandName}`,
+          subtitle:
+            `${burst.threat_count} threats / ${burst.distinct_domains} domains in 1h window (${burst.hour_bucket})`,
+          link: `/brands/${encodeURIComponent(burst.brand_id)}`,
+          severity: "critical",
+          ts: burst.hour_bucket,
+        });
+      }
+    } catch { /* skip */ }
+
+    // 3. New mass-impersonation IP cluster (PR-D fan-out clusters).
+    try {
+      const massImp = await env.DB.prepare(`
+        SELECT id, cluster_name, brand_ids, threat_count, first_detected
+          FROM infrastructure_clusters
+         WHERE id LIKE 'cluster_ip_%'
+           AND first_detected >= datetime('now', '-24 hours')
+         ORDER BY threat_count DESC
+         LIMIT 1
+      `).first<{
+        id: string;
+        cluster_name: string | null;
+        brand_ids: string | null;
+        threat_count: number;
+        first_detected: string;
+      }>();
+      if (massImp) {
+        let brandCount = 0;
+        try {
+          const parsed = massImp.brand_ids ? JSON.parse(massImp.brand_ids) : [];
+          brandCount = Array.isArray(parsed) ? parsed.length : 0;
+        } catch { /* malformed JSON — leave at 0 */ }
+        if (brandCount >= 100) {
+          events.push({
+            kind: "mass_impersonation_ip",
+            title: massImp.cluster_name ?? "Mass-impersonation infrastructure",
+            subtitle: `${brandCount} brands targeted from one IP — ${massImp.threat_count.toLocaleString()} active threats`,
+            link: `/operations/${encodeURIComponent(massImp.id)}`,
+            severity: "high",
+            ts: massImp.first_detected,
+          });
+        }
+      }
+    } catch { /* skip */ }
+
+    // 4. New high-volume campaign in last 24h.
+    try {
+      const camp = await env.DB.prepare(`
+        SELECT id, name, threat_count, brand_count, first_seen
+          FROM campaigns
+         WHERE first_seen >= datetime('now', '-24 hours')
+           AND threat_count >= 50
+           AND status = 'active'
+         ORDER BY threat_count DESC
+         LIMIT 1
+      `).first<{
+        id: string;
+        name: string;
+        threat_count: number;
+        brand_count: number;
+        first_seen: string;
+      }>();
+      if (camp) {
+        events.push({
+          kind: "new_campaign",
+          title: `New campaign: ${camp.name}`,
+          subtitle:
+            `${camp.threat_count.toLocaleString()} threats across ${camp.brand_count} brand${camp.brand_count === 1 ? "" : "s"} in 24h`,
+          link: `/campaigns/${encodeURIComponent(camp.id)}`,
+          severity: "high",
+          ts: camp.first_seen,
+        });
+      }
+    } catch { /* skip */ }
+
+    // 5. Fallback: open critical alerts the operator hasn't triaged.
+    // Only surface this when nothing else is critical — operators
+    // care more about new dangers than the open-queue depth.
+    if (events.length === 0) {
+      try {
+        const openCrit = await env.DB.prepare(`
+          SELECT COUNT(*) AS n
+            FROM alerts
+           WHERE severity = 'critical'
+             AND status = 'new'
+        `).first<{ n: number }>();
+        const n = openCrit?.n ?? 0;
+        if (n > 0) {
+          events.push({
+            kind: "open_critical_alerts",
+            title: `${n} open critical alert${n === 1 ? "" : "s"}`,
+            subtitle: "Critical-severity alerts awaiting triage.",
+            link: "/alerts?severity=critical&status=new",
+            severity: "critical",
+            ts: new Date().toISOString(),
+          });
+        }
+      } catch { /* skip */ }
+    }
+
+    const body = {
+      success: true,
+      data: {
+        events: events.slice(0, 3),
+        total: events.length,
+        generated_at: new Date().toISOString(),
+      },
+    };
+    await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 60 });
+    return json(body, 200, origin);
+  } catch (err) {
+    return json({
+      success: false,
+      error: err instanceof Error ? err.message : "An internal error occurred",
+    }, 500, origin);
+  }
+}
+

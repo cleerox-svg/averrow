@@ -33,6 +33,7 @@ import {
   handleListBreaches, handleListATOEvents, handleUpdateATOEvent,
   handleListEmailAuth, handleListCloudIncidents, handleTrustScoreHistory,
   handleIntelHotlist,
+  handleIntelCriticalBanner,
 } from "../handlers/intel";
 import {
   handleProviderStats, handleListProviders, handleWorstProviders, handleImprovingProviders, handleProviderMovers,
@@ -296,6 +297,16 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleIntelHotlist(request, env);
+  });
+
+  // ─── Intel: Critical banner (post-audit signal-alignment) ─────────
+  // Powers the red "Critical Intelligence" banner on Home — replaces
+  // the bare alertStats.critical count with a prioritized event list
+  // (provider surges, bursts, mass-impersonation IPs, new campaigns).
+  router.get("/api/intel/critical-banner", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleIntelCriticalBanner(request, env);
   });
 
   // ─── Intel: Breach Checks ─────────────────────────────────────────
