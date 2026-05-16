@@ -85,6 +85,11 @@ function buildInviteEmail(params: InviteEmailParams): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- PR-BA: declare dark-mode awareness so Gmail mobile / iOS Mail
+       don't auto-invert our intentionally-dark brand palette. -->
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <style>:root{color-scheme:light dark;supported-color-schemes:light dark;}</style>
   <title>You've been invited to ${orgName} on Averrow</title>
 </head>
 <body style="margin:0;padding:0;background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">

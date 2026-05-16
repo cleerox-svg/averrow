@@ -421,6 +421,25 @@ export default {
         });
       }
 
+      // GET /api/internal/cf-zone-introspect?zone=<hostname>
+      //
+      // Read-only Cloudflare zone debug. Uses the worker's existing
+      // CF_API_TOKEN to enumerate DNS records, Workers Routes, Page
+      // Rules, and Custom WAF rules for the given zone, plus probes
+      // the public URL to see exactly what the edge returns right
+      // now (including any x-deny-reason header). Each CF section
+      // fails independently with the CF error message so missing
+      // scopes are diagnosable from the response.
+      if (url.pathname === '/api/internal/cf-zone-introspect' && request.method === 'GET') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { handleCfZoneIntrospect } = await import('./handlers/cfZoneIntrospect');
+        return handleCfZoneIntrospect(request, env);
+      }
+
       if (url.pathname.startsWith('/api/internal/agents/') && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');

@@ -271,7 +271,13 @@ function buildBriefingHtml(
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<!-- PR-BA: declare dark-mode awareness so Gmail mobile / iOS Mail
+     don't auto-invert our intentionally-dark brand palette. -->
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<style>:root{color-scheme:light dark;supported-color-schemes:light dark;}</style>
+</head>
 <body style="margin:0;padding:0;background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#080C14;">
 <tr><td align="center" style="padding:24px 16px;">

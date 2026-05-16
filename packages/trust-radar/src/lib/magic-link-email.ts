@@ -66,7 +66,13 @@ export async function sendMagicLinkEmail(
 function buildHtml({ signInUrl, ipAddress, userAgent }: MagicLinkEmailParams): string {
   // Single-column responsive table; works in Gmail / Outlook / Apple Mail.
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Your Averrow sign-in link</title></head>
+<html><head><meta charset="utf-8"><title>Your Averrow sign-in link</title>
+<!-- PR-BA: declare dark-mode awareness so Gmail mobile / iOS Mail
+     don't auto-invert our intentionally-dark brand palette. -->
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<style>:root{color-scheme:light dark;supported-color-schemes:light dark;}</style>
+</head>
 <body style="margin:0;padding:0;background:#060A14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:rgba(255,255,255,0.92);">
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#060A14;padding:32px 16px;">
     <tr>
