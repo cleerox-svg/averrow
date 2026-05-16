@@ -312,19 +312,29 @@ export interface ExtractedAttachmentRow {
 }
 
 export interface AbuseInboxMessageDetail extends AbuseInboxMessageRow {
-  raw_body:         string | null;
-  raw_headers:      Record<string, string> | null;
-  extracted_urls:   ExtractedUrlRow[]        | null;
-  attachment_names: ExtractedAttachmentRow[] | null;
-  raw_size_bytes:   number | null;
+  raw_body:              string | null;
+  raw_headers:           Record<string, string> | null;
+  extracted_urls:        ExtractedUrlRow[]        | null;
+  attachment_names:      ExtractedAttachmentRow[] | null;
+  raw_size_bytes:        number | null;
+  // PR-AX
+  auth_results:          { spf: string | null; dkim: string | null; dmarc: string | null } | null;
+  sender_ip:             string | null;
+  correlated_threat_ids: string[] | null;
+  promoted_threat_ids:   string[] | null;
 }
 
 interface AbuseInboxMessageDetailRow extends AbuseInboxMessageRow {
-  raw_body:         string | null;
-  raw_headers:      string | null;
-  extracted_urls:   string | null;
-  attachment_names: string | null;
-  raw_size_bytes:   number | null;
+  raw_body:              string | null;
+  raw_headers:           string | null;
+  extracted_urls:        string | null;
+  attachment_names:      string | null;
+  raw_size_bytes:        number | null;
+  // PR-AX
+  auth_results:          string | null;
+  sender_ip:             string | null;
+  correlated_threat_ids: string | null;
+  promoted_threat_ids:   string | null;
 }
 
 function safeJsonParse<T>(value: string | null): T | null {
@@ -374,7 +384,8 @@ export async function handleGetAbuseInboxMessageDetail(
             classification_reason, ai_assessment, ai_action,
             severity, status, ack_sent_at, determination_sent_at,
             COALESCE(throttled, 0) AS throttled, throttle_reason,
-            raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes
+            raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes,
+            auth_results, sender_ip, correlated_threat_ids, promoted_threat_ids
      FROM abuse_inbox_messages
      WHERE id = ? AND org_id = ?`,
   ).bind(messageId, orgIdNum).first<AbuseInboxMessageDetailRow>();
@@ -385,9 +396,12 @@ export async function handleGetAbuseInboxMessageDetail(
 
   const detail: AbuseInboxMessageDetail = {
     ...row,
-    raw_headers:      safeJsonParse<Record<string, string>>(row.raw_headers),
-    extracted_urls:   safeJsonParse<ExtractedUrlRow[]>(row.extracted_urls),
-    attachment_names: safeJsonParse<ExtractedAttachmentRow[]>(row.attachment_names),
+    raw_headers:           safeJsonParse<Record<string, string>>(row.raw_headers),
+    extracted_urls:        safeJsonParse<ExtractedUrlRow[]>(row.extracted_urls),
+    attachment_names:      safeJsonParse<ExtractedAttachmentRow[]>(row.attachment_names),
+    auth_results:          safeJsonParse<{ spf: string | null; dkim: string | null; dmarc: string | null }>(row.auth_results),
+    correlated_threat_ids: safeJsonParse<string[]>(row.correlated_threat_ids),
+    promoted_threat_ids:   safeJsonParse<string[]>(row.promoted_threat_ids),
   };
 
   return json({ success: true, data: detail }, 200, origin);

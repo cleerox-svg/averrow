@@ -468,6 +468,9 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         </div>
       )}
 
+      {/* PR-AX — Platform intelligence (auth + sender IP + correlations + promotions) */}
+      <PlatformIntelSection detail={detail} loading={detailQ.isLoading} />
+
       {/* PR-AS — Raw capture sections (Body / URLs / Headers / Attachments) */}
       <RawCaptureSections detailQ={detailQ} detail={detail} snippet={message.original_body_snippet} />
 
@@ -500,6 +503,95 @@ function UnthrottleButton({ messageId }: { messageId: string }) {
     >
       {mutate.isPending ? 'unthrottling…' : 'unthrottle + reprocess'}
     </button>
+  );
+}
+
+// ─── PR-AX platform-intelligence section ─────────────────────────
+//
+// Surfaces the IOC bridge added in PR-AX: email auth (SPF/DKIM/DMARC),
+// most-external sender IP from the Received chain, count of URLs that
+// correlate to existing platform threats, and any threats we PROMOTED
+// from this submission on confirmed phishing/malware verdicts.
+function PlatformIntelSection({
+  detail, loading,
+}: {
+  detail: AdminAbuseInboxMessageDetail | null | undefined;
+  loading: boolean;
+}) {
+  if (loading || !detail) return null;
+  const auth = detail.auth_results;
+  const senderIp = detail.sender_ip;
+  const correlatedCount = detail.correlated_threat_ids?.length ?? 0;
+  const promotedCount   = detail.promoted_threat_ids?.length ?? 0;
+  const hasAnything = auth || senderIp || correlatedCount > 0 || promotedCount > 0;
+  if (!hasAnything) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Platform intelligence</div>
+      <div
+        className="rounded-lg p-3 grid grid-cols-1 md:grid-cols-2 gap-3"
+        style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.05)' }}
+      >
+        {auth && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Email auth</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <AuthPill label="SPF"   verdict={auth.spf} />
+              <AuthPill label="DKIM"  verdict={auth.dkim} />
+              <AuthPill label="DMARC" verdict={auth.dmarc} />
+            </div>
+          </div>
+        )}
+        {senderIp && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Sender IP</div>
+            <code className="text-[12px] font-mono text-white/90 break-all">{senderIp}</code>
+          </div>
+        )}
+        {correlatedCount > 0 && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
+            <div className="text-[12px] text-white/90">
+              <span style={{ color: '#fbbf24', fontWeight: 600 }}>{correlatedCount}</span> URL/domain
+              {correlatedCount === 1 ? '' : 's'} already in threat intel
+            </div>
+          </div>
+        )}
+        {promotedCount > 0 && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Promoted to platform</div>
+            <div className="text-[12px] text-white/90">
+              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{promotedCount}</span> threat
+              {promotedCount === 1 ? '' : 's'} written
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AuthPill({ label, verdict }: { label: string; verdict: string | null }) {
+  if (!verdict) {
+    return (
+      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/40">
+        {label}: —
+      </span>
+    );
+  }
+  const isPass = verdict === 'pass';
+  const isFail = verdict === 'fail' || verdict === 'permerror';
+  const color  = isPass ? 'var(--green)' : isFail ? '#f87171' : '#fbbf24';
+  const bg     = isPass ? 'rgba(60,184,120,0.10)' : isFail ? 'rgba(239,68,68,0.10)' : 'rgba(229,168,50,0.10)';
+  const border = isPass ? 'rgba(60,184,120,0.30)' : isFail ? 'rgba(239,68,68,0.30)' : 'rgba(229,168,50,0.30)';
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
+      style={{ color, background: bg, borderColor: border }}
+    >
+      {label}: {verdict}
+    </span>
   );
 }
 

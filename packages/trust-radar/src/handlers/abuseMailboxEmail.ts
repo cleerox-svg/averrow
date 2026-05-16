@@ -30,6 +30,9 @@
 
 import type { Env } from "../types";
 import { decideAbuseMailboxThrottle, extractSenderDomain } from "../lib/abuse-mailbox-throttle";
+import {
+  parseAuthResults, parseSenderIp, correlateUrls,
+} from "../lib/abuse-mailbox-iocs";
 
 interface EmailMessage {
   from:     string;
@@ -128,6 +131,18 @@ export async function handleAbuseMailboxEmail(
   const urlsJson        = capJson(extractedUrls.slice(0, URL_LIST_MAX_ENTRIES), URLS_STORE_MAX);
   const attachmentsJson = capJson(attachmentList.slice(0, ATTACHMENT_MAX_ENTRIES), ATTACHMENTS_STORE_MAX);
 
+  // PR-AX: parse auth results + sender IP from headers (pure, zero D1),
+  // and correlate the extracted URLs against the platform's existing
+  // threat intel. Correlations stamp on the row so the classifier sees
+  // them and the UI can render "this URL is already known". Bounded
+  // at the first 20 URLs internally.
+  const authResults  = parseAuthResults(outerHeaders);
+  const senderIp     = parseSenderIp(outerHeaders);
+  const correlations = await correlateUrls(env, extractedUrls);
+  const correlatedThreatIds = correlations.map((c) => c.threat_id);
+  const authResultsJson     = JSON.stringify(authResults);
+  const correlatedIdsJson   = JSON.stringify(correlatedThreatIds);
+
   // 5b. Throttle decision (PR-AT bad-actor protection).
   //
   // Reads per-sender + per-domain rolling-60-min counts. When fired,
@@ -193,9 +208,10 @@ export async function handleAbuseMailboxEmail(
        attachment_count, url_count,
        raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes,
        throttled, throttle_reason,
+       auth_results, sender_ip, correlated_threat_ids,
        classification, severity, status,
        created_at, updated_at
-     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
@@ -214,6 +230,9 @@ export async function handleAbuseMailboxEmail(
     message.rawSize,
     throttle.throttled ? 1 : 0,
     throttle.reason,
+    authResultsJson,
+    senderIp,
+    correlatedIdsJson,
   ).run();
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────

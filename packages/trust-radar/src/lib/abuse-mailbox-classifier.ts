@@ -57,6 +57,13 @@ export interface AbuseClassifyContext {
   attachment_count:      number;
   brand_name:            string | null;
   brand_domain:          string | null;
+  // PR-AX — IOC signals fed into the prompt for higher-fidelity verdicts.
+  // All optional / nullable so legacy callers without PR-AX data still work.
+  url_list?:             ReadonlyArray<{ url: string; domain: string | null; count: number }> | null;
+  attachment_list?:      ReadonlyArray<{ filename: string; mime_type: string | null }> | null;
+  auth_results?:         { spf: string | null; dkim: string | null; dmarc: string | null } | null;
+  sender_ip?:            string | null;
+  correlated_threats_count?: number | null;
 }
 
 const SYSTEM_PROMPT = `You are a phishing analyst classifying forwarded suspicious emails.
@@ -112,6 +119,46 @@ export function buildClassifyPrompt(ctx: AbuseClassifyContext): string {
   if (ctx.original_subject) lines.push(`Subject: ${ctx.original_subject}`);
   lines.push(`URLs in body: ${ctx.url_count}`);
   lines.push(`Attachments: ${ctx.attachment_count}`);
+
+  // PR-AX — feed the structured IOC signals into the prompt when
+  // available. These materially improve the verdict on edge cases
+  // (auth-fail + body looks legit = still suspicious; auth-pass +
+  // urgent-tone body = often legit transactional mail).
+  if (ctx.auth_results) {
+    const a = ctx.auth_results;
+    const parts: string[] = [];
+    if (a.spf)   parts.push(`SPF=${a.spf}`);
+    if (a.dkim)  parts.push(`DKIM=${a.dkim}`);
+    if (a.dmarc) parts.push(`DMARC=${a.dmarc}`);
+    if (parts.length > 0) {
+      lines.push(`Email auth: ${parts.join(' / ')}`);
+    }
+  }
+  if (ctx.sender_ip) {
+    lines.push(`Sender IP (from Received chain): ${ctx.sender_ip}`);
+  }
+  if (ctx.url_list && ctx.url_list.length > 0) {
+    lines.push('');
+    lines.push('URLs (up to first 10):');
+    for (const u of ctx.url_list.slice(0, 10)) {
+      const domainBit = u.domain ? ` [${u.domain}]` : '';
+      const countBit  = u.count > 1 ? ` ×${u.count}` : '';
+      lines.push(`  - ${u.url}${domainBit}${countBit}`);
+    }
+  }
+  if (ctx.attachment_list && ctx.attachment_list.length > 0) {
+    lines.push('');
+    lines.push('Attachments:');
+    for (const a of ctx.attachment_list.slice(0, 10)) {
+      const mimeBit = a.mime_type ? ` (${a.mime_type})` : '';
+      lines.push(`  - ${a.filename}${mimeBit}`);
+    }
+  }
+  if (typeof ctx.correlated_threats_count === 'number' && ctx.correlated_threats_count > 0) {
+    lines.push('');
+    lines.push(`Platform correlation: ${ctx.correlated_threats_count} of these URLs/domains are already in our threat intelligence. This is a strong signal of an active or recurring campaign.`);
+  }
+
   if (ctx.original_body_snippet) {
     lines.push('');
     lines.push('Body snippet (truncated):');
@@ -199,6 +246,13 @@ export async function classifyAbuseMessageWithAI(
   }
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────
+
+function parseJsonSafe<T>(s: string | null | undefined): T | null {
+  if (!s) return null;
+  try { return JSON.parse(s) as T; } catch { return null; }
+}
+
 // ─── Backfill ────────────────────────────────────────────────────
 
 export interface ClassifyBackfillResult {
@@ -223,6 +277,14 @@ interface MessageRow {
   forwarded_by_email:    string | null;
   inbound_alias:         string | null;
   determination_sent_at: string | null;
+  // PR-AX: IOC signals + correlations + extracted lists for the
+  // enriched prompt + the promotion step. All JSON-encoded; parsed
+  // inline below before passing to the prompt builder.
+  extracted_urls:        string | null;
+  attachment_names:      string | null;
+  auth_results:          string | null;
+  sender_ip:             string | null;
+  correlated_threat_ids: string | null;
 }
 
 interface BrandRow {
@@ -259,7 +321,9 @@ export async function runAbuseClassifierBackfill(
   const rows = await env.DB.prepare(`
     SELECT id, org_id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
-           forwarded_by_email, inbound_alias, determination_sent_at
+           forwarded_by_email, inbound_alias, determination_sent_at,
+           extracted_urls, attachment_names, auth_results, sender_ip,
+           correlated_threat_ids
     FROM abuse_inbox_messages
     WHERE classification = 'pending'
       AND COALESCE(throttled, 0) = 0
@@ -292,6 +356,15 @@ export async function runAbuseClassifierBackfill(
   for (const m of rows.results) {
     const brand = m.brand_id ? brandMap.get(m.brand_id) ?? null : null;
 
+    // PR-AX — pull IOC signals + correlations into the prompt for
+    // better verdicts on edge cases. All JSON-parse failures degrade
+    // silently to null (legacy / partial rows still classify on
+    // whatever signals they DO carry).
+    const urlList         = parseJsonSafe<Array<{ url: string; domain: string | null; count: number }>>(m.extracted_urls);
+    const attachmentList  = parseJsonSafe<Array<{ filename: string; mime_type: string | null }>>(m.attachment_names);
+    const authResults     = parseJsonSafe<{ spf: string | null; dkim: string | null; dmarc: string | null }>(m.auth_results);
+    const correlatedIds   = parseJsonSafe<string[]>(m.correlated_threat_ids) ?? [];
+
     const verdict = await classifyAbuseMessageWithAI(env, {
       original_from:         m.original_from,
       original_subject:      m.original_subject,
@@ -300,6 +373,11 @@ export async function runAbuseClassifierBackfill(
       attachment_count:      m.attachment_count,
       brand_name:            brand?.name             ?? null,
       brand_domain:          brand?.canonical_domain ?? null,
+      url_list:              urlList,
+      attachment_list:       attachmentList,
+      auth_results:          authResults,
+      sender_ip:             m.sender_ip,
+      correlated_threats_count: correlatedIds.length,
     });
 
     if (!verdict) {
@@ -362,6 +440,38 @@ export async function runAbuseClassifierBackfill(
         // Failures / suppressions logged inside sendDetermination.
       } catch (err) {
         console.warn(`[abuse-mailbox-classifier] determination send threw for ${m.id}:`, err);
+      }
+    }
+
+    // ─── PR-AX: promote to platform threats ─────────────────────
+    //
+    // On HIGH/CRITICAL phishing/malware verdicts, push the message's
+    // extracted URLs into the `threats` table. Deterministic threat
+    // id from threatId(source, type, value) keeps repeated reports
+    // idempotent. Stamps the new IDs back to the row so the UI can
+    // show "promoted to platform" with deep-links.
+    if (
+      (verdict.classification === "phishing" || verdict.classification === "malware") &&
+      (severity === "HIGH" || severity === "CRITICAL") &&
+      urlList && urlList.length > 0
+    ) {
+      try {
+        const { promoteToThreats } = await import("./abuse-mailbox-iocs");
+        const promotedIds = await promoteToThreats(env, {
+          urls: urlList,
+          classification: verdict.classification,
+          confidence:     verdict.confidence,
+          brandId:        m.brand_id,
+          senderIp:       m.sender_ip,
+          messageId:      m.id,
+        });
+        if (promotedIds.length > 0) {
+          await env.DB.prepare(
+            `UPDATE abuse_inbox_messages SET promoted_threat_ids = ? WHERE id = ?`,
+          ).bind(JSON.stringify(promotedIds), m.id).run();
+        }
+      } catch (err) {
+        console.warn(`[abuse-mailbox-classifier] threat promotion failed for ${m.id}:`, err);
       }
     }
 

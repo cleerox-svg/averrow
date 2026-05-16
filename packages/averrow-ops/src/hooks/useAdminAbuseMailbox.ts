@@ -111,11 +111,16 @@ export interface ExtractedAttachment {
 }
 
 export interface AdminAbuseInboxMessageDetail extends AdminAbuseInboxMessage {
-  raw_body:         string | null;
-  raw_headers:      Record<string, string> | null;
-  extracted_urls:   ExtractedUrl[]        | null;
-  attachment_names: ExtractedAttachment[] | null;
-  raw_size_bytes:   number | null;
+  raw_body:              string | null;
+  raw_headers:           Record<string, string> | null;
+  extracted_urls:        ExtractedUrl[]        | null;
+  attachment_names:      ExtractedAttachment[] | null;
+  raw_size_bytes:        number | null;
+  // PR-AX
+  auth_results:          { spf: string | null; dkim: string | null; dmarc: string | null } | null;
+  sender_ip:             string | null;
+  correlated_threat_ids: string[] | null;
+  promoted_threat_ids:   string[] | null;
 }
 
 /**

@@ -448,6 +448,8 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       )}
 
+      <TenantPlatformIntelSection detail={detail} loading={detailQ.isLoading} />
+
       <TenantRawCaptureSections detailQ={detailQ} detail={detail} snippet={m.original_body_snippet} />
 
       <div className="mt-4 pt-3 border-t border-white/[0.06]">
@@ -457,6 +459,87 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       </div>
     </article>
+  );
+}
+
+// ─── PR-AX platform-intelligence section (tenant parity) ────────
+
+function TenantPlatformIntelSection({
+  detail, loading,
+}: {
+  detail: AbuseInboxMessageDetail | null | undefined;
+  loading: boolean;
+}) {
+  if (loading || !detail) return null;
+  const auth = detail.auth_results;
+  const senderIp = detail.sender_ip;
+  const correlatedCount = detail.correlated_threat_ids?.length ?? 0;
+  const promotedCount   = detail.promoted_threat_ids?.length ?? 0;
+  const hasAnything = auth || senderIp || correlatedCount > 0 || promotedCount > 0;
+  if (!hasAnything) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Platform intelligence</div>
+      <div className="rounded-lg p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-black/20 border border-white/[0.05]">
+        {auth && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Email auth</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <TenantAuthPill label="SPF"   verdict={auth.spf} />
+              <TenantAuthPill label="DKIM"  verdict={auth.dkim} />
+              <TenantAuthPill label="DMARC" verdict={auth.dmarc} />
+            </div>
+          </div>
+        )}
+        {senderIp && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Sender IP</div>
+            <code className="text-[12px] font-mono text-white/90 break-all">{senderIp}</code>
+          </div>
+        )}
+        {correlatedCount > 0 && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
+            <div className="text-[12px] text-white/90">
+              <span className="text-amber font-semibold">{correlatedCount}</span> URL/domain
+              {correlatedCount === 1 ? '' : 's'} already in threat intel
+            </div>
+          </div>
+        )}
+        {promotedCount > 0 && (
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Promoted to platform</div>
+            <div className="text-[12px] text-white/90">
+              <span className="text-green font-semibold">{promotedCount}</span> threat
+              {promotedCount === 1 ? '' : 's'} written
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TenantAuthPill({ label, verdict }: { label: string; verdict: string | null }) {
+  if (!verdict) {
+    return (
+      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/40">
+        {label}: —
+      </span>
+    );
+  }
+  const isPass = verdict === 'pass';
+  const isFail = verdict === 'fail' || verdict === 'permerror';
+  const tone = isPass
+    ? 'text-green bg-green/[0.10] border-green/[0.30]'
+    : isFail
+      ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.30]'
+      : 'text-amber bg-amber/[0.10] border-amber/[0.30]';
+  return (
+    <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${tone}`}>
+      {label}: {verdict}
+    </span>
   );
 }
 
