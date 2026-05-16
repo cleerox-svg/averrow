@@ -665,8 +665,8 @@ The N-series rewires this without breaking existing callers. Backend table names
 | NX2 — Tier gate + claim-time backfill | ✅ Landed | PR #1350 — `createAlert` tier gate on `brands.tier='tracked'`; `backfillAlertsForBrand()` in `lib/alert-backfill.ts` fires via `workerCtx.waitUntil` on the three org_brands insert paths; `enrichment_pipeline.alerts.by_tier` diagnostics |
 | NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed | ✅ Landed | PR #1351 — tenant sidebar/page/empty-state copy + Signals tab on `/v2/brands/:id` |
 | NX4 — Campaign / actor significance + tenant fanout | ✅ Landed | PR #1352 — `lib/campaign-significance.ts` + `lib/alert-fanout.ts`; strategist wires significance check + per-brand fanout; migration 0192 |
-| NX5 — Preferences UI + Notification Center admin page | 🟡 In progress | Three-section preferences grouping; super-admin `/v2/notifications/admin` page |
-| NX6 — Platform health wire-up | ⏳ Not started | Hook `platform_*` types into Flight Control / Navigator / feed circuit breaker / news_watcher |
+| NX5 — Preferences UI + Notification Center admin page | ✅ Landed | PR #1353 — cadence_intel + cadence_platform on prefs_v2; notification_type_mutes table; new `/v2/notifications/admin` page |
+| NX6 — Platform health wire-up | 🟡 In progress | Final un-wired `platform_*` types + threat_actor fanout readiness audit |
 | NXF1 — Table rename `alerts` → `brand_signals` | ⏳ Future, post-NX6 | Rename migration + code refactor. Held back until NX1–NX6 prove the model in production |
 
 When a session lands, update this table in the same PR.
