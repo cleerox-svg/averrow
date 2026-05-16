@@ -1770,8 +1770,9 @@ signal feed.
 | NX2 — Tier gate + claim-time backfill | `createAlert` skips when `brands.tier='tracked'`; new `backfillAlertsForBrand()` runs on org_brands insert. | ✅ Landed (PR #1350) |
 | NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed | Tenant SPA labels (backend table stays `alerts`); `/v2/brands/:id` gains a Signals tab. | ✅ Landed (PR #1351) |
 | NX4 — Campaign / actor significance + tenant fanout | `lib/campaign-significance.ts` (≥20 threats OR 3× spike); on pass: super_admin notification + per-brand tenant alerts. | ✅ Landed (PR #1352) |
-| NX5 — Preferences UI + Notification Center admin page | Three-section preferences (mandatory platform / opt-in intel / cadence); new `/v2/notifications/admin` page. | 🟡 In progress |
-| NX6 — Platform health wire-up | Hook the 8 enumerated `platform_*` types into Flight Control / Navigator / feed CB / news_watcher. | ⏳ Not started |
+| NX5 — Preferences UI + Notification Center admin page | Three-section preferences (mandatory platform / opt-in intel / cadence); new `/v2/notifications/admin` page. | ✅ Landed (PR #1353) |
+| NX6 — Platform health wire-up | Hook the remaining `platform_*` types into Flight Control + audit threat_actor fanout readiness. | 🟡 In progress |
+| NXF — Deferred wire-ups (post-NX6) | KV budget polling + worker CPU burst (needs schema) + Resend bounces (needs Resend API) + intel_threat_actor_surface (needs actor IP-inventory diff) + threat_actor_targets producer (needs scraper or admin UI insert path) | ⏳ Backlog |
 | NXF1 — Backend table rename `alerts` → `brand_signals` | Held back until NX1–NX6 prove the model in production. | ⏳ Future |
 
 See `RESTRUCTURE_SPEC.md` for the per-session file lists + acceptance

@@ -27,7 +27,12 @@ import {
   renderPlatformEnrichmentStuck,
   renderPlatformGeoipRefreshStalled,
   renderPlatformWorkflowDispatchSilent,
+  // NX6: previously-unwired templates.
+  renderPlatformD1BudgetWarn,
+  renderPlatformD1BudgetBreach,
+  renderPlatformFeedAtRisk,
 } from "../lib/platform-templates";
+import { getBudgetState, DAILY_BUDGET, WARN_THRESHOLD } from "../lib/d1-budget";
 import { getLastDispatchAt, getCooldownUntil } from "../lib/workflow-dispatch";
 import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
@@ -442,6 +447,73 @@ export const flightControlAgent: AgentModule = {
     } catch { /* notification failures never break FC */ }
 
     mark('ai_spend_emit');
+
+    // ── NX6: D1 daily-budget heartbeat ─────────────────────────────
+    // Polls the cached CF GraphQL value via lib/d1-budget.getBudgetState
+    // (refreshes at most hourly). Two-step alert: warn at 85% of plan,
+    // breach at 100%. Both daily-deduped via group_key in the templates
+    // so the bell rings once per day per state, not every FC tick.
+    try {
+      const budget = await getBudgetState(env);
+      if (budget && !budget.stale && budget.rowsRead24h > 0) {
+        const pctUsed = Math.round((budget.rowsRead24h / DAILY_BUDGET) * 100);
+        if (budget.rowsRead24h >= DAILY_BUDGET) {
+          await emitPlatformNotification(env, 'platform_d1_budget_breach',
+            renderPlatformD1BudgetBreach({
+              pct_used: pctUsed,
+              reads_today: budget.rowsRead24h,
+              daily_limit: DAILY_BUDGET,
+            })
+          );
+        } else if (budget.rowsRead24h >= WARN_THRESHOLD) {
+          await emitPlatformNotification(env, 'platform_d1_budget_warn',
+            renderPlatformD1BudgetWarn({
+              pct_used: pctUsed,
+              reads_today: budget.rowsRead24h,
+              daily_limit: DAILY_BUDGET,
+            })
+          );
+        }
+      }
+    } catch { /* notification failures never break FC */ }
+
+    mark('d1_budget_emit');
+
+    // ── NX6: feed-at-risk pre-warning ──────────────────────────────
+    // Fires for feeds whose consecutive_failures has reached >=60% of
+    // their auto-pause threshold but haven't yet auto-paused. Gives
+    // operators a heads-up before the circuit breaker trips. Dedup is
+    // (feed_name, today) via group_key in the template.
+    try {
+      const atRiskRows = await db.prepare(`
+        SELECT
+          fs.feed_name,
+          fc.display_name,
+          fs.consecutive_failures,
+          COALESCE(fc.consecutive_failure_threshold, 5) AS threshold
+        FROM feed_status fs
+        JOIN feed_configs fc ON fc.feed_name = fs.feed_name
+        WHERE fc.enabled = 1
+          AND fs.consecutive_failures >= COALESCE(fc.consecutive_failure_threshold, 5) * 0.6
+          AND fs.consecutive_failures < COALESCE(fc.consecutive_failure_threshold, 5)
+      `).all<{
+        feed_name: string; display_name: string;
+        consecutive_failures: number; threshold: number;
+      }>();
+      for (const row of atRiskRows.results) {
+        await emitPlatformNotification(env, 'platform_feed_at_risk',
+          renderPlatformFeedAtRisk({
+            feed_id: row.feed_name,
+            feed_name: row.display_name ?? row.feed_name,
+            consecutive_failures: row.consecutive_failures,
+            threshold: row.threshold,
+            pct_to_auto_pause: Math.round((row.consecutive_failures / row.threshold) * 100),
+          })
+        );
+      }
+    } catch { /* notification failures never break FC */ }
+
+    mark('feed_at_risk_emit');
 
     // ── Backlog B1: cron heartbeat self-monitors ─────────────────
     // FC itself runs in the orchestrator path, so if FC is running
