@@ -24,12 +24,12 @@ export function StatusRow() {
           type="button"
           onClick={() => navigate('/alerts')}
           className="home-critical-banner"
-          aria-label={`${criticalCount} critical alerts require attention`}
+          aria-label={`${criticalCount} critical signals require attention`}
         >
           <span className="home-critical-dot" aria-hidden />
           <span className="home-critical-text">
             <strong>{criticalCount.toLocaleString()}</strong>{' '}
-            critical alert{criticalCount === 1 ? '' : 's'} require attention
+            critical signal{criticalCount === 1 ? '' : 's'} require attention
           </span>
           <span className="home-critical-cta">View →</span>
         </button>
