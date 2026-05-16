@@ -32,6 +32,7 @@
 
 import type { Env } from '../types';
 import { cachedCount } from './cached-count';
+import { cachedValue } from './cached-value';
 
 // KV cache TTL — geographic data for a given IP changes on the order of
 // weeks/months. 24h is a good balance of freshness and cache hit rate.
@@ -262,10 +263,31 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
       // When the swap step runs, geo_ip_ranges_new is renamed to
       // geo_ip_ranges and this query throws. We catch and report
       // null for shadow_row_count when that happens.
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges_new`)
-        .first<{ n: number }>()
-        .catch(() => null),
+      //
+      // KV-cached with a short 30s TTL because during refresh the
+      // table grows to 3.5M+ rows and concurrent COUNT(*) scans
+      // saturate D1 / risk worker timeout. Production 2026-05-16
+      // 19:45 UTC: an admin clicked the GeoIP card mid-refresh and
+      // the worker timed out trying to COUNT a 3.5M-row actively-
+      // written table, returning an empty 500 that surfaced as
+      // "Failed to load detail" in the operator UI. 30s TTL is short
+      // enough that operators watching shadow progress still see it
+      // tick, but bounds the underlying scan to ≤2 calls/min.
+      cachedValue<number | null>(
+        env,
+        'count.geo_ip_ranges_new.shadow',
+        30,
+        async () => {
+          try {
+            const r = await db
+              .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges_new`)
+              .first<{ n: number }>();
+            return r?.n ?? null;
+          } catch {
+            return null;
+          }
+        },
+      ).then((n) => (n != null ? { n } : null)),
       db.prepare(`
         SELECT completed_at, status, source, rows_written, duration_ms, error_message
         FROM geo_ip_refresh_log

@@ -851,13 +851,28 @@ export async function handlePipelineDetail(
 
   const cacheKey = `pipeline_detail:${pipelineId}:v1`;
   const cached = await env.CACHE.get(cacheKey);
-  if (cached) return json(JSON.parse(cached), 200, origin);
+  if (cached) {
+    try {
+      return json(JSON.parse(cached), 200, origin);
+    } catch (err) {
+      console.error(`[pipeline-detail] corrupt cache for ${cacheKey}, recomputing:`, err);
+      await env.CACHE.delete(cacheKey);
+    }
+  }
 
   // Geoip is special — its "backlog" is row count, not a draining
   // queue. Detail-sheet treatment is the same shape, just with
   // different prose.
   if (pipelineId === 'geoip') {
-    return handleGeoipDetail(request, env, origin);
+    try {
+      return await handleGeoipDetail(request, env, origin);
+    } catch (err) {
+      console.error('[pipeline-detail] handleGeoipDetail threw:', err);
+      return json({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      }, 500, origin);
+    }
   }
 
   const meta = PIPELINE_META[pipelineId];
