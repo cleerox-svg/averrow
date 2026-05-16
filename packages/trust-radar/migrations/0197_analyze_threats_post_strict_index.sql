@@ -1,0 +1,42 @@
+-- 0197_analyze_threats_post_strict_index.sql
+--
+-- D1 spend reduction follow-up to migration 0195. The strict partial
+-- index `idx_threats_dns_pending_strict` was created but ANALYZE was
+-- not run, so SQLite's planner has no statistics for it and falls
+-- back to picking `idx_threats_ip_source_feed` (which covers the
+-- whole threats table by ip_address) for the cartographer DNS
+-- backfill queries.
+--
+-- Diagnostic captured 2026-05-16 19:30 UTC via EXPLAIN QUERY PLAN
+-- against production a3776a5f:
+--
+--   UPDATE threats SET attempted_resolve_at = datetime('now')
+--   WHERE malicious_domain IN (?,?,?) AND ip_address IS NULL
+--     AND status='active' AND COALESCE(enrichment_attempts,0) < 8;
+--
+--   Plan: SEARCH threats USING INDEX idx_threats_ip_source_feed
+--         (ip_address=?)              ← wrong index, scans ~121K rows
+--
+-- With INDEXED BY idx_threats_dns_pending_strict the planner produces:
+--   SEARCH threats USING INDEX idx_threats_dns_pending_strict
+--         (malicious_domain=?)        ← 3-row seek, the right plan
+--
+-- sqlite_stat1 confirmed the strict index has no entry — other DNS
+-- partial indexes do, the new one doesn't because PR 0195's
+-- migration didn't include ANALYZE.
+--
+-- Migration 0123 (idx_threats_ip_source_feed) and 0100 (the previous
+-- DNS partial indexes) BOTH end with ANALYZE for exactly this reason.
+-- 0195 missed it. This migration corrects the omission.
+--
+-- Expected impact (24h sliding window measured by platform diagnostics):
+--   UPDATE threats SET attempted_resolve_at  — 160M reads → ~5M reads
+--   UPDATE threats SET enrichment_attempts++  — 66M reads → ~3M reads
+--   SELECT DISTINCT malicious_domain (DNS)    — 127M reads → ~5M reads
+-- Combined ~350M reads/day eliminated, ~42% of plan budget.
+--
+-- ANALYZE on the threats table reads every index once; D1 charges
+-- this as ~1M reads (the size of the largest index). One-shot cost,
+-- amortized across every subsequent query.
+
+ANALYZE threats;
