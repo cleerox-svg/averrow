@@ -197,8 +197,8 @@ export async function identifyAndCreate(env: Env): Promise<{
 }> {
   // Get brands with their latest email security grade, excluding already-monitored
   // orgs and leads created in the last 90 days
-  // Pull candidates with firmographics joined. The LEFT JOIN means brands
-  // without firmographic data still appear — they just have NULLs that
+  // Pull candidates with firmographics joined. The outer-join semantics
+  // retain brands without firmographic rows — they just have NULLs that
   // the UI hides. Buying-signal columns (cyber_10k_mentions, breach,
   // recent news) live on the same row and ride along for free.
   let emailGrades: { results: Array<{
@@ -767,6 +767,7 @@ export const pathfinderAgent: AgentModule = {
   budget: { monthlyTokenCap: 1_000_000 },
   reads: [
     { kind: "kv", namespace: "CACHE" },
+    { kind: "d1_table", name: "brand_firmographics" },
     { kind: "d1_table", name: "brand_threat_assessments" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "email_security_scans" },
