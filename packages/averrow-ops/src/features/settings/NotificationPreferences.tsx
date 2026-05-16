@@ -428,50 +428,59 @@ export function NotificationPreferences() {
         </div>
       </Card>
 
-      {/* 4. PER-BRAND SUBSCRIPTIONS ──────────────────────────────────── */}
-      <PanelHeader title="Subscriptions" subtitle="Override delivery floors for specific brands you watch" icon={<Building2 size={14} />} />
-      <Card hover={false}>
-        {subscriptions.length === 0 ? (
-          <div className="text-xs py-3 text-center" style={{ color: 'var(--text-tertiary)' }}>
-            No brand subscriptions yet. Add a brand to your monitored list and it auto-appears here.
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {subscriptions.map((s) => (
-              <div key={s.brand_id}
-                className="flex items-center justify-between gap-3 py-1.5 px-2 rounded"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-base)' }}>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                    {s.brand_name ?? s.brand_id}
-                  </div>
-                </div>
-                <select
-                  value={s.level}
-                  onChange={(e) => updateSub.mutate({ brandId: s.brand_id, level: e.target.value as SubscriptionLevel })}
-                  className="text-[11px] font-mono px-2 py-1 rounded"
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: 'var(--text-primary)' }}
-                >
-                  {SUBSCRIPTION_LEVELS.map((l) => (
-                    <option key={l.value} value={l.value}>{l.label}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => deleteSub.mutate(s.brand_id)}
-                  className="p-1 rounded hover:bg-white/[0.05] transition-colors"
-                  aria-label="Remove subscription"
-                  title="Remove subscription"
-                >
-                  <Trash2 size={14} style={{ color: 'var(--text-tertiary)' }} />
-                </button>
+      {/* 4. PER-BRAND SUBSCRIPTIONS ──────────────────────────────────────
+          Hidden for super_admins — they cover all brands platform-wide via
+          show_tenant_notifications + the admin alerts surface, so a
+          per-brand watch toggle is noise (the typical super_admin has
+          hundreds of "Default" rows nobody manages). Tenant users still
+          see this panel because individual brand watches matter for them. */}
+      {!isSuperAdmin && (
+        <>
+          <PanelHeader title="Subscriptions" subtitle="Override delivery floors for specific brands you watch" icon={<Building2 size={14} />} />
+          <Card hover={false}>
+            {subscriptions.length === 0 ? (
+              <div className="text-xs py-3 text-center" style={{ color: 'var(--text-tertiary)' }}>
+                No brand subscriptions yet. Add a brand to your monitored list and it auto-appears here.
               </div>
-            ))}
-          </div>
-        )}
-        <div className="mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-          Watching = always notify · Default = use severity floors · Ignored = never notify
-        </div>
-      </Card>
+            ) : (
+              <div className="space-y-1.5">
+                {subscriptions.map((s) => (
+                  <div key={s.brand_id}
+                    className="flex items-center justify-between gap-3 py-1.5 px-2 rounded"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-base)' }}>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                        {s.brand_name ?? s.brand_id}
+                      </div>
+                    </div>
+                    <select
+                      value={s.level}
+                      onChange={(e) => updateSub.mutate({ brandId: s.brand_id, level: e.target.value as SubscriptionLevel })}
+                      className="text-[11px] font-mono px-2 py-1 rounded"
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: 'var(--text-primary)' }}
+                    >
+                      {SUBSCRIPTION_LEVELS.map((l) => (
+                        <option key={l.value} value={l.value}>{l.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => deleteSub.mutate(s.brand_id)}
+                      className="p-1 rounded hover:bg-white/[0.05] transition-colors"
+                      aria-label="Remove subscription"
+                      title="Remove subscription"
+                    >
+                      <Trash2 size={14} style={{ color: 'var(--text-tertiary)' }} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              Watching = always notify · Default = use severity floors · Ignored = never notify
+            </div>
+          </Card>
+        </>
+      )}
 
       {/* 5. QUIET HOURS ──────────────────────────────────────────────── */}
       <PanelHeader title="Quiet hours" subtitle="Suppress push during these hours; in-app bell still updates" icon={<Globe size={14} />} />

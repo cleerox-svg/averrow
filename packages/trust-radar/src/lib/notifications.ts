@@ -107,6 +107,21 @@ const SEVERITY_RANK: Record<string, number> = {
   info: 0, low: 1, medium: 2, high: 3, critical: 4,
 };
 
+// Notification types that are valuable to tenant brand subscribers but
+// not actionable by super_admins. These get the regular tenant recipient
+// resolution (notification_subscriptions) but skip the super_admin
+// show_tenant_notifications opt-in path — even when a super_admin has
+// the firehose toggle on. Super admins can still view them per-brand
+// in the admin alerts surface when investigating.
+//
+// `intel_recommended_action` is the canonical entry: DMARC=none + other
+// hygiene callouts that only the brand owner can fix. Production audit
+// on 2026-05-16 showed one super_admin receiving 538 of these in 24h
+// for random unclaimed brands.
+const TENANT_ONLY_TYPES: ReadonlySet<string> = new Set([
+  'intel_recommended_action',
+]);
+
 export async function createNotification(env: Env, opts: CreateNotificationOpts): Promise<number> {
   // Defense-in-depth: refuse unknown event keys before we hit the SQL CHECK.
   if (!KNOWN_EVENT_KEYS.has(opts.type)) {
@@ -193,21 +208,35 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     // Q3 / N5: super_admins with show_tenant_notifications=1 are
     // ALSO recipients regardless of subscription — they explicitly
     // opted into the tenant firehose.
-    const users = await db.prepare(
-      `SELECT DISTINCT u.id
-         FROM users u
-         JOIN notification_subscriptions ns ON ns.user_id = u.id
-        WHERE u.status = 'active'
-          AND ns.brand_id = ?
-          AND ns.level != 'ignored'
-       UNION
-       SELECT u.id
-         FROM users u
-         JOIN notification_preferences_v2 p ON p.user_id = u.id
-        WHERE u.status = 'active'
-          AND u.role = 'super_admin'
-          AND p.show_tenant_notifications = 1`
-    ).bind(brandId).all<{ id: string }>();
+    //
+    // NX-push-uxr+1: types in TENANT_ONLY_TYPES (hygiene callouts the
+    // super_admin can't action — e.g. intel_recommended_action for
+    // brand DMARC=none) skip the super_admin half of the UNION. Brand
+    // subscribers still receive them. Production audit showed a single
+    // super_admin getting 538 DMARC-hygiene notifications in 24h about
+    // random unclaimed brands they have no power to fix.
+    const includeSuperAdmins = !TENANT_ONLY_TYPES.has(opts.type);
+    const sql = includeSuperAdmins
+      ? `SELECT DISTINCT u.id
+           FROM users u
+           JOIN notification_subscriptions ns ON ns.user_id = u.id
+          WHERE u.status = 'active'
+            AND ns.brand_id = ?
+            AND ns.level != 'ignored'
+         UNION
+         SELECT u.id
+           FROM users u
+           JOIN notification_preferences_v2 p ON p.user_id = u.id
+          WHERE u.status = 'active'
+            AND u.role = 'super_admin'
+            AND p.show_tenant_notifications = 1`
+      : `SELECT DISTINCT u.id
+           FROM users u
+           JOIN notification_subscriptions ns ON ns.user_id = u.id
+          WHERE u.status = 'active'
+            AND ns.brand_id = ?
+            AND ns.level != 'ignored'`;
+    const users = await db.prepare(sql).bind(brandId).all<{ id: string }>();
     userIds = users.results.map(u => u.id);
   } else if (audience === 'team') {
     // Staff-wide: every non-client role. Used for cross-cutting agent

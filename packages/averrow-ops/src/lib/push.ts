@@ -170,7 +170,13 @@ export async function unsubscribePush(): Promise<PushStatus> {
 }
 
 export async function listPushDevices(): Promise<PushDevice[]> {
-  const res = await api.get<PushDevice[]>('/api/notifications/subscriptions');
+  // /api/notifications/devices since the route collision fix —
+  // /api/notifications/subscriptions used to live here but it collided
+  // with the per-brand subscriptions endpoint at the same path. The
+  // brand-subs handler won (first registered) so the device list was
+  // unreachable, which is why every entry rendered as "Unknown device"
+  // (brand objects have no device_label field).
+  const res = await api.get<PushDevice[]>('/api/notifications/devices');
   return res.data ?? [];
 }
 

@@ -205,7 +205,11 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   router.get("/api/notifications/config", async (request: Request, env: Env) => {
     return handleGetNotificationConfig(request, env);
   });
-  router.get("/api/notifications/subscriptions", async (request: Request, env: Env) => {
+  // GET /api/notifications/devices — caller's push devices (push_subscriptions
+  // table). Distinct from /api/notifications/subscriptions which lists the
+  // per-brand notification_subscriptions watch levels. The two endpoints
+  // collided on the same path until the device list moved here.
+  router.get("/api/notifications/devices", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListPushSubscriptions(request, env, ctx.userId);
