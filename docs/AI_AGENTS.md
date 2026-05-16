@@ -122,6 +122,12 @@ The Analyst processes threats that have no `target_brand_id` assigned. It uses C
 - Runs brand-threat correlation via `packages/trust-radar/src/brand-threat-correlator.ts`
 - Processes up to 30 unattributed threats per run
 
+**Outputs** (`agent_outputs`): writes `type='insight'` rows for actionable narratives —
+"Active Phishing + No DMARC", "AI-Generated Threat Detected", "Risk Score Spike",
+"External Validation" — and one `type='diagnostic'` per-run summary. Insight rows
+surface via `/api/insights/latest` → Home "Latest Intel" section. (Pre-2026-05-16
+audit, insights were `type='classification'` and never reached any consumer.)
+
 **Inputs:** Threats with `target_brand_id IS NULL` and a non-null `malicious_domain`
 **Outputs:** Updated `target_brand_id` on threat records; `agent_outputs` entries
 
@@ -188,7 +194,15 @@ The Cartographer operates in two phases:
 Also runs email security scans for monitored brands via `packages/trust-radar/src/email-security.ts`.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
-**Outputs:** Enriched threat records; provider reputation scores; `agent_outputs` entries; `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
+**Outputs:** Enriched threat records; provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
+
+**AI cost gate (2026-05-16 audit):** Cartographer skips Haiku scoring for providers
+with fewer than 5 active threats AND no campaign history — those produce flat 90-100
+heuristic scores that nobody triages. Saves ~40% of cartographer's daily AI spend
+(~$1.50/day at current threat volume) without losing signal on providers operators
+actually act on. The full Haiku payload (`risk_factors`, `response_assessment`) now
+surfaces via `/api/insights/latest` → Home "Latest Intel" section; previously
+written to `agent_outputs(type='score')` with zero readers.
 
 ---
 

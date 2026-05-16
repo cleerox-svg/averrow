@@ -80,7 +80,7 @@ export const analystAgent: AgentModule = {
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "threats" },
   ],
-  outputs: [{ type: "classification" }],
+  outputs: [{ type: "insight" }],
   status: "active",
   category: "intelligence",
   pipelinePosition: 5,
@@ -356,7 +356,7 @@ export const analystAgent: AgentModule = {
               );
             }
             outputs.push({
-              type: 'classification',
+              type: 'insight',
               summary: `**Email Security Risk** — ${update.brandName} has grade ${grade}: weak spoofing protection increases phishing effectiveness. ${update.threatType === 'phishing' ? 'Threat escalated to CRITICAL.' : ''}`,
               severity: 'high',
               details: {
@@ -504,7 +504,7 @@ export const analystAgent: AgentModule = {
         // Escalation: PhishTank + no DMARC
         if (assessment.phishtank_active_urls > 0 && (!assessment.dmarc_policy || assessment.dmarc_policy === "none")) {
           outputs.push({
-            type: "classification",
+            type: "insight",
             summary: `**Active Phishing + No DMARC** — ${assessment.brand_name} has ${assessment.phishtank_active_urls} active phishing URLs with DMARC policy "${assessment.dmarc_policy ?? "missing"}". Immediate enforcement recommended.`,
             severity: "critical",
             details: {
@@ -520,7 +520,7 @@ export const analystAgent: AgentModule = {
         // Escalation: AI-generated phishing detected
         if (assessment.ai_generated_phishing_detected) {
           outputs.push({
-            type: "classification",
+            type: "insight",
             summary: `**AI-Generated Threat Detected** — ${assessment.ai_phishing_count_30d} AI-generated phishing attempts targeting ${assessment.brand_name} in the last 30 days.`,
             severity: "high",
             details: {
@@ -538,7 +538,7 @@ export const analystAgent: AgentModule = {
         ).bind(bid).first<{ composite_risk_score: number }>();
         if (prev && assessment.composite_risk_score - prev.composite_risk_score >= 20) {
           outputs.push({
-            type: "classification",
+            type: "insight",
             summary: `**Risk Score Spike** — ${assessment.brand_name} risk score jumped from ${prev.composite_risk_score} to ${assessment.composite_risk_score} (+${assessment.composite_risk_score - prev.composite_risk_score} points).`,
             severity: "high",
             details: {
@@ -578,7 +578,7 @@ export const analystAgent: AgentModule = {
         }
 
         outputs.push({
-          type: 'classification',
+          type: 'insight',
           summary: `**External Validation** — ${brandName}: ${parts.join('. ')}.${greynoiseContext}`,
           severity: enrichment.vt_flagged > 5 || enrichment.surbl_confirmed > 10 || enrichment.gsb_confirmed > 5 || enrichment.dbl_confirmed > 5 || enrichment.seclookup_high_risk > 5 ? 'high' : 'medium',
           details: {
@@ -619,7 +619,7 @@ export const analystAgent: AgentModule = {
 
           if ((brandThreats?.n || 0) > 0 && socialIntel.impersonationProfiles > 0) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**Coordinated Attack Signal** — Brand has ${brandThreats?.n} active phishing campaigns AND ${socialIntel.impersonationProfiles} social impersonation accounts. This suggests a coordinated attack.`,
               severity: "critical",
               details: {
@@ -641,7 +641,7 @@ export const analystAgent: AgentModule = {
 
           if (emailSec2?.email_security_grade && ['F', 'D'].includes(emailSec2.email_security_grade) && socialIntel.impersonationProfiles > 0) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**High Vulnerability** — Brand has email security grade ${emailSec2.email_security_grade} AND ${socialIntel.impersonationProfiles} active impersonation accounts. Extremely vulnerable to brand abuse.`,
               severity: "high",
               details: {
@@ -701,7 +701,7 @@ export const analystAgent: AgentModule = {
           // Escalate if credential leaks + active phishing detected
           if (mentionStats.credential_leaks > 0 && mentionStats.phishing_links > 0) {
             outputs.push({
-              type: 'classification',
+              type: 'insight',
               summary: `**Social Threat Convergence** — ${brandName} has ${mentionStats.credential_leaks} credential leaks AND ${mentionStats.phishing_links} phishing links shared on social platforms (${platforms}). Active exploitation likely.`,
               severity: 'critical',
               details: {
@@ -718,7 +718,7 @@ export const analystAgent: AgentModule = {
             });
           } else if (mentionStats.high_severity > 3) {
             outputs.push({
-              type: 'classification',
+              type: 'insight',
               summary: `**Elevated Social Chatter** — ${brandName}: ${mentionStats.total_mentions} social mentions across ${platforms} (${mentionStats.high_severity} high-severity). ${mentionStats.credential_leaks} credential leaks, ${mentionStats.code_leaks} code leaks.`,
               severity: 'high',
               details: {
@@ -774,7 +774,7 @@ export const analystAgent: AgentModule = {
 
           if (dwStats.credential_dumps > 0 && (activePhishing?.n || 0) > 0) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**Credential Exposure + Active Phishing** — ${brandName} has ${dwStats.credential_dumps} paste(s) with credential-dump signatures AND ${activePhishing?.n} active phishing campaigns. Treat as exploit-in-progress.`,
               severity: "critical",
               details: {
@@ -791,7 +791,7 @@ export const analystAgent: AgentModule = {
           // Signal 2: executive exposure — unique risk, raise even without phishing
           if (dwStats.executive_matches > 0) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**Executive Exposure** — ${brandName}: ${dwStats.executive_matches} confirmed dark-web mention(s) naming an executive${dwStats.credential_dumps > 0 ? ` alongside ${dwStats.credential_dumps} credential-dump paste(s)` : ''}. Targeted-attack precursor.`,
               severity: dwStats.credential_dumps > 0 ? "critical" : "high",
               details: {
@@ -808,7 +808,7 @@ export const analystAgent: AgentModule = {
           // — lead indicator for expected phishing campaigns in the next 7–14d.
           if (dwStats.confirmed >= 3 && (activePhishing?.n || 0) === 0 && dwStats.executive_matches === 0) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**Pre-Exploitation Exposure** — ${brandName} has ${dwStats.confirmed} confirmed dark-web mention(s) across ${dwStats.sources} source(s) with no active phishing yet. Expect incoming phishing; pre-position defenses.`,
               severity: "high",
               details: {
@@ -849,7 +849,7 @@ export const analystAgent: AgentModule = {
 
           if (channelCount >= 2) {
             outputs.push({
-              type: "classification",
+              type: "insight",
               summary: `**Multi-Channel Brand Attack** — ${brandName} targeted across ${channelCount} channels: ${appStoreStats.impersonations} app-store impersonation(s)${(otherChannels?.phishing || 0) > 0 ? `, ${otherChannels?.phishing} phishing threat(s)` : ''}${(otherChannels?.social_imp || 0) > 0 ? `, ${otherChannels?.social_imp} social impersonation(s)` : ''}. Coordinated campaign likely.`,
               severity: appStoreStats.high_severity > 0 ? "critical" : "high",
               details: {
@@ -942,7 +942,7 @@ export const analystAgent: AgentModule = {
             `).bind(brand.id, campaignLink, threat.id).run();
 
             outputs.push({
-              type: 'classification',
+              type: 'insight',
               summary: `**Subdomain Brand Spoofing** — ${brand.name} impersonated in ${brandInSubdomain ? 'subdomain' : 'domain'} of ${apex}: ${domain}`,
               severity: 'high',
               details: {
@@ -1049,7 +1049,7 @@ export const analystAgent: AgentModule = {
 
         if (resolvedVariants.length > 0) {
           outputs.push({
-            type: 'classification',
+            type: 'insight',
             summary: `**Numbered Domain Variants** — ${resolvedVariants.length} active variants found from pattern ${threat.malicious_domain}: ${resolvedVariants.slice(0, 5).join(', ')}${resolvedVariants.length > 5 ? '...' : ''}`,
             severity: 'high',
             details: {
@@ -1075,9 +1075,12 @@ export const analystAgent: AgentModule = {
       console.error("[analyst] numbered domain variant scanning error:", numErr);
     }
 
-    // Always generate an output so agent_outputs gets populated
+    // Always generate a diagnostic so agent_outputs gets populated even
+    // when no insight-worthy events fire. Was previously type='classification'
+    // (per-run summary noise) — separated from real insight rows so the
+    // `/api/insights/latest` consumer doesn't have to filter them out.
     outputs.push({
-      type: "classification",
+      type: "diagnostic",
       summary: itemsProcessed > 0
         ? `Analyst matched ${itemsUpdated} threats to brands (${itemsProcessed} processed, haiku=${haikuSuccesses}/${haikuFailures}, low_conf=${lowConfidence}, keywordPreMatched=${keywordPreMatched})`
         : `Analyst found 0 unmatched threats to process`,

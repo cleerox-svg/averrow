@@ -177,7 +177,7 @@ export const cartographerAgent: AgentModule = {
     { kind: "d1_table", name: "provider_threat_stats" },
     { kind: "d1_table", name: "threats" },
   ],
-  outputs: [{ type: "score" }, { type: "diagnostic" }],
+  outputs: [{ type: "insight" }, { type: "diagnostic" }],
   status: "active",
   category: "intelligence",
   pipelinePosition: 3,
@@ -662,6 +662,33 @@ export const cartographerAgent: AgentModule = {
       const campaignCount = campaignCountByProvider.get(provider.id) ?? 0;
       const repeatOffender = campaignCount >= 3;
 
+      // AI cost gate (added 2026-05-16 platform audit): only call Haiku
+      // for providers that warrant actual reasoning. Providers with <5
+      // active threats AND no campaign history produce a flat "looks
+      // fine" 90-100 score that nobody reads — pure AI waste. Skip
+      // straight to the heuristic score for those.
+      // Saves ~$1.50/day in Haiku calls (~40% of cartographer's daily
+      // $3.75 spend) without losing signal on the providers operators
+      // actually triage.
+      const aiWorthScoring = provider.active_threat_count >= 5 || repeatOffender;
+
+      if (!aiWorthScoring) {
+        const heuristicScore = computeHeuristicScore(
+          provider.active_threat_count,
+          provider.total_threat_count,
+          provider.avg_response_time,
+        );
+        try {
+          await env.DB.prepare(
+            "UPDATE hosting_providers SET reputation_score = ?, last_scored_at = datetime('now'), last_score = ?, last_score_threat_count = ? WHERE id = ?"
+          ).bind(heuristicScore, heuristicScore, provider.active_threat_count, provider.id).run();
+          itemsUpdated++;
+        } catch (err) {
+          console.error(`[cartographer] heuristic update failed for ${provider.id}:`, err);
+        }
+        continue;
+      }
+
       // Try Haiku scoring
       const result = await scoreProvider(env, callCtx, {
         name: provider.name,
@@ -682,20 +709,29 @@ export const cartographerAgent: AgentModule = {
         if (result.model) model = result.model;
         haikuSuccessCount++;
 
-        outputs.push({
-          type: "score",
-          summary: `${provider.name}: reputation ${reputationScore}/100${repeatOffender ? ' [REPEAT OFFENDER]' : ''} — ${result.data.reasoning}`,
-          severity: reputationScore < 30 ? "critical" : reputationScore < 50 ? "high" : reputationScore < 70 ? "medium" : "info",
-          details: {
-            provider: provider.name,
-            score: reputationScore,
-            risk_factors: result.data.risk_factors,
-            response_assessment: result.data.response_assessment,
-            campaign_count: campaignCount,
-            repeat_offender: repeatOffender,
-          },
-          relatedProviderIds: [provider.id],
-        });
+        // Only emit an insight row when the provider warrants operator
+        // attention — reputation < 70 OR repeat offender. Boring "looks
+        // fine" providers (70-100) used to push to agent_outputs as
+        // `type='score'` rows that no consumer read (audit 2026-05-16:
+        // 106,400 rows in 7d, zero readers). Renamed to `type='insight'`
+        // so `/api/insights/latest` picks them up alongside Strategist
+        // correlations; gated so we surface signal, not log noise.
+        if (reputationScore < 70 || repeatOffender) {
+          outputs.push({
+            type: "insight",
+            summary: `${provider.name}: reputation ${reputationScore}/100${repeatOffender ? ' [REPEAT OFFENDER]' : ''} — ${result.data.reasoning}`,
+            severity: reputationScore < 30 ? "critical" : reputationScore < 50 ? "high" : reputationScore < 70 ? "medium" : "info",
+            details: {
+              provider: provider.name,
+              score: reputationScore,
+              risk_factors: result.data.risk_factors,
+              response_assessment: result.data.response_assessment,
+              campaign_count: campaignCount,
+              repeat_offender: repeatOffender,
+            },
+            relatedProviderIds: [provider.id],
+          });
+        }
       } else {
         haikuFailCount++;
         // Fallback: simple heuristic scoring

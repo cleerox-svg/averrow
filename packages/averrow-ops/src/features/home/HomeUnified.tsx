@@ -22,6 +22,7 @@ import { StatGrid } from './sections/StatGrid';
 import { ThreatPulse } from './sections/ThreatPulse';
 import { BrandMovers } from './sections/BrandMovers';
 import { DailyBriefing } from './sections/DailyBriefing';
+import { LatestIntel } from './sections/LatestIntel';
 import { LiveActivity } from './sections/LiveActivity';
 import { ModuleHub } from './sections/ModuleHub';
 import { ProviderMovers } from './sections/ProviderMovers';
@@ -43,6 +44,7 @@ export function HomeUnified() {
       <StatGrid />
       <ThreatPulse />
       <DailyBriefing />
+      <LatestIntel />
       <LiveActivity />
       <BrandMovers />
       <ModuleHub />
