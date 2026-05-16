@@ -73,6 +73,16 @@ interface ZoneIntrospectReport {
   page_rules:     PageRuleSummary[]     | { error: string };
   waf_custom:     RulesetRuleSummary[]  | { error: string };
   http_probe:     { url: string; status: number; headers: Record<string, string> } | { error: string };
+  /** Token introspection — surfaces what the worker's CF_API_TOKEN
+   *  can actually see. Helpful when the zone lookup returns
+   *  "zone not found" — distinguishes "wrong account" from
+   *  "missing Zone:Read scope" from "wrong hostname". */
+  token_diagnostics: TokenDiagnostics;
+}
+
+interface TokenDiagnostics {
+  verify:         { status: string; id?: string; expires_on?: string | null } | { error: string };
+  visible_zones:  Array<{ id: string; name: string; status: string }> | { error: string };
 }
 
 async function cfFetch<T>(
@@ -115,6 +125,22 @@ export async function handleCfZoneIntrospect(
   const apex = hostname.split(".").slice(-2).join(".");
   const zonesRes = await cfFetch<ZoneSummary[]>(token, `/zones?name=${encodeURIComponent(apex)}`);
 
+  // Token diagnostics — always runs so a "zone not found" result is
+  // actionable. /user/tokens/verify works on any token; /zones (no
+  // filter) lists every zone the token can read.
+  const [verifyRes, allZonesRes] = await Promise.all([
+    cfFetch<{ id: string; status: string; expires_on?: string | null }>(token, `/user/tokens/verify`),
+    cfFetch<ZoneSummary[]>(token, `/zones?per_page=50`),
+  ]);
+  const tokenDiagnostics: TokenDiagnostics = {
+    verify: verifyRes.ok
+      ? { status: verifyRes.data.status, id: verifyRes.data.id, expires_on: verifyRes.data.expires_on ?? null }
+      : { error: verifyRes.error },
+    visible_zones: allZonesRes.ok
+      ? allZonesRes.data.map((z) => ({ id: z.id, name: z.name, status: z.status }))
+      : { error: allZonesRes.error },
+  };
+
   const report: ZoneIntrospectReport = {
     zone:           { error: "uninitialised" },
     dns_records:    { error: "uninitialised" },
@@ -122,10 +148,23 @@ export async function handleCfZoneIntrospect(
     page_rules:     { error: "uninitialised" },
     waf_custom:     { error: "uninitialised" },
     http_probe:     { error: "uninitialised" },
+    token_diagnostics: tokenDiagnostics,
   };
 
+  // HTTP probe runs unconditionally — even without zone scope on the
+  // token we can still see what the edge is returning at the public URL.
+  try {
+    const probeUrl = `https://${hostname}/`;
+    const probeRes = await fetch(probeUrl, { method: "HEAD", redirect: "manual" });
+    const headers: Record<string, string> = {};
+    probeRes.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+    report.http_probe = { url: probeUrl, status: probeRes.status, headers };
+  } catch (err) {
+    report.http_probe = { error: err instanceof Error ? err.message : String(err) };
+  }
+
   if (!zonesRes.ok || zonesRes.data.length === 0) {
-    report.zone = { error: zonesRes.ok ? "zone not found" : zonesRes.error };
+    report.zone = { error: zonesRes.ok ? "zone not found (token may lack Zone:Read scope — see token_diagnostics.visible_zones)" : zonesRes.error };
     return new Response(JSON.stringify({ success: true, data: report }, null, 2),
       { headers: { "Content-Type": "application/json" } });
   }
@@ -190,19 +229,6 @@ export async function handleCfZoneIntrospect(
     }
   } else {
     report.waf_custom = { error: rulesetsRes.error };
-  }
-
-  // 6. Issue a fresh HEAD against the hostname so we can see exactly
-  // what the edge is returning right now, including any deny-reason
-  // header. Doesn't need a CF scope — just a public-internet probe.
-  try {
-    const probeUrl = `https://${hostname}/`;
-    const probeRes = await fetch(probeUrl, { method: "HEAD", redirect: "manual" });
-    const headers: Record<string, string> = {};
-    probeRes.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-    report.http_probe = { url: probeUrl, status: probeRes.status, headers };
-  } catch (err) {
-    report.http_probe = { error: err instanceof Error ? err.message : String(err) };
   }
 
   return new Response(JSON.stringify({ success: true, data: report }, null, 2),
