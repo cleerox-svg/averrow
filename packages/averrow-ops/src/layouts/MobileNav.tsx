@@ -64,6 +64,7 @@ function buildMoreSections(observatoryPath: string) {
       { icon: '📊', label: 'Dashboard', path: '/admin' },
       { icon: '👥', label: 'Team',      path: '/admin/users' },
       { icon: '📋', label: 'Audit Log', path: '/admin/audit' },
+      { icon: '🎯', label: 'Attribution Backlog', path: '/admin/agents/attribution-backlog' },
     ],
   },
   {

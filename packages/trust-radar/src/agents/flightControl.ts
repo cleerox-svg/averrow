@@ -31,6 +31,7 @@ import {
   renderPlatformD1BudgetWarn,
   renderPlatformD1BudgetBreach,
   renderPlatformFeedAtRisk,
+  renderPlatformProviderEscalation,
 } from "../lib/platform-templates";
 import { getBudgetState, DAILY_BUDGET, WARN_THRESHOLD } from "../lib/d1-budget";
 import { getLastDispatchAt, getCooldownUntil } from "../lib/workflow-dispatch";
@@ -514,6 +515,67 @@ export const flightControlAgent: AgentModule = {
     } catch { /* notification failures never break FC */ }
 
     mark('feed_at_risk_emit');
+
+    // ── Provider-escalation watcher (PR-B from 2026-05-16 audit) ───
+    // Fires when a hosting provider's active_threat_count jumps
+    // significantly vs its 7-day baseline. Motivating case:
+    // Cloudflare 0 → 51,235 active threats with zero notification.
+    //
+    // Baseline reads from provider_threat_stats (period='7d') — the
+    // existing rollup populated by Cartographer. We treat a provider
+    // as "escalating" when:
+    //   - current active_threat_count ≥ 50 (filter near-empty
+    //     providers — bot scanner churn would otherwise wake on
+    //     1→10 movements)
+    //   - AND current ≥ 5× the 7d baseline OR delta ≥ 200
+    //
+    // Dedup key includes provider_id only (not the date) since the
+    // event-key catalog declares a 24h dedup window — emitPlatform
+    // takes care of suppressing repeat fires within the window.
+    //
+    // group_key intentionally collides with intel_provider_pivot's
+    // namespace prefix? No — see platform-templates for the actual
+    // key: `platform_provider_escalation:<provider_id>`.
+    try {
+      // provider_threat_stats joins on provider_name, not provider_id
+      // (composite UNIQUE(provider_name, period)). For the baseline we
+      // pick period='7d' which Cartographer populates every hour.
+      const escRows = await db.prepare(`
+        SELECT hp.id, hp.name, hp.active_threat_count AS current_count,
+               COALESCE(pts.threat_count, 0) AS baseline_count
+          FROM hosting_providers hp
+          LEFT JOIN provider_threat_stats pts
+            ON pts.provider_name = hp.name AND pts.period = '7d'
+         WHERE hp.active_threat_count >= 50
+           AND (
+                hp.active_threat_count >= 5 * COALESCE(pts.threat_count, 0)
+             OR hp.active_threat_count - COALESCE(pts.threat_count, 0) >= 200
+           )
+         ORDER BY (hp.active_threat_count - COALESCE(pts.threat_count, 0)) DESC
+         LIMIT 10
+      `).all<{
+        id: string; name: string;
+        current_count: number; baseline_count: number;
+      }>();
+      for (const row of escRows.results) {
+        const delta = row.current_count - row.baseline_count;
+        const multiplier = row.baseline_count > 0
+          ? row.current_count / row.baseline_count
+          : row.current_count; // pure new-provider surge case
+        await emitPlatformNotification(env, 'platform_provider_escalation',
+          renderPlatformProviderEscalation({
+            provider_id:    row.id,
+            provider_name:  row.name,
+            current_count:  row.current_count,
+            baseline_count: row.baseline_count,
+            delta,
+            multiplier,
+          }),
+        );
+      }
+    } catch { /* notification failures never break FC */ }
+
+    mark('provider_escalation_emit');
 
     // ── Backlog B1: cron heartbeat self-monitors ─────────────────
     // FC itself runs in the orchestrator path, so if FC is running

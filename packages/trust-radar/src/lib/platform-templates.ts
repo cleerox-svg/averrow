@@ -44,6 +44,19 @@ export interface PlatformFeedAtRiskVars {
   threshold: number;
 }
 
+// PR-B (2026-05-16 audit): provider escalation event vars. Surfaces
+// when a hosting provider's active_threat_count jumps relative to
+// its prior baseline. Threshold logic lives in FlightControl, this
+// type just carries the rendered values.
+export interface PlatformProviderEscalationVars {
+  provider_id: string;
+  provider_name: string;
+  current_count: number;
+  baseline_count: number;
+  delta: number;
+  multiplier: number;
+}
+
 export interface PlatformFeedAutoPausedVars {
   feed_id: string;
   feed_name: string;
@@ -187,6 +200,29 @@ export function renderPlatformFeedAtRisk(v: PlatformFeedAtRiskVars): RenderedTem
     group_key: `platform_feed_at_risk:${v.feed_id}`,
     audience: 'super_admin',
     severity: 'high',
+  };
+}
+
+// PR-B (2026-05-16 audit): provider-escalation renderer. Surfaces a
+// hosting provider whose active_threat_count just spiked vs its 7d
+// baseline. Cloudflare 0 → 51,235 was the motivating example —
+// previously emitted zero signal because no notification type existed.
+// Audience is super_admin because provider escalations drive takedown
+// prioritization and ops triage, not tenant-facing alerts.
+export function renderPlatformProviderEscalation(
+  v: PlatformProviderEscalationVars,
+): RenderedTemplate {
+  return {
+    title: `Provider surge: ${v.provider_name} ${v.current_count.toLocaleString()} active threats`,
+    message:
+      `Baseline was ${v.baseline_count.toLocaleString()} — ${v.multiplier.toFixed(1)}× spike (+${v.delta.toLocaleString()}). ` +
+      `Review hosting concentration before campaign window expands.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action: `Open the provider drill-down, assess top hosted brands, prioritize takedown outreach.`,
+    link: `/providers/${v.provider_id}`,
+    group_key: `platform_provider_escalation:${v.provider_id}`,
+    audience: 'super_admin',
+    severity: v.multiplier >= 50 ? 'critical' : 'high',
   };
 }
 

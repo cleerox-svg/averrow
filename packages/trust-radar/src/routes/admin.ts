@@ -18,6 +18,7 @@ import {
   handleMetricsAiSpend,
   handleMetricsGeoCoverage,
   handleMetricsFeedFailures,
+  handleAttributionBacklog,
 } from "../handlers/admin";
 import { handleListSessionEvents, handleForceLogout } from "../handlers/sessions";
 import { handleCreateInvite, handleListInvites, handleRevokeInvite } from "../handlers/invites";
@@ -280,6 +281,15 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handlePromoteIncident(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+
+  // ─── Attribution backlog (PR-B from 2026-05-16 audit) ───────────
+  // Lists infrastructure_clusters with actor_id IS NULL, top-N by
+  // threat_count, for the /admin/agents/attribution-backlog queue.
+  router.get("/api/admin/agents/attribution-backlog", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAttributionBacklog(request, env);
   });
 
   // ─── Agent deployment approval (AGENT_STANDARD §12.1) ──────────

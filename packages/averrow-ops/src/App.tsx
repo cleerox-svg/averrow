@@ -31,6 +31,7 @@ const Organization = React.lazy(() => import('@/features/settings/Organization')
 const SuperAdminOrgs = React.lazy(() => import('@/features/admin/SuperAdminOrgs').then(m => ({ default: m.SuperAdminOrgs })));
 const PricingConfig = React.lazy(() => import('@/features/admin/PricingConfig').then(m => ({ default: m.PricingConfig })));
 const AdminAudit = React.lazy(() => import('@/features/admin/AdminAudit').then(m => ({ default: m.AdminAudit })));
+const AttributionBacklog = React.lazy(() => import('@/features/admin/AttributionBacklog').then(m => ({ default: m.AttributionBacklog })));
 const Metrics = React.lazy(() => import('@/features/admin/Metrics').then(m => ({ default: m.Metrics })));
 const AdminIncidents = React.lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
 const AdminIncidentDetail = React.lazy(() => import('@/features/admin-incidents/IncidentDetail').then(m => ({ default: m.AdminIncidentDetail })));
@@ -177,6 +178,7 @@ export default function App() {
         <Route path="admin/organizations" element={lazyRoute(<SuperAdminOrgs />)} />
         <Route path="admin/pricing" element={lazyRoute(<PricingConfig />)} />
         <Route path="admin/audit" element={lazyRoute(<AdminAudit />)} />
+        <Route path="admin/agents/attribution-backlog" element={lazyRoute(<AttributionBacklog />)} />
         <Route path="admin/incidents" element={lazyRoute(<AdminIncidents />)} />
         <Route path="admin/incidents/:id" element={lazyRoute(<AdminIncidentDetail />)} />
         <Route path="admin/push" element={lazyRoute(<PushAdmin />)} />

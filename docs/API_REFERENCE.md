@@ -174,6 +174,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/agents/approvals/:id/resolve` | Admin | Resolve approval |
 | GET | `/api/admin/agents/api-usage` | Admin | AI API usage stats |
 | GET | `/api/admin/agents/config` | Admin | Agent configuration |
+| GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor, top-N by threat count. Powers the Admin "Attribution Backlog" queue. KV cached 5 min. PR-B from 2026-05-16 audit. |
 | GET | `/api/agents/token-usage` | User | Agent token usage breakdown |
 | POST | `/api/agents/:name/toggle` | Admin | Enable/disable agent |
 | POST | `/api/agents/:name/reset-circuit` | Admin | Reset agent circuit breaker |

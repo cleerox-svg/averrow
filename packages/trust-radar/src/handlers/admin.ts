@@ -3337,3 +3337,115 @@ function computeFeedVerdict(input: {
   if (input.pulls === 0)           return { tone: 'inactive', label: 'IDLE'     };
   return                                  { tone: 'success',  label: 'HEALTHY'  };
 }
+
+// ─── Attribution Backlog (PR-B from 2026-05-16 audit) ────────────
+//
+// GET /api/admin/agents/attribution-backlog
+//
+// Returns infrastructure_clusters with `actor_id IS NULL`, ordered
+// by threat_count DESC. Used by the admin "Attribution Backlog"
+// queue at /admin/agents/attribution-backlog where an analyst can
+// see the biggest unattributed clusters and route them for human
+// attribution.
+//
+// Background (audit finding #6):
+//   - 2,334 of 2,483 clusters (94%) have no actor_id
+//   - Attributor called Haiku for 1,330 of them → 1,325 returned
+//     'unknown' → 0.4% resolution rate
+//   - Most clusters carry 1,000+ threats — high-value evidence
+//     sitting unattributed
+//
+// Cached 5 min in KV. Returns up to 50 clusters per call. No
+// mutations — this PR is read-only surfacing; attribution-action
+// endpoints come in a follow-up.
+export async function handleAttributionBacklog(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const url = new URL(request.url);
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10)));
+
+    const cacheKey = `attribution-backlog:v1:${limit}`;
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) return json(JSON.parse(cached), 200, origin);
+
+    const [rowsRes, totalsRes] = await Promise.all([
+      env.DB.prepare(`
+        SELECT id, cluster_name, asns, countries, threat_count,
+               confidence_score, status, first_detected, last_seen,
+               attribution_attempted_at, nexus_brief, agent_notes
+          FROM infrastructure_clusters
+         WHERE actor_id IS NULL
+         ORDER BY threat_count DESC
+         LIMIT ?
+      `).bind(limit).all<{
+        id: string;
+        cluster_name: string | null;
+        asns: string | null;
+        countries: string | null;
+        threat_count: number | null;
+        confidence_score: number | null;
+        status: string | null;
+        first_detected: string | null;
+        last_seen: string | null;
+        attribution_attempted_at: string | null;
+        nexus_brief: string | null;
+        agent_notes: string | null;
+      }>(),
+      env.DB.prepare(`
+        SELECT
+          COUNT(*)                                                       AS total_clusters,
+          SUM(CASE WHEN actor_id IS NULL THEN 1 ELSE 0 END)              AS unattributed,
+          SUM(CASE WHEN actor_id IS NULL
+                    AND attribution_attempted_at IS NOT NULL
+                   THEN 1 ELSE 0 END)                                    AS attempted_unknown,
+          SUM(CASE WHEN actor_id IS NULL
+                    AND attribution_attempted_at IS NULL
+                   THEN 1 ELSE 0 END)                                    AS never_attempted
+        FROM infrastructure_clusters
+      `).first<{
+        total_clusters: number;
+        unattributed: number;
+        attempted_unknown: number;
+        never_attempted: number;
+      }>(),
+    ]);
+
+    // Trim the noisier text fields to avoid bloating the payload;
+    // operator drills into the cluster detail page for the full view.
+    const items = (rowsRes.results ?? []).map(r => ({
+      id:                       r.id,
+      cluster_name:             r.cluster_name,
+      asns:                     r.asns,
+      countries:                r.countries,
+      threat_count:             r.threat_count ?? 0,
+      confidence_score:         r.confidence_score,
+      status:                   r.status,
+      first_detected:           r.first_detected,
+      last_seen:                r.last_seen,
+      attribution_attempted_at: r.attribution_attempted_at,
+      nexus_brief_preview:      r.nexus_brief?.slice(0, 200) ?? null,
+      agent_notes_preview:      r.agent_notes?.slice(0, 200) ?? null,
+    }));
+
+    const body = {
+      success: true,
+      data: {
+        items,
+        totals: {
+          total_clusters:    totalsRes?.total_clusters    ?? 0,
+          unattributed:      totalsRes?.unattributed      ?? 0,
+          attempted_unknown: totalsRes?.attempted_unknown ?? 0,
+          never_attempted:   totalsRes?.never_attempted   ?? 0,
+        },
+        generated_at: new Date().toISOString(),
+      },
+    };
+    await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 300 });
+    return json(body, 200, origin);
+  } catch (err) {
+    return json({
+      success: false,
+      error: err instanceof Error ? err.message : "An internal error occurred",
+    }, 500, origin);
+  }
+}

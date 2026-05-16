@@ -153,6 +153,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),
         ...(isSuperAdmin ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
         { label: 'Audit Log',    path: '/admin/audit',       icon: ClipboardList },
+        { label: 'Attribution Backlog', path: '/admin/agents/attribution-backlog', icon: Target },
         // NX-push-uxr: Push Config removed from the primary nav — it's a
         // one-time VAPID bootstrap, not day-to-day ops. The route stays
         // at /admin/push and a card in AdminDashboard surfaces it when

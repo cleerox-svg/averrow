@@ -46,6 +46,7 @@ export type NotificationEventKey =
   | 'platform_feed_at_risk'
   | 'platform_feed_auto_paused'
   | 'platform_feed_silent'
+  | 'platform_provider_escalation'
   | 'platform_agent_stalled'
   | 'platform_geoip_refresh_stalled'
   | 'platform_workflow_dispatch_silent'
@@ -249,6 +250,19 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Feed Auto-Paused',
     description: 'Feed disabled after consecutive failures',
     dedupWindow: '-12 hours',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    // PR-B from 2026-05-16 audit. Fires when a hosting provider's
+    // active_threat_count jumps significantly relative to its prior
+    // baseline — Cloudflare 0 → 51,235 with no signal was the
+    // motivating gap. Dedup'd to 24h per provider so a sustained
+    // surge doesn't spam the bell.
+    key: 'platform_provider_escalation',
+    label: 'Provider Escalation',
+    description: 'Hosting provider active threat count spiked',
+    dedupWindow: '-24 hours',
     defaultEnabled: true,
     userToggleable: false,
   },
