@@ -329,10 +329,10 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // Convert a qualified lead to a tenant organization. Creates org +
   // adds super_admin as owner-role member + auto-creates/links the
   // brand for monitoring. Independent of outreach (deals close on calls).
-  router.post("/api/admin/leads/:id/convert-to-tenant", async (request: Request & { params: Record<string, string> }, env: Env) => {
+  router.post("/api/admin/leads/:id/convert-to-tenant", async (request: Request & { params: Record<string, string> }, env: Env, workerCtx: ExecutionContext) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleConvertLeadToTenant(request, env, request.params["id"] ?? "", ctx.userId);
+    return handleConvertLeadToTenant(request, env, request.params["id"] ?? "", ctx.userId, workerCtx);
   });
 
   // ─── Admin Users ──────────────────────────────────────────────────
@@ -377,10 +377,10 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Organizations (superadmin) ───────────────────────────────────
-  router.post("/api/admin/organizations", async (request: Request, env: Env) => {
+  router.post("/api/admin/organizations", async (request: Request, env: Env, workerCtx: ExecutionContext) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleCreateOrg(request, env, ctx.userId);
+    return handleCreateOrg(request, env, ctx.userId, workerCtx);
   });
   router.get("/api/admin/organizations", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);

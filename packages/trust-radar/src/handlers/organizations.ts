@@ -53,6 +53,7 @@ export async function handleCreateOrg(
   request: Request,
   env: Env,
   adminUserId: string,
+  workerCtx?: ExecutionContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   const body = await request.json().catch(() => null) as {
@@ -109,6 +110,15 @@ export async function handleCreateOrg(
         await env.DB.prepare(
           "INSERT INTO org_brands (org_id, brand_id, is_primary) VALUES (?, ?, ?)",
         ).bind(orgId, brand.brand_id, brand.is_primary ? 1 : 0).run();
+        // NX2: backfill 90 days of alerts on claim, deferred via waitUntil.
+        // See handleConvertLeadToTenant for the rationale.
+        if (workerCtx) {
+          const { backfillAlertsForBrand } = await import("../lib/alert-backfill");
+          workerCtx.waitUntil(
+            backfillAlertsForBrand(env, brand.brand_id).catch(err =>
+              console.error('[org_create] alert backfill failed:', err)),
+          );
+        }
       } catch { /* skip duplicates */ }
     }
   }
@@ -605,6 +615,7 @@ export async function handleAssignOrgBrand(
   env: Env,
   orgId: string,
   ctx: AuthContext,
+  workerCtx?: ExecutionContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
@@ -637,6 +648,15 @@ export async function handleAssignOrgBrand(
     await env.DB.prepare(
       "INSERT INTO org_brands (org_id, brand_id, is_primary) VALUES (?, ?, ?)",
     ).bind(orgId, body.brand_id, body.is_primary ? 1 : 0).run();
+    // NX2: same backfill-on-claim as handleCreateOrg / handleConvertLeadToTenant.
+    // Deferred via waitUntil so the response returns instantly; idempotent.
+    if (workerCtx) {
+      const { backfillAlertsForBrand } = await import("../lib/alert-backfill");
+      workerCtx.waitUntil(
+        backfillAlertsForBrand(env, body.brand_id).catch(err =>
+          console.error('[assign_org_brand] alert backfill failed:', err)),
+      );
+    }
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE")) {
       return json({ success: false, error: "Brand already assigned to this organization" }, 409, origin);

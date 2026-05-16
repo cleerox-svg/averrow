@@ -456,6 +456,23 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
        LIMIT 15
     `).all<{ source_feed: string; threat_type: string; n: number }>();
 
+    // Alerts table growth by brand tier (NX2 tier-gate visibility).
+    // The createAlert tier gate skips inserts when brands.tier='tracked'
+    // so the alerts table doesn't grow proportional to the ~76K tracked
+    // brands. This query proves the gate is working: under steady state
+    // the 'tracked' row should be 0 (or only legacy rows from before
+    // the gate landed).
+    const alertsByTierP = env.DB.prepare(`
+      SELECT
+        COALESCE(b.tier, 'unclassified') AS tier,
+        COUNT(*) AS total,
+        SUM(CASE WHEN a.created_at >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS created_24h
+      FROM alerts a
+      LEFT JOIN brands b ON b.id = a.brand_id
+      GROUP BY COALESCE(b.tier, 'unclassified')
+      ORDER BY total DESC
+    `).all<{ tier: string; total: number; created_24h: number }>();
+
     // ─── 3. Per-feed health ─────────────────────────────────────────
     const feedHealthP = env.DB.prepare(`
       SELECT
@@ -746,6 +763,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       d1BudgetState, d1TopQueries, d1BillingCycle, d1Recent,
       cachedCountStats,
       moduleEntitlements,
+      alertsByTier,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -755,6 +773,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       d1BudgetStateP, d1TopQueriesP, d1BillingCycleP, d1RecentP,
       getCachedCountStats(env),
       moduleEntitlementsP,
+      alertsByTierP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -1074,6 +1093,18 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             count: r.n,
           })),
           private_ip_inflation: (cartoQueueRaw?.n ?? 0) - (cartoQueue?.n ?? 0),
+        },
+
+        alerts: {
+          // NX2 tier-gate visibility. `tracked` should trend to 0 (or
+          // hold steady at the legacy pre-gate count); growth there means
+          // a producer is bypassing createAlert. `customer` + `monitored`
+          // are the normal path. `unclassified` is the LEFT JOIN miss.
+          by_tier: alertsByTier.results.map((r) => ({
+            tier: r.tier,
+            total: r.total,
+            created_24h: r.created_24h,
+          })),
         },
 
         feeds: {

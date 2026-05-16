@@ -661,8 +661,8 @@ The N-series rewires this without breaking existing callers. Backend table names
 
 | Session | Status | Evidence / notes |
 |---------|--------|------------------|
-| NX1 — Audience hygiene + ops bell filter | 🟡 In progress | Audit + audience-correct every `createNotification` call; ops bell filters to `audience IN ('super_admin','team','all')`; spam-trap migrates off direct INSERT |
-| NX2 — Tier gate + claim-time backfill | ⏳ Not started | `createAlert` skips when `brands.tier='tracked'`; `backfillAlertsForBrand()` helper fires on `org_brands` insert |
+| NX1 — Audience hygiene + ops bell filter | ✅ Landed | PR #1349 — `lib/notifications.ts` hardened defaulting, six producer call sites audience-corrected, spam-trap migrated to `createNotification`, ops bell + archive filter to `OPS_AUDIENCE_FILTER`, unread badge mirrors scoped fetch |
+| NX2 — Tier gate + claim-time backfill | 🟡 In progress | `createAlert` skips when `brands.tier='tracked'`; `backfillAlertsForBrand()` helper fires on `org_brands` insert |
 | NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed | ⏳ Not started | Tenant SPA labels only; sidebar nav update; `/v2/brands/:id` adds a Signals tab for SOC oversight |
 | NX4 — Campaign / actor significance + tenant fanout | ⏳ Not started | `lib/campaign-significance.ts` (≥20 threats OR spike rule); on pass, super-admin notification + per-brand tenant alerts |
 | NX5 — Preferences UI + Notification Center admin page | ⏳ Not started | Three-section preferences grouping; super-admin `/v2/notifications/admin` page |

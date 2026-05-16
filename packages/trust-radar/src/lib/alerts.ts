@@ -35,6 +35,15 @@ export interface CreateAlertParams {
   sourceId?: string;
   aiAssessment?: string;
   aiRecommendations?: string[];
+  /**
+   * NX2: bypass the brands.tier gate. Default false. The gate skips
+   * insert when the brand is tier='tracked' (unclaimed) so the alerts
+   * table doesn't accumulate rows for the 76K passively-watched brands.
+   * Backfill (lib/alert-backfill.ts) sets this true when an org claims
+   * a brand and we want to retro-populate alerts from the source tables.
+   * Never set this true outside backfill paths.
+   */
+  bypassTierGate?: boolean;
 }
 
 export interface Alert {
@@ -61,7 +70,11 @@ export interface Alert {
 }
 
 /**
- * Create a new alert and return its ID.
+ * Create a new alert and return its ID, or null if the brand is
+ * tier='tracked' (the NX2 tier gate — unclaimed brands don't get alert
+ * rows so the table doesn't grow proportional to the 76K tracked-brand
+ * universe). Callers that pipe the returned ID into other tables must
+ * guard on null.
  *
  * Defensive: severity is lower-cased before insert so legacy callers
  * passing 'CRITICAL'/'HIGH'/etc. don't fail the lowercase CHECK
@@ -70,7 +83,20 @@ export interface Alert {
  * once we've verified zero callers send uppercase (probably PR 3
  * follow-up).
  */
-export async function createAlert(db: D1Database, params: CreateAlertParams): Promise<string> {
+export async function createAlert(db: D1Database, params: CreateAlertParams): Promise<string | null> {
+  // NX2 tier gate. brands.tier values: 'tracked' (passive — no alerts),
+  // 'monitored' (active, alerts fire), 'customer' (claimed, alerts fire).
+  // Backfill explicitly bypasses via params.bypassTierGate when an org
+  // claims a previously-tracked brand and we want the history retro-populated.
+  if (!params.bypassTierGate) {
+    const brand = await db.prepare(
+      "SELECT tier FROM brands WHERE id = ?"
+    ).bind(params.brandId).first<{ tier: string | null }>();
+    if (brand?.tier === 'tracked') {
+      return null;
+    }
+  }
+
   const id = crypto.randomUUID();
   const detailsJson = params.details ? JSON.stringify(params.details) : null;
   const recommendationsJson = params.aiRecommendations ? JSON.stringify(params.aiRecommendations) : null;

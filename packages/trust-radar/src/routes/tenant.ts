@@ -90,10 +90,10 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleTransferOwnership(request, env, request.params["orgId"] ?? "", ctx);
   });
-  router.post("/api/orgs/:orgId/brands", async (request: Request & { params: Record<string, string> }, env: Env) => {
+  router.post("/api/orgs/:orgId/brands", async (request: Request & { params: Record<string, string> }, env: Env, workerCtx: ExecutionContext) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleAssignOrgBrand(request, env, request.params["orgId"] ?? "", ctx);
+    return handleAssignOrgBrand(request, env, request.params["orgId"] ?? "", ctx, workerCtx);
   });
   router.delete("/api/orgs/:orgId/brands/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
