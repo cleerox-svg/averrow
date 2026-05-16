@@ -361,7 +361,15 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     addToTally(tally, rows.meta);
 
     let resultRows = rows.results ?? [];
-    let cacheTtlSeconds = 1800;
+    // D1 spend reduction (2026-05-16): bumped from 1800s → 3600s.
+    // Navigator prewarms 3 periods every 5min — at 30min TTL the cache
+    // is fresh roughly 80% of prewarm ticks (rest are forced refreshes
+    // because the TTL boundary fell inside the prewarm cycle). Production
+    // audit showed 245 actual handler hits / 24h × 56K rows = 13.8M.
+    // 1h TTL drops the prewarm-driven miss count from ~50/day to ~24/day
+    // = ~7M rows saved. Globe freshness: arcs are aggregated over a
+    // 7-day window so a 1h cache lag is invisible to the user.
+    let cacheTtlSeconds = 3600;
     let usedFallback = false;
 
     // Fallback: cube empty for the requested window — defensive path back

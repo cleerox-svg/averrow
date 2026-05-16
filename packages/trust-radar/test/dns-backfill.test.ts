@@ -48,9 +48,14 @@ function makeEnv(opts: {
   // Pre-stamp throw matches BOTH split branches (ip_address IS NULL
   // and ip_address = '') so the test still simulates a pre-stamp
   // failure regardless of which branch the batch reached first.
+  //
+  // Distinguishes pre-stamp from the attempts-bump UPDATE by looking
+  // at the SET clause specifically (not the whole SQL) — both queries
+  // now mention `enrichment_attempts` in the WHERE clause after the
+  // 0195 partial-index alignment.
   const isPreStampSql = (sql: string): boolean =>
-    /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(sql) &&
-    !/enrichment_attempts/.test(sql);
+    /UPDATE threats\s*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(sql) &&
+    !/SET\s+enrichment_attempts/.test(sql);
 
   const prepare = (sql: string) => ({
     bind: (...bindArgs: unknown[]) => ({
@@ -119,10 +124,12 @@ describe("dns-backfill pre-stamp claim", () => {
     // Find the pre-stamp UPDATE — distinguished by setting only
     // attempted_resolve_at (no enrichment_attempts).
     const preStampIdx = calls.findIndex((c) =>
-      /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
-      !/enrichment_attempts/.test(c.sql),
+      /UPDATE threats\s*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
+      !/SET\s+enrichment_attempts/.test(c.sql),
     );
     expect(preStampIdx).toBeGreaterThanOrEqual(0);
+
+    // (no extra assertions beyond pre-stamp presence)
 
     // Every resolveDomain call must have happened AFTER the pre-stamp.
     expect(calledAtRunOrder.length).toBeGreaterThan(0);
@@ -180,8 +187,8 @@ describe("dns-backfill pre-stamp claim", () => {
     // Find every pre-stamp UPDATE (sets only attempted_resolve_at, no
     // enrichment_attempts).
     const preStamps = calls.filter((c) =>
-      /UPDATE threats[\s\S]*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
-      !/enrichment_attempts/.test(c.sql),
+      /UPDATE threats\s*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
+      !/SET\s+enrichment_attempts/.test(c.sql),
     );
 
     expect(preStamps.length).toBe(8);

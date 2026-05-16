@@ -124,6 +124,17 @@ export async function runDomainGeoBackfillBatch(
     // branch match `idx_threats_dns_backfill_select`'s partial WHERE
     // unambiguously so the planner uses it for both branches.
     // Phase 4 of the D1 spend-reduction track.
+    //
+    // D1 spend reduction (2026-05-16): both UPDATEs gained
+    // `status='active' AND COALESCE(enrichment_attempts, 0) < 8` so the
+    // new `idx_threats_dns_pending_strict` partial index (migration
+    // 0195) can be used. Without the matching filter the query is a
+    // superset of the strict index and SQLite falls back to the wider
+    // `idx_threats_dns_backfill` (~120K rows). With the filter the
+    // query is a subset and the planner narrows to ~60K rows. Skipping
+    // attempted_resolve_at updates on inactive/exhausted threats is
+    // correct — they aren't candidates for resolution anyway, so
+    // leaving their attempted_resolve_at stale has no observable effect.
     const PRE_STAMP_CHUNK = 50;
     try {
       for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
@@ -135,12 +146,16 @@ export async function runDomainGeoBackfillBatch(
             SET attempted_resolve_at = datetime('now')
             WHERE malicious_domain IN (${placeholders})
               AND ip_address IS NULL
+              AND status = 'active'
+              AND COALESCE(enrichment_attempts, 0) < 8
           `).bind(...chunk),
           env.DB.prepare(`
             UPDATE threats
             SET attempted_resolve_at = datetime('now')
             WHERE malicious_domain IN (${placeholders})
               AND ip_address = ''
+              AND status = 'active'
+              AND COALESCE(enrichment_attempts, 0) < 8
           `).bind(...chunk),
         ]);
       }
@@ -276,13 +291,30 @@ export async function runDomainGeoBackfillBatch(
         const chunk = transient.slice(i, i + STAMP_CHUNK);
         const placeholders = chunk.map(() => '?').join(',');
         try {
-          await env.DB.prepare(`
-            UPDATE threats
-            SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
-            WHERE malicious_domain IN (${placeholders})
-              AND (ip_address IS NULL OR ip_address = '')
-              AND COALESCE(enrichment_attempts, 0) < 8
-          `).bind(...chunk).run();
+          // D1 spend reduction (2026-05-16): split the OR into two
+          // batched UPDATEs (same Phase 4 reasoning as the pre-stamp
+          // block above) and add `status='active'` so the
+          // `idx_threats_dns_pending_strict` partial index (migration
+          // 0195) gets used. Pre-fix was 111K rows/call × 593 calls
+          // = 66M/24h; post-fix should be ~15K rows/call.
+          await env.DB.batch([
+            env.DB.prepare(`
+              UPDATE threats
+              SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
+              WHERE malicious_domain IN (${placeholders})
+                AND ip_address IS NULL
+                AND status = 'active'
+                AND COALESCE(enrichment_attempts, 0) < 8
+            `).bind(...chunk),
+            env.DB.prepare(`
+              UPDATE threats
+              SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
+              WHERE malicious_domain IN (${placeholders})
+                AND ip_address = ''
+                AND status = 'active'
+                AND COALESCE(enrichment_attempts, 0) < 8
+            `).bind(...chunk),
+          ]);
         } catch (err) {
           console.error('[dns-backfill] attempts bump failed:', err);
         }
