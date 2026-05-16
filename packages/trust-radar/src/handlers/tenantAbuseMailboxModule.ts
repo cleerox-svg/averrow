@@ -322,6 +322,10 @@ export interface AbuseInboxMessageDetail extends AbuseInboxMessageRow {
   sender_ip:             string | null;
   correlated_threat_ids: string[] | null;
   promoted_threat_ids:   string[] | null;
+  // PR-BC: parsed JSON object from `deep_analysis` column. Null when
+  // the row didn't qualify for deep analysis (LOW/MEDIUM verdicts,
+  // spam/benign/ambiguous), or when the Sonnet call failed.
+  deep_analysis:         unknown | null;
 }
 
 interface AbuseInboxMessageDetailRow extends AbuseInboxMessageRow {
@@ -335,6 +339,8 @@ interface AbuseInboxMessageDetailRow extends AbuseInboxMessageRow {
   sender_ip:             string | null;
   correlated_threat_ids: string | null;
   promoted_threat_ids:   string | null;
+  // PR-BC
+  deep_analysis:         string | null;
 }
 
 function safeJsonParse<T>(value: string | null): T | null {
@@ -385,7 +391,8 @@ export async function handleGetAbuseInboxMessageDetail(
             severity, status, ack_sent_at, determination_sent_at,
             COALESCE(throttled, 0) AS throttled, throttle_reason,
             raw_body, raw_headers, extracted_urls, attachment_names, raw_size_bytes,
-            auth_results, sender_ip, correlated_threat_ids, promoted_threat_ids
+            auth_results, sender_ip, correlated_threat_ids, promoted_threat_ids,
+            deep_analysis
      FROM abuse_inbox_messages
      WHERE id = ? AND org_id = ?`,
   ).bind(messageId, orgIdNum).first<AbuseInboxMessageDetailRow>();
@@ -402,6 +409,7 @@ export async function handleGetAbuseInboxMessageDetail(
     auth_results:          safeJsonParse<{ spf: string | null; dkim: string | null; dmarc: string | null }>(row.auth_results),
     correlated_threat_ids: safeJsonParse<string[]>(row.correlated_threat_ids),
     promoted_threat_ids:   safeJsonParse<string[]>(row.promoted_threat_ids),
+    deep_analysis:         safeJsonParse<unknown>(row.deep_analysis),
   };
 
   return json({ success: true, data: detail }, 200, origin);

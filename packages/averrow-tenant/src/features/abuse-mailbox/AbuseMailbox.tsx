@@ -439,6 +439,8 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       )}
 
+      <TenantDeepAnalysisSection detail={detail} loading={detailQ.isLoading} />
+
       <TenantPlatformIntelSection detail={detail} loading={detailQ.isLoading} />
 
       <TenantRawCaptureSections detailQ={detailQ} detail={detail} snippet={m.original_body_snippet} />
@@ -450,6 +452,74 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       </div>
     </article>
+  );
+}
+
+// ─── PR-BC investigator section (tenant parity) ────────────────
+
+function TenantDeepAnalysisSection({
+  detail, loading,
+}: {
+  detail: AbuseInboxMessageDetail | null | undefined;
+  loading: boolean;
+}) {
+  if (loading || !detail?.deep_analysis) return null;
+  const d = detail.deep_analysis;
+  const ACTION_TONE: Record<string, string> = {
+    takedown:     'text-sev-critical border-sev-critical/[0.30] bg-black/30',
+    abuse_report: 'text-amber border-amber/[0.30] bg-black/30',
+    block:        'text-amber border-amber/[0.30] bg-black/30',
+    monitor:      'text-white/70 border-white/[0.10] bg-black/30',
+    none:         'text-white/50 border-white/[0.08] bg-black/30',
+  };
+  const tone = ACTION_TONE[d.recommended_action.category] ?? 'text-white/70 border-white/[0.10] bg-black/30';
+  return (
+    <div className="mb-4">
+      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">
+        Investigator findings
+        <span className="ml-2 text-white/35">{d.model}</span>
+      </div>
+      <div className="rounded-lg p-4 bg-bg-card/60 border border-sev-critical/[0.20]">
+        <p className="text-[13px] text-white/92 leading-relaxed">{d.internal_narrative}</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mt-4">
+          {d.attribution.hosting_provider && (
+            <TenantDetailField label="Hosting provider" value={d.attribution.hosting_provider} />
+          )}
+          {d.attribution.hosting_country && (
+            <TenantDetailField label="Country" value={d.attribution.hosting_country} />
+          )}
+          {d.attribution.sender_asn && (
+            <TenantDetailField label="Sender ASN" value={d.attribution.sender_asn} mono />
+          )}
+          {d.attribution.correlated_campaigns.length > 0 && (
+            <TenantDetailField
+              label="Campaigns matched"
+              value={d.attribution.correlated_campaigns
+                .map((c) => c.name ?? c.id)
+                .join(', ')}
+            />
+          )}
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-white/[0.06]">
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Recommended action</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${tone}`}>
+              {d.recommended_action.category}
+            </span>
+            {d.recommended_action.target && (
+              <code className="text-[11px] font-mono text-white/85 break-all">
+                → {d.recommended_action.target}
+              </code>
+            )}
+          </div>
+          <p className="text-[12px] text-white/80 mt-2 leading-relaxed">
+            {d.recommended_action.details}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 

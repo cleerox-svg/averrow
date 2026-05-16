@@ -471,6 +471,9 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         </div>
       )}
 
+      {/* PR-BC — Deeper AI investigator (internal narrative + attribution + action) */}
+      <DeepAnalysisSection detail={detail} loading={detailQ.isLoading} />
+
       {/* PR-AX — Platform intelligence (auth + sender IP + correlations + promotions) */}
       <PlatformIntelSection detail={detail} loading={detailQ.isLoading} />
 
@@ -506,6 +509,91 @@ function UnthrottleButton({ messageId }: { messageId: string }) {
     >
       {mutate.isPending ? 'unthrottling…' : 'unthrottle + reprocess'}
     </button>
+  );
+}
+
+// ─── PR-BC investigator (deeper AI) section ─────────────────────
+//
+// Surfaces the Sonnet deep-analysis output on confirmed HIGH/CRITICAL
+// rows: full internal narrative (with IPs / URLs / sender addresses
+// — operators get everything), structured attribution chips, and the
+// recommended action with its target. Internal-only — the external
+// narrative + sanitization happens in the determination email.
+function DeepAnalysisSection({
+  detail, loading,
+}: {
+  detail: AdminAbuseInboxMessageDetail | null | undefined;
+  loading: boolean;
+}) {
+  if (loading || !detail?.deep_analysis) return null;
+  const d = detail.deep_analysis;
+  const ACTION_COLORS: Record<string, string> = {
+    takedown:     '#f87171',
+    abuse_report: '#fb923c',
+    block:        '#fbbf24',
+    monitor:      '#60a5fa',
+    none:         'rgba(255,255,255,0.45)',
+  };
+  const actionColor = ACTION_COLORS[d.recommended_action.category] ?? 'rgba(255,255,255,0.65)';
+  return (
+    <div className="mb-4">
+      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">
+        Investigator findings
+        <span className="ml-2 text-white/35">{d.model}</span>
+      </div>
+      <div
+        className="rounded-lg p-4"
+        style={{ background: 'rgba(15,23,42,0.50)', border: '1px solid rgba(248,113,113,0.20)' }}
+      >
+        <p className="text-[13px] text-white/92 leading-relaxed">{d.internal_narrative}</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mt-4">
+          {d.attribution.hosting_provider && (
+            <DetailField label="Hosting provider" value={d.attribution.hosting_provider} />
+          )}
+          {d.attribution.hosting_country && (
+            <DetailField label="Country" value={d.attribution.hosting_country} />
+          )}
+          {d.attribution.sender_asn && (
+            <DetailField label="Sender ASN" value={d.attribution.sender_asn} mono />
+          )}
+          {d.attribution.correlated_campaigns.length > 0 && (
+            <DetailField
+              label="Campaigns matched"
+              value={d.attribution.correlated_campaigns
+                .map((c) => c.name ?? c.id)
+                .join(', ')}
+            />
+          )}
+        </div>
+
+        <div
+          className="mt-4 pt-3 border-t border-white/[0.06]"
+        >
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Recommended action</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
+              style={{
+                color: actionColor,
+                background: 'rgba(0,0,0,0.30)',
+                borderColor: `${actionColor}55`,
+              }}
+            >
+              {d.recommended_action.category}
+            </span>
+            {d.recommended_action.target && (
+              <code className="text-[11px] font-mono text-white/85 break-all">
+                → {d.recommended_action.target}
+              </code>
+            )}
+          </div>
+          <p className="text-[12px] text-white/80 mt-2 leading-relaxed">
+            {d.recommended_action.details}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 

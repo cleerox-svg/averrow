@@ -334,6 +334,13 @@ interface DeterminationContext {
   attachmentCount?: number | null;
   correlatedCount?: number | null;   // platform threats this submission already matches
   promotedCount?: number | null;     // platform threats this submission CREATED
+  // PR-BC — sanitized investigator narrative from the Sonnet deep
+  // analyzer. Only populated on HIGH/CRITICAL phishing/malware
+  // verdicts where the Sonnet pass succeeded. The deep analyzer
+  // already strips IPs/URLs/emails before this gets here, and the
+  // sanitizeForExternalEmail helper below is a defense-in-depth
+  // second pass in case the model leaked anything past the prompt.
+  deepAnalysisExternal?: string | null;
 }
 
 interface VerdictDef {
@@ -412,6 +419,35 @@ const VERDICT_COPY: Record<string, VerdictDef> = {
     accent: "#A78BFA", pillBg: "#F0EBFD", pillFg: "#4C2D9E", pillBorder: "#CBBBF0",
   },
 };
+
+// ─── PR-BC external-narrative sanitizer ─────────────────────────
+//
+// Belt-and-suspenders pass on any string we're about to embed in
+// an outbound email. The deep analyzer's Sonnet prompt explicitly
+// forbids IPs/URLs/emails in the external narrative AND the
+// analyzer itself runs a regex scrub before storing the result.
+// This is a third gate at the email-send boundary — anything that
+// slips through both upstream layers gets caught here.
+//
+// Patterns scrubbed:
+//   IPv4 / IPv6  → "[ip]"
+//   https URLs   → "[link]"
+//   email addrs  → "[sender]"
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const IPV6_RE = /\b(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F]{0,4}\b/g;
+const URL_RE  = /https?:\/\/[^\s<>"']+/gi;
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+
+export function sanitizeForExternalEmail(text: string | null | undefined): string | null {
+  if (!text) return null;
+  return text
+    .replace(URL_RE, "[link]")
+    .replace(IPV4_RE, "[ip]")
+    .replace(IPV6_RE, "[ip]")
+    .replace(EMAIL_RE, "[sender]")
+    .replace(/\s{2,}/g, " ")
+    .trim() || null;
+}
 
 // ─── PR-AY helpers — translate raw signals into recipient-facing copy ───
 
@@ -541,11 +577,25 @@ function determinationHtml(ctx: DeterminationContext): string {
        </div>`
     : "";
 
+  // PR-BC investigator narrative — only present on HIGH/CRITICAL
+  // confirmed verdicts where the Sonnet deep analyzer succeeded.
+  // Triple-sanitized by this point (prompt + analyzer regex + final
+  // email-boundary scrub) — IPs / URLs / sender emails are guaranteed
+  // not to appear in the rendered output.
+  const investigatorClean = sanitizeForExternalEmail(ctx.deepAnalysisExternal);
+  const investigatorBlock = investigatorClean
+    ? `<div style="margin:16px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
+         <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Investigator findings</div>
+         <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(investigatorClean)}</p>
+       </div>`
+    : "";
+
   const body = `
     <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Verdict · ${ctx.confidence}% confidence</div>
     <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.lead)}</p>
     ${echoSubject}
     ${findingsBlock}
+    ${investigatorBlock}
     ${nextStepsBlock}
     <div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
       <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Analyst notes</div>
@@ -583,9 +633,14 @@ function determinationText(ctx: DeterminationContext): string {
     ? "\n\nWhat you should do:\n" + v.nextSteps.map((s) => `  - ${s}`).join("\n")
     : "";
 
+  const investigatorClean = sanitizeForExternalEmail(ctx.deepAnalysisExternal);
+  const investigatorBlock = investigatorClean
+    ? `\n\nInvestigator findings:\n${investigatorClean}`
+    : "";
+
   return `Determination: ${v.label} (${ctx.confidence}% confidence)
 
-${v.lead}${echo}${findingsBlock}${nextStepsBlock}
+${v.lead}${echo}${findingsBlock}${investigatorBlock}${nextStepsBlock}
 
 Analyst notes: ${ctx.reasoning}
 Action taken: ${ctx.action}

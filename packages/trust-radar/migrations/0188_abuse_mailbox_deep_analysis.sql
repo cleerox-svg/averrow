@@ -1,0 +1,39 @@
+-- PR-BC — Deeper AI analysis for confirmed abuse-mailbox verdicts
+--
+-- Adds a single JSON column that holds the full output of the Sonnet
+-- investigator pass. Computed only on HIGH/CRITICAL phishing/malware
+-- verdicts (severity-gated upstream), so the cost shape is bounded
+-- to ~10 confirmed threats/day worst-case × ~$0.003 per analysis =
+-- pennies per day.
+--
+-- Shape (mirrors DeepAnalysisResult in lib/abuse-mailbox-deep-analyzer.ts):
+--
+--   {
+--     "attribution": {
+--       "hosting_provider": string | null,
+--       "hosting_country":  string | null,
+--       "sender_asn":       string | null,
+--       "correlated_campaigns": [
+--         { "id": string, "name": string | null, "first_seen": string }
+--       ]
+--     },
+--     "internal_narrative":  string,
+--     "external_narrative":  string,
+--     "recommended_action": {
+--       "category":  "takedown" | "abuse_report" | "block" | "monitor" | "none",
+--       "target":    string | null,
+--       "details":   string
+--     },
+--     "analyzed_at": string,
+--     "model":       string
+--   }
+--
+-- Two narratives are stored side-by-side:
+--   - internal_narrative: full, with IPs/URLs/sender addresses. Surfaced
+--     in the admin + tenant drill-down UI for operator context.
+--   - external_narrative: sanitized for the submitter's determination
+--     email. The deep analyzer prompt explicitly forbids IPs, full URLs,
+--     full sender email addresses in the external narrative. A
+--     post-generation regex sanitizer in the responder is a safety net.
+
+ALTER TABLE abuse_inbox_messages ADD COLUMN deep_analysis TEXT;

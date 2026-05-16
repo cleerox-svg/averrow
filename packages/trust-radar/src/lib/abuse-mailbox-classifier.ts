@@ -452,6 +452,45 @@ export async function runAbuseClassifierBackfill(
       }
     }
 
+    // ─── PR-BC: deeper AI investigator on confirmed HIGH+ verdicts ──
+    //
+    // Runs after promotion so the analysis has the real promoted-count
+    // context. Sonnet pass produces internal + external narratives plus
+    // a specific recommended action. Severity-gated so cost stays
+    // bounded (~10 confirmed/day × ~$0.003 = pennies/day).
+    let deepAnalysisExternal: string | null = null;
+    if (
+      (verdict.classification === "phishing" || verdict.classification === "malware") &&
+      (severity === "HIGH" || severity === "CRITICAL")
+    ) {
+      try {
+        const { runDeepAnalysis } = await import("./abuse-mailbox-deep-analyzer");
+        const deep = await runDeepAnalysis(env, {
+          message_id:       m.id,
+          classification:   verdict.classification,
+          confidence:       verdict.confidence,
+          brand_name:       brand?.name             ?? null,
+          brand_domain:     brand?.canonical_domain ?? null,
+          original_from:    m.original_from,
+          original_subject: m.original_subject,
+          body_snippet:     m.original_body_snippet,
+          url_list:         urlList ?? [],
+          attachment_list:  attachmentList ?? [],
+          auth_results:     authResults,
+          sender_ip:        m.sender_ip,
+          correlated_threat_ids: correlatedIds,
+        });
+        if (deep) {
+          deepAnalysisExternal = deep.external_narrative;
+          await env.DB.prepare(
+            `UPDATE abuse_inbox_messages SET deep_analysis = ? WHERE id = ?`,
+          ).bind(JSON.stringify(deep), m.id).run();
+        }
+      } catch (err) {
+        console.warn(`[abuse-mailbox-classifier] deep analysis failed for ${m.id}:`, err);
+      }
+    }
+
     // ─── Wave-3 PR-AD: 24h determination email ─────────────────
     //
     // Fires immediately after the AI verdict lands. Skips rows that
@@ -477,6 +516,7 @@ export async function runAbuseClassifierBackfill(
           attachmentCount: m.attachment_count,
           correlatedCount: correlatedIds.length,
           promotedCount:   promotedIds.length,
+          deepAnalysisExternal,
         });
         if (detResult.ok) {
           await env.DB.prepare(

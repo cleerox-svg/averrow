@@ -121,6 +121,26 @@ export interface AdminAbuseInboxMessageDetail extends AdminAbuseInboxMessage {
   sender_ip:             string | null;
   correlated_threat_ids: string[] | null;
   promoted_threat_ids:   string[] | null;
+  // PR-BC
+  deep_analysis:         DeepAnalysisShape | null;
+}
+
+export interface DeepAnalysisShape {
+  attribution: {
+    hosting_provider:      string | null;
+    hosting_country:       string | null;
+    sender_asn:            string | null;
+    correlated_campaigns:  Array<{ id: string; name: string | null; first_seen: string }>;
+  };
+  internal_narrative:  string;
+  external_narrative:  string;
+  recommended_action: {
+    category: 'takedown' | 'abuse_report' | 'block' | 'monitor' | 'none';
+    target:   string | null;
+    details:  string;
+  };
+  analyzed_at: string;
+  model:       string;
 }
 
 /**
