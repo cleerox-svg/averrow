@@ -160,6 +160,9 @@ export type SeverityFloor = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type SeverityFloorWithOff = SeverityFloor | 'off';
 export type DigestMode = 'realtime' | 'hourly' | 'daily' | 'weekly' | 'off';
 export type DigestSeverityFloor = 'high' | 'medium' | 'low' | 'info';
+// NX5: per-group cadence (intel + platform). Distinct from digest_mode
+// which gates tenant-targeted brand events.
+export type GroupCadence = 'realtime' | 'daily_digest' | 'weekly_digest';
 
 export interface NotificationPreferencesV2 {
   inapp_severity_floor: SeverityFloor;
@@ -172,6 +175,8 @@ export interface NotificationPreferencesV2 {
   quiet_hours_timezone: string;
   critical_bypasses_quiet: number;
   show_tenant_notifications: number;
+  cadence_intel: GroupCadence;
+  cadence_platform: GroupCadence;
 }
 
 export function useNotificationPreferencesV2() {
@@ -192,6 +197,89 @@ export function useUpdateNotificationPreferencesV2() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-preferences-v2'] });
+    },
+  });
+}
+
+// ─── NX5: Notification Center admin (super_admin only) ──────────────
+
+export interface NotificationStatsRow {
+  type: string;
+  audience: string;
+  severity: string;
+  fired: number;
+  unique_recipients: number;
+}
+
+export interface NotificationStatsTotals {
+  total: number;
+  types: number;
+  unique_recipients: number;
+  super_admin_count: number;
+  tenant_count: number;
+  team_count: number;
+  all_count: number;
+  critical_count: number;
+  high_count: number;
+}
+
+export interface NotificationStats {
+  window_hours: number;
+  totals: NotificationStatsTotals;
+  by_type: NotificationStatsRow[];
+}
+
+export function useNotificationStats(hours = 24) {
+  return useQuery({
+    queryKey: ['notification-admin', 'stats', hours],
+    queryFn: async (): Promise<NotificationStats | null> => {
+      const res = await api.get<NotificationStats>(`/api/admin/notifications/stats?hours=${hours}`);
+      return res.data ?? null;
+    },
+    refetchInterval: 60_000,
+  });
+}
+
+export interface NotificationMute {
+  id: string;
+  type: string;
+  muted_until: string;
+  reason: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export function useNotificationMutes() {
+  return useQuery({
+    queryKey: ['notification-admin', 'mutes'],
+    queryFn: async (): Promise<NotificationMute[]> => {
+      const res = await api.get<NotificationMute[]>('/api/admin/notifications/mutes');
+      return res.data ?? [];
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateNotificationMute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ type, hours, reason }: { type: string; hours: number; reason?: string }) => {
+      await api.post('/api/admin/notifications/mute', { type, hours, reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notification-admin'] });
+    },
+  });
+}
+
+export function useDeleteNotificationMute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (type: string) => {
+      await api.delete(`/api/admin/notifications/mute/${encodeURIComponent(type)}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notification-admin'] });
     },
   });
 }

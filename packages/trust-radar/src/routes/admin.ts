@@ -207,6 +207,34 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleNotificationDeliveryAudit(request, env);
   });
 
+  // ─── NX5 Notification Center (super-admin only) ────────────────────
+  // Activity stats + per-type system-wide mutes. Powers
+  // /v2/notifications/admin in averrow-ops.
+  router.get("/api/admin/notifications/stats", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleNotificationStats } = await import("../handlers/notificationAdmin");
+    return handleNotificationStats(request, env);
+  });
+  router.get("/api/admin/notifications/mutes", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleListNotificationMutes } = await import("../handlers/notificationAdmin");
+    return handleListNotificationMutes(request, env);
+  });
+  router.post("/api/admin/notifications/mute", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleCreateNotificationMute } = await import("../handlers/notificationAdmin");
+    return handleCreateNotificationMute(request, env, ctx.userId);
+  });
+  router.delete("/api/admin/notifications/mute/:type", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleDeleteNotificationMute } = await import("../handlers/notificationAdmin");
+    return handleDeleteNotificationMute(request, env, request.params["type"] ?? "");
+  });
+
   // ─── Incidents (migration 0132) ───────────────────────────────────
   // Auto-created from critical platform_* notifications, operator-
   // managed via this surface, and selectively promoted to /status.

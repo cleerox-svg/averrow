@@ -100,6 +100,15 @@ const DIGEST_FLOOR_OPTIONS = [
   { value: 'high',   label: 'High and critical only' },
 ] as const;
 
+// NX5: per-group cadence — distinct from digest_mode. Intel + platform
+// each get their own batching cadence so an operator who only wants a
+// daily intel digest can still get realtime feed_health pings.
+const GROUP_CADENCE_OPTIONS = [
+  { value: 'realtime',      label: 'Realtime — every notification individually' },
+  { value: 'daily_digest',  label: 'Daily digest' },
+  { value: 'weekly_digest', label: 'Weekly digest' },
+] as const;
+
 const SUBSCRIPTION_LEVELS: Array<{ value: SubscriptionLevel; label: string; description: string }> = [
   { value: 'watching', label: 'Watching', description: 'Receive every notification for this brand' },
   { value: 'default',  label: 'Default',  description: 'Severity floors apply' },
@@ -239,8 +248,54 @@ export function NotificationPreferences() {
         </div>
       </Card>
 
-      {/* 2. DIGEST ────────────────────────────────────────────────────── */}
-      <PanelHeader title="Digest" subtitle="Roll up lower-severity notifications into a summary" icon={<Clock size={14} />} />
+      {/* 2a. NX5 PER-GROUP CADENCE ────────────────────────────────────── */}
+      <PanelHeader
+        title="Notification grouping"
+        subtitle="Distinct cadence per audience group — refines the legacy Digest setting"
+        icon={<Clock size={14} />}
+      />
+      <Card hover={false}>
+        <div className="space-y-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Platform alerts
+                </div>
+                <div className="text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                  Always on — these only fire when the platform needs you (feed health, agent stalls, D1 budget).
+                </div>
+              </div>
+            </div>
+            <Select
+              value={v2?.cadence_platform ?? 'realtime'}
+              options={GROUP_CADENCE_OPTIONS}
+              onChange={(v) => patchV2({ cadence_platform: v as NotificationPreferencesV2['cadence_platform'] })}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Intelligence digest
+                </div>
+                <div className="text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                  Toggleable per type below. New campaigns, threat actors, abuse mailbox, news watcher.
+                </div>
+              </div>
+            </div>
+            <Select
+              value={v2?.cadence_intel ?? 'realtime'}
+              options={GROUP_CADENCE_OPTIONS}
+              onChange={(v) => patchV2({ cadence_intel: v as NotificationPreferencesV2['cadence_intel'] })}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* 2b. DIGEST (legacy single cadence — affects tenant brand events) */}
+      <PanelHeader title="Tenant brand-event digest" subtitle="Cadence for brand-targeted events (DMARC drift, lookalikes, social impersonation)" icon={<Clock size={14} />} />
       <Card hover={false}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Frequency">

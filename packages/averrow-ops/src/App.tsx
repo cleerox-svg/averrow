@@ -35,6 +35,7 @@ const Metrics = React.lazy(() => import('@/features/admin/Metrics').then(m => ({
 const AdminIncidents = React.lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
 const AdminIncidentDetail = React.lazy(() => import('@/features/admin-incidents/IncidentDetail').then(m => ({ default: m.AdminIncidentDetail })));
 const PushAdmin = React.lazy(() => import('@/features/admin/PushAdmin').then(m => ({ default: m.PushAdmin })));
+const NotificationCenter = React.lazy(() => import('@/features/admin/NotificationCenter').then(m => ({ default: m.NotificationCenter })));
 const ArchitectDetail = React.lazy(() => import('@/features/agents/ArchitectDetail').then(m => ({ default: m.ArchitectDetail })));
 const Providers = React.lazy(() => import('@/features/providers/Providers').then(m => ({ default: m.Providers })));
 const Campaigns = React.lazy(() => import('@/features/campaigns/Campaigns').then(m => ({ default: m.Campaigns })));
@@ -179,6 +180,7 @@ export default function App() {
         <Route path="admin/incidents" element={lazyRoute(<AdminIncidents />)} />
         <Route path="admin/incidents/:id" element={lazyRoute(<AdminIncidentDetail />)} />
         <Route path="admin/push" element={lazyRoute(<PushAdmin />)} />
+        <Route path="admin/notifications" element={lazyRoute(<NotificationCenter />)} />
         <Route path="profile" element={lazyRoute(<Profile />)} />
         <Route path="notifications" element={lazyRoute(<Notifications />)} />
         <Route path="notifications/preferences" element={lazyRoute(<NotificationPreferences />)} />

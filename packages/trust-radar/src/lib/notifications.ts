@@ -100,6 +100,23 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
   }
 
   const db = env.DB;
+
+  // NX5: per-type mute check. Super admin can silence a notification
+  // type for N hours during an incident via /api/admin/notifications/mute.
+  // Producers continue running; we suppress at recipient resolution
+  // time so the mute is honored without changing the producer code.
+  // Best-effort — if the mute table query fails, fall through and
+  // deliver as normal (the audit row is the source of truth).
+  try {
+    const muted = await db.prepare(
+      `SELECT 1 FROM notification_type_mutes
+        WHERE type = ? AND user_id IS NULL AND muted_until > datetime('now')
+        LIMIT 1`
+    ).bind(opts.type).first<{ '1': number }>();
+    if (muted) return 0;
+  } catch {
+    // Table may not exist in older test fixtures — ignore.
+  }
   const metadataJson = opts.metadata ? JSON.stringify(opts.metadata) : null;
 
   // ─── Resolve audience + scope ────────────────────────────────────────

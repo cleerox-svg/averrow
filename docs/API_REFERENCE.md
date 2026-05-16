@@ -562,6 +562,10 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | DELETE | `/api/admin/sales-leads/:id` | Admin | Delete lead |
 | GET | `/api/admin/sales-leads/:id/activity` | Admin | Lead activity log |
 | POST | `/api/admin/sales-leads/:id/refresh-firmographics` | SuperAdmin | Re-run SEC/Wikidata enricher for this lead's brand and copy the refreshed firmographic + buying-signal data onto the lead snapshot. Cheap (no AI). |
+| GET  | `/api/admin/notifications/stats` | SuperAdmin | NX5 Notification Center — fired-by-(type, audience, severity) breakdown over a window (default 24h, max 720h via `?hours=`). |
+| GET  | `/api/admin/notifications/mutes` | SuperAdmin | NX5 — list active system-wide notification type mutes. |
+| POST | `/api/admin/notifications/mute` | SuperAdmin | NX5 — system-wide mute for a notification type. Body: `{ type, hours, reason? }`. |
+| DELETE | `/api/admin/notifications/mute/:type` | SuperAdmin | NX5 — clear a system-wide mute. |
 | POST | `/api/admin/backfill-classifications` | SuperAdmin | Backfill threat classifications |
 | POST | `/api/admin/backfill-saas-techniques` | Admin | Backfill SaaS attack technique classification (PushSecurity taxonomy) |
 | POST | `/api/admin/backfill-geo` | SuperAdmin | Backfill geo enrichment |

@@ -417,6 +417,11 @@ type SeverityFloor = 'critical' | 'high' | 'medium' | 'low' | 'info';
 type SeverityFloorWithOff = SeverityFloor | 'off';
 type DigestMode = 'realtime' | 'hourly' | 'daily' | 'weekly' | 'off';
 
+// NX5: per-group cadence type. Distinct from digest_mode (which gates
+// tenant-targeted brand events) — these two fields control how
+// intel + platform notifications batch.
+type GroupCadence = 'realtime' | 'daily_digest' | 'weekly_digest';
+
 interface PreferencesV2Row {
   inapp_severity_floor: SeverityFloor;
   push_severity_floor: SeverityFloorWithOff;
@@ -428,6 +433,9 @@ interface PreferencesV2Row {
   quiet_hours_timezone: string;
   critical_bypasses_quiet: number;
   show_tenant_notifications: number;
+  // NX5: per-group cadence (migration 0193)
+  cadence_intel: GroupCadence;
+  cadence_platform: GroupCadence;
 }
 
 const PREF_V2_DEFAULTS: PreferencesV2Row = {
@@ -441,12 +449,15 @@ const PREF_V2_DEFAULTS: PreferencesV2Row = {
   quiet_hours_timezone: 'UTC',
   critical_bypasses_quiet: 1,
   show_tenant_notifications: 0,
+  cadence_intel: 'realtime',
+  cadence_platform: 'realtime',
 };
 
 const VALID_SEVERITY: ReadonlySet<SeverityFloor> = new Set(['critical','high','medium','low','info']);
 const VALID_SEVERITY_OFF: ReadonlySet<SeverityFloorWithOff> = new Set(['critical','high','medium','low','info','off']);
 const VALID_DIGEST: ReadonlySet<DigestMode> = new Set(['realtime','hourly','daily','weekly','off']);
 const VALID_DIGEST_FLOOR: ReadonlySet<'high'|'medium'|'low'|'info'> = new Set(['high','medium','low','info']);
+const VALID_GROUP_CADENCE: ReadonlySet<GroupCadence> = new Set(['realtime','daily_digest','weekly_digest']);
 
 // GET /api/notifications/preferences/v2
 export async function handleGetPreferencesV2(request: Request, env: Env, userId: string): Promise<Response> {
@@ -456,7 +467,8 @@ export async function handleGetPreferencesV2(request: Request, env: Env, userId:
       `SELECT inapp_severity_floor, push_severity_floor, email_severity_floor,
               digest_mode, digest_severity_floor,
               quiet_hours_start, quiet_hours_end, quiet_hours_timezone,
-              critical_bypasses_quiet, show_tenant_notifications
+              critical_bypasses_quiet, show_tenant_notifications,
+              cadence_intel, cadence_platform
          FROM notification_preferences_v2 WHERE user_id = ?`
     ).bind(userId).first<PreferencesV2Row>();
 
@@ -530,6 +542,19 @@ export async function handleUpdatePreferencesV2(request: Request, env: Env, user
     }
     if (body.show_tenant_notifications !== undefined) {
       updates.push('show_tenant_notifications = ?'); bindings.push(body.show_tenant_notifications ? 1 : 0);
+    }
+    // NX5: per-group cadence
+    if (body.cadence_intel !== undefined) {
+      if (!VALID_GROUP_CADENCE.has(body.cadence_intel)) {
+        return json({ success: false, error: "Invalid cadence_intel" }, 400, origin);
+      }
+      updates.push('cadence_intel = ?'); bindings.push(body.cadence_intel);
+    }
+    if (body.cadence_platform !== undefined) {
+      if (!VALID_GROUP_CADENCE.has(body.cadence_platform)) {
+        return json({ success: false, error: "Invalid cadence_platform" }, 400, origin);
+      }
+      updates.push('cadence_platform = ?'); bindings.push(body.cadence_platform);
     }
 
     if (updates.length === 0) {
