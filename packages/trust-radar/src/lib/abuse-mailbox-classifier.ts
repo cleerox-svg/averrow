@@ -216,15 +216,19 @@ export function severityFor(
 }
 
 /**
- * Call Haiku for one message and return a structured classification.
- * Returns null on transport failure or unparseable output — the
- * caller leaves the row in classification='pending' so the next
- * backfill pass can retry.
+ * Call Haiku for one message and return a structured classification or
+ * the error reason. NX-poison-pill: callers can now distinguish a real
+ * verdict from a transport/parse failure so they can persist the error
+ * + bump the retry counter (migration 0196).
  */
+export type ClassifyOutcome =
+  | { ok: true; verdict: ClassifyResult }
+  | { ok: false; error: string };
+
 export async function classifyAbuseMessageWithAI(
   env: Env,
   ctx: AbuseClassifyContext,
-): Promise<ClassifyResult | null> {
+): Promise<ClassifyOutcome> {
   try {
     const { parsed } = await callAnthropicJSON<unknown>(env, {
       agentId: 'abuse_mailbox_classifier',
@@ -234,15 +238,21 @@ export async function classifyAbuseMessageWithAI(
       messages: [{ role: 'user', content: buildClassifyPrompt(ctx) }],
       maxTokens: 256,
     });
-    return parseClassifyResult(parsed);
-  } catch (err) {
-    if (err instanceof AnthropicError) {
-      console.error('[abuse_mailbox_classifier] anthropic error:', err.message);
-    } else {
-      console.error('[abuse_mailbox_classifier] unexpected error:',
-        err instanceof Error ? err.message : String(err));
+    const verdict = parseClassifyResult(parsed);
+    if (!verdict) {
+      return { ok: false, error: 'parse_error: model output did not match verdict schema' };
     }
-    return null;
+    return { ok: true, verdict };
+  } catch (err) {
+    const message = err instanceof AnthropicError ? err.message
+                  : err instanceof Error           ? err.message
+                  : String(err);
+    if (err instanceof AnthropicError) {
+      console.error('[abuse_mailbox_classifier] anthropic error:', message);
+    } else {
+      console.error('[abuse_mailbox_classifier] unexpected error:', message);
+    }
+    return { ok: false, error: message.slice(0, 500) };
   }
 }
 
@@ -285,7 +295,17 @@ interface MessageRow {
   auth_results:          string | null;
   sender_ip:             string | null;
   correlated_threat_ids: string | null;
+  // NX-poison-pill (migration 0196): retry budget for Haiku-failing rows.
+  classification_attempts: number | null;
 }
+
+/**
+ * Max retries for a single message before the classifier auto-graduates
+ * it to classification='ambiguous' / classified_by='auto_graduated'.
+ * Caps the cost of a poison-pill row at 3× the per-message Haiku spend
+ * (~$0.003 total) instead of every-orchestrator-tick forever.
+ */
+const MAX_CLASSIFY_ATTEMPTS = 3;
 
 interface BrandRow {
   id:               string;
@@ -318,18 +338,27 @@ export async function runAbuseClassifierBackfill(
   // of the flood but doesn't pay for Haiku classification or the
   // Resend determination email. Operator can unset abuse_inbox_messages
   // .throttled = 0 to opt-in a specific message back into the pipeline.
+  //
+  // NX-poison-pill (2026-05-16): skip rows whose classification_attempts
+  // are at cap (migration 0196). The graduation UPDATE below catches the
+  // 3rd attempt — rows that have already been graduated have
+  // classification != 'pending' and don't match this WHERE anyway, so
+  // the attempts filter is belt-and-suspenders for any row whose
+  // attempts column drifts past cap without a graduation (e.g. concurrent
+  // backfill, manual operator UPDATE).
   const rows = await env.DB.prepare(`
     SELECT id, org_id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
            forwarded_by_email, inbound_alias, determination_sent_at,
            extracted_urls, attachment_names, auth_results, sender_ip,
-           correlated_threat_ids
+           correlated_threat_ids, classification_attempts
     FROM abuse_inbox_messages
     WHERE classification = 'pending'
       AND COALESCE(throttled, 0) = 0
+      AND COALESCE(classification_attempts, 0) < ?
     ORDER BY received_at ASC
     LIMIT ? OFFSET ?
-  `).bind(limit, offset).all<MessageRow>();
+  `).bind(MAX_CLASSIFY_ATTEMPTS, limit, offset).all<MessageRow>();
 
   // Bulk-load brand metadata for the batch in one query so we can
   // include the customer's brand name in the prompt for every
@@ -365,7 +394,20 @@ export async function runAbuseClassifierBackfill(
     const authResults     = parseJsonSafe<{ spf: string | null; dkim: string | null; dmarc: string | null }>(m.auth_results);
     const correlatedIds   = parseJsonSafe<string[]>(m.correlated_threat_ids) ?? [];
 
-    const verdict = await classifyAbuseMessageWithAI(env, {
+    // NX-poison-pill: bump the attempt counter BEFORE the AI call so
+    // even if Haiku crashes mid-classification, the counter advances
+    // and the row gets one fewer retry. Concurrency safe under the
+    // existing `WHERE classification = 'pending'` guard — once
+    // classification flips, this UPDATE no-ops.
+    const attemptN = (m.classification_attempts ?? 0) + 1;
+    await env.DB.prepare(`
+      UPDATE abuse_inbox_messages
+      SET classification_attempts = ?,
+          updated_at = datetime('now')
+      WHERE id = ? AND classification = 'pending'
+    `).bind(attemptN, m.id).run();
+
+    const outcome = await classifyAbuseMessageWithAI(env, {
       original_from:         m.original_from,
       original_subject:      m.original_subject,
       original_body_snippet: m.original_body_snippet,
@@ -380,12 +422,45 @@ export async function runAbuseClassifierBackfill(
       correlated_threats_count: correlatedIds.length,
     });
 
-    if (!verdict) {
+    if (!outcome.ok) {
       result.failed += 1;
       result.by_classification.parse_error += 1;
+      // Persist the error so an operator can see why a row keeps
+      // failing without scraping logs. Trimmed to 500 chars in the
+      // helper.
+      await env.DB.prepare(`
+        UPDATE abuse_inbox_messages
+        SET last_classify_error = ?,
+            updated_at = datetime('now')
+        WHERE id = ? AND classification = 'pending'
+      `).bind(outcome.error, m.id).run();
+
+      // Graduate at the retry cap so the orchestrator's next tick
+      // doesn't re-pick this row and re-spend Haiku tokens on a
+      // message the model can't reliably classify (parse error,
+      // truncated JSON, weird body content, etc.). 'ambiguous' is the
+      // conservative landing zone — same as Haiku returns when it
+      // can't decide on its own — and the operator can re-trigger
+      // by setting classification='pending' + classification_attempts=0.
+      if (attemptN >= MAX_CLASSIFY_ATTEMPTS) {
+        await env.DB.prepare(`
+          UPDATE abuse_inbox_messages
+          SET classification         = 'ambiguous',
+              classified_by          = 'auto_graduated',
+              classification_reason  = ?,
+              severity               = 'MEDIUM',
+              updated_at             = datetime('now')
+          WHERE id = ? AND classification = 'pending'
+        `).bind(
+          `Auto-graduated after ${attemptN} failed AI classification attempts. Last error: ${outcome.error.slice(0, 200)}`,
+          m.id,
+        ).run();
+        result.by_classification.ambiguous += 1;
+      }
       continue;
     }
 
+    const verdict = outcome.verdict;
     result.classified += 1;
     result.by_classification[verdict.classification] += 1;
 
