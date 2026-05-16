@@ -224,7 +224,12 @@ export function IntelHotlist() {
                   name={b.brand_name}
                   color={M.AMBER}
                   dimColor={M.AMBER_DIM}
-                  faviconUrl={null}
+                  faviconUrl={
+                    b.brand_logo_url ??
+                    (b.brand_domain
+                      ? `https://www.google.com/s2/favicons?domain=${b.brand_domain}&sz=64`
+                      : null)
+                  }
                 />
                 <div className="home-intel-row-text">
                   <div className="home-intel-row-name">{b.brand_name}</div>

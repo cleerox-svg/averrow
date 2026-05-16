@@ -9,6 +9,12 @@ export interface Notification {
   id: string;
   // N3: tenant-scoping fields surfaced from the row
   brand_id: string | null;
+  // Resolved brand identity (LEFT JOINed from brands when brand_id
+  // is set) — lets the UI render a real favicon next to brand-
+  // scoped notifications instead of a generic severity glyph.
+  brand_domain: string | null;
+  brand_logo_url: string | null;
+  brand_name: string | null;
   org_id: string | null;
   audience: NotificationAudience;
   // System events appear in the feed too (email_security_change,

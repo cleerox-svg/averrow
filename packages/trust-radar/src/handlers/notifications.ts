@@ -80,53 +80,64 @@ export async function handleListNotificationsV2(request: Request, env: Env, user
     // until N5 retires the legacy preferences UI. Snoozed rows are
     // hidden by default — unhidden by `unread=true` filter or when
     // snoozed_until <= now (handled by the SELECT predicate below).
-    let sql = `SELECT id, brand_id, org_id, audience,
-                      type, severity, title, message,
-                      reason_text, recommended_action, link,
-                      state, read_at, snoozed_until, done_at,
-                      group_key, created_at, updated_at, metadata
-               FROM notifications WHERE user_id = ?`;
+    // brand_domain + brand_logo_url come from a LEFT JOIN so the
+    // frontend can render a real favicon next to brand-scoped
+    // notifications (matches the BrandMovers row treatment).
+    // Falls back to null for platform/feed/agent notifications.
+    let sql = `SELECT n.id, n.brand_id, n.org_id, n.audience,
+                      n.type, n.severity, n.title, n.message,
+                      n.reason_text, n.recommended_action, n.link,
+                      n.state, n.read_at, n.snoozed_until, n.done_at,
+                      n.group_key, n.created_at, n.updated_at, n.metadata,
+                      b.canonical_domain AS brand_domain,
+                      b.logo_url         AS brand_logo_url,
+                      b.name             AS brand_name
+               FROM notifications n
+               LEFT JOIN brands b ON b.id = n.brand_id
+               WHERE n.user_id = ?`;
     const params: unknown[] = [userId];
 
     // N4: explicit state filter for the triage inbox tabs
     // (Inbox / Snoozed / Done / All). Falls back to legacy
     // unread-only / inbox-default filtering when not provided.
+    // Columns are `n.`-prefixed because the LEFT JOIN on brands
+    // introduces ambiguity for created_at / name / etc.
     if (stateFilter === 'snoozed') {
-      sql += ` AND state = 'snoozed' AND snoozed_until > datetime('now')`;
+      sql += ` AND n.state = 'snoozed' AND n.snoozed_until > datetime('now')`;
     } else if (stateFilter === 'done') {
-      sql += ` AND state = 'done'`;
+      sql += ` AND n.state = 'done'`;
     } else if (stateFilter === 'all') {
       // No state predicate — return everything regardless of state.
     } else if (unreadOnly) {
-      sql += ` AND state = 'unread'`;
+      sql += ` AND n.state = 'unread'`;
     } else {
       // 'inbox' (default): hide done rows and unexpired snoozed rows.
-      sql += ` AND state != 'done'
-               AND (state != 'snoozed' OR snoozed_until <= datetime('now'))`;
+      sql += ` AND n.state != 'done'
+               AND (n.state != 'snoozed' OR n.snoozed_until <= datetime('now'))`;
     }
     if (type) {
-      sql += ` AND type = ?`;
+      sql += ` AND n.type = ?`;
       params.push(type);
     }
     if (severity) {
-      sql += ` AND severity = ?`;
+      sql += ` AND n.severity = ?`;
       params.push(severity);
     }
     if (audienceFilter && audienceFilter.length > 0) {
-      sql += ` AND audience IN (${audienceFilter.map(() => '?').join(',')})`;
+      sql += ` AND n.audience IN (${audienceFilter.map(() => '?').join(',')})`;
       params.push(...audienceFilter);
     }
     if (q) {
-      sql += ` AND (LOWER(title) LIKE ? OR LOWER(message) LIKE ?)`;
+      sql += ` AND (LOWER(n.title) LIKE ? OR LOWER(n.message) LIKE ?)`;
       const needle = `%${q.toLowerCase()}%`;
       params.push(needle, needle);
     }
     if (cursor) {
-      sql += ` AND created_at < ?`;
+      sql += ` AND n.created_at < ?`;
       params.push(cursor);
     }
 
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    sql += ` ORDER BY n.created_at DESC LIMIT ?`;
     params.push(limit);
 
     const tally = newTally();
@@ -141,6 +152,9 @@ export async function handleListNotificationsV2(request: Request, env: Env, user
       group_key: string | null;
       created_at: string; updated_at: string;
       metadata: string | null;
+      brand_domain: string | null;
+      brand_logo_url: string | null;
+      brand_name: string | null;
     }>();
     addToTally(tally, rows.meta);
     const results = rows.results;

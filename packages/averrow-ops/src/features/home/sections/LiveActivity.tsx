@@ -14,6 +14,8 @@
 import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { useNotifications } from '@/hooks/useNotifications';
+import { BrandAvatar } from '@/components/ui/BrandAvatar';
+import { M } from '@/design-system/tokens';
 
 const SEV_COLOR: Record<string, { fg: string; dim: string }> = {
   critical: { fg: 'var(--sev-critical)', dim: 'var(--sev-critical-dim, rgba(239,68,68,0.30))' },
@@ -21,6 +23,16 @@ const SEV_COLOR: Record<string, { fg: string; dim: string }> = {
   medium:   { fg: 'var(--sev-medium)',   dim: 'var(--sev-medium-dim, rgba(234,179,8,0.30))' },
   low:      { fg: 'var(--sev-low)',      dim: 'var(--sev-low-dim, rgba(34,197,94,0.30))'    },
   info:     { fg: 'var(--text-tertiary)', dim: 'var(--border-base)' },
+};
+
+// Severity → BrandAvatar accent pair so brand-scoped rows still
+// communicate severity via the tint surrounding the favicon.
+const SEV_AVATAR_ACCENT: Record<string, { color: string; dim: string }> = {
+  critical: { color: M.RED,    dim: M.RED_DIM    },
+  high:     { color: M.AMBER,  dim: M.AMBER_DIM  },
+  medium:   { color: M.AMBER,  dim: M.AMBER_DIM  },
+  low:      { color: M.GREEN,  dim: M.GREEN_DIM  },
+  info:     { color: M.BLUE,   dim: M.BLUE_DIM   },
 };
 
 function relTime(iso: string): string {
@@ -78,6 +90,13 @@ export function LiveActivity() {
           <ul className="home-live-activity-rows">
             {items.map((item) => {
               const sev = (item.severity || 'info').toLowerCase();
+              const hasBrand = !!item.brand_id;
+              const accent = SEV_AVATAR_ACCENT[sev] ?? SEV_AVATAR_ACCENT.info;
+              const faviconUrl =
+                item.brand_logo_url ??
+                (item.brand_domain
+                  ? `https://www.google.com/s2/favicons?domain=${item.brand_domain}&sz=64`
+                  : null);
               return (
                 <li key={item.id}>
                   <button
@@ -85,7 +104,16 @@ export function LiveActivity() {
                     onClick={() => item.link ? navigate(item.link) : navigate('/alerts')}
                     className="home-live-activity-row"
                   >
-                    <SevGlyph severity={sev} />
+                    {hasBrand ? (
+                      <BrandAvatar
+                        name={item.brand_name ?? item.title}
+                        color={accent.color}
+                        dimColor={accent.dim}
+                        faviconUrl={faviconUrl}
+                      />
+                    ) : (
+                      <SevGlyph severity={sev} />
+                    )}
                     <div className="home-live-activity-row-text">
                       <div className="home-live-activity-row-title">{item.title}</div>
                       <div className="home-live-activity-row-time">{relTime(item.created_at)}</div>

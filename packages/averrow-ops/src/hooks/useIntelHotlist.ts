@@ -28,6 +28,12 @@ export interface ConsensusIp {
 export interface Burst {
   brand_id: string;
   brand_name: string;
+  /** Brand favicon source — populated from brands.canonical_domain
+   *  + brands.logo_url so the UI can render the same favicon
+   *  treatment as BrandMovers. Null when the brand record has
+   *  neither field set. */
+  brand_domain: string | null;
+  brand_logo_url: string | null;
   hour_bucket: string;
   threat_count: number;
   distinct_domains: number;

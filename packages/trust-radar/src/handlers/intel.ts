@@ -346,26 +346,49 @@ export async function handleIntelHotlist(request: Request, env: Env): Promise<Re
       }>(),
     ]);
 
-    // Resolve brand_id → name for the bursts payload so the UI
-    // doesn't need an extra round-trip. Batched into one IN().
+    // Resolve brand_id → name + canonical_domain + logo_url for the
+    // bursts payload so the UI can render the same favicon treatment
+    // as BrandMovers without an extra round-trip. Batched into one
+    // IN().
     const burstBrandIds = Array.from(new Set((burstsRes.results ?? []).map(b => b.brand_id))).filter(Boolean);
-    let brandNameById = new Map<string, string>();
+    interface BurstBrand {
+      name: string;
+      canonical_domain: string | null;
+      logo_url: string | null;
+    }
+    let brandById = new Map<string, BurstBrand>();
     if (burstBrandIds.length > 0) {
       const placeholders = burstBrandIds.map(() => '?').join(',');
       const brandRows = await env.DB.prepare(
-        `SELECT id, name FROM brands WHERE id IN (${placeholders})`,
-      ).bind(...burstBrandIds).all<{ id: string; name: string }>();
-      brandNameById = new Map(brandRows.results.map(r => [r.id, r.name]));
+        `SELECT id, name, canonical_domain, logo_url FROM brands WHERE id IN (${placeholders})`,
+      ).bind(...burstBrandIds).all<{
+        id: string;
+        name: string;
+        canonical_domain: string | null;
+        logo_url: string | null;
+      }>();
+      brandById = new Map(
+        brandRows.results.map(r => [r.id, {
+          name: r.name,
+          canonical_domain: r.canonical_domain,
+          logo_url: r.logo_url,
+        }]),
+      );
     }
-    const bursts = (burstsRes.results ?? []).map(b => ({
-      brand_id:         b.brand_id,
-      brand_name:       brandNameById.get(b.brand_id) ?? b.brand_id,
-      hour_bucket:      b.hour_bucket,
-      threat_count:     b.threat_count,
-      distinct_domains: b.distinct_domains,
-      burst_start:      b.burst_start,
-      burst_end:        b.burst_end,
-    }));
+    const bursts = (burstsRes.results ?? []).map(b => {
+      const brand = brandById.get(b.brand_id);
+      return {
+        brand_id:         b.brand_id,
+        brand_name:       brand?.name ?? b.brand_id,
+        brand_domain:     brand?.canonical_domain ?? null,
+        brand_logo_url:   brand?.logo_url ?? null,
+        hour_bucket:      b.hour_bucket,
+        threat_count:     b.threat_count,
+        distinct_domains: b.distinct_domains,
+        burst_start:      b.burst_start,
+        burst_end:        b.burst_end,
+      };
+    });
 
     const body = {
       success: true,
