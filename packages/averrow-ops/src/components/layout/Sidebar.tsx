@@ -136,7 +136,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       items: [
         { label: 'Incidents',    path: '/admin/incidents',  icon: Siren },
         { label: 'Takedowns',    path: '/admin/takedowns',  icon: Gavel },
-        { label: 'Alerts',       path: '/alerts',           icon: Bell, badge: alertCount },
+        { label: 'Signals',      path: '/alerts',           icon: Bell, badge: alertCount },
         { label: 'Spam Trap',    path: '/admin/spam-trap',  icon: Inbox },
         { label: 'Abuse Mailbox', path: '/admin/abuse-mailbox', icon: Mail },
         { label: 'Leads',       path: '/leads',            icon: Target },
