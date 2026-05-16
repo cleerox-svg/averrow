@@ -256,6 +256,25 @@ export interface PipelineDetail {
     completed_at: string | null;
     error_message: string | null;
   }>;
+  /** Geoip-only — reference dataset shape (row count, freshness,
+   *  in-flight refresh progress). Replaces the generic backlog/
+   *  sparkline treatment for the GeoIP card since it isn't a
+   *  draining queue. */
+  reference_dataset?: {
+    configured: boolean;
+    row_count: number;
+    shadow_row_count: number | null;
+    shadow_table_present: boolean;
+    source_version: string | null;
+    last_refresh_at: string | null;
+    last_refresh_age_hours: number | null;
+    last_refresh_status: string | null;
+    last_refresh_rows_written: number | null;
+    last_refresh_duration_ms: number | null;
+    last_refresh_error: string | null;
+    currently_running: boolean;
+    stale_threshold_days: number;
+  };
 }
 
 export function usePipelineDetail(pipelineId: string | null) {

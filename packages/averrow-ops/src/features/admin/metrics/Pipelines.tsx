@@ -29,7 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import type { VerdictTag } from '@/components/ui/Badge';
 import { ChevronDown } from 'lucide-react';
 import { usePipelineStatus, usePipelineDetail } from '@/hooks/useAgents';
-import type { Agent, PipelineEntry } from '@/hooks/useAgents';
+import type { Agent, PipelineEntry, PipelineDetail } from '@/hooks/useAgents';
 import { relativeTime, formatDuration } from '@/lib/time';
 
 // Maps PipelineVerdict.label → VerdictTag for the styled Badge.
@@ -322,8 +322,14 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Left — sparkline + drain rate */}
+        {/* Left — sparkline + drain rate (OR reference-dataset block) */}
         <div className="space-y-4">
+          {detail.reference_dataset ? (
+            <ReferenceDatasetBlock
+              data={detail.reference_dataset}
+              attempts={detail.recent_attempts ?? []}
+            />
+          ) : (
           <div>
             <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Backlog · last 24h
@@ -373,6 +379,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
               </div>
             )}
           </div>
+          )}
 
           {detail.drained_last_hour != null && (
             <div>
@@ -467,6 +474,166 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function ReferenceDatasetBlock({
+  data,
+  attempts,
+}: {
+  data: NonNullable<PipelineDetail['reference_dataset']>;
+  attempts: NonNullable<PipelineDetail['recent_attempts']>;
+}) {
+  const {
+    configured, row_count, shadow_row_count, shadow_table_present,
+    source_version, last_refresh_age_hours, last_refresh_status,
+    last_refresh_duration_ms, last_refresh_error, currently_running,
+    stale_threshold_days,
+  } = data;
+
+  const ageDays =
+    last_refresh_age_hours != null ? last_refresh_age_hours / 24 : null;
+  const ageLabel =
+    last_refresh_age_hours == null
+      ? 'never'
+      : last_refresh_age_hours < 1
+        ? 'just now'
+        : last_refresh_age_hours < 24
+          ? `${last_refresh_age_hours}h ago`
+          : `${Math.round((ageDays ?? 0) * 10) / 10}d ago`;
+  const ageColor =
+    ageDays == null
+      ? 'var(--text-muted)'
+      : ageDays > stale_threshold_days * 2
+        ? 'var(--sev-critical)'
+        : ageDays > stale_threshold_days
+          ? 'var(--sev-medium)'
+          : 'var(--green)';
+
+  const shortSha =
+    source_version && source_version.length >= 12
+      ? source_version.slice(0, 12)
+      : source_version;
+
+  const shadowPct =
+    currently_running && shadow_row_count != null && row_count > 0
+      ? Math.min(100, Math.round((shadow_row_count / row_count) * 100))
+      : null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          Reference dataset
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Stat label="Live rows" value={row_count.toLocaleString()} />
+          <div>
+            <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>
+              Age
+            </div>
+            <div className="text-lg font-mono" style={{ color: ageColor }}>
+              {ageLabel}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {!configured && (
+        <div className="font-mono text-[10px] p-2 rounded" style={{
+          background: 'var(--sev-medium-bg)',
+          color:      'var(--text-secondary)',
+          border:     '1px solid var(--border-base)',
+        }}>
+          GEOIP_DB not configured — bind the D1 database to enable enrichment.
+        </div>
+      )}
+
+      {source_version && (
+        <div>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+            Source release
+          </div>
+          <div
+            className="font-mono text-[11px] mt-0.5"
+            style={{ color: 'var(--text-primary)' }}
+            title={source_version}
+          >
+            sha256:{shortSha}…
+          </div>
+        </div>
+      )}
+
+      {currently_running && (
+        <div className="p-2 rounded" style={{
+          background: 'var(--sev-low-bg)',
+          border:     '1px solid var(--border-base)',
+        }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-low)' }}>
+            Refresh in flight
+          </div>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+            Shadow table populating
+            {shadow_table_present && shadow_row_count != null && (
+              <>: {shadow_row_count.toLocaleString()} rows {shadowPct != null && `(${shadowPct}%)`}</>
+            )}
+          </div>
+        </div>
+      )}
+
+      {last_refresh_status === 'failed' && last_refresh_error && (
+        <div>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-critical)' }}>
+            Last refresh failed
+          </div>
+          <div className="font-mono text-[11px] p-2 rounded" style={{
+            background: 'var(--sev-critical-bg)',
+            color:      'var(--text-primary)',
+            border:     '1px solid var(--sev-critical-border)',
+          }}>
+            {last_refresh_error}
+          </div>
+        </div>
+      )}
+
+      {!currently_running && last_refresh_status === 'success' && last_refresh_duration_ms != null && (
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+          Last import ran in {formatDuration(last_refresh_duration_ms)}.
+        </div>
+      )}
+
+      {attempts.length > 0 && (
+        <div>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            Recent attempts
+          </div>
+          <div className="space-y-1">
+            {attempts.slice(0, 5).map(a => {
+              const color =
+                a.status === 'success' ? 'var(--green)' :
+                a.status === 'failed'  ? 'var(--sev-high)' :
+                a.status === 'running' ? 'var(--sev-low)' :
+                                         'var(--text-secondary)';
+              return (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between font-mono text-[10px]"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title={a.error_message ?? undefined}
+                >
+                  <span style={{ color }}>{a.status}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    {a.rows_written > 0 ? a.rows_written.toLocaleString() + ' rows · ' : ''}
+                    {relativeTime(a.started_at)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
