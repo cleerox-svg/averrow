@@ -13,11 +13,15 @@ import {
   useAbuseMailboxSummary,
   useAbuseInboxMessages,
   useAbuseInboxMessageDetail,
+  useUpdateAbuseMessageStatus,
+  useAbuseMailboxIntel,
   type AbuseMailboxBrandSummary,
   type AbuseMailboxTotals,
   type AbuseAlias,
   type AbuseInboxMessageRow,
   type AbuseInboxMessageDetail,
+  type AbuseMailboxIntel,
+  type AbuseMessageStatus,
   type ExtractedUrl,
   type ExtractedAttachment,
 } from '@/lib/abuseMailboxModule';
@@ -26,8 +30,13 @@ export function AbuseMailbox() {
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
   // PR-AO: per-message drill-down state. Parity with the ops surface.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // PR-BD: tabs/filters/search state (parity with admin)
+  const [statusTab, setStatusTab] = useState<'all' | AbuseMessageStatus>('all');
+  const [classFilter, setClassFilter] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState('');
   const summaryQ = useAbuseMailboxSummary();
   const messagesQ = useAbuseInboxMessages(activeBrand);
+  const intelQ = useAbuseMailboxIntel();
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -82,32 +91,41 @@ export function AbuseMailbox() {
             )}
           </section>
 
+          {/* PR-BD — Intel highlights from deep_analysis aggregates */}
+          {intelQ.data && <TenantIntelHighlights intel={intelQ.data} />}
+
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-                {activeBrand
-                  ? `Filtered: ${summaryQ.data.brands.find((b) => b.brand_id === activeBrand)?.brand_name ?? activeBrand}`
-                  : 'Recent messages'}
-                <span className="text-white/30 ml-2">({messagesQ.data?.messages.length ?? 0})</span>
-              </h2>
-              {activeBrand && (
-                <button
-                  type="button"
-                  onClick={() => setActiveBrand(null)}
-                  className="text-[11px] font-mono text-white/55 hover:text-white/85"
-                >
-                  clear filter
-                </button>
-              )}
-            </div>
+            <TenantInboxToolbar
+              messages={messagesQ.data?.messages ?? []}
+              activeBrand={activeBrand}
+              activeBrandName={
+                activeBrand
+                  ? (summaryQ.data.brands.find((b) => b.brand_id === activeBrand)?.brand_name ?? activeBrand)
+                  : null
+              }
+              onClearBrand={() => setActiveBrand(null)}
+              statusTab={statusTab}
+              onStatusTabChange={setStatusTab}
+              classFilter={classFilter}
+              onClassFilterChange={setClassFilter}
+              searchText={searchText}
+              onSearchChange={setSearchText}
+            />
 
             {messagesQ.isLoading && <div className="text-white/40 text-sm font-mono py-8 text-center">Loading messages…</div>}
-            {messagesQ.data && (
-              messagesQ.data.messages.length === 0 ? (
-                <EmptyMessages />
-              ) : (
+            {messagesQ.data && (() => {
+              const filtered = filterTenantMessages(messagesQ.data.messages, statusTab, classFilter, searchText);
+              if (messagesQ.data.messages.length === 0) return <EmptyMessages />;
+              if (filtered.length === 0) {
+                return (
+                  <div className="text-white/45 text-[12px] font-mono py-12 text-center">
+                    No messages match the current filters.
+                  </div>
+                );
+              }
+              return (
                 <div className="space-y-2">
-                  {messagesQ.data.messages.map((m) => (
+                  {filtered.map((m) => (
                     <Fragment key={m.id}>
                       <MessageRow
                         message={m}
@@ -118,8 +136,8 @@ export function AbuseMailbox() {
                     </Fragment>
                   ))}
                 </div>
-              )
-            )}
+              );
+            })()}
           </section>
         </>
       )}
@@ -444,6 +462,12 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
       <TenantPlatformIntelSection detail={detail} loading={detailQ.isLoading} />
 
       <TenantRawCaptureSections detailQ={detailQ} detail={detail} snippet={m.original_body_snippet} />
+
+      {/* PR-BD — Status transitions */}
+      <div className="mt-4 pt-3 border-t border-white/[0.06]">
+        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Status</div>
+        <TenantStatusActions message={m} />
+      </div>
 
       <div className="mt-4 pt-3 border-t border-white/[0.06]">
         <div className="flex items-center gap-2 text-[10px] font-mono text-white/55">
@@ -909,6 +933,266 @@ function NoBrands() {
       <p className="text-white/35 text-xs mt-1">
         Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
       </p>
+    </div>
+  );
+}
+
+// ─── PR-BD: client-side message filter (tenant parity) ──────────
+
+function filterTenantMessages(
+  messages: AbuseInboxMessageRow[],
+  statusTab: 'all' | AbuseMessageStatus,
+  classFilter: string | null,
+  searchText: string,
+): AbuseInboxMessageRow[] {
+  const q = searchText.trim().toLowerCase();
+  return messages.filter((m) => {
+    if (statusTab !== 'all' && m.status !== statusTab) return false;
+    if (classFilter && m.classification !== classFilter) return false;
+    if (q) {
+      const hay = [
+        m.original_subject ?? '',
+        m.original_from ?? '',
+        m.forwarded_by_email ?? '',
+        m.inbound_alias ?? '',
+      ].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+// ─── PR-BD: Intel highlights (tenant parity) ────────────────────
+
+function TenantIntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
+  const hasAnything =
+    intel.campaigns.length > 0 ||
+    intel.recent_takedowns.length > 0 ||
+    intel.hosting_providers.length > 0;
+  if (!hasAnything) return null;
+  return (
+    <section className="rounded-xl border bg-bg-card p-4 space-y-3 border-white/[0.06]">
+      <div className="flex items-center justify-between">
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+          Intel highlights
+        </h2>
+        <span className="text-[10px] font-mono text-white/45">
+          {intel.analyzed_count_7d} analyzed / 7d · {intel.analyzed_count_30d} / 30d
+        </span>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {intel.recent_takedowns.length > 0 && (
+          <TenantIntelCard title="Recent takedown recs" accent="var(--sev-critical)">
+            {intel.recent_takedowns.map((t) => (
+              <div key={t.message_id} className="text-[11px] py-1 border-b border-white/[0.04] last:border-b-0">
+                <div className="text-white/85 truncate">
+                  {t.original_subject ?? <span className="italic text-white/45">(no subject)</span>}
+                </div>
+                <div className="text-white/55 font-mono mt-0.5 truncate">
+                  → {t.target ?? t.hosting_provider ?? 'unknown target'}
+                  {t.hosting_country && ` · ${t.hosting_country}`}
+                </div>
+              </div>
+            ))}
+          </TenantIntelCard>
+        )}
+        {intel.campaigns.length > 0 && (
+          <TenantIntelCard title="Active campaigns" accent="var(--sev-high)">
+            {intel.campaigns.map((c) => (
+              <div key={c.campaign_id} className="text-[11px] py-1 border-b border-white/[0.04] last:border-b-0">
+                <div className="text-white/85 truncate">{c.campaign_name ?? c.campaign_id}</div>
+                <div className="text-white/55 font-mono mt-0.5">
+                  ×{c.count} match{c.count === 1 ? '' : 'es'} · first seen {new Date(c.first_seen).toLocaleDateString()}
+                </div>
+              </div>
+            ))}
+          </TenantIntelCard>
+        )}
+        {intel.hosting_providers.length > 0 && (
+          <TenantIntelCard title="Top hosting providers" accent="var(--blue)">
+            {intel.hosting_providers.map((p) => (
+              <div key={p.hosting_provider} className="text-[11px] py-1 border-b border-white/[0.04] last:border-b-0">
+                <div className="text-white/85 truncate">{p.hosting_provider}</div>
+                <div className="text-white/55 font-mono mt-0.5">
+                  ×{p.count}{p.hosting_country && ` · ${p.hosting_country}`}
+                </div>
+              </div>
+            ))}
+          </TenantIntelCard>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TenantIntelCard({
+  title, accent, children,
+}: { title: string; accent: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-lg p-3 bg-black/20 border border-white/[0.05]"
+      style={{ borderLeft: `2px solid ${accent}` }}
+    >
+      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">{title}</div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+// ─── PR-BD: Inbox toolbar (tenant parity) ───────────────────────
+
+const TENANT_STATUS_TABS: Array<{ key: 'all' | AbuseMessageStatus; label: string }> = [
+  { key: 'all',           label: 'All' },
+  { key: 'new',           label: 'New' },
+  { key: 'investigating', label: 'Investigating' },
+  { key: 'resolved',      label: 'Resolved' },
+  { key: 'dismissed',     label: 'Dismissed' },
+];
+
+const TENANT_CLASSIFICATION_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'phishing',  label: 'Phishing' },
+  { key: 'malware',   label: 'Malware' },
+  { key: 'spam',      label: 'Spam' },
+  { key: 'benign',    label: 'Benign' },
+  { key: 'pending',   label: 'Pending' },
+  { key: 'ambiguous', label: 'Ambiguous' },
+];
+
+function TenantInboxToolbar({
+  messages, activeBrand, activeBrandName, onClearBrand,
+  statusTab, onStatusTabChange,
+  classFilter, onClassFilterChange,
+  searchText, onSearchChange,
+}: {
+  messages: AbuseInboxMessageRow[];
+  activeBrand: string | null;
+  activeBrandName: string | null;
+  onClearBrand: () => void;
+  statusTab: 'all' | AbuseMessageStatus;
+  onStatusTabChange: (s: 'all' | AbuseMessageStatus) => void;
+  classFilter: string | null;
+  onClassFilterChange: (c: string | null) => void;
+  searchText: string;
+  onSearchChange: (s: string) => void;
+}) {
+  const statusCounts: Record<string, number> = { all: messages.length };
+  for (const m of messages) statusCounts[m.status] = (statusCounts[m.status] ?? 0) + 1;
+  const classCounts: Record<string, number> = {};
+  for (const m of messages) classCounts[m.classification] = (classCounts[m.classification] ?? 0) + 1;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+          {activeBrand && activeBrandName ? `Filtered: ${activeBrandName}` : 'Inbox'}
+          <span className="text-white/40 ml-1">({messages.length})</span>
+        </h2>
+        {activeBrand && (
+          <button
+            type="button"
+            onClick={onClearBrand}
+            className="text-[11px] font-mono text-white/55 hover:text-white/85"
+          >
+            clear brand filter
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1 flex-wrap border-b border-white/[0.06] pb-2">
+        {TENANT_STATUS_TABS.map((t) => {
+          const count = statusCounts[t.key] ?? 0;
+          const active = statusTab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onStatusTabChange(t.key)}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors border ${
+                active
+                  ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                  : 'bg-transparent text-white/65 border-transparent hover:text-white/85'
+              }`}
+            >
+              <span className="uppercase tracking-wider">{t.label}</span>
+              <span className="ml-1.5 text-white/45">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => onClassFilterChange(null)}
+          className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
+            classFilter === null
+              ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+              : 'border-white/[0.08] text-white/55 hover:text-white/85'
+          }`}
+        >
+          all
+        </button>
+        {TENANT_CLASSIFICATION_CHIPS.map((c) => {
+          const count = classCounts[c.key] ?? 0;
+          if (count === 0) return null;
+          const active = classFilter === c.key;
+          return (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => onClassFilterChange(active ? null : c.key)}
+              className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
+                active
+                  ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+                  : 'border-white/[0.08] text-white/55 hover:text-white/85'
+              }`}
+            >
+              {c.label} <span className="ml-1 text-white/45">{count}</span>
+            </button>
+          );
+        })}
+        <input
+          type="search"
+          placeholder="Search subject / sender / alias…"
+          value={searchText}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/35 focus:outline-none focus:border-amber/[0.40] min-w-[200px]"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── PR-BD: per-row status mutation (tenant parity) ─────────────
+
+function TenantStatusActions({ message }: { message: AbuseInboxMessageRow }) {
+  const mutate = useUpdateAbuseMessageStatus();
+  const cur = (message.status ?? 'new') as AbuseMessageStatus;
+  const next = (s: AbuseMessageStatus) => {
+    if (cur === s || mutate.isPending) return;
+    mutate.mutate({ messageId: message.id, status: s });
+  };
+  const BTN = (label: string, target: AbuseMessageStatus, color: string) => (
+    <button
+      key={target}
+      type="button"
+      onClick={() => next(target)}
+      disabled={cur === target || mutate.isPending}
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default"
+      style={{
+        color,
+        background: cur === target ? `${color}22` : 'rgba(0,0,0,0.30)',
+        border: `1px solid ${color}55`,
+      }}
+    >
+      {cur === target ? `✓ ${label}` : label}
+    </button>
+  );
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {BTN('Investigate', 'investigating', 'var(--sev-medium)')}
+      {BTN('Resolve',     'resolved',      'var(--green)')}
+      {BTN('Dismiss',     'dismissed',     'var(--text-secondary)')}
+      {cur !== 'new' && BTN('Reopen',      'new',           'var(--amber)')}
     </div>
   );
 }

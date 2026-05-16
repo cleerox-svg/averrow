@@ -4,8 +4,8 @@
 //   GET /api/orgs/:orgId/modules/abuse-mailbox
 //   GET /api/orgs/:orgId/modules/abuse-mailbox/messages[?brandId=…]
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from './api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiGet, apiPatch } from './api';
 import { useAuth } from './auth';
 
 export interface AbuseMailboxBrandSummary {
@@ -167,6 +167,55 @@ export function useAbuseInboxMessageDetail(messageId: string | null) {
       return res.data ?? null;
     },
     enabled: hasOrg && !!orgId && Boolean(messageId),
+    staleTime: 60_000,
+  });
+}
+
+// ─── PR-BD: status mutation + intel summary (tenant) ─────────
+
+export type AbuseMessageStatus = 'new' | 'investigating' | 'resolved' | 'dismissed';
+
+export function useUpdateAbuseMessageStatus() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ messageId, status }: { messageId: string; status: AbuseMessageStatus }) => {
+      const res = await apiPatch<{ id: string; status: AbuseMessageStatus }, { status: AbuseMessageStatus }>(
+        `/api/orgs/${orgId}/modules/abuse-mailbox/messages/${encodeURIComponent(messageId)}/status`,
+        { status },
+      );
+      return res.data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['abuse-mailbox-message-detail', orgId, vars.messageId] });
+      qc.invalidateQueries({ queryKey: ['abuse-mailbox-messages'] });
+      qc.invalidateQueries({ queryKey: ['abuse-mailbox-summary'] });
+    },
+  });
+}
+
+export interface IntelCampaign  { campaign_id: string; campaign_name: string | null; first_seen: string; count: number; }
+export interface IntelTakedown  { message_id: string; received_at: string; original_subject: string | null; target: string | null; hosting_provider: string | null; hosting_country: string | null; }
+export interface IntelProvider  { hosting_provider: string; hosting_country: string | null; count: number; }
+export interface AbuseMailboxIntel {
+  campaigns:          IntelCampaign[];
+  recent_takedowns:   IntelTakedown[];
+  hosting_providers:  IntelProvider[];
+  analyzed_count_7d:  number;
+  analyzed_count_30d: number;
+}
+
+export function useAbuseMailboxIntel() {
+  const { user, hasOrg } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useQuery<AbuseMailboxIntel>({
+    queryKey: ['abuse-mailbox-intel', orgId],
+    queryFn: async () => {
+      const res = await apiGet<AbuseMailboxIntel>(`/api/orgs/${orgId}/modules/abuse-mailbox/intel`);
+      return res.data;
+    },
+    enabled: hasOrg && !!orgId,
     staleTime: 60_000,
   });
 }

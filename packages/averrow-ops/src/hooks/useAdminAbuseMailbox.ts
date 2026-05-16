@@ -162,6 +162,56 @@ export function useAdminAbuseMailboxMessageDetail(messageId: string | null) {
   });
 }
 
+// ─── PR-BD: status mutation + intel summary ─────────────────────
+
+export type AbuseMessageStatus = 'new' | 'investigating' | 'resolved' | 'dismissed';
+
+/**
+ * Patch a message's status (mark resolved / dismissed / investigating).
+ * Refetches the list + detail queries on success so the UI updates
+ * without a manual reload.
+ */
+export function useUpdateAbuseMessageStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ messageId, status }: { messageId: string; status: AbuseMessageStatus }) => {
+      const res = await api.patch<{ id: string; status: AbuseMessageStatus }>(
+        `/api/admin/abuse-mailbox/messages/${encodeURIComponent(messageId)}/status`,
+        { status },
+      );
+      return res.data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['admin-abuse-mailbox-message-detail', vars.messageId] });
+      qc.invalidateQueries({ queryKey: ['admin-abuse-mailbox-messages'] });
+      qc.invalidateQueries({ queryKey: ['admin-abuse-mailbox-summary'] });
+    },
+  });
+}
+
+export interface IntelCampaign  { campaign_id: string; campaign_name: string | null; first_seen: string; count: number; }
+export interface IntelTakedown  { message_id: string; received_at: string; original_subject: string | null; target: string | null; hosting_provider: string | null; hosting_country: string | null; }
+export interface IntelProvider  { hosting_provider: string; hosting_country: string | null; count: number; }
+export interface AbuseMailboxIntel {
+  campaigns:          IntelCampaign[];
+  recent_takedowns:   IntelTakedown[];
+  hosting_providers:  IntelProvider[];
+  analyzed_count_7d:  number;
+  analyzed_count_30d: number;
+}
+
+export function useAdminAbuseMailboxIntel() {
+  return useQuery({
+    queryKey: ['admin-abuse-mailbox-intel'],
+    queryFn: async () => {
+      const res = await api.get<AbuseMailboxIntel>('/api/admin/abuse-mailbox/intel');
+      return res.data ?? null;
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+}
+
 /**
  * Clear the rate-limit flag on a specific message. Caller can re-run
  * the classifier afterwards to pick it up. Used from the drill-down

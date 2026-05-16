@@ -20,6 +20,8 @@ import {
   handleGetAbuseMailboxModuleSummary,
   handleListAbuseInboxMessages,
   handleGetAbuseInboxMessageDetail,
+  handleUpdateAbuseInboxMessageStatus,
+  handleGetAbuseMailboxIntel,
 } from "./tenantAbuseMailboxModule";
 
 /** Reserved slug for the Averrow self-org. Seeded by migration 0180. */
@@ -124,4 +126,53 @@ export async function handleAdminAbuseMailboxMessageDetail(
     }, 503, origin);
   }
   return handleGetAbuseInboxMessageDetail(request, env, String(selfOrgId), messageId, ctx);
+}
+
+/**
+ * PATCH /api/admin/abuse-mailbox/messages/:id/status
+ * PR-BD — status transition wrapper for the Averrow self-org.
+ */
+export async function handleAdminAbuseMailboxMessageStatusUpdate(
+  request:   Request,
+  env:       Env,
+  messageId: string,
+  ctx:       AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (ctx.role !== "super_admin") {
+    return json({ success: false, error: "super_admin required" }, 403, origin);
+  }
+  const selfOrgId = await getAverrowSelfOrgId(env);
+  if (selfOrgId === null) {
+    return json({
+      success: false,
+      error: "Averrow self-org not provisioned",
+      code: "SELF_ORG_NOT_PROVISIONED",
+    }, 503, origin);
+  }
+  return handleUpdateAbuseInboxMessageStatus(request, env, String(selfOrgId), messageId, ctx);
+}
+
+/**
+ * GET /api/admin/abuse-mailbox/intel
+ * PR-BD — Intel summary aggregated over deep_analysis rows.
+ */
+export async function handleAdminAbuseMailboxIntel(
+  request: Request,
+  env:     Env,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (ctx.role !== "super_admin") {
+    return json({ success: false, error: "super_admin required" }, 403, origin);
+  }
+  const selfOrgId = await getAverrowSelfOrgId(env);
+  if (selfOrgId === null) {
+    return json({
+      success: false,
+      error: "Averrow self-org not provisioned",
+      code: "SELF_ORG_NOT_PROVISIONED",
+    }, 503, origin);
+  }
+  return handleGetAbuseMailboxIntel(request, env, String(selfOrgId), ctx);
 }
