@@ -165,11 +165,30 @@ function brandLayout(opts: BrandLayoutOptions): string {
   // from public/favicon.svg via cairosvg at 144×144 (retina-grade
   // for the 38×38 display size). See public/logo-email.png +
   // scripts/generate-logo-assets.py.
-  const logoCell = `<img src="https://averrow.com/logo-email.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;border-radius:6px;background:#080E18;">`;
+  const logoCell = `<img class="av-brand-logo" src="https://averrow.com/logo-email.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;border-radius:6px;background:#080E18;">`;
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- PR-BA: tell Gmail mobile / iOS Mail / dark-mode-aware clients
+     that this email is intentionally designed for both light and
+     dark backgrounds. Without these declarations Gmail mobile's
+     "dark mode helper" sees our dark-navy logo tile (#080E18) and
+     auto-inverts it to white, flipping the PNG to red-on-white. -->
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  /* Pin the brand header's intended palette so dark-mode clients
+     don't transform it. The body card itself stays light; only the
+     dark-on-purpose header is locked. */
+  .av-brand-header { background:#0F1828 !important; }
+  .av-brand-logo   { background:#080E18 !important; }
+  @media (prefers-color-scheme: dark) {
+    .av-brand-header { background:#0F1828 !important; }
+    .av-brand-logo   { background:#080E18 !important; }
+  }
+</style>
 <title>${escapeHtml(opts.headline)} — Averrow</title>
 </head>
 <body style="margin:0;padding:0;background:#F3F4F6;font-family:${FONT_BODY};color:#1A2536;-webkit-font-smoothing:antialiased;">
@@ -177,7 +196,7 @@ function brandLayout(opts: BrandLayoutOptions): string {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3F4F6;padding:32px 16px;font-family:${FONT_BODY};">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0 4px 20px rgba(15,24,40,0.08);overflow:hidden;">
-        <tr><td style="background:#0F1828;padding:20px 24px;">
+        <tr><td class="av-brand-header" style="background:#0F1828;padding:20px 24px;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td style="vertical-align:middle;">${logoCell}</td>
