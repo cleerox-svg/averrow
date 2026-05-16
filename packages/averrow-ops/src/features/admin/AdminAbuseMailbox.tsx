@@ -15,7 +15,7 @@
 // Design tokens per CLAUDE.md §5 + AVERROW_UI_STANDARD.md.
 
 import { Fragment, useState } from 'react';
-import { Mail, Inbox, AlertTriangle, ShieldCheck, Copy, Check, ChevronDown } from 'lucide-react';
+import { Mail, MailCheck, MailX, Inbox, AlertTriangle, ShieldCheck, Copy, Check, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { Navigate } from 'react-router-dom';
 import { PageLoader } from '@/components/ui/PageLoader';
@@ -354,9 +354,12 @@ function MessageRow({ message, expanded, onToggle }: {
             </span>
           )}
         </div>
-        <span className="text-[10px] font-mono text-white/60 shrink-0">
-          {relativeTime(message.received_at)}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <DeliveryTracker message={message} />
+          <span className="text-[10px] font-mono text-white/60">
+            {relativeTime(message.received_at)}
+          </span>
+        </div>
       </div>
       <div className="text-[13px] text-white/95 truncate font-medium">
         {message.original_subject || <span className="italic text-white/45">(no subject)</span>}
@@ -802,6 +805,77 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// ─── PR-AZ: per-row delivery status tracker ──────────────────────
+//
+// Two envelope icons at the top-right of each row card showing the
+// state of the two automated emails that fire per submission:
+//   1. Ack-on-receipt (PR-AD) — confirms we got the report
+//   2. Determination/verdict (PR-AD + PR-AY) — the AI verdict reply
+//
+// States per icon:
+//   filled-green       sent OK (timestamp visible on hover)
+//   outline-gray       pending — classifier hasn't run / Resend in flight
+//   amber-X            intentionally skipped due to rate-limit (PR-AT)
+//
+// Designed to be readable at a glance from a list of 100 rows without
+// adding more text columns to the row card.
+function DeliveryTracker({ message }: { message: AdminAbuseInboxMessage }) {
+  const ack = !!message.ack_sent_at;
+  const verdict = !!message.determination_sent_at;
+  const throttled = message.throttled === 1;
+  const tooltip = throttled
+    ? `Rate-limited: ack + verdict emails intentionally skipped (${message.throttle_reason ?? "throttled"})`
+    : [
+        `Ack: ${ack ? `sent ${formatShortTs(message.ack_sent_at)}` : "pending"}`,
+        `Verdict: ${verdict ? `sent ${formatShortTs(message.determination_sent_at)}` : "pending"}`,
+      ].join(" · ");
+  return (
+    <div className="flex items-center gap-0.5" title={tooltip}>
+      <StatusIcon kind="ack"     sent={ack}     throttled={throttled} />
+      <StatusIcon kind="verdict" sent={verdict} throttled={throttled} />
+    </div>
+  );
+}
+
+function StatusIcon({
+  kind, sent, throttled,
+}: { kind: "ack" | "verdict"; sent: boolean; throttled: boolean }) {
+  if (throttled) {
+    return (
+      <MailX
+        size={13}
+        style={{ color: '#fbbf24', opacity: 0.65 }}
+        aria-label={`${kind} skipped — rate-limited`}
+      />
+    );
+  }
+  if (sent) {
+    return (
+      <MailCheck
+        size={13}
+        style={{ color: 'var(--green)' }}
+        aria-label={`${kind} sent`}
+      />
+    );
+  }
+  return (
+    <Mail
+      size={13}
+      style={{ color: 'rgba(255,255,255,0.35)' }}
+      aria-label={`${kind} pending`}
+    />
+  );
+}
+
+function formatShortTs(ts: string | null | undefined): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
 }
 
 function throttleReasonLabel(reason: string | null | undefined): string {
