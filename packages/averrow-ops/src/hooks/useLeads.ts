@@ -7,6 +7,7 @@ interface SalesLead {
   status: string;
   prospect_score: number;
   pitch_angle: string | null;
+  score_breakdown_json: string | null;
 
   // Company info
   company_name: string | null;
@@ -16,6 +17,17 @@ interface SalesLead {
   company_revenue_range: string | null;
   company_hq: string | null;
 
+  // Firmographic snapshot — canonical, structured values from
+  // brand_firmographics (SEC EDGAR / Wikidata). Distinct from company_size
+  // (free-text AI category) and company_industry (free-text AI tag).
+  revenue_band: string | null;          // '<10M' | '10-50M' | '50-250M' | '250M-1B' | '1B+'
+  employee_band: string | null;         // '<50' | '50-250' | '250-1K' | '1K-10K' | '10K+'
+  industry_naics: string | null;
+  is_public: number | null;             // 0 | 1
+  ticker: string | null;
+  founded_year: number | null;
+  parent_company: string | null;
+
   // Security posture
   email_security_grade: string | null;
   threat_count_30d: number | null;
@@ -23,6 +35,13 @@ interface SalesLead {
   trap_catches_30d: number | null;
   composite_risk_score: number | null;
   findings_summary: string | null;
+
+  // Buying signals — public data that hints procurement intent.
+  security_maturity: string | null;     // 'high' | 'medium' | 'low'
+  last_breach_disclosed_at: string | null;
+  security_news_headline: string | null;
+  security_news_url: string | null;
+  cyber_10k_mentions: number | null;
 
   // Target contact
   target_name: string | null;
@@ -126,11 +145,42 @@ export function useEnrichLead() {
   });
 }
 
+type UpdateLeadBody = {
+  status?: string;
+  notes?: string;
+  target_name?: string;
+  target_title?: string;
+  target_email?: string;
+  target_linkedin?: string;
+  outreach_variant_1?: string;
+  outreach_variant_2?: string;
+  company_industry?: string;
+  company_size?: string;
+  company_hq?: string;
+  security_maturity?: string;
+};
+
 export function useUpdateLead() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...body }: { id: string; status?: string; notes?: string }) => {
+    mutationFn: async ({ id, ...body }: { id: string } & UpdateLeadBody) => {
       return api.patch(`/api/admin/sales-leads/${id}`, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['lead'] });
+    },
+  });
+}
+
+// Triggers a cheap (no-AI) refresh that re-runs SEC/Wikidata enrichment
+// for the underlying brand and copies the refreshed firmographic row
+// onto this lead's snapshot columns.
+export function useRefreshLeadFirmographics() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      return api.post(`/api/admin/sales-leads/${id}/refresh-firmographics`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });

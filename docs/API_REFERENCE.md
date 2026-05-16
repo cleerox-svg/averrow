@@ -561,6 +561,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/admin/sales-leads/:id/decline` | Admin | Decline lead |
 | DELETE | `/api/admin/sales-leads/:id` | Admin | Delete lead |
 | GET | `/api/admin/sales-leads/:id/activity` | Admin | Lead activity log |
+| POST | `/api/admin/sales-leads/:id/refresh-firmographics` | SuperAdmin | Re-run SEC/Wikidata enricher for this lead's brand and copy the refreshed firmographic + buying-signal data onto the lead snapshot. Cheap (no AI). |
 | POST | `/api/admin/backfill-classifications` | SuperAdmin | Backfill threat classifications |
 | POST | `/api/admin/backfill-saas-techniques` | Admin | Backfill SaaS attack technique classification (PushSecurity taxonomy) |
 | POST | `/api/admin/backfill-geo` | SuperAdmin | Backfill geo enrichment |

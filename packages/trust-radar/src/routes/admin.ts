@@ -534,6 +534,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleLeadActivity(request, env, request.params["id"] ?? "");
   });
+  router.post("/api/admin/sales-leads/:id/refresh-firmographics", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleRefreshLeadFirmographics } = await import("../handlers/salesLeads");
+    return handleRefreshLeadFirmographics(request, env, request.params["id"] ?? "");
+  });
 
   // ─── Pathfinder AI Enrichment ─────────────────────────────────────
   router.post("/api/admin/pathfinder-enrich", async (request: Request, env: Env) => {

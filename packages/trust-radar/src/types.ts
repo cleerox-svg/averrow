@@ -390,6 +390,21 @@ export interface SalesLead {
   rejection_reason: string | null;
   ai_enriched: number;
   ai_enriched_at: string | null;
+  // Firmographic snapshot — populated from brand_firmographics + Pathfinder AI research.
+  // See migration 0190. Source of truth is brand_firmographics; these are copies-at-qualify-time.
+  revenue_band: string | null;
+  employee_band: string | null;
+  industry_naics: string | null;
+  is_public: number | null;
+  ticker: string | null;
+  founded_year: number | null;
+  parent_company: string | null;
+  // Buying signals — see migration 0189/0190.
+  security_maturity: string | null;
+  last_breach_disclosed_at: string | null;
+  security_news_headline: string | null;
+  security_news_url: string | null;
+  cyber_10k_mentions: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -408,6 +423,18 @@ export interface CreateLeadInput {
   pitch_angle?: string | null;
   findings_summary?: string | null;
   identified_by?: string;
+  // Firmographic snapshot at create time (Pathfinder pulls from brand_firmographics).
+  revenue_band?: string | null;
+  employee_band?: string | null;
+  industry_naics?: string | null;
+  is_public?: number | null;
+  ticker?: string | null;
+  founded_year?: number | null;
+  parent_company?: string | null;
+  last_breach_disclosed_at?: string | null;
+  security_news_headline?: string | null;
+  security_news_url?: string | null;
+  cyber_10k_mentions?: number | null;
 }
 
 export interface EnrichLeadInput {
@@ -415,6 +442,20 @@ export interface EnrichLeadInput {
   outreach_variant_1: string | null;
   outreach_variant_2: string | null;
   research_json: string;
+  // Dedicated columns persisted from the Haiku research result so the UI
+  // can render structured fields instead of cracking the JSON blob.
+  company_industry?: string | null;
+  company_size?: string | null;
+  company_hq?: string | null;
+  target_name?: string | null;
+  target_title?: string | null;
+  target_email?: string | null;
+  target_linkedin?: string | null;
+  security_maturity?: string | null;
+  // Buying signal harvested from web_search (recent_security_news).
+  security_news_headline?: string | null;
+  security_news_url?: string | null;
+  last_breach_disclosed_at?: string | null;
 }
 
 // ─── Spam Trap ──────────────────────────────────────────────────
@@ -572,6 +613,13 @@ export interface UpdateSalesLeadBody {
   target_title?: string;
   target_email?: string;
   target_linkedin?: string;
+  // Manual overrides — a rep can correct firmographic snapshot fields if
+  // the auto-enricher got something wrong. These don't propagate back to
+  // brand_firmographics; that's the auto-enricher's source of truth.
+  company_industry?: string;
+  company_size?: string;
+  company_hq?: string;
+  security_maturity?: string;
 }
 
 export interface IngestSignalBody {

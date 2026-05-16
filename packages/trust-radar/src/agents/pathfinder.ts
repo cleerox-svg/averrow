@@ -37,6 +37,19 @@ interface ProspectCandidate {
   composite_risk_score: number | null;
   pitch_angle: string;
   findings_summary: string;
+  // Firmographic + buying-signal snapshot — pulled from brand_firmographics
+  // at candidate-build time, persisted onto the sales_leads row by createLead.
+  revenue_band: string | null;
+  employee_band: string | null;
+  industry_naics: string | null;
+  is_public: number | null;
+  ticker: string | null;
+  founded_year: number | null;
+  parent_company: string | null;
+  last_breach_disclosed_at: string | null;
+  security_news_headline: string | null;
+  security_news_url: string | null;
+  cyber_10k_mentions: number | null;
 }
 
 
@@ -56,7 +69,15 @@ const SCORING = {
   social_impersonation: 15,
   social_high_risk: 10,
   social_takedown_needed: 10,
+  // Buying-signal boosts — evidence the brand cares about the problem.
+  // Free public data (SEC 10-K, news disclosures), not paid intent data.
+  recent_breach_disclosure: 25,   // disclosed breach in last 180 days
+  cyber_10k_disclosure_high: 10,  // 10+ cybersecurity mentions in latest 10-K
+  recent_security_news: 5,        // any security-tagged news mention
 };
+
+const BREACH_LOOKBACK_DAYS = 180;
+const CYBER_10K_MENTION_THRESHOLD = 10;
 
 const MODEL = HOT_PATH_HAIKU;
 const MAX_IDENTIFIED = 20;
@@ -70,6 +91,32 @@ const AI_TIMEOUT_MS = 25000;
  * lower than MAX_TRANCO_RANK already appear in the SQL WHERE clause.
  */
 const MIN_TRANCO_RANK = 500;
+
+/**
+ * Subdomain hosts that indicate a preview/dev/squatting domain rather
+ * than the canonical brand domain. A "brand" whose canonical_domain
+ * sits on webflow.io / vercel.app / etc. is almost always a phishing
+ * lookalike that the brand-matcher misclassified — selling to it makes
+ * no sense. Production confirmed `coeensquarelogin.webflow.io` was
+ * being surfaced as a Square lead.
+ */
+const PREVIEW_HOST_SUFFIXES = [
+  ".webflow.io",
+  ".netlify.app",
+  ".vercel.app",
+  ".pages.dev",
+  ".github.io",
+  ".replit.app",
+  ".glitch.me",
+  ".codesandbox.io",
+  ".firebaseapp.com",
+  ".herokuapp.com",
+];
+
+function isPreviewHost(domain: string): boolean {
+  const lower = domain.toLowerCase();
+  return PREVIEW_HOST_SUFFIXES.some(s => lower.endsWith(s));
+}
 
 /**
  * Domains belonging to hosting providers, CDNs, registrars, and
@@ -150,9 +197,19 @@ export async function identifyAndCreate(env: Env): Promise<{
 }> {
   // Get brands with their latest email security grade, excluding already-monitored
   // orgs and leads created in the last 90 days
+  // Pull candidates with firmographics joined. The outer-join semantics
+  // retain brands without firmographic rows — they just have NULLs that
+  // the UI hides. Buying-signal columns (cyber_10k_mentions, breach,
+  // recent news) live on the same row and ride along for free.
   let emailGrades: { results: Array<{
     brand_id: string; brand_name: string; brand_domain: string;
     tranco_rank: number | null; email_security_grade: string | null; dmarc_policy: string | null;
+    revenue_band: string | null; employee_band: string | null;
+    industry_naics: string | null; is_public: number | null; ticker: string | null;
+    founded_year: number | null; parent_company: string | null;
+    last_breach_disclosed_at: string | null;
+    security_news_headline: string | null; security_news_url: string | null;
+    cyber_10k_mentions: number | null;
   }> };
 
   try {
@@ -163,18 +220,30 @@ export async function identifyAndCreate(env: Env): Promise<{
         b.canonical_domain as brand_domain,
         b.tranco_rank,
         ess.email_security_grade,
-        ess.dmarc_policy
+        ess.dmarc_policy,
+        bf.revenue_band,
+        bf.employee_band,
+        bf.industry_naics,
+        bf.is_public,
+        bf.ticker,
+        bf.founded_year,
+        bf.parent_company,
+        bf.last_breach_disclosed_at,
+        bf.security_news_headline,
+        bf.security_news_url,
+        bf.cyber_10k_mentions
       FROM brands b
       LEFT JOIN email_security_scans ess ON ess.brand_id = b.id
         AND ess.scanned_at = (
           SELECT MAX(scanned_at) FROM email_security_scans
           WHERE brand_id = b.id
         )
+      LEFT JOIN brand_firmographics bf ON bf.brand_id = b.id
       WHERE b.id NOT IN (SELECT brand_id FROM org_brands)
         AND b.id NOT IN (
           SELECT brand_id FROM sales_leads
-          WHERE status IN ('sent', 'responded', 'meeting_booked', 'converted', 'declined')
-             OR created_at > datetime('now', '-30 days')
+          WHERE status NOT IN ('rejected','declined')
+             OR created_at > datetime('now', '-90 days')
         )
         AND (b.threat_count > 0 OR b.tranco_rank <= 50000)
         AND (b.tranco_rank IS NULL OR b.tranco_rank > ${MIN_TRANCO_RANK})
@@ -183,6 +252,12 @@ export async function identifyAndCreate(env: Env): Promise<{
     `).all<{
       brand_id: string; brand_name: string; brand_domain: string;
       tranco_rank: number | null; email_security_grade: string | null; dmarc_policy: string | null;
+      revenue_band: string | null; employee_band: string | null;
+      industry_naics: string | null; is_public: number | null; ticker: string | null;
+      founded_year: number | null; parent_company: string | null;
+      last_breach_disclosed_at: string | null;
+      security_news_headline: string | null; security_news_url: string | null;
+      cyber_10k_mentions: number | null;
     }>();
   } catch (err) {
     throw err;
@@ -192,11 +267,15 @@ export async function identifyAndCreate(env: Env): Promise<{
     return { candidates_found: 0, leads_created: 0, errors: 0 };
   }
 
-  // Filter out service providers, hosting companies, and mega-tech
+  // Filter out service providers, hosting companies, mega-tech, and
+  // preview-host typosquats (e.g. coeensquarelogin.webflow.io that the
+  // brand-matcher mistakenly labelled as "Square").
   const filteredBrands = emailGrades.results.filter(b => {
     const domain = b.brand_domain?.toLowerCase();
     if (!domain) return true; // keep brands without domain for scoring
-    return !SERVICE_PROVIDER_DOMAINS.has(domain);
+    if (SERVICE_PROVIDER_DOMAINS.has(domain)) return false;
+    if (isPreviewHost(domain)) return false;
+    return true;
   });
   emailGrades.results = filteredBrands;
 
@@ -344,6 +423,28 @@ export async function identifyAndCreate(env: Env): Promise<{
       score += SCORING.recent_risk_spike;
     }
 
+    // Buying-signal boosts — these don't change targeting, but a brand
+    // that just disclosed a breach or talks about cybersecurity in its
+    // 10-K is materially more likely to procure.
+    if (brand.last_breach_disclosed_at) {
+      const disclosedAt = Date.parse(brand.last_breach_disclosed_at);
+      if (Number.isFinite(disclosedAt)) {
+        const ageDays = (Date.now() - disclosedAt) / 86_400_000;
+        if (ageDays >= 0 && ageDays <= BREACH_LOOKBACK_DAYS) {
+          breakdown.recent_breach_disclosure = SCORING.recent_breach_disclosure;
+          score += SCORING.recent_breach_disclosure;
+        }
+      }
+    }
+    if (brand.cyber_10k_mentions != null && brand.cyber_10k_mentions >= CYBER_10K_MENTION_THRESHOLD) {
+      breakdown.cyber_10k_disclosure_high = SCORING.cyber_10k_disclosure_high;
+      score += SCORING.cyber_10k_disclosure_high;
+    }
+    if (brand.security_news_headline) {
+      breakdown.recent_security_news = SCORING.recent_security_news;
+      score += SCORING.recent_security_news;
+    }
+
     initialCandidates.push({ brand, breakdown, score });
   }
 
@@ -424,6 +525,17 @@ export async function identifyAndCreate(env: Env): Promise<{
       composite_risk_score: riskScore ?? null,
       pitch_angle: pitchAngle,
       findings_summary: findingsSummary,
+      revenue_band: brand.revenue_band,
+      employee_band: brand.employee_band,
+      industry_naics: brand.industry_naics,
+      is_public: brand.is_public,
+      ticker: brand.ticker,
+      founded_year: brand.founded_year,
+      parent_company: brand.parent_company,
+      last_breach_disclosed_at: brand.last_breach_disclosed_at,
+      security_news_headline: brand.security_news_headline,
+      security_news_url: brand.security_news_url,
+      cyber_10k_mentions: brand.cyber_10k_mentions,
     });
   }
 
@@ -437,7 +549,7 @@ export async function identifyAndCreate(env: Env): Promise<{
 
   for (const candidate of topCandidates) {
     try {
-      await createLead(env, {
+      const newId = await createLead(env, {
         brand_id: candidate.brand_id,
         prospect_score: candidate.prospect_score,
         score_breakdown_json: JSON.stringify(candidate.score_breakdown),
@@ -450,9 +562,24 @@ export async function identifyAndCreate(env: Env): Promise<{
         composite_risk_score: candidate.composite_risk_score,
         pitch_angle: candidate.pitch_angle,
         findings_summary: candidate.findings_summary,
+        revenue_band: candidate.revenue_band,
+        employee_band: candidate.employee_band,
+        industry_naics: candidate.industry_naics,
+        is_public: candidate.is_public,
+        ticker: candidate.ticker,
+        founded_year: candidate.founded_year,
+        parent_company: candidate.parent_company,
+        last_breach_disclosed_at: candidate.last_breach_disclosed_at,
+        security_news_headline: candidate.security_news_headline,
+        security_news_url: candidate.security_news_url,
+        cyber_10k_mentions: candidate.cyber_10k_mentions,
         identified_by: 'pathfinder_agent',
       });
-      leadsCreated++;
+      // createLead returns null when an active lead already exists for
+      // this brand_id (atomic NOT EXISTS guard). That's a no-op, not an
+      // error — the 90-day cooldown filter usually catches this earlier,
+      // but the DB-level guard handles races + manual triggers.
+      if (newId !== null) leadsCreated++;
     } catch (err) {
       errors++;
     }
@@ -580,6 +707,10 @@ RULES: Professional, direct tone. No buzzwords. No exclamation marks. Sign off a
     }
 
     // ── Update the lead ─────────────────────────────────────────
+    // Persist the structured fields from research into dedicated columns so
+    // the UI can render firmographics + buying-signals without cracking the
+    // JSON blob. The blob is still saved as the source of truth for
+    // forensics and any future re-parsing.
     await enrichLead(env, lead.id, {
       findings_summary: findingsSummary ?? '',
       outreach_variant_1: outreachResult.data
@@ -589,6 +720,13 @@ RULES: Professional, direct tone. No buzzwords. No exclamation marks. Sign off a
         ? JSON.stringify({ subject: outreachResult.data.variant_2_subject, body: outreachResult.data.variant_2_body })
         : null,
       research_json: JSON.stringify(research),
+      company_industry: research.company_industry ?? null,
+      company_size: research.company_size ?? null,
+      company_hq: research.company_hq ?? null,
+      target_name: research.target_name ?? null,
+      target_title: research.target_title ?? null,
+      security_maturity: research.security_maturity ?? null,
+      security_news_headline: research.recent_security_news ?? null,
     });
 
     return { enriched: true, lead_id: lead.id, company_name: lead.company_name ?? undefined };
@@ -629,6 +767,7 @@ export const pathfinderAgent: AgentModule = {
   budget: { monthlyTokenCap: 1_000_000 },
   reads: [
     { kind: "kv", namespace: "CACHE" },
+    { kind: "d1_table", name: "brand_firmographics" },
     { kind: "d1_table", name: "brand_threat_assessments" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "email_security_scans" },
