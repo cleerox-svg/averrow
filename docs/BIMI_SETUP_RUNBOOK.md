@@ -2,6 +2,26 @@
 
 BIMI (Brand Indicators for Message Identification) shows the Averrow logo next to outbound emails in Gmail, Yahoo, Apple Mail, and Fastmail. End-user effect: instead of a generic letter avatar next to your messages in the recipient's inbox, they see the red Avro Arrow.
 
+## ⚠️ ACTION REQUIRED — 2026-05-30 (DMARC ramp)
+
+**Status as of 2026-05-16**: DMARC + BIMI records are published on both `averrow.com` and `averrow.ca`. DMARC is currently at `p=none` (observe-only) for safety. BIMI is published but **NOT YET DISPLAYING** in inboxes because BIMI requires DMARC at `p=quarantine` or `p=reject` to activate.
+
+**On or after 2026-05-30** (~14 days after setup):
+
+1. Review the DMARC reports collected during the observation window:
+   - `averrow.com` reports → Cloudflare Dashboard → Email → DMARC Management
+   - `averrow.ca` reports → trust-radar worker's email handler (`dmarc_rua@trustradar.ca`)
+2. Verify that all legitimate senders (Resend, Google Workspace) are passing both SPF + DKIM alignment — no surprises in the "failed" column
+3. If clean, edit both DMARC TXT records via CF Dashboard → DNS:
+   - `_dmarc.averrow.com`: change `p=none` → `p=quarantine` (keep `pct=100`)
+   - `_dmarc.averrow.ca`: same change
+4. Within 1–24h the red Avro Arrow appears in Yahoo / Apple Mail / Fastmail inboxes for any mail sent from these domains
+5. Gmail will still show the auto-generated letter avatar — that needs a Verified Mark Certificate (VMC, ~$1500/yr). **Parked indefinitely until revenue justifies it.**
+
+Validators to check publish state (no auth needed):
+- https://easydmarc.com/tools/bimi-lookup
+- https://bimigroup.org/bimi-generator/
+
 ## Prerequisites
 
 1. **DMARC** at `p=quarantine` or `p=reject` with `pct=100` on the sending domain
