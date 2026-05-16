@@ -415,41 +415,18 @@ export async function runAbuseClassifierBackfill(
       m.id,
     ).run();
 
-    // ─── Wave-3 PR-AD: 24h determination email ─────────────────
-    //
-    // Fires immediately after the AI verdict lands. Skips rows that
-    // already have determination_sent_at set (defensive — the
-    // backfill is idempotent and could be replayed). Suppression for
-    // empty/own-domain submitters is handled inside sendDetermination.
-    if (!m.determination_sent_at && m.forwarded_by_email) {
-      try {
-        const { sendDetermination } = await import("./abuse-mailbox-responder");
-        const detResult = await sendDetermination(env, m.forwarded_by_email, {
-          messageId:       m.id,
-          originalSubject: m.original_subject,
-          classification:  verdict.classification,
-          confidence:      verdict.confidence,
-          reasoning:       verdict.reasoning,
-          action:          verdict.action,
-        });
-        if (detResult.ok) {
-          await env.DB.prepare(
-            `UPDATE abuse_inbox_messages SET determination_sent_at = datetime('now') WHERE id = ?`,
-          ).bind(m.id).run();
-        }
-        // Failures / suppressions logged inside sendDetermination.
-      } catch (err) {
-        console.warn(`[abuse-mailbox-classifier] determination send threw for ${m.id}:`, err);
-      }
-    }
-
     // ─── PR-AX: promote to platform threats ─────────────────────
+    //
+    // Runs BEFORE the determination email so the email's "What we
+    // found" block can surface the real count of new indicators we
+    // added to threat intelligence on this submission.
     //
     // On HIGH/CRITICAL phishing/malware verdicts, push the message's
     // extracted URLs into the `threats` table. Deterministic threat
     // id from threatId(source, type, value) keeps repeated reports
     // idempotent. Stamps the new IDs back to the row so the UI can
     // show "promoted to platform" with deep-links.
+    let promotedIds: string[] = [];
     if (
       (verdict.classification === "phishing" || verdict.classification === "malware") &&
       (severity === "HIGH" || severity === "CRITICAL") &&
@@ -457,7 +434,7 @@ export async function runAbuseClassifierBackfill(
     ) {
       try {
         const { promoteToThreats } = await import("./abuse-mailbox-iocs");
-        const promotedIds = await promoteToThreats(env, {
+        promotedIds = await promoteToThreats(env, {
           urls: urlList,
           classification: verdict.classification,
           confidence:     verdict.confidence,
@@ -472,6 +449,43 @@ export async function runAbuseClassifierBackfill(
         }
       } catch (err) {
         console.warn(`[abuse-mailbox-classifier] threat promotion failed for ${m.id}:`, err);
+      }
+    }
+
+    // ─── Wave-3 PR-AD: 24h determination email ─────────────────
+    //
+    // Fires immediately after the AI verdict lands. Skips rows that
+    // already have determination_sent_at set (defensive — the
+    // backfill is idempotent and could be replayed). Suppression for
+    // empty/own-domain submitters is handled inside sendDetermination.
+    //
+    // PR-AY: pass the richer context (auth, counts, correlations,
+    // promotion result) so the email can render the "What we found"
+    // + "What you should do" sections in plain English.
+    if (!m.determination_sent_at && m.forwarded_by_email) {
+      try {
+        const { sendDetermination } = await import("./abuse-mailbox-responder");
+        const detResult = await sendDetermination(env, m.forwarded_by_email, {
+          messageId:       m.id,
+          originalSubject: m.original_subject,
+          classification:  verdict.classification,
+          confidence:      verdict.confidence,
+          reasoning:       verdict.reasoning,
+          action:          verdict.action,
+          authResults:     authResults,
+          urlCount:        m.url_count,
+          attachmentCount: m.attachment_count,
+          correlatedCount: correlatedIds.length,
+          promotedCount:   promotedIds.length,
+        });
+        if (detResult.ok) {
+          await env.DB.prepare(
+            `UPDATE abuse_inbox_messages SET determination_sent_at = datetime('now') WHERE id = ?`,
+          ).bind(m.id).run();
+        }
+        // Failures / suppressions logged inside sendDetermination.
+      } catch (err) {
+        console.warn(`[abuse-mailbox-classifier] determination send threw for ${m.id}:`, err);
       }
     }
 

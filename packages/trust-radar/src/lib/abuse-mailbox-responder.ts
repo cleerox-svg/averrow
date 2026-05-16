@@ -307,11 +307,22 @@ interface DeterminationContext {
   confidence: number;       // 0-100
   reasoning: string;
   action: string;           // safe | review | escalate | takedown
+  // ── PR-AY: richer context surfaced in the determination email ──
+  // All optional/nullable so legacy callers continue to work; absent
+  // fields just suppress the matching findings bullet.
+  authResults?: { spf: string | null; dkim: string | null; dmarc: string | null } | null;
+  urlCount?: number | null;
+  attachmentCount?: number | null;
+  correlatedCount?: number | null;   // platform threats this submission already matches
+  promotedCount?: number | null;     // platform threats this submission CREATED
 }
 
 interface VerdictDef {
   label: string;
-  line: string;
+  /** Lead paragraph — sets the tone + tells the recipient what the verdict means. */
+  lead: string;
+  /** Bulleted "what you should do" actions. Per-verdict, plain-English. */
+  nextSteps: ReadonlyArray<string>;
   /** Accent stripe colour under the brand header. */
   accent: string;
   /** Verdict-tone callout colour (for the "Verdict" pill block). */
@@ -322,30 +333,168 @@ interface VerdictDef {
 const VERDICT_COPY: Record<string, VerdictDef> = {
   phishing: {
     label: "Phishing confirmed",
-    line: "We identified this as a phishing attempt. Don't engage with the sender. The URLs, headers, and sending IP are now in our threat intelligence so other monitored brands benefit from your report too.",
+    lead:
+      "We identified this as a phishing attempt. The goal of these messages is to steal credentials, payment info, " +
+      "or get malware on your device by impersonating a legitimate brand. Don't click the links, don't reply, and " +
+      "don't act on what the message asks for.",
+    nextSteps: [
+      "If you clicked a link or entered credentials before reporting, change those passwords now and notify your IT/security team.",
+      "Block the sender at your email provider.",
+      "Delete the original message — don't forward it, even with a 'be careful' note.",
+    ],
     accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
   },
   malware: {
     label: "Malware indicators found",
-    line: "We found malware indicators in the attached or linked content. Don't open attachments or click links from the original message. If you've already clicked, run an antivirus scan and consider rotating any credentials you entered.",
+    lead:
+      "We found malware indicators in the attached or linked content. Opening the attachment or clicking the " +
+      "link could install software that steals data, ransoms your files, or gives an attacker remote access.",
+    nextSteps: [
+      "If you opened the attachment or clicked a link: disconnect from the network if you can, run a full antivirus scan, and contact your IT/security team immediately.",
+      "Rotate any credentials you entered before or after the click.",
+      "Don't forward the message — receivers can still click despite warnings.",
+    ],
     accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
   },
   spam: {
     label: "Spam",
-    line: "We classified this as unsolicited commercial email rather than a targeted threat. Your address is on a bulk list — consider unsubscribing if the sender is legitimate, or filtering at your provider if not.",
+    lead:
+      "We classified this as unsolicited commercial email rather than a targeted threat. Annoying, but not " +
+      "malicious. Your address is likely on a bulk list — that usually reflects exposure from a breach or a list " +
+      "broker, not anything you did.",
+    nextSteps: [
+      "Look for an unsubscribe link inside the original message and use it if the sender appears legitimate.",
+      "If they ignore the unsubscribe, mark the message as spam at your email provider — most providers will block similar senders going forward.",
+      "Consider adding the sender's domain to your block list.",
+    ],
     accent: "#E5A832", pillBg: "#FCF4E0", pillFg: "#7E5A12", pillBorder: "#EBD9A7",
   },
   benign: {
     label: "Likely safe",
-    line: "After review we don't believe this message is a threat. It may be a legitimate but unfamiliar sender, or a marketing send from an opted-in list. If something still feels off, reply to this email and we'll re-inspect.",
+    lead:
+      "After review we don't believe this message is a threat. It may be a legitimate but unfamiliar sender, or a " +
+      "marketing send from an opted-in list.",
+    nextSteps: [
+      "If something still feels off, reply to this email with more context and we'll re-inspect.",
+      "If you're not sure who the sender is, ask the named brand through a known channel — their official website, not anything inside the message.",
+    ],
     accent: "#3CB878", pillBg: "#E6F5EC", pillFg: "#1A6B3C", pillBorder: "#A6D9BB",
   },
   ambiguous: {
     label: "Needs human review",
-    line: "Our automated triage couldn't reach a confident verdict on its own. A human analyst will reach out separately if we need more context from you. No further action needed on your side for now.",
+    lead:
+      "Our automated triage couldn't reach a confident verdict on its own. This usually means the message has " +
+      "mixed signals — legitimate-looking but with suspicious phrasing, or a new pattern we haven't seen at scale yet.",
+    nextSteps: [
+      "A human analyst will reach out separately if we need more context from you. No further action needed on your side for now.",
+      "Until then, don't act on anything the original message asks for.",
+      "If the matter is urgent, contact your IT/security team directly through a known channel.",
+    ],
     accent: "#A78BFA", pillBg: "#F0EBFD", pillFg: "#4C2D9E", pillBorder: "#CBBBF0",
   },
 };
+
+// ─── PR-AY helpers — translate raw signals into recipient-facing copy ───
+
+/**
+ * Map SPF / DKIM / DMARC verdicts to a single plain-English sentence.
+ * The recipient is typically a non-technical employee, so we avoid the
+ * acronyms and convert to the consequence ("looks like impersonation"
+ * / "matches the legitimate sender").
+ *
+ * Returns null when no auth verdicts are present at all (header was
+ * missing) — the caller suppresses the bullet entirely in that case.
+ */
+export function interpretAuth(
+  auth: { spf: string | null; dkim: string | null; dmarc: string | null } | null | undefined,
+  classification: string,
+): string | null {
+  if (!auth) return null;
+  const verdicts = [auth.spf, auth.dkim, auth.dmarc].filter((v): v is string => Boolean(v));
+  if (verdicts.length === 0) return null;
+  const isFail = (v: string | null): boolean => v === "fail" || v === "permerror";
+  const isPass = (v: string | null): boolean => v === "pass";
+  const failed = verdicts.filter(isFail);
+  const passed = verdicts.filter(isPass);
+
+  if (failed.length > 0 && passed.length === 0) {
+    return (classification === "phishing" || classification === "malware")
+      ? "Email authentication failed — typical of an impersonated sender."
+      : "Email authentication failed, which usually means the message wasn't actually sent from the address it claims.";
+  }
+  if (failed.length > 0) {
+    return "Email authentication had mixed results — some checks failed, some passed. This can indicate a forwarded message or partial spoofing.";
+  }
+  if (passed.length === verdicts.length) {
+    return (classification === "phishing" || classification === "malware")
+      ? "Email authentication passed — the attacker controls the sending domain or has compromised a legitimate sender."
+      : "Email authentication passed all checks, consistent with a legitimate sender.";
+  }
+  return "Email authentication ran but didn't produce a strong signal in either direction.";
+}
+
+/**
+ * Build the bulleted findings list — what we actually looked at /
+ * what changed in our threat intelligence as a result of this report.
+ * Returns null when there's nothing meaningful to surface (legacy
+ * row, ambiguous verdict on a sparse message).
+ */
+export type DeterminationContextForFindings = DeterminationContext;
+
+export function buildFindings(ctx: DeterminationContext): string[] {
+  const out: string[] = [];
+
+  // Auth — only when there's a real verdict
+  const authLine = interpretAuth(ctx.authResults, ctx.classification);
+  if (authLine) out.push(authLine);
+
+  // URL / promotion line — phrasing differs by verdict
+  if (typeof ctx.urlCount === "number" && ctx.urlCount > 0) {
+    const promoted = ctx.promotedCount ?? 0;
+    if (promoted > 0) {
+      out.push(
+        `${ctx.urlCount} link${ctx.urlCount === 1 ? "" : "s"} in the message; ` +
+        `${promoted} new indicator${promoted === 1 ? " has" : "s have"} been added to Averrow's threat intelligence. ` +
+        `Your report makes the platform smarter for every customer we monitor.`
+      );
+    } else if (ctx.classification === "benign") {
+      out.push(
+        `${ctx.urlCount} link${ctx.urlCount === 1 ? "" : "s"} in the message, none matched our threat intelligence.`
+      );
+    } else if (ctx.classification === "spam") {
+      out.push(
+        `${ctx.urlCount} link${ctx.urlCount === 1 ? "" : "s"} in the message, mostly commercial — no malicious indicators.`
+      );
+    } else {
+      out.push(
+        `${ctx.urlCount} link${ctx.urlCount === 1 ? "" : "s"} were extracted and inspected.`
+      );
+    }
+  }
+
+  // Attachment line — only mention when present
+  if (typeof ctx.attachmentCount === "number" && ctx.attachmentCount > 0) {
+    if (ctx.classification === "malware") {
+      out.push(
+        `${ctx.attachmentCount} attachment${ctx.attachmentCount === 1 ? "" : "s"} flagged for malicious content.`
+      );
+    } else {
+      out.push(
+        `${ctx.attachmentCount} attachment${ctx.attachmentCount === 1 ? "" : "s"} were inspected.`
+      );
+    }
+  }
+
+  // Correlation line — strong "we've seen this before" signal
+  if (typeof ctx.correlatedCount === "number" && ctx.correlatedCount > 0) {
+    out.push(
+      `${ctx.correlatedCount} indicator${ctx.correlatedCount === 1 ? "" : "s"} in this message match patterns ` +
+      `we're already tracking on the platform — this looks like part of an ongoing campaign.`
+    );
+  }
+
+  return out;
+}
 
 function determinationHtml(ctx: DeterminationContext): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
@@ -353,10 +502,32 @@ function determinationHtml(ctx: DeterminationContext): string {
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we triaged</div>
        <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${v.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
     : "";
+
+  const findings = buildFindings(ctx);
+  const findingsBlock = findings.length > 0
+    ? `<div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
+         <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:10px;">What we found</div>
+         <ul style="margin:0;padding:0 0 0 18px;list-style:disc;color:#1A2536;font-size:14px;line-height:1.6;">
+           ${findings.map((f) => `<li style="margin:0 0 6px;">${escapeHtml(f)}</li>`).join("")}
+         </ul>
+       </div>`
+    : "";
+
+  const nextStepsBlock = v.nextSteps.length > 0
+    ? `<div style="margin:16px 0 0;padding:16px 18px;background:#FFFFFF;border:1px solid ${v.pillBorder};border-radius:8px;border-left:4px solid ${v.accent};">
+         <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${v.pillFg};margin-bottom:10px;">What you should do</div>
+         <ul style="margin:0;padding:0 0 0 18px;list-style:disc;color:#1A2536;font-size:14px;line-height:1.6;">
+           ${v.nextSteps.map((s) => `<li style="margin:0 0 6px;">${escapeHtml(s)}</li>`).join("")}
+         </ul>
+       </div>`
+    : "";
+
   const body = `
     <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Verdict · ${ctx.confidence}% confidence</div>
-    <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.line)}</p>
+    <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.lead)}</p>
     ${echoSubject}
+    ${findingsBlock}
+    ${nextStepsBlock}
     <div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
       <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Analyst notes</div>
       <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(ctx.reasoning)}</p>
@@ -383,9 +554,19 @@ function determinationHtml(ctx: DeterminationContext): string {
 function determinationText(ctx: DeterminationContext): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${ctx.originalSubject}` : "";
+
+  const findings = buildFindings(ctx);
+  const findingsBlock = findings.length > 0
+    ? "\n\nWhat we found:\n" + findings.map((f) => `  - ${f}`).join("\n")
+    : "";
+
+  const nextStepsBlock = v.nextSteps.length > 0
+    ? "\n\nWhat you should do:\n" + v.nextSteps.map((s) => `  - ${s}`).join("\n")
+    : "";
+
   return `Determination: ${v.label} (${ctx.confidence}% confidence)
 
-${v.line}${echo}
+${v.lead}${echo}${findingsBlock}${nextStepsBlock}
 
 Analyst notes: ${ctx.reasoning}
 Action taken: ${ctx.action}
