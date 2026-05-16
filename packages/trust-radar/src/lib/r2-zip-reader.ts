@@ -48,7 +48,26 @@ export class R2ZipReader {
   constructor(
     private bucket: R2BucketLike,
     private key: string,
-  ) {}
+  ) {
+    // Fail fast on obvious operator mistakes. MaxMind ships archives as
+    // GeoLite2-City-CSV_YYYYMMDD.zip + GeoLite2-City-CSV_YYYYMMDD.zip.sha256
+    // (the SHA file is ~64 bytes of hex text — not a ZIP). Production
+    // 2026-05-05 had a refresh fail with "EOCD signature not found in
+    // last 64KB of R2 object …zip.sha256" because the SHA file was
+    // passed as the import key.
+    if (key.endsWith('.sha256')) {
+      throw new Error(
+        `R2ZipReader rejected key '${key}': .sha256 files are checksum text, not ZIP archives. ` +
+          `Pass the corresponding .zip key instead.`,
+      );
+    }
+    if (!key.toLowerCase().endsWith('.zip')) {
+      throw new Error(
+        `R2ZipReader rejected key '${key}': expected a .zip key, got something else. ` +
+          `Manual MaxMind imports must point at the archive itself, not a sibling file.`,
+      );
+    }
+  }
 
   /**
    * Fetch the EOCD + central directory and populate the entry list.

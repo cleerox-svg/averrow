@@ -73,13 +73,13 @@ export async function runGeoipBlocksImport(
   const blocksStream = await zip.streamEntry(blocksEntry);
 
   let pendingBatch: D1PreparedStatement[] = [];
-  let rowsWritten = 0;
+  let rowsInsertedThisAttempt = 0;
 
   const flushBatch = async () => {
     if (pendingBatch.length === 0) return;
     const results = await db.batch(pendingBatch);
     for (const r of results) {
-      rowsWritten += r.meta?.changes ?? 0;
+      rowsInsertedThisAttempt += r.meta?.changes ?? 0;
     }
     pendingBatch = [];
   };
@@ -115,6 +115,19 @@ export async function runGeoipBlocksImport(
     }
   });
   await flushBatch();
+
+  // Final shadow-table row count is the truthful "what's in the DB now"
+  // value — survives CF Workflow step retries. The per-attempt change
+  // counter (`rowsInsertedThisAttempt`) only counts rows this specific
+  // attempt actually wrote; a retry after a partial-success pass would
+  // hit INSERT OR IGNORE on already-inserted rows, returning changes=0
+  // and reporting a tiny rowsWritten despite the shadow table being
+  // fully populated. Production 2026-05-05 logged "Imported 744617 of
+  // 3701317 parsed" while the shadow table actually held all 3.7M rows.
+  const finalCountRow = await db
+    .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges_new`)
+    .first<{ n: number }>();
+  const rowsWritten = finalCountRow?.n ?? rowsInsertedThisAttempt;
 
   return { rowsWritten, rowsParsed, locationsCount: locations.size };
 }

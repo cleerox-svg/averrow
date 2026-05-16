@@ -934,6 +934,38 @@ export const flightControlAgent: AgentModule = {
       } catch { /* table may not exist (binding present but migrations not yet applied) */ }
     }
 
+    // ── Step C.2: GeoIP freshness check ────────────────────────────
+    // Sister check to the stuck-running supervisor above: detects when
+    // the LAST SUCCESSFUL refresh is older than the staleness threshold
+    // and fires `platform_geoip_refresh_stalled`. The stuck-running path
+    // only catches workflows that started + hung; this catches workflows
+    // that never started (all attempts failed → no 'running' row at
+    // all). Production 2026-05-16 caught a 11-day stale DB this way:
+    // last success 2026-05-05, every subsequent attempt failed, FC
+    // had no signal until an operator manually inspected.
+    const GEOIP_STALE_DAYS = 7;
+    if (env.GEOIP_DB) {
+      try {
+        const lastSuccess = await env.GEOIP_DB.prepare(`
+          SELECT id, source_version, completed_at,
+                 CAST((julianday('now') - julianday(completed_at)) AS INTEGER) AS age_days
+          FROM geo_ip_refresh_log
+          WHERE status = 'success'
+          ORDER BY completed_at DESC
+          LIMIT 1
+        `).first<{ id: string; source_version: string | null; completed_at: string; age_days: number }>();
+        if (lastSuccess && lastSuccess.age_days >= GEOIP_STALE_DAYS) {
+          await emitPlatformNotification(env, 'platform_geoip_refresh_stalled',
+            renderPlatformGeoipRefreshStalled({
+              refresh_log_id: lastSuccess.id,
+              minutes_running: lastSuccess.age_days * 24 * 60,
+              source_version: lastSuccess.source_version,
+            }),
+          );
+        }
+      } catch { /* binding/table missing — same defensive pattern as above */ }
+    }
+
     mark('geoip_refresh_supervisor');
 
     // ── Workflow dispatch supervisor ───────────────────────────────
