@@ -685,8 +685,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 576,
-      "last_modified": "2026-05-16T04:24:27.711Z"
+      "loc": 683,
+      "last_modified": "2026-05-16T05:16:29.012Z"
     },
     {
       "name": "trustbot",

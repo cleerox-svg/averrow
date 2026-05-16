@@ -9,6 +9,8 @@
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { generateCampaignName, checkCostGuard } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
+import { evaluateCampaignSignificance } from "../lib/campaign-significance";
+import { createBrandAlertsForCampaign } from "../lib/alert-fanout";
 
 export const strategistAgent: AgentModule = {
   name: "strategist",
@@ -163,6 +165,38 @@ export const strategistAgent: AgentModule = {
           } catch (e) {
             console.error(`[strategist] escalation notification error:`, e);
           }
+
+          // NX4: re-check significance on escalation. The "spike" branch
+          // is the relevant one here — a campaign that just 3x'd is the
+          // canonical "growing fast" signal we want to surface to the
+          // affected tenants. Volume + wide-net branches re-trigger when
+          // already-significant campaigns add more threats; the fanout
+          // helper is idempotent so re-firing is safe.
+          try {
+            const tcAgoRow = await env.DB.prepare(
+              `SELECT COUNT(*) AS n FROM threats
+                WHERE campaign_id = ?
+                  AND created_at < datetime('now', '-24 hours')`
+            ).bind(campaignId).first<{ n: number }>();
+            const bcRow = await env.DB.prepare(
+              `SELECT brand_count_at_first_detection AS n FROM campaigns WHERE id = ?`
+            ).bind(campaignId).first<{ n: number }>();
+            const sigEsc = evaluateCampaignSignificance({
+              threat_count: newCount.threat_count,
+              threat_count_24h_ago: tcAgoRow?.n ?? 0,
+              brand_count_at_first_detection: bcRow?.n ?? 0,
+            });
+            if (sigEsc.significant) {
+              await createBrandAlertsForCampaign(env, {
+                campaign_id: campaignId,
+                campaign_name: newCount.name,
+                threat_count: newCount.threat_count,
+                reasons: sigEsc.reasons,
+              });
+            }
+          } catch (e) {
+            console.error(`[strategist] escalation fanout error:`, e);
+          }
         }
       } else {
         // Create new campaign — use pre-fetched context maps (no per-IP DB calls)
@@ -187,10 +221,23 @@ export const strategistAgent: AgentModule = {
           name = nameResult.data.name;
         }
 
+        // NX4: snapshot brand_count_at_first_detection for the
+        // significance rule. Counts distinct brands among threats sharing
+        // this campaign's IP — same scope as the upcoming threats-table
+        // assignment a few lines below.
+        const brandCountRow = await env.DB.prepare(`
+          SELECT COUNT(DISTINCT target_brand_id) AS n
+            FROM threats
+           WHERE ip_address = ?
+             AND target_brand_id IS NOT NULL
+             AND status = 'active'
+        `).bind(cluster.ip_address).first<{ n: number }>();
+        const brandCountAtFirst = brandCountRow?.n ?? 0;
+
         // description stores the technical ID; name gets the AI name (or fallback)
         await env.DB.prepare(
-          `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status)
-           VALUES (?, ?, ?, ?, ?, 'active')`
+          `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
+           VALUES (?, ?, ?, ?, ?, 'active', ?)`
         ).bind(
           campaignId, name, fallbackName, cluster.threat_count,
           JSON.stringify({
@@ -199,6 +246,7 @@ export const strategistAgent: AgentModule = {
             sources: cluster.sources,
             threat_types: cluster.types,
           }),
+          brandCountAtFirst,
         ).run();
         itemsCreated++;
 
@@ -218,7 +266,7 @@ export const strategistAgent: AgentModule = {
         try {
           await createNotification(env, {
             // N1: explicit super_admin audience — "new campaign identified"
-            // is intel for the operator. N4 will fan out per-brand tenant
+            // is intel for the operator. NX4 fans out per-brand tenant
             // alerts when the campaign passes the significance threshold.
             audience: 'super_admin',
             type: 'agent_milestone',
@@ -230,6 +278,30 @@ export const strategistAgent: AgentModule = {
           });
         } catch (e) {
           console.error(`[strategist] notification error:`, e);
+        }
+
+        // NX4: tenant fan-out. New campaigns can be significant on
+        // first detection via the "wide net" branch (>=10 brands) or
+        // the volume branch (>=20 threats). Spike branch is moot here
+        // (no 24h-ago baseline at creation). Fanout helper is itself
+        // tier-gated + idempotent — safe to call unconditionally past
+        // the significance check.
+        const sigNew = evaluateCampaignSignificance({
+          threat_count: cluster.threat_count,
+          threat_count_24h_ago: 0,
+          brand_count_at_first_detection: brandCountAtFirst,
+        });
+        if (sigNew.significant) {
+          try {
+            await createBrandAlertsForCampaign(env, {
+              campaign_id: campaignId,
+              campaign_name: name,
+              threat_count: cluster.threat_count,
+              reasons: sigNew.reasons,
+            });
+          } catch (e) {
+            console.error('[strategist] campaign fanout error:', e);
+          }
         }
       }
 
@@ -308,12 +380,27 @@ export const strategistAgent: AgentModule = {
         name = nameResult.data.name;
       }
 
+      // NX4: snapshot brand_count_at_first_detection for the
+      // significance rule. Counts distinct brands among threats
+      // sharing this registrar — same scope as the threats-table
+      // assignment immediately below.
+      const regBrandCountRow = await env.DB.prepare(`
+        SELECT COUNT(DISTINCT target_brand_id) AS n
+          FROM threats
+         WHERE registrar = ?
+           AND target_brand_id IS NOT NULL
+           AND status = 'active'
+           AND created_at >= datetime('now', '-7 days')
+      `).bind(cluster.registrar).first<{ n: number }>();
+      const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
+
       await env.DB.prepare(
-        `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status)
-         VALUES (?, ?, ?, ?, ?, 'active')`
+        `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
+         VALUES (?, ?, ?, ?, ?, 'active', ?)`
       ).bind(
         campaignId, name, fallbackName, cluster.threat_count,
         JSON.stringify({ type: "shared_registrar", registrar: cluster.registrar }),
+        regBrandCountAtFirst,
       ).run();
 
       await env.DB.prepare(
@@ -330,6 +417,26 @@ export const strategistAgent: AgentModule = {
         severity: "medium",
         details: { registrar: cluster.registrar, count: cluster.threat_count, ai_name: name },
       });
+
+      // NX4: tenant fan-out for new registrar-cluster campaigns —
+      // same gating as the IP-cluster path above.
+      const regSig = evaluateCampaignSignificance({
+        threat_count: cluster.threat_count,
+        threat_count_24h_ago: 0,
+        brand_count_at_first_detection: regBrandCountAtFirst,
+      });
+      if (regSig.significant) {
+        try {
+          await createBrandAlertsForCampaign(env, {
+            campaign_id: campaignId,
+            campaign_name: name,
+            threat_count: cluster.threat_count,
+            reasons: regSig.reasons,
+          });
+        } catch (e) {
+          console.error('[strategist] registrar-campaign fanout error:', e);
+        }
+      }
     }
 
     // ─── Update campaign brand/provider counts ──────────────────

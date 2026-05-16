@@ -1768,8 +1768,8 @@ signal feed.
 |---|---|---|
 | NX1 — Audience hygiene + ops bell filter | Every `createNotification` call site gets explicit `audience`; spam-trap migrates off raw INSERT; ops bell + archive page filter to `audience IN ('super_admin','team','all')`; unread badge mirrors the scoped fetch. | ✅ Landed (PR #1349) |
 | NX2 — Tier gate + claim-time backfill | `createAlert` skips when `brands.tier='tracked'`; new `backfillAlertsForBrand()` runs on org_brands insert. | ✅ Landed (PR #1350) |
-| NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed | Tenant SPA labels (backend table stays `alerts`); `/v2/brands/:id` gains a Signals tab. | 🟡 In progress |
-| NX4 — Campaign / actor significance + tenant fanout | `lib/campaign-significance.ts` (≥20 threats OR 3× spike); on pass: super_admin notification + per-brand tenant alerts. | ⏳ Not started |
+| NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed | Tenant SPA labels (backend table stays `alerts`); `/v2/brands/:id` gains a Signals tab. | ✅ Landed (PR #1351) |
+| NX4 — Campaign / actor significance + tenant fanout | `lib/campaign-significance.ts` (≥20 threats OR 3× spike); on pass: super_admin notification + per-brand tenant alerts. | 🟡 In progress |
 | NX5 — Preferences UI + Notification Center admin page | Three-section preferences (mandatory platform / opt-in intel / cadence); new `/v2/notifications/admin` page. | ⏳ Not started |
 | NX6 — Platform health wire-up | Hook the 8 enumerated `platform_*` types into Flight Control / Navigator / feed CB / news_watcher. | ⏳ Not started |
 | NXF1 — Backend table rename `alerts` → `brand_signals` | Held back until NX1–NX6 prove the model in production. | ⏳ Future |

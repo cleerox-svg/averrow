@@ -45,6 +45,8 @@ export type AlertTypeKey =
   | 'vmc_expiring'
   | 'typosquat_bimi'
   | 'takedown_resurrected'
+  | 'campaign_impacts_brand'
+  | 'threat_actor_targeting_brand'
   | 'unknown';
 
 export interface AlertTypeDef {
@@ -178,6 +180,26 @@ export const ALERT_TYPES: readonly AlertTypeDef[] = [
     defaultSeverity: 'critical',
     dedupWindow: '-1 hour',
     writers: ['sparrow', 'cartographer'],
+  },
+  {
+    key: 'campaign_impacts_brand',
+    label: 'Campaign Impacts Brand',
+    description: 'A threat campaign passed the significance threshold and your brand is in its target set',
+    defaultSeverity: 'high',
+    // Match the campaign_escalation notification dedup so a single
+    // campaign that grows over a day doesn't flood the brand inbox.
+    dedupWindow: '-24 hours',
+    writers: ['strategist'],
+  },
+  {
+    key: 'threat_actor_targeting_brand',
+    label: 'Threat Actor Targeting Brand',
+    description: 'A known threat actor target list now includes your brand',
+    defaultSeverity: 'high',
+    // Actor target lists are slow-moving; a longer window prevents
+    // re-firing on every observer/nexus refresh of the same actor.
+    dedupWindow: '-7 days',
+    writers: ['observer', 'nexus'],
   },
 
   // ─── Legacy ──────────────────────────────────────────────────
