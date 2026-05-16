@@ -33,7 +33,7 @@ import {
 import { Card, SectionLabel, Button } from '@/design-system/components';
 import {
   getPushStatus, subscribePush, unsubscribePush,
-  listPushDevices, removePushDevice,
+  listPushDevices, removePushDevice, sendTestPush,
   type PushStatus, type PushDevice,
 } from '@/lib/push';
 import {
@@ -174,6 +174,8 @@ export function NotificationPreferences() {
   });
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   async function handleEnablePush() {
     setPushBusy(true); setPushError(null);
@@ -184,6 +186,19 @@ export function NotificationPreferences() {
     } catch (err) {
       setPushError(err instanceof Error ? err.message : 'Failed to enable push.');
     } finally { setPushBusy(false); }
+  }
+
+  // NX-push-uxr: test push exposed to all users (was admin-only on /admin/push).
+  // Bypasses every gate so the user can verify end-to-end delivery on the
+  // device they're holding without waiting for a real notification.
+  async function handleTestPush() {
+    setTestBusy(true); setTestResult(null);
+    try {
+      const r = await sendTestPush();
+      setTestResult(`Sent · ${r.delivered}/${r.attempted} device(s) confirmed`);
+    } catch (err) {
+      setTestResult(err instanceof Error ? `Test failed: ${err.message}` : 'Test push failed.');
+    } finally { setTestBusy(false); }
   }
   async function handleDisablePush() {
     setPushBusy(true); setPushError(null);
@@ -216,6 +231,81 @@ export function NotificationPreferences() {
         </button>
         <h1 className="text-2xl font-bold flex-1" style={{ color: 'var(--text-primary)' }}>Notification preferences</h1>
       </div>
+
+      {/* 0. ENABLE-PUSH BANNER ──────────────────────────────────────────
+          NX-push-uxr: surfaces the main on/off + test push as the first
+          thing on the page. The 7-panel preferences below were
+          previously hiding push-enable behind 5 scroll-screens.
+          Status badge, single CTA, and a Test button right next to it
+          so the user gets immediate feedback the channel works end-to-end. */}
+      <Card hover={false}>
+        {pushError && (
+          <div className="mb-3 p-2 rounded text-[11px] font-mono"
+            style={{ background: 'var(--sev-critical-bg)', color: 'var(--sev-critical)', border: '1px solid var(--sev-critical-border)' }}>
+            {pushError}
+          </div>
+        )}
+        <div className="flex items-start gap-3 flex-wrap">
+          <div
+            className="flex-shrink-0 w-10 h-10 rounded-md flex items-center justify-center"
+            style={{
+              background: pushStatus?.subscribed ? 'var(--green-glow)' : 'var(--amber-glow)',
+              color: pushStatus?.subscribed ? 'var(--green)' : 'var(--amber)',
+            }}
+          >
+            <Smartphone size={18} />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {pushStatus?.subscribed ? 'Push enabled on this device' : 'Push notifications'}
+            </div>
+            <div className="text-[11px] mt-0.5 font-mono" style={{ color: 'var(--text-tertiary)' }}>
+              {pushStatus?.subscribed
+                ? `${pushDevices?.length ?? 1} device(s) registered · severity floor "${v2?.push_severity_floor ?? 'low'}" — adjust in Delivery below`
+                : pushStatus?.permission === 'denied'
+                  ? 'Browser permission denied. Allow Averrow in your browser settings, then click Enable.'
+                  : pushStatus?.permission === 'unsupported'
+                    ? 'Web push not supported on this browser. iOS requires Add to Home Screen first.'
+                    : 'One-click enable: requests permission, subscribes this browser, and seeds sensible defaults.'}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {pushStatus?.subscribed ? (
+              <>
+                <Button variant="secondary" size="sm" onClick={handleTestPush} disabled={testBusy}>
+                  {testBusy ? 'Sending…' : 'Send test'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleDisablePush} disabled={pushBusy}>
+                  {pushBusy ? 'Disabling…' : 'Disable on this device'}
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleEnablePush}
+                disabled={pushBusy || pushStatus?.permission === 'unsupported'}
+              >
+                {pushBusy ? 'Enabling…' : 'Enable push'}
+              </Button>
+            )}
+          </div>
+        </div>
+        {testResult && (
+          <div
+            className="mt-3 p-2 rounded text-[11px] font-mono"
+            style={{
+              background: testResult.startsWith('Sent')
+                ? 'var(--green-glow)'
+                : 'var(--sev-critical-bg)',
+              color: testResult.startsWith('Sent') ? 'var(--green)' : 'var(--sev-critical)',
+              border: `1px solid ${testResult.startsWith('Sent') ? 'var(--green-border)' : 'var(--sev-critical-border)'}`,
+            }}
+          >
+            {testResult}
+          </div>
+        )}
+      </Card>
 
       {/* 1. DELIVERY CHANNELS ─────────────────────────────────────────── */}
       <PanelHeader title="Delivery" subtitle="What severity counts as worth your attention, per channel" icon={<Inbox size={14} />} />
@@ -429,35 +519,20 @@ export function NotificationPreferences() {
         </label>
       </Card>
 
-      {/* 6. PUSH DEVICES ─────────────────────────────────────────────── */}
-      <PanelHeader title="Push devices" subtitle="Manage registered devices that receive push notifications" icon={<Smartphone size={14} />} />
+      {/* 6. PUSH DEVICES — device-management list. The main on/off +
+            test live in the EnablePushBanner at the top of the page. */}
+      <PanelHeader title="Registered devices" subtitle="Browsers and phones currently subscribed for push" icon={<Smartphone size={14} />} />
       <Card hover={false}>
-        {pushError && (
-          <div className="mb-3 p-2 rounded text-[11px] font-mono"
-            style={{ background: 'var(--sev-critical-bg)', color: 'var(--sev-critical)', border: '1px solid var(--sev-critical-border)' }}>
-            {pushError}
-          </div>
-        )}
-        <div className="flex items-center gap-3">
-          {pushStatus?.subscribed ? (
-            <Button variant="secondary" size="sm" onClick={handleDisablePush} disabled={pushBusy}>
-              {pushBusy ? 'Disabling…' : 'Disable on this device'}
-            </Button>
-          ) : (
-            <Button variant="primary" size="sm" onClick={handleEnablePush} disabled={pushBusy}>
-              {pushBusy ? 'Enabling…' : 'Enable push on this device'}
-            </Button>
-          )}
-          <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-            {pushStatus?.subscribed ? 'This browser is subscribed' : 'Not subscribed on this browser'}
-          </span>
-        </div>
-        {pushDevices && pushDevices.length > 0 && (
-          <div className="mt-4 space-y-1.5">
+        {pushDevices && pushDevices.length > 0 ? (
+          <div className="space-y-1.5">
             {pushDevices.map((d) => (
               <DeviceRow key={d.id} device={d} onRemove={() => handleRemoveDevice(d.id)} />
             ))}
           </div>
+        ) : (
+          <p className="text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
+            No devices registered yet. Enable push at the top of this page on the device you want to receive notifications on.
+          </p>
         )}
       </Card>
 

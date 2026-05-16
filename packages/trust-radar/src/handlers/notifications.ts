@@ -440,7 +440,11 @@ interface PreferencesV2Row {
 
 const PREF_V2_DEFAULTS: PreferencesV2Row = {
   inapp_severity_floor: 'info',
-  push_severity_floor: 'high',
+  // NX5+1: lowered from 'high' so default-installed users actually receive
+  // notifications on push. Migration 0194 backfilled existing staff rows
+  // that were still on the legacy default. Industry standard for operator
+  // tooling is opt-out from noisy types, not opt-in to seeing anything at all.
+  push_severity_floor: 'low',
   email_severity_floor: 'high',
   digest_mode: 'daily',
   digest_severity_floor: 'medium',
@@ -473,12 +477,33 @@ export async function handleGetPreferencesV2(request: Request, env: Env, userId:
     ).bind(userId).first<PreferencesV2Row>();
 
     // Auto-seed if missing (the N2 backfill covered active users at
-    // migration time but new users won't have a row).
+    // migration time but new users won't have a row). Explicit columns
+    // so the seeded row matches PREF_V2_DEFAULTS — not the (now-stale)
+    // column DEFAULTs in migration 0127. Specifically push_severity_floor
+    // needs to be 'low' for new staff users; migration 0194 lowered the
+    // legacy 'high' value for existing rows.
     if (!row) {
       await env.DB.prepare(
-        `INSERT INTO notification_preferences_v2 (user_id) VALUES (?)
+        `INSERT INTO notification_preferences_v2 (
+           user_id, inapp_severity_floor, push_severity_floor, email_severity_floor,
+           digest_mode, digest_severity_floor,
+           quiet_hours_timezone, critical_bypasses_quiet, show_tenant_notifications,
+           cadence_intel, cadence_platform
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO NOTHING`
-      ).bind(userId).run();
+      ).bind(
+        userId,
+        PREF_V2_DEFAULTS.inapp_severity_floor,
+        PREF_V2_DEFAULTS.push_severity_floor,
+        PREF_V2_DEFAULTS.email_severity_floor,
+        PREF_V2_DEFAULTS.digest_mode,
+        PREF_V2_DEFAULTS.digest_severity_floor,
+        PREF_V2_DEFAULTS.quiet_hours_timezone,
+        PREF_V2_DEFAULTS.critical_bypasses_quiet,
+        PREF_V2_DEFAULTS.show_tenant_notifications,
+        PREF_V2_DEFAULTS.cadence_intel,
+        PREF_V2_DEFAULTS.cadence_platform,
+      ).run();
       return json({ success: true, data: PREF_V2_DEFAULTS }, 200, origin);
     }
     return json({ success: true, data: row }, 200, origin);

@@ -8,6 +8,9 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { Badge, Button, Card, PageHeader, StatGrid, StatCard } from '@/design-system/components';
+import { usePushConfig } from '@/hooks/usePushAdmin';
+import { useNavigate } from 'react-router-dom';
+import { BellRing } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { DailyBriefingWidget } from '@/components/DailyBriefingWidget';
@@ -524,6 +527,47 @@ function MaintenanceSection() {
   );
 }
 
+function PushBootstrapCard() {
+  const navigate = useNavigate();
+  const { data: config, isLoading } = usePushConfig();
+  // Hide when push is fully configured + enabled — the card is a
+  // setup nudge, not permanent UI. Loading state also hidden.
+  if (isLoading || !config) return null;
+  const fullyConfigured = config.push_enabled
+    && config.vapid_public_key.length > 0
+    && config.vapid_private_key_configured;
+  if (fullyConfigured) return null;
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            className="flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center"
+            style={{ background: 'var(--amber-glow)', color: 'var(--amber)' }}
+          >
+            <BellRing size={16} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Push notifications not configured
+            </div>
+            <div className="text-[11px] mt-0.5 font-mono" style={{ color: 'var(--text-tertiary)' }}>
+              {!config.vapid_public_key
+                ? 'Generate a VAPID keypair to enable web push.'
+                : !config.vapid_private_key_configured
+                  ? 'Private key not set as Worker secret. Run wrangler secret put.'
+                  : 'Enable push in the bootstrap panel to start delivering to subscribed devices.'}
+            </div>
+          </div>
+        </div>
+        <Button variant="primary" size="sm" onClick={() => navigate('/admin/push')}>
+          Open bootstrap
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 export function AdminDashboard() {
   const { data, isLoading, isError } = useSystemHealth();
 
@@ -609,6 +653,12 @@ export function AdminDashboard() {
           </div>
         }
       />
+
+      {/* ── PUSH BOOTSTRAP CARD ─────────────────────
+          Only renders when web push isn't fully configured. The full
+          VAPID lifecycle (/admin/push) moved out of the primary nav —
+          this card surfaces it when needed without burying the link. */}
+      <PushBootstrapCard />
 
       {/* ── DAILY BRIEFING WIDGET ─────────────────── */}
       <DailyBriefingWidget />

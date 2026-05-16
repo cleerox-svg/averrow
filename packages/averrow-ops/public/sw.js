@@ -24,7 +24,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-04-30.1';
+const VERSION = '2026-05-16.1';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const API_CACHE     = `averrow-api-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
@@ -173,6 +173,47 @@ async function staleWhileRevalidate(req, cacheName) {
 }
 
 // ─── Web Push ───────────────────────────────────────────────────────────
+
+// `pushsubscriptionchange` — the browser invalidates the user's push
+// subscription periodically (~weekly) or whenever the OS clears push
+// state (Android battery saver, app reinstall, browser data clear).
+// Without this handler, the DB keeps the old (now-dead) endpoint and
+// every dispatch silently 410s until dispatchPush's auto-cleanup
+// catches up — typically days of missed notifications.
+//
+// Strategy: if the browser hands us a newSubscription, POST it to
+// /api/notifications/subscribe (idempotent on endpoint URL). If
+// newSubscription is null, re-subscribe via pushManager.subscribe()
+// using the cached VAPID key, then POST that.
+//
+// The OLD endpoint is left to dispatchPush's 410 auto-deletion so we
+// don't need a separate "delete by endpoint" API surface.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const fresh = event.newSubscription
+        ? event.newSubscription
+        : await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: event.oldSubscription?.options?.applicationServerKey,
+          }).catch(() => null);
+      if (!fresh) return;
+      const payload = {
+        subscription: fresh.toJSON ? fresh.toJSON() : fresh,
+        device_label: 'auto (resubscribe)',
+      };
+      await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // Swallow — the next user-initiated subscribe (or dispatchPush 410
+      // auto-cleanup) will recover.
+    }
+  })());
+});
 
 self.addEventListener('push', (event) => {
   // Payload shape comes from src/lib/push.ts on the worker:
