@@ -85,13 +85,27 @@ interface UserPrefRow {
   feed_health?: number | null;
   intelligence_digest?: number | null;
   agent_milestone?: number | null;
-  // Global channel + DND
+  // Global channel + DND (v1 — legacy)
   push_notifications?: number | null;
   quiet_hours_start?: string | null;
   quiet_hours_end?: string | null;
   quiet_hours_tz?: string | null;
   critical_breakthrough?: number | null;
+  // NX6 fix: v2 fields joined so the push gate can use the modern
+  // source-of-truth. The NX5 preferences UI writes push_severity_floor
+  // (NotificationPreferencesV2) but the legacy v1 push_notifications
+  // column was the gate — so users who toggled push via the new UI
+  // never actually received pushes.
+  v2_push_severity_floor?: string | null;
+  v2_quiet_hours_start?: string | null;
+  v2_quiet_hours_end?: string | null;
+  v2_quiet_hours_timezone?: string | null;
+  v2_critical_bypasses_quiet?: number | null;
 }
+
+const SEVERITY_RANK: Record<string, number> = {
+  info: 0, low: 1, medium: 2, high: 3, critical: 4,
+};
 
 export async function createNotification(env: Env, opts: CreateNotificationOpts): Promise<number> {
   // Defense-in-depth: refuse unknown event keys before we hit the SQL CHECK.
@@ -227,14 +241,28 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
 
   let created = 0;
   for (const uid of userIds) {
-    // Pull every pref we might need in one query (event flag + push + DND).
+    // Pull every pref we might need in one query — v1 (event flags +
+    // legacy push toggle + DND) JOIN v2 (modern severity floors +
+    // quiet hours). NX6 fix: prior versions queried v1 only, so the
+    // push gate used the legacy push_notifications column even after
+    // the NX5 UI moved users to the v2 push_severity_floor model.
+    // Users who set their preferences in the new UI never got pushes
+    // because v1.push_notifications stayed at 0/null.
     const pref = await db.prepare(
-      `SELECT brand_threat, campaign_escalation, feed_health,
-              intelligence_digest, agent_milestone,
-              push_notifications,
-              quiet_hours_start, quiet_hours_end, quiet_hours_tz,
-              critical_breakthrough
-         FROM notification_preferences WHERE user_id = ?`,
+      `SELECT np.brand_threat, np.campaign_escalation, np.feed_health,
+              np.intelligence_digest, np.agent_milestone,
+              np.push_notifications,
+              np.quiet_hours_start, np.quiet_hours_end, np.quiet_hours_tz,
+              np.critical_breakthrough,
+              pv.push_severity_floor      AS v2_push_severity_floor,
+              pv.quiet_hours_start        AS v2_quiet_hours_start,
+              pv.quiet_hours_end          AS v2_quiet_hours_end,
+              pv.quiet_hours_timezone     AS v2_quiet_hours_timezone,
+              pv.critical_bypasses_quiet  AS v2_critical_bypasses_quiet
+         FROM users u
+         LEFT JOIN notification_preferences    np ON np.user_id = u.id
+         LEFT JOIN notification_preferences_v2 pv ON pv.user_id = u.id
+        WHERE u.id = ?`,
     ).bind(uid).first<UserPrefRow>();
 
     // ── Gate 2a: per-event opt-out (only for user-toggleable events) ──
@@ -298,33 +326,71 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     } else {
       // Capture the reason a notification skipped the push channel so
       // the audit can distinguish "user opted out" from "delivery broke".
+      const v2Floor = pref?.v2_push_severity_floor;
+      const v1Enabled = pref?.push_notifications === 1;
       const reason = !pref
         ? "no preferences row"
-        : pref.push_notifications !== 1
-          ? "push_notifications opt-out"
-          : "quiet hours / DND";
+        : v2Floor === 'off'
+          ? "v2 push_severity_floor=off"
+          : v2Floor && (SEVERITY_RANK[opts.severity] ?? 0) < (SEVERITY_RANK[v2Floor] ?? 0)
+            ? `severity ${opts.severity} below floor ${v2Floor}`
+            : !v2Floor && !v1Enabled
+              ? "v1 push_notifications opt-out (no v2 row)"
+              : "quiet hours / DND";
       await recordDelivery(env, notificationId, uid, "push", "skipped", reason);
     }
   }
   return created;
 }
 
-/** Gate 2b + Gate 3: should we attempt push delivery for this event/user? */
+/** Gate 2b + Gate 3: should we attempt push delivery for this event/user?
+ *
+ * NX6 fix: v2 push_severity_floor is the canonical source. v1
+ * push_notifications is the legacy fallback for users without a v2
+ * row (rare — handleGetPreferencesV2 auto-seeds them on first read).
+ *
+ * Push fires when EITHER:
+ *   - v2 push_severity_floor != 'off' AND notification severity meets the floor, OR
+ *   - v2 not present AND v1 push_notifications === 1 (legacy users).
+ *
+ * Quiet hours: v2 columns take precedence when present; v1 used as fallback.
+ * Critical breakthrough: v2 critical_bypasses_quiet takes precedence.
+ */
 async function shouldSendPush(
   opts: CreateNotificationOpts,
   pref: UserPrefRow | null,
 ): Promise<boolean> {
-  if (!pref) return false;                       // no row = defaults (push off)
-  if (pref.push_notifications !== 1) return false; // explicit user opt-in required
+  if (!pref) return false;
+
+  // ── Channel gate: v2 floor first, v1 toggle as fallback ──────────
+  const v2Floor = pref.v2_push_severity_floor;
+  let v2Allows = false;
+  if (v2Floor && v2Floor !== 'off') {
+    const eventRank = SEVERITY_RANK[opts.severity] ?? 0;
+    const floorRank = SEVERITY_RANK[v2Floor] ?? 0;
+    v2Allows = eventRank >= floorRank;
+  }
+  const v1Allows = pref.push_notifications === 1;
+  // v2 is the canonical source — only fall back to v1 when no v2 row exists.
+  const v2HasRow = !!v2Floor;
+  const allowed = v2HasRow ? v2Allows : v1Allows;
+  if (!allowed) return false;
+
+  // ── Quiet hours: prefer v2, fall back to v1 ──────────────────────
+  const quietStart = pref.v2_quiet_hours_start    ?? pref.quiet_hours_start    ?? null;
+  const quietEnd   = pref.v2_quiet_hours_end      ?? pref.quiet_hours_end      ?? null;
+  const quietTz    = pref.v2_quiet_hours_timezone ?? pref.quiet_hours_tz       ?? null;
+  const criticalBreakthrough = pref.v2_critical_bypasses_quiet != null
+    ? pref.v2_critical_bypasses_quiet === 1
+    : pref.critical_breakthrough === 1;
 
   const quiet: QuietHoursPrefs = {
-    start: pref.quiet_hours_start ?? null,
-    end: pref.quiet_hours_end ?? null,
-    tz: pref.quiet_hours_tz ?? null,
-    criticalBreakthrough: pref.critical_breakthrough === 1,
+    start: quietStart,
+    end: quietEnd,
+    tz: quietTz,
+    criticalBreakthrough,
   };
   if (isInQuietHours(quiet)) {
-    // Critical events with breakthrough enabled punch through DND.
     if (opts.severity === 'critical' && quiet.criticalBreakthrough) return true;
     return false;
   }

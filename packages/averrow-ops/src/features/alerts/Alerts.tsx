@@ -646,11 +646,11 @@ export function Alerts() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Alerts" subtitle="Active contacts requiring attention" />
+      <PageHeader title="Signals" subtitle="Brand signals across all monitored brands — SOC triage view" />
 
       <StatGrid cols={4}>
         <StatCard
-          label="Total Alerts"
+          label="Total Signals"
           value={statsLoading ? '...' : (stats?.total ?? 0)}
           accentColor="var(--red)"
         />
