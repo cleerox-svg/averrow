@@ -184,8 +184,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1216,
-      "last_modified": "2026-05-16T20:43:53.594Z"
+      "loc": 1226,
+      "last_modified": "2026-05-16T21:35:18.915Z"
     },
     {
       "name": "cube-healer",
@@ -377,8 +377,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threat_narratives"
       ],
       "ai_models_referenced": [],
-      "loc": 481,
-      "last_modified": "2026-05-15T17:55:10.293Z"
+      "loc": 505,
+      "last_modified": "2026-05-16T21:32:52.259Z"
     },
     {
       "name": "news-watcher",

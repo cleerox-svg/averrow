@@ -19,6 +19,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
+import type { Env } from "../types";
 import { scoreProvider } from "../lib/haiku";
 import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
@@ -114,10 +115,19 @@ async function enrichIpBatch(ips: string[]): Promise<Map<string, IpGeoResult>> {
 
 // ─── RDAP registrar lookup ────────────────────────────────────────
 
-async function lookupRegistrar(domain: string): Promise<{ registrar: string | null; registration_date: string | null }> {
+async function lookupRegistrar(env: Env, domain: string): Promise<{ registrar: string | null; registration_date: string | null }> {
   try {
-    const res = await fetch(`https://rdap.org/domain/${domain}`, {
-      headers: { 'Accept': 'application/json' },
+    // PR-C (2026-05-16 audit fix #15): rdap.org returns HTTP 403
+    // "Host not in allowlist" to CF Workers, nulling 100% of our
+    // registrar enrichment. Route through the IANA bootstrap to hit
+    // each TLD's authoritative server directly.
+    const { getRdapServerForDomain } = await import('../lib/rdap-bootstrap');
+    const server = await getRdapServerForDomain(env, domain);
+    if (!server) return { registrar: null, registration_date: null };
+
+    const base = server.endsWith('/') ? server : `${server}/`;
+    const res = await fetch(`${base}domain/${encodeURIComponent(domain)}`, {
+      headers: { 'Accept': 'application/rdap+json' },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return { registrar: null, registration_date: null };
@@ -356,7 +366,7 @@ export const cartographerAgent: AgentModule = {
           let registrar: string | null = null;
           let registration_date: string | null = null;
           if (threat.malicious_domain && rdapEnriched < 10) {
-            const rdap = await lookupRegistrar(threat.malicious_domain);
+            const rdap = await lookupRegistrar(env, threat.malicious_domain);
             registrar = rdap.registrar;
             registration_date = rdap.registration_date;
             if (registrar || registration_date) rdapEnriched++;

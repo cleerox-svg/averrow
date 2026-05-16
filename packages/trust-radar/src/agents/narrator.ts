@@ -176,8 +176,15 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
   if (appStoreListings.results.length > 0) signalTypes.push("app_store_impersonation");
   if (darkWebMentions.results.length > 0) signalTypes.push("dark_web_mention");
 
-  // Only generate if there are at least 2 different signal types
-  if (signalTypes.length < 2) {
+  // Generate if either:
+  //   - 2+ different signal types (cross-channel correlation), OR
+  //   - 50+ threats in 7d (volume = signal — narrator should still
+  //     synthesize for high-volume targets even without supporting
+  //     lookalike/social/CT findings, since most brands in production
+  //     only have the threats channel populated; audit 2026-05-16
+  //     found this gate killed all 38 narrator runs that week)
+  const highVolume = threats.results.length >= 50;
+  if (!highVolume && signalTypes.length < 2) {
     return;
   }
 
@@ -306,8 +313,19 @@ export const narratorAgent: AgentModule = {
       };
     }
 
+    // PR-C (2026-05-16 audit fix #13): pre-screen also includes the
+    // email-security-grade and high-volume-threat signal channels, both
+    // of which the inner gate in generateNarrativesForBrand() counts but
+    // the screen was ignoring. Audit found 3,092 brands with active
+    // threats but 0 with lookalikes/socials in production — under the
+    // old gate every brand was filtered out (signalTypes=1) and the
+    // narrator produced 0 rows in 7 days of runs. New gate:
+    //   threat_count >= 50 OR signalTypes >= 2
+    // covers high-volume targets (volume = signal) while keeping the
+    // correlation path for brands with diverse evidence.
     const brandsWithSignals = await env.DB.prepare(`
       SELECT b.id, b.name,
+        (b.email_security_grade IN ('D','F')) as email_fail,
         (SELECT COUNT(*) FROM threats t WHERE t.target_brand_id = b.id AND t.created_at >= datetime('now', '-7 days')) as threat_count,
         (SELECT COUNT(*) FROM social_monitor_results smr WHERE smr.brand_id = b.id AND smr.created_at >= datetime('now', '-7 days')) as social_count,
         (SELECT COUNT(*) FROM lookalike_domains ld WHERE ld.brand_id = b.id AND ld.registered = 1 AND ld.created_at >= datetime('now', '-7 days')) as lookalike_count,
@@ -323,7 +341,7 @@ export const narratorAgent: AgentModule = {
       ORDER BY b.threat_count DESC
       LIMIT 20
     `).all<{
-      id: string; name: string;
+      id: string; name: string; email_fail: number;
       threat_count: number; social_count: number;
       lookalike_count: number; ct_count: number;
       appstore_count: number; darkweb_count: number;
@@ -337,11 +355,17 @@ export const narratorAgent: AgentModule = {
 
     for (const brand of brandsWithSignals.results) {
       let signalTypes = 0;
-      if (brand.threat_count > 0) signalTypes++;
-      if (brand.social_count > 0) signalTypes++;
+      if (brand.threat_count > 0)   signalTypes++;
+      if (brand.email_fail)         signalTypes++;
+      if (brand.social_count > 0)   signalTypes++;
       if (brand.lookalike_count > 0) signalTypes++;
-      if (brand.ct_count > 0) signalTypes++;
-      if (signalTypes < 2) continue;
+      if (brand.ct_count > 0)       signalTypes++;
+      if (brand.appstore_count > 0) signalTypes++;
+      if (brand.darkweb_count > 0)  signalTypes++;
+      // High-volume single-signal targets get a narrative too — 50+
+      // active threats in 7d is itself a signal worth synthesizing.
+      const highVolume = brand.threat_count >= 50;
+      if (!highVolume && signalTypes < 2) continue;
 
       const existing = await env.DB.prepare(
         `SELECT id FROM threat_narratives WHERE brand_id = ? AND created_at >= datetime('now', '-24 hours') LIMIT 1`

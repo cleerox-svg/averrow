@@ -194,7 +194,7 @@ The Cartographer operates in two phases:
 Also runs email security scans for monitored brands via `packages/trust-radar/src/email-security.ts`.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
-**Outputs:** Enriched threat records; provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
+**Outputs:** Enriched threat records (`threats.registrar`, `registration_date` populated via IANA RDAP bootstrap — switched from rdap.org in PR-C of the 2026-05-16 audit because rdap.org returns HTTP 403 to CF Workers); provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
 
 **AI cost gate (2026-05-16 audit):** Cartographer skips Haiku scoring for providers
 with fewer than 5 active threats AND no campaign history — those produce flat 90-100

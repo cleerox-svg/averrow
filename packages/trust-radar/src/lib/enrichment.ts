@@ -188,7 +188,10 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   if (needsWhois.results.length > 0) {
     const domains = needsWhois.results.map((r) => r.malicious_domain);
     try {
-      const rdapMap = await batchRDAPLookup(domains);
+      // env-aware: routes through IANA RDAP bootstrap, avoiding the
+      // 403-from-rdap.org dead path that nulled all registrar
+      // enrichment pre-2026-05-16 audit (PR-C).
+      const rdapMap = await batchRDAPLookup(domains, env);
 
       for (const row of needsWhois.results) {
         const rdap = rdapMap.get(row.malicious_domain);
