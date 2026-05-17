@@ -356,6 +356,105 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       }
     })();
 
+    // DNS-queue stability signals — server-side aggregation of the
+    // five checks documented in `docs/PLATFORM_DATA_DEPENDENCIES.md`.
+    // Consumed by `scripts/dns-queue-stability-check.sh` to print a
+    // single green/red verdict before greenlighting PR-4 cleanup.
+    // Three aggregates in parallel, each bounded by hoursBack.
+    interface DnsQueueStability {
+      source_counts: { queue: number; threats: number; total: number };
+      throughput: {
+        avg_processed: number | null;
+        avg_resolved: number | null;
+        avg_dead: number | null;
+        avg_duration_ms: number | null;
+      };
+      reconciler: {
+        runs: number;
+        runs_with_failures: number;
+        total_batch_failures: number;
+        avg_delta: number | null;
+      };
+    }
+    const dnsQueueStabilityP: Promise<DnsQueueStability> = (async () => {
+      const windowExpr = `datetime('now', '-${hoursBack} hours')`;
+      try {
+        const [sourceRow, throughputRow, reconcilerRow] = await Promise.all([
+          env.DB.prepare(`
+            SELECT
+              SUM(CASE WHEN summary LIKE '%source=queue%' THEN 1 ELSE 0 END) AS queue_n,
+              SUM(CASE WHEN summary LIKE '%source=threats%' THEN 1 ELSE 0 END) AS threats_n,
+              COUNT(*) AS total_n
+            FROM agent_outputs
+            WHERE agent_id = 'navigator'
+              AND type = 'diagnostic'
+              AND summary LIKE 'dns-backfill:%'
+              AND created_at >= ${windowExpr}
+          `).first<{ queue_n: number; threats_n: number; total_n: number }>(),
+          env.DB.prepare(`
+            SELECT
+              AVG(CAST(json_extract(details, '$.processed')      AS REAL)) AS avg_processed,
+              AVG(CAST(json_extract(details, '$.resolved')       AS REAL)) AS avg_resolved,
+              AVG(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS avg_dead,
+              AVG(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS avg_duration_ms
+            FROM agent_outputs
+            WHERE agent_id = 'navigator'
+              AND type = 'diagnostic'
+              AND summary LIKE 'dns-backfill:%'
+              AND created_at >= ${windowExpr}
+          `).first<{
+            avg_processed: number | null;
+            avg_resolved: number | null;
+            avg_dead: number | null;
+            avg_duration_ms: number | null;
+          }>(),
+          env.DB.prepare(`
+            SELECT
+              COUNT(*)                                                       AS runs,
+              SUM(CASE WHEN CAST(json_extract(details, '$.batches_failed')
+                                AS INT) > 0 THEN 1 ELSE 0 END)               AS runs_with_failures,
+              SUM(CAST(json_extract(details, '$.batches_failed') AS INT))    AS total_batch_failures,
+              AVG(CAST(json_extract(details, '$.delta') AS REAL))            AS avg_delta
+            FROM agent_outputs
+            WHERE agent_id = 'navigator'
+              AND type = 'diagnostic'
+              AND summary LIKE 'dns-queue-reconcile%'
+              AND created_at >= ${windowExpr}
+          `).first<{
+            runs: number;
+            runs_with_failures: number;
+            total_batch_failures: number;
+            avg_delta: number | null;
+          }>(),
+        ]);
+        return {
+          source_counts: {
+            queue: sourceRow?.queue_n ?? 0,
+            threats: sourceRow?.threats_n ?? 0,
+            total: sourceRow?.total_n ?? 0,
+          },
+          throughput: {
+            avg_processed: throughputRow?.avg_processed ?? null,
+            avg_resolved: throughputRow?.avg_resolved ?? null,
+            avg_dead: throughputRow?.avg_dead ?? null,
+            avg_duration_ms: throughputRow?.avg_duration_ms ?? null,
+          },
+          reconciler: {
+            runs: reconcilerRow?.runs ?? 0,
+            runs_with_failures: reconcilerRow?.runs_with_failures ?? 0,
+            total_batch_failures: reconcilerRow?.total_batch_failures ?? 0,
+            avg_delta: reconcilerRow?.avg_delta ?? null,
+          },
+        };
+      } catch {
+        return {
+          source_counts: { queue: 0, threats: 0, total: 0 },
+          throughput: { avg_processed: null, avg_resolved: null, avg_dead: null, avg_duration_ms: null },
+          reconciler: { runs: 0, runs_with_failures: 0, total_batch_failures: 0, avg_delta: null },
+        };
+      }
+    })();
+
     // domain_geo_drainable — domains we can actually try right now
     // (cooldown expired, attempts < cap). Pairs with `domain_geo`
     // FC backlog (which includes all rows, even ones in cooldown).
@@ -798,6 +897,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       moduleEntitlements,
       alertsByTier,
       dnsQueueSize,
+      dnsQueueStability,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -809,6 +909,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       moduleEntitlementsP,
       alertsByTierP,
       dnsQueueSizeP,
+      dnsQueueStabilityP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -1142,6 +1243,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           drainable_in_threats: domainGeoDrainable?.n ?? 0,
           delta: dnsQueueSize.bound ? dnsQueueSize.n - (domainGeoDrainable?.n ?? 0) : null,
         },
+
+        // PR-3 → PR-4 gate: aggregated stability signals over the
+        // requested window. Consumed by `scripts/dns-queue-stability-
+        // check.sh` to print a single green/red verdict before
+        // merging the cleanup PR. Each signal is documented in
+        // `docs/PLATFORM_DATA_DEPENDENCIES.md` and the script's
+        // header comment.
+        dns_queue_stability: dnsQueueStability,
 
         alerts: {
           // NX2 tier-gate visibility. `tracked` should trend to 0 (or
