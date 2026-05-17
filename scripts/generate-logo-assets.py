@@ -41,8 +41,13 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "packages/trust-radar/public/favicon.svg"
+# Mark-only variant (no rounded-square background) — used in the
+# email template so Gmail Android dark mode has no dark pixels to
+# trip its per-image color-inversion heuristic. See PR-BB.
+SRC_MARK = ROOT / "packages/trust-radar/public/favicon-mark.svg"
 OUT = ROOT / "packages/trust-radar/public/brand"
 OUT_LEGACY_EMAIL = ROOT / "packages/trust-radar/public/logo-email.png"
+OUT_EMAIL_MARK = ROOT / "packages/trust-radar/public/logo-email-mark.png"
 
 # Brand colours — keep in sync with AVERROW_UI_STANDARD.md / favicon.svg
 BG_DARK = (8, 14, 24)        # #080E18 — favicon background
@@ -59,10 +64,10 @@ SOCIAL_SQUARE_SIZES = [400, 800, 1500]
 OG_W, OG_H = 1200, 630
 
 
-def render_svg_to_png(size: int) -> Image.Image:
-  """Render the master SVG at NxN as an RGBA PIL image."""
+def render_svg_to_png(size: int, src: Path = SRC) -> Image.Image:
+  """Render an SVG at NxN as an RGBA PIL image."""
   png_bytes = cairosvg.svg2png(
-    url=str(SRC),
+    url=str(src),
     output_width=size,
     output_height=size,
   )
@@ -82,10 +87,30 @@ def write_plain_sizes() -> None:
 def write_email_logo() -> None:
   """Email logo lives at /logo-email.png so the URL stays stable
   (referenced by abuse-mailbox-responder.ts via averrow.com/logo-email.png).
-  Render at 144 for retina sharpness when displayed at 38px."""
+  Render at 144 for retina sharpness when displayed at 38px.
+
+  Kept around for historical clients and any external integrations
+  that hot-link the URL — the live email template (PR-BB and later)
+  uses the mark-only variant below.
+  """
   img = render_svg_to_png(144)
   img.save(OUT_LEGACY_EMAIL, "PNG", optimize=True)
   print(f"  ok  {OUT_LEGACY_EMAIL.relative_to(ROOT)}  ({OUT_LEGACY_EMAIL.stat().st_size:,} B)")
+
+
+def write_email_logo_mark() -> None:
+  """Mark-only email logo — no rounded-square tile, no dark pixels.
+  Renders the red Avro Arrow on transparent so Gmail Android dark
+  mode's per-image color-inversion heuristic finds nothing dark
+  to flip. The parent TD's locked dark-navy background provides
+  the visible tile. See abuse-mailbox-responder.ts comment on
+  logoCell + the favicon-mark.svg source."""
+  if not SRC_MARK.exists():
+    print(f"  skip  {OUT_EMAIL_MARK.relative_to(ROOT)} (source missing: {SRC_MARK.relative_to(ROOT)})")
+    return
+  img = render_svg_to_png(144, src=SRC_MARK)
+  img.save(OUT_EMAIL_MARK, "PNG", optimize=True)
+  print(f"  ok  {OUT_EMAIL_MARK.relative_to(ROOT)}  ({OUT_EMAIL_MARK.stat().st_size:,} B)")
 
 
 def write_favicon_ico() -> None:
@@ -161,8 +186,11 @@ def main() -> int:
   print("Plain PNG sizes:")
   write_plain_sizes()
   print()
-  print("Email logo (legacy path /logo-email.png):")
+  print("Email logo (legacy tile variant /logo-email.png):")
   write_email_logo()
+  print()
+  print("Email logo (mark-only variant /logo-email-mark.png):")
+  write_email_logo_mark()
   print()
   print("Favicon .ico (multi-res 16/32/48):")
   write_favicon_ico()

@@ -158,14 +158,29 @@ interface BrandLayoutOptions {
 
 function brandLayout(opts: BrandLayoutOptions): string {
   const accent = opts.accent ?? "#E5A832";
-  // Logo: hosted PNG of the platform favicon. Gmail strips inline
-  // <svg> AND blocks SVG referenced via <img>, but accepts PNG via
-  // <img src> — initially behind the "Show images" prompt, then
-  // permanently for whitelisted senders. Source asset rendered
-  // from public/favicon.svg via cairosvg at 144×144 (retina-grade
-  // for the 38×38 display size). See public/logo-email.png +
-  // scripts/generate-logo-assets.py.
-  const logoCell = `<img class="av-brand-logo" src="https://averrow.com/logo-email.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;border-radius:6px;background:#080E18;">`;
+  // Logo: hosted PNG of the platform favicon, MARK-ONLY (no tile).
+  //
+  // Gmail Android dark mode (verified 2026-05-17 in production) applies
+  // per-image color inversion when the IMG is detected as "dark with
+  // some color content" — even when the surrounding TD background is
+  // locked dark by our `.av-brand-header` rule. PR-BA's tile variant
+  // (logo-email.png — dark-navy rounded square with red Avro Arrow
+  // baked in) was getting flipped: dark-navy tile → white, dark-red
+  // gradient → pink, bright crimson at bottom stayed red. Resulted in
+  // a white rounded square with a pink arrow on the user's screen.
+  //
+  // Fix: render only the colored mark with NO tile and NO dark pixels
+  // anywhere in the PNG. Inner cut-out uses evenodd fill so it's
+  // transparent (was dark-navy in v1, would still trip Gmail). Drop
+  // the IMG's CSS background + border-radius so we depend on nothing
+  // CSS-based for the visible tile look — the arrow floats directly
+  // on whatever the parent TD background is. The parent TD's dark
+  // navy is the existing locked `.av-brand-header` value, preserved
+  // even in Gmail Android dark mode by PR-BA's !important rule.
+  //
+  // Source asset: public/favicon-mark.svg + scripts/generate-logo-assets.py
+  // → public/logo-email-mark.png, served as https://averrow.com/logo-email-mark.png
+  const logoCell = `<img class="av-brand-logo" src="https://averrow.com/logo-email-mark.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
@@ -179,14 +194,26 @@ function brandLayout(opts: BrandLayoutOptions): string {
 <meta name="supported-color-schemes" content="light dark">
 <style>
   :root { color-scheme: light dark; supported-color-schemes: light dark; }
-  /* Pin the brand header's intended palette so dark-mode clients
-     don't transform it. The body card itself stays light; only the
-     dark-on-purpose header is locked. */
+  /* Pin the brand palette so dark-mode clients don't transform it.
+     The body card stays light; only the dark-on-purpose header +
+     accent strip are locked. PR-BA covered .av-brand-header (the
+     dark-navy strip behind the logo). 2026-05-17 user report
+     surfaced two follow-ups:
+       1. .av-brand-logo background isn't needed any more — the IMG
+          is mark-only now (no tile), so no background to lock.
+          Kept here as a no-op safety in case any client paints
+          behind the transparent IMG.
+       2. .av-accent-line was a bare inline-style TD — Gmail
+          Android inverted its color (amber → violet for the
+          common case). Re-asserting it here with !important + the
+          per-verdict dynamic accent. */
   .av-brand-header { background:#0F1828 !important; }
-  .av-brand-logo   { background:#080E18 !important; }
+  .av-brand-logo   { background:transparent !important; }
+  .av-accent-line  { background:${accent} !important; }
   @media (prefers-color-scheme: dark) {
     .av-brand-header { background:#0F1828 !important; }
-    .av-brand-logo   { background:#080E18 !important; }
+    .av-brand-logo   { background:transparent !important; }
+    .av-accent-line  { background:${accent} !important; }
   }
 </style>
 <title>${escapeHtml(opts.headline)} — Averrow</title>
@@ -207,7 +234,7 @@ function brandLayout(opts: BrandLayoutOptions): string {
             </tr>
           </table>
         </td></tr>
-        <tr><td style="height:4px;background:${accent};line-height:4px;font-size:0;">&nbsp;</td></tr>
+        <tr><td class="av-accent-line" style="height:4px;background:${accent};line-height:4px;font-size:0;">&nbsp;</td></tr>
         <tr><td style="padding:28px 32px 8px;">
           <div style="font-family:${FONT_BODY};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#8895AA;font-weight:600;">${escapeHtml(opts.preheaderTag)}</div>
           <h1 style="margin:6px 0 0;font-family:${FONT_BODY};font-size:26px;font-weight:800;color:#0F1828;line-height:1.25;letter-spacing:-0.015em;">${escapeHtml(opts.headline)}</h1>

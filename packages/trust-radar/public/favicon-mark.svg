@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Mark-only variant of favicon.svg — drops the dark rounded-square
+       background so the IMG can render on whatever surface it's placed
+       over. Used by abuse-mailbox-responder.ts so Gmail Android dark
+       mode's per-image color inversion has nothing dark to invert.
+       The inner cut-out uses evenodd fill-rule so it's fully transparent
+       (rather than baked dark-navy), letting the parent TD background
+       show through and keeping the PNG free of any dark pixels that
+       could trip Gmail's dark-mode heuristic. -->
+  <defs>
+    <linearGradient id="deep-arrow" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6B1010"/>
+      <stop offset="100%" stop-color="#C83C3C"/>
+    </linearGradient>
+  </defs>
+  <path
+    d="M16 5L26 26H18L16 21L14 26H6Z M14.5 22H17.5L16 18Z"
+    fill="url(#deep-arrow)"
+    fill-rule="evenodd"
+  />
+</svg>
