@@ -27,6 +27,7 @@ import {
   renderPlatformEnrichmentStuck,
   renderPlatformDnsQueueDrift,
   renderPlatformDnsQueueStalled,
+  renderPlatformAbuseClassifierSilent,
   renderPlatformGeoipRefreshStalled,
   renderPlatformWorkflowDispatchSilent,
   // NX6: previously-unwired templates.
@@ -242,6 +243,11 @@ export const flightControlAgent: AgentModule = {
     // DNS_QUEUE_DB; binding is optional so the SELECT is wrapped
     // in try/catch.
     { kind: "d1_table", name: "dns_queue" },
+    // PR-AY: abuse mailbox classifier silence check reads pending
+    // count + oldest received_at, then budget_ledger for last
+    // classifier Haiku timestamp.
+    { kind: "d1_table", name: "abuse_inbox_messages" },
+    { kind: "d1_table", name: "budget_ledger" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_activity_log" },
@@ -767,6 +773,64 @@ export const flightControlAgent: AgentModule = {
         console.warn('[flight-control] dns_queue health check failed:', err);
       }
     }
+
+    // ── Abuse mailbox classifier silence check (PR-AY) ──
+    // Pending row count is computed via a single COUNT — cheap. Last
+    // successful classifier completion is read from budget_ledger,
+    // which is the ground truth: a row appears there iff the
+    // classifier made a Haiku call (the per-row attempt counter is
+    // incremented BEFORE the AI call, so attempts > 0 alone isn't a
+    // signal that classification SUCCEEDED).
+    //
+    // Threshold 2h: classifier promise is "determination within ~1
+    // hour"; 2h gives one missed cron tick of grace before alerting.
+    // Only fires when pending > 0 AND oldest pending > threshold —
+    // a quiet inbox with no pending rows is fine to be silent.
+    try {
+      const SILENCE_THRESHOLD_HOURS = 2;
+      const pendingRow = await db.prepare(`
+        SELECT COUNT(*) AS n,
+               MIN(received_at) AS oldest
+        FROM abuse_inbox_messages
+        WHERE classification = 'pending'
+          AND COALESCE(throttled, 0) = 0
+          AND COALESCE(classification_attempts, 0) < 3
+      `).first<{ n: number; oldest: string | null }>();
+
+      const pendingCount = pendingRow?.n ?? 0;
+      if (pendingCount > 0 && pendingRow?.oldest) {
+        const oldestMs = Date.parse(pendingRow.oldest + 'Z');
+        const oldestHours = (Date.now() - oldestMs) / 3_600_000;
+
+        // Only alert when the oldest pending row is old enough that
+        // we KNOW a cron tick should have processed it.
+        if (oldestHours > SILENCE_THRESHOLD_HOURS) {
+          const lastRow = await db.prepare(`
+            SELECT MAX(created_at) AS last_at
+            FROM budget_ledger
+            WHERE agent_id = 'abuse_mailbox_classifier'
+          `).first<{ last_at: string | null }>();
+          const lastAt = lastRow?.last_at;
+          const hoursSilent = lastAt
+            ? (Date.now() - Date.parse(lastAt + 'Z')) / 3_600_000
+            : oldestHours;
+
+          if (hoursSilent > SILENCE_THRESHOLD_HOURS) {
+            await emitPlatformNotification(env, 'platform_abuse_classifier_silent',
+              renderPlatformAbuseClassifierSilent({
+                hours_silent: hoursSilent,
+                threshold_hours: SILENCE_THRESHOLD_HOURS,
+                pending_count: pendingCount,
+                oldest_pending_hours: oldestHours,
+              })
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[flight-control] abuse classifier silence check failed:', err);
+    }
+
     // Collect enrichment backlog warnings into a single D1 batch
     // instead of awaiting 7 sequential INSERTs. Pre-fix this phase
     // was 4s on the 14s FC tick; with one batch round-trip it

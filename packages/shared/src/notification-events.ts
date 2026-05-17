@@ -55,6 +55,7 @@ export type NotificationEventKey =
   | 'platform_enrichment_stuck_pile'
   | 'platform_dns_queue_drift'
   | 'platform_dns_queue_stalled'
+  | 'platform_abuse_classifier_silent'
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
@@ -336,6 +337,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_dns_queue_stalled',
     label: 'DNS Queue Reconciler Stalled',
     description: 'Reconciler alive but no enqueue/dequeue activity while threats has drainable candidates',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_abuse_classifier_silent',
+    label: 'Abuse Mailbox Classifier Silent',
+    description: 'Pending abuse-mailbox rows exist but classifier has not run successfully in >2h',
     dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,
