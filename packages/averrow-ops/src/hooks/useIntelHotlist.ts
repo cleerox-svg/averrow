@@ -56,8 +56,8 @@ export function useIntelHotlist(limit = 10) {
       return res.data ?? null;
     },
     placeholderData: keepPreviousData,
-    // Backend caches 5min; client poll every 2min keeps the Home
-    // tile feeling live without amplifying backend load.
-    refetchInterval: 120_000,
+    // Backend caches 30min (cost-sweep 2026-05-16); align the
+    // client poll to 10min so most refetches hit KV cache.
+    refetchInterval: 600_000,
   });
 }

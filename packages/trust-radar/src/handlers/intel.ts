@@ -399,7 +399,13 @@ export async function handleIntelHotlist(request: Request, env: Env): Promise<Re
         generated_at:          new Date().toISOString(),
       },
     };
-    await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 300 });
+    // Cost-sweep 2026-05-16: was 5min TTL → 1,800 D1 calls/24h
+    // × 235K rows/call for the GROUP BY fan-out scan = ~6M reads/day
+    // burned on Home-page Hotlist refreshes. The data doesn't shift
+    // meaningfully on a 5-min cadence (top-fan-out IPs and burst
+    // patterns are hour-scale signals) — 30min TTL cuts the burn ~6×
+    // without operator-noticeable staleness.
+    await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 1800 });
     return json(body, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);

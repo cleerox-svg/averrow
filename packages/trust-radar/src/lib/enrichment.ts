@@ -17,6 +17,7 @@ import { batchResolve } from "./dns";
 import { batchGeoLookup, normalizeProvider, upsertHostingProvider, isPrivateIP, getGeoUsage, PRIVATE_IP_SQL_FILTER } from "./geoip";
 import { batchRDAPLookup } from "./whois";
 import { enrichBrands } from "./brandDetect";
+import { cachedCount } from "./cached-count";
 
 export interface EnrichmentResult {
   dnsResolved: number;
@@ -48,15 +49,43 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
     corroborationBoosted: 0,
   };
 
-  // Count what needs enrichment
-  const counts = await env.DB.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM threats WHERE malicious_domain IS NOT NULL AND ip_address IS NULL) as needs_dns,
-      (SELECT COUNT(*) FROM threats WHERE ip_address IS NOT NULL AND (country_code IS NULL OR asn IS NULL OR hosting_provider_id IS NULL OR lat IS NULL)) as needs_geo,
-      (SELECT COUNT(*) FROM threats WHERE malicious_domain IS NOT NULL AND registrar IS NULL AND severity IN ('critical', 'high')) as needs_whois,
-      (SELECT COUNT(*) FROM threats WHERE target_brand_id IS NULL AND malicious_domain IS NOT NULL) as needs_brand,
-      (SELECT COUNT(*) FROM threats) as total
-  `).first<{ needs_dns: number; needs_geo: number; needs_whois: number; needs_brand: number; total: number }>();
+  // Diagnostic counts (cost-sweep 2026-05-16): the 5 inline COUNT(*)
+  // subqueries were running once per enrichment cycle uncached,
+  // burning ~15M reads / 11 calls = 1.4M reads/call (4 full table
+  // scans + 1 PK count). Wrapped in cachedCount with a 60-min TTL:
+  // these are operator-visibility counters, not gating logic, so
+  // hour-stale is fine.
+  const [needs_dns, needs_geo, needs_whois, needs_brand, total] = await Promise.all([
+    cachedCount(env, 'count.enrich.needs_dns', 3600, async () => {
+      const r = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM threats WHERE malicious_domain IS NOT NULL AND ip_address IS NULL`,
+      ).first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, 'count.enrich.needs_geo', 3600, async () => {
+      const r = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM threats WHERE ip_address IS NOT NULL AND (country_code IS NULL OR asn IS NULL OR hosting_provider_id IS NULL OR lat IS NULL)`,
+      ).first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, 'count.enrich.needs_whois', 3600, async () => {
+      const r = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM threats WHERE malicious_domain IS NOT NULL AND registrar IS NULL AND severity IN ('critical', 'high')`,
+      ).first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, 'count.enrich.needs_brand', 3600, async () => {
+      const r = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND malicious_domain IS NOT NULL`,
+      ).first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, 'count.threats.total', 3600, async () => {
+      const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+  ]);
+  const counts = { needs_dns, needs_geo, needs_whois, needs_brand, total };
 
   // Write diagnostic agent_output every run for visibility
   try {
@@ -308,42 +337,75 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   // GREATEST(confidence_score, floor) so existing high-confidence
   // rows don't get downgraded.
   //
-  // Bounded — limits to IPs that need boosting (current score < the
-  // floor) so re-runs no-op once a corpus stabilizes.
+  // Bounded — limits to IPs that need boosting.
+  //
+  // Cost-sweep rewrite (2026-05-16): the original single-statement
+  // CTE+UPDATE was burning 2.87M reads/call × ~21 calls/day = 60M
+  // reads (~7% of plan budget). SQLite re-evaluated the CTE 3× per
+  // candidate row (MAX subquery, WHERE subquery, IN subquery). Worst-
+  // case 250K active-with-IP rows × 3 evaluations = full-corpus
+  // scan per stage.
+  //
+  // Two-step replacement: one bounded GROUP BY scan to read the
+  // corroborated IPs list (~5K rows in production), then a per-IP
+  // targeted UPDATE (~50 rows each via idx_threats_ip). Total reads
+  // per cycle: ~250K (one scan) + N × ~50 (targeted updates) instead
+  // of 3 × 250K × |candidate set|.
+  //
+  // Also gated to run at most once every 6h via a KV stamp — the
+  // boost is idempotent and the corpus doesn't shift faster than
+  // that on production. Was running every hour from
+  // runEnrichmentPipeline (1× orchestrator + agent calls).
   try {
-    const boost = await env.DB.prepare(`
-      WITH corroborated AS (
-        SELECT ip_address,
-               COUNT(DISTINCT source_feed) AS feed_count
+    const STAMP_KEY = "enrich:corroboration_boost:last";
+    const lastRun = await env.CACHE.get(STAMP_KEY);
+    const lastRunMs = lastRun ? parseInt(lastRun, 10) : 0;
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    if (Date.now() - lastRunMs < SIX_HOURS_MS) {
+      // Throttled — skip this cycle.
+    } else {
+      const corroborated = await env.DB.prepare(`
+        SELECT ip_address, COUNT(DISTINCT source_feed) AS feed_count
           FROM threats
          WHERE status = 'active'
            AND ip_address IS NOT NULL
            AND ip_address NOT IN ('', '0.0.0.0')
          GROUP BY ip_address
         HAVING feed_count >= 4
-      )
-      UPDATE threats
-         SET confidence_score = MAX(
-               COALESCE(confidence_score, 0),
-               (SELECT CASE
-                  WHEN c.feed_count >= 6 THEN 95
-                  WHEN c.feed_count >= 5 THEN 90
-                  ELSE 85
-                END
-                FROM corroborated c WHERE c.ip_address = threats.ip_address)
-             )
-       WHERE status = 'active'
-         AND ip_address IN (SELECT ip_address FROM corroborated)
-         AND COALESCE(confidence_score, 0) < (
-           SELECT CASE
-                    WHEN c.feed_count >= 6 THEN 95
-                    WHEN c.feed_count >= 5 THEN 90
-                    ELSE 85
-                  END
-             FROM corroborated c WHERE c.ip_address = threats.ip_address
-         )
-    `).run();
-    result.corroborationBoosted = boost.meta?.changes ?? 0;
+      `).all<{ ip_address: string; feed_count: number }>();
+
+      let totalBoosted = 0;
+      // Batched per-IP UPDATEs — 50 statements per D1 batch (within
+      // the 100-stmt batch limit). Each statement is a targeted
+      // UPDATE via idx_threats_ip — cheap.
+      const BATCH_SIZE = 50;
+      const rows = corroborated.results ?? [];
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const chunk = rows.slice(i, i + BATCH_SIZE);
+        const stmts = chunk.map((r) => {
+          const floor = r.feed_count >= 6 ? 95 : r.feed_count >= 5 ? 90 : 85;
+          return env.DB.prepare(
+            `UPDATE threats
+                SET confidence_score = ?
+              WHERE status = 'active'
+                AND ip_address = ?
+                AND COALESCE(confidence_score, 0) < ?`,
+          ).bind(floor, r.ip_address, floor);
+        });
+        try {
+          const batchRes = await env.DB.batch(stmts);
+          for (const r of batchRes) totalBoosted += r.meta?.changes ?? 0;
+        } catch (err) {
+          console.error("[enrich] Stage 4c batch update failed:", err);
+        }
+      }
+      result.corroborationBoosted = totalBoosted;
+      try {
+        await env.CACHE.put(STAMP_KEY, String(Date.now()), {
+          expirationTtl: SIX_HOURS_MS / 1000 + 60,
+        });
+      } catch { /* non-fatal */ }
+    }
   } catch (err) {
     console.error("[enrich] Stage 4c corroboration boost failed:", err);
   }

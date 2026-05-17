@@ -140,9 +140,22 @@ export async function runDomainGeoBackfillBatch(
       for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
         const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
         const placeholders = chunk.map(() => '?').join(',');
+        // INDEXED BY (2026-05-16 cost sweep): planner picks
+        // idx_threats_ip_source_feed for `ip_address IS NULL` even
+        // with ANALYZE stats showing idx_threats_dns_pending_strict
+        // is the smaller, more selective index (59k partial rows vs
+        // ~120k for the wide index). The wide-index scan was
+        // burning 124k reads/UPDATE × ~1.5k calls/day = 184M reads
+        // (25% of plan budget). Forcing the strict index turns each
+        // UPDATE into a 50-row seek by malicious_domain.
+        //
+        // The `ip_address = ''` branch returns zero rows in
+        // production (audit 2026-05-16) so it gets the wider
+        // fallback index — there are no rows for the planner to
+        // mis-cost anyway.
         await env.DB.batch([
           env.DB.prepare(`
-            UPDATE threats
+            UPDATE threats INDEXED BY idx_threats_dns_pending_strict
             SET attempted_resolve_at = datetime('now')
             WHERE malicious_domain IN (${placeholders})
               AND ip_address IS NULL
@@ -299,7 +312,7 @@ export async function runDomainGeoBackfillBatch(
           // = 66M/24h; post-fix should be ~15K rows/call.
           await env.DB.batch([
             env.DB.prepare(`
-              UPDATE threats
+              UPDATE threats INDEXED BY idx_threats_dns_pending_strict
               SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
               WHERE malicious_domain IN (${placeholders})
                 AND ip_address IS NULL
