@@ -28,6 +28,7 @@ import {
   checkAndFireIngestionMilestones,
 } from '../lib/platform-milestones';
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
+import { reconcileDnsQueue, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour } from '../lib/cube-builder';
@@ -90,6 +91,9 @@ interface NavigatorImplResult {
   cubeErrors: string[];
   /** Forwarded so the agent wrapper can emit a per-tick diagnostic. */
   dnsResult: DnsBackfillResult | null;
+  /** DNS-queue reconciler outcome — surfaced to agent_outputs so
+   *  operators can watch parity converge before PR-3 flips reads. */
+  reconcileResult: ReconcileResult;
 }
 
 async function runNavigatorImpl(
@@ -103,6 +107,10 @@ async function runNavigatorImpl(
 
   let eventsDrained = 0;
   let dnsResult = { processed: 0, resolved: 0, enriched: 0, graduatedDead: 0, durationMs: 0, softCapHit: false };
+  let reconcileResult: ReconcileResult = {
+    skipped: true, reason: 'not_run', enqueued: 0, dequeued: 0,
+    candidatesInThreats: 0, queueSize: 0, delta: 0, durationMs: 0,
+  };
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -168,6 +176,29 @@ async function runNavigatorImpl(
 
     if (dnsResult.softCapHit || dnsResult.enriched < dnsResult.resolved) {
       status = 'partial';
+    }
+
+    // ── 2b. DNS queue reconcile (PR-2 of DNS-queue split) ──
+    // Mirrors the drainable-from-threats set into the DNS_QUEUE_DB
+    // shadow table. Runs AFTER dns-backfill so freshly-resolved
+    // domains get dequeued in the same tick. Never throws — if
+    // DNS_QUEUE_DB is unbound it returns {skipped:true} silently.
+    // Cutover note: PR-3 will flip dns-backfill.ts reads to consume
+    // dns_queue directly; this reconciler stays as the enqueue
+    // pipeline until PR-4 moves enqueue into the feed ingestion path.
+    try {
+      reconcileResult = await reconcileDnsQueue(env);
+      if (!reconcileResult.skipped) {
+        console.log(
+          `[navigator] dns-queue-reconcile: enqueued=${reconcileResult.enqueued} dequeued=${reconcileResult.dequeued} candidates=${reconcileResult.candidatesInThreats} queue=${reconcileResult.queueSize} delta=${reconcileResult.delta} duration=${reconcileResult.durationMs}ms`,
+        );
+      }
+    } catch (err) {
+      // Belt-and-suspenders — the reconciler already catches its own
+      // errors. This try/catch ensures any escape doesn't degrade
+      // Navigator's overall status, since reconcile failure means
+      // PR-3 cutover gets delayed, not that drain is broken.
+      console.error('[navigator] dns-queue-reconcile escape:', err);
     }
   } catch (err) {
     status = 'failed';
@@ -446,6 +477,7 @@ async function runNavigatorImpl(
     cubeRows: cubeResults.totalRows,
     cubeErrors: cubeResults.errors,
     dnsResult,
+    reconcileResult,
   };
 }
 
@@ -481,6 +513,9 @@ export const navigatorAgent: AgentModule = {
   reads: [],
   writes: [
     { kind: 'd1_table', name: 'agent_events' },
+    // PR-2 reconciler — INSERT/UPDATE/DELETE on the dns_queue side
+    // DB. Declared so the architect resource-drift check sees it.
+    { kind: 'd1_table', name: 'dns_queue' },
   ],
   outputs: [],
   status: 'active',
@@ -586,6 +621,31 @@ export const navigatorAgent: AgentModule = {
           enriched_rows: dr.enriched,
           soft_cap_hit: dr.softCapHit,
           duration_ms: dr.durationMs,
+        },
+      });
+    }
+
+    // DNS-queue reconciler diagnostic (PR-2). Lets operators watch
+    // parity converge before PR-3 flips reads. `delta` near zero =
+    // healthy. Skipped ticks are surfaced too so a missing binding
+    // shows up explicitly rather than silently.
+    {
+      const rr = result.reconcileResult;
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: rr.skipped
+          ? `dns-queue-reconcile: SKIPPED (${rr.reason ?? 'unknown'})`
+          : `dns-queue-reconcile: enqueued=${rr.enqueued} dequeued=${rr.dequeued} candidates=${rr.candidatesInThreats} queue=${rr.queueSize} delta=${rr.delta} ${rr.durationMs}ms`,
+        severity: rr.skipped ? 'info' : Math.abs(rr.delta) > 500 ? 'medium' : 'info',
+        details: {
+          skipped: rr.skipped,
+          reason: rr.reason,
+          enqueued: rr.enqueued,
+          dequeued: rr.dequeued,
+          candidates_in_threats: rr.candidatesInThreats,
+          queue_size: rr.queueSize,
+          delta: rr.delta,
+          duration_ms: rr.durationMs,
         },
       });
     }
