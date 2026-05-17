@@ -626,9 +626,13 @@ export async function runAbuseClassifierBackfill(
       try {
         const { createNotification } = await import("./notifications");
         const audience: "tenant" | "super_admin" = m.brand_id ? "tenant" : "super_admin";
+        // Link paths are basename-relative because both SPAs use
+        // <BrowserRouter basename="..."> — `/v2/admin/...` would
+        // get double-prefixed to `/v2/v2/admin/...` and 404. User
+        // bug 2026-05-17.
         const link = audience === "super_admin"
-          ? `/v2/admin/abuse-mailbox#msg-${m.id}`
-          : `/tenant/modules/abuse-mailbox#msg-${m.id}`;
+          ? `/admin/abuse-mailbox#msg-${m.id}`
+          : `/modules/abuse-mailbox#msg-${m.id}`;
         const subjectPreview = (m.original_subject ?? "(no subject)").slice(0, 80);
         await createNotification(env, {
           type: "abuse_mailbox_verdict",

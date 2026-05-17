@@ -180,7 +180,9 @@ export async function handleAbuseMailboxEmail(
         message: `${forwardedBy ?? "(no sender)"} via ${forwardedByDomain ?? "(no domain)"} — ` +
           `${throttle.sender_count_last_window} from this sender / ` +
           `${throttle.domain_count_last_window} from this domain in the last hour.`,
-        link: "/v2/admin/abuse-mailbox",
+        // Path is basename-relative — `/v2/admin/...` would get
+        // double-prefixed by React Router's basename="/v2" and 404.
+        link: "/admin/abuse-mailbox",
         audience: "super_admin",
         groupKey: `abuse_mailbox_flood_detected:${throttleDim}`,
         reasonText: "A single sender or sending domain is exceeding the per-hour capture limit on the public abuse aliases.",
