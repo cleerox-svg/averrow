@@ -185,9 +185,12 @@ describe("dns-backfill pre-stamp claim", () => {
     await runDomainGeoBackfillBatch(env, { batchSize: 200, timeoutMs: 30_000 });
 
     // Find every pre-stamp UPDATE (sets only attempted_resolve_at, no
-    // enrichment_attempts).
+    // enrichment_attempts). Regex tolerates the optional `INDEXED BY
+    // idx_threats_dns_pending_strict` clause added in the 2026-05-16
+    // cost sweep to force the strict partial index on the IS NULL
+    // branch (the `= ''` branch keeps the wide fallback).
     const preStamps = calls.filter((c) =>
-      /UPDATE threats\s*SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
+      /UPDATE threats\s*(?:INDEXED BY \S+\s*)?SET attempted_resolve_at = datetime\('now'\)\s*WHERE malicious_domain IN/.test(c.sql) &&
       !/SET\s+enrichment_attempts/.test(c.sql),
     );
 
