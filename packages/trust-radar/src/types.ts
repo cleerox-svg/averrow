@@ -15,6 +15,16 @@ export interface Env {
   // clean no-op so cartographer's pipeline degrades gracefully when
   // the binding isn't there.
   GEOIP_DB?: D1Database;
+  // Dedicated D1 for the DNS resolution work queue (PR-1 of the
+  // DNS-queue split). Holds the ~17K-row drainable subset of threats
+  // that need IP resolution, isolating the heavy dns-backfill cycle
+  // into its own 25B-row/month budget. Optional during the pre-stage
+  // phase: the binding exists in production but no code paths read or
+  // write through it yet. Subsequent PRs add dual-write (PR-2), flip
+  // reads (PR-3), and remove the main-DB fallback (PR-4). Optional
+  // typing means downstream callers must null-check, which forces the
+  // cutover diff to land in one explicit place per call site.
+  DNS_QUEUE_DB?: D1Database;
   CACHE: KVNamespace;
   ASSETS: Fetcher;
   THREAT_PUSH_HUB: DurableObjectNamespace;

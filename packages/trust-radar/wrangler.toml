@@ -163,6 +163,34 @@ database_name = "geoip-db"
 database_id = "f47a6b18-b343-46d9-87e8-ef8ef4aa8521"
 migrations_dir = "migrations-geoip"
 
+# ─── DNS resolution work queue ──────────────────────────────
+# Side D1 that holds the "needs DNS resolution" subset of threats.
+# Lets the heavy dns-backfill SELECT + UPDATE cycle run against a
+# 17K-row dedicated table with its own 25B-row/month budget instead
+# of competing with the main `trust-radar-v2` budget.
+#
+# Pre-stage state (this commit): DB created, schema stamped, binding
+# active — no code reads/writes the table yet. The migration in
+# migrations-dns-queue/0001_initial.sql is the source of truth.
+#
+# Cutover path (subsequent PRs):
+#   PR-2: dual-write — ingest hooks INSERT into dns_queue alongside
+#         the existing threats-table writes. Drain logic still reads
+#         from threats. Run 24h, diff the two for parity.
+#   PR-3: flip reads — lib/dns-backfill.ts SELECT / UPDATE / DELETE
+#         against dns_queue; resolved IPs still write back to the main
+#         threats row.
+#   PR-4: cleanup — remove dual-write, drop idx_threats_dns_pending_strict
+#         + idx_threats_dns_backfill from the main DB, ANALYZE.
+#
+# Until PR-3 ships, the binding is a no-op — defining it now lets
+# downstream PRs evolve schema and queries without binding churn.
+[[d1_databases]]
+binding = "DNS_QUEUE_DB"
+database_name = "trust-radar-dns-queue"
+database_id = "b2c6dae6-26d4-4d03-b3ff-08709bcf04c9"
+migrations_dir = "migrations-dns-queue"
+
 # ─── KV Namespace (cache) ────────────────────────────────────
 [[kv_namespaces]]
 binding = "CACHE"
