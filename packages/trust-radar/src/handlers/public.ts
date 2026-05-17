@@ -174,10 +174,14 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
           `SELECT COUNT(DISTINCT campaign_id) as c FROM threats
            WHERE target_brand_id = ? AND campaign_id IS NOT NULL`
         ).bind(monitoredBrand.id).first<{ c: number }>(),
+        // Cube swap (cost-sweep 2026-05-16): threat_cube_brand has
+        // (target_brand_id, threat_type, threat_count) so SUM is exact;
+        // saves a per-brand scan of threats on every public-assess call.
         env.DB.prepare(
-          `SELECT threat_type, COUNT(*) as count FROM threats
-           WHERE target_brand_id = ? AND threat_type IS NOT NULL
-           GROUP BY threat_type ORDER BY count DESC`
+          `SELECT threat_type, SUM(threat_count) AS count
+             FROM threat_cube_brand
+            WHERE target_brand_id = ? AND threat_type != ''
+            GROUP BY threat_type ORDER BY count DESC`
         ).bind(monitoredBrand.id).all<{ threat_type: string; count: number }>(),
       ]);
       threatCount = tc?.c ?? 0;

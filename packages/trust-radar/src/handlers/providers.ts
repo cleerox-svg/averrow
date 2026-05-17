@@ -387,10 +387,14 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
         WHERE t.hosting_provider_id = ? AND t.target_brand_id IS NOT NULL
         GROUP BY target_brand_id ORDER BY count DESC LIMIT 10
       `).bind(decoded).all(),
+      // Cube swap (cost-sweep 2026-05-16): threat_cube_provider has
+      // (hosting_provider_id, threat_type, threat_count). Saves a
+      // per-provider scan of threats on every provider-detail page.
       env.DB.prepare(`
-        SELECT threat_type, COUNT(*) AS count
-        FROM threats WHERE hosting_provider_id = ?
-        GROUP BY threat_type ORDER BY count DESC
+        SELECT threat_type, SUM(threat_count) AS count
+          FROM threat_cube_provider
+         WHERE hosting_provider_id = ? AND threat_type != ''
+         GROUP BY threat_type ORDER BY count DESC
       `).bind(decoded).all(),
     ]);
 
