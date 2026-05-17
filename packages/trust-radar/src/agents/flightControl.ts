@@ -1466,13 +1466,25 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     cacheCount('backlog.watchdog', BACKLOG_TTL_LIVE_S, `
       SELECT COUNT(*) as count FROM social_mentions WHERE status = 'new'
     `, true),
+    // D1 spend reduction (2026-05-17): both backlog queries below
+    // were using `idx_threats_ip_source_feed` via MULTI-INDEX OR
+    // (117K rows/call) instead of `idx_threats_dns_pending_strict`
+    // (~60K). Adding `status='active'` and dropping `ip_address = ''`
+    // (zero matching rows in prod) lets the planner pick the strict
+    // partial index. Verified via production EXPLAIN QUERY PLAN.
+    // Note: `domain_geo` previously omitted `status='active'`. Adding
+    // it is semantically equivalent for this counter — only active
+    // threats can ever be drained by Navigator (the dns-backfill SELECT
+    // already gates on status='active' implicitly via the same index).
     cacheCount('backlog.domain_geo', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(DISTINCT malicious_domain) as count FROM threats
-      WHERE (ip_address IS NULL OR ip_address = '')
+      SELECT COUNT(DISTINCT malicious_domain) as count
+      FROM threats INDEXED BY idx_threats_dns_pending_strict
+      WHERE ip_address IS NULL
+        AND status = 'active'
+        AND COALESCE(enrichment_attempts, 0) < 8
         AND malicious_domain IS NOT NULL
         AND malicious_domain NOT LIKE '*%'
         AND malicious_domain LIKE '%.%'
-        AND COALESCE(enrichment_attempts, 0) < 8
     `),
     // domain_geo_drainable mirrors the dns-backfill SELECT — the
     // count of domains we can actually try right now (cooldown
@@ -1481,12 +1493,14 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // tells the operator how much work the next Navigator tick can
     // pick up.
     cacheCount('backlog.domain_geo_drainable', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(DISTINCT malicious_domain) as count FROM threats
-      WHERE (ip_address IS NULL OR ip_address = '')
+      SELECT COUNT(DISTINCT malicious_domain) as count
+      FROM threats INDEXED BY idx_threats_dns_pending_strict
+      WHERE ip_address IS NULL
+        AND status = 'active'
+        AND COALESCE(enrichment_attempts, 0) < 8
         AND malicious_domain IS NOT NULL
         AND malicious_domain NOT LIKE '*%'
         AND malicious_domain LIKE '%.%'
-        AND COALESCE(enrichment_attempts, 0) < 8
         AND (attempted_resolve_at IS NULL
              OR attempted_resolve_at < datetime('now', '-6 hours'))
     `),

@@ -71,15 +71,29 @@ export async function runDomainGeoBackfillBatch(
     // The platform priority (per operator) is "as fast as possible"
     // — every malicious domain should get tried within hours of
     // ingestion, not days.
+    // D1 spend reduction (2026-05-17 follow-up): EXPLAIN QUERY PLAN
+    // showed the previous version using `idx_threats_ip_source_feed
+    // (ip_address=?)` via MULTI-INDEX OR — 116K rows/call. Rewriting
+    // to drop the `ip_address = ''` branch (zero matching rows in
+    // prod, audit 2026-05-17) and adding `status='active'` lets the
+    // planner pick `idx_threats_dns_pending_strict` — confirmed via
+    // production EXPLAIN: `SEARCH threats USING INDEX
+    // idx_threats_dns_pending_strict (malicious_domain>?)`. The index
+    // is partitioned to ~60K rows and the LIMIT 500 walks index-order
+    // until the residual `attempted_resolve_at` filter yields 500
+    // matches. Pre-fix: 288M rows/24h × 2,478 calls. Expected post-
+    // fix: ~5M rows/24h. INDEXED BY forces the plan stays stable
+    // across stat refreshes.
     const batch = await env.DB.prepare(`
       SELECT DISTINCT malicious_domain
-      FROM threats
-      WHERE (ip_address IS NULL OR ip_address = '')
+      FROM threats INDEXED BY idx_threats_dns_pending_strict
+      WHERE ip_address IS NULL
+        AND status = 'active'
+        AND COALESCE(enrichment_attempts, 0) < 8
         AND malicious_domain IS NOT NULL
         AND malicious_domain != ''
         AND malicious_domain NOT LIKE '*%'
         AND malicious_domain LIKE '%.%'
-        AND COALESCE(enrichment_attempts, 0) < 8
         AND (attempted_resolve_at IS NULL
              OR attempted_resolve_at < datetime('now', '-6 hours'))
       LIMIT ?

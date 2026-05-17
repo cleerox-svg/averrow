@@ -105,16 +105,23 @@ async function fireCrossings(
  * Called from Navigator on every 5-min tick (288x/day). Pre-PR-I this
  * was a bare `SELECT COUNT(*) FROM threats` that scanned the full table
  * each call — diag 2026-05-14 attributed ~87M rows-read across 306
- * calls (avg 285K rows/call). Now routed through cachedCount with a
- * 4-min TTL, so the 5-min cron hits cache ~4× out of 5. Milestone
- * thresholds advance slowly (next is 500K, current 299K), so 4-min
- * staleness is well within tolerance.
+ * calls (avg 285K rows/call). Routed through cachedCount.
+ *
+ * 2026-05-17 follow-up: TTL was 240s but Navigator fires every 300s,
+ * so every tick missed cache (age=300 > TTL=240). Diagnostics still
+ * showed 263 calls/24h × 360K rows = 94M reads/day on this query
+ * hash. Bumped to 1800s (30 min) — matches the dashboard/admin TTLs
+ * for `count.threats.total` so all callers share a single warm
+ * entry. With 1800s, Navigator hits cache ~5 out of 6 ticks (~48
+ * misses/day instead of 288). Milestone thresholds advance slowly
+ * (next is 500K, current 299K), so a 30-min lag is invisible to
+ * operators.
  */
 export async function checkAndFireThreatMilestones(
   env: Env,
   agentRunId?: string | null,
 ): Promise<MilestoneCheckResult> {
-  const current = await cachedCount(env, 'count.threats.total', 240, async () => {
+  const current = await cachedCount(env, 'count.threats.total', 1800, async () => {
     const row = await env.DB
       .prepare(`SELECT COUNT(*) AS n FROM threats`)
       .first<{ n: number }>();
@@ -129,13 +136,16 @@ export async function checkAndFireThreatMilestones(
  * against MILESTONE_VALUES. Same number the /feeds page surfaces.
  *
  * Same Navigator dispatch pattern as checkAndFireThreatMilestones —
- * cached for 4 min so the 5-min cron mostly hits.
+ * TTL bumped from 240s to 1800s on 2026-05-17 for the same reason:
+ * Navigator's 5-min tick was always past the 240s TTL, so every tick
+ * missed cache. 30-min freshness is fine for a slow-growing lifetime
+ * counter.
  */
 export async function checkAndFireIngestionMilestones(
   env: Env,
   agentRunId?: string | null,
 ): Promise<MilestoneCheckResult> {
-  const current = await cachedCount(env, 'count.feed_pulls.total_ingested', 240, async () => {
+  const current = await cachedCount(env, 'count.feed_pulls.total_ingested', 1800, async () => {
     const row = await env.DB
       .prepare(`SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`)
       .first<{ n: number }>();
