@@ -471,10 +471,23 @@ FC monitors Navigator's health but does not manage it. Previously known as
 runs write `agent_id='navigator'`. Not an AI agent — pure SQL. Responsibilities:
 
 1. **DNS resolution** (primary mission) — resolve malicious domains to IP
-   addresses so Cartographer can geo-enrich them (200 domains / 8s batch)
-2. Drain stale pending `agent_events` (housekeeping)
-3. Rebuild current + previous hour for all 3 cube tables (6 cube builds)
-4. Pre-warm KV caches for Observatory, Dashboard, Agents, Operations pages
+   addresses so Cartographer can geo-enrich them (200 domains / 8s batch).
+   Reads candidates from the dedicated `DNS_QUEUE_DB` (D1: `trust-radar-dns-queue`)
+   when bound; falls back to the `threats` table when unbound. State mutations are
+   dual-written to both tables until the PR-4 cleanup ships. The split moved this
+   workload off the main DB's read budget — 39× per-call reduction (500 rows vs
+   19,553) since dns_queue is a focused ~17K-row working set vs the 380K-row
+   threats table.
+2. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` keeps `dns_queue` in
+   lockstep with `threats.drainable` candidates. Runs AFTER dns-backfill so freshly-
+   resolved domains get dequeued in the same tick. Idempotent: `INSERT OR IGNORE`
+   on the candidate diff, `DELETE` on confirmed-stale. Bounded at 5,000 inserts /
+   500 deletes per tick. Skips cleanly when `DNS_QUEUE_DB` is unbound. Drift
+   between queue and threats is surfaced by FC via `platform_dns_queue_drift`;
+   reconciler liveness is surfaced via `platform_dns_queue_stalled`.
+3. Drain stale pending `agent_events` (housekeeping)
+4. Rebuild current + previous hour for all 5 cube tables (10 cube builds)
+5. Pre-warm KV caches for Observatory, Dashboard, Agents, Operations pages
 
 Navigator finds the path (IP addresses); Cartographer maps the terrain (lat/lng,
 country, provider).

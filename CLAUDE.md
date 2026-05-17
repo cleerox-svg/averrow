@@ -542,6 +542,7 @@ context is the column name, not the value.
 - Primary DB: `trust-radar-v2` (D1, SQLite) — internal name kept intentionally
 - Audit DB: `trust-radar-v2-audit`
 - GeoIP DB: `geoip-db` (D1, optional binding `GEOIP_DB`) — dedicated reference DB for the third-tier MaxMind GeoLite2 lookup. Migrations live in `migrations-geoip/`. Cartographer Phase 0.5 queries it; the `geoip_refresh` agent loads it. Isolated to keep range-scan reads off the main DB's budget — see `lib/geoip-mmdb.ts`.
+- DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set extracted from the threats table. Migrations live in `migrations-dns-queue/`. Navigator dns-backfill drains it; `lib/dns-queue-reconciler.ts` mirrors candidates from threats every Navigator tick. Isolated to keep the dns-backfill SELECT + UPDATE cycle off the main DB's read budget (39× per-call reduction observed post-split). Health monitored by FC via `platform_dns_queue_drift` and `platform_dns_queue_stalled` notifications. See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts`.
 - **Never DROP or ALTER existing columns** without explicit instruction
 - New columns: `ALTER TABLE ... ADD COLUMN` only
 - New migrations: `migrations/NNNN_description.sql`
@@ -737,6 +738,22 @@ campaigns                 ← Threat campaign groupings
 infrastructure_clusters   ← NEXUS operation clusters
 organizations             ← Multi-tenant org layer
 org_members               ← Org membership + roles
+```
+
+### Side-DB tables:
+```
+DNS_QUEUE_DB (trust-radar-dns-queue):
+  dns_queue               ← Drainable "needs DNS resolution" set (~17K rows).
+                            Mirrors a subset of threats via lib/dns-queue-reconciler.ts.
+                            Drained by lib/dns-backfill.ts in the Navigator cron.
+                            Reads come from this DB; ip_address writes go back to
+                            threats.
+
+GEOIP_DB (geoip-db):
+  geo_ip_ranges           ← MaxMind GeoLite2-City ranges (~5M rows). Loaded by
+                            geoip_refresh agent, queried by Cartographer Phase 0.5.
+  geo_ip_refresh_log      ← Per-import audit + workflow self-heal log (FC reads
+                            for stuck-workflow detection).
 ```
 
 ---

@@ -94,6 +94,15 @@ handlers/briefing daily run ──────────► platform_briefing_
 
 geoip refresh stall supervisor ───────► platform_geoip_refresh_stalled      ► notifications inbox
   reads: geo_ip_refresh_log
+
+dns-queue parity drift supervisor ────► platform_dns_queue_drift            ► notifications inbox
+  reads: dns_queue COUNT (DNS_QUEUE_DB), threats drainable count (main DB)
+  fires when |queue_size - drainable| > 500
+
+dns-queue reconciler-stalled supervisor ► platform_dns_queue_stalled         ► notifications inbox
+  reads: dns_queue COUNT, threats drainable, agent_outputs MAX(created_at)
+         WHERE summary LIKE 'dns-queue-reconcile%' AND has activity
+  fires when no enqueue/dequeue in 30 min AND drainable > queue + 500
 ```
 
 **Key dependency:** ANY change to `getAgentHealth`'s `is_stalled` computation (PR-R reconciliation) directly affects whether `platform_agent_stalled` fires. Without PR-R's workflow-event reconciliation, nexus would generate a false `platform_agent_stalled` every FC tick (every hour), polluting the inbox AND triggering misleading "nexus stalled" entries in the daily briefing via `notification_narrator`.

@@ -317,12 +317,13 @@ Routes jobs by time of day:
 Independent agent — runs on the `*/5 * * * *` cron. Not managed by Flight Control
 (FC monitors its health but does not dispatch it). Previously known as `fast_tick`;
 historical `agent_runs` rows carry `agent_id='fast_tick'` while new runs write
-`agent_id='navigator'`. 5 phases per run:
+`agent_id='navigator'`. 6 phases per run:
 1. **Event drain** — Marks stale pending `agent_events` (>5 min old) as done (up to 50 events)
-2. **DNS backfill** — Runs domain geo-enrichment batch (200 domains, 8s timeout)
-3. **Cube refresh** — Rebuilds current + previous hour for `threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand` (6 builds total)
-4. **Cache pre-warming** — Phase A (Observatory 3 periods), Phase B (Dashboard/Agents/Operations), Phase C (Brands/Threat Actors/Intel) — 24 endpoints total
-5. **Logging** — Writes `agent_runs` record with timing, cube row counts, and error summary
+2. **DNS backfill** — Runs domain geo-enrichment batch (200 domains, 8s timeout). Reads candidates from `DNS_QUEUE_DB` (the dedicated `trust-radar-dns-queue` D1) when the binding is present; falls back to `threats` table when unbound. State mutations are dual-written to both tables until the PR-4 cleanup ships.
+3. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` mirrors the drainable subset of threats into `dns_queue` so dns-backfill (which now reads from the queue) stays in lockstep with feed ingestion. Runs AFTER dns-backfill so freshly-resolved domains get dequeued in the same tick. Bounded at 5K inserts / 500 deletes per tick.
+4. **Cube refresh** — Rebuilds current + previous hour for `threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand`, `threat_cube_status`, `threat_cube_arcs` (10 builds total)
+5. **Cache pre-warming** — Phase A (Observatory 3 periods), Phase B (Dashboard/Agents/Operations), Phase C (Brands/Threat Actors/Intel) — 24 endpoints total
+6. **Logging** — Writes `agent_runs` record with timing, cube row counts, reconciler stats, and error summary
 
 ### Cloudflare Workflows
 
