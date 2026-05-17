@@ -1427,17 +1427,33 @@ export async function handleBackfillDomainGeo(
   const origin = request.headers.get("Origin");
 
   try {
-    // Count remaining unique unresolved domains
-    const totalRow = await env.DB.prepare(`
-      SELECT COUNT(DISTINCT malicious_domain) AS n
-      FROM threats
-      WHERE (ip_address IS NULL OR ip_address = '')
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain != ''
-        AND malicious_domain NOT LIKE '*%'
-        AND malicious_domain LIKE '%.%'
-    `).first<{ n: number }>();
-    const totalPending = totalRow?.n ?? 0;
+    // Count remaining unique unresolved domains.
+    //
+    // D1 spend reduction (2026-05-17): the frontend loops this endpoint
+    // until remaining===0, so the totalPending preflight count fires on
+    // every iteration. Previously each call burned ~117K rows via
+    // MULTI-INDEX OR scan on idx_threats_ip_source_feed. Two fixes:
+    //   1. Wrapped in cachedCount (60s TTL — short enough that progress
+    //      visibly decrements, long enough that successive loop iters
+    //      hit cache).
+    //   2. SQL rewritten to use idx_threats_dns_pending_strict — drop
+    //      empty-string OR branch (zero rows in prod) and add
+    //      status='active' + attempts gate so the strict partial index
+    //      matches. EXPLAIN confirmed single-index seek post-rewrite.
+    const totalPending = await cachedCount(env, 'count.threats.domain_geo_backlog', 60, async () => {
+      const row = await env.DB.prepare(`
+        SELECT COUNT(DISTINCT malicious_domain) AS n
+        FROM threats INDEXED BY idx_threats_dns_pending_strict
+        WHERE ip_address IS NULL
+          AND status = 'active'
+          AND COALESCE(enrichment_attempts, 0) < 8
+          AND malicious_domain IS NOT NULL
+          AND malicious_domain != ''
+          AND malicious_domain NOT LIKE '*%'
+          AND malicious_domain LIKE '%.%'
+      `).first<{ n: number }>();
+      return row?.n ?? 0;
+    });
 
     if (totalPending === 0) {
       return json({

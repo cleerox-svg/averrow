@@ -343,17 +343,33 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // (cooldown expired, attempts < cap). Pairs with `domain_geo`
     // FC backlog (which includes all rows, even ones in cooldown).
     // The pair tells the operator: "30K total / 412 drainable now".
-    const domainGeoDrainableP = env.DB.prepare(`
-      SELECT COUNT(DISTINCT malicious_domain) AS n FROM threats
-      WHERE (ip_address IS NULL OR ip_address = '')
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain != ''
-        AND malicious_domain NOT LIKE '*%'
-        AND malicious_domain LIKE '%.%'
-        AND COALESCE(enrichment_attempts, 0) < 8
-        AND (attempted_resolve_at IS NULL
-             OR attempted_resolve_at < datetime('now', '-6 hours'))
-    `).first<{ n: number }>();
+    //
+    // D1 spend reduction (2026-05-17): two changes here.
+    //   1. Wrapped in cachedCount (300s TTL) — diagnostics is called
+    //      by both the ops dashboard tile AND the FC notification
+    //      path. Without caching each call burned 117K rows via
+    //      MULTI-INDEX OR.
+    //   2. SQL rewritten to use `idx_threats_dns_pending_strict` —
+    //      drop empty-string OR branch (zero matching rows in prod
+    //      audit 2026-05-17) and add `status='active'` so the partial
+    //      index WHERE matches. Production EXPLAIN QUERY PLAN
+    //      confirmed single-index seek post-rewrite.
+    const domainGeoDrainableP = cachedCount(env, 'count.threats.domain_geo_drainable', 300, async () => {
+      const row = await env.DB.prepare(`
+        SELECT COUNT(DISTINCT malicious_domain) AS n
+        FROM threats INDEXED BY idx_threats_dns_pending_strict
+        WHERE ip_address IS NULL
+          AND status = 'active'
+          AND COALESCE(enrichment_attempts, 0) < 8
+          AND malicious_domain IS NOT NULL
+          AND malicious_domain != ''
+          AND malicious_domain NOT LIKE '*%'
+          AND malicious_domain LIKE '%.%'
+          AND (attempted_resolve_at IS NULL
+               OR attempted_resolve_at < datetime('now', '-6 hours'))
+      `).first<{ n: number }>();
+      return row?.n ?? 0;
+    }).then((n) => ({ n }));
 
     // Cartographer queue — matches actual Phase 0 query (private IPs and
     // attempts-exhausted threats excluded — see migration 0110).
