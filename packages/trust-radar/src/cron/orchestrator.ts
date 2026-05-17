@@ -775,18 +775,33 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   }
 
   // Enrichment pipeline
-  try {
-    const { runEnrichmentPipeline } = await import('../lib/enrichment');
-    const enrichResult = await runEnrichmentPipeline(env);
-    logger.info('threat_feed_scan_enrichment', {
-      dnsResolved: enrichResult.dnsResolved,
-      geoEnriched: enrichResult.geoEnriched,
-      whoisEnriched: enrichResult.whoisEnriched,
-      brandsMatched: enrichResult.brandsMatched,
-      domainRanksChecked: enrichResult.domainRanksChecked,
-    });
-  } catch (err) {
-    logger.error('threat_feed_scan_enrichment_error', { error: err instanceof Error ? err.message : String(err) });
+  //
+  // Cadence gate (2026-05-16 cost sweep): runs at hour % 4 === 0
+  // (00/04/08/12/16/20 UTC = 6×/day) instead of every hourly tick
+  // (24×/day). Each invocation issues 5 COUNT(*) diagnostics +
+  // touches every stage (DNS, geo, RDAP, brand, ranking, corroboration,
+  // provider-counts sync). Most stages also run from dedicated
+  // dispatch paths (Navigator dns-backfill every 5min, Cartographer
+  // geo every hour, brand-match backfill below, Stage 4c gated to
+  // 6h via KV stamp). 6×/day was empirically sufficient before the
+  // hourly bump that came with the audit work.
+  //
+  // The manual /api/threats/enrich-all path remains hourly-or-on-demand
+  // — operators can force a run when triaging.
+  if (hour % 4 === 0) {
+    try {
+      const { runEnrichmentPipeline } = await import('../lib/enrichment');
+      const enrichResult = await runEnrichmentPipeline(env);
+      logger.info('threat_feed_scan_enrichment', {
+        dnsResolved: enrichResult.dnsResolved,
+        geoEnriched: enrichResult.geoEnriched,
+        whoisEnriched: enrichResult.whoisEnriched,
+        brandsMatched: enrichResult.brandsMatched,
+        domainRanksChecked: enrichResult.domainRanksChecked,
+      });
+    } catch (err) {
+      logger.error('threat_feed_scan_enrichment_error', { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   // Brand match backfill (2 rounds)
