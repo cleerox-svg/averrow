@@ -14,10 +14,10 @@
 // Auth: super_admin only. /admin/abuse-mailbox route.
 // Design tokens per CLAUDE.md §5 + AVERROW_UI_STANDARD.md.
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Mail, MailCheck, MailX, Inbox, AlertTriangle, ShieldCheck, Copy, Check, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { PageLoader } from '@/components/ui/PageLoader';
 import {
   useAdminAbuseMailboxSummary,
@@ -52,6 +52,30 @@ export function AdminAbuseMailbox() {
   const summaryQ  = useAdminAbuseMailboxSummary();
   const messagesQ = useAdminAbuseMailboxMessages(activeBrand);
   const intelQ    = useAdminAbuseMailboxIntel();
+
+  // Deep-link support — notification dispatcher sends users here
+  // with `#msg-<id>` in the URL (abuse_mailbox_verdict notification,
+  // see lib/abuse-mailbox-classifier.ts). Open the matching row on
+  // mount + on hash change so subsequent in-app clicks also work.
+  const location = useLocation();
+  useEffect(() => {
+    const hash = location.hash || (typeof window !== 'undefined' ? window.location.hash : '');
+    const match = hash.match(/^#msg-(.+)$/);
+    if (match) {
+      setSelectedId(decodeURIComponent(match[1]!));
+    }
+  }, [location.hash]);
+
+  // Scroll the opened row into view once the messages list resolves
+  // — otherwise on a fresh load the user lands at the top and has
+  // to hunt for the highlighted row.
+  useEffect(() => {
+    if (!selectedId || messagesQ.isLoading) return;
+    const el = document.getElementById(`msg-${selectedId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selectedId, messagesQ.isLoading]);
 
   if (authLoading) return <PageLoader />;
   if (!isSuperAdmin) return <Navigate to="/" replace />;
@@ -152,11 +176,15 @@ export function AdminAbuseMailbox() {
                 <div className="space-y-2">
                   {filtered.map((m) => (
                     <Fragment key={m.id}>
-                      <MessageRow
-                        message={m}
-                        expanded={selectedId === m.id}
-                        onToggle={() => setSelectedId(prev => prev === m.id ? null : m.id)}
-                      />
+                      {/* id is the deep-link anchor target — notifications
+                          send users here with `#msg-<id>` in the URL. */}
+                      <div id={`msg-${m.id}`}>
+                        <MessageRow
+                          message={m}
+                          expanded={selectedId === m.id}
+                          onToggle={() => setSelectedId(prev => prev === m.id ? null : m.id)}
+                        />
+                      </div>
                       {selectedId === m.id && <MessageDetail message={m} />}
                     </Fragment>
                   ))}
