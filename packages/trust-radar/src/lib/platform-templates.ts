@@ -126,6 +126,17 @@ export interface PlatformDnsQueueStalledVars {
   drainable_in_threats: number;
 }
 
+export interface PlatformAbuseClassifierSilentVars {
+  /** Hours since the last successful classifier Haiku call. */
+  hours_silent: number;
+  /** Threshold (hours) above which we alert. */
+  threshold_hours: number;
+  /** Pending row count right now. */
+  pending_count: number;
+  /** Oldest pending row's age (hours since received_at). */
+  oldest_pending_hours: number;
+}
+
 export interface PlatformAiSpendBurstVars {
   spent_24h_usd: number;
   threshold_usd: number;
@@ -441,6 +452,19 @@ export function renderPlatformDnsQueueStalled(v: PlatformDnsQueueStalledVars): R
     recommended_action: `Check Navigator cron health; inspect agent_outputs for reconciler errors; verify DNS_QUEUE_DB binding is wired in wrangler.toml.`,
     link: PLATFORM_AGENTS_LINK,
     group_key: `platform_dns_queue_stalled:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'high',
+  };
+}
+
+export function renderPlatformAbuseClassifierSilent(v: PlatformAbuseClassifierSilentVars): RenderedTemplate {
+  return {
+    title: `Abuse mailbox classifier silent for ${v.hours_silent.toFixed(1)}h`,
+    message: `${v.pending_count} pending row(s) waiting (oldest ${v.oldest_pending_hours.toFixed(1)}h old). Last successful Haiku classification was ${v.hours_silent.toFixed(1)}h ago (threshold ${v.threshold_hours}h). The dedicated 17 * * * * cron may have failed or the abuse_mailbox_classifier dispatch is throwing.`,
+    reason_text: `Platform alert — operational only. Customers using /report-abuse are waiting on a determination email.`,
+    recommended_action: `1) Check Workers logs for 'abuse_mailbox_classifier_tick_error'. 2) Hit POST /api/admin/abuse-mailbox/classify-pending manually to drain the queue. 3) If still failing, inspect the pending rows' shape — a malformed row can break the SELECT path.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_abuse_classifier_silent:${todayKey()}`,
     audience: 'super_admin',
     severity: 'high',
   };

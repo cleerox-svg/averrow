@@ -270,11 +270,13 @@ export const REPO_MANIFEST: RepoInventory = {
         "CACHE",
         "CERTSTREAM_MONITOR",
         "DB",
+        "abuse_inbox_messages",
         "agent_configs",
         "agent_outputs",
         "agent_runs",
         "backlog_history",
         "brands",
+        "budget_ledger",
         "dns_queue",
         "feed_configs",
         "feed_pull_history",
@@ -297,8 +299,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 2266,
-      "last_modified": "2026-05-17T16:27:51.424Z"
+      "loc": 2330,
+      "last_modified": "2026-05-17T23:25:54.751Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -1450,6 +1452,32 @@ export const REPO_MANIFEST: RepoInventory = {
         "sparrow",
         "strategist"
       ]
+    },
+    {
+      "pattern": "17 * * * *",
+      "handler_path": "packages/trust-radar/src/index.ts",
+      "agents_invoked": [
+        "analyst",
+        "appStoreMonitor",
+        "attributor",
+        "auto-seeder",
+        "cartographer",
+        "cube-healer",
+        "darkWebMonitor",
+        "flightControl",
+        "geoip-refresh",
+        "lookalike-scanner",
+        "narrator",
+        "news-watcher",
+        "nexus",
+        "notification_narrator",
+        "observer",
+        "seed-strategist",
+        "socialDiscovery",
+        "socialMonitor",
+        "sparrow",
+        "strategist"
+      ]
     }
   ],
   "workers": [
@@ -1476,7 +1504,7 @@ export const REPO_MANIFEST: RepoInventory = {
   "totals": {
     "agents": 38,
     "feeds": 49,
-    "crons": 12,
+    "crons": 13,
     "workers": 1
   }
 };

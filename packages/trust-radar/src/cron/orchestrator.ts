@@ -169,6 +169,45 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Abuse mailbox classifier dispatch (PR-AY) ─────────────────────
+  //
+  // Hourly at :17. Previously gated inside runThreatFeedScan at line ~1142
+  // (before this PR moved it out). Same starvation pattern that hit
+  // cart/strategist/sparrow earlier — the classifier sat AFTER all the
+  // heavy agent dispatches in runThreatFeedScan and routinely never
+  // executed when the orchestrator hit its CPU/wall ceiling. Production
+  // evidence: last Haiku call 2026-05-17 04:17 UTC; a pending row arrived
+  // at 18:08 UTC and sat untouched for 5+ hours (classification_attempts
+  // stayed at 0). Same fix template as PR-E (enricher) and PR-Q
+  // (strategist/sparrow): own cron trigger, fresh CPU budget per tick.
+  //
+  // Cadence: hourly — matches the original "ack on arrival +
+  // determination within ~hour" promise on the /report-abuse marketing
+  // page. Bounded at 50 rows per tick (Haiku ~$0.001/row).
+  if (event.cron === '17 * * * *') {
+    try {
+      const pendingCount = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
+      ).first<{ n: number }>();
+      if ((pendingCount?.n ?? 0) > 0) {
+        const { runAbuseClassifierBackfill } = await import('../lib/abuse-mailbox-classifier');
+        const result = await runAbuseClassifierBackfill(env, { limit: 50, offset: 0 });
+        logger.info('abuse_mailbox_classifier_tick', {
+          pending_before: pendingCount?.n ?? 0,
+          scanned: result.scanned,
+          classified: result.classified,
+          failed: result.failed,
+          by_classification: result.by_classification,
+        });
+      }
+    } catch (err) {
+      logger.error('abuse_mailbox_classifier_tick_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
   // ─── 6-hourly agents on dedicated crons (PR-Q) ─────────────────────
   //
   // Five agents (strategist, sparrow, app_store_monitor, dark_web_monitor,
@@ -1128,37 +1167,19 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     logger.error('threat_feed_scan_snapshots_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // ── Abuse mailbox classifier (PR-AG) ───────────────────────────
-  // Runs every hourly tick. Gated on a pending count > 0 so it's a
-  // free no-op when the inbox is empty. Closes the loop the marketing
-  // /report-abuse page promises: ack on arrival (fires from the email
-  // handler) + determination email within ~hour of classification
-  // (was a manual /api/admin path before this hook).
+  // ── Abuse mailbox classifier ──
   //
-  // Bounded at 50 messages per tick — typical inbox is <10 messages
-  // per hour, so the budget is fine; spikes drain over multiple ticks.
-  // The handler emits its own logging; we just catch+swallow here so
-  // a classifier-cost issue can't block the orchestrator's later steps.
-  try {
-    const pendingCount = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
-    ).first<{ n: number }>();
-    if ((pendingCount?.n ?? 0) > 0) {
-      const { runAbuseClassifierBackfill } = await import('../lib/abuse-mailbox-classifier');
-      const result = await runAbuseClassifierBackfill(env, { limit: 50, offset: 0 });
-      logger.info('abuse_mailbox_classifier_tick', {
-        pending_before: pendingCount?.n ?? 0,
-        scanned: result.scanned,
-        classified: result.classified,
-        failed: result.failed,
-        by_classification: result.by_classification,
-      });
-    }
-  } catch (err) {
-    logger.error('abuse_mailbox_classifier_tick_error', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // Moved to its own dedicated `17 * * * *` cron in PR-AY (handler at
+  // the top of handleScheduled, alongside enricher/cartographer).
+  // Reason: this block was positioned LATE in runThreatFeedScan (after
+  // every heavy agent dispatch), and the orchestrator routinely hit
+  // its CPU/wall ceiling before reaching here. Production evidence:
+  // last Haiku call 2026-05-17 04:17 UTC, despite pending rows
+  // arriving in the meantime.
+  //
+  // Same starvation pattern + same fix template as PR-E (enricher),
+  // PR-F (cartographer), PR-Q (strategist/sparrow/etc). The new cron
+  // dispatch runs with a fresh per-invocation budget.
 
   // NOTE: daily brand-score batch (computeBrandScoresBatch) was
   // gated on `hour === 0` here but routinely never executed —
