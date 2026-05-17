@@ -53,6 +53,8 @@ export type NotificationEventKey =
   | 'platform_cron_orchestrator_missed'
   | 'platform_cron_navigator_missed'
   | 'platform_enrichment_stuck_pile'
+  | 'platform_dns_queue_drift'
+  | 'platform_dns_queue_stalled'
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
@@ -319,6 +321,22 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Enrichment Stuck Pile',
     description: 'Threats enriched but missing geo data',
     dedupWindow: '-6 hours',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_dns_queue_drift',
+    label: 'DNS Queue Parity Drift',
+    description: 'dns_queue and threats candidates have diverged — reconciler falling behind',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_dns_queue_stalled',
+    label: 'DNS Queue Reconciler Stalled',
+    description: 'Reconciler alive but no enqueue/dequeue activity while threats has drainable candidates',
+    dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,
   },

@@ -107,6 +107,25 @@ export interface PlatformEnrichmentStuckVars {
   threshold: number;
 }
 
+export interface PlatformDnsQueueDriftVars {
+  /** Absolute |queue_size - drainable_in_threats|. Drift > threshold
+   *  means the reconciler isn't keeping up OR a writer regressed. */
+  drift: number;
+  threshold: number;
+  queue_size: number;
+  drainable_in_threats: number;
+}
+
+export interface PlatformDnsQueueStalledVars {
+  /** Minutes since the reconciler last produced enqueued>0 or
+   *  dequeued>0 — the queue is alive but doing nothing while threats
+   *  candidates keep growing. */
+  minutes_idle: number;
+  threshold_minutes: number;
+  queue_size: number;
+  drainable_in_threats: number;
+}
+
 export interface PlatformAiSpendBurstVars {
   spent_24h_usd: number;
   threshold_usd: number;
@@ -398,6 +417,32 @@ export function renderPlatformEnrichmentStuck(v: PlatformEnrichmentStuckVars): R
     group_key: `platform_enrichment_stuck_pile:${todayKey()}`,
     audience: 'super_admin',
     severity: 'medium',
+  };
+}
+
+export function renderPlatformDnsQueueDrift(v: PlatformDnsQueueDriftVars): RenderedTemplate {
+  return {
+    title: `DNS queue parity drift: ${v.drift} rows`,
+    message: `dns_queue=${v.queue_size}, drainable_in_threats=${v.drainable_in_threats}. Threshold ${v.threshold}. Reconciler may be failing — dns-backfill is reading stale set.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action: `Check agent_outputs WHERE agent_id='navigator' AND summary LIKE '%dns-queue-reconcile%' for batch errors; verify DNS_QUEUE_DB binding is healthy; re-run reconciler manually via Navigator trigger.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_dns_queue_drift:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'medium',
+  };
+}
+
+export function renderPlatformDnsQueueStalled(v: PlatformDnsQueueStalledVars): RenderedTemplate {
+  return {
+    title: `DNS queue reconciler stalled: ${v.minutes_idle} min idle`,
+    message: `Reconciler hasn't enqueued or dequeued for ${v.minutes_idle} min (threshold ${v.threshold_minutes}). queue=${v.queue_size}, drainable=${v.drainable_in_threats}. Navigator cron may be skipping the reconcile step.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action: `Check Navigator cron health; inspect agent_outputs for reconciler errors; verify DNS_QUEUE_DB binding is wired in wrangler.toml.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_dns_queue_stalled:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'high',
   };
 }
 

@@ -125,6 +125,8 @@ export function inferAffectedComponents(
     type === "platform_kv_budget_warn" ||
     type === "platform_worker_cpu_burst" ||
     type === "platform_enrichment_stuck_pile" ||
+    type === "platform_dns_queue_drift" ||
+    type === "platform_dns_queue_stalled" ||
     type === "platform_ai_spend_burst"
   ) {
     out.push("category:processing");

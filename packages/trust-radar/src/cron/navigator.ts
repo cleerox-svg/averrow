@@ -106,7 +106,7 @@ async function runNavigatorImpl(
   console.log(`[navigator] start ${scheduledTime.toISOString()}`);
 
   let eventsDrained = 0;
-  let dnsResult = { processed: 0, resolved: 0, enriched: 0, graduatedDead: 0, durationMs: 0, softCapHit: false };
+  let dnsResult = { processed: 0, resolved: 0, enriched: 0, graduatedDead: 0, durationMs: 0, softCapHit: false, readSource: 'threats' as 'queue' | 'threats' };
   let reconcileResult: ReconcileResult = {
     skipped: true, reason: 'not_run', enqueued: 0, dequeued: 0,
     candidatesInThreats: 0, queueSize: 0, delta: 0, durationMs: 0,
@@ -172,7 +172,7 @@ async function runNavigatorImpl(
     });
 
     console.log(
-      `[navigator] dns-backfill: processed=${dnsResult.processed} resolved=${dnsResult.resolved} enriched=${dnsResult.enriched} graduatedDead=${dnsResult.graduatedDead} softCapHit=${dnsResult.softCapHit} duration=${dnsResult.durationMs}ms`,
+      `[navigator] dns-backfill: source=${dnsResult.readSource} processed=${dnsResult.processed} resolved=${dnsResult.resolved} enriched=${dnsResult.enriched} graduatedDead=${dnsResult.graduatedDead} softCapHit=${dnsResult.softCapHit} duration=${dnsResult.durationMs}ms`,
     );
 
     if (dnsResult.softCapHit || dnsResult.enriched < dnsResult.resolved) {
@@ -613,9 +613,10 @@ export const navigatorAgent: AgentModule = {
       const severity = dr.softCapHit ? 'medium' : 'info';
       agentOutputs.push({
         type: 'diagnostic',
-        summary: `dns-backfill: processed=${dr.processed} resolved=${dr.resolved} dead=${dr.graduatedDead} enriched_rows=${dr.enriched} softCap=${dr.softCapHit ? 'YES' : 'no'} ${dr.durationMs}ms`,
+        summary: `dns-backfill: source=${dr.readSource} processed=${dr.processed} resolved=${dr.resolved} dead=${dr.graduatedDead} enriched_rows=${dr.enriched} softCap=${dr.softCapHit ? 'YES' : 'no'} ${dr.durationMs}ms`,
         severity,
         details: {
+          read_source: dr.readSource,
           processed: dr.processed,
           resolved: dr.resolved,
           graduated_dead: dr.graduatedDead,

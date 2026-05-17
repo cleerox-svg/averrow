@@ -51,7 +51,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 1116,
-      "last_modified": "2026-05-16T20:42:12.774Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "appStoreMonitor",
@@ -84,7 +84,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 374,
-      "last_modified": "2026-05-16T21:46:46.250Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "auto-seeder",
@@ -186,7 +186,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 1226,
-      "last_modified": "2026-05-16T21:35:18.915Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "cube-healer",
@@ -275,6 +275,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "agent_runs",
         "backlog_history",
         "brands",
+        "dns_queue",
         "feed_configs",
         "feed_pull_history",
         "feed_status",
@@ -296,8 +297,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 2156,
-      "last_modified": "2026-05-16T21:23:53.607Z"
+      "loc": 2266,
+      "last_modified": "2026-05-17T16:07:48.928Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -379,7 +380,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 505,
-      "last_modified": "2026-05-16T21:32:52.259Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "news-watcher",
@@ -428,7 +429,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 742,
-      "last_modified": "2026-05-16T21:51:05.742Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "notification_narrator",
@@ -482,7 +483,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 1043,
-      "last_modified": "2026-05-16T04:24:31.231Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "pathfinder",
@@ -508,7 +509,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "writes": [],
       "ai_models_referenced": [],
       "loc": 831,
-      "last_modified": "2026-05-16T04:00:21.769Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "public-trust-check",
@@ -689,7 +690,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 683,
-      "last_modified": "2026-05-16T05:16:29.012Z"
+      "last_modified": "2026-05-17T14:22:08.921Z"
     },
     {
       "name": "trustbot",
@@ -1463,6 +1464,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "CARTOGRAPHER_MAIN",
         "CERTSTREAM_MONITOR",
         "DB",
+        "DNS_QUEUE_DB",
         "GEOIP_DB",
         "GEOIP_REFRESH",
         "GEOIP_STAGING",

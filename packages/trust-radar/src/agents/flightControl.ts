@@ -25,6 +25,8 @@ import {
   renderPlatformAiSpendBurst,
   renderPlatformCronMissed,
   renderPlatformEnrichmentStuck,
+  renderPlatformDnsQueueDrift,
+  renderPlatformDnsQueueStalled,
   renderPlatformGeoipRefreshStalled,
   renderPlatformWorkflowDispatchSilent,
   // NX6: previously-unwired templates.
@@ -235,6 +237,11 @@ export const flightControlAgent: AgentModule = {
     // failing. Lives on GEOIP_DB; the binding is optional so the
     // SELECT is wrapped in try/catch.
     { kind: "d1_table", name: "geo_ip_refresh_log" },
+    // PR-3 of DNS-queue split: FC reads dns_queue size for the
+    // parity-drift and reconciler-stalled health checks. Lives on
+    // DNS_QUEUE_DB; binding is optional so the SELECT is wrapped
+    // in try/catch.
+    { kind: "d1_table", name: "dns_queue" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_activity_log" },
@@ -671,6 +678,95 @@ export const flightControlAgent: AgentModule = {
         );
       }
     } catch { /* notification failures never break FC */ }
+
+    // ── DNS queue health check (PR-3 of DNS-queue split) ──
+    // Two distinct failure modes to surface:
+    //   1. Drift: |dns_queue.size - threats.drainable| > 500 means the
+    //      reconciler isn't keeping up. Either reconciler is failing
+    //      (see PR-2b debug counters) or a writer regressed. dns-
+    //      backfill reads from queue, so drift = lost work.
+    //   2. Stalled: no enqueue or dequeue activity in the last 30 min
+    //      across all reconciler runs visible in agent_outputs. Means
+    //      reconciler is alive but doing nothing — likely a binding
+    //      issue or D1 transient that's eating writes.
+    // Both gated on env.DNS_QUEUE_DB to skip cleanly when the binding
+    // isn't yet rolled out to a given environment.
+    if (env.DNS_QUEUE_DB) {
+      try {
+        const queueDb = env.DNS_QUEUE_DB;
+
+        // Snapshot queue size + threats-drainable in parallel.
+        const [queueSizeRow, drainableRow] = await Promise.all([
+          cachedCount(env, 'count.dns_queue.size', 300, async () => {
+            const r = await queueDb.prepare('SELECT COUNT(*) AS n FROM dns_queue').first<{ n: number }>();
+            return r?.n ?? 0;
+          }).then((n) => ({ n })),
+          cachedCount(env, 'count.threats.domain_geo_strict_pending', 300, async () => {
+            const r = await db.prepare(`
+              SELECT COUNT(DISTINCT malicious_domain) AS n
+              FROM threats INDEXED BY idx_threats_dns_pending_strict
+              WHERE ip_address IS NULL
+                AND status = 'active'
+                AND COALESCE(enrichment_attempts, 0) < 8
+                AND malicious_domain IS NOT NULL
+                AND malicious_domain != ''
+                AND malicious_domain NOT LIKE '*%'
+                AND malicious_domain LIKE '%.%'
+            `).first<{ n: number }>();
+            return r?.n ?? 0;
+          }).then((n) => ({ n })),
+        ]);
+
+        const queueSize = queueSizeRow.n;
+        const drainable = drainableRow.n;
+        const drift = Math.abs(queueSize - drainable);
+        const DRIFT_THRESHOLD = 500;
+
+        if (drift > DRIFT_THRESHOLD) {
+          await emitPlatformNotification(env, 'platform_dns_queue_drift',
+            renderPlatformDnsQueueDrift({
+              drift,
+              threshold: DRIFT_THRESHOLD,
+              queue_size: queueSize,
+              drainable_in_threats: drainable,
+            })
+          );
+        }
+
+        // Stall detection — last reconciler line with enqueued OR
+        // dequeued > 0. Single-statement aggregate; doesn't read
+        // agent_outputs row-by-row.
+        const lastActivity = await db.prepare(`
+          SELECT MAX(created_at) AS last_active
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-queue-reconcile%'
+            AND (summary LIKE '%enqueued=%' AND summary NOT LIKE '%enqueued=0 dequeued=0%')
+        `).first<{ last_active: string | null }>();
+
+        if (lastActivity?.last_active) {
+          const lastMs = Date.parse(lastActivity.last_active + 'Z');
+          const minutesIdle = Math.floor((Date.now() - lastMs) / 60_000);
+          const STALL_THRESHOLD_MIN = 30;
+          if (minutesIdle > STALL_THRESHOLD_MIN && drainable > queueSize + DRIFT_THRESHOLD) {
+            // Only fire stalled-alert when there's actual work to do
+            // (drainable > queue + drift threshold). A quiet queue
+            // with nothing to drain is fine to be idle.
+            await emitPlatformNotification(env, 'platform_dns_queue_stalled',
+              renderPlatformDnsQueueStalled({
+                minutes_idle: minutesIdle,
+                threshold_minutes: STALL_THRESHOLD_MIN,
+                queue_size: queueSize,
+                drainable_in_threats: drainable,
+              })
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('[flight-control] dns_queue health check failed:', err);
+      }
+    }
     // Collect enrichment backlog warnings into a single D1 batch
     // instead of awaiting 7 sequential INSERTs. Pre-fix this phase
     // was 4s on the 14s FC tick; with one batch round-trip it
