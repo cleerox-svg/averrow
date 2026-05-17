@@ -190,17 +190,30 @@ export async function handleThreatStats(request: Request, env: Env): Promise<Res
       session.prepare(
         "SELECT COALESCE(SUM(records_ingested), 0) as items_today FROM feed_pull_history WHERE started_at >= date('now', 'start of day') AND status = 'success'"
       ).first<{ items_today: number }>(),
+      // Cube swaps (cost-sweep 2026-05-16): each of these used to
+      // GROUP BY against the raw threats table (~355K rows scanned
+      // per call). Switched to the corresponding cube — pre-aggregated
+      // hourly rolling, ~10-100× smaller scan footprint.
       session.prepare(
-        "SELECT threat_type, COUNT(*) as count FROM threats GROUP BY threat_type ORDER BY count DESC LIMIT 10"
+        `SELECT threat_type, SUM(threat_count) AS count
+           FROM threat_cube_status
+          GROUP BY threat_type ORDER BY count DESC LIMIT 10`
       ).all(),
       session.prepare(
-        "SELECT source_feed, COUNT(*) as count FROM threats GROUP BY source_feed ORDER BY count DESC LIMIT 10"
+        `SELECT source_feed, SUM(threat_count) AS count
+           FROM threat_cube_status
+          GROUP BY source_feed ORDER BY count DESC LIMIT 10`
       ).all(),
       session.prepare(
-        "SELECT severity, COUNT(*) as count FROM threats GROUP BY severity"
+        `SELECT severity, SUM(threat_count) AS count
+           FROM threat_cube_status
+          GROUP BY severity`
       ).all(),
       session.prepare(
-        "SELECT country_code, COUNT(*) as count FROM threats WHERE country_code IS NOT NULL GROUP BY country_code ORDER BY count DESC LIMIT 30"
+        `SELECT country_code, SUM(threat_count) AS count
+           FROM threat_cube_geo
+          WHERE country_code != ''
+          GROUP BY country_code ORDER BY count DESC LIMIT 30`
       ).all(),
       session.prepare(`
         SELECT id, threat_type, severity, source_feed, malicious_domain, ioc_value,
@@ -208,26 +221,30 @@ export async function handleThreatStats(request: Request, env: Env): Promise<Res
         FROM threats ORDER BY created_at DESC LIMIT 20
       `).all(),
       session.prepare(`
-        SELECT country_code, COUNT(*) as count
-        FROM threats
-        WHERE country_code IS NOT NULL AND created_at >= date('now', 'start of day')
-        GROUP BY country_code ORDER BY count DESC LIMIT 10
+        SELECT country_code, SUM(threat_count) AS count
+          FROM threat_cube_geo
+         WHERE country_code != ''
+           AND hour_bucket >= strftime('%Y-%m-%d %H:00', 'now', 'start of day')
+         GROUP BY country_code ORDER BY count DESC LIMIT 10
       `).all(),
     ]);
 
-    // Hosting provider breakdown (v2: join hosting_providers)
+    // Hosting provider breakdown — cube-backed (cost-sweep 2026-05-16).
+    // The threats-table JOIN was ~250K rows/call; cube_provider scans
+    // ~5K rows by hosting_provider_id × hour.
     let byProvider: unknown[] = [];
     try {
       const providerRows = await session.prepare(`
-        SELECT hp.name as hosting_provider, COUNT(*) as count,
-          SUM(CASE WHEN t.severity = 'critical' THEN 1 ELSE 0 END) as critical,
-          SUM(CASE WHEN t.severity = 'high' THEN 1 ELSE 0 END) as high
-        FROM threats t
-        JOIN hosting_providers hp ON t.hosting_provider_id = hp.id
-        GROUP BY hp.name ORDER BY count DESC LIMIT 20
+        SELECT hp.name AS hosting_provider,
+               SUM(tcp.threat_count) AS count,
+               SUM(CASE WHEN tcp.severity = 'critical' THEN tcp.threat_count ELSE 0 END) AS critical,
+               SUM(CASE WHEN tcp.severity = 'high'     THEN tcp.threat_count ELSE 0 END) AS high
+          FROM threat_cube_provider tcp
+          JOIN hosting_providers hp ON hp.id = tcp.hosting_provider_id
+         GROUP BY hp.name ORDER BY count DESC LIMIT 20
       `).all();
       byProvider = providerRows.results;
-    } catch { /* table may not be populated yet */ }
+    } catch { /* cube may not be populated yet */ }
 
     const dailyStats = {
       scansToday: feedIngestionsToday?.items_today ?? 0,
@@ -396,13 +413,15 @@ export async function handleGeoClusters(request: Request, env: Env): Promise<Res
       LIMIT 50
     `).all();
 
-    // Pre-fetch top threat_type per country in a single query (avoids N+1)
+    // Top threat_type per country — cube-backed (cost-sweep 2026-05-16).
+    // threat_cube_geo has (country_code, threat_type, threat_count) so
+    // SUM is exact; saves a full-corpus scan on every map render.
     const topTypeRows = await session.prepare(`
       SELECT country_code, threat_type
       FROM (
-        SELECT country_code, threat_type, COUNT(*) AS cnt
-        FROM threats
-        WHERE country_code IS NOT NULL
+        SELECT country_code, threat_type, SUM(threat_count) AS cnt
+        FROM threat_cube_geo
+        WHERE country_code != ''
         GROUP BY country_code, threat_type
         ORDER BY country_code, cnt DESC
       )
