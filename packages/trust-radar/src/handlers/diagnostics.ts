@@ -339,6 +339,23 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       needs_dns: number;
     }>();
 
+    // ── DNS-queue parity (PR-2 of DNS-queue split) ──
+    // Counts the dns_queue side-DB so operators can verify the
+    // reconciler is converging before PR-3 flips dns-backfill reads.
+    // |queueSize - domain_geo_drainable| ≈ 0 means parity is healthy.
+    // Skipped cleanly if DNS_QUEUE_DB isn't bound (dev environments).
+    const dnsQueueSizeP: Promise<{ n: number; bound: boolean }> = (async () => {
+      if (!env.DNS_QUEUE_DB) return { n: 0, bound: false };
+      try {
+        const row = await env.DNS_QUEUE_DB.prepare(
+          'SELECT COUNT(*) AS n FROM dns_queue'
+        ).first<{ n: number }>();
+        return { n: row?.n ?? 0, bound: true };
+      } catch {
+        return { n: 0, bound: false };
+      }
+    })();
+
     // domain_geo_drainable — domains we can actually try right now
     // (cooldown expired, attempts < cap). Pairs with `domain_geo`
     // FC backlog (which includes all rows, even ones in cooldown).
@@ -780,6 +797,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       cachedCountStats,
       moduleEntitlements,
       alertsByTier,
+      dnsQueueSize,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -790,6 +808,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       getCachedCountStats(env),
       moduleEntitlementsP,
       alertsByTierP,
+      dnsQueueSizeP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -1109,6 +1128,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             count: r.n,
           })),
           private_ip_inflation: (cartoQueueRaw?.n ?? 0) - (cartoQueue?.n ?? 0),
+        },
+
+        // DNS-queue parity (PR-2 of DNS-queue split). Mirrors the
+        // dns-backfill working set into DNS_QUEUE_DB. Healthy state:
+        // |delta| ≈ 0 after one Navigator tick. Persistent positive
+        // delta = stale rows not being dequeued; persistent negative
+        // delta = enqueue lagging behind threats. Use this as the
+        // green-light check before merging PR-3 (the read flip).
+        dns_queue_parity: {
+          bound: dnsQueueSize.bound,
+          queue_size: dnsQueueSize.n,
+          drainable_in_threats: domainGeoDrainable?.n ?? 0,
+          delta: dnsQueueSize.bound ? dnsQueueSize.n - (domainGeoDrainable?.n ?? 0) : null,
         },
 
         alerts: {
