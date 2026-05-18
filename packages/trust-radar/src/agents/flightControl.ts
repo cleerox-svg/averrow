@@ -707,13 +707,18 @@ export const flightControlAgent: AgentModule = {
             const r = await queueDb.prepare('SELECT COUNT(*) AS n FROM dns_queue').first<{ n: number }>();
             return r?.n ?? 0;
           }).then((n) => ({ n })),
-          cachedCount(env, 'count.threats.domain_geo_strict_pending', 300, async () => {
+          // PR-4: dropped INDEXED BY hint + the
+          // `enrichment_attempts < 8` filter. Threats.attempts is
+          // no longer written (dns_queue owns the state), so the
+          // legacy filter would exclude no rows anyway. The drift
+          // check is now "count of threats needing DNS resolution
+          // by existence" vs "count of rows in dns_queue".
+          cachedCount(env, 'count.threats.dns_drainable', 300, async () => {
             const r = await db.prepare(`
               SELECT COUNT(DISTINCT malicious_domain) AS n
-              FROM threats INDEXED BY idx_threats_dns_pending_strict
+              FROM threats
               WHERE ip_address IS NULL
                 AND status = 'active'
-                AND COALESCE(enrichment_attempts, 0) < 8
                 AND malicious_domain IS NOT NULL
                 AND malicious_domain != ''
                 AND malicious_domain NOT LIKE '*%'
@@ -1511,12 +1516,18 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     ttl: number,
     sql: string,
     suppressErrors = false,
+    /** PR-4: route the SELECT to a non-main D1 binding. Currently
+     *  used only for the dns_queue backlogs (DNS_QUEUE_DB). When
+     *  undefined the SELECT runs on the main `db` (trust-radar-v2)
+     *  — the default for every other backlog counter. */
+    altDb?: D1Database,
   ): Promise<{ value: number; wasCached: boolean }> => {
     let wasCached = true;
     const value = await cachedCount(env, key, ttl, async () => {
       wasCached = false;
       try {
-        const r = await db.prepare(sql).first<{ count: number }>();
+        const targetDb = altDb ?? db;
+        const r = await targetDb.prepare(sql).first<{ count: number }>();
         return r?.count ?? 0;
       } catch (err) {
         if (suppressErrors) return 0;
@@ -1636,34 +1647,27 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // it is semantically equivalent for this counter — only active
     // threats can ever be drained by Navigator (the dns-backfill SELECT
     // already gates on status='active' implicitly via the same index).
+    // PR-4: now read both DNS backlog counts from dns_queue. The
+    // schema mirrors the dns-backfill SELECT semantics (PK on
+    // malicious_domain → no DISTINCT needed; partial index on
+    // attempts<8 → no domain-format filters needed since reconciler
+    // already gates those out on insert).
+    // suppressErrors=true: dev environments without DNS_QUEUE_DB
+    // bound see 0 here instead of failing the whole FC tick.
     cacheCount('backlog.domain_geo', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(DISTINCT malicious_domain) as count
-      FROM threats INDEXED BY idx_threats_dns_pending_strict
-      WHERE ip_address IS NULL
-        AND status = 'active'
-        AND COALESCE(enrichment_attempts, 0) < 8
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain NOT LIKE '*%'
-        AND malicious_domain LIKE '%.%'
-    `),
-    // domain_geo_drainable mirrors the dns-backfill SELECT — the
-    // count of domains we can actually try right now (cooldown
-    // expired and under the attempts cap). The total backlog above
-    // includes domains that are still in cooldown; this number
-    // tells the operator how much work the next Navigator tick can
-    // pick up.
+      SELECT COUNT(*) as count
+      FROM dns_queue
+      WHERE enrichment_attempts < 8
+    `, true, env.DNS_QUEUE_DB),
+    // domain_geo_drainable — the count of domains we can actually
+    // try right now (cooldown expired and under the attempts cap).
     cacheCount('backlog.domain_geo_drainable', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(DISTINCT malicious_domain) as count
-      FROM threats INDEXED BY idx_threats_dns_pending_strict
-      WHERE ip_address IS NULL
-        AND status = 'active'
-        AND COALESCE(enrichment_attempts, 0) < 8
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain NOT LIKE '*%'
-        AND malicious_domain LIKE '%.%'
+      SELECT COUNT(*) as count
+      FROM dns_queue INDEXED BY idx_dns_queue_drainable
+      WHERE enrichment_attempts < 8
         AND (attempted_resolve_at IS NULL
              OR attempted_resolve_at < datetime('now', '-6 hours'))
-    `),
+    `, true, env.DNS_QUEUE_DB),
     cacheCount('backlog.brand_enrich', BACKLOG_TTL_LIVE_S, `
       SELECT COUNT(*) as count FROM brands
       WHERE enriched_at IS NULL AND canonical_domain IS NOT NULL

@@ -10,9 +10,28 @@
 #   4. Reconciler keeps converging (batches_failed=0, delta≈0)
 #   5. Main DB read budget actually shrank
 #
-# This is the green-light check before merging PR-4 cleanup (the
-# harvest where threats-side indexes get dropped and dual-writes
-# retired).
+# Three lifecycle uses for this script:
+#
+#   A. Pre-PR-4 gate (before shipping cleanup) — confirm signals are
+#      stable for 24h after PR-3 deploys. Signal 5 will read YELLOW
+#      while the threats-side dual-write is still firing; that's
+#      expected pre-cleanup and is in fact the harvest PR-4 collects.
+#
+#   B. Post-PR-4 verify (immediately after deploy) — re-run to
+#      confirm nothing broke. Key signals:
+#        Signal 1 — still source=queue on every tick (regression
+#                   sentinel: the deploy didn't unbind DNS_QUEUE_DB)
+#        Signal 2 — throughput unchanged from pre-cleanup
+#        Signal 4 — reconciler still draining + healthy (proves the
+#                   reader migration didn't break the candidate-mirror
+#                   logic). batches_failed must remain 0.
+#        Signal 5 — flips to GREEN. dns-backfill queries vanish from
+#                   the main-DB top-N. THIS IS the cleanup proof.
+#
+#   C. 24h post-PR-4 steady-state check — re-run with `24` and confirm
+#      the GREEN verdict holds through a full feed-ingest cycle. The
+#      window has rolled past the deploy moment so any deploy-edge
+#      noise is gone.
 #
 # Usage:
 #   ./scripts/dns-queue-stability-check.sh          # default 24h window
@@ -24,9 +43,9 @@
 #   AVERROW_API_URL          — (optional) defaults to https://averrow.com
 #
 # Exit codes:
-#   0  GREEN  — all five signals healthy; safe to ship PR-4
+#   0  GREEN  — all five signals healthy; safe to ship PR-4 / cleanup verified
 #   1  YELLOW — at least one signal warns (degraded but not broken)
-#   2  RED    — at least one signal failed; revert/hold PR-4
+#   2  RED    — at least one signal failed; revert/hold
 
 set -euo pipefail
 

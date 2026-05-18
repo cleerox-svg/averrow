@@ -86,12 +86,6 @@ const READ_LIMIT = 50_000;
 const MAX_INSERTS_PER_TICK = 5_000;
 const MAX_DELETES_PER_TICK = 500;
 
-interface CandidateRow {
-  malicious_domain: string;
-  enrichment_attempts: number;
-  attempted_resolve_at: string | null;
-  source_feed: string | null;
-}
 
 export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   const start = Date.now();
@@ -115,34 +109,40 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   }
 
   try {
-    // ── 1. Snapshot drainable candidates in threats ──
-    // Uses the strict partial index landed in migration 0195. Includes
-    // duplicates because feeds can write multiple threats rows for the
-    // same malicious_domain (e.g. malwarebazaar's repeated '0.0.0.0'
-    // rows). Dedupe happens in step 2.
+    // ── 1. Snapshot candidates in threats ──
+    // PR-4 cleanup: removed the `enrichment_attempts < 8` filter
+    // because threats.enrichment_attempts is no longer written
+    // (dns_queue owns that state now). Dead rows are kept in
+    // dns_queue with attempts=8 so this candidate read pulls them
+    // along with everything else; step 4's diff against queueSet
+    // filters them out automatically (they're already in queue, so
+    // they're not in toInsert). Removed INDEXED BY hint — the
+    // remaining filters (ip_address IS NULL + status='active') are
+    // satisfied by idx_threats_ip_source_feed without the strict
+    // index that's slated to be dropped in this same PR.
+    //
+    // Returns CandidateRow shape with dummy enrichment_attempts=0
+    // and null attempted_resolve_at — these get inserted into new
+    // dns_queue rows but are immediately overwritten by dns-backfill
+    // when the row is actually drained.
     const candidatesRes = await env.DB.prepare(`
-      SELECT
-        malicious_domain,
-        COALESCE(enrichment_attempts, 0) AS enrichment_attempts,
-        attempted_resolve_at,
-        source_feed
-      FROM threats INDEXED BY idx_threats_dns_pending_strict
+      SELECT malicious_domain, source_feed
+      FROM threats
       WHERE ip_address IS NULL
         AND status = 'active'
-        AND COALESCE(enrichment_attempts, 0) < 8
         AND malicious_domain IS NOT NULL
         AND malicious_domain != ''
         AND malicious_domain NOT LIKE '*%'
         AND malicious_domain LIKE '%.%'
       LIMIT ?
-    `).bind(READ_LIMIT).all<CandidateRow>();
+    `).bind(READ_LIMIT).all<{ malicious_domain: string; source_feed: string | null }>();
 
     // ── 2. Dedupe by malicious_domain ──
     // Keep first occurrence; per-row state is owned by dns-backfill
-    // after PR-3 so the dedupe choice only matters for the INITIAL
-    // fill. INSERT OR IGNORE ignores conflicts so the queue ends up
-    // with the first-seen row for any duplicated domain.
-    const uniqueByDomain = new Map<string, CandidateRow>();
+    // so the dedupe choice only matters for the INITIAL fill.
+    // INSERT OR IGNORE ignores conflicts so the queue ends up with
+    // the first-seen row for any duplicated domain.
+    const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
     for (const c of candidatesRes.results) {
       if (!uniqueByDomain.has(c.malicious_domain)) {
         uniqueByDomain.set(c.malicious_domain, c);
@@ -164,7 +164,7 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     // Capped at MAX_INSERTS_PER_TICK so an empty-queue first run
     // converges over a few ticks instead of burning the CPU budget
     // in one shot.
-    const toInsert: CandidateRow[] = [];
+    const toInsert: Array<{ malicious_domain: string; source_feed: string | null }> = [];
     for (const [domain, row] of uniqueByDomain) {
       if (!queueSet.has(domain)) {
         toInsert.push(row);
@@ -187,11 +187,9 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
         env.DNS_QUEUE_DB!.prepare(`
           INSERT OR IGNORE INTO dns_queue
             (malicious_domain, enrichment_attempts, attempted_resolve_at, source_feed, enqueued_at)
-          VALUES (?, ?, ?, ?, datetime('now'))
+          VALUES (?, 0, NULL, ?, datetime('now'))
         `).bind(
           c.malicious_domain,
-          c.enrichment_attempts,
-          c.attempted_resolve_at,
           c.source_feed,
         )
       );

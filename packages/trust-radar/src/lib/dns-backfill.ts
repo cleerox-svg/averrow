@@ -149,38 +149,50 @@ export async function runDomainGeoBackfillBatch(
     // ── Step 0: pre-stamp claim ──
     //
     // Atomically claim every selected domain by stamping
-    // attempted_resolve_at = now BEFORE running DoH resolution. The
-    // claim has to be visible to the NEXT tick's SELECT before the
-    // resolution work completes — otherwise a soft-cap during DoH
-    // leaves the same domains re-selectable on the next tick.
+    // attempted_resolve_at = now in dns_queue BEFORE running DoH
+    // resolution. The claim has to be visible to the NEXT tick's
+    // SELECT before the resolution work completes — otherwise a
+    // soft-cap during DoH leaves the same domains re-selectable on
+    // the next tick.
     //
-    // PR-3 dual-write: stamp BOTH dns_queue (now the gating source)
-    // AND threats (kept until PR-4 cleanup so other readers stay
-    // accurate). The two writes go in parallel via Promise.all; a
-    // failure on the queue side never blocks the threats side and
-    // vice versa.
+    // PR-4 cleanup: removed the threats-side UPDATE that was part
+    // of PR-3's dual-write transition. dns_queue is now the sole
+    // source of cooldown/attempts state. The threats table just
+    // holds the `ip_address` deliverable once resolution succeeds.
+    // Frees ~5.5M reads/day on the main DB.
     //
-    // Pre-stamp does NOT bump enrichment_attempts — the counter only
-    // advances when an outcome (resolved / dead / transient) is
-    // recorded later. This separates "I tried to do work" (cooldown)
-    // from "this domain is exhausting its retry budget" (attempts).
+    // Pre-stamp does NOT bump enrichment_attempts — the counter
+    // only advances when an outcome (resolved / dead / transient)
+    // is recorded later.
     //
-    // Chunked at 50 placeholders to stay below D1's max-SQL-variables
-    // ceiling (200 placeholders trigger `too many SQL variables` per
-    // a 2026-05-04 production probe).
+    // Chunked at 50 placeholders for D1's max-SQL-variables ceiling.
     const PRE_STAMP_CHUNK = 50;
-    try {
-      for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
-        const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
-        const placeholders = chunk.map(() => '?').join(',');
-
-        // Both writes go in parallel. Promise.all (not allSettled):
-        // if either side throws, we want to BAIL cleanly rather than
-        // run DoH with a half-claimed batch. The reconciler can heal
-        // SET equality on its next tick, but it can't recover from
-        // attempts++ being applied without a matching cooldown stamp.
-        const writes: Promise<unknown>[] = [
-          env.DB.batch([
+    if (useQueueDb && queueDb) {
+      try {
+        for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
+          const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
+          const placeholders = chunk.map(() => '?').join(',');
+          await queueDb.prepare(`
+            UPDATE dns_queue SET attempted_resolve_at = datetime('now')
+            WHERE malicious_domain IN (${placeholders})
+          `).bind(...chunk).run();
+        }
+      } catch (err) {
+        // If the pre-stamp fails (D1 transient), bail out cleanly.
+        // Re-running the whole batch on the next tick is safe and
+        // preferable to running resolution against an unclaimed
+        // batch (which would re-select the same domains forever).
+        console.error('[dns-backfill] pre-stamp claim failed:', err);
+        return { ...empty, durationMs: Date.now() - start };
+      }
+    } else {
+      // Legacy threats-only path — only runs in dev environments
+      // without the DNS_QUEUE_DB binding.
+      try {
+        for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {
+          const chunk = domains.slice(i, i + PRE_STAMP_CHUNK);
+          const placeholders = chunk.map(() => '?').join(',');
+          await env.DB.batch([
             env.DB.prepare(`
               UPDATE threats INDEXED BY idx_threats_dns_pending_strict
               SET attempted_resolve_at = datetime('now')
@@ -197,26 +209,12 @@ export async function runDomainGeoBackfillBatch(
                 AND status = 'active'
                 AND COALESCE(enrichment_attempts, 0) < 8
             `).bind(...chunk),
-          ]),
-        ];
-        if (useQueueDb && queueDb) {
-          writes.push(
-            queueDb.prepare(`
-              UPDATE dns_queue SET attempted_resolve_at = datetime('now')
-              WHERE malicious_domain IN (${placeholders})
-            `).bind(...chunk).run()
-          );
+          ]);
         }
-        await Promise.all(writes);
+      } catch (err) {
+        console.error('[dns-backfill] pre-stamp claim failed:', err);
+        return { ...empty, durationMs: Date.now() - start };
       }
-    } catch (err) {
-      // If the pre-stamp fails (D1 transient on either side), bail
-      // out cleanly. Re-running the whole batch on the next tick is
-      // safe and preferable to running resolution against an
-      // unclaimed batch (which would re-select the same domains
-      // forever).
-      console.error('[dns-backfill] pre-stamp claim failed:', err);
-      return { ...empty, durationMs: Date.now() - start };
     }
 
     // ── Step 1: parallel DoH resolution, capped at CONCURRENCY ──
@@ -315,14 +313,46 @@ export async function runDomainGeoBackfillBatch(
 
     // ── Step 3a: graduate confirmed-dead domains ──
     // All 3 resolvers said NXDOMAIN or no A record — authoritative
-    // enough to stop trying. Push enrichment_attempts to the cap (8)
-    // on threats so other readers see "exhausted" status.
+    // enough to stop trying. Stamp enrichment_attempts to the cap
+    // (8) and last_outcome='dead' in dns_queue.
     //
-    // PR-3 dual-write: also DELETE dead domains from dns_queue. Their
-    // job in the queue is done — no point keeping rows that will
-    // never be drained again.
+    // PR-4 cleanup: switched from DELETE to UPDATE on dns_queue
+    // because the reconciler reads candidates from threats by
+    // existence (ip_address IS NULL). If we DELETE from the queue,
+    // the reconciler re-adds on its next tick — there's no threats-
+    // side state left to flag the row as graduated. Keeping the
+    // dead row with attempts=8 makes the reconciler's queueSet
+    // check return true → no re-add, while the dns-backfill SELECT
+    // filter (enrichment_attempts < 8) still excludes it from
+    // future draining. Cleanup of dead rows is a follow-up reaper.
+    //
+    // We no longer write threats.enrichment_attempts — dns_queue is
+    // the source of truth for state, and threats only holds the
+    // ip_address deliverable.
     let graduatedDead = 0;
-    if (confirmedDead.size > 0) {
+    if (confirmedDead.size > 0 && useQueueDb && queueDb) {
+      const DEAD_CHUNK = 50;
+      const deadArr = [...confirmedDead];
+      for (let i = 0; i < deadArr.length; i += DEAD_CHUNK) {
+        if (isOverCap()) { softCapHit = true; break; }
+        const chunk = deadArr.slice(i, i + DEAD_CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        try {
+          const r = await queueDb.prepare(`
+            UPDATE dns_queue
+            SET enrichment_attempts = 8,
+                last_outcome = 'dead'
+            WHERE malicious_domain IN (${placeholders})
+          `).bind(...chunk).run();
+          graduatedDead += r.meta?.changes ?? 0;
+        } catch (err) {
+          console.error('[dns-backfill] dead-domain graduation failed:', err);
+        }
+      }
+    } else if (confirmedDead.size > 0) {
+      // Legacy threats-only path. Threats.enrichment_attempts=8 is
+      // the historical exhausted marker for environments without
+      // DNS_QUEUE_DB bound.
       const DEAD_CHUNK = 50;
       const deadArr = [...confirmedDead];
       for (let i = 0; i < deadArr.length; i += DEAD_CHUNK) {
@@ -338,52 +368,55 @@ export async function runDomainGeoBackfillBatch(
           `).bind(...chunk).run();
           graduatedDead += r.meta?.changes ?? 0;
         } catch (err) {
-          console.error('[dns-backfill] dead-domain graduation failed:', err);
-        }
-
-        if (useQueueDb && queueDb) {
-          try {
-            await queueDb.prepare(
-              `DELETE FROM dns_queue WHERE malicious_domain IN (${placeholders})`
-            ).bind(...chunk).run();
-          } catch (err) {
-            console.error('[dns-backfill] dns_queue drain (dead) failed:', err);
-          }
+          console.error('[dns-backfill] dead-domain graduation (legacy) failed:', err);
         }
       }
     }
 
     // ── Step 3b: bump enrichment_attempts for transient failures ──
     // For domains that hit a transient failure (timeout, SERVFAIL,
-    // resolver disagreement). Increments enrichment_attempts by 1 on
-    // both threats and dns_queue so the cap-at-8 filter eventually
-    // exits them.
+    // resolver disagreement). Increments enrichment_attempts by 1
+    // in dns_queue so the cap-at-8 filter eventually exits them.
     //
     // attempted_resolve_at was advanced in Step 0; we don't re-stamp.
     // Skip resolved domains (Step 2 wrote ip_address) and dead ones
-    // (Step 3a stamped attempts=8) — both are now ineligible. We also
-    // gate on enrichment_attempts < 8 so a domain can't be bumped to
-    // 9; that would skew per-feed retry-cap diagnostics.
+    // (Step 3a deleted from queue) — both are now ineligible.
     //
-    // PR-3 dual-write: bump attempts on BOTH tables in parallel.
+    // PR-4 cleanup: removed the threats-side UPDATE that was part
+    // of PR-3's dual-write transition. dns_queue is the source of
+    // truth for attempts state.
     const transient: string[] = [];
     for (const d of attempted) {
       if (!domainToIp.has(d) && !confirmedDead.has(d)) transient.push(d);
     }
-    if (transient.length > 0) {
+    if (transient.length > 0 && useQueueDb && queueDb) {
       const STAMP_CHUNK = 50;
       for (let i = 0; i < transient.length; i += STAMP_CHUNK) {
         if (isOverCap()) { softCapHit = true; break; }
         const chunk = transient.slice(i, i + STAMP_CHUNK);
         const placeholders = chunk.map(() => '?').join(',');
-
-        // Both writes in parallel. allSettled here: an attempts++
-        // failure must not break the loop entirely — we just log and
-        // continue. Drift between threats.attempts and
-        // dns_queue.attempts is small and self-healing (the SELECT
-        // cap-at-8 still applies on whichever side advances).
-        const writes: Promise<unknown>[] = [
-          env.DB.batch([
+        try {
+          await queueDb.prepare(`
+            UPDATE dns_queue
+            SET enrichment_attempts = enrichment_attempts + 1
+            WHERE malicious_domain IN (${placeholders})
+              AND enrichment_attempts < 8
+          `).bind(...chunk).run();
+        } catch (err) {
+          console.error('[dns-backfill] transient bump failed:', err);
+        }
+      }
+    } else if (transient.length > 0) {
+      // Legacy threats-only path — dev environments without
+      // DNS_QUEUE_DB. Keeps the original Phase-4 split for cost-safe
+      // partial-index usage.
+      const STAMP_CHUNK = 50;
+      for (let i = 0; i < transient.length; i += STAMP_CHUNK) {
+        if (isOverCap()) { softCapHit = true; break; }
+        const chunk = transient.slice(i, i + STAMP_CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        try {
+          await env.DB.batch([
             env.DB.prepare(`
               UPDATE threats INDEXED BY idx_threats_dns_pending_strict
               SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
@@ -400,23 +433,9 @@ export async function runDomainGeoBackfillBatch(
                 AND status = 'active'
                 AND COALESCE(enrichment_attempts, 0) < 8
             `).bind(...chunk),
-          ]),
-        ];
-        if (useQueueDb && queueDb) {
-          writes.push(
-            queueDb.prepare(`
-              UPDATE dns_queue
-              SET enrichment_attempts = enrichment_attempts + 1
-              WHERE malicious_domain IN (${placeholders})
-                AND enrichment_attempts < 8
-            `).bind(...chunk).run()
-          );
-        }
-        const results = await Promise.allSettled(writes);
-        for (const r of results) {
-          if (r.status === 'rejected') {
-            console.error('[dns-backfill] transient bump partial failure:', r.reason);
-          }
+          ]);
+        } catch (err) {
+          console.error('[dns-backfill] transient bump (legacy) failed:', err);
         }
       }
     }
