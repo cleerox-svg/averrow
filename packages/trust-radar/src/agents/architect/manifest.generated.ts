@@ -300,7 +300,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 2334,
-      "last_modified": "2026-05-18T15:20:18.691Z"
+      "last_modified": "2026-05-18T20:34:27.936Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -1072,8 +1072,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/trust-radar/src/feeds/taxii.ts",
       "source_type": "api",
       "schedule": null,
-      "loc": 223,
-      "last_modified": "2026-05-15T17:55:10.333Z"
+      "loc": 296,
+      "last_modified": "2026-05-18T20:35:57.888Z"
     },
     {
       "name": "telegram",
