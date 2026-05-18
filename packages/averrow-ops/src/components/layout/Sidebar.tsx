@@ -5,7 +5,7 @@ import {
   Gavel, Bell, Inbox, Mail, Target, Siren, Radar,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
   Smartphone, EyeOff, BellRing, BarChart3, DollarSign,
-  Sun, Moon, Laptop,
+  Sun, Moon, Laptop, PanelLeftClose, PanelLeftOpen, LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -35,8 +35,16 @@ interface NavSection {
   items: NavItem[];
 }
 
+export type SidebarMode = 'expanded' | 'rail';
+
 interface SidebarProps {
   onNavigate?: () => void;
+  // Rail mode collapses to icons only — used by the mobile-vertical
+  // drawer. Defaults to 'expanded' for the desktop sidebar.
+  mode?: SidebarMode;
+  // When provided, the sidebar renders an inline toggle (rail ↔ expanded)
+  // in its header. Used by the drawer to flip its own width.
+  onToggleMode?: () => void;
 }
 
 const SIDEBAR_CONTAINER_STYLE: React.CSSProperties = {
@@ -92,11 +100,12 @@ const NAV_ACTIVE_STYLE: React.CSSProperties = {
   textDecoration: 'none',
 };
 
-export function Sidebar({ onNavigate }: SidebarProps) {
+export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: SidebarProps) {
   const { user, logout, isSuperAdmin, isBrandAdmin } = useAuth();
   const [alertCount, setAlertCount] = useState(0);
   const { path: observatoryPath } = useObservatoryVersion();
   const location = useLocation();
+  const isRail = mode === 'rail';
 
   useEffect(() => {
     const fetchAlerts = () => {
@@ -165,47 +174,90 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const NAV_SECTIONS = OPS_SECTIONS;
 
   return (
-    <aside className="w-56 h-full flex flex-col" style={SIDEBAR_CONTAINER_STYLE}>
+    <aside
+      className="h-full flex flex-col"
+      style={{
+        ...SIDEBAR_CONTAINER_STYLE,
+        width: isRail ? 64 : 224,
+        transition: 'width 0.18s ease',
+      }}
+    >
       <div
-        className="px-4 pt-4"
         style={{
           borderBottom: '1px solid var(--border-base)',
           paddingBottom: 16,
           marginBottom: 8,
+          padding: isRail ? '16px 8px 16px' : '16px 16px 16px',
           display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
+          alignItems: 'center',
+          justifyContent: isRail ? 'center' : 'space-between',
           gap: 8,
         }}
       >
-        <AverrowLogo />
-        <ThemeCycleButton />
+        {!isRail && <AverrowLogo />}
+        {onToggleMode ? (
+          <button
+            type="button"
+            onClick={onToggleMode}
+            aria-label={isRail ? 'Expand sidebar' : 'Collapse to icons'}
+            title={isRail ? 'Expand sidebar' : 'Collapse to icons'}
+            style={{
+              padding: 6,
+              borderRadius: 6,
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-tertiary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {isRail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+        ) : (
+          !isRail && <ThemeCycleButton />
+        )}
       </div>
       <nav className="flex-1 overflow-y-auto py-2">
-        {NAV_SECTIONS.map((section) => (
+        {NAV_SECTIONS.map((section, idx) => (
           <div key={section.label}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 16px 6px' }}>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontFamily: 'monospace',
-                  letterSpacing: '0.22em',
-                  color: 'var(--text-tertiary)',
-                  textTransform: 'uppercase',
-                  whiteSpace: 'nowrap',
-                  fontWeight: 700,
-                }}
-              >
-                {section.label}
-              </span>
-              <div
-                style={{
-                  flex: 1,
-                  height: 1,
-                  background: 'linear-gradient(90deg, var(--border-base), transparent)',
-                }}
-              />
-            </div>
+            {isRail ? (
+              // Rail mode: replace the label with a thin divider so
+              // section grouping is still visible without the text.
+              idx > 0 && (
+                <div
+                  style={{
+                    height: 1,
+                    margin: '10px 12px',
+                    background: 'var(--border-base)',
+                  }}
+                />
+              )
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 16px 6px' }}>
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontFamily: 'monospace',
+                    letterSpacing: '0.22em',
+                    color: 'var(--text-tertiary)',
+                    textTransform: 'uppercase',
+                    whiteSpace: 'nowrap',
+                    fontWeight: 700,
+                  }}
+                >
+                  {section.label}
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 1,
+                    background: 'linear-gradient(90deg, var(--border-base), transparent)',
+                  }}
+                />
+              </div>
+            )}
             {section.items.map(item => {
               const Icon = item.icon;
               const prefixActive = item.matchPrefixes?.some(p =>
@@ -217,30 +269,65 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               // Every other entry should stay active on its child URLs
               // (e.g. `/admin/incidents/:id`, `/brands/:id`) — H2 audit fix.
               const exactMatch = item.path === '/' || item.exact === true;
+              const railItemStyle: React.CSSProperties = isRail ? {
+                justifyContent: 'center',
+                padding: '10px 0',
+                margin: '2px 8px',
+                gap: 0,
+                position: 'relative',
+              } : {};
               return (
                 <NavLink
                   key={item.label}
                   to={item.path}
                   onClick={onNavigate}
                   end={exactMatch}
-                  style={({ isActive }) => ((isActive || prefixActive) ? NAV_ACTIVE_STYLE : NAV_INACTIVE_STYLE)}
+                  title={isRail ? item.label : undefined}
+                  aria-label={isRail ? item.label : undefined}
+                  style={({ isActive }) => ({
+                    ...((isActive || prefixActive) ? NAV_ACTIVE_STYLE : NAV_INACTIVE_STYLE),
+                    ...railItemStyle,
+                  })}
                 >
                   {({ isActive }) => {
                     const active = isActive || !!prefixActive;
                     return (
                       <>
                         <Icon
-                          size={16}
+                          size={isRail ? 18 : 16}
                           style={{
                             flexShrink: 0,
                             color: active ? '#E5A832' : 'var(--text-tertiary)',
                             filter: active ? 'drop-shadow(0 0 4px rgba(229,168,50,0.60))' : undefined,
                           }}
                         />
-                        <span>{item.label}</span>
-                        {item.badge !== undefined && item.badge > 0 && (
+                        {!isRail && <span>{item.label}</span>}
+                        {!isRail && item.badge !== undefined && item.badge > 0 && (
                           <span className="ml-auto">
                             <Badge severity="critical" label={String(item.badge)} size="xs" />
+                          </span>
+                        )}
+                        {isRail && item.badge !== undefined && item.badge > 0 && (
+                          <span
+                            style={{
+                              position: 'absolute',
+                              top: 4,
+                              right: 6,
+                              minWidth: 14,
+                              height: 14,
+                              padding: '0 4px',
+                              borderRadius: 99,
+                              background: 'var(--sev-critical)',
+                              color: '#fff',
+                              fontSize: 9,
+                              fontWeight: 800,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              lineHeight: 1,
+                            }}
+                          >
+                            {item.badge > 99 ? '99+' : item.badge}
                           </span>
                         )}
                       </>
@@ -255,34 +342,68 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       <div
         style={{
           borderTop: '1px solid var(--border-base)',
-          padding: '12px 16px',
+          padding: isRail ? '10px 0' : '12px 16px',
           marginTop: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: isRail ? 'center' : 'stretch',
+          gap: isRail ? 8 : 0,
         }}
       >
-        {isBrandAdmin && user?.organization && (
+        {!isRail && isBrandAdmin && user?.organization && (
           <div className="text-[10px] font-mono uppercase tracking-wider mb-1" style={{ color: 'var(--amber)', opacity: 0.7 }}>
             {user.organization.name}
           </div>
         )}
-        <div
-          className="truncate"
-          style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}
-        >
-          {user?.email}
-        </div>
-        <button
-          onClick={logout}
-          className="mt-2 hover:text-accent transition-colors"
-          style={{
-            fontSize: 10,
-            color: 'var(--text-muted)',
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-            letterSpacing: '0.12em',
-          }}
-        >
-          LOGOUT
-        </button>
+        {!isRail && (
+          <div
+            className="truncate"
+            style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}
+          >
+            {user?.email}
+          </div>
+        )}
+        {isRail ? (
+          <>
+            <ThemeCycleButton />
+            <button
+              onClick={logout}
+              aria-label="Logout"
+              title="Logout"
+              style={{
+                padding: 6,
+                borderRadius: 6,
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-tertiary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <LogOut size={14} />
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={logout}
+            className="mt-2 hover:text-accent transition-colors"
+            style={{
+              fontSize: 10,
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              fontFamily: 'monospace',
+              letterSpacing: '0.12em',
+              textAlign: 'left',
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+            }}
+          >
+            LOGOUT
+          </button>
+        )}
       </div>
     </aside>
   );

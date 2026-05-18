@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar }        from './Sidebar';
 import { TopBar }         from './TopBar';
 import { MobileNav }      from '@/layouts/MobileNav';
+import { MobileSidebarDrawer } from '@/layouts/MobileSidebarDrawer';
 import { DeepBackground } from '@/components/ui/DeepBackground';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useBreakpoint }  from '@/design-system/hooks';
@@ -10,13 +12,15 @@ import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
 
 export function Shell() {
   const location     = useLocation();
-  const { isMobile } = useBreakpoint();
+  const { isMobile, isMobileVertical, isMobileHorizontal } = useBreakpoint();
   const isFullScreen = location.pathname.includes('/observatory');
   const isHome       = location.pathname === '/';
   // Home renders its own header with bell + profile pill (HomeUnified),
-  // so the global TopBar would just duplicate those affordances. Hide
-  // it on Home for everyone, mobile or not.
-  const hideTopBar   = isHome;
+  // so the global TopBar would just duplicate those affordances on
+  // desktop and landscape phones. Mobile vertical is the exception —
+  // the hamburger lives in TopBar, so Home needs it visible too.
+  const hideTopBar   = isHome && !isMobileVertical;
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div
@@ -33,14 +37,18 @@ export function Shell() {
       {!isMobile && <Sidebar />}
 
       <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden', minWidth:0 }}>
-        {!hideTopBar && <TopBar />}
+        {!hideTopBar && (
+          <TopBar onMenuClick={isMobileVertical ? () => setDrawerOpen(true) : undefined} />
+        )}
 
         <main
           style={{
             flex:       1,
             overflowY:  isFullScreen ? 'hidden' : 'auto',
             overflowX:  'hidden',
-            paddingBottom: isMobile && !isFullScreen ? 80 : 0,
+            // Mobile vertical no longer has a bottom nav — drop the 80px
+            // reservation. Mobile horizontal still uses the bottom tabs.
+            paddingBottom: isMobileHorizontal && !isFullScreen ? 80 : 0,
             // Enable momentum scrolling on iOS
             WebkitOverflowScrolling: 'touch',
           }}
@@ -70,7 +78,10 @@ export function Shell() {
         </main>
       </div>
 
-      {isMobile && <MobileNav />}
+      {isMobileHorizontal && <MobileNav />}
+      {isMobileVertical && (
+        <MobileSidebarDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      )}
 
       {/* Auto-prompts biometric setup on first login when the user has
           zero passkeys + WebAuthn is supported. Self-gates internally
