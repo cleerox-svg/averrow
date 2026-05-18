@@ -166,10 +166,6 @@ async function sendViaResend(
 const FONT_BODY = `'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`;
 const FONT_MONO = `'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace`;
 
-// PR-BB: PNG inlined as base64 to avoid Gmail's image-proxy
-// intermittently failing to load the hosted asset. Regenerate with:
-//   base64 -w0 packages/trust-radar/public/logo-email-mark.png
-const LOGO_DATA_URI = `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`;
 
 interface BrandLayoutOptions {
   /** Hex colour for the 4px accent stripe under the header. Default amber. */
@@ -184,38 +180,35 @@ interface BrandLayoutOptions {
 
 function brandLayout(opts: BrandLayoutOptions): string {
   const accent = opts.accent ?? "#E5A832";
-  // Logo: inline data: URI of the mark-only Avro Arrow.
+  // Logo: hosted PNG of the platform favicon, mark-only.
   //
-  // PR-BB (2026-05-18): previous treatment hosted the PNG at
-  // https://averrow.com/logo-email-mark.png. Customer report
-  // 2026-05-18: ack email rendered the logo correctly but the
-  // determination email (sent ~35 min later to the same address)
-  // showed a broken-image placeholder. The PNG URL itself returns
-  // 200 OK with the right content-type, so the failure was on
-  // Gmail's image-proxy side — most likely intermittent revalidation
-  // failures due to the asset's `cache-control: max-age=0,
-  // must-revalidate` header. Once the proxy fails a revalidation,
-  // it can't display anything (no fallback to stale).
+  // PR-BF (2026-05-18): reverted PR-BB's `data:image/png;base64,...`
+  // approach. Gmail mobile (Android in particular) refuses to render
+  // <img src="data:..."> for security reasons — the broken-image
+  // placeholder customers reported was the data URI being stripped
+  // by the mobile client. Back to a hosted URL so Gmail's image
+  // proxy fetches it normally.
   //
-  // Embedding as a data: URI eliminates the proxy entirely. Adds
-  // ~3.3KB per email (base64 of the 2.5KB PNG). Worth it: this is
-  // a customer-facing email and a broken logo undermines the trust
-  // signal the whole abuse-triage flow exists to deliver.
+  // To fix the OTHER half — the original PR-BB symptom (Gmail proxy
+  // intermittently failing to load the hosted asset due to
+  // revalidation misses on the default `cache-control: max-age=0,
+  // must-revalidate` header) — PR-BF added a per-path
+  //   Cache-Control: public, max-age=31536000, immutable
+  // rule in public/_headers for /logo-email*.png. Long cache means
+  // the proxy fetches once, caches for a year, never re-validates.
+  // Exactly the right behaviour for a brandmark that essentially
+  // never changes (and would get a new filename if it did).
   //
-  // To regenerate after editing the source asset:
-  //   base64 -w0 packages/trust-radar/public/logo-email-mark.png
-  // Then paste the result into LOGO_DATA_URI below.
-  //
-  // Gmail Android dark mode (verified 2026-05-17 in production)
-  // applies per-image color inversion when the IMG is detected as
-  // "dark with some color content" — even when the surrounding TD
-  // background is locked dark by our `.av-brand-header` rule. The
-  // mark-only PNG (red arrow on transparent, no dark pixels) survives
-  // that filter — verified rendering in production for the ack email.
+  // The [data-ogsc] / [data-ogsb] counter-invert CSS below (also
+  // from PR-BB) is preserved: when the image DOES load on Gmail
+  // Android dark mode, the CSS counter-inverts the auto-flip so
+  // the logo's designed crimson red survives. Harmless when no
+  // dark-mode marker attribute is present.
   //
   // Source asset: public/favicon-mark.svg + scripts/generate-logo-assets.py
-  // → public/logo-email-mark.png
-  const logoCell = `<img class="av-brand-logo" src="data:image/png;base64,${LOGO_DATA_URI}" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
+  // → public/logo-email-mark.png (served at the URL below with the
+  //   PR-BF long-cache header from _headers).
+  const logoCell = `<img class="av-brand-logo" src="https://averrow.com/logo-email-mark.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
