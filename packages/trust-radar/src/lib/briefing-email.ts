@@ -1,32 +1,53 @@
 /**
- * Briefing Email Service — comprehensive 12-section operations briefing.
- * Sends styled HTML via Resend API.
+ * Daily Platform Briefing email — comprehensive operations report shaped
+ * for an executive inbox, not a logs dump.
+ *
+ * Visual structure: wrapped by `email-layout.emailShell()` (canonical brand
+ * header + footer with logo). Body is a sequence of glass-style cards on
+ * the Deep Space background, each card hosting one logical section.
+ *
+ * Sends via Resend; failure path caches the full body in KV under
+ * `briefing:resend_last_error` so the diagnostics endpoint can surface
+ * the actionable failure (rotate key vs verify domain vs rate-limit).
  */
 import { logger } from "./logger";
 import type { Env } from "../types";
 import type { ComprehensiveBriefing } from "../handlers/briefing";
+import { emailShell, escapeHtml, headerStatusBadge } from "./email-layout";
 
 const RECIPIENT_DEFAULT = "claude.leroux@averrow.com";
-const FROM_ADDRESS = "Averrow Platform <briefing@averrow.com>";
+const FROM_ADDRESS = "Averrow Intelligence <briefing@averrow.com>";
 
-// ─── Resend API ────────────────────────────────────────────────
+// ─── Tokens (mirror the SPA design system) ─────────────────────
+
+const COLOR = {
+  bgCard:     "#111A2C",
+  bgCardAlt:  "#0D1626",
+  border:     "rgba(255,255,255,0.07)",
+  borderHard: "rgba(255,255,255,0.10)",
+  text:       "#E8ECF2",
+  textDim:    "#9AAABF",
+  textMuted:  "#6B7A90",
+  amber:      "#E5A832",
+  red:        "#F87171",
+  orange:     "#FB923C",
+  yellow:     "#FBBF24",
+  blue:       "#60A5FA",
+  green:      "#34D399",
+} as const;
+
+const FONT_MONO = "'SF Mono','Menlo',Consolas,'Courier New',monospace";
+
+// ─── Resend transport ───────────────────────────────────────────
 
 interface ResendResponse {
   id?: string;
-  /** Resend errors include a `name` discriminator like 'invalid_api_key',
-   *  'validation_error', 'rate_limit_exceeded', 'domain_not_verified'. */
   name?: string;
   error?: string;
   message?: string;
   statusCode?: number;
 }
 
-/**
- * Last-error breadcrumb stored under this KV key on failure so the next
- * successful tick (or a manual diagnostic call) can read the full Resend
- * response body, not just the truncated message that gets persisted in
- * threat_briefings.report_data.email_error.
- */
 const RESEND_LAST_ERROR_KV = 'briefing:resend_last_error';
 
 async function sendViaResend(
@@ -38,39 +59,20 @@ async function sendViaResend(
 ): Promise<{ ok: boolean; id?: string; error?: string; statusCode?: number; errorName?: string }> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html }),
   });
-
-  // Read raw body once so we can parse + cache the full diagnostic on failure
-  // even if Resend returns non-JSON HTML for 5xx (rare but happens on outages).
   const rawBody = await res.text();
   let body: ResendResponse;
-  try {
-    body = JSON.parse(rawBody) as ResendResponse;
-  } catch {
-    body = { message: `Non-JSON response: ${rawBody.slice(0, 240)}` };
-  }
+  try { body = JSON.parse(rawBody) as ResendResponse; }
+  catch { body = { message: `Non-JSON response: ${rawBody.slice(0, 240)}` }; }
 
   if (!res.ok) {
-    // Compose a useful single-line error: "<HTTP> <name>: <message>".
-    // Resend returns errors like { name: 'invalid_api_key', message: 'API key is invalid' }
-    // — surfacing both lets the operator distinguish "rotate the key" from
-    // "verify the sending domain" from "you hit the rate limit." Previously
-    // only `message` was persisted, which collapsed all four scenarios into
-    // the same opaque "API key is invalid" / "Domain not verified" string.
     const composed = [
       `HTTP ${res.status}`,
       body.name ?? null,
       body.message ?? body.error ?? null,
     ].filter(Boolean).join(' / ');
-
-    // Cache the full body in KV (TTL 7 days) so the next call to
-    // /api/internal/platform-diagnostics can pick it up. KV failures are
-    // non-fatal — caching is a diagnostic aid, not the alert path.
     try {
       await env.CACHE.put(
         RESEND_LAST_ERROR_KV,
@@ -85,18 +87,12 @@ async function sendViaResend(
         { expirationTtl: 7 * 24 * 60 * 60 },
       );
     } catch { /* non-fatal */ }
-
-    return {
-      ok: false,
-      error: composed,
-      statusCode: res.status,
-      errorName: body.name,
-    };
+    return { ok: false, error: composed, statusCode: res.status, errorName: body.name };
   }
   return { ok: true, id: body.id };
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
+// ─── Format helpers ─────────────────────────────────────────────
 
 function fmt(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString("en-US");
@@ -107,516 +103,419 @@ function pct(hits: number, checked: number): string {
   return ((hits / checked) * 100).toFixed(1) + "%";
 }
 
-function dayOverDayPct(today: number, yesterday: number): string {
+function dodPct(today: number, yesterday: number): string {
   if (yesterday === 0) return today > 0 ? "+100%" : "0%";
   const change = ((today - yesterday) / yesterday) * 100;
   const sign = change >= 0 ? "+" : "";
   return `${sign}${change.toFixed(0)}%`;
 }
 
-function dayOverDayArrow(today: number, yesterday: number): string {
-  if (today > yesterday) return " &#9650;";
-  if (today < yesterday) return " &#9660;";
-  return "";
-}
-
-function statusBadge(status: string): string {
-  const isOp = status === "OPERATIONAL";
-  return `<span style="display:inline-block;padding:4px 14px;border-radius:6px;background:${isOp ? "#10b981" : "#f59e0b"};color:${isOp ? "#ffffff" : "#1a1a1a"};font-weight:700;font-size:12px;letter-spacing:1px;font-family:monospace;">[${status}]</span>`;
-}
-
-function sectionHeader(text: string): string {
-  return `<tr><td style="padding:20px 24px 8px;background:#0a0f1a;">
-    <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#E5A832;text-transform:uppercase;font-family:monospace;">${text}</div>
-  </td></tr>`;
-}
-
-function cardStart(): string {
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #1e293b;border-radius:8px;overflow:hidden;background:#111827;">`;
-}
-
-function cardEnd(): string {
-  return `</table>`;
-}
-
-function tableRow(
-  cells: Array<{
-    text: string;
-    align?: string;
-    color?: string;
-    mono?: boolean;
-    bold?: boolean;
-    width?: string;
-  }>,
-  bgOverride?: string,
-  borderLeft?: string,
-): string {
-  const bg = bgOverride ? `background:${bgOverride};` : "";
-  const bl = borderLeft ? `border-left:3px solid ${borderLeft};` : "";
-  return `<tr style="${bg}${bl}">${cells
-    .map(
-      (c) =>
-        `<td style="padding:8px 14px;border-bottom:1px solid #1e293b;color:${c.color ?? "#e2e8f0"};font-size:12px;text-align:${c.align ?? "left"};${c.mono ? "font-family:monospace;" : ""}${c.bold ? "font-weight:700;" : ""}${c.width ? `width:${c.width};` : ""}">${c.text}</td>`,
-    )
-    .join("")}</tr>`;
-}
-
-function headerRow(
-  cells: Array<{ text: string; align?: string; width?: string }>,
-): string {
-  return `<tr style="background:#0f172a;">${cells
-    .map(
-      (c) =>
-        `<td style="padding:8px 14px;border-bottom:1px solid #1e293b;color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;font-weight:600;text-align:${c.align ?? "left"};${c.width ? `width:${c.width};` : ""}">${c.text}</td>`,
-    )
-    .join("")}</tr>`;
-}
-
-function warningRow(text: string): string {
-  return `<tr><td style="padding:8px 14px;border-bottom:1px solid #1e293b;background:#1c1410;border-left:3px solid #f59e0b;color:#f59e0b;font-size:12px;font-family:monospace;">&#9888; ${text}</td></tr>`;
-}
-
-function okRow(text: string): string {
-  return `<tr><td style="padding:8px 14px;border-bottom:1px solid #1e293b;color:#10b981;font-size:12px;font-family:monospace;">&#10003; ${text}</td></tr>`;
+function dodArrow(today: number, yesterday: number): string {
+  if (today > yesterday) return "▲";
+  if (today < yesterday) return "▼";
+  return "·";
 }
 
 function severityColor(sev: string): string {
   switch (sev) {
-    case "critical":
-      return "#f87171";
-    case "high":
-      return "#fb923c";
-    case "medium":
-      return "#fbbf24";
-    case "low":
-      return "#78A0C8";
-    default:
-      return "#4ade80";
+    case "critical": return COLOR.red;
+    case "high":     return COLOR.orange;
+    case "medium":   return COLOR.yellow;
+    case "low":      return COLOR.blue;
+    default:         return COLOR.green;
   }
 }
 
-function enrichmentStatus(checked: number): string {
-  if (checked > 0) return '<span style="color:#10b981;">&#10003;</span>';
-  return '<span style="color:#f59e0b;">&#9888;</span>';
+// ─── Building blocks ────────────────────────────────────────────
+
+/** Section: title strip + card body, with consistent spacing. */
+function section(title: string, bodyHtml: string, opts?: { eyebrow?: string }): string {
+  const eyebrow = opts?.eyebrow
+    ? `<div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">${escapeHtml(opts.eyebrow)}</div>`
+    : "";
+  return `
+  <tr><td style="padding:22px 28px 6px;">
+    ${eyebrow}
+    <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};">${escapeHtml(title)}</div>
+  </td></tr>
+  <tr><td style="padding:0 28px 4px;">${bodyHtml}</td></tr>`;
 }
 
-// ─── Parse Flight Controller summary ─────────────────────────
-
-function parseFlightControllerSummary(
-  summary: string | null,
-): Array<{ queue: string; backlog: string }> {
-  if (!summary) return [];
-  const rows: Array<{ queue: string; backlog: string }> = [];
-  // Parse patterns like "Cartographer: 124" or "queue_name backlog: 15403"
-  const lines = summary.split(/[,;\n]+/);
-  for (const line of lines) {
-    const match = line.match(
-      /([A-Za-z_\s]+?)[\s:]+(\d[\d,]*)/,
-    );
-    if (match) {
-      rows.push({ queue: match[1]!.trim(), backlog: match[2]!.trim() });
-    }
-  }
-  // Look for budget pattern
-  const budgetMatch = summary.match(
-    /\$[\d.]+\s*\/\s*\$[\d.]+/,
-  );
-  if (budgetMatch) {
-    rows.push({ queue: "Budget", backlog: budgetMatch[0] });
-  }
-  return rows;
+/** Card: rounded container with hairline border. */
+function card(innerHtml: string, opts?: { accent?: string }): string {
+  const accentRule = opts?.accent
+    ? `border-left:3px solid ${opts.accent};`
+    : "";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOR.bgCard};border:1px solid ${COLOR.border};${accentRule}border-radius:10px;overflow:hidden;">${innerHtml}</table>`;
 }
 
-// ─── Build HTML ──────────────────────────────────────────────
+/** Stat tile (used in the 4-up overview grid). */
+function statTile(value: string, label: string, color: string = COLOR.amber): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOR.bgCard};border:1px solid ${COLOR.border};border-radius:10px;">
+    <tr><td style="padding:14px 12px;text-align:center;">
+      <div style="font-family:${FONT_MONO};font-size:22px;font-weight:800;color:${color};line-height:1.1;letter-spacing:-0.02em;">${value}</div>
+      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.18em;color:${COLOR.textMuted};text-transform:uppercase;margin-top:6px;">${escapeHtml(label)}</div>
+    </td></tr>
+  </table>`;
+}
 
-function buildBriefingHtml(
-  b: ComprehensiveBriefing,
-  title: string,
-): string {
+/** Table row builder — keeps row spacing + colour consistent. */
+function tr(cells: Array<{ html: string; align?: "left" | "right" | "center"; width?: string; color?: string; mono?: boolean; bold?: boolean }>): string {
+  return `<tr>${cells.map(c => `<td style="padding:10px 14px;border-top:1px solid ${COLOR.border};color:${c.color ?? COLOR.text};font-size:12px;text-align:${c.align ?? "left"};${c.mono ? `font-family:${FONT_MONO};` : ""}${c.bold ? "font-weight:700;" : ""}${c.width ? `width:${c.width};` : ""}">${c.html}</td>`).join("")}</tr>`;
+}
+
+function thead(cells: Array<{ text: string; align?: "left" | "right" | "center"; width?: string }>): string {
+  return `<tr>${cells.map(c => `<td style="padding:10px 14px;background:${COLOR.bgCardAlt};color:${COLOR.textDim};font-family:${FONT_MONO};font-size:9px;letter-spacing:0.18em;font-weight:600;text-transform:uppercase;text-align:${c.align ?? "left"};${c.width ? `width:${c.width};` : ""}">${escapeHtml(c.text)}</td>`).join("")}</tr>`;
+}
+
+function statusDot(color: string): string {
+  return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${color};box-shadow:0 0 6px ${color}80;vertical-align:middle;"></span>`;
+}
+
+function pillBadge(label: string, color: string): string {
+  return `<span style="display:inline-block;padding:3px 9px;border-radius:999px;border:1px solid ${color}55;background:${color}18;color:${color};font-family:${FONT_MONO};font-size:9px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">${escapeHtml(label)}</span>`;
+}
+
+// ─── Compose the body ───────────────────────────────────────────
+
+function buildBriefingBody(b: ComprehensiveBriefing): string {
   const p = b.platformOverview;
   const dateStr = new Date(b.generatedAt).toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
-  const timeStr = new Date(b.generatedAt).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-    hour12: false,
-  });
-  const dodPct = dayOverDayPct(p.todayCount, p.yesterdayCount);
-  const dodArrow = dayOverDayArrow(p.todayCount, p.yesterdayCount);
-  const total12h = b.newThreats.bySeverity.reduce(
-    (s, r) => s + Number(r.count),
-    0,
-  );
+  const dodStr = dodPct(p.todayCount, p.yesterdayCount);
+  const dodSym = dodArrow(p.todayCount, p.yesterdayCount);
+  const dodColor = p.todayCount > p.yesterdayCount ? COLOR.red
+                 : p.todayCount < p.yesterdayCount ? COLOR.green
+                 : COLOR.textDim;
+  const total12h = b.newThreats.bySeverity.reduce((s, r) => s + Number(r.count), 0);
 
-  // Feed production totals
-  const totalFeedRuns = b.feedProduction.reduce(
-    (s, f) => s + Number(f.runs),
-    0,
-  );
-  const totalIngested = b.feedProduction.reduce(
-    (s, f) => s + Number(f.ingested),
-    0,
-  );
-
-  // Feed health summary
+  const totalFeedRuns = b.feedProduction.reduce((s, f) => s + Number(f.runs), 0);
+  const totalIngested = b.feedProduction.reduce((s, f) => s + Number(f.ingested), 0);
   const healthCounts: Record<string, number> = {};
-  for (const h of b.feedHealth.summary) {
-    healthCounts[h.health_status] = Number(h.count);
-  }
+  for (const h of b.feedHealth.summary) healthCounts[h.health_status] = Number(h.count);
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<!-- PR-BA: declare dark-mode awareness so Gmail mobile / iOS Mail
-     don't auto-invert our intentionally-dark brand palette. -->
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
-<style>:root{color-scheme:light dark;supported-color-schemes:light dark;}</style>
-</head>
-<body style="margin:0;padding:0;background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#080C14;">
-<tr><td align="center" style="padding:24px 16px;">
-<table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#0a0f1a;">
+  // 1) Title + date
+  const titleBlock = `
+  <tr><td style="padding:24px 28px 6px;">
+    <div style="font-family:${FONT_MONO};font-size:10px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;">Daily Operations Briefing</div>
+    <div style="font-size:20px;font-weight:700;color:${COLOR.text};margin-top:6px;line-height:1.25;">${escapeHtml(dateStr)}</div>
+    <div style="font-size:12px;color:${COLOR.textDim};margin-top:4px;">${fmt(p.brandsMonitored)} brands monitored · ${fmt(p.brandsClassified)} classified</div>
+  </td></tr>`;
 
-<!-- ═══ HEADER ═══ -->
-<tr><td style="padding:28px 24px 16px;background:#0a0f1a;border-radius:12px 12px 0 0;border-bottom:1px solid #1e293b;">
-  <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td>
-      <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#E5A832;text-transform:uppercase;font-family:monospace;">AVERROW INTELLIGENCE</div>
-      <div style="font-size:18px;font-weight:700;color:#e2e8f0;margin-top:6px;">${title}</div>
-      <div style="font-size:12px;color:#78A0C8;margin-top:4px;">${dateStr}</div>
-    </td>
-    <td style="text-align:right;vertical-align:top;">${statusBadge(b.statusBadge)}</td>
-  </tr></table>
-</td></tr>
-
-${b.geopoliticalCampaigns.length > 0 ? b.geopoliticalCampaigns.map(gc => {
-  const actors: string[] = JSON.parse(gc.threat_actors || '[]');
-  const priorityColor = gc.briefing_priority === 'critical' ? '#C83C3C' : '#fb923c';
-  return `<!-- ═══ GEOPOLITICAL ALERT ═══ -->
-<tr><td style="padding:12px 24px;background:#0a0f1a;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid #C83C3C;border-radius:8px;overflow:hidden;background:#1a0f0f;">
-    <tr><td style="padding:14px 16px;border-bottom:1px solid #3d1515;">
-      <div style="font-size:13px;font-weight:700;color:#f87171;font-family:monospace;letter-spacing:1px;">&#128308; GEOPOLITICAL ALERT: ${gc.name.toUpperCase()}</div>
-    </td></tr>
-    <tr><td style="padding:12px 16px;">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="padding:4px 0;font-size:12px;color:#e2e8f0;font-family:monospace;">Status: <span style="color:${priorityColor};font-weight:700;">${gc.status.toUpperCase()}</span></td>
-          <td style="padding:4px 0;font-size:12px;color:#e2e8f0;font-family:monospace;">Since: <span style="color:#E5A832;">${gc.start_date}</span></td>
-          <td style="padding:4px 0;font-size:12px;color:#e2e8f0;font-family:monospace;">Priority: <span style="color:${priorityColor};font-weight:700;">${gc.briefing_priority.toUpperCase()}</span></td>
-        </tr>
+  // 2) Geopolitical alert (if any) — full-width crimson card up top
+  const geoBlock = b.geopoliticalCampaigns.length === 0 ? "" : b.geopoliticalCampaigns.map(gc => {
+    let actors: string[] = [];
+    try { actors = JSON.parse(gc.threat_actors || "[]"); } catch { /* noop */ }
+    return `
+    <tr><td style="padding:14px 28px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1A0E0E;border:1px solid #5A1A1A;border-radius:10px;">
+        <tr><td style="padding:14px 16px;border-bottom:1px solid #3D1515;">
+          <div style="font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;color:${COLOR.red};text-transform:uppercase;">⚑ Geopolitical Alert · ${escapeHtml(gc.name)}</div>
+        </td></tr>
+        <tr><td style="padding:12px 16px;">
+          <div style="font-size:12px;color:${COLOR.text};line-height:1.6;">
+            Status <strong style="color:${COLOR.red};">${escapeHtml(gc.status.toUpperCase())}</strong>
+            · Priority <strong style="color:${COLOR.orange};">${escapeHtml(gc.briefing_priority.toUpperCase())}</strong>
+            · Since <strong style="color:${COLOR.amber};">${escapeHtml(gc.start_date)}</strong>
+          </div>
+          <div style="font-size:12px;color:${COLOR.text};line-height:1.6;margin-top:4px;">
+            ${fmt(gc.total_threats)} threats total · <strong style="color:${COLOR.amber};">${fmt(gc.new_24h)}</strong> new in 24h · ${fmt(gc.brands_hit)} brands targeted
+          </div>
+          ${actors.length > 0 ? `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.orange};margin-top:6px;">Actors: ${escapeHtml(actors.join(", "))}</div>` : ""}
+          ${gc.notes ? `<div style="font-size:12px;color:${COLOR.textDim};margin-top:6px;font-style:italic;">${escapeHtml(gc.notes)}</div>` : ""}
+        </td></tr>
       </table>
-      <div style="margin-top:8px;font-size:12px;color:#e2e8f0;font-family:monospace;">
-        Total threats: <span style="color:#E5A832;font-weight:700;">${fmt(gc.total_threats)}</span>
-        &middot; New (24h): <span style="color:#E5A832;font-weight:700;">${fmt(gc.new_24h)}</span>
-        &middot; Brands targeted: <span style="color:#E5A832;font-weight:700;">${fmt(gc.brands_hit)}</span>
+    </td></tr>`;
+  }).join("");
+
+  // 3) 4-up overview grid
+  const overviewGrid = `
+  <tr><td style="padding:18px 28px 4px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="25%" style="padding:0 6px 0 0;">${statTile(fmt(p.totalThreats), "Total Threats")}</td>
+        <td width="25%" style="padding:0 6px;">${statTile(fmt(p.last24h), "New · 24h")}</td>
+        <td width="25%" style="padding:0 6px;">${statTile(fmt(p.avgPerHour) + "/hr", "Hourly Rate")}</td>
+        <td width="25%" style="padding:0 0 0 6px;">${statTile(`${dodStr} ${dodSym}`, "Day over Day", dodColor)}</td>
+      </tr>
+    </table>
+  </td></tr>`;
+
+  // 4) New threats (12h)
+  const severityChips = b.newThreats.bySeverity.map(s =>
+    `<span style="display:inline-block;margin-right:14px;font-family:${FONT_MONO};font-size:11px;color:${COLOR.text};">
+      ${statusDot(severityColor(s.severity))} <span style="text-transform:capitalize;color:${COLOR.textDim};">${escapeHtml(s.severity)}</span> <strong style="color:${COLOR.text};">${fmt(s.count)}</strong>
+    </span>`
+  ).join("");
+
+  const bySourceTable = b.newThreats.bySource.length > 0 ? card(`
+    ${thead([{ text: "Source" }, { text: "Count", align: "right", width: "80px" }])}
+    ${b.newThreats.bySource.map(s => tr([
+      { html: escapeHtml(s.source_feed), mono: true },
+      { html: fmt(s.count), align: "right", mono: true, color: COLOR.amber, bold: true },
+    ])).join("")}
+  `) : "";
+
+  const notableList = b.newThreats.notable.length === 0 ? "" : `
+    <div style="margin-top:10px;font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.textDim};text-transform:uppercase;margin-bottom:6px;">Notable Critical / High</div>
+    ${card(b.newThreats.notable.slice(0, 5).map(t => tr([
+      { html: `${statusDot(severityColor(t.severity))} <span style="margin-left:6px;font-weight:600;color:${COLOR.text};">${escapeHtml(t.malicious_domain)}</span>` },
+      { html: `<span style="color:${COLOR.textDim};font-family:${FONT_MONO};font-size:11px;">${escapeHtml(t.type)} · ${escapeHtml(t.severity)} · ${escapeHtml(t.source_feed)}</span>`, align: "right" },
+    ])).join(""))}
+  `;
+
+  const newThreatsBody = section(
+    "New Threats",
+    `<div style="margin-bottom:10px;">
+      <span style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.textDim};">Last 12h:</span>
+      <span style="font-family:${FONT_MONO};font-size:14px;color:${COLOR.amber};font-weight:700;margin-left:4px;">${fmt(total12h)}</span>
+    </div>
+    <div style="margin-bottom:14px;">${severityChips}</div>
+    ${bySourceTable}
+    ${notableList}
+    <div style="height:8px;"></div>`,
+    { eyebrow: "Section 1" }
+  );
+
+  // 5) Feed production + health (two-column on desktop, stacks via tables)
+  const feedProductionTable = b.feedProduction.length === 0
+    ? `<div style="font-size:12px;color:${COLOR.textMuted};font-family:${FONT_MONO};">No feed activity in window.</div>`
+    : card(`
+      ${thead([{ text: "Feed" }, { text: "Runs", align: "right", width: "60px" }, { text: "Ingested", align: "right", width: "90px" }])}
+      ${b.feedProduction.slice(0, 12).map(f => tr([
+        { html: escapeHtml(f.feed_name), mono: true },
+        { html: fmt(f.runs), align: "right", mono: true, color: COLOR.textDim },
+        { html: fmt(f.ingested), align: "right", mono: true, color: COLOR.amber, bold: true },
+      ])).join("")}
+    `);
+
+  const healthChips = [
+    healthCounts["healthy"] ? `${statusDot(COLOR.green)} <span style="color:${COLOR.text};margin-left:6px;">${healthCounts["healthy"]} healthy</span>` : "",
+    healthCounts["degraded"] ? `${statusDot(COLOR.amber)} <span style="color:${COLOR.text};margin-left:6px;">${healthCounts["degraded"]} degraded</span>` : "",
+    healthCounts["failed"] ? `${statusDot(COLOR.red)} <span style="color:${COLOR.text};margin-left:6px;">${healthCounts["failed"]} failed</span>` : "",
+  ].filter(Boolean).join("<span style='display:inline-block;width:18px;'></span>");
+
+  const feedIssues = [...b.feedHealth.degradedFeeds, ...b.feedHealth.staleFeeds];
+  const feedIssuesHtml = feedIssues.length === 0
+    ? `<div style="font-size:12px;color:${COLOR.green};font-family:${FONT_MONO};margin-top:8px;">✓ All feeds operational</div>`
+    : feedIssues.slice(0, 6).map(f => {
+        const err = "last_error" in f ? f.last_error : `last run ${f.last_successful_pull ?? "never"} (stale)`;
+        return `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.amber};margin-top:6px;line-height:1.5;">⚠ ${escapeHtml(f.feed_name)} — ${escapeHtml(String(err ?? "unknown"))}</div>`;
+      }).join("");
+
+  const feedsBlock = section(
+    "Feeds (12h)",
+    `
+    <div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.textDim};margin-bottom:10px;">
+      ${b.feedProduction.length} active · ${fmt(totalFeedRuns)} runs · ${fmt(totalIngested)} records ingested
+    </div>
+    ${feedProductionTable}
+    <div style="margin-top:14px;font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.textDim};text-transform:uppercase;margin-bottom:6px;">Health</div>
+    <div style="font-family:${FONT_MONO};font-size:12px;">${healthChips}</div>
+    ${feedIssuesHtml}
+    <div style="height:6px;"></div>
+    `,
+    { eyebrow: "Section 2" }
+  );
+
+  // 6) Enrichment pipeline
+  const enrichmentRows = [
+    { name: "SURBL",        checked: b.enrichment.surbl_checked, hits: b.enrichment.surbl_hits },
+    { name: "VirusTotal",   checked: b.enrichment.vt_checked,    hits: b.enrichment.vt_hits },
+    { name: "Google SB",    checked: b.enrichment.gsb_checked,   hits: b.enrichment.gsb_hits },
+    { name: "Spamhaus DBL", checked: b.enrichment.dbl_checked,   hits: b.enrichment.dbl_hits },
+    { name: "AbuseIPDB",    checked: b.enrichment.abuse_checked, hits: b.enrichment.abuse_hits },
+    { name: "GreyNoise",    checked: b.enrichment.gn_checked,    hits: 0 },
+    { name: "SecLookup",    checked: b.enrichment.sec_checked,   hits: 0 },
+  ];
+  const enrichmentBlock = section(
+    "Enrichment Pipeline",
+    card(`
+      ${thead([{ text: "Engine" }, { text: "Checked", align: "right" }, { text: "Hits", align: "right" }, { text: "Hit Rate", align: "right", width: "70px" }, { text: " ", align: "center", width: "30px" }])}
+      ${enrichmentRows.map(e => tr([
+        { html: escapeHtml(e.name), mono: true },
+        { html: fmt(e.checked), align: "right", mono: true, color: COLOR.textDim },
+        { html: fmt(e.hits), align: "right", mono: true, color: e.hits > 0 ? COLOR.amber : COLOR.textMuted, bold: e.hits > 0 },
+        { html: pct(e.hits, e.checked), align: "right", mono: true, color: COLOR.textDim },
+        { html: e.checked > 0 ? statusDot(COLOR.green) : statusDot(COLOR.amber), align: "center" },
+      ])).join("")}
+    `),
+    { eyebrow: "Section 3" }
+  );
+
+  // 7) Agent activity
+  const agentBlock = section(
+    "Agent Activity (12h)",
+    b.agentActivity.length === 0
+      ? `<div style="font-size:12px;color:${COLOR.textMuted};font-family:${FONT_MONO};">No agent activity in window.</div>`
+      : card(`
+        ${thead([{ text: "Agent" }, { text: "Runs", align: "right", width: "60px" }, { text: "Last Run", align: "right" }, { text: " ", align: "center", width: "30px" }])}
+        ${b.agentActivity.slice(0, 12).map(a => {
+          const lr = a.last_run ? new Date(a.last_run).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—";
+          return tr([
+            { html: escapeHtml(a.agent_id), mono: true },
+            { html: fmt(a.runs), align: "right", mono: true, color: COLOR.amber },
+            { html: lr, align: "right", mono: true, color: COLOR.textDim },
+            { html: statusDot(COLOR.green), align: "center" },
+          ]);
+        }).join("")}
+      `),
+    { eyebrow: "Section 4" }
+  );
+
+  // 8) Spam trap + honeypot — compact summary cards side by side
+  const spamTrapCard = card(`
+    <tr><td style="padding:14px 16px;">
+      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:6px;">Spam Trap</div>
+      <div style="font-size:12px;color:${COLOR.text};line-height:1.8;">
+        Seeds: <strong style="color:${COLOR.amber};">${fmt(b.spamTrap.totalSeeds)}</strong><br>
+        Captures: <strong style="color:${COLOR.amber};">${fmt(b.spamTrap.totalCaptures)}</strong>
+        <span style="color:${COLOR.textDim};">(${fmt(b.spamTrap.captures12h)} new in 12h)</span>
       </div>
-      <div style="margin-top:6px;font-size:11px;color:#fb923c;font-family:monospace;">
-        Actors: ${actors.join(', ')}
-      </div>
-      ${gc.notes ? `<div style="margin-top:6px;font-size:11px;color:#78A0C8;font-family:monospace;">${gc.notes}</div>` : ''}
     </td></tr>
-  </table>
-</td></tr>`;
-}).join('') : ''}
+  `);
+  const honeypotCard = card(`
+    <tr><td style="padding:14px 16px;">
+      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:6px;">Honeypot</div>
+      <div style="font-size:12px;color:${COLOR.text};line-height:1.8;">
+        Visits: <strong style="color:${COLOR.amber};">${fmt(b.honeypot.totalVisits)}</strong>
+        <span style="color:${COLOR.textDim};">(${fmt(b.honeypot.botVisits)} bots · ${fmt(b.honeypot.humanVisits)} humans)</span><br>
+        Last 12h: <strong style="color:${COLOR.amber};">${fmt(b.honeypot.visits12h)}</strong>
+      </div>
+    </td></tr>
+  `);
+  const trapsBlock = `
+  <tr><td style="padding:22px 28px 6px;">
+    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">Section 5</div>
+    <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};">Traps &amp; Honeypots</div>
+  </td></tr>
+  <tr><td style="padding:0 28px 4px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="50%" style="padding:0 6px 0 0;vertical-align:top;">${spamTrapCard}</td>
+        <td width="50%" style="padding:0 0 0 6px;vertical-align:top;">${honeypotCard}</td>
+      </tr>
+    </table>
+  </td></tr>`;
 
-<!-- ═══ SECTION 1: PLATFORM OVERVIEW ═══ -->
-${sectionHeader("Platform Overview")}
-<tr><td style="padding:0 24px 12px;background:#0a0f1a;">
-  ${cardStart()}
-  <tr>
-    <td style="padding:16px;text-align:center;width:25%;border-right:1px solid #1e293b;">
-      <div style="font-size:26px;font-weight:700;color:#E5A832;font-family:monospace;">${fmt(p.totalThreats)}</div>
-      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Total</div>
-    </td>
-    <td style="padding:16px;text-align:center;width:25%;border-right:1px solid #1e293b;">
-      <div style="font-size:26px;font-weight:700;color:#E5A832;font-family:monospace;">${fmt(p.last24h)}</div>
-      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">New 24h</div>
-    </td>
-    <td style="padding:16px;text-align:center;width:25%;border-right:1px solid #1e293b;">
-      <div style="font-size:26px;font-weight:700;color:#E5A832;font-family:monospace;">${fmt(p.avgPerHour)}/hr</div>
-      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Per Hour</div>
-    </td>
-    <td style="padding:16px;text-align:center;width:25%;">
-      <div style="font-size:26px;font-weight:700;color:${p.todayCount >= p.yesterdayCount ? "#C83C3C" : "#10b981"};font-family:monospace;">${dodPct}${dodArrow}</div>
-      <div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Day/Day</div>
-    </td>
-  </tr>
-  ${cardEnd()}
-  <div style="font-size:11px;color:#78A0C8;margin-top:8px;font-family:monospace;">
-    ${fmt(p.brandsMonitored)} brands monitored &middot; ${fmt(p.brandsClassified)} classified
-  </div>
-</td></tr>
+  const suspiciousHits = b.honeypot.suspiciousHumans.slice(0, 4).map(h => {
+    const label = h.reason === "bait" ? "Bait hit" : "Recon probe";
+    const time = h.visited_at
+      ? new Date(h.visited_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC"
+      : "—";
+    const asn = h.asn ? ` AS${escapeHtml(h.asn)}` : "";
+    return `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.orange};margin-top:6px;line-height:1.5;">⚠ ${label}: ${escapeHtml(h.country || "??")}${asn} → ${escapeHtml(h.page)} at ${time}</div>`;
+  }).join("");
+  const suspiciousBlock = suspiciousHits ? `
+  <tr><td style="padding:6px 28px 4px;">
+    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.textDim};text-transform:uppercase;margin-top:6px;">Recon &amp; Bait Hits (7d)</div>
+    ${suspiciousHits}
+  </td></tr>` : "";
 
-<!-- ═══ SECTION 2: NEW THREATS (12H) ═══ -->
-${sectionHeader("New Threats (12h)")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:14px;color:#e2e8f0;font-weight:600;margin-bottom:8px;">Total new: <span style="color:#E5A832;">${fmt(total12h)}</span></div>
-  <div style="font-size:12px;color:#78A0C8;font-family:monospace;margin-bottom:12px;">
-    ${b.newThreats.bySeverity.map((s) => `<span style="color:${severityColor(s.severity)};">${s.severity}: ${fmt(s.count)}</span>`).join(" &middot; ")}
-  </div>
-</td></tr>
-${b.newThreats.bySource.length > 0 ? `<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin-bottom:4px;">By Source</div>
-  ${cardStart()}
-  ${headerRow([{ text: "Feed" }, { text: "Count", align: "right" }])}
-  ${b.newThreats.bySource.map((s) => tableRow([{ text: s.source_feed, mono: true }, { text: fmt(s.count), align: "right", mono: true, color: "#E5A832" }])).join("")}
-  ${cardEnd()}
-</td></tr>` : ""}
-${b.newThreats.notable.length > 0 ? `<tr><td style="padding:8px 24px 4px;background:#0a0f1a;">
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin-bottom:4px;">Notable Critical/High</div>
-  ${cardStart()}
-  ${b.newThreats.notable.slice(0, 5).map((t) => `<tr><td style="padding:8px 14px;border-bottom:1px solid #1e293b;">
-    <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${severityColor(t.severity)};margin-right:8px;"></span>
-    <span style="color:#e2e8f0;font-size:12px;font-weight:600;">${t.malicious_domain}</span>
-    <span style="color:#78A0C8;font-size:11px;margin-left:8px;">${t.type} &middot; ${t.severity} &middot; ${t.source_feed}</span>
-  </td></tr>`).join("")}
-  ${cardEnd()}
-</td></tr>` : ""}
+  // 9) Top targeted brands — compact
+  const topBrandsBlock = section(
+    "Top Targeted Brands (24h)",
+    b.topTargetedBrands.length === 0
+      ? `<div style="font-size:12px;color:${COLOR.textMuted};font-family:${FONT_MONO};">No brand-attributed threats in window.</div>`
+      : card(b.topTargetedBrands.slice(0, 10).map((brand, i) => tr([
+          { html: `<span style="color:${COLOR.textMuted};font-family:${FONT_MONO};">${(i + 1).toString().padStart(2, "0")}</span>`, width: "32px" },
+          { html: escapeHtml(brand.name), bold: true },
+          { html: fmt(brand.threats_24h), align: "right", mono: true, color: COLOR.amber, bold: true, width: "80px" },
+        ])).join("")),
+    { eyebrow: "Section 6" }
+  );
 
-<!-- ═══ SECTION 3: FEED PRODUCTION (12H) ═══ -->
-${sectionHeader("Feed Production (12h)")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${cardStart()}
-  ${headerRow([{ text: "Feed" }, { text: "Runs", align: "right", width: "60px" }, { text: "Ingested", align: "right", width: "80px" }])}
-  ${b.feedProduction.map((f) => tableRow([{ text: f.feed_name, mono: true }, { text: fmt(f.runs), align: "right", mono: true }, { text: fmt(f.ingested), align: "right", mono: true, color: "#E5A832" }])).join("")}
-  ${cardEnd()}
-  <div style="font-size:11px;color:#78A0C8;margin-top:8px;font-family:monospace;">
-    ${b.feedProduction.length} feeds active &middot; ${fmt(totalFeedRuns)} total runs &middot; ${fmt(totalIngested)} records ingested
-  </div>
-</td></tr>
+  // 10) Anomalies & status
+  const anomalies: string[] = [];
+  const oks: string[] = [];
+  if (b.enrichment.gn_checked === 0)
+    anomalies.push("GreyNoise: 0 enrichments — API may not be returning data");
+  if (b.enrichment.sec_checked === 0)
+    anomalies.push("SecLookup: 0 enrichments — API may not be returning data");
+  if (b.newCapabilities.certstream === 0)
+    anomalies.push("CertStream: alive but 0 captures");
+  for (const f of b.feedHealth.degradedFeeds)
+    anomalies.push(`${f.feed_name}: degraded — ${f.last_error ?? "unknown"}`);
 
-<!-- ═══ SECTION 4: FEED HEALTH ═══ -->
-${sectionHeader("Feed Health")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:12px;color:#e2e8f0;font-family:monospace;margin-bottom:10px;">
-    ${[
-      healthCounts["healthy"] ? `<span style="color:#10b981;">&#9679; ${healthCounts["healthy"]} healthy</span>` : "",
-      healthCounts["degraded"] ? `<span style="color:#f59e0b;">&#9679; ${healthCounts["degraded"]} degraded</span>` : "",
-      healthCounts["failed"] ? `<span style="color:#C83C3C;">&#9679; ${healthCounts["failed"]} failed</span>` : "",
-    ].filter(Boolean).join("&nbsp;&nbsp;")}
-  </div>
-  ${b.feedHealth.degradedFeeds.length > 0 || b.feedHealth.staleFeeds.length > 0 ? `${cardStart()}
-  ${b.feedHealth.degradedFeeds.map((f) => warningRow(`${f.feed_name} — ${f.last_error ?? "unknown error"}`)).join("")}
-  ${b.feedHealth.staleFeeds.map((f) => warningRow(`${f.feed_name} — last run ${f.last_successful_pull ?? "never"} (stale)`)).join("")}
-  ${cardEnd()}` : `<div style="font-size:12px;color:#10b981;font-family:monospace;">&#10003; All feeds operational</div>`}
-</td></tr>
+  if (b.agentActivity.length > 0)
+    oks.push(`All ${b.agentActivity.length} agents running normally`);
+  const producingEngines = [
+    b.enrichment.surbl_checked, b.enrichment.vt_checked, b.enrichment.gsb_checked,
+    b.enrichment.dbl_checked, b.enrichment.abuse_checked, b.enrichment.gn_checked,
+    b.enrichment.sec_checked,
+  ].filter(v => v > 0).length;
+  oks.push(`Enrichment pipeline operational (${producingEngines} of 7 engines producing)`);
+  if (b.newCapabilities.typosquat_new > 0)
+    oks.push(`Typosquat scanner active — ${fmt(b.newCapabilities.typosquat_new)} new domains`);
+  else if (b.newCapabilities.typosquat_total > 0)
+    oks.push(`Typosquat scanner active — ${fmt(b.newCapabilities.typosquat_total)} total domains`);
+  if (b.newCapabilities.appstore_new > 0)
+    oks.push(`App-store monitor — ${fmt(b.newCapabilities.appstore_new)} new (${fmt(b.newCapabilities.appstore_total)} active)`);
+  if (b.newCapabilities.darkweb_new > 0)
+    oks.push(`Dark-web monitor — ${fmt(b.newCapabilities.darkweb_new)} new (${fmt(b.newCapabilities.darkweb_total)} active)`);
 
-<!-- ═══ SECTION 5: ENRICHMENT PIPELINE ═══ -->
-${sectionHeader("Enrichment Pipeline")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${cardStart()}
-  ${headerRow([{ text: "Engine" }, { text: "Checked", align: "right" }, { text: "Hits", align: "right" }, { text: "Hit Rate", align: "right" }, { text: "Status", align: "center", width: "50px" }])}
-  ${[
-    { name: "SURBL", checked: b.enrichment.surbl_checked, hits: b.enrichment.surbl_hits },
-    { name: "VirusTotal", checked: b.enrichment.vt_checked, hits: b.enrichment.vt_hits },
-    { name: "Google SB", checked: b.enrichment.gsb_checked, hits: b.enrichment.gsb_hits },
-    { name: "Spamhaus DBL", checked: b.enrichment.dbl_checked, hits: b.enrichment.dbl_hits },
-    { name: "AbuseIPDB", checked: b.enrichment.abuse_checked, hits: b.enrichment.abuse_hits },
-    { name: "GreyNoise", checked: b.enrichment.gn_checked, hits: 0 },
-    { name: "SecLookup", checked: b.enrichment.sec_checked, hits: 0 },
-  ].map((e) => tableRow([
-    { text: e.name, mono: true },
-    { text: fmt(e.checked), align: "right", mono: true },
-    { text: fmt(e.hits), align: "right", mono: true, color: e.hits > 0 ? "#E5A832" : "#64748b" },
-    { text: pct(e.hits, e.checked), align: "right", mono: true },
-    { text: enrichmentStatus(e.checked), align: "center" },
-  ])).join("")}
-  ${cardEnd()}
-</td></tr>
+  const anomaliesBlock = section(
+    "Status",
+    `
+    <div style="display:block;">
+      ${anomalies.map(text => `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.amber};line-height:1.6;padding:4px 0;">⚠ ${escapeHtml(text)}</div>`).join("")}
+      ${oks.map(text => `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.green};line-height:1.6;padding:4px 0;">✓ ${escapeHtml(text)}</div>`).join("")}
+    </div>
+    `,
+    { eyebrow: "Section 7" }
+  );
 
-<!-- ═══ SECTION 6: FLIGHT CONTROLLER ═══ -->
-${sectionHeader("Flight Controller")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${b.flightController.summary ? (() => {
-    const fcRows = parseFlightControllerSummary(b.flightController.summary);
-    if (fcRows.length === 0) {
-      return `<div style="font-size:12px;color:#78A0C8;font-family:monospace;padding:8px 0;">${b.flightController.summary}</div>`;
-    }
-    return `${cardStart()}
-    ${headerRow([{ text: "Queue" }, { text: "Backlog", align: "right" }])}
-    ${fcRows.map((r) => tableRow([{ text: r.queue, mono: true }, { text: r.backlog, align: "right", mono: true, color: "#E5A832" }])).join("")}
-    ${cardEnd()}`;
-  })() : `<div style="font-size:12px;color:#64748b;font-family:monospace;">No Flight Controller diagnostic available</div>`}
-</td></tr>
+  // 11) Brand coverage — compact one-liner
+  const brandCoverageBlock = b.brandCoverage.length === 0 ? "" : `
+  <tr><td style="padding:22px 28px 6px;">
+    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">Section 8</div>
+    <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};">Brand Coverage</div>
+  </td></tr>
+  <tr><td style="padding:0 28px 18px;">
+    <div style="font-family:${FONT_MONO};font-size:12px;color:${COLOR.textDim};line-height:1.7;">
+      ${fmt(p.brandsMonitored)} monitored · ${fmt(p.brandsClassified)} classified<br>
+      <span style="color:${COLOR.text};">Top sectors:</span>
+      ${b.brandCoverage.slice(0, 5).map(c => `<span style="color:${COLOR.text};">${escapeHtml(c.sector)}</span> <span style="color:${COLOR.textDim};">(${fmt(c.brands)})</span>`).join(" · ")}
+    </div>
+  </td></tr>`;
 
-<!-- ═══ SECTION 7: AGENT STATUS ═══ -->
-${sectionHeader("Agent Status (12h)")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${cardStart()}
-  ${headerRow([{ text: "Agent" }, { text: "Runs", align: "right", width: "60px" }, { text: "Last Run", align: "right" }, { text: "Status", align: "center", width: "50px" }])}
-  ${b.agentActivity.map((a) => {
-    const lastRunTime = a.last_run ? new Date(a.last_run).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—";
-    return tableRow([
-      { text: a.agent_id, mono: true },
-      { text: fmt(a.runs), align: "right", mono: true },
-      { text: lastRunTime, align: "right", mono: true, color: "#78A0C8" },
-      { text: '<span style="color:#10b981;">&#10003;</span>', align: "center" },
-    ]);
-  }).join("")}
-  ${b.agentActivity.length === 0 ? `<tr><td style="padding:12px 14px;color:#64748b;font-size:12px;">No agent activity in last 12h</td></tr>` : ""}
-  ${cardEnd()}
-</td></tr>
+  // CTA back to dashboard
+  const ctaBlock = `
+  <tr><td style="padding:10px 28px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+      <a class="av-cta" href="https://averrow.com/v2/admin" style="display:inline-block;padding:13px 28px;background:linear-gradient(180deg,${COLOR.amber} 0%,#B8821F 100%);color:#0B1320;font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;text-decoration:none;border-radius:8px;text-transform:uppercase;">Open Admin Dashboard</a>
+    </td></tr></table>
+  </td></tr>`;
 
-<!-- ═══ SECTION 8: SPAM TRAP INTELLIGENCE ═══ -->
-${sectionHeader("Spam Trap Intelligence")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:12px;color:#e2e8f0;font-family:monospace;margin-bottom:8px;">
-    Seeds deployed: <span style="color:#E5A832;">${fmt(b.spamTrap.totalSeeds)}</span>
-    ${b.spamTrap.seedingSources.length > 0 ? ` (${b.spamTrap.seedingSources.slice(0, 3).map((s) => `${s.seeded_location}: ${s.seeds}`).join(" &middot; ")})` : ""}
-  </div>
-  <div style="font-size:12px;color:#e2e8f0;font-family:monospace;margin-bottom:8px;">
-    Total captures: <span style="color:#E5A832;">${fmt(b.spamTrap.totalCaptures)}</span>
-    &middot; New (12h): <span style="color:#E5A832;">${fmt(b.spamTrap.captures12h)}</span>
-  </div>
-  ${b.spamTrap.seedingSources.length > 0 ? `
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:8px 0 4px;">Seeding Sources</div>
-  ${cardStart()}
-  ${headerRow([{ text: "Source" }, { text: "Seeds", align: "right" }, { text: "Catches", align: "right" }])}
-  ${b.spamTrap.seedingSources.map((s) => tableRow([{ text: s.seeded_location, mono: true }, { text: fmt(s.seeds), align: "right", mono: true }, { text: fmt(s.catches), align: "right", mono: true, color: Number(s.catches) > 0 ? "#E5A832" : "#64748b" }])).join("")}
-  ${cardEnd()}` : ""}
-  ${b.spamTrap.latestCaptures.length > 0 ? `
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:12px 0 4px;">Latest Captures</div>
-  ${cardStart()}
-  ${b.spamTrap.latestCaptures.map((c) => `<tr><td style="padding:10px 14px;border-bottom:1px solid #1e293b;">
-    <div style="font-size:12px;color:#e2e8f0;">From: <span style="color:#78A0C8;">${c.from_address}</span> &#8594; <span style="color:#78A0C8;">${c.trap_address}</span></div>
-    <div style="font-size:11px;color:#e2e8f0;margin-top:2px;">Subject: &ldquo;${c.subject}&rdquo;</div>
-    <div style="font-size:10px;color:#64748b;margin-top:2px;">${c.category} &middot; ${c.severity} &middot; ${c.captured_at}</div>
-  </td></tr>`).join("")}
-  ${cardEnd()}` : ""}
-</td></tr>
+  return [
+    titleBlock,
+    geoBlock,
+    overviewGrid,
+    newThreatsBody,
+    feedsBlock,
+    enrichmentBlock,
+    agentBlock,
+    trapsBlock,
+    suspiciousBlock,
+    topBrandsBlock,
+    anomaliesBlock,
+    brandCoverageBlock,
+    ctaBlock,
+  ].join("");
+}
 
-<!-- ═══ SECTION 9: HONEYPOT ACTIVITY ═══ -->
-${sectionHeader("Honeypot Activity")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:12px;color:#e2e8f0;font-family:monospace;margin-bottom:8px;">
-    Total visits: <span style="color:#E5A832;">${fmt(b.honeypot.totalVisits)}</span>
-    (<span style="color:#78A0C8;">${fmt(b.honeypot.botVisits)} bots</span> &middot;
-    <span style="color:#78A0C8;">${fmt(b.honeypot.humanVisits)} humans</span>)
-    &middot; Last 12h: <span style="color:#E5A832;">${fmt(b.honeypot.visits12h)}</span>
-  </div>
-  ${b.honeypot.pageBreakdown.length > 0 ? `
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:8px 0 4px;">Page Breakdown</div>
-  ${cardStart()}
-  ${headerRow([{ text: "Page" }, { text: "Visits", align: "right" }, { text: "Bots", align: "right" }])}
-  ${b.honeypot.pageBreakdown.map((p) => tableRow([{ text: p.page, mono: true }, { text: fmt(p.visits), align: "right", mono: true }, { text: fmt(p.bots), align: "right", mono: true }])).join("")}
-  ${cardEnd()}` : ""}
-  ${b.honeypot.recentBots.length > 0 ? `
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:12px 0 4px;">Recent Crawlers</div>
-  ${cardStart()}
-  ${b.honeypot.recentBots.map((bot) => `<tr><td style="padding:8px 14px;border-bottom:1px solid #1e293b;font-size:12px;color:#e2e8f0;font-family:monospace;">
-    &#9679; ${bot.bot_name || "Unknown bot"} &middot; ${bot.country || "?"} &middot; ${bot.visited_at ? new Date(bot.visited_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—"}
-  </td></tr>`).join("")}
-  ${cardEnd()}` : ""}
-  ${b.honeypot.suspiciousHumans.length > 0 ? `
-  <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;font-family:monospace;margin:12px 0 4px;">Recon &amp; Bait Hits (7d)</div>
-  ${cardStart()}
-  ${b.honeypot.suspiciousHumans.map((h) => {
-    const label = h.reason === "bait" ? "Bait page hit" : "Recon probe";
-    const time = h.visited_at ? new Date(h.visited_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—";
-    const asn = h.asn ? ` AS${h.asn}` : "";
-    return warningRow(`${label}: ${h.country || "??"}${asn} → ${h.page} at ${time}`);
-  }).join("")}
-  ${cardEnd()}` : ""}
-</td></tr>
-
-<!-- ═══ SECTION 10: TOP TARGETED BRANDS (24H) ═══ -->
-${sectionHeader("Top Targeted Brands (24h)")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${b.topTargetedBrands.length > 0 ? `${cardStart()}
-  ${b.topTargetedBrands.map((brand, i) => tableRow([
-    { text: `${i + 1}.`, align: "right", color: "#64748b", width: "30px", mono: true },
-    { text: brand.name },
-    { text: fmt(brand.threats_24h), align: "right", mono: true, color: "#E5A832" },
-  ])).join("")}
-  ${cardEnd()}` : `<div style="font-size:12px;color:#64748b;font-family:monospace;">No brand-attributed threats in last 24h</div>`}
-</td></tr>
-
-<!-- ═══ SECTION 11: ANOMALIES & ALERTS ═══ -->
-${sectionHeader("Anomalies & Alerts")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  ${cardStart()}
-  ${(() => {
-    const rows: string[] = [];
-    // Enrichment anomalies
-    if (b.enrichment.gn_checked > 0 && b.enrichment.gn_checked === b.enrichment.gn_checked) {
-      // GreyNoise executing but 0 enrichments
-    }
-    if (b.enrichment.gn_checked === 0) {
-      rows.push(warningRow("GreyNoise: executing but 0 enrichments — API may not be returning data"));
-    }
-    if (b.enrichment.sec_checked === 0) {
-      rows.push(warningRow("SecLookup: executing but 0 enrichments — API may not be returning data"));
-    }
-    // CertStream
-    if (b.newCapabilities.certstream === 0) {
-      rows.push(warningRow("CertStream: alive but 0 captures"));
-    }
-    // Degraded feeds
-    for (const f of b.feedHealth.degradedFeeds) {
-      rows.push(warningRow(`${f.feed_name}: degraded — ${f.last_error ?? "unknown"}`));
-    }
-    // OK statuses
-    if (b.agentActivity.length > 0) {
-      rows.push(okRow(`All ${b.agentActivity.length} agents running normally`));
-    }
-    const producingEngines = [b.enrichment.surbl_checked, b.enrichment.vt_checked, b.enrichment.gsb_checked, b.enrichment.dbl_checked, b.enrichment.abuse_checked, b.enrichment.gn_checked, b.enrichment.sec_checked].filter((v) => v > 0).length;
-    rows.push(okRow(`Enrichment pipeline operational (${producingEngines} of 7 engines producing)`));
-    if (b.newCapabilities.typosquat_new > 0) {
-      rows.push(okRow(`Typosquat scanner active — ${fmt(b.newCapabilities.typosquat_new)} domains discovered`));
-    } else if (b.newCapabilities.typosquat_total > 0) {
-      rows.push(okRow(`Typosquat scanner active — ${fmt(b.newCapabilities.typosquat_total)} total domains`));
-    }
-    if (b.newCapabilities.appstore_new > 0) {
-      rows.push(okRow(`App-store monitor active — ${fmt(b.newCapabilities.appstore_new)} new impersonations in 12h (${fmt(b.newCapabilities.appstore_total)} total active)`));
-    } else if (b.newCapabilities.appstore_total > 0) {
-      rows.push(okRow(`App-store monitor active — ${fmt(b.newCapabilities.appstore_total)} active impersonations`));
-    }
-    if (b.newCapabilities.darkweb_new > 0) {
-      rows.push(okRow(`Dark-web monitor active — ${fmt(b.newCapabilities.darkweb_new)} new mentions in 12h (${fmt(b.newCapabilities.darkweb_total)} total active)`));
-    } else if (b.newCapabilities.darkweb_total > 0) {
-      rows.push(okRow(`Dark-web monitor active — ${fmt(b.newCapabilities.darkweb_total)} active mentions`));
-    }
-    return rows.join("");
-  })()}
-  ${cardEnd()}
-</td></tr>
-
-<!-- ═══ SECTION 12: BRAND COVERAGE ═══ -->
-${sectionHeader("Brand Coverage")}
-<tr><td style="padding:0 24px 4px;background:#0a0f1a;">
-  <div style="font-size:12px;color:#e2e8f0;font-family:monospace;margin-bottom:8px;">
-    ${fmt(p.brandsMonitored)} monitored &middot; ${fmt(p.brandsClassified)} classified
-  </div>
-  ${b.brandCoverage.length > 0 ? `<div style="font-size:12px;color:#78A0C8;font-family:monospace;">
-    Top: ${b.brandCoverage.slice(0, 5).map((c) => `${c.sector} (${c.brands})`).join(" &middot; ")}
-  </div>` : ""}
-</td></tr>
-
-<!-- ═══ FOOTER ═══ -->
-<tr><td style="padding:24px;background:#0a0f1a;border-radius:0 0 12px 12px;border-top:1px solid #1e293b;margin-top:16px;">
-  <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td style="font-size:11px;color:#78A0C8;font-family:monospace;">
-      Averrow Threat Interceptor &middot; averrow.com<br>
-      <span style="color:#4a5568;">Generated at ${timeStr} UTC &middot; Next briefing at 8:00 AM ET</span>
-    </td>
-    <td style="text-align:right;">
-      <a href="https://averrow.com/v2/briefings" style="color:#E5A832;font-size:11px;text-decoration:none;font-family:monospace;">View in Dashboard &#8594;</a>
-    </td>
-  </tr></table>
-</td></tr>
-
-</table>
-</td></tr>
-</table>
-</body>
-</html>`;
+function buildBriefingHtml(b: ComprehensiveBriefing, title: string): string {
+  const ok = b.statusBadge === "OPERATIONAL";
+  return emailShell({
+    title: `${title} — Averrow`,
+    preheader: `${b.statusBadge}: ${fmt(b.platformOverview.last24h)} new threats · ${fmt(b.platformOverview.brandsMonitored)} brands monitored`,
+    accent: ok ? "#E5A832" : "#FB923C",
+    tagline: "INTELLIGENCE BRIEFING",
+    headerBadge: headerStatusBadge(b.statusBadge, ok ? "ok" : "warn"),
+    body: buildBriefingBody(b),
+    footerNote: `Generated ${new Date(b.generatedAt).toLocaleString("en-US", { timeZone: "UTC", hour12: false })} UTC · Next briefing 08:00 ET`,
+  });
 }
 
 // ─── Public API ────────────────────────────────────────────────
@@ -626,34 +525,20 @@ export async function sendBriefingEmail(
   briefing: ComprehensiveBriefing,
   title: string,
 ): Promise<{ sent: boolean; id?: string; error?: string; recipient: string }> {
-  // BRIEFING_RECIPIENT lets the operator change recipient without a
-  // code edit. Set via `wrangler secret put BRIEFING_RECIPIENT`.
   const recipient = (env.BRIEFING_RECIPIENT?.trim() || RECIPIENT_DEFAULT);
 
   if (!env.RESEND_API_KEY) {
-    logger.warn("briefing_email_skip", {
-      reason: "RESEND_API_KEY not configured",
-    });
+    logger.warn("briefing_email_skip", { reason: "RESEND_API_KEY not configured" });
     return { sent: false, error: "RESEND_API_KEY not configured", recipient };
   }
 
-  const subject = `${briefing.statusBadge === "DEGRADED" ? "[DEGRADED] " : "[OPERATIONAL] "}${title}`;
+  const subject = `${briefing.statusBadge === "DEGRADED" ? "[DEGRADED] " : ""}${title}`;
   const html = buildBriefingHtml(briefing, title);
 
-  const result = await sendViaResend(
-    env,
-    env.RESEND_API_KEY,
-    recipient,
-    subject,
-    html,
-  );
-
+  const result = await sendViaResend(env, env.RESEND_API_KEY, recipient, subject, html);
   if (result.ok) {
     logger.info("briefing_email_sent", { to: recipient, resendId: result.id });
   } else {
-    // Surface the discriminator (`name`) and HTTP status, not just `message`.
-    // Operators reading the diagnostics endpoint need to know whether to
-    // rotate the key, verify the domain, or wait out a rate limit.
     logger.error("briefing_email_failed", {
       to: recipient,
       error: result.error,
@@ -661,6 +546,13 @@ export async function sendBriefingEmail(
       errorName: result.errorName,
     });
   }
-
   return { sent: result.ok, id: result.id, error: result.error, recipient };
+}
+
+// Exported for the preview/render scripts to render the body without sending.
+export function renderBriefingHtmlForPreview(
+  briefing: ComprehensiveBriefing,
+  title: string,
+): string {
+  return buildBriefingHtml(briefing, title);
 }

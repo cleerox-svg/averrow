@@ -1,23 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from 'recharts';
+import {
+  Mail, Rss, Download, Brain, Zap, AlertTriangle, Loader2, Check, X,
+  ChevronDown, ChevronUp, BellRing, Activity, Database, Cpu, Shield, DollarSign,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+
 import { useSystemHealth } from '@/hooks/useSystemHealth';
 import { useBudgetStatus, useBudgetBreakdown, useBudgetConfigMutation } from '@/hooks/useBudget';
 import type { BudgetStatus } from '@/hooks/useBudget';
 import { useAdminAction } from '@/hooks/useAdminAction';
+import { usePushConfig } from '@/hooks/usePushAdmin';
+import { api } from '@/lib/api';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { Badge, Button, Card, PageHeader, StatGrid, StatCard } from '@/design-system/components';
-import { usePushConfig } from '@/hooks/usePushAdmin';
-import { useNavigate } from 'react-router-dom';
-import { BellRing } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { api } from '@/lib/api';
 import { DailyBriefingWidget } from '@/components/DailyBriefingWidget';
-import { Mail, Rss, Download, Brain, Zap, ChevronDown, ChevronUp, AlertTriangle, Loader2, Check, X } from 'lucide-react';
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
+
+/* ─── Style tokens (resolved once, reused below) ───────────────────────── */
+
+const textPrimary: CSSProperties = { color: 'var(--text-primary)' };
+const textSecondary: CSSProperties = { color: 'var(--text-secondary)' };
+const textTertiary: CSSProperties = { color: 'var(--text-tertiary)' };
+const textMuted: CSSProperties = { color: 'var(--text-muted)' };
+const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
+
+const sectionEyebrow: CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 9,
+  fontWeight: 700,
+  letterSpacing: '0.22em',
+  textTransform: 'uppercase',
+  color: 'var(--text-tertiary)',
+};
+
+const dividerLine: CSSProperties = {
+  border: 'none',
+  height: 1,
+  background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.18), transparent)',
+  margin: '14px 0',
+};
+
+/* ─── Small helpers ────────────────────────────────────────────────────── */
 
 function fmt(n: number): string {
   return n.toLocaleString();
@@ -31,19 +59,38 @@ function shortDate(iso: string): string {
 function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-white/10 px-3 py-2 backdrop-blur-sm" style={{ background: 'var(--bg-card)' }}>
-      <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{label}</div>
-      <div className="font-mono text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt(payload[0].value)} threats</div>
+    <div
+      className="rounded-lg border px-3 py-2 backdrop-blur-sm"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+    >
+      <div style={{ ...mono, fontSize: 10, ...textTertiary }}>{label}</div>
+      <div style={{ ...mono, fontSize: 13, fontWeight: 700, ...textPrimary }}>{fmt(payload[0].value)} threats</div>
     </div>
   );
 }
 
-function throttleColor(level: BudgetStatus['throttle_level']): string {
+/* ─── Card eyebrow ─────────────────────────────────────────────────────── */
+
+function CardEyebrow({ icon: Icon, label, right }: { icon?: LucideIcon; label: string; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {Icon && <Icon size={12} style={{ color: 'var(--amber)' }} />}
+        <div style={sectionEyebrow}>{label}</div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+/* ─── Budget panel — tighter, no endless agent list ────────────────────── */
+
+function throttleColorVar(level: BudgetStatus['throttle_level']): string {
   switch (level) {
-    case 'emergency': return 'text-accent';
-    case 'hard': return 'text-[#fb923c]';
-    case 'soft': return 'text-[#fbbf24]';
-    default: return 'text-positive';
+    case 'emergency': return 'var(--red)';
+    case 'hard':      return 'var(--sev-high)';
+    case 'soft':      return 'var(--sev-medium)';
+    default:          return 'var(--green)';
   }
 }
 
@@ -62,136 +109,148 @@ function BudgetPanel() {
   const mutation = useBudgetConfigMutation();
   const [editing, setEditing] = useState(false);
   const [limitInput, setLimitInput] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   if (!budget) return null;
 
   const barPct = Math.min(budget.pct_used, 100);
-  const barColor = budget.throttle_level === 'emergency' ? 'progress-bar-fill-red'
-    : budget.throttle_level === 'hard' ? 'progress-bar-fill-amber'
-    : budget.throttle_level === 'soft' ? 'progress-bar-fill-amber'
-    : 'progress-bar-fill-teal';
+  const accent = throttleColorVar(budget.throttle_level);
+  const breakdownItems = breakdown ?? [];
+  const visibleItems = showAll ? breakdownItems : breakdownItems.slice(0, 5);
 
   return (
-    <Card style={{ padding: '20px', marginBottom: 16 }} className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="section-label">AI Budget</div>
-        <ThrottleBadge level={budget.throttle_level} />
+    <Card padding="20px">
+      <CardEyebrow icon={DollarSign} label="AI Budget" right={<ThrottleBadge level={budget.throttle_level} />} />
+
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: accent, lineHeight: 1, letterSpacing: -0.5 }}>
+          ${budget.spent_this_month.toFixed(2)}
+        </span>
+        <span style={{ ...mono, fontSize: 11, ...textTertiary }}>
+          of ${budget.config.monthly_limit_usd.toFixed(2)}
+        </span>
       </div>
 
-      {/* Spend bar */}
-      <div>
-        <div className="flex items-baseline justify-between mb-1.5">
-          <span className={`font-display text-lg font-bold ${throttleColor(budget.throttle_level)}`}>
-            ${budget.spent_this_month.toFixed(2)}
-          </span>
-          <span className="font-mono text-[10px] text-white/40">
-            / ${budget.config.monthly_limit_usd.toFixed(2)}
-          </span>
-        </div>
-        <div className="progress-bar-track h-2 mb-1">
-          <div className={barColor} style={{ width: `${barPct}%` }} />
-        </div>
-        <div className="font-mono text-[10px] text-white/55">{budget.pct_used.toFixed(1)}% used</div>
+      <div
+        style={{
+          height: 6, borderRadius: 999, overflow: 'hidden',
+          background: 'rgba(255,255,255,0.06)', marginBottom: 6,
+        }}
+      >
+        <div
+          style={{
+            height: '100%', width: `${barPct}%`,
+            background: `linear-gradient(90deg, ${accent}80, ${accent})`,
+            boxShadow: `0 0 12px ${accent}60`,
+            transition: 'width 300ms ease',
+          }}
+        />
+      </div>
+      <div style={{ ...mono, fontSize: 11, ...textSecondary, marginBottom: 16 }}>
+        {budget.pct_used.toFixed(1)}% used
       </div>
 
-      <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-
-      {/* Key metrics */}
-      <div className="grid grid-cols-2 gap-3 font-mono text-[10px]">
-        <div>
-          <div className="text-white/40 mb-0.5">Remaining</div>
-          <div className="text-white/95 font-semibold">${budget.remaining.toFixed(2)}</div>
-        </div>
-        <div>
-          <div className="text-white/40 mb-0.5">Daily burn</div>
-          <div className="text-white/95 font-semibold">${budget.daily_burn_rate.toFixed(2)}/day</div>
-        </div>
-        <div>
-          <div className="text-white/40 mb-0.5">Projected</div>
-          <div className={`font-semibold ${budget.projected_monthly > budget.config.monthly_limit_usd ? 'text-accent' : 'text-white/95'}`}>
-            ${budget.projected_monthly.toFixed(2)}
-          </div>
-        </div>
-        <div>
-          <div className="text-white/40 mb-0.5">Days left</div>
-          <div className="text-white/95 font-semibold">{budget.days_in_month - budget.days_elapsed}</div>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, ...mono, fontSize: 11 }}>
+        <KvRow label="Remaining" value={`$${budget.remaining.toFixed(2)}`} />
+        <KvRow label="Daily burn" value={`$${budget.daily_burn_rate.toFixed(2)}/day`} />
+        <KvRow
+          label="Projected"
+          value={`$${budget.projected_monthly.toFixed(2)}`}
+          danger={budget.projected_monthly > budget.config.monthly_limit_usd}
+        />
+        <KvRow label="Days left" value={String(budget.days_in_month - budget.days_elapsed)} />
       </div>
 
-      {budget.anthropic_reported > 0 && (
+      {breakdownItems.length > 0 && (
         <>
-          <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-          <div className="font-mono text-[10px] text-white/55">
-            Anthropic reported: ${budget.anthropic_reported.toFixed(2)}
-          </div>
-        </>
-      )}
-
-      {/* Agent breakdown */}
-      {breakdown && breakdown.length > 0 && (
-        <>
-          <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-          <div className="font-mono text-[9px] uppercase tracking-widest text-white/40 mb-2">Spend by Agent</div>
-          <div className="space-y-1.5">
-            {breakdown.map((a) => (
-              <div key={a.agent_id} className="flex items-center justify-between font-mono text-[10px]">
-                <span className="text-white/80">{a.agent_id}</span>
-                <span className="text-white/60">${a.cost_usd.toFixed(3)} ({a.calls})</span>
+          <hr style={dividerLine} />
+          <div style={sectionEyebrow}>Spend by Agent</div>
+          <div style={{ marginTop: 8 }}>
+            {visibleItems.map((a) => (
+              <div
+                key={a.agent_id}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 0', borderBottom: '1px solid var(--border-base)', ...mono, fontSize: 11,
+                }}
+              >
+                <span style={textPrimary}>{a.agent_id}</span>
+                <span style={textSecondary}>
+                  ${a.cost_usd.toFixed(3)} <span style={textMuted}>({a.calls})</span>
+                </span>
               </div>
             ))}
           </div>
+          {breakdownItems.length > 5 && (
+            <button
+              type="button"
+              onClick={() => setShowAll(!showAll)}
+              style={{
+                marginTop: 8, ...mono, fontSize: 11, fontWeight: 600,
+                color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              }}
+            >
+              {showAll ? 'Show top 5 only' : `Show all ${breakdownItems.length} agents`}
+            </button>
+          )}
         </>
       )}
 
-      {/* Edit limit */}
-      <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
+      <hr style={dividerLine} />
       {!editing ? (
         <button
           type="button"
           onClick={() => { setEditing(true); setLimitInput(String(budget.config.monthly_limit_usd)); }}
-          className="font-mono text-[10px] text-amber-400 hover:text-amber-300 transition-colors"
+          style={{
+            ...mono, fontSize: 11, fontWeight: 600,
+            color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          }}
         >
-          Edit monthly limit &rarr;
+          Edit monthly limit →
         </button>
       ) : (
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-white/40">$</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ ...mono, fontSize: 11, ...textTertiary }}>$</span>
           <input
             type="number"
             step="0.01"
             min="0"
             value={limitInput}
             onChange={(e) => setLimitInput(e.target.value)}
-            className="w-20 rounded border border-white/10 px-2 py-1 font-mono text-[11px] text-white/95 outline-none focus:border-amber-400"
-            style={{ background: 'var(--bg-card)' }}
+            style={{
+              width: 80, padding: '4px 8px', border: '1px solid var(--border-strong)',
+              borderRadius: 6, ...mono, fontSize: 12, ...textPrimary,
+              background: 'var(--bg-elevated)', outline: 'none',
+            }}
           />
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               const val = parseFloat(limitInput);
-              if (!isNaN(val) && val >= 0) {
-                mutation.mutate({ monthly_limit_usd: val });
-              }
+              if (!isNaN(val) && val >= 0) mutation.mutate({ monthly_limit_usd: val });
               setEditing(false);
             }}
-            className="font-mono text-[10px] text-positive hover:text-amber-300 transition-colors"
           >
             Save
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditing(false)}
-            className="font-mono text-[10px] text-white/55 hover:text-accent transition-colors"
-          >
-            Cancel
-          </button>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
         </div>
       )}
     </Card>
   );
 }
 
-/* ─── Email Security Stats ─── */
+function KvRow({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div>
+      <div style={{ ...textTertiary, marginBottom: 2 }}>{label}</div>
+      <div style={{ color: danger ? 'var(--red)' : 'var(--text-primary)', fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+/* ─── Email Security Section ──────────────────────────────────────────── */
 
 interface EmailSecurityStats {
   scanned: number;
@@ -203,11 +262,11 @@ interface EmailSecurityStats {
 
 const GRADE_COLORS: Record<string, string> = {
   'A+': '#4ade80',
-  'A': '#2dd4bf',
-  'B': '#5eadb0',
-  'C': '#fbbf24',
-  'D': '#fb923c',
-  'F': '#f87171',
+  'A':  '#2dd4bf',
+  'B':  '#5eadb0',
+  'C':  '#fbbf24',
+  'D':  '#fb923c',
+  'F':  '#f87171',
 };
 
 function EmailSecuritySection() {
@@ -226,138 +285,126 @@ function EmailSecuritySection() {
   const avgScore = stats?.avg_score ?? 0;
   const total = stats?.total_brands ?? (scanned + pending);
   const grades = stats?.grades ?? [];
-  const coveragePct = total > 0 ? ((scanned / total) * 100) : 0;
-  const maxGradeCount = Math.max(...grades.map(g => g.count ?? 0), 1);
+  const coveragePct = total > 0 ? (scanned / total) * 100 : 0;
+  const maxGradeCount = Math.max(...grades.map((g) => g.count ?? 0), 1);
 
   return (
-    <div className="rounded-xl border border-white/10 p-4 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="section-label">Email Security Coverage</div>
-        <div>
-          {scanAction.state === 'idle' && (
-            <button
-              type="button"
-              onClick={scanAction.confirm}
-              className="rounded border border-white/10 hover:bg-white/5 transition-colorsflex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              Scan All Brands &rarr;
-            </button>
-          )}
-          {scanAction.state === 'confirming' && (
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-amber-400">Scan all pending brands?</span>
-              <button
-                type="button"
-                onClick={scanAction.execute}
-                className="rounded border border-white/10 hover:bg-white/5 transition-colorsflex items-center gap-1 px-2 py-1 font-mono text-[10px] text-green-400"
-              >
-                <Check className="w-3 h-3" /> Confirm
-              </button>
-              <button
-                type="button"
-                onClick={scanAction.cancel}
-                className="rounded border border-white/10 hover:bg-white/5 transition-colorsflex items-center gap-1 px-2 py-1 font-mono text-[10px] text-white/40"
-              >
-                <X className="w-3 h-3" /> Cancel
-              </button>
-            </div>
-          )}
-          {scanAction.state === 'loading' && (
-            <span className="flex items-center gap-1.5 font-mono text-[10px] text-amber-400">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Scanning...
-            </span>
-          )}
-          {scanAction.state === 'success' && (
-            <span className="flex items-center gap-1.5 font-mono text-[10px] text-green-400">
-              <Check className="w-3.5 h-3.5" /> Email security scan queued for {pending} brands
-            </span>
-          )}
-          {scanAction.state === 'error' && (
-            <span className="font-mono text-[10px] text-red-400">{scanAction.error}</span>
-          )}
-        </div>
+    <Card padding="20px">
+      <CardEyebrow
+        icon={Mail}
+        label="Email Security Coverage"
+        right={
+          <>
+            {scanAction.state === 'idle' && (
+              <Button variant="ghost" size="sm" onClick={scanAction.confirm}>
+                Scan all brands →
+              </Button>
+            )}
+            {scanAction.state === 'confirming' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ ...mono, fontSize: 11, color: 'var(--amber)' }}>Scan all pending?</span>
+                <Button variant="ghost" size="sm" onClick={scanAction.execute}>
+                  <Check size={12} /> Confirm
+                </Button>
+                <Button variant="ghost" size="sm" onClick={scanAction.cancel}>
+                  <X size={12} /> Cancel
+                </Button>
+              </div>
+            )}
+            {scanAction.state === 'loading' && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber)' }}>
+                <Loader2 size={12} className="animate-spin" /> Scanning...
+              </span>
+            )}
+            {scanAction.state === 'success' && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green)' }}>
+                <Check size={12} /> Queued for {pending} brands
+              </span>
+            )}
+            {scanAction.state === 'error' && (
+              <span style={{ ...mono, fontSize: 11, color: 'var(--red)' }}>{scanAction.error}</span>
+            )}
+          </>
+        }
+      />
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 18, marginBottom: 18 }}>
+        <Metric value={fmt(scanned)} label="scanned" />
+        <Metric value={fmt(pending)} label="pending" />
+        <Metric value={`${avgScore}/100`} label="avg score" />
       </div>
 
-      {/* Summary stats */}
-      <div className="flex items-center gap-4 font-mono text-[11px] text-white/60">
-        <span><strong className="text-white/95">{fmt(scanned)}</strong> scanned</span>
-        <span>&middot;</span>
-        <span><strong className="text-white/95">{fmt(pending)}</strong> pending</span>
-        <span>&middot;</span>
-        <span>Avg score: <strong className="text-white/95">{avgScore}/100</strong></span>
-      </div>
-
-      <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-
-      {/* Grade distribution */}
       {grades.length > 0 && (
-        <div>
-          <div className="font-mono text-[9px] uppercase tracking-widest text-white/40 mb-3">Grade Distribution</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+        <>
+          <div style={sectionEyebrow}>Grade Distribution</div>
+          <div style={{
+            display: 'grid', gap: 12, marginTop: 10,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))',
+          }}>
             {grades.map((g) => {
               const color = GRADE_COLORS[g.grade] ?? '#78A0C8';
-              const barWidth = maxGradeCount > 0 ? Math.max((g.count / maxGradeCount) * 100, 4) : 4;
+              const barWidth = Math.max((g.count / maxGradeCount) * 100, 4);
               const isF = g.grade === 'F';
               return (
-                <div key={g.grade} className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className="font-mono text-[12px] font-bold"
-                      style={isF
-                        ? { color, textShadow: '0 0 20px rgba(200,60,60,0.8)' }
-                        : { color }}
-                    >
+                <div key={g.grade}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{
+                      ...mono, fontSize: 13, fontWeight: 700, color,
+                      textShadow: isF ? '0 0 16px rgba(248,113,113,0.6)' : undefined,
+                    }}>
                       {g.grade}
                     </span>
-                    <span
-                      className={`font-mono text-[11px] ${isF ? 'font-bold' : ''}`}
-                      style={{ color: isF ? color : undefined }}
-                    >
-                      {isF ? (
-                        <span className="text-red-400 font-bold">{fmt(g.count)}</span>
-                      ) : (
-                        <span className="text-white/80">{fmt(g.count)}</span>
-                      )}
+                    <span style={{ ...mono, fontSize: 12, fontWeight: isF ? 700 : 500, color: isF ? color : 'var(--text-primary)' }}>
+                      {fmt(g.count)}
                     </span>
                   </div>
-                  <div className="h-2 rounded-full bg-white/5 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{ width: `${barWidth}%`, backgroundColor: color }}
-                    />
+                  <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${barWidth}%`, background: color, transition: 'width 300ms' }} />
                   </div>
                 </div>
               );
             })}
           </div>
-        </div>
+        </>
       )}
 
-      <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
+      <hr style={dividerLine} />
 
-      {/* Scan coverage bar */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="font-mono text-[9px] uppercase tracking-widest text-white/40">Scan Coverage</span>
-          <span className="font-mono text-[10px] text-white/70">
-            {coveragePct.toFixed(1)}% &nbsp;({fmt(scanned)} / {fmt(total)})
-          </span>
-        </div>
-        <div className="progress-bar-track h-2.5">
-          <div className="progress-bar-fill-amber" style={{ width: `${Math.min(coveragePct, 100)}%` }} />
-        </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={sectionEyebrow}>Scan Coverage</span>
+        <span style={{ ...mono, fontSize: 11, ...textSecondary }}>
+          {coveragePct.toFixed(1)}% &middot; {fmt(scanned)} / {fmt(total)}
+        </span>
       </div>
+      <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+        <div
+          style={{
+            height: '100%', width: `${Math.min(coveragePct, 100)}%`,
+            background: 'linear-gradient(90deg, var(--amber-dim), var(--amber))',
+            transition: 'width 300ms',
+          }}
+        />
+      </div>
+    </Card>
+  );
+}
+
+function Metric({ value, label }: { value: string; label: string }) {
+  return (
+    <div>
+      <span style={{ ...mono, fontSize: 18, fontWeight: 700, ...textPrimary, marginRight: 6 }}>{value}</span>
+      <span style={{ ...mono, fontSize: 11, ...textTertiary, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+        {label}
+      </span>
     </div>
   );
 }
 
-/* ─── Maintenance Operations ─── */
+/* ─── Maintenance Operations (collapsible) ─────────────────────────────── */
 
 interface OperationConfig {
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: LucideIcon;
   badge: string;
   confirmText: string;
   endpoint: string;
@@ -367,7 +414,7 @@ const OPERATIONS: OperationConfig[] = [
   {
     label: 'Force Feed Pull',
     icon: Rss,
-    badge: 'Trigger all 15 active feeds now',
+    badge: 'Trigger all active feeds now',
     confirmText: 'Force-pull all active feeds now, ignoring schedules.',
     endpoint: '/api/feeds/trigger-all',
   },
@@ -386,7 +433,7 @@ const OPERATIONS: OperationConfig[] = [
     endpoint: '/api/admin/backfill-ai-attribution',
   },
   {
-    label: 'Run 10x Feeds',
+    label: 'Run 10× Feeds',
     icon: Zap,
     badge: '10 batches with 15s delays',
     confirmText: 'Run feeds 10 times in sequence. Only use for initial data loading.',
@@ -397,77 +444,62 @@ const OPERATIONS: OperationConfig[] = [
 function OperationCard({ op }: { op: OperationConfig }) {
   const action = useAdminAction(op.endpoint);
   const Icon = op.icon;
-
   return (
-    <div className="rounded-xl border border-white/10 p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-amber-400" />
-        <span className="font-mono text-[12px] font-semibold text-white/95">{op.label}</span>
+    <Card padding="16px">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <Icon size={14} style={{ color: 'var(--amber)' }} />
+        <span style={{ ...mono, fontSize: 12, fontWeight: 700, ...textPrimary }}>{op.label}</span>
       </div>
-      <div className="font-mono text-[10px] text-white/40">{op.badge}</div>
+      <div style={{ ...mono, fontSize: 11, ...textTertiary, marginBottom: 12 }}>{op.badge}</div>
 
       {action.state === 'idle' && (
-        <button
-          type="button"
-          onClick={action.confirm}
-          className="rounded border border-white/10 hover:bg-white/5 transition-colorsw-full px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
-        >
+        <Button variant="secondary" size="sm" onClick={action.confirm}>
           Run
-        </button>
+        </Button>
       )}
       {action.state === 'confirming' && (
-        <div className="space-y-2">
-          <div className="font-mono text-[10px] text-amber-400/80">{op.confirmText}</div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={action.execute}
-              className="rounded border border-white/10 hover:bg-white/5 transition-colorsflex-1 flex items-center justify-center gap-1 px-2 py-1.5 font-mono text-[10px] text-green-400"
-            >
-              <Check className="w-3 h-3" /> Confirm
-            </button>
-            <button
-              type="button"
-              onClick={action.cancel}
-              className="rounded border border-white/10 hover:bg-white/5 transition-colorsflex-1 flex items-center justify-center gap-1 px-2 py-1.5 font-mono text-[10px] text-white/40"
-            >
-              <X className="w-3 h-3" /> Cancel
-            </button>
+        <div>
+          <div style={{ ...mono, fontSize: 11, color: 'var(--amber)', marginBottom: 8, lineHeight: 1.5 }}>
+            {op.confirmText}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Button variant="primary" size="sm" onClick={action.execute}>
+              <Check size={12} /> Confirm
+            </Button>
+            <Button variant="ghost" size="sm" onClick={action.cancel}>
+              Cancel
+            </Button>
           </div>
         </div>
       )}
       {action.state === 'loading' && (
-        <div className="flex items-center justify-center gap-1.5 py-1.5 font-mono text-[10px] text-amber-400">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Running...
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber)' }}>
+          <Loader2 size={12} className="animate-spin" /> Running…
         </div>
       )}
       {action.state === 'success' && (
-        <div className="flex items-center justify-center gap-1.5 py-1.5 font-mono text-[10px] text-green-400">
-          <Check className="w-3.5 h-3.5" /> Done
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green)' }}>
+          <Check size={12} /> Done
         </div>
       )}
       {action.state === 'error' && (
-        <div className="flex items-center justify-center gap-1.5 py-1.5 font-mono text-[10px] text-red-400">
-          <X className="w-3.5 h-3.5" /> {action.error || 'Failed'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--red)' }}>
+          <X size={12} /> {action.error || 'Failed'}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
 function MaintenanceSection() {
   const [expanded, setExpanded] = useState(() => {
-    try {
-      return localStorage.getItem('dashboard-maintenance') === 'true';
-    } catch {
-      return false;
-    }
+    try { return localStorage.getItem('dashboard-maintenance') === 'true'; }
+    catch { return false; }
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('dashboard-maintenance', String(expanded));
-    } catch {}
+    try { localStorage.setItem('dashboard-maintenance', String(expanded)); }
+    catch { /* noop */ }
   }, [expanded]);
 
   const { data: emailStats } = useQuery({
@@ -479,79 +511,80 @@ function MaintenanceSection() {
   });
 
   const { data: systemHealth } = useSystemHealth();
-
   const unlinkedThreats = systemHealth?.threats?.total ?? 0;
   const pendingScans = emailStats?.pending ?? 0;
 
   return (
-    <div className="rounded-xl border border-white/10 overflow-hidden">
-      {/* Header — always visible */}
+    <Card padding={0}>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between p-4"
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left',
+        }}
       >
-        <div className="flex items-center gap-3">
-          <span className="section-label !mb-0">Maintenance Operations</span>
-          <span className="flex items-center gap-1 font-mono text-[9px] text-amber-400 uppercase tracking-wider">
-            <AlertTriangle className="w-3 h-3" /> Super Admin Only
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Cpu size={14} style={{ color: 'var(--amber)' }} />
+            <div style={sectionEyebrow}>Maintenance Operations</div>
+          </div>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--amber)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+            <AlertTriangle size={11} /> Super Admin
           </span>
         </div>
-        {expanded ? (
-          <ChevronUp className="w-4 h-4 text-white/50" />
-        ) : (
-          <ChevronDown className="w-4 h-4 text-white/50" />
-        )}
+        {expanded
+          ? <ChevronUp size={16} style={{ color: 'var(--text-secondary)' }} />
+          : <ChevronDown size={16} style={{ color: 'var(--text-secondary)' }} />}
       </button>
 
-      {/* Expanded content */}
       {expanded && (
-        <div className="px-4 pb-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {OPERATIONS.map((op) => (
-              <OperationCard key={op.label} op={op} />
-            ))}
+        <div style={{ padding: '0 20px 20px' }}>
+          <div style={{
+            display: 'grid', gap: 12,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          }}>
+            {OPERATIONS.map((op) => <OperationCard key={op.label} op={op} />)}
           </div>
-
-          <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-
-          {/* Stats bar */}
-          <div className="flex items-center gap-4 font-mono text-[10px] text-white/40">
-            <span>Unlinked threats: <strong className="text-white/95">{fmt(unlinkedThreats)}</strong></span>
-            <span>&middot;</span>
-            <span>Pending email scans: <strong className="text-white/95">{fmt(pendingScans)}</strong></span>
+          <hr style={dividerLine} />
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 16, ...mono, fontSize: 11, ...textTertiary }}>
+            <span>Unlinked threats: <strong style={textPrimary}>{fmt(unlinkedThreats)}</strong></span>
+            <span style={textMuted}>·</span>
+            <span>Pending email scans: <strong style={textPrimary}>{fmt(pendingScans)}</strong></span>
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
+
+/* ─── Push bootstrap nudge ─────────────────────────────────────────────── */
 
 function PushBootstrapCard() {
   const navigate = useNavigate();
   const { data: config, isLoading } = usePushConfig();
-  // Hide when push is fully configured + enabled — the card is a
-  // setup nudge, not permanent UI. Loading state also hidden.
   if (isLoading || !config) return null;
   const fullyConfigured = config.push_enabled
     && config.vapid_public_key.length > 0
     && config.vapid_private_key_configured;
   if (fullyConfigured) return null;
+
   return (
-    <Card hover={false}>
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 min-w-0">
+    <Card variant="elevated" padding="16px">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           <div
-            className="flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center"
-            style={{ background: 'var(--amber-glow)', color: 'var(--amber)' }}
+            style={{
+              flexShrink: 0, width: 36, height: 36, borderRadius: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--amber-glow)', color: 'var(--amber)',
+            }}
           >
             <BellRing size={16} />
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Push notifications not configured
-            </div>
-            <div className="text-[11px] mt-0.5 font-mono" style={{ color: 'var(--text-tertiary)' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, ...textPrimary }}>Push notifications not configured</div>
+            <div style={{ ...mono, fontSize: 11, marginTop: 2, ...textTertiary }}>
               {!config.vapid_public_key
                 ? 'Generate a VAPID keypair to enable web push.'
                 : !config.vapid_private_key_configured
@@ -568,8 +601,10 @@ function PushBootstrapCard() {
   );
 }
 
+/* ─── Main dashboard ───────────────────────────────────────────────────── */
+
 export function AdminDashboard() {
-  const { data, isLoading, isError } = useSystemHealth();
+  const { data, isLoading } = useSystemHealth();
 
   const [classifying, setClassifying] = useState(false);
   const [classifyResult, setClassifyResult] = useState<string | null>(null);
@@ -614,79 +649,39 @@ export function AdminDashboard() {
   };
 
   const successRate = agents.total > 0 ? Math.round((agents.successes / agents.total) * 100) : 100;
-  const isHealthy = agents.errors === 0;
   const trendTotal = trend.reduce((s, t) => s + t.count, 0);
   const trendAvg = trend.length > 0 ? Math.round(trendTotal / trend.length) : 0;
-  const trendPeak = trend.reduce((max, t) => t.count > max.count ? t : max, { day: '', count: 0 });
-
-  const chartData = trend.map((t) => ({
-    date: shortDate(t.day),
-    threats: t.count,
-  }));
-
+  const trendPeak = trend.reduce((max, t) => (t.count > max.count ? t : max), { day: '', count: 0 });
+  const chartData = trend.map((t) => ({ date: shortDate(t.day), threats: t.count }));
   const dbSizePercent = Math.min((infra.mainDb.sizeMb / 500) * 100, 100);
+  const isHealthy = agents.errors === 0;
 
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
       <PageHeader
         title="Admin Dashboard"
         subtitle="Platform health and operations"
         actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              System Health
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ ...mono, fontSize: 11, ...textSecondary }}>System Health</span>
             <span
               style={{
-                fontSize: 10,
-                fontWeight: 700,
-                fontFamily: 'var(--font-mono)',
-                padding: '3px 8px',
-                borderRadius: 4,
-                border: `1px solid ${agents.errors > 0 ? 'var(--sev-high)' : 'var(--green)'}`,
-                color: agents.errors > 0 ? 'var(--sev-high)' : 'var(--green)',
-                background: agents.errors > 0 ? 'rgba(251,146,60,0.1)' : 'rgba(60,184,120,0.1)',
+                ...mono, fontSize: 10, fontWeight: 700, padding: '4px 10px',
+                borderRadius: 999, letterSpacing: '0.16em',
+                border: `1px solid ${isHealthy ? 'var(--green)' : 'var(--sev-high)'}`,
+                color: isHealthy ? 'var(--green)' : 'var(--sev-high)',
+                background: isHealthy ? 'rgba(60,184,120,0.10)' : 'rgba(251,146,60,0.10)',
               }}
             >
-              {agents.errors > 0 ? 'DEGRADED' : 'OPERATIONAL'}
+              {isHealthy ? 'OPERATIONAL' : 'DEGRADED'}
             </span>
           </div>
         }
       />
 
-      {/* ── PUSH BOOTSTRAP CARD ─────────────────────
-          Only renders when web push isn't fully configured. The full
-          VAPID lifecycle (/admin/push) moved out of the primary nav —
-          this card surfaces it when needed without burying the link. */}
       <PushBootstrapCard />
 
-      {/* ── DAILY BRIEFING WIDGET ─────────────────── */}
-      <DailyBriefingWidget />
-
-      {/* ── ADMIN ACTIONS ─────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleClassifySaasTechniques}
-          disabled={classifying}
-          loading={classifying}
-        >
-          {classifying ? 'Classifying...' : 'Classify SaaS Techniques'}
-        </Button>
-        {classifyResult && (
-          <span style={{
-            fontSize: 11,
-            color: 'var(--sev-info)',
-            fontFamily: 'var(--font-mono)',
-            marginLeft: 8,
-          }}>
-            ✓ {classifyResult}
-          </span>
-        )}
-      </div>
-
-      {/* ── TOP STAT ROW ────────────────────────── */}
+      {/* TOP STAT ROW */}
       <StatGrid cols={4}>
         <StatCard label="Threats Today" value={fmt(threats.today)} accentColor="var(--red)" sublabel={`${fmt(threats.total)} total`} />
         <StatCard label="Feed Ingestion" value={fmt(feeds.ingested)} accentColor="var(--amber)" sublabel="records (24h)" />
@@ -694,260 +689,314 @@ export function AdminDashboard() {
         <StatCard label="Active Sessions" value={fmt(sessions.count)} accentColor="var(--green)" sublabel="authenticated" />
       </StatGrid>
 
-      {/* ── THREE-COLUMN LAYOUT ─────────────────── */}
-      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
-        {/* LEFT — Infrastructure */}
-        <div className="space-y-4">
-          <SectionLabel>Infrastructure</SectionLabel>
+      {/* DAILY BRIEFING */}
+      <section>
+        <SectionLabel label="Daily Briefing" attribution="Generated by the briefing agent" />
+        <DailyBriefingWidget />
+      </section>
 
-          {/* Database */}
-          <div className="rounded-xl border border-white/10 p-4 space-y-4">
-            <div className="section-label">Database</div>
-
-            {/* Main DB */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="font-mono text-[11px] font-semibold text-white/95">{infra.mainDb.name}</span>
-                <Badge status="active" label="PRIMARY" size="xs" />
-              </div>
-              <div className="progress-bar-track h-2 mb-1.5">
-                <div className="progress-bar-fill-teal" style={{ width: `${dbSizePercent}%` }} />
-              </div>
-              <div className="font-mono text-[10px] text-white/40">{infra.mainDb.sizeMb} MB</div>
-              <div className="font-mono text-[10px] text-white/55 mt-0.5">
-                {infra.mainDb.tables} tables &middot; {migrations.total} migrations
-              </div>
-              <div className="font-mono text-[10px] text-white/55">
-                Region: {infra.mainDb.region} &middot; Created Mar 13
-              </div>
-              {migrations.last_run && (
-                <div className="font-mono text-[10px] text-white/55">
-                  Last migration: {shortDate(migrations.last_run)}
-                </div>
-              )}
-            </div>
-
-            <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-
-            {/* Audit DB */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-[11px] font-semibold text-white/95">{infra.auditDb.name}</span>
-                <Badge status="inactive" label="AUDIT" size="xs" />
-              </div>
-              <div className="font-mono text-[10px] text-white/55">
-                {infra.auditDb.sizeKb} KB &middot; {infra.auditDb.tables} tables &middot; {infra.auditDb.region}
-              </div>
-            </div>
-          </div>
-
-          {/* Worker */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Worker</div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="dot-pulse-green" />
-                <span className="font-mono text-[11px] font-semibold text-white/95">{infra.worker.name}</span>
-              </div>
-              <Badge status="active" label="ACTIVE" size="xs" />
-            </div>
-            <div className="font-mono text-[10px] text-white/55 mt-1.5">{infra.worker.platform}</div>
-            <div className="font-mono text-[10px] text-white/50 mt-0.5">ID: 5a136591...</div>
-            <div className="font-mono text-[10px] text-white/55 mt-0.5">Region: ENAM</div>
-          </div>
-
-          {/* KV Namespaces */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">KV Namespaces ({infra.kvNamespaces.length})</div>
-            <div className="space-y-2">
-              {infra.kvNamespaces.map((kv) => (
-                <div key={kv.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="dot-pulse-green" />
-                    <span className="font-mono text-[11px] text-white/95">{kv.name}</span>
-                  </div>
-                  <Badge status="active" label="ACTIVE" size="xs" />
-                </div>
-              ))}
-              <div className="font-mono text-[10px] text-white/55 mt-1 ml-5">
-                {fmt(sessions.count)} active sessions
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* CENTER — Activity */}
-        <div className="space-y-4">
-          <SectionLabel>Activity</SectionLabel>
-
-          {/* Threat Ingestion Chart */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Threat Ingestion (14D)</div>
-            <div className="h-[180px]">
-              {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-                    <defs>
-                      <linearGradient id="tealGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#00D4FF" stopOpacity={0.15} />
-                        <stop offset="100%" stopColor="#00D4FF" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fill: 'rgba(120,160,200,0.4)', fontSize: 9, fontFamily: 'IBM Plex Mono' }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: 'rgba(120,160,200,0.3)', fontSize: 9, fontFamily: 'IBM Plex Mono' }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="threats"
-                      stroke="#00D4FF"
-                      strokeWidth={2}
-                      fill="url(#tealGradient)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <span className="font-mono text-[11px] text-white/40">No trend data</span>
-                </div>
-              )}
-            </div>
-            <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-            <div className="flex items-center justify-between font-mono text-[10px] text-white/40">
-              <span>Total: {fmt(trendTotal)}</span>
-              <span>Avg/day: {fmt(trendAvg)}</span>
-              {trendPeak.day && <span>Peak: {shortDate(trendPeak.day)}</span>}
-            </div>
-          </div>
-
-          {/* Agent Performance */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Agent Performance (24H)</div>
-            <div className="flex gap-4 mb-3">
-              <div>
-                <div className="font-display text-lg font-bold text-white/95">{fmt(agents.total)}</div>
-                <div className="font-mono text-[9px] text-white/55 uppercase">Runs</div>
-              </div>
-              <div>
-                <div className="font-display text-lg font-bold text-white/95">{fmt(agents.successes)}</div>
-                <div className="font-mono text-[9px] text-white/55 uppercase">Success</div>
-              </div>
-              <div>
-                <div className={`font-display text-lg font-bold ${agents.errors > 0 ? 'text-accent' : 'text-white/95'}`}>
-                  {agents.errors}
-                </div>
-                <div className="font-mono text-[9px] text-white/55 uppercase">Errors</div>
-              </div>
-            </div>
-            <div className="progress-bar-track h-2 mb-1.5">
-              <div
-                className={successRate >= 90 ? 'progress-bar-fill-teal' : successRate >= 50 ? 'progress-bar-fill-amber' : 'progress-bar-fill-red'}
-                style={{ width: `${successRate}%` }}
+      {/* ACTIVITY ROW — chart spans 2/3, agent perf 1/3 */}
+      <section>
+        <SectionLabel label="Activity (14d)" />
+        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
+          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">
+            <Card padding="20px" style={{ height: '100%' }}>
+              <CardEyebrow
+                icon={Activity}
+                label="Threat Ingestion · 14 Days"
+                right={
+                  <span style={{ ...mono, fontSize: 11, ...textSecondary }}>
+                    Total <strong style={textPrimary}>{fmt(trendTotal)}</strong>
+                    {' · '}Avg <strong style={textPrimary}>{fmt(trendAvg)}</strong>/day
+                    {trendPeak.day && <>{' · '}Peak <strong style={textPrimary}>{shortDate(trendPeak.day)}</strong></>}
+                  </span>
+                }
               />
-            </div>
-            <div className="font-mono text-[10px] text-white/40 mb-3">{successRate}% success rate</div>
-            <hr style={{ border: 'none', height: 1, background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.2), transparent)', margin: '12px 0' }} />
-            <div className="font-mono text-[10px] text-white/40 mt-2">
-              {fmt(feeds.pulls)} feed pulls &middot; {fmt(feeds.ingested)} ingested
-            </div>
+              <div style={{ height: 220 }}>
+                {chartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
+                      <defs>
+                        <linearGradient id="amberGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--amber)" stopOpacity={0.35} />
+                          <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: 'rgba(255,255,255,0.45)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Area
+                        type="monotone"
+                        dataKey="threats"
+                        stroke="var(--amber)"
+                        strokeWidth={2}
+                        fill="url(#amberGradient)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', ...mono, fontSize: 12, ...textTertiary }}>
+                    No trend data
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-4">
+            <Card padding="20px" style={{ height: '100%' }}>
+              <CardEyebrow icon={Cpu} label="Agent Performance · 24h" />
+              <div style={{ display: 'flex', gap: 18, marginBottom: 14 }}>
+                <BigStat value={fmt(agents.total)} label="Runs" />
+                <BigStat value={fmt(agents.successes)} label="Success" tone="green" />
+                <BigStat value={String(agents.errors)} label="Errors" tone={agents.errors > 0 ? 'red' : undefined} />
+              </div>
+              <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden', marginBottom: 6 }}>
+                <div
+                  style={{
+                    height: '100%', width: `${successRate}%`,
+                    background: successRate >= 90
+                      ? 'linear-gradient(90deg, var(--green-dim), var(--green))'
+                      : successRate >= 50
+                        ? 'linear-gradient(90deg, var(--amber-dim), var(--amber))'
+                        : 'linear-gradient(90deg, var(--red-dim), var(--red))',
+                    transition: 'width 300ms',
+                  }}
+                />
+              </div>
+              <div style={{ ...mono, fontSize: 11, ...textSecondary, marginBottom: 14 }}>
+                {successRate}% success rate
+              </div>
+              <hr style={dividerLine} />
+              <div style={{ ...mono, fontSize: 11, ...textTertiary, lineHeight: 1.7 }}>
+                <div><strong style={textPrimary}>{fmt(feeds.pulls)}</strong> feed pulls</div>
+                <div><strong style={textPrimary}>{fmt(feeds.ingested)}</strong> records ingested</div>
+              </div>
+            </Card>
           </div>
         </div>
+      </section>
 
-        {/* RIGHT — Security & Compliance */}
-        <div className="space-y-4">
-          <SectionLabel>Security &amp; Compliance</SectionLabel>
-
-          {/* AI Budget */}
-          <BudgetPanel />
-
-          {/* Sessions */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Sessions</div>
-            <div className="font-display text-2xl font-bold text-white/95 mb-1">{fmt(sessions.count)}</div>
-            <div className="font-mono text-[10px] text-white/55 mb-3">active sessions &middot; 1 total user</div>
-            <Link
-              to="/profile"
-              className="font-mono text-[10px] text-amber-400 hover:text-amber-300 transition-colors"
-            >
-              Revoke all sessions &rarr;
-            </Link>
+      {/* SECURITY ROW — Budget + Compliance */}
+      <section>
+        <SectionLabel label="Security &amp; Spend" />
+        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
+          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-5">
+            <BudgetPanel />
           </div>
-
-          {/* Compliance */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Compliance</div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-positive">&#10003;</span>
-                <span className="text-white/80">Data residency: ENAM</span>
+          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-7">
+            <Card padding="20px" style={{ height: '100%' }}>
+              <CardEyebrow
+                icon={Shield}
+                label="Compliance & Sessions"
+                right={
+                  <Link
+                    to="/admin/audit"
+                    style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber)', textDecoration: 'none' }}
+                  >
+                    Audit Log →
+                  </Link>
+                }
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                <ComplianceItem ok label="Data residency: ENAM" />
+                <ComplianceItem ok label="Audit logging: Active" sub={`${fmt(audit.count)} events recorded`} />
+                <ComplianceItem ok label="Encryption at rest: D1 managed" />
+                <ComplianceItem ok label="TLS: Cloudflare managed" />
+                <ComplianceItem ok label="Auth: Google OAuth" />
+                <ComplianceItem ok label={`${fmt(sessions.count)} active sessions`} sub="1 total user · revoke from profile" />
               </div>
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-positive">&#10003;</span>
-                <span className="text-white/80">Audit logging: Active</span>
+              <hr style={dividerLine} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleClassifySaasTechniques}
+                  disabled={classifying}
+                  loading={classifying}
+                >
+                  {classifying ? 'Classifying…' : 'Classify SaaS Techniques'}
+                </Button>
+                {classifyResult && (
+                  <span style={{ ...mono, fontSize: 11, color: 'var(--green)' }}>✓ {classifyResult}</span>
+                )}
+                <Link
+                  to="/profile"
+                  style={{ ...mono, fontSize: 11, color: 'var(--amber)', textDecoration: 'none' }}
+                >
+                  Revoke all sessions →
+                </Link>
               </div>
-              <div className="font-mono text-[10px] text-white/55 ml-5">
-                {fmt(audit.count)} events recorded
-              </div>
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-positive">&#10003;</span>
-                <span className="text-white/80">Encryption at rest: D1 managed</span>
-              </div>
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-positive">&#10003;</span>
-                <span className="text-white/80">TLS: Cloudflare managed</span>
-              </div>
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-positive">&#10003;</span>
-                <span className="text-white/80">Auth: Google OAuth</span>
-              </div>
-            </div>
-            <div className="mt-3">
-              <Link
-                to="/admin/audit"
-                className="font-mono text-[10px] text-amber-400 hover:text-amber-300 transition-colors"
-              >
-                View Audit Log &rarr;
-              </Link>
-            </div>
-          </div>
-
-          {/* Migrations */}
-          <div className="rounded-xl border border-white/10 p-4">
-            <div className="section-label mb-3">Migrations</div>
-            <div className="font-display text-lg font-bold text-white/95">{migrations.total}</div>
-            <div className="font-mono text-[10px] text-white/55 mt-0.5">migrations run</div>
-            {migrations.last_run && (
-              <div className="font-mono text-[10px] text-white/55 mt-1.5">
-                Last: {shortDate(migrations.last_run)}
-              </div>
-            )}
-            {migrations.last_name && (
-              <div className="font-mono text-[10px] text-white/50 mt-0.5 truncate">
-                {migrations.last_name}
-              </div>
-            )}
-            <div className="flex items-center gap-1.5 mt-2">
-              <span className="text-positive font-mono text-[11px]">&#10003;</span>
-              <span className="font-mono text-[10px] text-white/70">Up to date</span>
-            </div>
+            </Card>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* ── EMAIL SECURITY COVERAGE ────────────────── */}
+      {/* INFRASTRUCTURE — single compact row instead of an endless column */}
+      <section>
+        <SectionLabel label="Infrastructure" />
+        <Card padding="20px">
+          <div
+            style={{
+              display: 'grid', gap: 20,
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            }}
+          >
+            <InfraTile
+              icon={Database}
+              title={infra.mainDb.name}
+              badge={<Badge status="active" label="PRIMARY" size="xs" />}
+              progress={dbSizePercent}
+              progressColor="var(--blue)"
+              lines={[
+                `${infra.mainDb.sizeMb} MB · ${infra.mainDb.tables} tables`,
+                `${migrations.total} migrations · ${infra.mainDb.region}`,
+                migrations.last_run
+                  ? `Last migration: ${shortDate(migrations.last_run)}`
+                  : 'Never migrated',
+              ]}
+            />
+            <InfraTile
+              icon={Database}
+              title={infra.auditDb.name}
+              badge={<Badge status="inactive" label="AUDIT" size="xs" />}
+              lines={[
+                `${infra.auditDb.sizeKb} KB · ${infra.auditDb.tables} tables`,
+                `Region: ${infra.auditDb.region}`,
+              ]}
+            />
+            <InfraTile
+              icon={Cpu}
+              title={infra.worker.name}
+              badge={<Badge status="active" label="ACTIVE" size="xs" />}
+              lines={[infra.worker.platform, 'Region: ENAM']}
+              pulseColor="var(--green)"
+            />
+            <InfraTile
+              icon={Activity}
+              title={`KV · ${infra.kvNamespaces.length} namespaces`}
+              badge={<Badge status="active" label="ACTIVE" size="xs" />}
+              lines={[
+                infra.kvNamespaces.map(k => k.name).join(', '),
+                `${fmt(sessions.count)} active sessions`,
+              ]}
+            />
+            <InfraTile
+              icon={Shield}
+              title="Migrations"
+              badge={<Badge status="active" label="UP TO DATE" size="xs" />}
+              lines={[
+                `${migrations.total} migrations run`,
+                migrations.last_run ? `Last: ${shortDate(migrations.last_run)}` : 'No prior runs',
+                migrations.last_name ?? '—',
+              ]}
+            />
+          </div>
+        </Card>
+      </section>
+
+      {/* EMAIL SECURITY */}
       <EmailSecuritySection />
 
-      {/* ── MAINTENANCE OPERATIONS ─────────────────── */}
+      {/* MAINTENANCE — collapsible */}
       <MaintenanceSection />
+    </div>
+  );
+}
+
+function BigStat({ value, label, tone }: { value: string; label: string; tone?: 'green' | 'red' }) {
+  const color = tone === 'green' ? 'var(--green)' : tone === 'red' ? 'var(--red)' : 'var(--text-primary)';
+  return (
+    <div>
+      <div style={{
+        fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 800, lineHeight: 1, color,
+      }}>
+        {value}
+      </div>
+      <div style={{ ...sectionEyebrow, marginTop: 6 }}>{label}</div>
+    </div>
+  );
+}
+
+function InfraTile({
+  icon: Icon, title, badge, progress, progressColor, lines, pulseColor,
+}: {
+  icon: LucideIcon;
+  title: string;
+  badge?: React.ReactNode;
+  progress?: number;
+  progressColor?: string;
+  lines: (string | null)[];
+  pulseColor?: string;
+}) {
+  return (
+    <div style={{
+      borderRadius: 10, border: '1px solid var(--border-base)',
+      background: 'var(--bg-elevated)', padding: 14,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {pulseColor ? (
+            <span style={{
+              width: 8, height: 8, borderRadius: 999, background: pulseColor,
+              boxShadow: `0 0 10px ${pulseColor}`, flexShrink: 0,
+            }} />
+          ) : (
+            <Icon size={13} style={{ color: 'var(--amber)' }} />
+          )}
+          <span style={{
+            ...mono, fontSize: 12, fontWeight: 700, ...textPrimary,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {title}
+          </span>
+        </div>
+        {badge}
+      </div>
+      {progress != null && (
+        <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: 8 }}>
+          <div style={{
+            height: '100%', width: `${progress}%`,
+            background: `linear-gradient(90deg, ${progressColor}55, ${progressColor})`,
+            transition: 'width 300ms',
+          }} />
+        </div>
+      )}
+      <div style={{ ...mono, fontSize: 11, ...textSecondary, lineHeight: 1.6 }}>
+        {lines.filter(Boolean).map((line, i) => (
+          <div key={i} style={i === 0 ? undefined : textTertiary}>{line}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComplianceItem({ ok, label, sub }: { ok: boolean; label: string; sub?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <span style={{
+        flexShrink: 0, width: 18, height: 18, borderRadius: 999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1,
+        background: ok ? 'rgba(60,184,120,0.15)' : 'rgba(248,113,113,0.15)',
+        color: ok ? 'var(--green)' : 'var(--red)',
+        fontSize: 11, fontWeight: 700,
+      }}>
+        {ok ? '✓' : '!'}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, ...textPrimary }}>{label}</div>
+        {sub && <div style={{ ...mono, fontSize: 11, ...textTertiary, marginTop: 2 }}>{sub}</div>}
+      </div>
     </div>
   );
 }

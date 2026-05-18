@@ -65,17 +65,19 @@ describe('AdminDashboard', () => {
   it('renders top stat row with correct values', () => {
     renderWithProviders(<AdminDashboard />);
     expect(screen.getByText('3,209')).toBeInTheDocument();
-    expect(screen.getByText('6,245')).toBeInTheDocument();
+    // 6,245 appears in the StatCard and again in the agent performance subline
+    expect(screen.getAllByText('6,245').length).toBeGreaterThanOrEqual(1);
     // 229 appears in both stat card and agent performance section
     expect(screen.getAllByText('229').length).toBeGreaterThanOrEqual(1);
-    // 94 appears in stat card and KV sessions note
-    expect(screen.getAllByText('94').length).toBeGreaterThanOrEqual(1);
+    // 94 appears in stat card, KV sessions note, and compliance row
+    expect(screen.getAllByText(/94/).length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders section labels', () => {
     renderWithProviders(<AdminDashboard />);
     expect(screen.getByText('Infrastructure')).toBeInTheDocument();
-    expect(screen.getByText('Activity')).toBeInTheDocument();
+    // "Activity" now reads "Activity (14d)" — match by prefix
+    expect(screen.getByText(/Activity/)).toBeInTheDocument();
   });
 
   it('renders database cards', () => {
@@ -94,9 +96,10 @@ describe('AdminDashboard', () => {
 
   it('renders KV namespaces', () => {
     renderWithProviders(<AdminDashboard />);
-    expect(screen.getByText('trust-radar-cache')).toBeInTheDocument();
-    expect(screen.getByText('SESSIONS')).toBeInTheDocument();
-    expect(screen.getByText('CACHE')).toBeInTheDocument();
+    // KV namespace names are joined in a compact row — match each by substring.
+    expect(screen.getByText(/trust-radar-cache/)).toBeInTheDocument();
+    expect(screen.getByText(/SESSIONS/)).toBeInTheDocument();
+    expect(screen.getByText(/CACHE/)).toBeInTheDocument();
   });
 
   it('renders agent performance stats', () => {
@@ -113,9 +116,11 @@ describe('AdminDashboard', () => {
 
   it('renders migration info', () => {
     renderWithProviders(<AdminDashboard />);
-    expect(screen.getByText('45')).toBeInTheDocument();
+    // "45 migrations run" is now a single text node; match by substring.
+    expect(screen.getByText(/45 migrations run/)).toBeInTheDocument();
     expect(screen.getByText('0047_agent_activity_log.sql')).toBeInTheDocument();
-    expect(screen.getByText('Up to date')).toBeInTheDocument();
+    // Migration freshness now appears as the "UP TO DATE" badge label.
+    expect(screen.getByText(/UP TO DATE/i)).toBeInTheDocument();
   });
 
   it('renders threat trend chart', () => {
