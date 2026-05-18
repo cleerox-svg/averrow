@@ -97,6 +97,12 @@ export interface Env {
   RESEND_API_KEY?: string;
   /** Override the daily-briefing recipient. Defaults to claude.leroux@averrow.com when unset. */
   BRIEFING_RECIPIENT?: string;
+  /** HMAC secret for List-Unsubscribe one-click tokens
+   *  (lib/handlers/abuseMailboxUnsubscribe.ts). Falls back to
+   *  AVERROW_INTERNAL_SECRET when unset so a missed Worker-secret
+   *  provision doesn't break the unsubscribe path. */
+  ABUSE_UNSUBSCRIBE_SECRET?: string;
+  AVERROW_INTERNAL_SECRET?: string;
 }
 
 // ─── Enums ──────────────────────────────────────────────────────

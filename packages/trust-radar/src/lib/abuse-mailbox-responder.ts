@@ -74,15 +74,28 @@ async function sendViaResend(
   subject: string,
   html: string,
   text: string,
+  /** Extra headers passed through to the recipient (List-Unsubscribe etc).
+   *  Resend forwards these verbatim. */
+  extraHeaders?: Record<string, string>,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    const body: Record<string, unknown> = {
+      from: FROM_ADDRESS,
+      to: [to],
+      subject,
+      html,
+      text,
+    };
+    if (extraHeaders && Object.keys(extraHeaders).length > 0) {
+      body.headers = extraHeaders;
+    }
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html, text }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -367,15 +380,59 @@ export async function sendAck(
   if (!decision.send) return { ok: false, reason: decision.reason };
   if (!env.RESEND_API_KEY) return { ok: false, reason: "no-resend-key" };
 
-  const subject = `Averrow · Report received — ${ctx.originalSubject ?? "your forwarded message"}`.slice(0, 140);
+  const cleanedTo = toAddress!.trim().toLowerCase();
+
+  // Honour List-Unsubscribe opt-outs (PR-BC). Idempotent — duplicate
+  // sends to opted-out recipients silently no-op rather than burning
+  // the Resend quota AND the recipient's tolerance.
+  if (await isOptedOut(env, cleanedTo)) {
+    return { ok: false, reason: "opted-out" };
+  }
+
+  // Subject (PR-BC): drop the embedded original phishing/spam
+  // subject. Gmail's content classifier scores phishing-language in
+  // OUR subject against us, so quoting "Urgent: Netflix expires
+  // today" inside our subject scored these mails as suspicious for
+  // some recipients. The original subject is still visible in the
+  // body under "Subject we received". The 8-char prefix of the
+  // message UUID gives a stable Ref for support-side correlation.
+  const ref = ctx.messageId.slice(0, 8);
+  const subject = `Averrow · Report received (Ref: ${ref})`;
   const html = ackHtml(ctx);
   const text = ackText(ctx);
-  const res = await sendViaResend(env.RESEND_API_KEY, toAddress!.trim().toLowerCase(), subject, html, text);
+
+  // List-Unsubscribe + one-click POST (RFC 8058). Gives Gmail a
+  // recipient-controlled exit ramp — required to keep deliverability
+  // for senders Gmail considers "bulk-adjacent" and a strong positive
+  // reputation signal regardless of volume.
+  const { unsubscribeUrl } = await import("../handlers/abuseMailboxUnsubscribe");
+  const unsubUrl = await unsubscribeUrl(env, cleanedTo, ctx.messageId);
+  const extraHeaders = {
+    "List-Unsubscribe": `<${unsubUrl}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+
+  const res = await sendViaResend(env.RESEND_API_KEY, cleanedTo, subject, html, text, extraHeaders);
   if (!res.ok) {
     logger.warn("abuse_mailbox_ack_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });
     return { ok: false, reason: res.error ?? "send-failed" };
   }
   return { ok: true, reason: "sent" };
+}
+
+/** Look up email_optouts. Returns true if the recipient has opted
+ *  out via a List-Unsubscribe one-click (or any other source row). */
+async function isOptedOut(env: Env, email: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT 1 AS y FROM email_optouts WHERE email = ? LIMIT 1",
+    ).bind(email).first<{ y: number }>();
+    return !!row;
+  } catch (err) {
+    // Table may not exist yet on dev DBs; never block on this check.
+    console.warn("[abuse-mailbox-responder] optout lookup failed:", err);
+    return false;
+  }
 }
 
 // ─── 24h determination ──────────────────────────────────────────
@@ -727,14 +784,33 @@ export async function sendDetermination(
   if (!decision.send) return { ok: false, reason: decision.reason };
   if (!env.RESEND_API_KEY) return { ok: false, reason: "no-resend-key" };
 
+  const cleanedTo = toAddress!.trim().toLowerCase();
+  if (await isOptedOut(env, cleanedTo)) {
+    return { ok: false, reason: "opted-out" };
+  }
+
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
-  const subject = `Averrow · ${v.label} — ${ctx.originalSubject ?? "your forwarded report"}`.slice(0, 140);
+  // PR-BC: same subject-content rationale as sendAck — the per-
+  // verdict label (e.g. "Phishing confirmed") is brand-safe; the
+  // forwarded original subject moves into the body's "Subject we
+  // triaged" block (unchanged).
+  const ref = ctx.messageId.slice(0, 8);
+  const subject = `Averrow · ${v.label} (Ref: ${ref})`;
+
+  const { unsubscribeUrl } = await import("../handlers/abuseMailboxUnsubscribe");
+  const unsubUrl = await unsubscribeUrl(env, cleanedTo, ctx.messageId);
+  const extraHeaders = {
+    "List-Unsubscribe": `<${unsubUrl}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+
   const res = await sendViaResend(
     env.RESEND_API_KEY,
-    toAddress!.trim().toLowerCase(),
+    cleanedTo,
     subject,
     determinationHtml(ctx),
     determinationText(ctx),
+    extraHeaders,
   );
   if (!res.ok) {
     logger.warn("abuse_mailbox_determination_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });

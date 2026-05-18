@@ -236,6 +236,21 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // redirects, so this one stays Worker-side.
   router.get("/report-phishing", () => Response.redirect("/report-abuse", 302));
 
+  // RFC 8058 List-Unsubscribe one-click target for abuse-mailbox
+  // responder emails (ack + determination). Gmail (and other clients
+  // honouring `List-Unsubscribe-Post: List-Unsubscribe=One-Click`)
+  // POSTs to this URL with no auth and no body. Token is HMAC of the
+  // email so a bot can't opt random addresses out by guessing.
+  // Accepts GET too as a manual-click fallback.
+  router.post("/api/abuse-mailbox/unsubscribe", async (request: Request, env: Env) => {
+    const { handleAbuseMailboxUnsubscribe } = await import("../handlers/abuseMailboxUnsubscribe");
+    return handleAbuseMailboxUnsubscribe(request, env);
+  });
+  router.get("/api/abuse-mailbox/unsubscribe", async (request: Request, env: Env) => {
+    const { handleAbuseMailboxUnsubscribe } = await import("../handlers/abuseMailboxUnsubscribe");
+    return handleAbuseMailboxUnsubscribe(request, env);
+  });
+
   // /privacy and /terms are inline templates until they get ported in
   // a follow-up — they're rarely-changing legal content, lowest priority
   // for the Astro migration.
