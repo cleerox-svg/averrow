@@ -62,16 +62,18 @@ export function HomeHeader() {
           <span className="home-header-live-label">LIVE</span>
         </div>
 
-        <NotificationBell />
+        <div className="home-header-account">
+          <NotificationBell />
 
-        <button
-          type="button"
-          onClick={() => navigate('/profile')}
-          aria-label={`Open profile — ${user?.display_name ?? user?.name ?? user?.email ?? 'user'}`}
-          className="home-header-profile"
-        >
-          {initials}
-        </button>
+          <button
+            type="button"
+            onClick={() => navigate('/profile')}
+            aria-label={`Open profile — ${user?.display_name ?? user?.name ?? user?.email ?? 'user'}`}
+            className="home-header-profile"
+          >
+            {initials}
+          </button>
+        </div>
       </div>
 
       <style>{`
@@ -117,6 +119,17 @@ export function HomeHeader() {
           align-items: center;
           gap: 10px;
           flex-shrink: 0;
+        }
+        .home-header-account {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        /* On portrait phones the global TopBar carries the bell +
+           profile pill, so hide the duplicates here. The LIVE
+           indicator stays — TopBar doesn't surface it. */
+        @media (max-width: 899px) and (orientation: portrait) {
+          .home-header-account { display: none; }
         }
         .home-header-live {
           display: flex;
