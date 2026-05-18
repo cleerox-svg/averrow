@@ -36,7 +36,12 @@ export type AbuseClassification =
   | 'spam'
   | 'benign'
   | 'malware'
-  | 'ambiguous';
+  | 'ambiguous'
+  // PR-BD: submitter replied to one of our determination/ack
+  // emails. Set at INSERT time in handlers/abuseMailboxEmail.ts so
+  // the row never enters the AI pending queue. Admin reviews these
+  // by hand from the UI's "follow_up" filter chip.
+  | 'follow_up';
 
 export type AbuseAction = 'safe' | 'review' | 'escalate' | 'takedown';
 
@@ -212,6 +217,7 @@ export function severityFor(
   if (classification === 'phishing') return confidence >= 80 ? 'HIGH' : 'MEDIUM';
   if (classification === 'spam')     return 'LOW';
   if (classification === 'benign')   return 'LOW';
+  if (classification === 'follow_up') return 'LOW';
   return 'MEDIUM'; // ambiguous
 }
 
@@ -378,6 +384,7 @@ export async function runAbuseClassifierBackfill(
       benign:      0,
       malware:     0,
       ambiguous:   0,
+      follow_up:   0,  // handler-set classification; backfill never emits this — always 0
       parse_error: 0,
     },
   };
@@ -581,6 +588,7 @@ export async function runAbuseClassifierBackfill(
         const { sendDetermination } = await import("./abuse-mailbox-responder");
         const detResult = await sendDetermination(env, m.forwarded_by_email, {
           messageId:       m.id,
+          inboundAlias:    m.inbound_alias,
           originalSubject: m.original_subject,
           classification:  verdict.classification,
           confidence:      verdict.confidence,

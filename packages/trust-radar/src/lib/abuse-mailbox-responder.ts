@@ -77,6 +77,11 @@ async function sendViaResend(
   /** Extra headers passed through to the recipient (List-Unsubscribe etc).
    *  Resend forwards these verbatim. */
   extraHeaders?: Record<string, string>,
+  /** Address the recipient's Reply lands at. Routed to the same
+   *  inbound alias the submitter forwarded to originally, so the
+   *  classifier picks the reply up as a follow_up row. Null/undef
+   *  → no reply_to in the payload (Resend defaults to From). */
+  replyTo?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const body: Record<string, unknown> = {
@@ -86,6 +91,9 @@ async function sendViaResend(
       html,
       text,
     };
+    if (replyTo) {
+      body.reply_to = replyTo;
+    }
     if (extraHeaders && Object.keys(extraHeaders).length > 0) {
       body.headers = extraHeaders;
     }
@@ -412,7 +420,7 @@ export async function sendAck(
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   };
 
-  const res = await sendViaResend(env.RESEND_API_KEY, cleanedTo, subject, html, text, extraHeaders);
+  const res = await sendViaResend(env.RESEND_API_KEY, cleanedTo, subject, html, text, extraHeaders, ctx.inboundAlias);
   if (!res.ok) {
     logger.warn("abuse_mailbox_ack_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });
     return { ok: false, reason: res.error ?? "send-failed" };
@@ -439,6 +447,12 @@ async function isOptedOut(env: Env, email: string): Promise<boolean> {
 
 interface DeterminationContext {
   messageId: string;
+  /** The inbound alias the submitter originally forwarded TO
+   *  (e.g. phishing@averrow.ca). Used as reply_to so the recipient's
+   *  reply lands back in the abuse-mailbox classifier pipeline and
+   *  gets tagged as `follow_up` on intake. Nullable to allow legacy
+   *  callers / rows where the alias wasn't recorded. */
+  inboundAlias: string | null;
   originalSubject: string | null;
   classification: string;   // phishing | spam | benign | malware | ambiguous
   confidence: number;       // 0-100
@@ -811,6 +825,7 @@ export async function sendDetermination(
     determinationHtml(ctx),
     determinationText(ctx),
     extraHeaders,
+    ctx.inboundAlias,
   );
   if (!res.ok) {
     logger.warn("abuse_mailbox_determination_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });

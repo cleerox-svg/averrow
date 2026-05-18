@@ -331,6 +331,7 @@ const CLASSIFICATION_COLORS: Record<string, string> = {
   benign:    '#4ADE80',
   ambiguous: '#A78BFA',
   pending:   'var(--text-muted)',
+  follow_up: '#60a5fa',
 };
 
 function MessageRow({ message, expanded, onToggle }: {
@@ -1181,6 +1182,10 @@ const CLASSIFICATION_CHIPS: Array<{ key: string; label: string }> = [
   { key: 'benign',    label: 'Benign' },
   { key: 'pending',   label: 'Pending' },
   { key: 'ambiguous', label: 'Ambiguous' },
+  // PR-BD: submitter replies to ack/determination emails get tagged
+  // here so admin can review them by hand. Auto-skipped by the
+  // classifier (handler sets classification=follow_up on intake).
+  { key: 'follow_up', label: 'Follow-up' },
 ];
 
 function InboxToolbar({

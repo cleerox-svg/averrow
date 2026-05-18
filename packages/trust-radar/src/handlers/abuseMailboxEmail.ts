@@ -203,6 +203,27 @@ export async function handleAbuseMailboxEmail(
 
   // 6. Insert the row.
   const messageId = crypto.randomUUID();
+
+  // PR-BD: follow-up detection. When a submitter replies to one of
+  // our ack / determination emails, the reply lands back at the same
+  // inbound alias (reply_to wired to inbound_alias in the responder).
+  // We don't want such replies to enter the AI pending queue (waste
+  // of Haiku + would trigger another determination email loop). And
+  // we don't want to ack them — the submitter is already in
+  // conversation. Detection heuristic: subject begins with "Re:"
+  // followed by "Averrow ·" — Gmail/Apple Mail / Outlook all preserve
+  // that prefix when the user hits Reply on our outbound. False
+  // positives are bounded: a brand-new abuse report whose forwarded
+  // content originally said "Re: Averrow ·" is rare, and the
+  // operator can always re-classify by hand from the admin UI.
+  const isFollowUp = (() => {
+    const s = (original.subject ?? "").trim();
+    if (!s) return false;
+    return /^re\s*:\s*averrow\s*·/i.test(s);
+  })();
+  const initialClassification = isFollowUp ? "follow_up" : "pending";
+  const initialSeverity = "LOW";
+
   await env.DB.prepare(
     `INSERT INTO abuse_inbox_messages (
        id, org_id, brand_id, received_at, forwarded_by_email, forwarded_by_domain, inbound_alias,
@@ -213,7 +234,7 @@ export async function handleAbuseMailboxEmail(
        auth_results, sender_ip, correlated_threat_ids,
        classification, severity, status,
        created_at, updated_at
-     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'LOW', 'new', datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, NULL, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
@@ -235,6 +256,8 @@ export async function handleAbuseMailboxEmail(
     authResultsJson,
     senderIp,
     correlatedIdsJson,
+    initialClassification,
+    initialSeverity,
   ).run();
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
@@ -251,7 +274,12 @@ export async function handleAbuseMailboxEmail(
   // PR-AT: skip when throttle.throttled. Sending an ack to a flooding
   // sender just gives them feedback that the alias is live and burns
   // Resend quota; the row is still captured for forensic purposes.
-  if (!throttle.throttled) {
+  //
+  // PR-BD: also skip for follow_up rows. The submitter is replying
+  // to one of our previous emails — they're already in conversation.
+  // Auto-acking their reply would generate the "got it!" -> "you
+  // got it!" loop that abuse-mailbox responders are notorious for.
+  if (!throttle.throttled && !isFollowUp) {
     try {
       const { sendAck } = await import("../lib/abuse-mailbox-responder");
       const ackResult = await sendAck(env, forwardedBy, {
