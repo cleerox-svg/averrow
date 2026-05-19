@@ -207,6 +207,7 @@ function friendlyDatabaseName(id: string): string {
   const map: Record<string, string> = {
     'a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6': 'trust-radar-v2 (DB)',
     '55d58eff-47f3-4533-afa4-e52d494376e0': 'trust-radar-v2-audit (AUDIT_DB)',
+    'b2c6dae6-26d4-4d03-b3ff-08709bcf04c9': 'trust-radar-dns-queue (DNS_QUEUE_DB)',
     'f47a6b18-b343-46d9-87e8-ef8ef4aa8521': 'geoip-db (GEOIP_DB)',
     '54ffc831-f9ff-4d24-bfbf-1b6f8f580261': 'mtrade-db',
     '57191073-aec7-4035-8cbb-689d4de647e6': 'farmtrack-db',
