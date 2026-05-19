@@ -782,10 +782,10 @@ export const REPO_MANIFEST: RepoInventory = {
     {
       "name": "certstream",
       "path": "packages/trust-radar/src/feeds/certstream.ts",
-      "source_type": "http",
+      "source_type": "stream",
       "schedule": null,
-      "loc": 237,
-      "last_modified": "2026-05-15T17:55:10.317Z"
+      "loc": 257,
+      "last_modified": "2026-05-19T13:34:07.078Z"
     },
     {
       "name": "cins_army",
@@ -1073,7 +1073,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "source_type": "api",
       "schedule": null,
       "loc": 296,
-      "last_modified": "2026-05-18T20:35:57.888Z"
+      "last_modified": "2026-05-19T13:28:07.862Z"
     },
     {
       "name": "telegram",

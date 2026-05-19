@@ -53,7 +53,6 @@ export const certstream: FeedModule = {
     const keyword = allSearchKeywords[Math.floor(Date.now() / 900_000) % allSearchKeywords.length]!;
 
     const url = `${ctx.feedUrl}?q=%25${keyword}%25&output=json&limit=100`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { Accept: "application/json" } });
 
     // crt.sh has had recurring upstream HTTP 502s (observed 2026-04-27,
     // tripped this feed's auto-pause threshold of 5 consecutive failures)
@@ -62,10 +61,31 @@ export const certstream: FeedModule = {
     // rotating keyword set that succeeds on the next tick). Treat 5xx,
     // 429, 403, and 404 as skip-this-tick: log + return empty, don't
     // throw. The feed runner counts thrown errors toward auto-pause; a
-    // transient crt.sh block shouldn't pause our entire CT monitoring path.
+    // transient crt.sh block shouldn't pause our entire CT monitoring
+    // path.
+    //
+    // PR-BH (2026-05-19): extend the same skip-this-tick treatment to
+    // network-layer failures — AbortError (30s timeout fired before
+    // response arrived), DNS resolution failures, TLS handshake
+    // failures, and ECONNRESET. Production audit 2026-05-19 showed 6
+    // consecutive 30s timeouts in a 12h window tripping the same
+    // auto-pause threshold the HTTP-error path was designed to avoid.
+    // Same operational rationale: a transient upstream issue
+    // shouldn't pause the whole CT monitoring path; the existing
+    // certstream WebSocket feed continues regardless.
     //
     // Genuine request bugs (other 4xx like 400) still throw — those
     // indicate our query is malformed and should be surfaced.
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { Accept: "application/json" } });
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "unknown";
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[ct_logs] fetch failed (${name}: ${message.slice(0, 200)}) — skipping tick`);
+      return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    }
+
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       const isTransient =
