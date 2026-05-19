@@ -267,6 +267,10 @@ function ExposureScore({ score }: { score: number | null }) {
 function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
   const max = Math.max(1, ...points.map((p) => p.count));
   const total = points.reduce((s, p) => s + p.count, 0);
+  // Percentage heights collapse to 0 here because the column wrapper has no
+  // definite height (items-end on the row doesn't stretch children). Size
+  // bars in pixels against an explicit max instead.
+  const BAR_MAX_PX = 64;
 
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
@@ -276,7 +280,7 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
       </div>
       <div className="flex items-end gap-2 h-24">
         {points.map((p) => {
-          const h = Math.max(4, Math.round((p.count / max) * 100));
+          const h = Math.max(4, Math.round((p.count / max) * BAR_MAX_PX));
           return (
             <div
               key={p.date}
@@ -286,7 +290,7 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
               <div className="text-[10px] font-mono text-white/45 tabular-nums">{p.count}</div>
               <div
                 className="w-full rounded-sm bg-amber/[0.40] hover:bg-amber/[0.60] transition-colors"
-                style={{ height: `${h}%` }}
+                style={{ height: `${h}px` }}
               />
               <div className="text-[9px] font-mono text-white/35 uppercase tracking-wider">
                 {new Date(p.date).toLocaleDateString('en-US', { weekday: 'short' })}
