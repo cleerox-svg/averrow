@@ -27,6 +27,7 @@ import {
   renderPlatformEnrichmentStuck,
   renderPlatformDnsQueueDrift,
   renderPlatformDnsQueueStalled,
+  renderPlatformDnsQueueReaperStalled,
   renderPlatformAbuseClassifierSilent,
   renderPlatformGeoipRefreshStalled,
   renderPlatformWorkflowDispatchSilent,
@@ -744,35 +745,84 @@ export const flightControlAgent: AgentModule = {
           );
         }
 
-        // Stall detection — last reconciler line with enqueued OR
-        // dequeued > 0. Single-statement aggregate; doesn't read
-        // agent_outputs row-by-row.
-        const lastActivity = await db.prepare(`
-          SELECT MAX(created_at) AS last_active
+        // Stall detection (PR-BI cursor architecture) — read the
+        // latest reconciler diagnostic's `cursor_lag_minutes`. The
+        // cursor advances whenever new candidates land in threats;
+        // if drainable > queueSize + drift threshold AND cursor is
+        // lagging by >30 min, the reconciler is broken (cursor not
+        // advancing despite available work).
+        //
+        // A quiet queue with nothing to drain legitimately has
+        // cursor_lag_minutes growing — that's not a stall. We
+        // require BOTH conditions: lag is high AND drainable > queue.
+        const lastReconciler = await db.prepare(`
+          SELECT details, created_at
           FROM agent_outputs
           WHERE agent_id = 'navigator'
             AND type = 'diagnostic'
             AND summary LIKE 'dns-queue-reconcile%'
-            AND (summary LIKE '%enqueued=%' AND summary NOT LIKE '%enqueued=0 dequeued=0%')
-        `).first<{ last_active: string | null }>();
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).first<{ details: string | null; created_at: string }>();
 
-        if (lastActivity?.last_active) {
-          const lastMs = Date.parse(lastActivity.last_active + 'Z');
-          const minutesIdle = Math.floor((Date.now() - lastMs) / 60_000);
-          const STALL_THRESHOLD_MIN = 30;
-          if (minutesIdle > STALL_THRESHOLD_MIN && drainable > queueSize + DRIFT_THRESHOLD) {
-            // Only fire stalled-alert when there's actual work to do
-            // (drainable > queue + drift threshold). A quiet queue
-            // with nothing to drain is fine to be idle.
-            await emitPlatformNotification(env, 'platform_dns_queue_stalled',
-              renderPlatformDnsQueueStalled({
-                minutes_idle: minutesIdle,
-                threshold_minutes: STALL_THRESHOLD_MIN,
-                queue_size: queueSize,
-                drainable_in_threats: drainable,
-              })
-            );
+        if (lastReconciler?.details) {
+          try {
+            const parsed = JSON.parse(lastReconciler.details) as {
+              cursor_lag_minutes?: number;
+              skipped?: boolean;
+            };
+            const lag = parsed.cursor_lag_minutes ?? 0;
+            const STALL_THRESHOLD_MIN = 30;
+            if (
+              !parsed.skipped
+              && lag > STALL_THRESHOLD_MIN
+              && drainable > queueSize + DRIFT_THRESHOLD
+            ) {
+              await emitPlatformNotification(env, 'platform_dns_queue_stalled',
+                renderPlatformDnsQueueStalled({
+                  minutes_idle: lag,
+                  threshold_minutes: STALL_THRESHOLD_MIN,
+                  queue_size: queueSize,
+                  drainable_in_threats: drainable,
+                })
+              );
+            }
+          } catch {
+            // Defensive — malformed JSON shouldn't crash FC.
           }
+        }
+
+        // Reaper stall detection (PR-BI). The daily reaper writes
+        // KV stamps at end of each run. Past 36 h without a stamp
+        // means the hour===0 Navigator tick is failing or the
+        // reaper itself is broken. Ghost rows accumulate but drain
+        // is unaffected — medium severity.
+        try {
+          const lastReaperRun = await env.CACHE.get('reconciler:dns_queue:reaper_last_run');
+          const REAPER_STALL_THRESHOLD_H = 36;
+          if (lastReaperRun) {
+            const reaperMs = Date.parse(lastReaperRun);
+            if (!Number.isNaN(reaperMs)) {
+              const hoursSince = Math.floor((Date.now() - reaperMs) / 3_600_000);
+              if (hoursSince > REAPER_STALL_THRESHOLD_H) {
+                const lastDeltaStr = await env.CACHE.get('reconciler:dns_queue:reaper_last_delta');
+                const lastDelta = lastDeltaStr != null ? parseInt(lastDeltaStr, 10) : null;
+                await emitPlatformNotification(env, 'platform_dns_queue_reaper_stalled',
+                  renderPlatformDnsQueueReaperStalled({
+                    hours_since_last_run: hoursSince,
+                    threshold_hours: REAPER_STALL_THRESHOLD_H,
+                    last_stale_removed: Number.isNaN(lastDelta as number) ? null : lastDelta,
+                    queue_size: queueSize,
+                  })
+                );
+              }
+            }
+          }
+          // If no KV stamp exists yet, this is bootstrap — the first
+          // hour===0 tick after deploy will populate it. No alert
+          // until we have at least one prior run as a baseline.
+        } catch (err) {
+          console.warn('[flight-control] reaper stall check failed:', err);
         }
       } catch (err) {
         console.warn('[flight-control] dns_queue health check failed:', err);

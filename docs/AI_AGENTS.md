@@ -480,16 +480,31 @@ runs write `agent_id='navigator'`. Not an AI agent — pure SQL. Responsibilitie
    per-attempt state. The split moved this workload off the main DB's read
    budget — 39× per-call reduction (500 rows vs 19,553) since dns_queue is
    a focused ~17K-row working set vs the 380K-row threats table.
-2. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` keeps `dns_queue` in
-   lockstep with `threats.drainable` candidates. Runs AFTER dns-backfill so freshly-
-   resolved domains get dequeued in the same tick. Idempotent: `INSERT OR IGNORE`
-   on the candidate diff, `DELETE` on confirmed-stale. Bounded at 5,000 inserts /
-   500 deletes per tick. Skips cleanly when `DNS_QUEUE_DB` is unbound. Drift
-   between queue and threats is surfaced by FC via `platform_dns_queue_drift`;
-   reconciler liveness is surfaced via `platform_dns_queue_stalled`.
-3. Drain stale pending `agent_events` (housekeeping)
-4. Rebuild current + previous hour for all 5 cube tables (10 cube builds)
-5. Pre-warm KV caches for Observatory, Dashboard, Agents, Operations pages
+2. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` enqueues NEW threat
+   candidates into `dns_queue` using cursor-paginated reads from the main DB.
+   KV cursor at `reconciler:dns_queue:cursor` tracks position by `created_at`;
+   each tick reads only the rows added since the last cursor (typically ~37
+   per 5-min tick), advances cursor to MAX(created_at) observed, and persists.
+   `INSERT OR IGNORE` absorbs the deliberate cursor overlap (`>=` not `>`)
+   that prevents skipping rows with identical timestamps. Bounded at 500
+   candidates read per tick. PR-BI (2026-05-19) replaced the pre-PR-BI
+   set-diff reconciler that scanned ~83K rows on both sides every tick —
+   total reconciler reads dropped from ~15M/day to ~10.7K/day (99.4%
+   reduction). Skips cleanly when `DNS_QUEUE_DB` is unbound. Drift between
+   queue and threats is surfaced by FC via `platform_dns_queue_drift`;
+   reconciler cursor lag is surfaced via `platform_dns_queue_stalled`.
+3. **DNS-queue reap (daily, hour===0)** — `lib/dns-queue-reaper.ts` sweeps
+   stale rows whose underlying threat flipped to inactive after enqueue.
+   Since the reconciler only ADDS rows (cursor pagination), the reaper
+   handles the slow-leak removal path that dns-backfill's per-domain
+   DELETE-on-resolve doesn't catch. Bounded ~17K reads per daily run.
+   Writes `reconciler:dns_queue:reaper_last_run` + `:reaper_last_delta`
+   KV stamps. Stalled reaper (>36h since last run) is surfaced via
+   `platform_dns_queue_reaper_stalled` (medium severity — drain unaffected,
+   the queue just accumulates ghost rows).
+4. Drain stale pending `agent_events` (housekeeping)
+5. Rebuild current + previous hour for all 5 cube tables (10 cube builds)
+6. Pre-warm KV caches for Observatory, Dashboard, Agents, Operations pages
 
 Navigator finds the path (IP addresses); Cartographer maps the terrain (lat/lng,
 country, provider).

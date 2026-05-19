@@ -100,9 +100,16 @@ dns-queue parity drift supervisor ────► platform_dns_queue_drift      
   fires when |queue_size - drainable| > 500
 
 dns-queue reconciler-stalled supervisor ► platform_dns_queue_stalled         ► notifications inbox
-  reads: dns_queue COUNT, threats drainable, agent_outputs MAX(created_at)
-         WHERE summary LIKE 'dns-queue-reconcile%' AND has activity
-  fires when no enqueue/dequeue in 30 min AND drainable > queue + 500
+  reads: dns_queue COUNT, threats drainable, latest agent_outputs row
+         WHERE summary LIKE 'dns-queue-reconcile%' (reads details.cursor_lag_minutes)
+  fires when cursor_lag_minutes > 30 AND drainable > queue + 500
+         (PR-BI cursor architecture — replaced the pre-PR-BI 'no enqueue/dequeue in 30 min' check)
+
+dns-queue reaper-stalled supervisor ───► platform_dns_queue_reaper_stalled   ► notifications inbox
+  reads: CACHE.get('reconciler:dns_queue:reaper_last_run') (KV stamp)
+         CACHE.get('reconciler:dns_queue:reaper_last_delta')
+  fires when hours_since_last_run > 36 (severity: medium)
+         No baseline established yet → YELLOW until first hour===0 tick after PR-BI deploy
 ```
 
 **Key dependency:** ANY change to `getAgentHealth`'s `is_stalled` computation (PR-R reconciliation) directly affects whether `platform_agent_stalled` fires. Without PR-R's workflow-event reconciliation, nexus would generate a false `platform_agent_stalled` every FC tick (every hour), polluting the inbox AND triggering misleading "nexus stalled" entries in the daily briefing via `notification_narrator`.

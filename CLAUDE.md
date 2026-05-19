@@ -542,7 +542,7 @@ context is the column name, not the value.
 - Primary DB: `trust-radar-v2` (D1, SQLite) — internal name kept intentionally
 - Audit DB: `trust-radar-v2-audit`
 - GeoIP DB: `geoip-db` (D1, optional binding `GEOIP_DB`) — dedicated reference DB for the third-tier MaxMind GeoLite2 lookup. Migrations live in `migrations-geoip/`. Cartographer Phase 0.5 queries it; the `geoip_refresh` agent loads it. Isolated to keep range-scan reads off the main DB's budget — see `lib/geoip-mmdb.ts`.
-- DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set. After the PR-1 → PR-4 split (May 17–18), `dns_queue` is the **source of truth** for the cooldown + attempts state previously kept on `threats.attempted_resolve_at` + `threats.enrichment_attempts`. Navigator's dns-backfill drains it; `lib/dns-queue-reconciler.ts` mirrors candidate existence from threats every tick (the threats table still owns the `ip_address` deliverable but no longer carries the per-attempt state). Threats-side dns indexes (`idx_threats_dns_pending_strict`, `idx_threats_dns_backfill`, `idx_threats_dns_backfill_select`) were dropped in migration 0200. FC backlog (`backlog.domain_geo` / `domain_geo_drainable`), diagnostics (`enrichment_pipeline.domain_geo_drainable`, `dns_queue_parity.drainable_in_threats`), and the admin backfill endpoint all read from `dns_queue` now. Health monitored by FC via `platform_dns_queue_drift` and `platform_dns_queue_stalled` notifications. See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts`.
+- DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set. After the PR-1 → PR-4 split (May 17–18), `dns_queue` is the **source of truth** for the cooldown + attempts state previously kept on `threats.attempted_resolve_at` + `threats.enrichment_attempts`. Navigator's dns-backfill drains it; `lib/dns-queue-reconciler.ts` enqueues new candidates from threats every tick using a **cursor-paginated** read (KV key `reconciler:dns_queue:cursor`, reads only rows added since the last cursor — PR-BI 2026-05-19). The companion `lib/dns-queue-reaper.ts` sweeps stale rows once per day at hour===0 (rows whose threats flipped to inactive after enqueue). Threats table still owns the `ip_address` deliverable but no longer carries the per-attempt state. Threats-side dns indexes (`idx_threats_dns_pending_strict`, `idx_threats_dns_backfill`, `idx_threats_dns_backfill_select`) were dropped in migration 0200. FC backlog (`backlog.domain_geo` / `domain_geo_drainable`), diagnostics (`enrichment_pipeline.domain_geo_drainable`, `dns_queue_parity.drainable_in_threats`), and the admin backfill endpoint all read from `dns_queue` now. Health monitored by FC via `platform_dns_queue_drift`, `platform_dns_queue_stalled`, and `platform_dns_queue_reaper_stalled` notifications. Read-budget: cursor + reaper architecture ≈ 94K reads/day on main DB (down from 15M/day pre-PR-BI, 99.4% reduction). See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts` + `lib/dns-queue-reaper.ts`.
 - **Never DROP or ALTER existing columns** without explicit instruction
 - New columns: `ALTER TABLE ... ADD COLUMN` only
 - New migrations: `migrations/NNNN_description.sql`
@@ -744,10 +744,14 @@ org_members               ← Org membership + roles
 ```
 DNS_QUEUE_DB (trust-radar-dns-queue):
   dns_queue               ← Drainable "needs DNS resolution" set (~17K rows).
-                            Mirrors a subset of threats via lib/dns-queue-reconciler.ts.
-                            Drained by lib/dns-backfill.ts in the Navigator cron.
-                            Reads come from this DB; ip_address writes go back to
-                            threats.
+                            Populated by lib/dns-queue-reconciler.ts (PR-BI
+                            cursor-paginated incremental enqueue, KV cursor at
+                            `reconciler:dns_queue:cursor`). Drained by
+                            lib/dns-backfill.ts in the Navigator cron. Stale
+                            rows (threat flipped inactive after enqueue) are
+                            swept once per day at hour===0 by
+                            lib/dns-queue-reaper.ts. Reads come from this DB;
+                            ip_address writes go back to threats.
 
 GEOIP_DB (geoip-db):
   geo_ip_ranges           ← MaxMind GeoLite2-City ranges (~5M rows). Loaded by
