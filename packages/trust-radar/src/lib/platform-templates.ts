@@ -126,6 +126,19 @@ export interface PlatformDnsQueueStalledVars {
   drainable_in_threats: number;
 }
 
+export interface PlatformDnsQueueReaperStalledVars {
+  /** Hours since the reaper's last run (from KV stamp). The reaper is
+   *  expected to run daily, so anything past ~36h indicates the
+   *  hour===0 Navigator tick is failing or the reaper itself is
+   *  broken. Ghost rows accumulate in dns_queue until cleared. */
+  hours_since_last_run: number;
+  threshold_hours: number;
+  /** Last reaper's stale_removed count for context. */
+  last_stale_removed: number | null;
+  /** Current queue size. */
+  queue_size: number;
+}
+
 export interface PlatformAbuseClassifierSilentVars {
   /** Hours since the last successful classifier Haiku call. */
   hours_silent: number;
@@ -454,6 +467,20 @@ export function renderPlatformDnsQueueStalled(v: PlatformDnsQueueStalledVars): R
     group_key: `platform_dns_queue_stalled:${todayKey()}`,
     audience: 'super_admin',
     severity: 'high',
+  };
+}
+
+export function renderPlatformDnsQueueReaperStalled(v: PlatformDnsQueueReaperStalledVars): RenderedTemplate {
+  const lastDeltaPart = v.last_stale_removed != null ? `, last sweep removed=${v.last_stale_removed}` : '';
+  return {
+    title: `DNS queue reaper stalled: ${v.hours_since_last_run}h since last run`,
+    message: `Daily reaper hasn't swept dns_queue in ${v.hours_since_last_run}h (threshold ${v.threshold_hours}h). queue=${v.queue_size}${lastDeltaPart}. Stale ghost rows (threats that flipped to inactive after enqueue) are not being cleared.`,
+    reason_text: `Platform alert — operational only. Drain functionality is unaffected; the queue just grows with cruft until the reaper resumes.`,
+    recommended_action: `Check Navigator cron health for hour===0 ticks; inspect agent_outputs for dns-queue-reap diagnostics; verify CACHE KV binding can write reconciler:dns_queue:reaper_last_run.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_dns_queue_reaper_stalled:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'medium',
   };
 }
 

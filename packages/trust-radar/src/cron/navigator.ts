@@ -29,6 +29,7 @@ import {
 } from '../lib/platform-milestones';
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reconcileDnsQueue, type ReconcileResult } from '../lib/dns-queue-reconciler';
+import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour } from '../lib/cube-builder';
@@ -94,6 +95,9 @@ interface NavigatorImplResult {
   /** DNS-queue reconciler outcome — surfaced to agent_outputs so
    *  operators can watch parity converge before PR-3 flips reads. */
   reconcileResult: ReconcileResult;
+  /** DNS-queue reaper outcome — emitted on the once-per-day tick
+   *  (hour===0). null on every other tick. */
+  reaperResult: ReaperResult | null;
 }
 
 async function runNavigatorImpl(
@@ -108,10 +112,12 @@ async function runNavigatorImpl(
   let eventsDrained = 0;
   let dnsResult = { processed: 0, resolved: 0, enriched: 0, graduatedDead: 0, durationMs: 0, softCapHit: false, readSource: 'threats' as 'queue' | 'threats' };
   let reconcileResult: ReconcileResult = {
-    skipped: true, reason: 'not_run', enqueued: 0, dequeued: 0,
-    candidatesInThreats: 0, queueSize: 0, delta: 0, durationMs: 0,
+    skipped: true, reason: 'not_run', enqueued: 0, scanned: 0,
+    cursorBefore: null, cursorAfter: null, cursorLagMinutes: 0,
+    queueSize: 0, durationMs: 0,
     batchesAttempted: 0, batchesFailed: 0,
   };
+  let reaperResult: ReaperResult | null = null;
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -179,27 +185,45 @@ async function runNavigatorImpl(
       status = 'partial';
     }
 
-    // ── 2b. DNS queue reconcile (PR-2 of DNS-queue split) ──
-    // Mirrors the drainable-from-threats set into the DNS_QUEUE_DB
-    // shadow table. Runs AFTER dns-backfill so freshly-resolved
-    // domains get dequeued in the same tick. Never throws — if
-    // DNS_QUEUE_DB is unbound it returns {skipped:true} silently.
-    // Cutover note: PR-3 will flip dns-backfill.ts reads to consume
-    // dns_queue directly; this reconciler stays as the enqueue
-    // pipeline until PR-4 moves enqueue into the feed ingestion path.
+    // ── 2b. DNS queue reconcile (PR-BI cursor architecture) ──
+    // Cursor-paginated enqueue: reads only threats added since the
+    // last cursor (~37 rows/tick at current inflow) and INSERT OR
+    // IGNOREs them into dns_queue. Stale-row removal lives in the
+    // reaper (phase 2c, daily). Never throws — if DNS_QUEUE_DB is
+    // unbound it returns {skipped:true} silently.
     try {
       reconcileResult = await reconcileDnsQueue(env);
       if (!reconcileResult.skipped) {
         console.log(
-          `[navigator] dns-queue-reconcile: enqueued=${reconcileResult.enqueued} dequeued=${reconcileResult.dequeued} candidates=${reconcileResult.candidatesInThreats} queue=${reconcileResult.queueSize} delta=${reconcileResult.delta} duration=${reconcileResult.durationMs}ms`,
+          `[navigator] dns-queue-reconcile: scanned=${reconcileResult.scanned} enqueued=${reconcileResult.enqueued} queue=${reconcileResult.queueSize} cursor=${reconcileResult.cursorBefore ?? 'null'}→${reconcileResult.cursorAfter ?? 'unchanged'} lag=${reconcileResult.cursorLagMinutes}m duration=${reconcileResult.durationMs}ms`,
         );
       }
     } catch (err) {
       // Belt-and-suspenders — the reconciler already catches its own
       // errors. This try/catch ensures any escape doesn't degrade
-      // Navigator's overall status, since reconcile failure means
-      // PR-3 cutover gets delayed, not that drain is broken.
+      // Navigator's overall status.
       console.error('[navigator] dns-queue-reconcile escape:', err);
+    }
+
+    // ── 2c. DNS queue reaper (PR-BI, daily) ──
+    // Sweeps stale rows whose underlying threat is no longer a
+    // candidate (status flipped, deleted, etc). Runs once per day
+    // gated on hour===0. Hour-only gate (no minute check) per
+    // CLAUDE.md §6 cron-audit rule — Navigator fires every 5 min
+    // and the reaper is idempotent under KV-throttle if multiple
+    // ticks within hour 0 race. Bounded ~17K reads/run; comfortably
+    // fits the 25s Navigator soft-cap.
+    if (scheduledTime.getUTCHours() === 0) {
+      try {
+        reaperResult = await reapDnsQueue(env);
+        if (!reaperResult.skipped) {
+          console.log(
+            `[navigator] dns-queue-reap: scanned=${reaperResult.scanned} candidates=${reaperResult.candidatesInThreats} stale_removed=${reaperResult.staleRemoved} softCap=${reaperResult.softCapHit ? 'YES' : 'no'} duration=${reaperResult.durationMs}ms`,
+          );
+        }
+      } catch (err) {
+        console.error('[navigator] dns-queue-reap escape:', err);
+      }
     }
   } catch (err) {
     status = 'failed';
@@ -479,6 +503,7 @@ async function runNavigatorImpl(
     cubeErrors: cubeResults.errors,
     dnsResult,
     reconcileResult,
+    reaperResult,
   };
 }
 
@@ -627,10 +652,12 @@ export const navigatorAgent: AgentModule = {
       });
     }
 
-    // DNS-queue reconciler diagnostic (PR-2). Lets operators watch
-    // parity converge before PR-3 flips reads. `delta` near zero =
-    // healthy. Skipped ticks are surfaced too so a missing binding
-    // shows up explicitly rather than silently.
+    // DNS-queue reconciler diagnostic (PR-BI cursor architecture).
+    // `cursor_lag_minutes` is the key health signal: if it grows
+    // unbounded, threats are being ingested faster than the
+    // reconciler is enqueuing. Steady-state lag should hover near
+    // 0-5 min. Batch failures medium-severity; high lag (>30 min,
+    // ie 6+ stalled ticks) also medium.
     {
       const rr = result.reconcileResult;
       const errSuffix = rr.batchesFailed > 0
@@ -640,22 +667,55 @@ export const navigatorAgent: AgentModule = {
         type: 'diagnostic',
         summary: rr.skipped
           ? `dns-queue-reconcile: SKIPPED (${rr.reason ?? 'unknown'})`
-          : `dns-queue-reconcile: enqueued=${rr.enqueued} dequeued=${rr.dequeued} candidates=${rr.candidatesInThreats} queue=${rr.queueSize} delta=${rr.delta} ${rr.durationMs}ms${errSuffix}`,
+          : `dns-queue-reconcile: scanned=${rr.scanned} enqueued=${rr.enqueued} queue=${rr.queueSize} lag=${rr.cursorLagMinutes}m ${rr.durationMs}ms${errSuffix}`,
         severity: rr.skipped || rr.batchesFailed > 0 ? 'medium'
-          : Math.abs(rr.delta) > 500 ? 'medium'
+          : rr.cursorLagMinutes > 30 ? 'medium'
           : 'info',
         details: {
           skipped: rr.skipped,
           reason: rr.reason,
+          scanned: rr.scanned,
           enqueued: rr.enqueued,
-          dequeued: rr.dequeued,
-          candidates_in_threats: rr.candidatesInThreats,
+          cursor_before: rr.cursorBefore,
+          cursor_after: rr.cursorAfter,
+          cursor_lag_minutes: rr.cursorLagMinutes,
           queue_size: rr.queueSize,
-          delta: rr.delta,
           duration_ms: rr.durationMs,
           batches_attempted: rr.batchesAttempted,
           batches_failed: rr.batchesFailed,
           last_error: rr.lastError,
+        },
+      });
+    }
+
+    // DNS-queue reaper diagnostic (PR-BI, hour===0 only).
+    // `stale_removed` is the daily clean-up volume. Spikes can mean
+    // a feed mass-deactivated threats; sustained low values are
+    // normal steady-state. softCapHit means the queue is growing
+    // faster than the reaper can sweep — escalate to medium.
+    if (result.reaperResult) {
+      const rp = result.reaperResult;
+      const errSuffix = rp.batchesFailed > 0
+        ? ` batchFails=${rp.batchesFailed}/${rp.batchesAttempted} err="${(rp.lastError ?? '').slice(0, 120)}"`
+        : '';
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: rp.skipped
+          ? `dns-queue-reap: SKIPPED (${rp.reason ?? 'unknown'})`
+          : `dns-queue-reap: scanned=${rp.scanned} candidates=${rp.candidatesInThreats} stale_removed=${rp.staleRemoved} softCap=${rp.softCapHit ? 'YES' : 'no'} ${rp.durationMs}ms${errSuffix}`,
+        severity: rp.skipped || rp.batchesFailed > 0 || rp.softCapHit ? 'medium' : 'info',
+        details: {
+          skipped: rp.skipped,
+          reason: rp.reason,
+          scanned: rp.scanned,
+          candidates_in_threats: rp.candidatesInThreats,
+          stale_removed: rp.staleRemoved,
+          delta: rp.delta,
+          soft_cap_hit: rp.softCapHit,
+          duration_ms: rp.durationMs,
+          batches_attempted: rp.batchesAttempted,
+          batches_failed: rp.batchesFailed,
+          last_error: rp.lastError,
         },
       });
     }

@@ -487,7 +487,10 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
   },
   domain_geo: {
     label: 'DNS Resolution',
-    description: 'Domains awaiting A-record resolution to source IP.',
+    description:
+      'Domains awaiting A-record resolution to source IP. Backed by ' +
+      'a side-DB queue (trust-radar-dns-queue) populated by the ' +
+      'cursor-paginated reconciler and swept daily by the reaper.',
     agent: 'navigator',
     schedule: '5 min',
     endpoints: [
@@ -500,7 +503,10 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
       'emit domains that already 5x-failed resolution (those are skipped ' +
       'after the cap to avoid re-asking dead resolvers). Three resolvers ' +
       'rotate per call so a single resolver outage just slows things ' +
-      'rather than halts them.',
+      'rather than halts them. The reconciler enqueues NEW threat ' +
+      'candidates each Navigator tick using a KV cursor — old rows ' +
+      'whose threats flipped to inactive are cleared by the once-per-' +
+      'day reaper (sweeps dns_queue at hour===0 UTC).',
   },
   brand_enrich: {
     label: 'Brand Enrichment',

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # ─── DNS-queue split stability check ─────────────────────────────
 #
-# Prints a single green/red verdict over five signals documented in
+# Prints a single green/red verdict over six signals documented in
 # docs/PLATFORM_DATA_DEPENDENCIES.md §3:
 #
 #   1. dns-backfill reads from queue (not threats) on every tick
 #   2. Throughput parity vs pre-flip baseline
-#   3. Zero parity-drift or stalled platform notifications fired
-#   4. Reconciler keeps converging (batches_failed=0, delta≈0)
+#   3. Zero parity-drift / stalled / reaper-stalled notifications fired
+#   4. Reconciler healthy (batches_failed=0, cursor_lag bounded)
 #   5. Main DB read budget actually shrank
+#   6. Reaper running daily (PR-BI cursor architecture)
 #
 # Three lifecycle uses for this script:
 #
@@ -91,6 +92,7 @@ recent_win = d.get("d1_recent_window", {})
 src      = stability.get("source_counts",  {}) or {}
 tp       = stability.get("throughput",     {}) or {}
 recon    = stability.get("reconciler",     {}) or {}
+reaper   = stability.get("reaper",         {}) or {}
 
 # Verdict accumulator
 verdicts = []  # list of (label, "GREEN"|"YELLOW"|"RED", message)
@@ -140,10 +142,12 @@ else:
              f"avg_processed={ap_v:.1f}  avg_resolved={ar_v:.1f}  avg_dead={ad or 0:.1f}  avg_duration={am_v:.0f}ms")
 
 # ── Signal 3: notifications ──────────────────────────────────────
+# Three platform_dns_queue_* notification types: _drift, _stalled,
+# _reaper_stalled. Any of them firing fails this signal.
 dns_alerts = [a for a in alerts if a.get("type", "").startswith("platform_dns_queue_")]
 if not dns_alerts:
     note("3. Notifications", "GREEN",
-         f"0 platform_dns_queue_drift / 0 platform_dns_queue_stalled in last {hours}h")
+         f"0 platform_dns_queue_* alerts (drift / stalled / reaper_stalled) in last {hours}h")
 else:
     by_type = {}
     for a in dns_alerts:
@@ -151,30 +155,40 @@ else:
     breakdown = ", ".join(f"{k}={v}" for k, v in by_type.items())
     note("3. Notifications", "RED", f"{len(dns_alerts)} fired ({breakdown})")
 
-# ── Signal 4: reconciler health ──────────────────────────────────
+# ── Signal 4: reconciler health (PR-BI cursor architecture) ──────
+# Replaces the pre-cursor avg|delta| check. New signal is
+# cursor_lag_minutes: how stale is the KV cursor relative to the
+# newest threat row. Steady-state lag is ~0-5 min. Sustained
+# max>30 means the cursor is stuck and candidates are not being
+# enqueued.
 runs        = recon.get("runs", 0) or 0
 fail_runs   = recon.get("runs_with_failures", 0) or 0
 total_fails = recon.get("total_batch_failures", 0) or 0
-avg_delta   = recon.get("avg_delta")
+avg_lag     = recon.get("avg_cursor_lag_minutes")
+max_lag     = recon.get("max_cursor_lag_minutes")
+avg_scan    = recon.get("avg_scanned")
+avg_enq     = recon.get("avg_enqueued")
 if runs == 0:
     note("4. Reconciler",    "YELLOW",
          f"no reconciler runs in last {hours}h — binding unset or Navigator silent?")
 elif fail_runs > 0:
     note("4. Reconciler",    "RED",
          f"{fail_runs}/{runs} runs had batch failures (total={total_fails}); reconciler is degraded")
+elif max_lag is not None and max_lag > 60:
+    note("4. Reconciler",    "RED",
+         f"{runs} runs, 0 failures, but max cursor_lag={max_lag:.0f}m (>60: cursor stuck)")
+elif max_lag is not None and max_lag > 30:
+    note("4. Reconciler",    "YELLOW",
+         f"{runs} runs, 0 failures, but max cursor_lag={max_lag:.0f}m (>30: cursor lagging)")
 else:
-    parity_str = ""
-    if avg_delta is not None:
-        ad_v = abs(avg_delta)
-        if ad_v > 500:
-            note("4. Reconciler", "YELLOW",
-                 f"{runs} runs, 0 failures, but avg|delta|={ad_v:.1f} (>500: parity drift)")
-            parity_str = None
-        else:
-            parity_str = f", avg delta={avg_delta:.1f}"
-    if parity_str is not None:
-        note("4. Reconciler", "GREEN",
-             f"{runs} runs, 0 batch failures{parity_str}")
+    lag_str = ""
+    if avg_lag is not None:
+        lag_str = f", avg_lag={avg_lag:.1f}m max_lag={max_lag or 0:.0f}m"
+    thr_str = ""
+    if avg_scan is not None and avg_enq is not None:
+        thr_str = f", avg_scanned={avg_scan:.1f} avg_enqueued={avg_enq:.1f}"
+    note("4. Reconciler", "GREEN",
+         f"{runs} runs, 0 batch failures{thr_str}{lag_str}")
 
 # ── Signal 5: main DB budget ─────────────────────────────────────
 # Main trust-radar-v2 has uuid prefix 'a3776a5f'. Anything else is
@@ -222,6 +236,34 @@ else:
         note("5. Main-DB budget", "GREEN",
              f"main DB rows_read={rows_read:,} in {hours}h; "
              f"{len(dns_family_on_main)} dns-backfill queries in top-N (target: 0)")
+
+# ── Signal 6: reaper daily-run health (PR-BI) ────────────────────
+# The daily reaper sweeps ghost rows (queued but threat flipped to
+# inactive). Reads KV stamps written at end of each reaper run.
+# Pre-deploy (first 24-48h) this signal reads YELLOW until at least
+# one hour===0 tick has fired.
+reaper_age_h     = reaper.get("last_run_age_hours")
+reaper_last      = reaper.get("last_run_at")
+reaper_last_rm   = reaper.get("last_stale_removed")
+reaper_runs_win  = reaper.get("runs_in_window", 0) or 0
+reaper_total_rm  = reaper.get("total_stale_removed")
+if reaper_last is None:
+    note("6. Reaper",         "YELLOW",
+         "no reaper run stamped in KV yet — first hour===0 tick after deploy will populate")
+elif reaper_age_h is not None and reaper_age_h > 36:
+    note("6. Reaper",         "RED",
+         f"last run {reaper_age_h}h ago (>36h threshold) — hour===0 Navigator tick failing?")
+elif reaper_age_h is not None and reaper_age_h > 26:
+    note("6. Reaper",         "YELLOW",
+         f"last run {reaper_age_h}h ago (>26h: one missed daily tick)")
+else:
+    delta_str = ""
+    if reaper_last_rm is not None:
+        delta_str = f", last_removed={reaper_last_rm}"
+    if reaper_runs_win > 0 and reaper_total_rm is not None:
+        delta_str += f", total_removed_in_window={reaper_total_rm}"
+    note("6. Reaper",         "GREEN",
+         f"last run {reaper_age_h or 0}h ago{delta_str}")
 
 # ── Render output ────────────────────────────────────────────────
 COLORS = {

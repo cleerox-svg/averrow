@@ -373,13 +373,34 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         runs: number;
         runs_with_failures: number;
         total_batch_failures: number;
-        avg_delta: number | null;
+        avg_scanned: number | null;
+        avg_enqueued: number | null;
+        avg_cursor_lag_minutes: number | null;
+        max_cursor_lag_minutes: number | null;
+      };
+      reaper: {
+        last_run_at: string | null;
+        last_run_age_hours: number | null;
+        last_stale_removed: number | null;
+        runs_in_window: number;
+        total_stale_removed: number | null;
       };
     }
     const dnsQueueStabilityP: Promise<DnsQueueStability> = (async () => {
       const windowExpr = `datetime('now', '-${hoursBack} hours')`;
       try {
-        const [sourceRow, throughputRow, reconcilerRow] = await Promise.all([
+        const reaperKvP = (async () => {
+          try {
+            const [lastRun, lastDelta] = await Promise.all([
+              env.CACHE.get('reconciler:dns_queue:reaper_last_run'),
+              env.CACHE.get('reconciler:dns_queue:reaper_last_delta'),
+            ]);
+            return { lastRun, lastDelta };
+          } catch {
+            return { lastRun: null, lastDelta: null };
+          }
+        })();
+        const [sourceRow, throughputRow, reconcilerRow, reaperRow, reaperKv] = await Promise.all([
           env.DB.prepare(`
             SELECT
               SUM(CASE WHEN summary LIKE '%source=queue%' THEN 1 ELSE 0 END) AS queue_n,
@@ -414,7 +435,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
               SUM(CASE WHEN CAST(json_extract(details, '$.batches_failed')
                                 AS INT) > 0 THEN 1 ELSE 0 END)               AS runs_with_failures,
               SUM(CAST(json_extract(details, '$.batches_failed') AS INT))    AS total_batch_failures,
-              AVG(CAST(json_extract(details, '$.delta') AS REAL))            AS avg_delta
+              AVG(CAST(json_extract(details, '$.scanned')  AS REAL))         AS avg_scanned,
+              AVG(CAST(json_extract(details, '$.enqueued') AS REAL))         AS avg_enqueued,
+              AVG(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS avg_cursor_lag_minutes,
+              MAX(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS max_cursor_lag_minutes
             FROM agent_outputs
             WHERE agent_id = 'navigator'
               AND type = 'diagnostic'
@@ -424,9 +448,31 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             runs: number;
             runs_with_failures: number;
             total_batch_failures: number;
-            avg_delta: number | null;
+            avg_scanned: number | null;
+            avg_enqueued: number | null;
+            avg_cursor_lag_minutes: number | null;
+            max_cursor_lag_minutes: number | null;
           }>(),
+          env.DB.prepare(`
+            SELECT
+              COUNT(*) AS runs,
+              SUM(CAST(json_extract(details, '$.stale_removed') AS INT)) AS total_stale_removed
+            FROM agent_outputs
+            WHERE agent_id = 'navigator'
+              AND type = 'diagnostic'
+              AND summary LIKE 'dns-queue-reap%'
+              AND created_at >= ${windowExpr}
+          `).first<{ runs: number; total_stale_removed: number | null }>(),
+          reaperKvP,
         ]);
+        let reaperLastRunAgeHours: number | null = null;
+        if (reaperKv.lastRun) {
+          const ts = Date.parse(reaperKv.lastRun);
+          if (!Number.isNaN(ts)) {
+            reaperLastRunAgeHours = Math.floor((Date.now() - ts) / 3_600_000);
+          }
+        }
+        const reaperLastDelta = reaperKv.lastDelta != null ? parseInt(reaperKv.lastDelta, 10) : null;
         return {
           source_counts: {
             queue: sourceRow?.queue_n ?? 0,
@@ -443,14 +489,32 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             runs: reconcilerRow?.runs ?? 0,
             runs_with_failures: reconcilerRow?.runs_with_failures ?? 0,
             total_batch_failures: reconcilerRow?.total_batch_failures ?? 0,
-            avg_delta: reconcilerRow?.avg_delta ?? null,
+            avg_scanned: reconcilerRow?.avg_scanned ?? null,
+            avg_enqueued: reconcilerRow?.avg_enqueued ?? null,
+            avg_cursor_lag_minutes: reconcilerRow?.avg_cursor_lag_minutes ?? null,
+            max_cursor_lag_minutes: reconcilerRow?.max_cursor_lag_minutes ?? null,
+          },
+          reaper: {
+            last_run_at: reaperKv.lastRun ?? null,
+            last_run_age_hours: reaperLastRunAgeHours,
+            last_stale_removed: Number.isNaN(reaperLastDelta as number) ? null : reaperLastDelta,
+            runs_in_window: reaperRow?.runs ?? 0,
+            total_stale_removed: reaperRow?.total_stale_removed ?? null,
           },
         };
       } catch {
         return {
           source_counts: { queue: 0, threats: 0, total: 0 },
           throughput: { avg_processed: null, avg_resolved: null, avg_dead: null, avg_duration_ms: null },
-          reconciler: { runs: 0, runs_with_failures: 0, total_batch_failures: 0, avg_delta: null },
+          reconciler: {
+            runs: 0, runs_with_failures: 0, total_batch_failures: 0,
+            avg_scanned: null, avg_enqueued: null,
+            avg_cursor_lag_minutes: null, max_cursor_lag_minutes: null,
+          },
+          reaper: {
+            last_run_at: null, last_run_age_hours: null,
+            last_stale_removed: null, runs_in_window: 0, total_stale_removed: null,
+          },
         };
       }
     })();

@@ -55,6 +55,7 @@ export type NotificationEventKey =
   | 'platform_enrichment_stuck_pile'
   | 'platform_dns_queue_drift'
   | 'platform_dns_queue_stalled'
+  | 'platform_dns_queue_reaper_stalled'
   | 'platform_abuse_classifier_silent'
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
@@ -338,6 +339,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'DNS Queue Reconciler Stalled',
     description: 'Reconciler alive but no enqueue/dequeue activity while threats has drainable candidates',
     dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_dns_queue_reaper_stalled',
+    label: 'DNS Queue Reaper Stalled',
+    description: 'Daily reaper has not run in >36 hours — stale ghost rows accumulating in dns_queue',
+    dedupWindow: '-6 hours',
     defaultEnabled: true,
     userToggleable: false,
   },

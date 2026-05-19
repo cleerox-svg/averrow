@@ -1,91 +1,97 @@
-// DNS Queue Reconciler — PR-2 of the DNS-queue split.
+// DNS Queue Reconciler — cursor-paginated incremental enqueue.
 //
 // Mirrors the "needs DNS resolution" subset of the threats table into
 // the dedicated `trust-radar-dns-queue` D1 (binding DNS_QUEUE_DB).
-// Runs every Navigator tick (5 min) so dns_queue stays within ~5 min
-// of threats. PR-3 will flip dns-backfill.ts reads from threats to
-// dns_queue; PR-4 will retire the threats-side indexes.
+// Runs every Navigator tick (5 min).
 //
-// Design notes:
+// ── Architecture (PR-BI, 2026-05-19) ────────────────────────────
 //
-//   - The 14+ feed INSERT sites for threats are too distributed to
-//     hook individually without risk of missing one. A single
-//     reconciler is a clean choke point — and idempotent, so it's
-//     safe to re-run if Navigator restarts mid-tick.
+// Previous design (PR-2 → PR-4): every tick scanned the FULL
+// threats candidate set (~83K rows) AND the full dns_queue
+// (~83K rows), JS set-diffed to find rows to add/remove. Cost:
+// 15M reads/day on the main DB. Inherent to the scan, not
+// reducible by indexes.
 //
-//   - Set-equality semantics, not state-equality. The queue mirrors
-//     the SET of candidate malicious_domains in threats; the per-row
-//     state (enrichment_attempts, attempted_resolve_at) is owned by
-//     dns-backfill.ts after PR-3 lands. Until then, PR-2 only
-//     verifies parity of SET membership.
+// New design: per-tick reconciler reads only THREATS ADDED SINCE
+// LAST CURSOR (typically ~37 rows per 5-min tick at current
+// inflow). Stale removal moves to a once-per-day "reaper" run.
 //
-//   - Initial-fill bug post-mortem (PR-2a hotfix, 2026-05-17):
-//     v1 used INSERT … ON CONFLICT DO UPDATE batched at 50 rows.
-//     Feeds like malwarebazaar dump multiple threats rows per
-//     malicious_domain (e.g. five rows of '0.0.0.0'), and SQLite
-//     fails the entire batch when the same statement contains
-//     duplicate PK values. The catch swallowed the error and only
-//     the alphabetically-last batch (z* domains, no dupes by luck)
-//     succeeded. Two fixes here: dedupe candidates in JS via Map,
-//     and switch to INSERT OR IGNORE so state-drift correction is
-//     deferred to PR-3 (where dns-backfill writes both tables).
+// Reads/day after PR-BI:
+//   - 288 reconciler ticks × ~37 rows = ~10,700 (was 15M)
+//   - 1 daily reaper × ~83K rows      = ~83,000
+//   - Total: ~94K reads/day (99.4% reduction)
 //
-//   - Bounded per tick. Initial backfill (queue empty, 18K
-//     candidates) splits across ~4 ticks via MAX_INSERTS_PER_TICK.
-//     Steady state writes only the small delta. Caps protect
-//     Navigator's 30s CPU budget — v1 burned 99s wall-clock per
-//     tick trying to flush all batches.
+// ── Mechanics ──
 //
-//   - Never throws — drift is recoverable on the next tick. The
-//     reconciler returning {skipped:true} for any failure path keeps
-//     Navigator's primary mission (dns-backfill) unblocked.
+//   Cursor:
+//     KV key `reconciler:dns_queue:cursor` (ISO timestamp).
+//     Each tick reads `threats WHERE status='active' AND
+//     created_at >= cursor AND ip_address IS NULL ORDER BY
+//     created_at LIMIT 500` and advances cursor to MAX(created_at)
+//     observed. Uses idx_threats_status_created — EXPLAIN
+//     verified: `SEARCH USING INDEX (status=? AND created_at>?)`,
+//     no TEMP B-TREE for ORDER BY.
 //
-//   - Skipped cleanly when DNS_QUEUE_DB is unbound. PR-1 added the
-//     binding to wrangler.toml as active, so this only fires in dev
-//     environments that haven't enabled it.
+//     `>= cursor` (not `>`) ensures rows with identical
+//     created_at values aren't skipped between ticks. INSERT OR
+//     IGNORE absorbs the overlap-dedup cost.
+//
+//     Bootstrap: missing cursor defaults to `now - 30 minutes`.
+//     We trust earlier reconciler runs filled the queue with
+//     pre-existing candidates — no re-scan of history needed.
+//
+//   Stale removal:
+//     Out of scope for this module. See lib/dns-queue-reaper.ts.
+//     The reaper runs once/day, scans the queue, drops rows
+//     whose threats are no longer candidates (status flipped,
+//     etc). Sub-daily lag for stale rows is acceptable —
+//     dns-backfill's own DELETE-on-resolve handles the common
+//     case in real time.
+//
+//   Caps:
+//     READ_LIMIT 500 (typical tick has ~37 candidates; cap
+//     accommodates feed-burst windows). Batch size 50 per
+//     INSERT OR IGNORE chunk (D1 SQL-variable ceiling).
+//
+//   Never throws — drift is recoverable on the next tick. The
+//   reconciler returning {skipped:true} for any failure path
+//   keeps Navigator's primary mission (dns-backfill) unblocked.
 
 import type { Env } from '../types';
+
+const CURSOR_KEY = 'reconciler:dns_queue:cursor';
+const CHUNK_SIZE = 50;
+const READ_LIMIT = 500;
+
+// Bootstrap default — when the cursor KV key is missing (first
+// deploy, or KV got wiped), we start from this many minutes back.
+// 30 min is plenty: previous reconciler runs (set-diff variant)
+// kept the queue continuously populated, so older candidates are
+// already in dns_queue.
+const BOOTSTRAP_MINUTES_AGO = 30;
 
 export interface ReconcileResult {
   skipped: boolean;
   reason?: string;
   /** rows_written on the queue side from INSERT OR IGNORE. */
   enqueued: number;
-  /** rows_written on the queue side from DELETE. */
-  dequeued: number;
-  /** Unique candidate count in threats (post-dedupe). */
-  candidatesInThreats: number;
+  /** Number of new candidates pulled from threats since cursor. */
+  scanned: number;
+  /** Cursor position read at start of tick (ISO timestamp). */
+  cursorBefore: string | null;
+  /** Cursor position after advance (ISO timestamp). */
+  cursorAfter: string | null;
+  /** Minutes between cursor and now-at-tick-start. Surfaced for
+   *  staleness monitoring — if this grows, threats are being
+   *  ingested faster than the reconciler is enqueuing. */
+  cursorLagMinutes: number;
+  /** Current dns_queue size — read once per tick for observability. */
   queueSize: number;
-  /** queueSize - candidatesInThreats. Positive = queue has stale rows
-   *  not yet dequeued. Negative = threats has candidates not yet
-   *  enqueued. Should converge to 0 within a few ticks of empty start. */
-  delta: number;
   durationMs: number;
-  /** PR-2b debug: count of INSERT batches attempted / failed and the
-   *  first error message, so silent failures surface in agent_outputs
-   *  without needing wrangler tail. */
   batchesAttempted: number;
   batchesFailed: number;
   lastError?: string;
 }
-
-// Chunk size for IN(?,?,?...) batches. SQLite has a max of ~999
-// parameters per statement; 50 keeps us well below and matches the
-// pattern used in dns-backfill.ts so the planner cost is comparable.
-const CHUNK_SIZE = 50;
-
-// Hard cap on the candidate read. Cheap (strict-index scan) — full
-// table coverage in one read is fine.
-const READ_LIMIT = 50_000;
-
-// Per-tick write caps. v1 unbounded ran 367 batches × ~250ms =
-// 92s wall-clock per tick. With these caps each tick handles a
-// bounded slice and the queue converges over 3-4 ticks from empty.
-// Steady-state writes are tiny (feed ingestion ~few-hundred/hour
-// new candidates) so caps almost never bite after first fill.
-const MAX_INSERTS_PER_TICK = 5_000;
-const MAX_DELETES_PER_TICK = 500;
-
 
 export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   const start = Date.now();
@@ -95,10 +101,11 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   const base: ReconcileResult = {
     skipped: false,
     enqueued: 0,
-    dequeued: 0,
-    candidatesInThreats: 0,
+    scanned: 0,
+    cursorBefore: null,
+    cursorAfter: null,
+    cursorLagMinutes: 0,
     queueSize: 0,
-    delta: 0,
     durationMs: 0,
     batchesAttempted: 0,
     batchesFailed: 0,
@@ -109,77 +116,89 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   }
 
   try {
-    // ── 1. Snapshot candidates in threats ──
-    // PR-4 cleanup: removed the `enrichment_attempts < 8` filter
-    // because threats.enrichment_attempts is no longer written
-    // (dns_queue owns that state now). Dead rows are kept in
-    // dns_queue with attempts=8 so this candidate read pulls them
-    // along with everything else; step 4's diff against queueSet
-    // filters them out automatically (they're already in queue, so
-    // they're not in toInsert). Removed INDEXED BY hint — the
-    // remaining filters (ip_address IS NULL + status='active') are
-    // satisfied by idx_threats_ip_source_feed without the strict
-    // index that's slated to be dropped in this same PR.
+    // ── 1. Read cursor from KV ──
+    // Default to "30 min ago" if not yet set (first deploy of the
+    // cursor-based reconciler). The set-diff reconciler kept the
+    // queue continuously up-to-date, so we don't need a full re-
+    // scan of history at bootstrap.
+    let cursor: string | null = null;
+    try {
+      cursor = await env.CACHE.get(CURSOR_KEY);
+    } catch {
+      // KV transient — treat as bootstrap. Cursor defaults below.
+    }
+    if (!cursor) {
+      const bootstrapAt = new Date(Date.now() - BOOTSTRAP_MINUTES_AGO * 60_000);
+      // SQLite datetime() format: 'YYYY-MM-DD HH:MM:SS' (no T, no
+      // ms, no TZ). Match the schema we use in feed_pull_history,
+      // agent_runs, etc.
+      cursor = bootstrapAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    }
+    const cursorBefore = cursor;
+    const cursorAgeMs = Date.now() - Date.parse(cursor.replace(' ', 'T') + 'Z');
+    const cursorLagMinutes = Math.max(0, Math.floor(cursorAgeMs / 60_000));
+
+    // ── 2. Read new candidates since cursor ──
+    // INDEXED BY pins the right plan even if the planner gets
+    // confused by stats refresh. EXPLAIN verified on prod
+    // (2026-05-19): SEARCH threats USING INDEX
+    // idx_threats_status_created (status=? AND created_at>?).
     //
-    // Returns CandidateRow shape with dummy enrichment_attempts=0
-    // and null attempted_resolve_at — these get inserted into new
-    // dns_queue rows but are immediately overwritten by dns-backfill
-    // when the row is actually drained.
+    // `>= cursor` (not `>`) — rows with identical created_at don't
+    // get skipped between ticks. INSERT OR IGNORE handles the dedup.
     const candidatesRes = await env.DB.prepare(`
-      SELECT malicious_domain, source_feed
-      FROM threats
-      WHERE ip_address IS NULL
-        AND status = 'active'
+      SELECT malicious_domain, source_feed, created_at
+      FROM threats INDEXED BY idx_threats_status_created
+      WHERE status = 'active'
+        AND created_at >= ?
+        AND ip_address IS NULL
         AND malicious_domain IS NOT NULL
         AND malicious_domain != ''
         AND malicious_domain NOT LIKE '*%'
         AND malicious_domain LIKE '%.%'
+      ORDER BY created_at
       LIMIT ?
-    `).bind(READ_LIMIT).all<{ malicious_domain: string; source_feed: string | null }>();
+    `).bind(cursor, READ_LIMIT).all<{
+      malicious_domain: string;
+      source_feed: string | null;
+      created_at: string;
+    }>();
 
-    // ── 2. Dedupe by malicious_domain ──
-    // Keep first occurrence; per-row state is owned by dns-backfill
-    // so the dedupe choice only matters for the INITIAL fill.
-    // INSERT OR IGNORE ignores conflicts so the queue ends up with
-    // the first-seen row for any duplicated domain.
+    const candidates = candidatesRes.results;
+    const scanned = candidates.length;
+
+    // ── 3. Dedupe by malicious_domain ──
+    // Within one tick, the SELECT may return multiple rows with the
+    // same malicious_domain (e.g., feed reposts). INSERT OR IGNORE
+    // would handle it row-by-row, but batching via db.batch() with
+    // duplicate PKs in one batch is risky on D1 (the 2026-05-17
+    // bug). Dedupe up-front.
     const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
-    for (const c of candidatesRes.results) {
+    let maxCreatedAt = cursor;
+    for (const c of candidates) {
       if (!uniqueByDomain.has(c.malicious_domain)) {
         uniqueByDomain.set(c.malicious_domain, c);
       }
+      if (c.created_at > maxCreatedAt) maxCreatedAt = c.created_at;
     }
-    const candidateDomains = new Set(uniqueByDomain.keys());
+    const toInsert = [...uniqueByDomain.values()];
 
-    // ── 3. Snapshot current dns_queue ──
-    const queueRes = await env.DNS_QUEUE_DB.prepare(
-      `SELECT malicious_domain FROM dns_queue`
-    ).all<{ malicious_domain: string }>();
-    const queueDomains = queueRes.results.map((r) => r.malicious_domain);
-    const queueSet = new Set(queueDomains);
-
-    // ── 4. INSERT new candidates not yet in queue ──
-    // Only insert the DIFF (candidates not in queue). Avoids re-running
-    // a no-op INSERT OR IGNORE against the entire candidate set every
-    // tick — saves ~5K subrequests/tick once the queue is full.
-    // Capped at MAX_INSERTS_PER_TICK so an empty-queue first run
-    // converges over a few ticks instead of burning the CPU budget
-    // in one shot.
-    const toInsert: Array<{ malicious_domain: string; source_feed: string | null }> = [];
-    for (const [domain, row] of uniqueByDomain) {
-      if (!queueSet.has(domain)) {
-        toInsert.push(row);
-        if (toInsert.length >= MAX_INSERTS_PER_TICK) break;
-      }
+    // ── 4. Read current queue size — cheap, observability only ──
+    let queueSize = 0;
+    try {
+      const r = await env.DNS_QUEUE_DB.prepare(
+        'SELECT COUNT(*) AS n FROM dns_queue'
+      ).first<{ n: number }>();
+      queueSize = r?.n ?? 0;
+    } catch {
+      // Non-fatal — leave at 0, surface via lastError if other
+      // queries fail too.
     }
 
-    // PR-2b rewrite: use db.batch() of single-row INSERTs instead of
-    // one multi-row VALUES statement. The multi-row form (PR-2a) was
-    // reporting enqueued=0 across 8+ ticks despite 16K+ candidates and
-    // 28s of work — symptoms consistent with either (a) silent error
-    // in the multi-row VALUES parse path on D1 or (b) meta.changes
-    // returning 0 for multi-row INSERT OR IGNORE. db.batch() with
-    // single-row statements bypasses both: each statement has its own
-    // result + changes count, and any per-row failure is isolated.
+    // ── 5. INSERT OR IGNORE the dedupe'd new candidates ──
+    // Per-row INSERTs batched via db.batch() (proven PR-2b pattern;
+    // avoids the multi-row VALUES bug + gives per-statement
+    // changes count).
     let enqueued = 0;
     for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
       const chunk = toInsert.slice(i, i + CHUNK_SIZE);
@@ -188,71 +207,56 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
           INSERT OR IGNORE INTO dns_queue
             (malicious_domain, enrichment_attempts, attempted_resolve_at, source_feed, enqueued_at)
           VALUES (?, 0, NULL, ?, datetime('now'))
-        `).bind(
-          c.malicious_domain,
-          c.source_feed,
-        )
+        `).bind(c.malicious_domain, c.source_feed)
       );
       batchesAttempted++;
       try {
         const results = await env.DNS_QUEUE_DB.batch(stmts);
-        for (const r of results) {
-          enqueued += r.meta?.changes ?? 0;
-        }
+        for (const r of results) enqueued += r.meta?.changes ?? 0;
       } catch (err) {
         batchesFailed++;
         if (!lastError) {
-          lastError = err instanceof Error
-            ? `${err.name}: ${err.message}`
-            : String(err);
+          lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         }
         console.error('[dns-queue-reconciler] enqueue batch failed:', err);
       }
     }
 
-    // ── 5. DELETE stale rows ──
-    // A queue row is stale iff its malicious_domain is NOT in the
-    // current candidate snapshot. This means one of: (a) the
-    // underlying threat got an ip_address (resolved), (b) status
-    // changed off 'active', (c) attempts hit the cap, (d) the row
-    // was deleted. All four are correct reasons to drop from queue.
-    // Capped at MAX_DELETES_PER_TICK.
-    const staleDomains: string[] = [];
-    for (const d of queueDomains) {
-      if (!candidateDomains.has(d)) {
-        staleDomains.push(d);
-        if (staleDomains.length >= MAX_DELETES_PER_TICK) break;
-      }
-    }
-
-    let dequeued = 0;
-    for (let i = 0; i < staleDomains.length; i += CHUNK_SIZE) {
-      const chunk = staleDomains.slice(i, i + CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(',');
-      batchesAttempted++;
+    // ── 6. Advance cursor ──
+    // Only persist if we observed at least one candidate. If the
+    // window was empty (no new threats in last 5 min — common at
+    // night), keep the cursor — next tick reads from same point.
+    //
+    // CRITICAL: persist even if some INSERT batches failed. The
+    // failed rows would be retried next tick via INSERT OR IGNORE,
+    // but only if the cursor advances; not advancing pins the
+    // cursor on a permanent-failure row and blocks all subsequent
+    // candidates. The dedup gives us idempotency.
+    let cursorAfter: string | null = cursorBefore;
+    if (maxCreatedAt > cursor) {
       try {
-        const r = await env.DNS_QUEUE_DB.prepare(
-          `DELETE FROM dns_queue WHERE malicious_domain IN (${placeholders})`
-        ).bind(...chunk).run();
-        dequeued += r.meta?.changes ?? 0;
+        await env.CACHE.put(CURSOR_KEY, maxCreatedAt, {
+          expirationTtl: 86_400 * 7, // 7 days — refreshed every tick that finds candidates
+        });
+        cursorAfter = maxCreatedAt;
       } catch (err) {
-        batchesFailed++;
+        // KV write failure — log + continue. Next tick reads stale
+        // cursor and re-processes. Idempotent via INSERT OR IGNORE.
+        console.error('[dns-queue-reconciler] cursor write failed:', err);
         if (!lastError) {
-          lastError = err instanceof Error
-            ? `${err.name}: ${err.message}`
-            : String(err);
+          lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         }
-        console.error('[dns-queue-reconciler] dequeue batch failed:', err);
       }
     }
 
     return {
       skipped: false,
       enqueued,
-      dequeued,
-      candidatesInThreats: candidateDomains.size,
-      queueSize: queueDomains.length,
-      delta: queueDomains.length - candidateDomains.size,
+      scanned,
+      cursorBefore,
+      cursorAfter,
+      cursorLagMinutes,
+      queueSize,
       durationMs: Date.now() - start,
       batchesAttempted,
       batchesFailed,
