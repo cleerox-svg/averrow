@@ -86,15 +86,25 @@ export async function handleTenantDashboard(
       WHERE a.status IN ('new', 'acknowledged', 'investigating')
     `).bind(orgId).first<{ cnt: number }>();
 
-    // Recent alerts (last 5)
+    // Recent alerts (top 5) — diversified across alert_type so one noisy
+    // category (e.g. campaign_impacts_brand) can't crowd out the rest.
+    // Take the 2 most recent of each type, then pick top 5 by severity + recency.
     const recentAlertsResult = await env.DB.prepare(`
-      SELECT a.id, a.title, a.severity, a.alert_type, a.status, a.created_at,
-             b.name AS brand_name
-      FROM alerts a
-      JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
-      JOIN brands b ON b.id = a.brand_id
-      WHERE a.status IN ('new', 'acknowledged', 'investigating')
-      ORDER BY a.created_at DESC
+      WITH ranked AS (
+        SELECT a.id, a.title, a.severity, a.alert_type, a.status, a.created_at,
+               b.name AS brand_name,
+               ROW_NUMBER() OVER (PARTITION BY a.alert_type ORDER BY a.created_at DESC) AS type_rank
+        FROM alerts a
+        JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+        JOIN brands b ON b.id = a.brand_id
+        WHERE a.status IN ('new', 'acknowledged', 'investigating')
+      )
+      SELECT id, title, severity, alert_type, status, created_at, brand_name
+      FROM ranked
+      WHERE type_rank <= 2
+      ORDER BY
+        CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+        created_at DESC
       LIMIT 5
     `).bind(orgId).all();
 
