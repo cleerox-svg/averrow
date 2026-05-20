@@ -915,7 +915,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // gracefully — diagnostics endpoint stays usable when CF GraphQL
     // is down or CF_API_TOKEN isn't configured.
     const d1BudgetStateP = getBudgetDiagnostics(env);
-    const d1TopQueriesP = fetchD1TopQueries(env, 20);
+    const d1TopQueriesP = fetchD1TopQueries(env, 20, "reads");
+    // Parallel write-spender view. Writes have their own included
+    // quota on Workers Paid (50M/mo) so the operator needs a separate
+    // top-N ordered by rowsWritten to attribute overage.
+    const d1TopWriteQueriesP = fetchD1TopQueries(env, 20, "writes");
     // PR-X: billing-cycle (18th-17th) reads summed across all D1 DBs
     // on the account. Replaces the rolling-24h × 30 projection in the
     // monthly meter — see lib/d1-budget.ts header for why.
@@ -952,7 +956,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealth, feedStatus, feedErrors,
       agentMesh, workflowAgentMesh, stalled, backlog,
       aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
-      d1BudgetState, d1TopQueries, d1BillingCycle, d1Recent,
+      d1BudgetState, d1TopQueries, d1TopWriteQueries, d1BillingCycle, d1Recent,
       cachedCountStats,
       moduleEntitlements,
       alertsByTier,
@@ -964,7 +968,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, workflowAgentMeshP, stalledP, backlogP,
       aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
-      d1BudgetStateP, d1TopQueriesP, d1BillingCycleP, d1RecentP,
+      d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP, d1BillingCycleP, d1RecentP,
       getCachedCountStats(env),
       moduleEntitlementsP,
       alertsByTierP,
@@ -1250,7 +1254,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 8,
+          endpoint_version: 9,
         },
 
         geo_coverage: {
@@ -1471,6 +1475,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // when the fetch fails without grepping worker logs.
         d1_top_queries_24h: d1TopQueries.queries,
         d1_top_queries_error: d1TopQueries.error,
+
+        // Parallel top-N ordered by rowsWritten instead of rowsRead —
+        // attributes write spend so the operator can tell which
+        // INSERT/UPDATE/DELETE paths are driving toward the 50M/mo
+        // Workers Paid included write quota. Same { queries, error }
+        // shape as the reads view.
+        d1_top_write_queries_24h: d1TopWriteQueries.queries,
+        d1_top_write_queries_error: d1TopWriteQueries.error,
 
         // One-shot index health probe added 2026-04-29 to debug why
         // the migration-0123 composite index isn't being used by the
