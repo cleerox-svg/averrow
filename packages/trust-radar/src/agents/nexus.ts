@@ -236,10 +236,11 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   //
   // Delegates to lib/provider-trends.ts so the manual-fallback
   // path here and the canonical workflow at workflows/nexusRun.ts
-  // share the same diff-filtered UPDATE pattern. The helper drops
-  // no-op writes (where new trend values match current), which the
-  // 2026-05-20 D1 write audit flagged as the dominant inline
-  // UPDATE pattern on the platform.
+  // share the same diff-filtered write helper. The helper drops
+  // no-op writes (where new trend values match current); the
+  // 2026-05-20 D1 write audit flagged the prior inline rewrite-
+  // every-row path as the dominant inline write driver on the
+  // platform.
   let providersUpdated = 0;
   try {
     const result = await updateProviderTrends(db);
@@ -664,17 +665,20 @@ export const nexusAgent: AgentModule = {
   parallelMax: 1,
   costGuard: "enforced",
   budget: { monthlyTokenCap: 10_000_000 },
+  // threat_cube_provider read and hosting_providers write moved
+  // out of this file in 2026-05-20 (PR-BJ Phase 1B) — both happen
+  // via lib/provider-trends.updateProviderTrends() now. The
+  // cartographer agent already declares the same pair, so the
+  // ARCHITECT manifest still surfaces them on the platform map.
   reads: [
     { kind: "d1_table", name: "app_store_listings" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "dark_web_mentions" },
-    { kind: "d1_table", name: "threat_cube_provider" },
     { kind: "d1_table", name: "threats" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_events" },
     { kind: "d1_table", name: "agent_runs" },
-    { kind: "d1_table", name: "hosting_providers" },
     { kind: "d1_table", name: "infrastructure_clusters" },
     { kind: "d1_table", name: "threats" },
   ],
