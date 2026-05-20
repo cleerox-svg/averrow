@@ -165,8 +165,13 @@ export async function runDomainGeoBackfillBatch(
     // only advances when an outcome (resolved / dead / transient)
     // is recorded later.
     //
-    // Chunked at 50 placeholders for D1's max-SQL-variables ceiling.
-    const PRE_STAMP_CHUNK = 50;
+    // Chunked at 99 placeholders for D1's max-SQL-variables ceiling
+    // (SQLITE_MAX_VARIABLE_NUMBER = 100; we leave 1 head-room). Was 50
+    // until PR-BL — halves the prepared-statement count on the
+    // critical-path UPDATE, the second-largest D1 writer behind
+    // cube_healer (2,178 calls/day → ~1,100). Row-writes per batch
+    // are unchanged; this is purely an API-call reduction.
+    const PRE_STAMP_CHUNK = 99;
     if (useQueueDb && queueDb) {
       try {
         for (let i = 0; i < domains.length; i += PRE_STAMP_CHUNK) {

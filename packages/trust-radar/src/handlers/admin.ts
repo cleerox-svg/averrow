@@ -1792,7 +1792,15 @@ export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number
   const brands = brandRows.results;
   if (brands.length === 0) return { matched: 0, checked: 0, pending: 0 };
 
-  const totalPending = await cachedCount(env, 'count.threats.unattributed_with_ioc', 60, async () => {
+  // PR-BL: TTL bumped 60s → 600s. The diagnostics endpoint flagged
+  // this as the #3 D1 read offender (~17.8M rows / 87 calls / 24h)
+  // because runBrandMatchBackfill is called hourly from the orchestrator
+  // plus 1-2× from manual triggers. At 60s every call was a miss; at
+  // 600s only the first call per 10-min window hits the full scan.
+  // The downstream LIMIT 500 still bounds the work per call, and the
+  // count is only used as a gate (skip if 0 / report `remaining`), so
+  // sub-10-min staleness is harmless.
+  const totalPending = await cachedCount(env, 'count.threats.unattributed_with_ioc', 600, async () => {
     const pendingRow = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)",
     ).first<{ n: number }>();

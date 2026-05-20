@@ -1,11 +1,21 @@
 /**
  * Cube Healer Agent — Phase 4.2 retroactive drift remediation.
  *
- * Runs 6-hourly via the "12 *\/6 * * *" cron. Performs a full 30-day
- * bulk rebuild of threat_cube_geo, threat_cube_provider, and
- * threat_cube_brand via INSERT OR REPLACE ... SELECT ... GROUP BY,
- * bounding drift from cartographer's retroactive enrichment to ≤6 hours
- * of back-fill.
+ * Runs 6-hourly via the "12 *\/6 * * *" cron. Performs a 14-day bulk
+ * rebuild of threat_cube_geo, threat_cube_provider, threat_cube_brand,
+ * threat_cube_status, and threat_cube_arcs via INSERT OR REPLACE ...
+ * SELECT ... GROUP BY, bounding drift from cartographer's retroactive
+ * enrichment to ≤6 hours of back-fill within that window.
+ *
+ * Window: 14 days (PR-BL, 2026-05-20). Was 30d originally; reduced
+ * after diagnostics showed cube_healer accounting for ~50% of daily
+ * D1 writes (~1.6M/day) and projecting 205% of the 50M write quota.
+ * Cartographer's retroactive enrichment is concentrated in the first
+ * 7-14 days — buckets older than that almost never receive updated
+ * lat/lng or hosting_provider_id. The 30-day safety margin was
+ * defensive padding without observed payoff. Window can be widened
+ * again if forensic backfills over older threats start producing
+ * cube drift.
  *
  * Why this exists:
  *   Cartographer's candidate query has no time filter — it enriches threats
@@ -56,7 +66,7 @@ const GEO_HEAL_SQL = `
     COUNT(*),
     datetime('now')
   FROM threats
-  WHERE created_at >= datetime('now', '-30 days')
+  WHERE created_at >= datetime('now', '-14 days')
     AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
     AND status = 'active'
     AND lat IS NOT NULL
@@ -77,7 +87,7 @@ const PROVIDER_HEAL_SQL = `
     COUNT(*),
     datetime('now')
   FROM threats
-  WHERE created_at >= datetime('now', '-30 days')
+  WHERE created_at >= datetime('now', '-14 days')
     AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
     AND status = 'active'
     AND hosting_provider_id IS NOT NULL
@@ -97,7 +107,7 @@ const BRAND_HEAL_SQL = `
     COUNT(*),
     datetime('now')
   FROM threats
-  WHERE created_at >= datetime('now', '-30 days')
+  WHERE created_at >= datetime('now', '-14 days')
     AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
     AND status = 'active'
     AND target_brand_id IS NOT NULL
@@ -122,12 +132,12 @@ const STATUS_HEAL_SQL = `
     COUNT(*),
     datetime('now')
   FROM threats
-  WHERE created_at >= datetime('now', '-30 days')
+  WHERE created_at >= datetime('now', '-14 days')
     AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
   GROUP BY 1, 2, 3, 4, 5
 `;
 
-// Arcs cube heal — PR-Z. Same 30-day window as the other cubes.
+// Arcs cube heal — PR-Z. Same 14-day window as the other cubes (PR-BL).
 // Source filter mirrors buildArcsCubeForHour: status='active',
 // target_brand_id NOT NULL, lat/lng NOT NULL. Aggregates source_lat/
 // source_lng as the centroid of attacking IPs in each (country, brand,
@@ -150,7 +160,7 @@ const ARCS_HEAL_SQL = `
     MAX(created_at),
     datetime('now')
   FROM threats
-  WHERE created_at >= datetime('now', '-30 days')
+  WHERE created_at >= datetime('now', '-14 days')
     AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
     AND status = 'active'
     AND lat IS NOT NULL
