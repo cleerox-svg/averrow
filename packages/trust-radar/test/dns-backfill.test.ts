@@ -172,12 +172,15 @@ describe("dns-backfill pre-stamp claim", () => {
     // Live D1 probe (2026-05-04) rejects 200 placeholders with
     // `too many SQL variables`. With the default batchSize=200 the
     // unchunked pre-stamp threw on every navigator tick, returning
-    // empty without resolving anything. Chunk size 50 mirrors the
-    // existing Step 3a/3b chunks.
+    // empty without resolving anything.
+    //
+    // PR-BL (2026-05-20): chunk size bumped 50 → 99 to use D1's full
+    // SQLITE_MAX_VARIABLE_NUMBER=100 headroom (1 left as safety). Cuts
+    // prepared-statement count ~50%.
     //
     // Phase 4 split each chunk into TWO statements (ip_address IS NULL
     // and ip_address = '') so the partial index applies cleanly.
-    // 200 domains / 50 = 4 chunks × 2 branches = 8 pre-stamp records.
+    // 200 domains / 99 = 3 chunks (99 + 99 + 2) × 2 branches = 6 pre-stamp records.
     const domains = Array.from({ length: 200 }, (_, i) => `d${i}.test`);
     vi.spyOn(resolverModule, "resolveDomain").mockResolvedValue({ kind: "transient" });
 
@@ -194,17 +197,17 @@ describe("dns-backfill pre-stamp claim", () => {
       !/SET\s+enrichment_attempts/.test(c.sql),
     );
 
-    expect(preStamps.length).toBe(8);
+    expect(preStamps.length).toBe(6);
     for (const c of preStamps) {
-      expect(c.bindArgs.length).toBeLessThanOrEqual(50);
+      expect(c.bindArgs.length).toBeLessThanOrEqual(99);
       expect(c.bindArgs.length).toBeGreaterThan(0);
     }
 
     // Each chunk should produce one IS NULL branch and one = '' branch.
     const isNullBranches = preStamps.filter((c) => /AND ip_address IS NULL/.test(c.sql));
     const isEmptyBranches = preStamps.filter((c) => /AND ip_address = ''/.test(c.sql));
-    expect(isNullBranches.length).toBe(4);
-    expect(isEmptyBranches.length).toBe(4);
+    expect(isNullBranches.length).toBe(3);
+    expect(isEmptyBranches.length).toBe(3);
   });
 
   it("guards the transient-bump against exceeding the cap", async () => {
