@@ -234,7 +234,11 @@ export interface TopQueriesResult {
   error: string | null;
 }
 
-export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQueriesResult> {
+export async function fetchD1TopQueries(
+  env: Env,
+  limit = 20,
+  sortBy: "reads" | "writes" = "reads",
+): Promise<TopQueriesResult> {
   const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
   const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
   if (!token || !accountId) {
@@ -255,13 +259,19 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
   // `sum.queries` from PR #864 doesn't exist — CF rejects with
   // `unknown field "queries"`. The query count is on the top-level
   // `count` field (number of analytics samples in the group).
+  //
+  // sortBy lets the operator pull either the read-spenders (default,
+  // matches the existing d1_top_queries_24h consumer) or the
+  // write-spenders (used by d1_top_write_queries_24h to drive the
+  // write-budget audit alongside the existing read view).
+  const orderField = sortBy === "writes" ? "sum_rowsWritten_DESC" : "sum_rowsRead_DESC";
   const query = `
     query {
       viewer {
         accounts(filter: { accountTag: "${accountId}" }) {
           d1QueriesAdaptiveGroups(
             filter: { datetimeHour_geq: "${since}" }
-            orderBy: [sum_rowsRead_DESC]
+            orderBy: [${orderField}]
             limit: ${limit}
           ) {
             count
@@ -319,17 +329,21 @@ export async function fetchD1TopQueries(env: Env, limit = 20): Promise<TopQuerie
       return { queries: [], error: "CF returned 0 query groups (no d1QueriesAdaptiveGroups data?)" };
     }
 
-    const queries = groups.map((g) => ({
-      query_hash: g.dimensions.query,
-      query_sample: g.dimensions.query,
-      database_id: g.dimensions.databaseId ?? null,
-      rows_read: g.sum.rowsRead,
-      rows_written: g.sum.rowsWritten,
-      query_count: g.count,
-      avg_rows_per_query: g.count > 0
-        ? Math.round(g.sum.rowsRead / g.count)
-        : 0,
-    }));
+    // avg_rows_per_query reflects the metric we sorted by so the
+    // top-N view is internally consistent — writers see avg writes,
+    // readers see avg reads.
+    const queries = groups.map((g) => {
+      const total = sortBy === "writes" ? g.sum.rowsWritten : g.sum.rowsRead;
+      return {
+        query_hash: g.dimensions.query,
+        query_sample: g.dimensions.query,
+        database_id: g.dimensions.databaseId ?? null,
+        rows_read: g.sum.rowsRead,
+        rows_written: g.sum.rowsWritten,
+        query_count: g.count,
+        avg_rows_per_query: g.count > 0 ? Math.round(total / g.count) : 0,
+      };
+    });
     return { queries, error: null };
   } catch (err) {
     return {
