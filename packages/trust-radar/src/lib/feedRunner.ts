@@ -38,7 +38,7 @@ export async function markSeen(env: Env, iocType: string, iocValue: string): Pro
 
 // ─── Threat Insertion (v2 schema) ────────────────────────────────
 
-export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<void> {
+export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<boolean> {
   // Apply heuristic reclassification (first-pass before AI Analyst)
   const reclassified = reclassifyThreatType(
     threat.threat_type,
@@ -62,7 +62,12 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<v
   // for those rows).
   const isPrivateIp = threat.ip_address ? (isPrivateIP(threat.ip_address) ? 1 : 0) : 0;
 
-  await db.prepare(
+  // Returns true when the row was inserted, false when the PK
+  // conflict path was taken (duplicate). Callers that need to
+  // distinguish new-vs-dup (e.g. the TAXII multi-page drain) can
+  // skip a separate pre-dedup SELECT — D1 reports it via
+  // meta.changes on INSERT OR IGNORE.
+  const result = await db.prepare(
     `INSERT OR IGNORE INTO threats
        (id, source_feed, threat_type, malicious_url, malicious_domain,
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
@@ -90,6 +95,7 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<v
     severity,
     isPrivateIp,
   ).run();
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 // ─── Feed Config Row ─────────────────────────────────────────────

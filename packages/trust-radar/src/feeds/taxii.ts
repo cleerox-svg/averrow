@@ -190,7 +190,17 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
   let itemsError = 0;
   let pageCount = 0;
   let nextEstimateMs = INITIAL_PAGE_ESTIMATE_MS;
-  let cursor: string | null = cfg.taxii_next_added_after;
+  // Symmetric guard with the cursor-WRITE block below: a stale
+  // "None"/"null" cursor (Python-style serialization leaks have
+  // happened twice — 2026-05-13 and 2026-05-20) must be treated
+  // as "no cursor" on READ too. Otherwise the greater-than
+  // comparison below would permanently reject real timestamps,
+  // since 'N' > '2' in ASCII.
+  const storedCursor = cfg.taxii_next_added_after?.trim();
+  let cursor: string | null =
+    !storedCursor || storedCursor === "None" || storedCursor === "null"
+      ? null
+      : storedCursor;
 
   // ── Multi-page drain loop ──
   // Each iteration pulls one page, processes its objects, and
@@ -237,16 +247,18 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
       itemsFetched++;
       try {
         const row = buildThreatRow(feedName, parsed);
-        const before = await env.DB.prepare(
-          `SELECT 1 FROM threats WHERE id = ? LIMIT 1`,
-        ).bind(row.id).first<{ 1: number }>();
-        if (before) {
+        // INSERT OR IGNORE dedups on the threats PK in one
+        // round-trip; the pre-check SELECT we used to do here
+        // doubled D1 latency per indicator with no added value
+        // (CLAUDE.md §8). The boolean return tells us whether
+        // the row was actually new.
+        const inserted = await insertThreat(env.DB, row);
+        if (inserted) {
+          itemsNew++;
+          pageInserts++;
+        } else {
           itemsDuplicate++;
-          continue;
         }
-        await insertThreat(env.DB, row);
-        itemsNew++;
-        pageInserts++;
       } catch (err) {
         itemsError++;
         console.error(`[taxii:${feedName}] insert error:`, err);
@@ -257,15 +269,25 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
     // server returned a cursor older than what we already had
     // (rare but possible during clock skew or replay), keep the
     // existing value.
-    if (fetched.nextCursor && (!cursor || fetched.nextCursor > cursor)) {
+    //
+    // Also refuse to write sentinel strings — some upstreams
+    // (OTX confirmed 2026-05-20) emit `x-taxii-date-added-last:
+    // None` on empty windows. A literal "None"/"null" cursor
+    // wedges the feed permanently because "None" sorts AFTER
+    // any ISO timestamp ('N' > '2' in ASCII), so the
+    // greater-than guard below would then reject every real
+    // future cursor. Treat those values as "no cursor".
+    const incoming = fetched.nextCursor?.trim();
+    const isSentinel = !incoming || incoming === "None" || incoming === "null";
+    if (!isSentinel && (!cursor || incoming! > cursor)) {
       try {
         await env.DB.prepare(
           `UPDATE feed_configs
               SET taxii_next_added_after = ?,
                   updated_at = datetime('now')
             WHERE feed_name = ?`,
-        ).bind(fetched.nextCursor, feedName).run();
-        cursor = fetched.nextCursor;
+        ).bind(incoming, feedName).run();
+        cursor = incoming!;
       } catch (err) {
         // Cursor write failure means the next tick re-pulls this
         // page. Dedup absorbs the cost. Surface as a non-fatal
