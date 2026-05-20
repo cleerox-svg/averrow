@@ -147,6 +147,13 @@ export function inferAffectedComponents(
     out.push("system:email_deliverability");
   }
 
+  // PR-BK: scheduled Phase 2 D1-write-budget review reminder.
+  // Cost/budget hygiene rather than infra alerting — tag the system
+  // without a category bucket for the same reason as DMARC above.
+  if (type === "platform_d1_writes_phase2_review") {
+    out.push("system:d1_budget");
+  }
+
   return out;
 }
 

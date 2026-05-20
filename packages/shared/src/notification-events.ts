@@ -61,6 +61,7 @@ export type NotificationEventKey =
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
   | 'platform_dmarc_ramp_reminder'
+  | 'platform_d1_writes_phase2_review'
   // ── PR-AW — abuse mailbox family ──
   | 'abuse_mailbox_verdict'
   | 'abuse_mailbox_flood_detected'
@@ -387,6 +388,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_dmarc_ramp_reminder',
     label: 'DMARC Ramp Reminder',
     description: 'Scheduled reminder to flip _dmarc.averrow.com + .ca from p=none → p=quarantine (activates BIMI logo). Self-disables once the TXT record reads quarantine or reject.',
+    dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_d1_writes_phase2_review',
+    label: 'D1 Writes Phase 2 Review',
+    description: 'Scheduled review after Phase 1 write-budget cuts (PR-BJ, deployed 2026-05-20). Fires daily on/after 2026-05-27 if the cycle write projection still exceeds the 50M/mo Workers Paid included quota. Self-disables once projected writes drop under the quota.',
     dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,

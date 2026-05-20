@@ -499,6 +499,14 @@ export interface BillingCycleMetrics {
   cycle_projection_rows_read: number;
   /** projection ÷ 25B × 100, rounded to 1dp. */
   pct_of_25b_plan_ceiling: number;
+  /** Linear extrapolation of cycle writes to full cycle (assumes pace holds).
+   *  Symmetric with cycle_projection_rows_read — added 2026-05-20 so the
+   *  Phase 2 D1-write-budget review reminder (and any future write-spend
+   *  callers) don't have to re-derive it from rows_written_cycle. */
+  cycle_projection_rows_written: number;
+  /** projection ÷ 50M × 100, rounded to 1dp. The Workers Paid plan
+   *  includes 50M writes/month; anything over goes to $1/M overage. */
+  pct_of_50m_write_quota: number;
   /** Per-database breakdown, ordered desc by rows_read. */
   per_database: D1DatabaseUsageRow[];
   setup_required: boolean;
@@ -508,6 +516,11 @@ export interface BillingCycleMetrics {
 
 /** Plan ceiling: 25B rows_read/month. Re-exported for the diagnostics layer. */
 export const BILLING_CYCLE_PLAN_CEILING = 25_000_000_000;
+
+/** Workers Paid plan included write quota: 50M rows_written/month.
+ *  Above this, writes are billed at $1/million. Used by the Phase 2
+ *  D1-write-budget review reminder + any future write-spend callers. */
+export const WRITES_INCLUDED_QUOTA = 50_000_000;
 
 /**
  * Fetch billing-cycle D1 metrics summed across ALL D1 databases on the
@@ -528,6 +541,8 @@ export async function fetchBillingCycleMetrics(env: Env, now: Date = new Date())
     write_queries_cycle: 0,
     cycle_projection_rows_read: 0,
     pct_of_25b_plan_ceiling: 0,
+    cycle_projection_rows_written: 0,
+    pct_of_50m_write_quota: 0,
     per_database: [],
     setup_required: true,
   });
@@ -625,6 +640,14 @@ export async function fetchBillingCycleMetrics(env: Env, now: Date = new Date())
       : rowsReadCycle;
     const pctOfCeiling = Math.round((cycleProjection / BILLING_CYCLE_PLAN_CEILING) * 1000) / 10;
 
+    // Same linear-extrapolation pattern for writes. Symmetric with
+    // reads — needed for the Phase 2 D1-write-budget review reminder
+    // and any future write-spend callers.
+    const cycleProjectionWrites = pctElapsedFraction > 0
+      ? Math.round(rowsWrittenCycle / pctElapsedFraction)
+      : rowsWrittenCycle;
+    const pctOfWriteQuota = Math.round((cycleProjectionWrites / WRITES_INCLUDED_QUOTA) * 1000) / 10;
+
     return {
       cycle,
       rows_read_cycle: rowsReadCycle,
@@ -633,6 +656,8 @@ export async function fetchBillingCycleMetrics(env: Env, now: Date = new Date())
       write_queries_cycle: writeQueriesCycle,
       cycle_projection_rows_read: cycleProjection,
       pct_of_25b_plan_ceiling: pctOfCeiling,
+      cycle_projection_rows_written: cycleProjectionWrites,
+      pct_of_50m_write_quota: pctOfWriteQuota,
       per_database: perDatabase,
       setup_required: false,
     };

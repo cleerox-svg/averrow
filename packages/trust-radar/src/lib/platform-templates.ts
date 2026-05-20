@@ -146,6 +146,20 @@ export interface PlatformDmarcRampReminderVars {
   averrow_ca_policy:  string | null;
 }
 
+export interface PlatformD1WritesPhase2ReviewVars {
+  /** Linear projection of cycle writes to a full month.
+   *  Comes from BillingCycleMetrics.cycle_projection_rows_written. */
+  cycle_projection_rows_written: number;
+  /** projection ÷ 50M × 100. */
+  pct_of_50m_write_quota: number;
+  /** Actual writes so far in the cycle (denominator for context). */
+  rows_written_cycle: number;
+  /** % of the billing cycle elapsed at the time of the check.
+   *  When this is small (e.g. < 25%), the projection is noisier
+   *  and the operator should weigh it accordingly. */
+  cycle_pct_elapsed: number;
+}
+
 export interface PlatformAbuseClassifierSilentVars {
   /** Hours since the last successful classifier Haiku call. */
   hours_silent: number;
@@ -496,6 +510,41 @@ export function renderPlatformDmarcRampReminder(v: PlatformDmarcRampReminderVars
       `3) This reminder self-disables within ~24h after the TXT records reflect quarantine or reject.`,
     link: PLATFORM_ADMIN_LINK,
     group_key: `platform_dmarc_ramp_reminder:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'medium',
+  };
+}
+
+/**
+ * Phase 2 D1-write-budget review reminder. Fires daily on/after
+ * 2026-05-27 (7 days after Phase 1 deploy) if the current monthly
+ * write projection still exceeds the 50M/mo Workers Paid included
+ * quota. Companion to renderPlatformDmarcRampReminder — same self-
+ * disabling scheduled-reminder pattern, different driver.
+ *
+ * Self-disable lives in flightControl.ts: if
+ * cycle_projection_rows_written ≤ WRITES_INCLUDED_QUOTA we skip
+ * emitting — Phase 1 alone was enough and no Phase 2 work is needed.
+ */
+export function renderPlatformD1WritesPhase2Review(v: PlatformD1WritesPhase2ReviewVars): RenderedTemplate {
+  const projectionMillions = Math.round(v.cycle_projection_rows_written / 100_000) / 10;
+  const overageProjection = Math.max(0, v.cycle_projection_rows_written - 50_000_000);
+  const overageDollars = Math.round((overageProjection / 1_000_000) * 100) / 100; // $1/M
+  return {
+    title: `D1 writes still over quota — Phase 2 review due (${projectionMillions}M/mo projected)`,
+    message:
+      `Phase 1 write-budget cuts (PR-BJ) have been live for ≥7 days. ` +
+      `Current cycle projection: ${projectionMillions}M writes/month vs the 50M included quota ` +
+      `(${v.pct_of_50m_write_quota}% of quota, ~$${overageDollars}/mo overage at $1/M). ` +
+      `Cycle is ${v.cycle_pct_elapsed}% elapsed — the longer this sits the firmer the projection.`,
+    reason_text: `Scheduled platform reminder — see PR #1406 + diagnostics d1_top_write_queries_24h to identify Phase 2 candidates.`,
+    recommended_action:
+      `1) Run \`./scripts/platform-diagnostics.sh 168\` and review the top write spenders. ` +
+      `2) Compare against the Phase 2 candidates from PR #1406: cube state → KV/DO, ` +
+      `agent_runs / agent_activity_log telemetry → separate log, brand_score_snapshots cadence cut. ` +
+      `3) This reminder self-disables within ~24h once the cycle write projection drops under 50M/mo.`,
+    link: PLATFORM_ADMIN_LINK,
+    group_key: `platform_d1_writes_phase2_review:${todayKey()}`,
     audience: 'super_admin',
     severity: 'medium',
   };

@@ -24,6 +24,7 @@ import {
   renderPlatformFeedSilent,
   renderPlatformBriefingSilent,
   renderPlatformDmarcRampReminder,
+  renderPlatformD1WritesPhase2Review,
   renderPlatformAiSpendBurst,
   renderPlatformCronMissed,
   renderPlatformEnrichmentStuck,
@@ -39,7 +40,7 @@ import {
   renderPlatformFeedAtRisk,
   renderPlatformProviderEscalation,
 } from "../lib/platform-templates";
-import { getBudgetState, DAILY_BUDGET, WARN_THRESHOLD } from "../lib/d1-budget";
+import { getBudgetState, DAILY_BUDGET, WARN_THRESHOLD, fetchBillingCycleMetrics, WRITES_INCLUDED_QUOTA } from "../lib/d1-budget";
 import { getLastDispatchAt, getCooldownUntil } from "../lib/workflow-dispatch";
 import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
@@ -1189,6 +1190,44 @@ export const flightControlAgent: AgentModule = {
         }
       } catch (err) {
         console.warn('[flight-control] dmarc ramp reminder failed:', err);
+      }
+    }
+
+    // ── PR-BK: 2026-05-27 Phase 2 D1-write-budget review reminder ─
+    // Fires daily on/after 2026-05-27 (7 days after the Phase 1 write
+    // cuts deployed via PR-BJ on 2026-05-20) IF the cycle write
+    // projection still exceeds the 50M/mo Workers Paid included quota.
+    //
+    // Self-disable mirrors the DMARC pattern: each tick fetches
+    // current billing-cycle metrics. If cycle_projection_rows_written
+    // ≤ WRITES_INCLUDED_QUOTA, Phase 1 alone was enough and we skip
+    // the emit — no Phase 2 work needed, the reminder turns itself
+    // off without a follow-up PR.
+    //
+    // emitPlatformNotification dedupes to once per day via the
+    // 'platform_d1_writes_phase2_review' event's dedupWindow=-1d, so
+    // multiple FC ticks within a day collapse to one notification.
+    //
+    // The billing-cycle fetch (CF GraphQL) is the one network call
+    // this adds. Gated on the date check first so pre-2026-05-27
+    // ticks pay nothing.
+    const PHASE2_REVIEW_DATE_UTC = '2026-05-27';
+    if (todayUtc >= PHASE2_REVIEW_DATE_UTC) {
+      try {
+        const cycle = await fetchBillingCycleMetrics(env);
+        if (!cycle.setup_required && !cycle.error
+            && cycle.cycle_projection_rows_written > WRITES_INCLUDED_QUOTA) {
+          await emitPlatformNotification(env, 'platform_d1_writes_phase2_review',
+            renderPlatformD1WritesPhase2Review({
+              cycle_projection_rows_written: cycle.cycle_projection_rows_written,
+              pct_of_50m_write_quota:        cycle.pct_of_50m_write_quota,
+              rows_written_cycle:            cycle.rows_written_cycle,
+              cycle_pct_elapsed:             cycle.cycle.pct_elapsed,
+            })
+          );
+        }
+      } catch (err) {
+        console.warn('[flight-control] phase2 d1 write review failed:', err);
       }
     }
 
