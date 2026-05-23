@@ -1393,19 +1393,35 @@ export const flightControlAgent: AgentModule = {
     mark('workflow_dispatch_supervisor');
 
     // ── C2 infrastructure overlap detection ────────────────────────
-    try {
-      const c2Overlap = await db.prepare(`
-        SELECT COUNT(*) as cnt FROM threats
-        WHERE source_feed = 'c2_tracker'
-        AND ip_address IN (SELECT DISTINCT ip_address FROM threats WHERE source_feed != 'c2_tracker' AND ip_address IS NOT NULL)
-      `).first<{ cnt: number }>();
-      if (c2Overlap && c2Overlap.cnt > 0) {
-        await logActivity(db, 'flight_control', 'warning', 'c2_overlap',
-          `[flight-control] ${c2Overlap.cnt} C2 server IPs also appear in other threat feeds — infrastructure overlap detected`,
-          { c2_overlap_count: c2Overlap.cnt }
-        );
-      }
-    } catch { /* non-fatal — c2_tracker may not have data yet */ }
+    //
+    // Gated to hour===0 (once/day). Before this gate the block fired on
+    // every FC tick (24+/day observed) and the IN-subquery on the
+    // unbounded threats table burned ~17.7M rows/24h — the #3 read source
+    // in `d1_top_queries_24h` per the 2026-05-23 diagnostic. The output
+    // is an operator activity-log entry, not a time-critical security
+    // alert, so daily latency is acceptable. PR-CB (priority 3 of the
+    // diagnostics walk-through).
+    //
+    // Future improvement: the subquery `source_feed != 'c2_tracker' AND
+    // ip_address IS NOT NULL` can't use idx_threats_source_feed (negation)
+    // and currently does a wide scan. If c2_tracker volume grows, swap
+    // to an INNER JOIN on ip_address with a covering index on
+    // (ip_address, source_feed).
+    if (new Date().getUTCHours() === 0) {
+      try {
+        const c2Overlap = await db.prepare(`
+          SELECT COUNT(*) as cnt FROM threats
+          WHERE source_feed = 'c2_tracker'
+          AND ip_address IN (SELECT DISTINCT ip_address FROM threats WHERE source_feed != 'c2_tracker' AND ip_address IS NOT NULL)
+        `).first<{ cnt: number }>();
+        if (c2Overlap && c2Overlap.cnt > 0) {
+          await logActivity(db, 'flight_control', 'warning', 'c2_overlap',
+            `[flight-control] ${c2Overlap.cnt} C2 server IPs also appear in other threat feeds — infrastructure overlap detected`,
+            { c2_overlap_count: c2Overlap.cnt }
+          );
+        }
+      } catch { /* non-fatal — c2_tracker may not have data yet */ }
+    }
 
     mark('c2_overlap');
 
