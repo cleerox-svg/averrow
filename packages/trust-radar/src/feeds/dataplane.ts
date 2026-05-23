@@ -72,10 +72,22 @@ const ENDPOINTS: DataPlaneEndpoint[] = [
     severity: "low", confidence: 65, category: "ipv6_proto41_abuse" },
 ];
 
-// Sample size per tick. With 6-endpoint rotation, 500 × 6 = 3000
+// Sample size per tick. With 6-endpoint rotation, 250 × 6 = 1500
 // IPs/6h across the full mesh. Random sampling means we get
 // breadth across the upstream list rather than always the first N.
-const SAMPLE_SIZE = 500;
+//
+// PR-CA: trimmed from 500 → 250 (2026-05-23). Diagnostic
+// `d1_top_write_queries_24h` flagged this INSERT path at 103K
+// rows_written / 24h (the largest single write source). With
+// each insert touching ~10 indexes on the threats table, 500/tick
+// × 24 ticks/day was contributing ~13% of total D1 writes against
+// the 50M-row/cycle quota. Halving the sample drops the
+// contribution to ~50K/day (~6.5%) while keeping breadth — the
+// 6-endpoint rotation still covers the full mesh every 6h, just
+// at lower density per endpoint. Downstream consumer (FC's C2
+// overlap correlation) compares IP presence across feeds, not
+// IP-count density, so coverage breadth matters more than depth.
+const SAMPLE_SIZE = 250;
 const BATCH_SIZE = 50;
 const FETCH_TIMEOUT_MS = 60_000;
 
