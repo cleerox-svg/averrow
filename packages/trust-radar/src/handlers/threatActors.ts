@@ -3,6 +3,7 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
 
 // Helper: safely query a table that may not exist, returning a fallback
@@ -150,25 +151,50 @@ export async function handleListThreatActors(request: Request, env: Env): Promis
     });
 
     // Sparkline: 14-day daily threat counts per actor via ASN infrastructure join.
-    // Cheap: bounded by 7 actors × 14 days = ~98 rows max.
-    const sparklinePromise = session.prepare(`
-      SELECT tai.threat_actor_id,
-             date(t.created_at) AS day,
-             COUNT(*) AS cnt
-      FROM threats t
-      JOIN threat_actor_infrastructure tai ON tai.asn = t.asn
-      WHERE t.created_at >= datetime('now', '-14 days')
-        AND t.asn IS NOT NULL
-      GROUP BY tai.threat_actor_id, date(t.created_at)
-    `).all<{ threat_actor_id: string; day: string; cnt: number }>().catch((err) => {
+    // Result row count is small (~98 rows max for the actors that have
+    // matching ASNs in the 14-day window), but the JOIN scans ~14 days of
+    // `threats` (≈ 50K rows) on every call regardless of the page filters
+    // — the data is global, not paginated. The 2026-05-23 diagnostic
+    // attributed 185K rows/request × 46 requests/24h = ~8.5M rows/24h to
+    // this single endpoint, making it the 3rd-largest read source.
+    //
+    // PR-CC (priority 4 of the diagnostics walk-through): wrap with
+    // cachedValue at 1800s (30 min) using a fixed key — the sparkline is
+    // filter-independent, so every list-call across countries / status /
+    // attribution shares the cached value. A 30-min lag is invisible on
+    // a 14-day-window visualization (each day is one bar of a sparkline;
+    // the most-recent bar updates within the same UTC day either way).
+    // Falls through to compute on KV errors via cachedValue's contract,
+    // so the cache is purely a perf optimization — never a correctness
+    // dependency.
+    const sparklinePromise = cachedValue<{ threat_actor_id: string; day: string; cnt: number }[]>(
+      env,
+      'threat_actor_sparkline_14d',
+      1800,
+      async () => {
+        const r = await session.prepare(`
+          SELECT tai.threat_actor_id,
+                 date(t.created_at) AS day,
+                 COUNT(*) AS cnt
+          FROM threats t
+          JOIN threat_actor_infrastructure tai ON tai.asn = t.asn
+          WHERE t.created_at >= datetime('now', '-14 days')
+            AND t.asn IS NOT NULL
+          GROUP BY tai.threat_actor_id, date(t.created_at)
+        `).all<{ threat_actor_id: string; day: string; cnt: number }>();
+        if (r.meta) addToTally(tally, r.meta);
+        return r.results;
+      },
+    ).catch((err) => {
       console.error('[threatActors] sparkline query failed:', err);
-      return { results: [] as { threat_actor_id: string; day: string; cnt: number }[] };
+      return [] as { threat_actor_id: string; day: string; cnt: number }[];
     });
 
     const [countResult, rows, sparklineRows] = await Promise.all([countPromise, rowsPromise, sparklinePromise]);
     // .first() doesn't expose meta on countResult; .all() rows have meta.
+    // sparklineRows is now a bare array (compute() inside cachedValue
+    // handles its own meta accounting) — no `meta` field to check here.
     if (rows && 'meta' in rows) addToTally(tally, rows.meta);
-    if (sparklineRows && 'meta' in sparklineRows) addToTally(tally, sparklineRows.meta);
     tally.queries += 1; // count query
 
     // Pivot sparkline rows into per-actor 14-day arrays (oldest first)
@@ -181,7 +207,7 @@ export async function handleListThreatActors(request: Request, env: Env): Promis
       days.push(d.toISOString().slice(0, 10));
     }
     const byActor = new Map<string, Map<string, number>>();
-    for (const row of (sparklineRows.results ?? [])) {
+    for (const row of sparklineRows) {
       if (!byActor.has(row.threat_actor_id)) byActor.set(row.threat_actor_id, new Map());
       byActor.get(row.threat_actor_id)!.set(row.day, row.cnt);
     }
