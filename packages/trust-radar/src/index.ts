@@ -11,6 +11,7 @@ import { renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage
 import { logHoneypotVisit } from "./lib/honeypot-visit-logger";
 import type { Env } from "./types";
 import { handleScheduled } from "./cron/orchestrator";
+import { timingSafeBearerEq } from "./lib/internal-secret";
 
 // ─── Route modules ──────────────────────────────────────────────────
 import { registerPublicRoutes } from "./routes/public";
@@ -248,7 +249,7 @@ export default {
       if (url.pathname === '/api/debug/run-enrichment' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
 
@@ -288,7 +289,7 @@ export default {
       if (url.pathname === '/api/internal/cubes/brand-summaries/rebuild' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { buildDarkWebBrandSummary, buildAppStoreBrandSummary } = await import('./lib/cube-builder');
@@ -311,7 +312,7 @@ export default {
       if (url.pathname === '/api/internal/geoip-status' && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { getGeoMmdbStatus } = await import('./lib/geoip-mmdb');
@@ -326,7 +327,7 @@ export default {
       if (url.pathname === '/api/internal/geoip-refresh' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         let forceReload = false;
@@ -364,7 +365,7 @@ export default {
       if (url.pathname === '/api/internal/taxii/discover' && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const rootUrl = url.searchParams.get('root_url');
@@ -395,7 +396,7 @@ export default {
       if (url.pathname === '/api/internal/notifications/sweep-stale-platform' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const minutes = parseInt(url.searchParams.get('olderThanMinutes') ?? '60', 10);
@@ -433,7 +434,7 @@ export default {
       if (url.pathname === '/api/internal/cf-zone-introspect' && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { handleCfZoneIntrospect } = await import('./handlers/cfZoneIntrospect');
@@ -443,7 +444,7 @@ export default {
       if (url.pathname.startsWith('/api/internal/agents/') && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
 
@@ -512,7 +513,7 @@ export default {
       if (url.pathname.startsWith('/api/internal/') && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
 
@@ -570,7 +571,7 @@ export default {
       if (url.pathname === '/api/internal/auth/mint-service-jwt' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { handleMintServiceJwt } = await import('./handlers/auth');
@@ -581,7 +582,7 @@ export default {
       if (url.pathname === '/api/internal/briefing/send' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { generateAndEmailBriefing } = await import('./handlers/briefing');
@@ -594,7 +595,7 @@ export default {
           && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const instanceId = url.pathname.split('/').pop()!;
@@ -608,7 +609,7 @@ export default {
           && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const instanceId = url.pathname.split('/').pop()!;
@@ -621,7 +622,7 @@ export default {
       if (url.pathname === '/api/certstream/stats' && request.method === 'GET') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const csId = env.CERTSTREAM_MONITOR.idFromName('certstream-primary');
@@ -632,7 +633,7 @@ export default {
       if (url.pathname === '/api/certstream/reload-brands' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
-        if (!internalSecret || authHeader !== `Bearer ${internalSecret}`) {
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const csId = env.CERTSTREAM_MONITOR.idFromName('certstream-primary');

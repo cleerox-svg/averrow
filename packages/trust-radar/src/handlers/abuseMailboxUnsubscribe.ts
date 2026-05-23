@@ -23,6 +23,7 @@
 // secrets doesn't break the unsubscribe path.
 
 import type { Env } from "../types";
+import { timingSafeEqual } from "../lib/internal-secret";
 
 async function hmacToken(email: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -85,7 +86,11 @@ export async function handleAbuseMailboxUnsubscribe(
   const secret =
     env.ABUSE_UNSUBSCRIBE_SECRET ?? env.AVERROW_INTERNAL_SECRET ?? "";
   const expected = await hmacToken(email, secret);
-  if (token !== expected) {
+  // PR-BQ: constant-time compare. The 16-hex token has limited
+  // entropy and Cloudflare's network jitter dominates a real-world
+  // timing leak, but the canonical defense is so cheap there's no
+  // reason to leave it.
+  if (!timingSafeEqual(token, expected)) {
     return new Response("Invalid token", { status: 401 });
   }
 
