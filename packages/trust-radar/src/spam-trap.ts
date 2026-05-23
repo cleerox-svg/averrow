@@ -381,6 +381,11 @@ async function createThreatFromCapture(env: Env, data: {
 // ─── Helper Functions ──────────────────────────────────────────────
 
 async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  // PR-BP: 5MB cap. Cloudflare Email Routing accepts up to 25MB per
+  // message, but a flood of 25MB payloads would OOM the Worker isolate
+  // (128MB ceiling) given the downstream TextDecoder allocation and
+  // attachment extraction. Mirrors the cap already in dmarc-receiver.ts.
+  const MAX_RAW_BYTES = 5 * 1024 * 1024;
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
@@ -390,13 +395,25 @@ async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<
     if (done) break;
     chunks.push(value);
     totalLength += value.length;
+    if (totalLength > MAX_RAW_BYTES) {
+      console.warn("[spam-trap] Email exceeds 5MB — truncating");
+      break;
+    }
   }
 
-  const result = new Uint8Array(totalLength);
+  const result = new Uint8Array(Math.min(totalLength, MAX_RAW_BYTES));
   let offset = 0;
   for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
+    const remaining = result.length - offset;
+    if (remaining <= 0) break;
+    if (chunk.length <= remaining) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    } else {
+      result.set(chunk.subarray(0, remaining), offset);
+      offset += remaining;
+      break;
+    }
   }
   return result.buffer;
 }

@@ -437,6 +437,10 @@ async function getAverrowSelfOrgId(env: Env): Promise<number | null> {
 // ─── Helpers (small + scoped to this file) ──────────────────────
 
 async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  // PR-BP: 5MB cap. Cloudflare Email Routing accepts up to 25MB per
+  // message; without a per-handler cap, a flood of 25MB payloads
+  // OOMs the Worker isolate (128MB ceiling). Mirrors dmarc-receiver.ts.
+  const MAX_RAW_BYTES = 5 * 1024 * 1024;
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
@@ -445,10 +449,25 @@ async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<
     if (done) break;
     chunks.push(value);
     totalLength += value.length;
+    if (totalLength > MAX_RAW_BYTES) {
+      console.warn("[abuse-mailbox] Email exceeds 5MB — truncating");
+      break;
+    }
   }
-  const out = new Uint8Array(totalLength);
+  const out = new Uint8Array(Math.min(totalLength, MAX_RAW_BYTES));
   let offset = 0;
-  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  for (const c of chunks) {
+    const remaining = out.length - offset;
+    if (remaining <= 0) break;
+    if (c.length <= remaining) {
+      out.set(c, offset);
+      offset += c.length;
+    } else {
+      out.set(c.subarray(0, remaining), offset);
+      offset += remaining;
+      break;
+    }
+  }
   return out.buffer;
 }
 

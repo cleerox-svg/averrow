@@ -91,7 +91,50 @@ function isPrivateOrLoopback(ip: string): boolean {
   return PRIVATE_IP_PREFIXES.some((p) => ip.startsWith(p));
 }
 
-const IP_PATTERN = /\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-f:]+::?[0-9a-f:]+)\]?/i;
+// PR-BP: strict IP patterns. The previous loose `[0-9a-f:]+::?[0-9a-f:]+`
+// regex matched non-IPv6 strings like `aa:bb` and `abcd:1234`, none of
+// which passed the loopback/link-local check in isPrivateOrLoopback(),
+// allowing attacker-controlled junk in a Received header to be stamped
+// into threats.ip_address. These patterns require:
+//   - IPv4: 4 octets, each 0-255 (validated below by isValidOctet)
+//   - IPv6: at least one `::` OR enough colon-separated groups to be a
+//           plausible v6 address, validated by isValidIPv6 below.
+const IP_PATTERN = /\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}|::[0-9a-f:]+|[0-9a-f:]+::[0-9a-f:]*|::1)\]?/i;
+
+function isValidIPv4(ip: string): boolean {
+  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  for (let i = 1; i <= 4; i++) {
+    const n = parseInt(m[i] ?? "", 10);
+    if (n < 0 || n > 255) return false;
+  }
+  return true;
+}
+
+function isValidIPv6(ip: string): boolean {
+  // Must contain at least one colon and only valid hex/colon characters.
+  // Allows zero-compression (::) appearing at most once.
+  if (!/^[0-9a-f:]+$/i.test(ip)) return false;
+  const doubleColonCount = (ip.match(/::/g) ?? []).length;
+  if (doubleColonCount > 1) return false;
+  // Split on `::` if present; each half must be 0-7 groups of 1-4 hex.
+  // If no `::`, must be exactly 8 groups.
+  const groups = ip.split("::");
+  if (groups.length === 1) {
+    const parts = ip.split(":");
+    if (parts.length !== 8) return false;
+    return parts.every((p) => /^[0-9a-f]{1,4}$/i.test(p));
+  }
+  // groups.length === 2 (split by `::`)
+  const left = groups[0] ? groups[0].split(":") : [];
+  const right = groups[1] ? groups[1].split(":") : [];
+  if (left.length + right.length > 7) return false;
+  return [...left, ...right].every((p) => p === "" || /^[0-9a-f]{1,4}$/i.test(p));
+}
+
+function isValidIp(ip: string): boolean {
+  return isValidIPv4(ip) || isValidIPv6(ip);
+}
 
 /**
  * Walk the Received chain from oldest (bottom of the chain) to newest
@@ -115,6 +158,11 @@ export function parseSenderIp(headers: Record<string, string>): string | null {
     const m = IP_PATTERN.exec(hop);
     const ip = m?.[1];
     if (!ip) continue;
+    // PR-BP: validate strictly before any stamping. The IP_PATTERN
+    // regex catches plausible candidates but doesn't enforce octet
+    // ranges or full IPv6 structure — `isValidIp` rejects garbage
+    // before it can poison threats.ip_address downstream.
+    if (!isValidIp(ip)) continue;
     if (isPrivateOrLoopback(ip)) continue;
     return ip;
   }

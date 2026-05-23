@@ -43,27 +43,54 @@ export async function signJWT(
 }
 
 export async function verifyJWT(token: string, secret: string): Promise<JWTPayload | null> {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
+  // PR-BP: hardened — explicitly locks alg to HS256 + handles malformed
+  // input via try/catch + rejects future-dated iat (limits replay window
+  // if the signing secret leaks). All failures return null so callers
+  // can treat verifyJWT as a single boolean gate.
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
 
-  const [header, body, sig] = parts as [string, string, string];
-  const key = await getKey(secret);
+    const [header, body, sig] = parts as [string, string, string];
 
-  const sigBuf = Uint8Array.from(atob(sig.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
-    c.charCodeAt(0)
-  );
+    // Lock the algorithm. Without this check, a future change that
+    // accepts asymmetric tokens (e.g. RS256) would let attackers craft
+    // HS256 tokens signed with the public key — alg-confusion attack.
+    // Also rejects "alg: none" explicitly.
+    const headerJson = JSON.parse(atob(header.replace(/-/g, "+").replace(/_/g, "/"))) as {
+      alg?: string;
+      typ?: string;
+    };
+    if (headerJson.alg !== "HS256") return null;
+    if (headerJson.typ !== "JWT") return null;
 
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    key,
-    sigBuf,
-    encoder.encode(`${header}.${body}`)
-  );
+    const key = await getKey(secret);
 
-  if (!valid) return null;
+    const sigBuf = Uint8Array.from(atob(sig.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
+      c.charCodeAt(0)
+    );
 
-  const payload = JSON.parse(atob(body.replace(/-/g, "+").replace(/_/g, "/"))) as JWTPayload;
-  if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      sigBuf,
+      encoder.encode(`${header}.${body}`)
+    );
+    if (!valid) return null;
 
-  return payload;
+    const payload = JSON.parse(atob(body.replace(/-/g, "+").replace(/_/g, "/"))) as JWTPayload;
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp < now) return null;
+    // Reject future-dated iat (60s clock-skew tolerance). Without this
+    // check, a leaked secret could mint a token with `iat: 99999999999`
+    // that forever bypasses the forced_logout `iat <= forcedAt` gate.
+    if (typeof payload.iat === "number" && payload.iat > now + 60) return null;
+
+    return payload;
+  } catch {
+    // Any decode/parse failure (malformed base64, invalid UTF-8, bad
+    // JSON) lands here — treat as verification failure rather than
+    // surfacing a 500 to the caller.
+    return null;
+  }
 }
