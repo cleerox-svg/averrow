@@ -203,6 +203,56 @@ export const cartographerAgent: AgentModule = {
     let model: string | undefined;
     const outputs: AgentOutputEntry[] = [];
 
+    // ─── Lever #6: Message Batches API for daily provider scoring ───
+    // Two pieces of the batched scoring flow run inside this hourly
+    // cartographer tick:
+    //   1. Always: poll any pending batch submissions. When Anthropic
+    //      reports a batch ended, download results and update
+    //      hosting_providers.reputation_score per provider — same shape
+    //      as the inline sync path's UPDATE. Ingestion is fully
+    //      idempotent (results carry the provider_id as custom_id).
+    //   2. Once per day at hour=2 UTC: submit a new batch covering all
+    //      AI-worthy providers that haven't been batch-scored in 25h.
+    //
+    // Both are no-ops when there's nothing to do (no pending batches,
+    // no eligible providers, or a recent submit). The inline sync
+    // scoring loop later in this function continues to run hourly but
+    // naturally skips providers that the batch ingestion just freshened
+    // (the upstream query gates on last_scored_at).
+    //
+    // Failure isolation: any failure here is logged + continued — the
+    // rest of the cartographer tick (IP enrichment, email security
+    // scans, inline scoring) must not be blocked by a batch hiccup.
+    let batchPollSummary: Awaited<ReturnType<typeof import("../lib/cartographer-batch").pollAndIngestCartographerBatches>> | null = null;
+    let batchSubmitSummary: Awaited<ReturnType<typeof import("../lib/cartographer-batch").submitCartographerScoringBatch>> | null = null;
+    try {
+      const { pollAndIngestCartographerBatches, submitCartographerScoringBatch } = await import("../lib/cartographer-batch");
+      try {
+        batchPollSummary = await pollAndIngestCartographerBatches(env, runId);
+        if (batchPollSummary.ingested_batches > 0) {
+          itemsUpdated += batchPollSummary.ingested_providers;
+        }
+      } catch (err) {
+        console.error("[cartographer] batch poll failed:", err);
+      }
+      // Daily submission window. The cartographer cron fires at :09
+      // UTC hourly per wrangler.toml; the hour gate matches the standard
+      // cron-audit rule (hour-only checks). The submit helper itself
+      // also enforces a 23h idempotency guard against double-fires, so
+      // a manual /api/internal/agents/cartographer/run during hour=2
+      // won't double-submit.
+      const scheduledHour = new Date().getUTCHours();
+      if (scheduledHour === 2) {
+        try {
+          batchSubmitSummary = await submitCartographerScoringBatch(env, runId);
+        } catch (err) {
+          console.error("[cartographer] batch submit failed:", err);
+        }
+      }
+    } catch (err) {
+      console.error("[cartographer] batch module import failed:", err);
+    }
+
     // ─── Phase 0: ip-api.com batch enrichment for unenriched threats ───
     // Process up to 3 batches of 500 (1,500 threats) per cron tick. 2026-05-12
     // platform-status went degraded because 5 batches at ~3s/threat overshot
@@ -1000,6 +1050,9 @@ export const cartographerAgent: AgentModule = {
         threats_total_active: threatsTotal?.n ?? 0,
         threats_with_provider: threatsWithProvider?.n ?? 0,
         threats_without_provider_but_with_ip: threatsWithoutProvider?.n ?? 0,
+        // Lever #6: batches API metrics
+        batch_poll: batchPollSummary,
+        batch_submit: batchSubmitSummary,
       },
     });
 
