@@ -3123,8 +3123,8 @@ export async function handleMetricsAiCostOptimization(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v3 — Lever #2 deployed 2026-05-23, busted cache so the status
-  // flip shows up immediately post-deploy.
+  // v3 — Lever #2 + Lever #4 both deployed 2026-05-23, busted cache so
+  // the status flips show up immediately post-deploy.
   const cacheKey = "metrics_ai_cost_optimization:v3";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
@@ -3253,10 +3253,10 @@ export async function handleMetricsAiCostOptimization(
       id: "lever_4",
       title: "Add cache_control plumbing to lib/anthropic.ts",
       target_agent: "(infra)",
-      status: "planned",
+      status: "deployed",
       estimated_savings_usd_per_year: 0,
-      deployed_at: null,
-      indicator: "infra-only — no immediate cost change",
+      deployed_at: "2026-05-23",
+      indicator: "infra-only — no immediate cost change; enables future levers",
     },
     {
       id: "lever_6",

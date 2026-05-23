@@ -46,6 +46,12 @@ export interface AnthropicMessage {
 export interface AnthropicUsage {
   input_tokens: number;
   output_tokens: number;
+  // Prompt caching metrics — present on responses that include
+  // cache_control blocks. cache_creation_input_tokens are billed at
+  // 1.25× standard input rate (cache write), cache_read_input_tokens
+  // at 0.1× (90% discount). Absent on responses without caching.
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 export interface AnthropicContentBlock {
@@ -116,6 +122,36 @@ export interface AnthropicCallOptions {
    * entirely.
    */
   idempotencyKey?: string;
+  /**
+   * Wrap the `system` prompt in a `cache_control: { type: 'ephemeral' }`
+   * block so Anthropic caches it for subsequent calls (Lever #4 of the
+   * AI cost-reduction plan).
+   *
+   * Cache hits return `cache_read_input_tokens` in usage and are billed
+   * at 10% of standard input rate. Cache writes are billed at 125%. The
+   * cache TTL is 5 minutes by default — refresh implicit on every cache
+   * hit. Minimum cacheable size is 1024 tokens for Sonnet, 2048 for Haiku.
+   *
+   * Use only when the system prompt is:
+   *   - Static across many calls (e.g. Architect's reconciliation prompt)
+   *   - Long enough to clear the model's minimum (Haiku ≥ 2048 tokens)
+   *   - Called at a rate that beats the 5-min TTL
+   *
+   * No-op for callers that don't set it — backwards compatible with every
+   * existing call site. Wire up per-callsite, not globally.
+   */
+  cacheSystem?: boolean;
+  /**
+   * Wrap the last user-message in a cache_control block (sliding cache
+   * boundary). Useful when the prefix of the conversation is stable but
+   * the tail varies — Anthropic caches everything up to and including
+   * the cache_control block. Same billing rules as cacheSystem.
+   *
+   * Most call sites here send a single user message, so this option is
+   * effectively "cache the whole message" — useful when the message
+   * itself is a large fixed context bundle (e.g. NEXUS pivot detection).
+   */
+  cacheLastUserMessage?: boolean;
 }
 
 /**
@@ -193,6 +229,41 @@ function resolveBaseUrl(env: AnthropicEnv, useGateway: boolean): string {
   return "https://api.anthropic.com";
 }
 
+/**
+ * Rewrite the LAST user-message in a messages array so its content
+ * carries a cache_control block. Anthropic caches everything up to and
+ * including the cache_control marker, so marking the tail means the
+ * full conversation prefix becomes cacheable. Earlier messages and
+ * non-user roles pass through untouched.
+ *
+ * String content is upconverted to the structured block form; existing
+ * structured content gets the marker tacked onto its last block.
+ */
+function markLastUserCacheable(messages: AnthropicMessage[]): AnthropicMessage[] {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m && m.role === "user") { lastUserIdx = i; break; }
+  }
+  if (lastUserIdx === -1) return messages;
+  const out = messages.slice();
+  const target = out[lastUserIdx]!;
+  if (typeof target.content === "string") {
+    out[lastUserIdx] = {
+      role: target.role,
+      content: [{ type: "text", text: target.content, cache_control: { type: "ephemeral" } }],
+    };
+  } else if (Array.isArray(target.content) && target.content.length > 0) {
+    const blocks = target.content.slice();
+    const lastBlock = blocks[blocks.length - 1];
+    if (lastBlock && typeof lastBlock === "object") {
+      blocks[blocks.length - 1] = { ...lastBlock, cache_control: { type: "ephemeral" } };
+      out[lastUserIdx] = { role: target.role, content: blocks };
+    }
+  }
+  return out;
+}
+
 // ─── Core call ───────────────────────────────────────────────────
 
 /**
@@ -241,12 +312,23 @@ export async function callAnthropic(
     }
   }
 
+  // Lever #4: optional prompt caching. When cacheSystem is true the
+  // system prompt is sent as a structured block with cache_control so
+  // Anthropic returns 90%-discounted cache_read_input_tokens on
+  // subsequent calls that reuse it. When cacheLastUserMessage is true
+  // we wrap the final user message the same way (sliding-window cache).
+  // Default off — every existing call site continues to send a plain
+  // string system prompt and an unwrapped messages array.
   const body: Record<string, unknown> = {
     model,
     max_tokens: maxTokens,
-    messages,
+    messages: opts.cacheLastUserMessage ? markLastUserCacheable(messages) : messages,
   };
-  if (system !== undefined) body.system = system;
+  if (system !== undefined) {
+    body.system = opts.cacheSystem
+      ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+      : system;
+  }
   if (tools !== undefined) body.tools = tools;
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
 
@@ -311,8 +393,21 @@ export async function callAnthropic(
   // point write nothing — no tokens consumed. recordCost itself is
   // wrapped in try/catch so a transient D1 blip does not cascade
   // into the caller losing its response.
-  const inputTokens = apiResponse.usage?.input_tokens ?? 0;
-  const outputTokens = apiResponse.usage?.output_tokens ?? 0;
+  //
+  // Lever #4: roll cache_creation_input_tokens and cache_read_input_tokens
+  // into an effective input_token count so estimateCost() stays accurate
+  // when prompt caching is in use. Anthropic bills cache writes at 1.25×
+  // standard input rate and cache reads at 0.1×. Calls without caching
+  // see no change (the cache fields are absent → 0 → adds nothing).
+  // Future: add dedicated ledger columns if we want to observe cache
+  // hit-rate separately from total spend.
+  const usage = apiResponse.usage;
+  const cacheCreation = usage?.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage?.cache_read_input_tokens ?? 0;
+  const inputTokens = (usage?.input_tokens ?? 0)
+    + Math.round(cacheCreation * 1.25)
+    + Math.round(cacheRead * 0.1);
+  const outputTokens = usage?.output_tokens ?? 0;
   if (env.DB) {
     try {
       const budget = new BudgetManager(env.DB);
