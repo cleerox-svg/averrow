@@ -20,7 +20,7 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { scoreProvider } from "../lib/haiku";
+import { scoreProvider, scoreProvidersBatch } from "../lib/haiku";
 import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
@@ -669,6 +669,20 @@ export const cartographerAgent: AgentModule = {
       campaignCountByProvider.set(row.hosting_provider_id, row.campaign_count);
     }
 
+    // Lever #1b: pre-bucket providers into heuristic-skip and AI-worthy
+    // before the loop. Heuristic-skip providers run per-item (no AI cost
+    // to amortize). AI-worthy providers are batched 5-at-a-time through
+    // scoreProvidersBatch so the static system prompt is sent once per
+    // batch instead of once per provider — ~150 input tokens × (N-1)
+    // calls saved per batch, plus per-item JSON wrapper overhead.
+    type AiInput = {
+      provider: typeof providers.results[number];
+      threatTypes: Record<string, number>;
+      campaignCount: number;
+      repeatOffender: boolean;
+    };
+    const aiQueue: AiInput[] = [];
+
     for (const provider of providers.results) {
       itemsProcessed++;
 
@@ -681,9 +695,6 @@ export const cartographerAgent: AgentModule = {
       // active threats AND no campaign history produce a flat "looks
       // fine" 90-100 score that nobody reads — pure AI waste. Skip
       // straight to the heuristic score for those.
-      // Saves ~$1.50/day in Haiku calls (~40% of cartographer's daily
-      // $3.75 spend) without losing signal on the providers operators
-      // actually triage.
       const aiWorthScoring = provider.active_threat_count >= 5 || repeatOffender;
 
       if (!aiWorthScoring) {
@@ -703,39 +714,83 @@ export const cartographerAgent: AgentModule = {
         continue;
       }
 
-      // Try Haiku scoring
-      const result = await scoreProvider(env, callCtx, {
-        name: provider.name,
-        asn: provider.asn,
-        active_threats: provider.active_threat_count,
-        total_threats: provider.total_threat_count,
-        avg_response_time: provider.avg_response_time,
-        threat_types: threatTypes,
-        trend_7d: provider.trend_7d,
-        trend_30d: provider.trend_30d,
-      });
+      aiQueue.push({ provider, threatTypes, campaignCount, repeatOffender });
+    }
 
+    // Lever #1b: 5-at-a-time batching. Larger batches risk maxTokens
+    // truncation when several providers in the same batch score < 70
+    // (verbose-response path) and the model hits the output cap.
+    const CART_BATCH_SIZE = 5;
+    for (let i = 0; i < aiQueue.length; i += CART_BATCH_SIZE) {
+      const batch = aiQueue.slice(i, i + CART_BATCH_SIZE);
+      const batchInput = batch.map((entry) => ({
+        name: entry.provider.name,
+        asn: entry.provider.asn,
+        active_threats: entry.provider.active_threat_count,
+        total_threats: entry.provider.total_threat_count,
+        avg_response_time: entry.provider.avg_response_time,
+        threat_types: entry.threatTypes,
+        trend_7d: entry.provider.trend_7d,
+        trend_30d: entry.provider.trend_30d,
+      }));
+
+      const batchResult = await scoreProvidersBatch(env, callCtx, batchInput);
+      // Validate: success + array length matches input. A short or
+      // malformed response forces per-provider fallback so we don't
+      // silently drop scores on the floor.
+      const batchOk =
+        batchResult.success
+        && Array.isArray(batchResult.data)
+        && batchResult.data.length === batch.length;
+
+      if (!batchOk) {
+        // Batch failed or partial — drop back to per-provider scoring
+        // for this batch. Preserves the old behavior exactly.
+        if (batchResult.tokens_used) totalTokens += batchResult.tokens_used;
+        for (const entry of batch) {
+          await processOneAiProvider(entry, await scoreProvider(env, callCtx, {
+            name: entry.provider.name,
+            asn: entry.provider.asn,
+            active_threats: entry.provider.active_threat_count,
+            total_threats: entry.provider.total_threat_count,
+            avg_response_time: entry.provider.avg_response_time,
+            threat_types: entry.threatTypes,
+            trend_7d: entry.provider.trend_7d,
+            trend_30d: entry.provider.trend_30d,
+          }));
+        }
+        continue;
+      }
+
+      if (batchResult.tokens_used) totalTokens += batchResult.tokens_used;
+      if (batchResult.model) model = batchResult.model;
+      // Per-provider post-processing using the batch results, by index.
+      for (let j = 0; j < batch.length; j++) {
+        const entry = batch[j]!;
+        const score = batchResult.data![j];
+        await processOneAiProvider(entry, { success: true, data: score });
+      }
+    }
+
+    // Per-provider post-processing. Used by both the per-call fallback
+    // path (batch failure) and the per-index batch results. Identical
+    // logic to the pre-Lever-#1b code path — only the upstream Haiku
+    // call differs.
+    async function processOneAiProvider(
+      entry: AiInput,
+      result: Awaited<ReturnType<typeof scoreProvider>>,
+    ): Promise<void> {
+      const { provider, campaignCount, repeatOffender } = entry;
       let reputationScore: number;
 
       if (result.success && result.data) {
         reputationScore = result.data.reputation_score;
-        if (result.tokens_used) totalTokens += result.tokens_used;
-        if (result.model) model = result.model;
         haikuSuccessCount++;
 
-        // Only emit an insight row when the provider warrants operator
-        // attention — reputation < 70 OR repeat offender. Boring "looks
-        // fine" providers (70-100) used to push to agent_outputs as
-        // `type='score'` rows that no consumer read (audit 2026-05-16:
-        // 106,400 rows in 7d, zero readers). Renamed to `type='insight'`
-        // so `/api/insights/latest` picks them up alongside Strategist
-        // correlations; gated so we surface signal, not log noise.
         if (reputationScore < 70 || repeatOffender) {
-          // Lever #1 (AI cost plan): scoreProvider() prompt now only
-          // emits reasoning/risk_factors/response_assessment when
-          // score < 70. For the repeat_offender + score >= 70 case
-          // those fields are absent — fall back to a synthesized
-          // summary so the insight row is still useful.
+          // Lever #1: scoreProvider() prompt only emits prose fields
+          // when score < 70. Synthesize a summary for the
+          // repeat_offender + score >= 70 edge case.
           const reasoning = result.data.reasoning
             ?? `repeat offender (${campaignCount} campaigns) — score ${reputationScore}/100`;
           outputs.push({
@@ -755,13 +810,11 @@ export const cartographerAgent: AgentModule = {
         }
       } else {
         haikuFailCount++;
-        // Fallback: simple heuristic scoring
         reputationScore = computeHeuristicScore(
           provider.active_threat_count,
           provider.total_threat_count,
           provider.avg_response_time,
         );
-        // Penalize repeat offenders (3+ campaigns)
         if (repeatOffender) reputationScore = Math.max(0, reputationScore - 15);
       }
 
