@@ -69,16 +69,29 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
     // those would blow up the KV key space.
     const useGlobalCache = !scope;
 
-    // D1 spend-reduction: bumped TTLs from 300s → 1800s. The dashboard
-    // counters change by ~1000/hour at the platform's current scale; a
-    // 30-min cache is more than fresh enough for a homepage tile and
-    // means Navigator's every-5-min prewarms hit the cache 5 times out
-    // of 6 instead of always missing. Production audit on 2026-05-16
-    // showed `SELECT COUNT(*) FROM threats` running 263×/24h × 338K
-    // rows = 89M rows/day on the 300s TTL. With 1800s the math drops to
-    // ~48 calls/day = 16M rows. Saves ~70M rows/day = ~8.5% of plan.
+    // D1 spend-reduction: bumped TTLs from 1800s → 3600s on total/active
+    // and 600s → 1800s on last_24h. These keys are shared with admin.ts
+    // (which already uses 3600s for `count.threats.total`); because
+    // cachedCount uses per-caller TTL for freshness checks, dashboard's
+    // shorter window was rejecting admin-cached entries 1800-3600s old
+    // and recomputing them — even though admin had just populated them.
+    // Aligning TTLs lets dashboard accept admin's value and roughly
+    // halves dashboard's compute-path entries for these keys.
+    //
+    // Drift cost is invisible on a homepage tile: total/active drift
+    // ~1000/hour at current scale, so 60-min lag still reads as fresh.
+    // last_24h is a rolling window that changes by the same rate, so
+    // 30-min lag is also fine. PR-CD (priority 5 of the diagnostics
+    // walk-through) — targeted bump to push `cached_count.hit_rate`
+    // above 70% (was 62% in the 2026-05-23 diagnostic).
+    //
+    // Production audit on 2026-05-16 showed `SELECT COUNT(*) FROM
+    // threats` running 263×/24h × 338K rows = 89M rows/day on the
+    // 300s TTL. The 1800s bump dropped that to ~48 calls/day = 16M
+    // rows. This further bump to 3600s drops it to ~24 calls/day =
+    // 8M rows. Saves another ~8M rows/day ≈ 1% of plan.
     const threatCountP = useGlobalCache
-      ? cachedCount(env, 'count.threats.total', 1800, async () => {
+      ? cachedCount(env, 'count.threats.total', 3600, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
@@ -87,7 +100,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .first<{ n: number }>();
 
     const threatActiveP = useGlobalCache
-      ? cachedCount(env, 'count.threats.active', 1800, async () => {
+      ? cachedCount(env, 'count.threats.active', 3600, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active'`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
@@ -97,7 +110,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .catch(() => ({ n: 0 }));
 
     const threat24hP = useGlobalCache
-      ? cachedCount(env, 'count.threats.last_24h', 600, async () => {
+      ? cachedCount(env, 'count.threats.last_24h', 1800, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now', '-1 day')`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))
