@@ -3123,9 +3123,9 @@ export async function handleMetricsAiCostOptimization(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v4 — Lever #3 deployed 2026-05-23, busted cache so the status flip
+  // v5 — Lever #1b deployed 2026-05-23, busted cache so the status flip
   // shows up immediately post-deploy.
-  const cacheKey = "metrics_ai_cost_optimization:v4";
+  const cacheKey = "metrics_ai_cost_optimization:v5";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -3226,9 +3226,9 @@ export async function handleMetricsAiCostOptimization(
       id: "lever_1b",
       title: "Cartographer in-prompt batching (N providers/call)",
       target_agent: "cartographer",
-      status: "planned",
+      status: "deployed",
       estimated_savings_usd_per_year: 200,
-      deployed_at: null,
+      deployed_at: "2026-05-23",
       indicator: "calls/day on cartographer drop without record volume changing",
     },
     {

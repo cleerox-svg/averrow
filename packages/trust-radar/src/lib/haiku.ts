@@ -410,6 +410,69 @@ ${JSON.stringify(provider, null, 2)}`;
   return callJsonSafe<HaikuProviderScore>(env, ctx, systemPrompt, userMessage, 384);
 }
 
+/**
+ * Batch version of scoreProvider — Lever #1b of the AI cost-reduction plan.
+ *
+ * Sends N providers per call instead of N calls. Amortizes the static
+ * system prompt across the batch (saves ~150 input tokens × N-1 calls).
+ * Per-item output savings are smaller because we still need one score
+ * object per provider, but the structural overhead per item is reduced.
+ *
+ * Stacks with Lever #1 (which trims per-item output): batch responses
+ * stay compact because most providers score >= 70 and emit only
+ * {provider_name, reputation_score}.
+ *
+ * The model returns a JSON array of HaikuProviderScore, in the SAME
+ * ORDER as the input. The caller is responsible for matching results
+ * back to inputs by index. If the array length doesn't match, the
+ * caller should fall back to per-provider scoring for the missing
+ * entries (the cartographer call site does this).
+ *
+ * Batch size guidance: 5-10 providers per call works well on Haiku.
+ * Larger batches risk the response being truncated by maxTokens or
+ * the model losing track of the input order. The cartographer call
+ * site batches in groups of 5.
+ */
+export async function scoreProvidersBatch(
+  env: Env,
+  ctx: HaikuCallContext,
+  providers: Array<{
+    name: string;
+    asn: string | null;
+    active_threats: number;
+    total_threats: number;
+    avg_response_time: number | null;
+    threat_types: Record<string, number>;
+    trend_7d: number;
+    trend_30d: number;
+  }>,
+): Promise<HaikuResponse<HaikuProviderScore[]>> {
+  if (providers.length === 0) {
+    return { success: true, data: [] };
+  }
+
+  const systemPrompt = `You are a hosting provider reputation analyst. Score EACH provider in the input array.
+
+Respond with ONLY a JSON array (no markdown, no prose outside the JSON). The array MUST have exactly ${providers.length} elements, in the SAME ORDER as the input.
+
+For each provider where reputation_score >= 70 (low risk):
+  {"provider_name":"...","reputation_score":NN}
+  Omit reasoning, risk_factors, response_assessment.
+
+For each provider where reputation_score < 70 (notable risk):
+  {"provider_name":"...","reputation_score":NN,"reasoning":"<= 1 sentence, <= 200 chars","risk_factors":["...", "..."],"response_assessment":"<= 1 sentence, <= 150 chars"}
+  Cap risk_factors at 3 items. Each item <= 60 chars. No filler.
+
+100 = excellent abuse response, no recent threats. 0 = bulletproof / non-responsive / heavy threat hosting.`;
+
+  const userMessage = `Score these ${providers.length} hosting providers:
+${JSON.stringify(providers, null, 2)}`;
+
+  // maxTokens budget: ~200 tokens per high-risk item, ~30 per low-risk.
+  // Cap = 5 items × ~250 = 1250, rounded to 1024 (most batches skew low-risk).
+  return callJsonSafe<HaikuProviderScore[]>(env, ctx, systemPrompt, userMessage, 1024);
+}
+
 // ─── Batch Classification ────────────────────────────────────────
 
 export async function batchClassify(
