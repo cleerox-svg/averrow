@@ -1404,9 +1404,9 @@ export const flightControlAgent: AgentModule = {
     //
     // Future improvement: the subquery `source_feed != 'c2_tracker' AND
     // ip_address IS NOT NULL` can't use idx_threats_source_feed (negation)
-    // and currently does a wide scan. If c2_tracker volume grows, swap
-    // to an INNER JOIN on ip_address with a covering index on
-    // (ip_address, source_feed).
+    // and currently does a wide scan. If c2_tracker volume grows, rewrite
+    // as a self-join over the threats table keyed by ip_address with a
+    // covering index on (ip_address, source_feed).
     if (new Date().getUTCHours() === 0) {
       try {
         const c2Overlap = await db.prepare(`
