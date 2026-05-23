@@ -57,9 +57,13 @@ export interface HaikuInsight {
 export interface HaikuProviderScore {
   provider_name: string;
   reputation_score: number; // 0-100
-  reasoning: string;
-  risk_factors: string[];
-  response_assessment: string;
+  // Prose fields are only requested when reputation_score < 70 — see
+  // scoreProvider() prompt. Cartographer's call site at agents/cartographer.ts
+  // also only consumes them on the < 70 path (line 733). Marked optional
+  // so the high-score path doesn't have to fake them.
+  reasoning?: string;
+  risk_factors?: string[];
+  response_assessment?: string;
 }
 
 interface HaikuResponse<T> {
@@ -363,18 +367,34 @@ export async function scoreProvider(
     trend_30d: number;
   },
 ): Promise<HaikuResponse<HaikuProviderScore>> {
+  // Conditional verbosity (Lever #1 of the AI cost-reduction plan):
+  // ~70% of providers score >= 70 and the prose fields go straight in
+  // the bin at agents/cartographer.ts:733 (only emitted to outputs[]
+  // when score < 70 OR repeatOffender). Asking the model for them
+  // anyway was paying for tokens we throw away. On Haiku 4.5, output
+  // is 5x input — output tokens were 83% of cartographer's bill.
+  //
+  // New prompt: score-only when low risk, full breakdown when notable.
+  // maxTokens dropped 1024 -> 384 to cap the verbose path (typical
+  // verbose response is ~250 tokens, leaving 50% headroom).
   const systemPrompt = `You are a hosting provider reputation analyst. Score the hosting provider based on their threat hosting metrics.
-Respond with ONLY a JSON object (no markdown, no explanation outside the JSON) with these fields:
-- provider_name: the provider name
-- reputation_score: number 0-100 (100 = excellent, 0 = terrible)
-- reasoning: brief explanation
-- risk_factors: array of notable risk factors
-- response_assessment: assessment of their abuse response`;
+
+Respond with ONLY a JSON object (no markdown, no prose outside the JSON).
+
+If reputation_score >= 70 (low risk, "looks fine"):
+  {"provider_name":"...","reputation_score":NN}
+  Omit reasoning, risk_factors, response_assessment entirely.
+
+If reputation_score < 70 (notable risk):
+  {"provider_name":"...","reputation_score":NN,"reasoning":"<= 1 sentence, <= 200 chars","risk_factors":["...", "..."],"response_assessment":"<= 1 sentence, <= 150 chars"}
+  Cap risk_factors at 3 items. Each item <= 60 chars. No filler.
+
+100 = excellent abuse response, no recent threats. 0 = bulletproof / non-responsive / heavy threat hosting.`;
 
   const userMessage = `Score this hosting provider's reputation:
 ${JSON.stringify(provider, null, 2)}`;
 
-  return callJsonSafe<HaikuProviderScore>(env, ctx, systemPrompt, userMessage);
+  return callJsonSafe<HaikuProviderScore>(env, ctx, systemPrompt, userMessage, 384);
 }
 
 // ─── Batch Classification ────────────────────────────────────────

@@ -3123,7 +3123,10 @@ export async function handleMetricsAiCostOptimization(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_ai_cost_optimization:v1";
+  // v2 — Lever #1 deployed 2026-05-23, busted cache so the status
+  // flip shows up immediately post-deploy instead of waiting out v1's
+  // 5-min TTL.
+  const cacheKey = "metrics_ai_cost_optimization:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -3215,9 +3218,9 @@ export async function handleMetricsAiCostOptimization(
       id: "lever_1",
       title: "Cartographer scoreProvider output-schema tightening",
       target_agent: "cartographer",
-      status: "planned",
+      status: "deployed",
       estimated_savings_usd_per_year: 850,
-      deployed_at: null,
+      deployed_at: "2026-05-23",
       indicator: "out:in ratio drops below 0.5 on cartographer",
     },
     {

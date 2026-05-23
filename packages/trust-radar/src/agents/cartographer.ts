@@ -731,15 +731,22 @@ export const cartographerAgent: AgentModule = {
         // so `/api/insights/latest` picks them up alongside Strategist
         // correlations; gated so we surface signal, not log noise.
         if (reputationScore < 70 || repeatOffender) {
+          // Lever #1 (AI cost plan): scoreProvider() prompt now only
+          // emits reasoning/risk_factors/response_assessment when
+          // score < 70. For the repeat_offender + score >= 70 case
+          // those fields are absent — fall back to a synthesized
+          // summary so the insight row is still useful.
+          const reasoning = result.data.reasoning
+            ?? `repeat offender (${campaignCount} campaigns) — score ${reputationScore}/100`;
           outputs.push({
             type: "insight",
-            summary: `${provider.name}: reputation ${reputationScore}/100${repeatOffender ? ' [REPEAT OFFENDER]' : ''} — ${result.data.reasoning}`,
+            summary: `${provider.name}: reputation ${reputationScore}/100${repeatOffender ? ' [REPEAT OFFENDER]' : ''} — ${reasoning}`,
             severity: reputationScore < 30 ? "critical" : reputationScore < 50 ? "high" : reputationScore < 70 ? "medium" : "info",
             details: {
               provider: provider.name,
               score: reputationScore,
-              risk_factors: result.data.risk_factors,
-              response_assessment: result.data.response_assessment,
+              risk_factors: result.data.risk_factors ?? [],
+              response_assessment: result.data.response_assessment ?? null,
               campaign_count: campaignCount,
               repeat_offender: repeatOffender,
             },
