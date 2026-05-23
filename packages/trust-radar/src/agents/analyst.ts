@@ -37,6 +37,46 @@ function getSubdomain(domain: string): string {
   return domain.slice(0, domain.length - apex.length - 1);
 }
 
+/**
+ * Generate common character-substitution typo variants of a brand keyword
+ * (Lever #2 of the AI cost-reduction plan).
+ *
+ * Brand impersonation attacks routinely swap letters for visually-similar
+ * digits — "paypa1.com", "g00gle-login.net", "micr0soft-verify.io". The
+ * existing keyword pre-match uses substring matching (analyst.ts:172), so
+ * "paypal" matches "paypal-login" but NOT "paypa1" — the typo variants
+ * fall through to Haiku, which is exactly what the call-count cost driver
+ * looks like in the analyst spend numbers.
+ *
+ * This function generates SINGLE-character substitution variants for
+ * keywords >= 5 chars (shorter keywords have too high a false-positive
+ * rate). For each occurrence of a substitutable character, emit one
+ * variant. "paypal" → ["p4ypal", "payp4l", "paypa1"] etc.
+ *
+ * Single substitutions only. Pairs (two swaps in one keyword) get
+ * exponential variant counts and start producing strings that don't
+ * resemble the original. The Haiku fallback handles those cases.
+ *
+ * Performance: called once per tick during map build for ≤100 brands —
+ * 100 × ~5 variants = 500 extra Map entries, negligible vs Haiku-call cost.
+ */
+function generateTypoVariants(keyword: string): string[] {
+  if (keyword.length < 5) return [];
+  const subs: Array<[string, string]> = [
+    ['o', '0'], ['l', '1'], ['i', '1'], ['s', '5'],
+    ['a', '4'], ['e', '3'], ['b', '8'], ['t', '7'],
+  ];
+  const variants = new Set<string>();
+  for (const [from, to] of subs) {
+    for (let i = 0; i < keyword.length; i++) {
+      if (keyword[i] === from) {
+        variants.add(keyword.slice(0, i) + to + keyword.slice(i + 1));
+      }
+    }
+  }
+  return Array.from(variants);
+}
+
 /** Check if a domain contains a numeric segment that can be varied. */
 function extractNumberedPattern(domain: string): { prefix: string; num: number; suffix: string } | null {
   // Match patterns like "domain123.com" or "site-42-login.com"
@@ -111,11 +151,23 @@ export const analystAgent: AgentModule = {
 
     // Build a flat keyword → brand_id map for substring matching.
     // Keywords are typically lowercase, alphanumeric, ≥4 chars to avoid false positives.
+    // Lever #2: each keyword also generates character-substitution typo
+    // variants (paypa1, g00gle, micr0soft, etc.) so impersonation attempts
+    // that swap letters for digits hit the pre-match instead of falling
+    // through to Haiku. See generateTypoVariants() above.
     const keywordToBrandId = new Map<string, string>();
     for (const b of brands.results) {
       const addKeyword = (kw: string) => {
         const norm = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (norm.length >= 4) keywordToBrandId.set(norm, b.id);
+        if (norm.length < 4) return;
+        keywordToBrandId.set(norm, b.id);
+        for (const variant of generateTypoVariants(norm)) {
+          // setIfAbsent: don't let a typo variant from brand A overwrite
+          // an exact keyword from brand B (exact match always wins).
+          if (!keywordToBrandId.has(variant)) {
+            keywordToBrandId.set(variant, b.id);
+          }
+        }
       };
       addKeyword(b.name);
       if (b.brand_keywords) {
