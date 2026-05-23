@@ -1,0 +1,77 @@
+---
+title: "When AI Finds Vulnerabilities Faster Than Humans Can Patch Them"
+excerpt: "Anthropic's Project Glasswing changes the math of vulnerability discovery. Here's why the demand-side of cybersecurity matters more than ever."
+category: "Threat Intel"
+author: "Claude Leroux"
+publishedAt: "2026-06-05"
+readingMinutes: 7
+draft: true
+---
+
+{/*
+  Scheduled for 2026-06-05 (~2 weeks after Anthropic's 2026-05-22
+  Project Glasswing update post — late enough to read as independent
+  thinking rather than bandwagoning, early enough to ride the news
+  cycle). To publish: flip `draft: true` → `draft: false` above.
+  Marketing/brand voice review recommended before publish.
+*/}
+
+Last month, Anthropic published an update on Project Glasswing. The numbers are striking. Mythos Preview — their next-generation model — has helped roughly 50 partners find more than ten thousand high- or critical-severity vulnerabilities in the world's most systemically important software. Cloudflare alone identified 2,000 bugs across their critical-path systems. Mozilla patched 271 vulnerabilities in Firefox 150, more than ten times what they typically find in a release cycle. Anthropic scanned more than 1,000 open-source projects and surfaced over 6,000 high- or critical-severity findings.
+
+If you maintain code, this is a generational change in your defensive toolkit. If you defend brands, customers, or transactions, it's worth thinking carefully about what comes next.
+
+### The bottleneck moves
+
+For decades, security progress has been gated by how fast humans could find vulnerabilities. Project Glasswing flips that. Anthropic's own framing is striking: "Progress on software security used to be limited by how quickly we could find new vulnerabilities. Now it's limited by how quickly we can verify, disclose, and patch the large numbers of vulnerabilities found by AI."
+
+That bottleneck doesn't disappear — it migrates. Maintainers are getting buried. Some have asked Anthropic to slow down disclosures. A high- or critical-severity bug takes around two weeks to patch on average, and many disclosed vulnerabilities still aren't widely deployed. Even at Anthropic's careful pace, the security ecosystem is overloaded.
+
+Now imagine the same capability available outside coordinated disclosure programs. Mythos-class models will become more broadly accessible over the next 12-24 months. Some will be aligned with cyberdefenders. Others won't.
+
+### What attackers do when code gets harder
+
+This is where the conversation usually stops, with software developers debating patch cadences and signature databases. But there's another half to the picture that I think about every day.
+
+When code attacks get harder, attackers don't stop attacking. They move.
+
+The path of least resistance has always been the human. A perfectly patched email gateway doesn't help when a customer receives a convincing fake invoice from a domain registered three hours ago. A fully audited authentication stack doesn't matter when an attacker spoofs a brand's name on social media and harvests credentials directly. Strong dependency scanning doesn't catch the fake mobile app cloned from the legitimate one and uploaded to an alternate app store.
+
+These attacks don't appear in CVE databases. They don't get fixed by patches. And they scale faster than any patching cadence can ever match — because each one is bespoke, targeting a specific brand, customer, or transaction.
+
+### What we see from the demand side
+
+I've spent years thinking about this side of the problem. While Project Glasswing focuses on the supply side of cybersecurity — finding vulnerabilities before attackers can exploit them — Averrow exists to handle the demand side: catching attacks already in motion against brands and the people who trust them.
+
+Our intelligence comes from several categories of sources. None of them, individually, is novel. The advantage is in the way they combine.
+
+**Public threat infrastructure.** We pull from dozens of threat feeds — newly registered domains, certificate transparency logs, malware command-and-control trackers, phishing repositories, IP reputation systems, passive DNS. Most security teams know these exist. Few correlate across them in real time at brand granularity. We do.
+
+**Customer-forwarded signals.** Every brand we monitor gets an abuse mailbox — an inbox where customers and employees forward suspicious messages they receive. Most of what arrives is mundane: legitimate emails misread as phishing, expected newsletter content, internal mail forwarded out of confusion. But a meaningful fraction contains genuine attacks the rest of the internet hasn't seen yet. A targeted phishing campaign starts somewhere. Usually it starts in inboxes belonging to a specific brand's customers.
+
+**Public attacker behavior.** Threat actors increasingly operate in semi-public — Telegram channels, criminal forums, leaked credential dumps, app stores. We watch these surfaces continuously. Not because what they say is hard to find, but because nobody on a brand security team has time to read all of it every day.
+
+**Brand-specific surface scanning.** Lookalike domain permutations. Social media handle squatting. Mobile app stores. App marketplaces. The places where a brand's identity gets impersonated in ways that don't show up in any feed.
+
+What turns this into intelligence isn't the data. It's the correlation. When a domain forwarded by a customer matches a hosting provider already flagged for targeting the same brand in our feeds, and the same brand has a known DKIM gap that makes spoofing easier — that's a narrative, not an alert. When three social profiles registered the same week share visual elements with each other and with a previously-taken-down impersonation account, that's a campaign, not a coincidence. The signal lives in the joins, not the columns.
+
+I won't go further than that on the specifics. The exact correlation logic, the classifiers, the dedup heuristics, the prioritization weights — those stay in the codebase. Anthropic's Glasswing post does the same thing when it withholds vulnerability details under coordinated disclosure embargos. There's a version of openness that's principled and a version that's reckless; the line is whether transparency makes attackers' jobs easier.
+
+### What this means going forward
+
+A few practical things follow from where I think the threat landscape is heading.
+
+**Patch cycles will get faster — and that's good.** Vendors are going to push patches more aggressively. The article notes Palo Alto Networks released five times the usual number of patches in their latest update. Microsoft is warning that patch volume will continue to grow. Software is going to get more secure faster than it ever has.
+
+**Social engineering attacks will grow.** As code attacks get expensive, identity attacks get relatively cheaper. Brand impersonation, lookalike domains, fake apps, social profile takeover, business email compromise — all of these target the trust relationship between an organization and its customers. None of them get fixed by a CVE patch.
+
+**Detection that matches attacker speed becomes table stakes.** The same AI acceleration helping defenders find vulnerabilities is helping attackers run impersonation campaigns at scale. Manual brand protection workflows — quarterly takedown reviews, weekly domain checks, monthly social media audits — were already too slow. They'll be uncompetitive within a year.
+
+**The "so what" matters more than the alert.** When AI can generate noise as fast as it generates signal, raw alert counts mean nothing. What matters is the narrative — what happened, who's behind it, what's at risk, what to do about it. We've been building toward this for a year because we saw it coming. The Glasswing post is a useful confirmation that the rest of the industry sees it too.
+
+### A useful asymmetry
+
+There's an encouraging asymmetry in all of this. As supply-side defenses get harder to bypass through vulnerability discovery, brand and customer protection becomes a higher-leverage investment. The ROI on detecting a phishing campaign targeting your customers grew sharply the day Cloudflare and Mozilla started shipping ten times the usual patch volume.
+
+We're going to keep building toward the world where attackers can't reliably impersonate the brands that customers trust. Glasswing accelerates that future from a different angle. We need both.
+
+If you want to talk about what we're seeing from the demand side — across whatever brands you care about — get in touch. The intelligence isn't theoretical. It's running right now.
