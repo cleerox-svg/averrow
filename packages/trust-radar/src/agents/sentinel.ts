@@ -18,6 +18,56 @@ import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { cachedCount } from "../lib/cached-count";
 
+// ─── Sibling-domain dedup (Lever #3) ─────────────────────────────
+
+/**
+ * Extract the registrable / apex domain (eTLD+1) from a hostname.
+ * "login.fake-paypal.com" → "fake-paypal.com"
+ * "abc.def.gov.uk"       → "def.gov.uk"
+ *
+ * Used for sibling-domain dedup at the Haiku-classification step:
+ * two threats with the same (apex_domain, source_feed, asn) are
+ * almost certainly the same campaign, and the classifier returns
+ * the same threat_type / severity / confidence for both. Sharing
+ * the result eliminates the duplicate AI call.
+ *
+ * Per-threat enrichment (homoglyph detect, brand squat, Iranian APT
+ * escalation) still runs INDIVIDUALLY on every threat — only the
+ * base classification is shared. So sibling subdomains can still
+ * land at different severities if one happens to match a homoglyph.
+ *
+ * Inlined here instead of importing from analyst.ts to avoid coupling
+ * two agents through a util file.
+ */
+function getApexDomain(domain: string): string {
+  const parts = domain.split(".");
+  if (parts.length <= 2) return domain;
+  const sld = parts[parts.length - 2] ?? "";
+  const knownSlds = new Set(["co", "com", "org", "net", "gov", "edu", "ac", "ltd", "plc"]);
+  if (sld.length > 0 && sld.length <= 3 && knownSlds.has(sld)) {
+    return parts.slice(-3).join(".");
+  }
+  return parts.slice(-2).join(".");
+}
+
+/**
+ * Compose the dedup key for sibling-domain classification sharing.
+ * Threats sharing this tuple inherit the same Haiku classification.
+ *
+ * When malicious_domain is null (IP-only threats), we still group by
+ * (source_feed, asn) — different feeds emit IP threats with different
+ * default semantics, and same-feed/same-ASN clusters are almost always
+ * the same campaign.
+ */
+function classificationGroupKey(threat: {
+  malicious_domain: string | null;
+  source_feed: string;
+  asn: string | null;
+}): string {
+  const apex = threat.malicious_domain ? getApexDomain(threat.malicious_domain) : "";
+  return `${apex}|${threat.source_feed}|${threat.asn ?? ""}`;
+}
+
 // ─── Homoglyph & brand-squatting detection ──────────────────────
 
 const FALLBACK_BRAND_KEYWORDS = [
@@ -240,12 +290,43 @@ export const sentinelAgent: AgentModule = {
     // awaits.
     const SENTINEL_CONCURRENCY = 5;
     const threatList = threats.results;
+
+    // Lever #3: sibling-domain classification cache. Threats sharing
+    // (apex_domain, source_feed, asn) reuse the FIRST caller's Haiku
+    // result — the next caller awaits the same promise instead of firing
+    // its own call. Per-threat enrichment still runs individually below.
+    // Map keys go in as soon as the call is initiated (not resolved) so
+    // concurrent wave-mates don't race into duplicate Haiku calls.
+    type ClassificationResult = Awaited<ReturnType<typeof classifyThreat>>;
+    const classificationCache = new Map<string, Promise<ClassificationResult>>();
+    let aiSkippedBySibling = 0;
+    const getOrClassify = (threat: typeof threatList[number]): Promise<ClassificationResult> => {
+      const key = classificationGroupKey(threat);
+      const existing = classificationCache.get(key);
+      if (existing) {
+        aiSkippedBySibling++;
+        return existing;
+      }
+      const p = classifyThreat(env, callCtx, {
+        malicious_url: threat.malicious_url,
+        malicious_domain: threat.malicious_domain,
+        ip_address: threat.ip_address,
+        source_feed: threat.source_feed,
+        ioc_value: threat.ioc_value,
+      });
+      classificationCache.set(key, p);
+      return p;
+    };
+
     for (let i = 0; i < threatList.length; i += SENTINEL_CONCURRENCY) {
       const wave = threatList.slice(i, i + SENTINEL_CONCURRENCY);
-      await Promise.all(wave.map((threat) => processThreat(threat)));
+      await Promise.all(wave.map((threat) => processThreat(threat, getOrClassify)));
     }
 
-    async function processThreat(threat: typeof threats.results[number]): Promise<void> {
+    async function processThreat(
+      threat: typeof threats.results[number],
+      getOrClassify: (t: typeof threats.results[number]) => Promise<Awaited<ReturnType<typeof classifyThreat>>>,
+    ): Promise<void> {
       itemsProcessed++;
 
       // Pre-filter: high-confidence feeds with known threat types skip AI
@@ -262,14 +343,12 @@ export const sentinelAgent: AgentModule = {
         haikuSuccesses++; // count as success for stats
         aiSkippedByRules++;
       } else {
-        // Try Haiku classification
-        const result = await classifyThreat(env, callCtx, {
-          malicious_url: threat.malicious_url,
-          malicious_domain: threat.malicious_domain,
-          ip_address: threat.ip_address,
-          source_feed: threat.source_feed,
-          ioc_value: threat.ioc_value,
-        });
+        // Try Haiku classification. Lever #3: routed through
+        // getOrClassify so sibling threats share a single AI call —
+        // the first caller fires it, subsequent callers in the same
+        // tick (same apex_domain + source_feed + asn) await the same
+        // promise.
+        const result = await getOrClassify(threat);
 
         if (result.success && result.data) {
           haikuSuccesses++;
@@ -422,7 +501,7 @@ export const sentinelAgent: AgentModule = {
     outputs.push({
       type: "classification",
       summary: itemsProcessed > 0
-        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, haiku=${haikuSuccesses}/${haikuFailures}, aiSkippedByRules=${aiSkippedByRules})`
+        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, haiku=${haikuSuccesses}/${haikuFailures}, aiSkippedByRules=${aiSkippedByRules}, aiSkippedBySibling=${aiSkippedBySibling})`
         : `Sentinel found 0 unclassified threats (${totalCount?.n ?? 0} total in DB, ${nullCount?.n ?? 0} with NULL confidence)`,
       severity: "info",
       details: {
@@ -432,6 +511,7 @@ export const sentinelAgent: AgentModule = {
         haikuSuccesses,
         haikuFailures,
         aiSkippedByRules,
+        aiSkippedBySibling,
         totalThreats: totalCount?.n ?? 0,
         nullConfidenceThreats: nullCount?.n ?? 0,
         anthropicApiConfigured: !!env.ANTHROPIC_API_KEY,

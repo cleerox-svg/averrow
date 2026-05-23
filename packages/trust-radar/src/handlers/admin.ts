@@ -3123,9 +3123,9 @@ export async function handleMetricsAiCostOptimization(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v3 — Lever #2 + Lever #4 both deployed 2026-05-23, busted cache so
-  // the status flips show up immediately post-deploy.
-  const cacheKey = "metrics_ai_cost_optimization:v3";
+  // v4 — Lever #3 deployed 2026-05-23, busted cache so the status flip
+  // shows up immediately post-deploy.
+  const cacheKey = "metrics_ai_cost_optimization:v4";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -3244,9 +3244,9 @@ export async function handleMetricsAiCostOptimization(
       id: "lever_3",
       title: "Sentinel sibling-domain deduplication + tighter response JSON",
       target_agent: "sentinel",
-      status: "planned",
+      status: "deployed",
       estimated_savings_usd_per_year: 125,
-      deployed_at: null,
+      deployed_at: "2026-05-23",
       indicator: "calls/day on sentinel drop; out:in ratio drops",
     },
     {

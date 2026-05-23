@@ -35,8 +35,13 @@ export interface HaikuClassification {
   threat_type: string;
   confidence: number;      // 0-100
   severity: string;        // critical, high, medium, low, info
-  reasoning: string;
-  ioc_indicators: string[];
+  // reasoning/ioc_indicators are no longer requested by classifyThreat()
+  // (Lever #3 of the AI cost-reduction plan) — neither caller (Sentinel
+  // line 274, admin-classify.ts line 143) consumed them. Marked optional
+  // so existing types/parsing stay compatible if the model still emits
+  // them for legacy reasons.
+  reasoning?: string;
+  ioc_indicators?: string[];
 }
 
 export interface HaikuBrandMatch {
@@ -218,13 +223,21 @@ export async function classifyThreat(
     ioc_value?: string | null;
   },
 ): Promise<HaikuResponse<HaikuClassification>> {
-  const systemPrompt = `You are a cybersecurity threat classifier. Analyze the given threat indicator and classify it.
-Respond with ONLY a JSON object (no markdown, no explanation outside the JSON) with these fields:
-- threat_type: one of "phishing", "typosquatting", "impersonation", "malware_distribution", "credential_harvesting"
-- confidence: number 0-100
-- severity: one of "critical", "high", "medium", "low", "info"
-- reasoning: brief explanation
-- ioc_indicators: array of notable IOC patterns found`;
+  // Lever #3 of the AI cost-reduction plan. Sentinel + admin-classify
+  // (the only two callers) consume confidence + severity and ignore
+  // reasoning + ioc_indicators (verified via callsite audit). Asking
+  // for the prose anyway costs ~150 output tokens per call at 5x input
+  // rate. Sentinel runs ~873 calls/day with out:in = 1.00, so output
+  // dominates the bill the same way it does for cartographer.
+  //
+  // New prompt: numeric/categorical only. maxTokens dropped 1024 → 128
+  // (response is now ~30 tokens of JSON; 4x headroom).
+  const systemPrompt = `You are a cybersecurity threat classifier. Analyze the indicator and classify it.
+
+Respond with ONLY a JSON object (no markdown, no prose outside the JSON):
+{"threat_type":"<one of: phishing, typosquatting, impersonation, malware_distribution, credential_harvesting>","confidence":<0-100>,"severity":"<one of: critical, high, medium, low, info>"}
+
+No reasoning. No IOC list. The caller derives those from rule-based logic.`;
 
   const userMessage = `Classify this threat:
 - URL: ${threat.malicious_url ?? "N/A"}
@@ -233,7 +246,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON) w
 - Source Feed: ${threat.source_feed}
 - IOC Value: ${threat.ioc_value ?? "N/A"}`;
 
-  return callJsonSafe<HaikuClassification>(env, ctx, systemPrompt, userMessage);
+  return callJsonSafe<HaikuClassification>(env, ctx, systemPrompt, userMessage, 128);
 }
 
 // ─── Brand Inference ─────────────────────────────────────────────
