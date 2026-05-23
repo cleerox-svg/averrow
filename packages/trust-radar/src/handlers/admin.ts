@@ -3123,9 +3123,9 @@ export async function handleMetricsAiCostOptimization(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v5 — Lever #1b deployed 2026-05-23, busted cache so the status flip
-  // shows up immediately post-deploy.
-  const cacheKey = "metrics_ai_cost_optimization:v5";
+  // v6 — Lever #6 deployed 2026-05-23, busted cache so the status flip
+  // shows up immediately post-deploy. All 7 levers now deployed.
+  const cacheKey = "metrics_ai_cost_optimization:v6";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -3262,10 +3262,10 @@ export async function handleMetricsAiCostOptimization(
       id: "lever_6",
       title: "Cartographer Message Batches API (50% async discount)",
       target_agent: "cartographer",
-      status: "planned",
+      status: "deployed",
       estimated_savings_usd_per_year: 675,
-      deployed_at: null,
-      indicator: "cost/call on cartographer drops ~50% post-cutover",
+      deployed_at: "2026-05-23",
+      indicator: "cost/call on cartographer drops ~50% post-cutover (effective once first batch ingests, ~24h after deploy)",
     },
   ];
 
