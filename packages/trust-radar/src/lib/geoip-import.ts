@@ -30,8 +30,23 @@ export interface ZipReaderLike {
 const LOCATIONS_FILENAME = "GeoLite2-City-Locations-en.csv";
 const BLOCKS_FILENAME = "GeoLite2-City-Blocks-IPv4.csv";
 
-/** D1 batch limit is 100 statements per call. */
-const D1_BATCH_LIMIT = 100;
+/**
+ * D1 batch size for the GeoIP import.
+ *
+ * D1 allows up to 1000 statements per batch() call. The historical
+ * value here was 100 — conservative, but it produced ~37K batches per
+ * refresh × ~3.7M rows, consuming proportionally more D1 query budget
+ * than the row writes themselves. Audit 2026-05-24 (see plan file):
+ * 5.16M queries for 2.95M row writes in a single 24h window, which is
+ * #1 by query-count among write hotspots.
+ *
+ * Bumped to 500 — a 5x query-count reduction without giving up the
+ * fine-grained checkpointing each batch flush represents (still 7K+
+ * commit points per refresh for the resume-offset path in plan step 3).
+ * Stays well under D1's 1000-statement cap and the worker subrequest
+ * body-size budget (~80 bytes × 500 = 40 KB per batch).
+ */
+const D1_BATCH_LIMIT = 500;
 
 export interface GeoipImportResult {
   rowsWritten: number;
