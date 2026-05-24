@@ -52,13 +52,54 @@ export interface GeoipImportResult {
   rowsWritten: number;
   rowsParsed: number;
   locationsCount: number;
+  /** Index of the last row that was actually processed (i.e. parsed
+   *  and either inserted or skipped via resumeFromRow). Equal to
+   *  rowsParsed on a clean run. Surfaced so the workflow can stamp
+   *  it into geo_ip_refresh_log.last_committed_row as the final
+   *  checkpoint. */
+  lastRowIndex: number;
+}
+
+export interface GeoipImportOptions {
+  /**
+   * Resume mode (Step 3 of D1 write-hotspot remediation). When set,
+   * the streaming loop reads and parses the first `resumeFromRow`
+   * Blocks CSV rows BUT does not push them to the D1 batch — the
+   * assumption is those rows were already INSERT-OR-IGNORE'd into
+   * `geo_ip_ranges_new` by a previous failed attempt. After
+   * resumeFromRow, normal batch+flush resumes.
+   *
+   * MaxMind Blocks CSV is order-stable (sorted by network address)
+   * within a single release, so row N in attempt 2 is the same
+   * key as row N in attempt 1. The caller is responsible for
+   * verifying source version match BEFORE setting this — different
+   * MaxMind releases would have different row orderings and
+   * resumeFromRow would skip the wrong rows.
+   *
+   * 0 (default) = fresh-start mode: process every row.
+   */
+  resumeFromRow?: number;
+
+  /**
+   * Called after every successful batch flush with the count of
+   * Blocks CSV rows processed so far. Caller persists this to
+   * geo_ip_refresh_log.last_committed_row so a subsequent retry
+   * can pass it back as resumeFromRow.
+   *
+   * The callback runs once per ~500 rows (D1_BATCH_LIMIT). It MUST
+   * be a single D1 UPDATE — anything heavier compounds with the
+   * batch flush cost. Errors are swallowed (logged via console.warn)
+   * so a transient D1 hiccup on the progress write can't kill an
+   * otherwise-healthy import.
+   */
+  onProgress?: (rowsProcessed: number) => Promise<void>;
 }
 
 /**
  * Run the Locations + Blocks import against the shadow table
  * `geo_ip_ranges_new`. The caller is responsible for:
  *   - Calling `prepareShadowTable(db)` first (DROP+CREATE
- *     `geo_ip_ranges_new`)
+ *     `geo_ip_ranges_new`, unless resuming)
  *   - Calling `atomicSwap(db)` after to flip into production
  *
  * Single-step design (no separate Locations / Blocks return value)
@@ -70,7 +111,11 @@ export interface GeoipImportResult {
 export async function runGeoipBlocksImport(
   db: D1Database,
   zip: ZipReaderLike,
+  options: GeoipImportOptions = {},
 ): Promise<GeoipImportResult> {
+  const resumeFromRow = options.resumeFromRow ?? 0;
+  const onProgress = options.onProgress;
+
   const locEntry = zip.findEntry(LOCATIONS_FILENAME);
   if (!locEntry) {
     throw new Error(
@@ -89,6 +134,8 @@ export async function runGeoipBlocksImport(
 
   let pendingBatch: D1PreparedStatement[] = [];
   let rowsInsertedThisAttempt = 0;
+  let rowsProcessed = 0;          // counts every parsed Blocks row, skipped or written
+  let skippedForResume = 0;       // diagnostic counter
 
   const flushBatch = async () => {
     if (pendingBatch.length === 0) return;
@@ -97,9 +144,32 @@ export async function runGeoipBlocksImport(
       rowsInsertedThisAttempt += r.meta?.changes ?? 0;
     }
     pendingBatch = [];
+    if (onProgress) {
+      try {
+        await onProgress(rowsProcessed);
+      } catch (err) {
+        // Progress write failure is non-fatal — the import keeps going
+        // and the next flush will re-attempt the UPDATE. Worst case
+        // a retry has a stale offset and re-processes ~500 rows.
+        console.warn(
+          `[geoip-import] onProgress failed at row ${rowsProcessed}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   };
 
   const { rowsParsed } = await streamBlocksCsv(blocksStream, async (row) => {
+    rowsProcessed++;
+    // Resume mode: skip rows already committed by a previous attempt.
+    // The CSV still has to be parsed (the gzip stream isn't seekable
+    // and Blocks is monolithic), but we avoid the D1 work — which is
+    // the expensive part. INSERT OR IGNORE remains the safety net
+    // against any off-by-one in resumeFromRow.
+    if (rowsProcessed <= resumeFromRow) {
+      skippedForResume++;
+      return;
+    }
     const range = cidrToIntRange(row.network);
     if (!range) return;
     const loc = row.geonameId
@@ -130,6 +200,12 @@ export async function runGeoipBlocksImport(
     }
   });
   await flushBatch();
+  if (skippedForResume > 0) {
+    console.log(
+      `[geoip-import] resumed at row ${resumeFromRow}; skipped ${skippedForResume} ` +
+      `previously-committed rows, processed ${rowsProcessed - skippedForResume} new rows`,
+    );
+  }
 
   // Final shadow-table row count is the truthful "what's in the DB now"
   // value — survives CF Workflow step retries. The per-attempt change
@@ -144,11 +220,44 @@ export async function runGeoipBlocksImport(
     .first<{ n: number }>();
   const rowsWritten = finalCountRow?.n ?? rowsInsertedThisAttempt;
 
-  return { rowsWritten, rowsParsed, locationsCount: locations.size };
+  return { rowsWritten, rowsParsed, locationsCount: locations.size, lastRowIndex: rowsProcessed };
 }
 
-/** DROP + CREATE the shadow table the import writes into. */
-export async function prepareShadowTable(db: D1Database): Promise<void> {
+export interface PrepareShadowOptions {
+  /**
+   * Resume mode: if the shadow table already exists and the caller has
+   * verified its source_version matches the version about to load
+   * (see geo_ip_refresh_log.shadow_version), pass true to leave it
+   * intact. The import call will then skip rows already committed.
+   *
+   * Default false: drop + create (fresh start), preserving the
+   * pre-Step-3 behavior for any caller that doesn't opt in.
+   */
+  keepExisting?: boolean;
+}
+
+/**
+ * DROP + CREATE the shadow table the import writes into. When
+ * `keepExisting: true`, no-ops if the shadow table already exists
+ * (resume path). The caller is responsible for verifying version
+ * match before requesting keepExisting.
+ */
+export async function prepareShadowTable(
+  db: D1Database,
+  options: PrepareShadowOptions = {},
+): Promise<{ keptExisting: boolean }> {
+  if (options.keepExisting) {
+    const exists = await db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='geo_ip_ranges_new'`,
+      )
+      .first<{ name: string }>();
+    if (exists) {
+      return { keptExisting: true };
+    }
+    // keepExisting was requested but the shadow doesn't exist (e.g. a
+    // prior cleanup dropped it). Fall through to fresh create.
+  }
   await db.batch([
     db.prepare(`DROP TABLE IF EXISTS geo_ip_ranges_new`),
     db.prepare(`
@@ -172,6 +281,7 @@ export async function prepareShadowTable(db: D1Database): Promise<void> {
       `CREATE INDEX idx_geo_ip_end_new ON geo_ip_ranges_new(end_ip_int)`,
     ),
   ]);
+  return { keptExisting: false };
 }
 
 /**

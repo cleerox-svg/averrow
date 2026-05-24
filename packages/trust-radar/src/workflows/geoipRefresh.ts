@@ -247,11 +247,57 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // Atomic-swap pattern: write to geo_ip_ranges_new, then rename
     // at the end. Concurrent cartographer Phase 0.5 lookups never
     // observe a half-loaded dataset.
+    //
+    // Resume support (Step 3 of D1 write-hotspot remediation, audit
+    // notes 2026-05-24): if the log row carries a non-zero
+    // last_committed_row AND shadow_version matches the version we're
+    // about to load, KEEP the existing shadow and resume from the
+    // checkpoint. Otherwise drop + create fresh.
+    //
+    // Mismatch handling: a different shadow_version means the orphan
+    // came from an earlier MaxMind release; mixing rows from two
+    // releases would corrupt the lookup. The DROP path handles it.
+    const resumeState = await step.do('check-resume', async () => {
+      const row = await this.env.GEOIP_DB.prepare(`
+        SELECT last_committed_row, shadow_version
+          FROM geo_ip_refresh_log
+         WHERE id = ?
+      `).bind(refreshLogId).first<{
+        last_committed_row: number | null;
+        shadow_version: string | null;
+      }>();
+      const checkpoint = row?.last_committed_row ?? 0;
+      const matches = row?.shadow_version === probe.sha256First12;
+      return {
+        resumeFromRow: matches && checkpoint > 0 ? checkpoint : 0,
+        versionMatches: matches,
+      };
+    });
+
     await step.do(
       'prepare-shadow-table',
       { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '60 seconds' },
       async () => {
-        await prepareShadowTableHelper(this.env.GEOIP_DB);
+        const { keptExisting } = await prepareShadowTableHelper(
+          this.env.GEOIP_DB,
+          { keepExisting: resumeState.resumeFromRow > 0 },
+        );
+        if (keptExisting) {
+          console.log(
+            `[geoip-workflow] resuming from row ${resumeState.resumeFromRow} ` +
+            `(shadow_version match)`,
+          );
+        } else {
+          // Fresh start: stamp the new shadow_version + reset the
+          // checkpoint. Done here (not in log-refresh-starting) so the
+          // reset is paired atomically with the shadow recreation.
+          await this.env.GEOIP_DB.prepare(`
+            UPDATE geo_ip_refresh_log
+               SET shadow_version = ?,
+                   last_committed_row = 0
+             WHERE id = ?
+          `).bind(probe.sha256First12, refreshLogId).run();
+        }
       },
     );
 
@@ -271,10 +317,13 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // Wall time: ~30 min worst-case (1× Locations parse, 1× Blocks
     // stream, ~3.5M D1 batched inserts). Step timeout is 1 hour.
     //
-    // Retry semantics: a transient failure retries the whole step
-    // from the start — re-fetching both CSVs and rebuilding the
-    // Map. The shadow table's PRIMARY KEY constraint makes the
-    // INSERT OR IGNORE re-run idempotent.
+    // Retry semantics (Step 3 of remediation): a transient failure
+    // retries the whole step. The CSV stream is re-fetched from the
+    // start (gzip not seekable), but the loader now reads
+    // last_committed_row before each attempt and stream-skips the
+    // already-written rows — only NEW work hits D1. INSERT OR IGNORE
+    // remains the safety net.
+    const refreshLogIdForProgress = refreshLogId;
     const importResult = await step.do(
       'import',
       { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
@@ -290,7 +339,16 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
           await httpReader.open();
           zip = httpReader;
         }
-        return await runGeoipBlocksImport(this.env.GEOIP_DB, zip);
+        return await runGeoipBlocksImport(this.env.GEOIP_DB, zip, {
+          resumeFromRow: resumeState.resumeFromRow,
+          onProgress: async (rowsProcessed) => {
+            await this.env.GEOIP_DB.prepare(`
+              UPDATE geo_ip_refresh_log
+                 SET last_committed_row = ?
+               WHERE id = ?
+            `).bind(rowsProcessed, refreshLogIdForProgress).run();
+          },
+        });
       },
     );
 
