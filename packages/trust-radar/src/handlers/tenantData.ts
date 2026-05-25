@@ -4,6 +4,7 @@
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import { deliverWebhook } from "../lib/webhooks";
+import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
 
@@ -204,6 +205,125 @@ export async function handleTenantAlerts(
       data: alertsResult.results || [],
       total: countResult?.total ?? 0,
       severity_breakdown: severityBreakdown.results || [],
+    }, 200, origin);
+  } catch (err) {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+// ─── GET /api/orgs/:orgId/threats ────────────────────────────
+//
+// Org-wide threat browser. Lists individual threat records across
+// every brand the org owns (joined through org_brands), with optional
+// brand / status / severity / type filters, free-text domain search,
+// pagination, and faceted breakdowns. Modeled on handleTenantAlerts.
+//
+// This is the surface that finally exposes the production threats-table
+// volume to tenant users: the dashboard's per-brand counts now have a
+// records view to drill into. Defaults to status='active'.
+
+export async function handleTenantOrgThreats(
+  request: Request,
+  env: Env,
+  orgId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessErr = verifyOrgAccess(ctx, orgId);
+  if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+
+  try {
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    const severity = url.searchParams.get("severity");
+    const threatType = url.searchParams.get("threat_type");
+    const brandId = url.searchParams.get("brand_id");
+    const q = url.searchParams.get("q");
+    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 100);
+    const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+
+    // org_id is bindings[0] — consumed by the org_brands JOIN in every query.
+    const conditions: string[] = ["1=1"];
+    const bindings: unknown[] = [orgId];
+
+    // Default to active threats; status=all opts into every status.
+    if (status && status !== "all") {
+      conditions.push("t.status = ?");
+      bindings.push(status);
+    } else if (!status) {
+      conditions.push("t.status = ?");
+      bindings.push("active");
+    }
+    if (severity)   { conditions.push("t.severity = ?");        bindings.push(severity); }
+    if (threatType) { conditions.push("t.threat_type = ?");     bindings.push(threatType); }
+    if (brandId)    { conditions.push("t.target_brand_id = ?"); bindings.push(brandId); }
+    if (q)          { conditions.push("t.malicious_domain LIKE ?"); bindings.push(`%${q}%`); }
+
+    const whereClause = conditions.join(" AND ");
+
+    const compute = async () => {
+      // Rows page — index-driven via idx_threats_brand_status.
+      const threatsResult = await env.DB.prepare(`
+        SELECT t.id, t.threat_type, t.malicious_domain, t.malicious_url,
+               t.target_brand_id, t.source_feed, t.severity, t.status,
+               t.confidence_score, t.country_code, t.ip_address,
+               t.first_seen, t.last_seen,
+               b.name AS brand_name, b.canonical_domain AS brand_domain
+        FROM threats t
+        JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+        JOIN brands b ON b.id = t.target_brand_id
+        WHERE ${whereClause}
+        ORDER BY
+          CASE t.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
+          t.last_seen DESC
+        LIMIT ? OFFSET ?
+      `).bind(...bindings, limit, offset).all();
+
+      const countResult = await env.DB.prepare(`
+        SELECT COUNT(*) AS total
+        FROM threats t
+        JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+        WHERE ${whereClause}
+      `).bind(...bindings).first<{ total: number }>();
+
+      const severityBreakdown = await env.DB.prepare(`
+        SELECT t.severity, COUNT(*) AS count
+        FROM threats t
+        JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+        WHERE ${whereClause}
+        GROUP BY t.severity
+      `).bind(...bindings).all();
+
+      const typeBreakdown = await env.DB.prepare(`
+        SELECT t.threat_type, COUNT(*) AS count
+        FROM threats t
+        JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+        WHERE ${whereClause}
+        GROUP BY t.threat_type
+      `).bind(...bindings).all();
+
+      return {
+        data: threatsResult.results || [],
+        total: countResult?.total ?? 0,
+        severity_breakdown: severityBreakdown.results || [],
+        type_breakdown: typeBreakdown.results || [],
+      };
+    };
+
+    // Cache only the default page (no filters, page 1, default status) —
+    // the highest-traffic shape — per the CLAUDE.md page-load caching rule.
+    const isDefaultPage =
+      !status && !severity && !threatType && !brandId && !q && offset === 0 && limit === 50;
+    const result = isDefaultPage
+      ? await cachedValue(env, `tenant.threats.${orgId}`, 90, compute)
+      : await compute();
+
+    return json({
+      success: true,
+      data: result.data,
+      total: result.total,
+      severity_breakdown: result.severity_breakdown,
+      type_breakdown: result.type_breakdown,
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);

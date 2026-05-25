@@ -647,6 +647,7 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | GET | `/api/orgs/:orgId/dashboard` | Member | Tenant-scoped dashboard |
 | GET | `/api/orgs/:orgId/alerts` | Member | Tenant alerts list |
 | PATCH | `/api/orgs/:orgId/alerts/:alertId` | Member | Update tenant alert |
+| GET | `/api/orgs/:orgId/threats` | Member | Org-wide threat records across all org brands. Filters: `brand_id`, `status` (default `active`, or `all`), `severity`, `threat_type`, `q` (domain LIKE), `limit` (≤100), `offset`. Returns `{ data, total, severity_breakdown, type_breakdown }`. Default page is KV-cached 90s. |
 | GET | `/api/orgs/:orgId/brands/:brandId/detail` | Member | Tenant brand detail |
 | GET | `/api/orgs/:orgId/brands/:brandId/threats` | Member | Tenant brand threats |
 | GET | `/api/orgs/:orgId/brands/:brandId/social-profiles` | Member | Tenant brand social profiles |

@@ -9,6 +9,7 @@ import { Members } from '@/features/settings/Members';
 import { Profile } from '@/features/profile/Profile';
 import { Billing } from '@/features/billing/Billing';
 import { Alerts } from '@/features/alerts/Alerts';
+import { Threats } from '@/features/threats/Threats';
 import { Notifications } from '@/features/notifications/NotificationsInbox';
 import { Domain } from '@/features/domain/Domain';
 import { BrandDomainFindings } from '@/features/domain/BrandDomainFindings';
@@ -43,6 +44,7 @@ export function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<Modules />} />
+              <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="notifications" element={<Notifications />} />
 

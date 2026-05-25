@@ -25,6 +25,12 @@ import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
 
+// All threat_type values in the `threats` table are malicious-domain/URL
+// threats, so the Domain module surfaces every type — not just
+// typosquatting. Static literals (no user input) — safe to inline in SQL.
+const DOMAIN_THREAT_TYPES =
+  "'phishing','typosquatting','impersonation','malware_distribution','credential_harvesting','c2'";
+
 // ─── Tenant org-access guard ────────────────────────────────────
 function verifyOrgAccess(ctx: AuthContext, orgId: string): string | null {
   if (ctx.role === "super_admin") return null;
@@ -47,6 +53,8 @@ interface BrandSummary {
   certs_suspicious:        number;
   certs_new:               number;
   certs_malicious:         number;
+  // Production threat-intel volume (threats table) attributed to the brand
+  malicious_threats_total: number;
 }
 
 // ─── GET /api/orgs/:orgId/modules/domain ────────────────────────
@@ -99,7 +107,8 @@ export async function handleGetDomainModuleSummary(
        (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id) AS certs_total,
        (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.suspicious = 1) AS certs_suspicious,
        (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.status = 'new') AS certs_new,
-       (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.status = 'malicious') AS certs_malicious
+       (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.status = 'malicious') AS certs_malicious,
+       (SELECT COUNT(*) FROM threats t WHERE t.target_brand_id = b.id AND t.status = 'active' AND t.threat_type IN (${DOMAIN_THREAT_TYPES})) AS malicious_threats_total
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
      WHERE ob.org_id = ?
@@ -120,6 +129,7 @@ export async function handleGetDomainModuleSummary(
     certs_suspicious:      acc.certs_suspicious      + b.certs_suspicious,
     certs_new:             acc.certs_new             + b.certs_new,
     certs_malicious:       acc.certs_malicious       + b.certs_malicious,
+    malicious_threats_total: acc.malicious_threats_total + b.malicious_threats_total,
   }), {
     lookalikes_total:      0,
     lookalikes_registered: 0,
@@ -130,6 +140,7 @@ export async function handleGetDomainModuleSummary(
     certs_suspicious:      0,
     certs_new:             0,
     certs_malicious:       0,
+    malicious_threats_total: 0,
   });
 
   return json({
@@ -169,20 +180,23 @@ export interface CertRow {
 }
 
 /**
- * Typosquat threats attributed to the brand — sourced from the
- * `threats` table where threat_type='typosquatting' AND
- * target_brand_id matches. Layered onto the GET response so the
- * tenant Domain Findings page can surface the production threat-intel
- * volume (24K+ rows across the platform) alongside the smaller
- * curated lookalike_domains workspace.
+ * Malicious domain/URL threats attributed to the brand — sourced from
+ * the `threats` table across all threat types (phishing, typosquatting,
+ * impersonation, malware_distribution, credential_harvesting, c2) where
+ * target_brand_id matches. Layered onto the GET response so the tenant
+ * Domain Findings page surfaces the production threat-intel volume
+ * (hundreds of K rows across the platform) alongside the smaller curated
+ * lookalike_domains workspace.
  *
  * `takedown_status` is LEFT-JOINed from takedown_requests so the UI
  * can swap the "Request takedown" CTA for a status badge when one
  * is already in-flight.
  */
-export interface TyposquatRow {
+export interface MaliciousDomainRow {
   id:               string;
-  malicious_domain: string;
+  threat_type:      string;
+  malicious_domain: string | null;
+  malicious_url:    string | null;
   source_feed:      string;
   severity:         string;
   status:           string;
@@ -245,15 +259,15 @@ export async function handleGetBrandDomainFindings(
   }
 
   // Read all three finding types in parallel. Cap at a sensible page
-  // size; a future "view all" page can paginate.
+  // size; the dedicated Threats page (/tenant/threats) paginates the
+  // full per-brand volume.
   //
-  // Typosquats: LEFT JOIN takedown_requests so the UI can render a
-  // takedown-status badge when one is already in-flight (and hide the
-  // "Request takedown" CTA). Match is by (org_id, target_value=domain)
-  // — taking the most recent request if there are multiple historical
-  // ones for the same domain.
+  // Malicious domains/URLs: LEFT JOIN takedown_requests so the UI can
+  // render a takedown-status badge when one is already in-flight (and
+  // hide the "Request takedown" CTA). Match is by (org_id,
+  // source_id=threat.id), taking the most recent request.
   const FINDINGS_LIMIT = 100;
-  const [lookalikes, certs, typosquats] = await Promise.all([
+  const [lookalikes, certs, maliciousDomains] = await Promise.all([
     env.DB.prepare(
       `SELECT id, brand_id, domain, permutation_type, registered, resolves_to,
               has_mx, has_web, first_seen, last_checked, threat_level,
@@ -271,7 +285,8 @@ export async function handleGetBrandDomainFindings(
        LIMIT ?`,
     ).bind(brandId, FINDINGS_LIMIT).all<CertRow>(),
     env.DB.prepare(
-      `SELECT t.id, t.malicious_domain, t.source_feed, t.severity, t.status,
+      `SELECT t.id, t.threat_type, t.malicious_domain, t.malicious_url,
+              t.source_feed, t.severity, t.status,
               t.first_seen, t.last_seen, t.hosting_provider, t.country_code,
               tr.status AS takedown_status, tr.id AS takedown_id
        FROM threats t
@@ -279,15 +294,15 @@ export async function handleGetBrandDomainFindings(
          ON tr.source_type = 'threat'
         AND tr.source_id = t.id
         AND tr.org_id = ?
-       WHERE t.threat_type = 'typosquatting'
+       WHERE t.threat_type IN (${DOMAIN_THREAT_TYPES})
          AND t.target_brand_id = ?
          AND t.status = 'active'
        ORDER BY
          CASE t.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
                           WHEN 'medium' THEN 2 ELSE 3 END,
-         t.first_seen DESC
+         t.last_seen DESC
        LIMIT ?`,
-    ).bind(orgIdNum, brandId, FINDINGS_LIMIT).all<TyposquatRow>(),
+    ).bind(orgIdNum, brandId, FINDINGS_LIMIT).all<MaliciousDomainRow>(),
   ]);
 
   return json({
@@ -296,7 +311,7 @@ export async function handleGetBrandDomainFindings(
       brand_id: brandId,
       lookalikes: lookalikes.results,
       certs: certs.results,
-      typosquats: typosquats.results,
+      malicious_domains: maliciousDomains.results,
       page_size: FINDINGS_LIMIT,
     },
   }, 200, origin);

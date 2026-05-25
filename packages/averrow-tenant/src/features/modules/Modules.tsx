@@ -223,7 +223,9 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
               <tr key={b.id} className="border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02]">
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-white/90">{b.name}</span>
+                    <Link to={`/threats?brand=${b.id}`} className="font-medium text-white/90 hover:text-amber transition-colors">
+                      {b.name}
+                    </Link>
                     {b.is_primary === 1 && (
                       <span className="text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
                         Primary
@@ -232,8 +234,13 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
                   </div>
                   <div className="text-[11px] font-mono text-white/40 mt-0.5">{b.canonical_domain}</div>
                 </td>
-                <td className={`text-right px-4 py-2.5 tabular-nums font-mono ${b.active_threats > 0 ? 'text-amber' : 'text-white/55'}`}>
-                  {b.active_threats.toLocaleString()}
+                <td className="text-right px-4 py-2.5">
+                  <Link
+                    to={`/threats?brand=${b.id}`}
+                    className={`tabular-nums font-mono hover:underline ${b.active_threats > 0 ? 'text-amber' : 'text-white/55'}`}
+                  >
+                    {b.active_threats.toLocaleString()}
+                  </Link>
                 </td>
                 <td className="text-right px-4 py-2.5 tabular-nums font-mono text-white/55 hidden md:table-cell">
                   {b.social_profiles_count.toLocaleString()}

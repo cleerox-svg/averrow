@@ -6,7 +6,7 @@
 // once that lands in Phase B).
 
 import { NavLink } from 'react-router-dom';
-import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, type LucideIcon } from 'lucide-react';
+import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, ShieldAlert, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
@@ -76,6 +76,10 @@ export function Sidebar() {
           <NavLink to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Globe size={16} />
             <span>Overview</span>
+          </NavLink>
+          <NavLink to="/threats" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+            <ShieldAlert size={16} />
+            <span>Threats</span>
           </NavLink>
           <NavLink to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Radar size={16} />

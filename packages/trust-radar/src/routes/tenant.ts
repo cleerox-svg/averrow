@@ -14,6 +14,7 @@ import {
 } from "../handlers/organizations";
 import {
   handleTenantDashboard, handleTenantAlerts, handleTenantUpdateAlert,
+  handleTenantOrgThreats,
   handleTenantBrandDetail, handleTenantBrandThreats, handleTenantBrandSocialProfiles,
   handleGetMonitoringConfig, handleUpdateMonitoringConfig,
 } from "../handlers/tenantData";
@@ -199,6 +200,11 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTenantAlerts(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/threats", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTenantOrgThreats(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.patch("/api/orgs/:orgId/alerts/:alertId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);

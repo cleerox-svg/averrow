@@ -22,6 +22,7 @@ export interface DomainBrandSummary {
   certs_suspicious:       number;
   certs_new:              number;
   certs_malicious:        number;
+  malicious_threats_total: number;
 }
 
 export interface DomainModuleTotals {
@@ -34,6 +35,7 @@ export interface DomainModuleTotals {
   certs_suspicious:       number;
   certs_new:              number;
   certs_malicious:        number;
+  malicious_threats_total: number;
 }
 
 export interface DomainModuleSummary {
@@ -71,18 +73,21 @@ export interface CertRow {
 }
 
 /**
- * Typosquatting threat row attributed to a brand. Sourced from the
- * `threats` table where threat_type='typosquatting' AND
+ * Malicious domain/URL threat row attributed to a brand. Sourced from
+ * the `threats` table across all threat types (phishing, typosquatting,
+ * impersonation, malware_distribution, credential_harvesting, c2) where
  * target_brand_id matches. Distinct from `LookalikeRow` (the smaller
- * curated workspace in `lookalike_domains`) — typosquats here are
- * the production threat-intel rows the scanner emits at scale.
+ * curated workspace in `lookalike_domains`) — these are the production
+ * threat-intel rows the feeds emit at scale.
  */
-export interface TyposquatRow {
+export interface MaliciousDomainRow {
   id:                  string;       // threats.id
-  malicious_domain:    string;
-  source_feed:         string;       // typosquat_scanner | ct_logs | numbered_variant_scan | nrd_hagezi
+  threat_type:         string;       // phishing | typosquatting | malware_distribution | ...
+  malicious_domain:    string | null;
+  malicious_url:       string | null;
+  source_feed:         string;       // typosquat_scanner | ct_logs | urlhaus | threatfox | ...
   severity:            string;       // critical | high | medium | low
-  status:              string;       // active | resolved | etc
+  status:              string;       // active | down | remediated
   first_seen:          string | null;
   last_seen:           string | null;
   hosting_provider:    string | null;
@@ -92,11 +97,11 @@ export interface TyposquatRow {
 }
 
 export interface BrandFindings {
-  brand_id:   string;
-  lookalikes: LookalikeRow[];
-  certs:      CertRow[];
-  typosquats: TyposquatRow[];
-  page_size:  number;
+  brand_id:          string;
+  lookalikes:        LookalikeRow[];
+  certs:             CertRow[];
+  malicious_domains: MaliciousDomainRow[];
+  page_size:         number;
 }
 
 export function useDomainModuleSummary() {

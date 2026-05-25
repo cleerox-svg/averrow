@@ -28,7 +28,7 @@ export function Domain() {
           </span>
         </div>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Lookalike domains, typosquats, and Certificate Transparency activity targeting your brands.
+          Malicious domains and URLs, lookalike domains, and Certificate Transparency activity targeting your brands.
         </p>
       </header>
 
@@ -66,11 +66,11 @@ function HeadlineMetrics({
 }) {
   const cards = [
     {
-      label: 'Brands monitored',
-      value: brandCount,
-      sub: `${totals.lookalikes_total + totals.certs_total} total findings`,
+      label: 'Malicious domains & URLs',
+      value: totals.malicious_threats_total,
+      sub: `across ${brandCount} brand${brandCount === 1 ? '' : 's'} monitored`,
       icon: ShieldCheck,
-      tone: 'neutral' as const,
+      tone: totals.malicious_threats_total > 0 ? 'warn' as const : 'neutral' as const,
     },
     {
       label: 'Lookalikes registered',
@@ -119,11 +119,11 @@ function HeadlineMetrics({
 }
 
 function BrandCard({ brand: b }: { brand: DomainBrandSummary }) {
-  const totalFindings = b.lookalikes_total + b.certs_total;
+  const totalFindings = b.lookalikes_total + b.certs_total + b.malicious_threats_total;
   const criticalCount = b.lookalikes_critical;
   const highCount = b.lookalikes_high;
   const tone =
-    criticalCount > 0 ? 'border-sev-critical/[0.30]' :
+    criticalCount > 0 || b.malicious_threats_total > 0 ? 'border-sev-critical/[0.30]' :
     highCount > 0     ? 'border-amber/[0.30]'        :
     'border-white/[0.06]';
 
@@ -146,7 +146,17 @@ function BrandCard({ brand: b }: { brand: DomainBrandSummary }) {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mt-3">
+      <div className="grid grid-cols-3 gap-3 mt-3">
+        <div>
+          <div className="text-[9px] uppercase tracking-widest font-mono text-white/35 mb-1">Malicious</div>
+          <div className="flex items-baseline gap-2">
+            <span className={`text-xl font-bold tabular-nums ${b.malicious_threats_total > 0 ? 'text-sev-critical' : 'text-white/90'}`}>
+              {b.malicious_threats_total.toLocaleString()}
+            </span>
+            <span className="text-[10px] text-white/40">active</span>
+          </div>
+          <div className="text-[10px] text-white/45 mt-0.5">domains &amp; URLs</div>
+        </div>
         <div>
           <div className="text-[9px] uppercase tracking-widest font-mono text-white/35 mb-1">Lookalikes</div>
           <div className="flex items-baseline gap-2">

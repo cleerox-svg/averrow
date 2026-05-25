@@ -1,9 +1,10 @@
 // Domain Monitoring — per-brand drill-down.
 //
-// Lists lookalike domain rows + CT certificate rows + typosquats
-// (production threat-intel) for one brand. Pre-filtered by org scope
-// server-side. Per-row "Request takedown" CTA on the typosquats
-// section feeds the existing /api/orgs/:orgId/takedowns pipeline.
+// Lists malicious domains/URLs (production threat-intel, all threat
+// types) + lookalike domain rows + CT certificate rows for one brand.
+// Pre-filtered by org scope server-side. Per-row "Request takedown" CTA
+// on the malicious-domains section feeds the existing
+// /api/orgs/:orgId/takedowns pipeline.
 
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -14,8 +15,9 @@ import {
   useRequestTakedown,
   type LookalikeRow,
   type CertRow,
-  type TyposquatRow,
+  type MaliciousDomainRow,
 } from '@/lib/domainModule';
+import { THREAT_TYPE_LABELS } from '@/lib/threats';
 
 export function BrandDomainFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -46,7 +48,7 @@ export function BrandDomainFindings() {
 
       {data && (
         <>
-          <TyposquatsSection rows={data.typosquats} brandId={data.brand_id} brandName={brand?.brand_name ?? data.brand_id} />
+          <MaliciousDomainsSection rows={data.malicious_domains} brandId={data.brand_id} brandName={brand?.brand_name ?? data.brand_id} />
           <LookalikesSection rows={data.lookalikes} />
           <CertsSection rows={data.certs} />
         </>
@@ -55,28 +57,29 @@ export function BrandDomainFindings() {
   );
 }
 
-// ───── Typosquats section ──────────────────────────────────────────
+// ───── Malicious domains & URLs section ────────────────────────────
 //
-// Production threat-intel rows from the `threats` table where
-// threat_type='typosquatting' and target_brand_id matches. Distinct
-// from the smaller curated `lookalike_domains` working set rendered
-// by LookalikesSection above.
+// Production threat-intel rows from the `threats` table across all
+// threat types (phishing, typosquatting, malware, etc.) where
+// target_brand_id matches. Distinct from the smaller curated
+// `lookalike_domains` working set rendered by LookalikesSection below.
+// The dedicated /tenant/threats page paginates the full volume.
 
-function TyposquatsSection({
+function MaliciousDomainsSection({
   rows,
   brandId,
   brandName,
-}: { rows: TyposquatRow[]; brandId: string; brandName: string }) {
-  const [confirmRow, setConfirmRow] = useState<TyposquatRow | null>(null);
+}: { rows: MaliciousDomainRow[]; brandId: string; brandName: string }) {
+  const [confirmRow, setConfirmRow] = useState<MaliciousDomainRow | null>(null);
 
   if (rows.length === 0) {
     return (
       <section>
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-          Typosquatting Domains <span className="text-white/30">(0)</span>
+          Malicious Domains &amp; URLs <span className="text-white/30">(0)</span>
         </h2>
         <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/45 text-sm">
-          No typosquatting domains attributed to this brand yet.
+          No malicious domains or URLs attributed to this brand yet.
         </div>
       </section>
     );
@@ -89,28 +92,30 @@ function TyposquatsSection({
     <section>
       <div className="flex items-baseline justify-between mb-3">
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-          Typosquatting Domains <span className="text-white/30">({rows.length})</span>
+          Malicious Domains &amp; URLs <span className="text-white/30">({rows.length})</span>
         </h2>
-        {(criticalCount > 0 || highCount > 0) && (
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
-            {criticalCount > 0 && (
-              <span className="text-sev-critical">
-                {criticalCount} critical
-              </span>
-            )}
-            {highCount > 0 && (
-              <span className="text-amber">
-                {highCount} high
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
+          {criticalCount > 0 && (
+            <span className="text-sev-critical">
+              {criticalCount} critical
+            </span>
+          )}
+          {highCount > 0 && (
+            <span className="text-amber">
+              {highCount} high
+            </span>
+          )}
+          <Link to={`/threats?brand=${brandId}`} className="text-amber hover:underline">
+            View all →
+          </Link>
+        </div>
       </div>
       <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
         <table className="w-full text-[12px]">
           <thead className="border-b border-white/[0.06] bg-white/[0.02]">
             <tr className="text-left">
-              <Th>Domain</Th>
+              <Th>Domain / URL</Th>
+              <Th>Type</Th>
               <Th>Severity</Th>
               <Th>Source</Th>
               <Th>Hosting</Th>
@@ -121,8 +126,15 @@ function TyposquatsSection({
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0">
-                <Td className="font-mono">
-                  <span className="text-white/90">{r.malicious_domain}</span>
+                <Td className="font-mono max-w-[280px] truncate">
+                  <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>
+                    {r.malicious_domain ?? r.malicious_url ?? '—'}
+                  </span>
+                </Td>
+                <Td>
+                  <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                    {THREAT_TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}
+                  </span>
                 </Td>
                 <Td><SeverityPill severity={r.severity} /></Td>
                 <Td>
@@ -169,10 +181,12 @@ function TyposquatsSection({
 
 function RequestTakedownDialog({
   row, brandId, brandName, onClose,
-}: { row: TyposquatRow; brandId: string; brandName: string; onClose: () => void }) {
+}: { row: MaliciousDomainRow; brandId: string; brandName: string; onClose: () => void }) {
   const mutation = useRequestTakedown();
+  const target = row.malicious_domain ?? row.malicious_url ?? '';
+  const typeLabel = THREAT_TYPE_LABELS[row.threat_type] ?? row.threat_type.replace(/_/g, ' ');
   const defaultSummary =
-    `Typosquatting domain ${row.malicious_domain} impersonates ${brandName}. ` +
+    `Malicious ${typeLabel.toLowerCase()} target ${target} impersonates ${brandName}. ` +
     `Detected ${row.first_seen?.slice(0, 10) ?? 'recently'} via ${row.source_feed}. ` +
     `Severity: ${row.severity}.`;
   const [summary, setSummary] = useState(defaultSummary);
@@ -182,7 +196,7 @@ function RequestTakedownDialog({
       {
         brand_id:         brandId,
         threat_id:        row.id,
-        malicious_domain: row.malicious_domain,
+        malicious_domain: target,
         evidence_summary: summary.trim() || defaultSummary,
       },
       { onSuccess: onClose },
@@ -201,7 +215,7 @@ function RequestTakedownDialog({
         <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">Confirm takedown request</div>
-            <div className="mt-1 text-sm text-white/90 font-mono">{row.malicious_domain}</div>
+            <div className="mt-1 text-sm text-white/90 font-mono">{target}</div>
           </div>
           <button
             type="button"
