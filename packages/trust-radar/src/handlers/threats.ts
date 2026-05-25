@@ -20,10 +20,24 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     const status = url.searchParams.get("status");
     const source = url.searchParams.get("source");
     const search = url.searchParams.get("q");
+    const country = url.searchParams.get("country");
+
+    // Whitelisted server-side sort (shared with the tenant endpoint so the
+    // shared <ThreatsTable> behaves identically). Severity ranks critical
+    // highest so dir=desc puts critical first.
+    const SORT_COLUMNS: Record<string, string> = {
+      severity:   "CASE t.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END",
+      last_seen:  "t.last_seen", first_seen: "t.first_seen", brand: "b.name",
+      type: "t.threat_type", status: "t.status", confidence: "t.confidence_score",
+      target: "t.malicious_domain", source: "t.source_feed", country: "t.country_code",
+    };
+    const sortParam = url.searchParams.get("sort") ?? "severity";
+    const dir = (url.searchParams.get("dir") ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const sortCol = SORT_COLUMNS[sortParam] ?? SORT_COLUMNS.severity;
 
     // KV cache: threats list with complex JOINs — cache for 5 minutes.
     const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
-    const cacheKey = `threats_list:${severity ?? ""}:${type ?? ""}:${status ?? ""}:${source ?? ""}:${search ?? ""}:${limit}:${offset}:${scopeHash}`;
+    const cacheKey = `threats_list:${severity ?? ""}:${type ?? ""}:${status ?? ""}:${source ?? ""}:${country ?? ""}:${search ?? ""}:${sortParam}:${dir}:${limit}:${offset}:${scopeHash}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return attachBookmark(json(JSON.parse(cached), 200, origin), session);
 
@@ -44,6 +58,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     if (type) { conditions.push("t.threat_type = ?"); params.push(type); }
     if (status) { conditions.push("t.status = ?"); params.push(status); }
     if (source) { conditions.push("t.source_feed = ?"); params.push(source); }
+    if (country) { conditions.push("t.country_code = ?"); params.push(country); }
     if (search) {
       conditions.push("(t.malicious_domain LIKE ? OR t.malicious_url LIKE ? OR t.ip_address LIKE ? OR t.ioc_value LIKE ?)");
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
@@ -58,22 +73,31 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
         `SELECT t.id, t.threat_type, t.severity, t.confidence_score, t.status, t.source_feed,
                 t.ioc_value, t.malicious_domain, t.malicious_url, t.ip_address, t.asn,
                 t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
+                t.cluster_id, t.registrar, t.registration_date,
+                t.vt_checked, t.vt_malicious, t.vt_reputation,
+                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                t.surbl_checked, t.surbl_listed,
+                t.greynoise_checked, t.greynoise_classification,
+                t.seclookup_checked, t.seclookup_risk_score,
+                t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
                 t.first_seen, t.last_seen, t.created_at, t.lat, t.lng,
                 t.saas_technique_id,
                 st.name        AS saas_technique_name,
                 st.phase       AS saas_technique_phase,
                 st.phase_label AS saas_technique_phase_label,
                 st.severity    AS saas_technique_severity,
+                hp.name AS hosting_provider,
                 b.name AS brand_name,
                 tai.threat_actor_id AS actor_id,
                 ta.name AS actor_name
          FROM threats t
          LEFT JOIN brands b ON b.id = t.target_brand_id
+         LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
          LEFT JOIN saas_techniques st ON st.id = t.saas_technique_id
          LEFT JOIN (SELECT asn, threat_actor_id FROM threat_actor_infrastructure GROUP BY asn) tai ON tai.asn = t.asn
          LEFT JOIN threat_actors ta ON ta.id = tai.threat_actor_id
          ${where}
-         ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
+         ORDER BY ${sortCol} ${dir}, t.created_at DESC LIMIT ? OFFSET ?`
       ).bind(...params).all();
     } catch {
       // Fallback if threat_actor_infrastructure or saas_techniques tables don't exist
@@ -81,19 +105,27 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
         `SELECT t.id, t.threat_type, t.severity, t.confidence_score, t.status, t.source_feed,
                 t.ioc_value, t.malicious_domain, t.malicious_url, t.ip_address, t.asn,
                 t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
+                t.cluster_id, t.registrar, t.registration_date,
+                t.vt_checked, t.vt_malicious, t.vt_reputation,
+                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                t.surbl_checked, t.surbl_listed,
+                t.greynoise_checked, t.greynoise_classification,
+                t.seclookup_checked, t.seclookup_risk_score,
+                t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
                 t.first_seen, t.last_seen, t.created_at, t.lat, t.lng,
                 NULL AS saas_technique_id,
                 NULL AS saas_technique_name,
                 NULL AS saas_technique_phase,
                 NULL AS saas_technique_phase_label,
                 NULL AS saas_technique_severity,
+                NULL AS hosting_provider,
                 b.name AS brand_name,
                 NULL AS actor_id,
                 NULL AS actor_name
          FROM threats t
          LEFT JOIN brands b ON b.id = t.target_brand_id
          ${where}
-         ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
+         ORDER BY ${sortCol} ${dir}, t.created_at DESC LIMIT ? OFFSET ?`
       ).bind(...params).all();
     }
 

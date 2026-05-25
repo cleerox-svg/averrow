@@ -236,11 +236,24 @@ export async function handleTenantOrgThreats(
     const url = new URL(request.url);
     const status = url.searchParams.get("status");
     const severity = url.searchParams.get("severity");
-    const threatType = url.searchParams.get("threat_type");
+    const threatType = url.searchParams.get("threat_type") ?? url.searchParams.get("type");
     const brandId = url.searchParams.get("brand_id");
+    const country = url.searchParams.get("country");
     const q = url.searchParams.get("q");
     const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 100);
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+
+    // Whitelisted server-side sort (column key -> SQL expression). Severity
+    // ranks critical highest so dir=desc puts critical first.
+    const SORT_COLUMNS: Record<string, string> = {
+      severity:   "CASE t.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END",
+      last_seen:  "t.last_seen", first_seen: "t.first_seen", brand: "b.name",
+      type: "t.threat_type", status: "t.status", confidence: "t.confidence_score",
+      target: "t.malicious_domain", source: "t.source_feed", country: "t.country_code",
+    };
+    const sortParam = url.searchParams.get("sort") ?? "severity";
+    const dir = (url.searchParams.get("dir") ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const sortCol = SORT_COLUMNS[sortParam] ?? SORT_COLUMNS.severity;
 
     // org_id is bindings[0] — consumed by the org_brands JOIN in every query.
     const conditions: string[] = ["1=1"];
@@ -257,25 +270,36 @@ export async function handleTenantOrgThreats(
     if (severity)   { conditions.push("t.severity = ?");        bindings.push(severity); }
     if (threatType) { conditions.push("t.threat_type = ?");     bindings.push(threatType); }
     if (brandId)    { conditions.push("t.target_brand_id = ?"); bindings.push(brandId); }
-    if (q)          { conditions.push("t.malicious_domain LIKE ?"); bindings.push(`%${q}%`); }
+    if (country)    { conditions.push("t.country_code = ?");    bindings.push(country); }
+    if (q)          { conditions.push("(t.malicious_domain LIKE ? OR t.malicious_url LIKE ? OR t.ip_address LIKE ?)"); bindings.push(`%${q}%`, `%${q}%`, `%${q}%`); }
 
     const whereClause = conditions.join(" AND ");
 
     const compute = async () => {
-      // Rows page — index-driven via idx_threats_brand_status.
+      // Rows page — curated evidence/infra/correlation columns so the
+      // shared table's detail drawer can answer "why this verdict".
       const threatsResult = await env.DB.prepare(`
         SELECT t.id, t.threat_type, t.malicious_domain, t.malicious_url,
                t.target_brand_id, t.source_feed, t.severity, t.status,
                t.confidence_score, t.country_code, t.ip_address,
+               t.asn, t.registrar, t.registration_date,
+               t.campaign_id, t.cluster_id, t.saas_technique_id,
+               t.vt_checked, t.vt_malicious, t.vt_reputation,
+               t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+               t.surbl_checked, t.surbl_listed,
+               t.greynoise_checked, t.greynoise_classification,
+               t.seclookup_checked, t.seclookup_risk_score,
+               t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
                t.first_seen, t.last_seen,
+               hp.name AS hosting_provider, st.name AS saas_technique_name,
                b.name AS brand_name, b.canonical_domain AS brand_domain
         FROM threats t
         JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
         JOIN brands b ON b.id = t.target_brand_id
+        LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+        LEFT JOIN saas_techniques st ON st.id = t.saas_technique_id
         WHERE ${whereClause}
-        ORDER BY
-          CASE t.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
-          t.last_seen DESC
+        ORDER BY ${sortCol} ${dir}, t.last_seen DESC
         LIMIT ? OFFSET ?
       `).bind(...bindings, limit, offset).all();
 
@@ -310,10 +334,10 @@ export async function handleTenantOrgThreats(
       };
     };
 
-    // Cache only the default page (no filters, page 1, default status) —
-    // the highest-traffic shape — per the CLAUDE.md page-load caching rule.
+    // Cache only the default shape (no filters, page 1, default sort).
     const isDefaultPage =
-      !status && !severity && !threatType && !brandId && !q && offset === 0 && limit === 50;
+      !status && !severity && !threatType && !brandId && !country && !q &&
+      offset === 0 && limit === 50 && sortParam === "severity" && dir === "DESC";
     const result = isDefaultPage
       ? await cachedValue(env, `tenant.threats.${orgId}`, 90, compute)
       : await compute();

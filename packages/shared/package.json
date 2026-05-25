@@ -15,7 +15,8 @@
     "./passkeys": "./src/passkeys/index.ts",
     "./theme": "./src/theme/index.ts",
     "./theme.css": "./src/theme/tokens.css",
-    "./avatar": "./src/avatar/index.ts"
+    "./avatar": "./src/avatar/index.ts",
+    "./threats-table": "./src/threats-table/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

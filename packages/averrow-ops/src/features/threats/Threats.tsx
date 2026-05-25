@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useMemo } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Card, DataRow, PageHeader, SaasTechniqueBadge } from '@/components/ui';
@@ -58,60 +59,45 @@ function sinceLabelToIso(label: string): string | undefined {
 }
 
 export function Threats() {
-  const [severity, setSeverity] = useState('');
-  const [type, setType] = useState('');
-  const [status, setStatus] = useState('');
-  const [country, setCountry] = useState('');
-  const [brandId, setBrandId] = useState('');
-  const [actorId, setActorId] = useState('');
-  const [sinceLabel, setSinceLabel] = useState('');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
-  const limit = 50;
+  const navigate = useNavigate();
+  const table = useThreatsTable({ pageSize: 50 });
+  const s = table.state;
 
+  // Aggregate fuels the slice-summary strip + brand/country option lists,
+  // driven by the shared table's filter state.
   const filters: ThreatAggregateFilters = useMemo(() => ({
-    severity: severity || undefined,
-    type:     type || undefined,
-    status:   status || undefined,
-    country:  country || undefined,
-    brand_id: brandId || undefined,
-    actor_id: actorId || undefined,
-    search:   search || undefined,
-    since:    sinceLabelToIso(sinceLabel),
-  }), [severity, type, status, country, brandId, actorId, search, sinceLabel]);
-
-  // Aggregate fuels the slice-summary strip + populates the brand/actor/
-  // country option lists from data the slice actually has.
+    severity: s.severity || undefined,
+    type:     s.type || undefined,
+    status:   s.status || undefined,
+    country:  s.country || undefined,
+    brand_id: s.brandId || undefined,
+    search:   s.q || undefined,
+  }), [s.severity, s.type, s.status, s.country, s.brandId, s.q]);
   const { data: agg } = useThreatAggregate(filters);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['threats', filters, page],
+    queryKey: ['threats', table.params],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set('limit', String(limit));
-      params.set('offset', String(page * limit));
-      if (filters.severity) params.set('severity', filters.severity);
-      if (filters.type)     params.set('type',     filters.type);
-      if (filters.status)   params.set('status',   filters.status);
-      if (filters.search)   params.set('q',        filters.search);
-      // brand/actor/country filters not yet wired into /api/threats list
-      // backend — they'd require a small handleListThreats extension.
-      // PR17 surfaces them in the aggregate; PR18 wires the list query.
-      const res = await api.get<{ threats: Threat[]; total: number }>(`/api/threats?${params}`);
+      const p = new URLSearchParams();
+      p.set('limit', String(table.params.limit));
+      p.set('offset', String(table.params.offset));
+      p.set('sort', table.params.sort);
+      p.set('dir', table.params.dir);
+      if (s.severity) p.set('severity', s.severity);
+      if (s.type)     p.set('type', s.type);
+      if (s.status)   p.set('status', s.status);
+      if (s.country)  p.set('country', s.country);
+      if (s.q)        p.set('q', s.q);
+      const res = await api.get<{ threats: Threat[]; total: number }>(`/api/threats?${p}`);
       if (!res.success || !res.data) throw new Error(res.error ?? 'Failed');
       return res.data;
     },
+    placeholderData: keepPreviousData,
   });
 
-  const totalForPagination = data?.total ?? 0;
-
-  function clearAll() {
-    setSeverity(''); setType(''); setStatus(''); setCountry('');
-    setBrandId(''); setActorId(''); setSinceLabel(''); setSearch('');
-    setPage(0);
-  }
-
-  const hasAnyFilter = !!(severity || type || status || country || brandId || actorId || sinceLabel || search);
+  const brandOpts = (agg?.top_brands ?? []).map((b) => ({ value: b.brand_id, label: b.brand_name ?? b.brand_id }));
+  const countryOpts = (agg?.top_countries ?? []).map((c) => ({ value: c.country, label: c.country }));
+  const hasAnyFilter = !!(s.severity || s.type || s.status || s.country || s.brandId || s.q);
 
   return (
     <div className="p-6 space-y-5 max-w-7xl">
@@ -135,115 +121,32 @@ export function Threats() {
       <PanelHeader title="Top of pile" subtitle="Where the pressure is concentrated" />
       <LeaderboardsPanel agg={agg} />
 
-      <PanelHeader title="Slice" subtitle="Narrow the view to a specific axis" />
-      <SlicersBar
-        severity={severity}        setSeverity={(v) => { setSeverity(v); setPage(0); }}
-        type={type}                setType={(v) => { setType(v); setPage(0); }}
-        status={status}            setStatus={(v) => { setStatus(v); setPage(0); }}
-        country={country}          setCountry={(v) => { setCountry(v); setPage(0); }}
-        brandId={brandId}          setBrandId={(v) => { setBrandId(v); setPage(0); }}
-        actorId={actorId}          setActorId={(v) => { setActorId(v); setPage(0); }}
-        sinceLabel={sinceLabel}    setSinceLabel={(v) => { setSinceLabel(v); setPage(0); }}
-        search={search}            setSearch={(v) => { setSearch(v); setPage(0); }}
-        agg={agg}
-      />
-
-      {hasAnyFilter && <ActiveFilterChips
-        severity={severity}    onClearSeverity={() => { setSeverity(''); setPage(0); }}
-        type={type}            onClearType={() => { setType(''); setPage(0); }}
-        status={status}        onClearStatus={() => { setStatus(''); setPage(0); }}
-        country={country}      onClearCountry={() => { setCountry(''); setPage(0); }}
-        brandId={brandId}      brandLabel={agg?.top_brands.find(b => b.brand_id === brandId)?.brand_name}
-        onClearBrand={() => { setBrandId(''); setPage(0); }}
-        actorId={actorId}      actorLabel={agg?.top_actors.find(a => a.actor_id === actorId)?.actor_name}
-        onClearActor={() => { setActorId(''); setPage(0); }}
-        sinceLabel={sinceLabel} onClearSince={() => { setSinceLabel(''); setPage(0); }}
-        search={search}        onClearSearch={() => { setSearch(''); setPage(0); }}
-        onClearAll={clearAll}
-      />}
-
-      {isLoading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
-        </div>
-      ) : (
-        <>
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
-            {(data?.threats ?? []).length === 0 ? (
-              <EmptyState
-                icon={hasAnyFilter ? <Search /> : <CheckCircle />}
-                title={hasAnyFilter ? 'No threats match filters' : 'No active threats'}
-                subtitle={hasAnyFilter
-                  ? 'Try clearing some filters or widening the date range'
-                  : 'All monitored brands are clean for this time window'}
-                action={hasAnyFilter
-                  ? { label: 'Clear filters', onClick: clearAll }
-                  : undefined}
-                variant="clean"
-                compact
-              />
-            ) : (
-              (data?.threats ?? []).map((t) => (
-                <DataRow key={t.id} severity={toSeverity(t.severity)}>
-                  <div className="grid grid-cols-[1fr_1.5fr_1fr_1fr_0.6fr_0.6fr_0.8fr] gap-3 items-center w-full font-mono text-[11px]">
-                    <span style={{ color: 'var(--text-primary)' }}>{t.threat_type}</span>
-                    <div className="flex flex-col gap-1 min-w-0">
-                      <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{t.malicious_domain ?? '-'}</span>
-                      {t.saas_technique_id && t.saas_technique_name && t.saas_technique_phase && t.saas_technique_phase_label && (
-                        <SaasTechniqueBadge
-                          techniqueId={t.saas_technique_id}
-                          techniqueName={t.saas_technique_name}
-                          phase={t.saas_technique_phase}
-                          phaseLabel={t.saas_technique_phase_label}
-                          severity={t.saas_technique_severity ?? 'medium'}
-                          size="xs"
-                        />
-                      )}
-                    </div>
-                    <span>
-                      {t.target_brand_id ? (
-                        <Link to={`/brands/${t.target_brand_id}`} className="hover:underline underline-offset-2" style={{ color: 'var(--text-primary)' }}>
-                          {t.brand_name ?? t.target_brand_id}
-                        </Link>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>—</span>
-                      )}
-                    </span>
-                    <span>
-                      {t.actor_id ? (
-                        <Link to={`/threat-actors/${t.actor_id}`} className="hover:underline underline-offset-2" style={{ color: 'var(--amber)' }}>
-                          {t.actor_name ?? 'Unknown Actor'}
-                        </Link>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>Unattributed</span>
-                      )}
-                    </span>
-                    <span className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-secondary)' }}>
-                      {t.severity ?? '-'}
-                    </span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{t.status}</span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{relativeTime(t.created_at)}</span>
-                  </div>
-                </DataRow>
-              ))
-            )}
-          </Card>
-
-          {totalForPagination > limit && (
-            <div className="flex items-center gap-3 justify-center">
-              <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0}
-                className="font-mono text-[11px] disabled:opacity-30 disabled:cursor-not-allowed"
-                style={{ color: 'var(--text-secondary)' }}>Prev</button>
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                Page {page + 1} of {Math.ceil(totalForPagination / limit)}
-              </span>
-              <button onClick={() => setPage(page + 1)} disabled={(page + 1) * limit >= totalForPagination}
-                className="font-mono text-[11px] disabled:opacity-30 disabled:cursor-not-allowed"
-                style={{ color: 'var(--text-secondary)' }}>Next</button>
+      <PanelHeader title="Slice" subtitle="Filter, sort, and inspect — click a row for the evidence behind the verdict" />
+      <ThreatsTable
+        columns={['type', 'target', 'brand', 'actor', 'technique', 'severity', 'status', 'evidence', 'last_seen']}
+        rows={(data?.threats ?? []) as unknown as ThreatRow[]}
+        total={data?.total ?? 0}
+        loading={isLoading}
+        state={table.state}
+        pageSize={table.pageSize}
+        onFilter={table.setFilter}
+        onSearch={table.setSearch}
+        onToggleSort={table.toggleSort}
+        onPage={table.setPage}
+        controls={['brand', 'severity', 'type', 'status', 'country', 'search']}
+        brands={brandOpts}
+        countries={countryOpts}
+        sortKeys={{ type: 'type', target: 'target', brand: 'brand', severity: 'severity', status: 'status', last_seen: 'last_seen' }}
+        renderExtraDetail={(r) => {
+          const brandId = r.target_brand_id; const actorId = r.actor_id;
+          return (brandId || actorId) ? (
+            <div style={{ marginTop: 14, display: 'flex', gap: 16 }}>
+              {brandId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
+              {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/threat-actors/${actorId}`)}>↗ Threat actor</button>}
             </div>
-          )}
-        </>
-      )}
+          ) : null;
+        }}
+      />
     </div>
   );
 }
