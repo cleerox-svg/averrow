@@ -648,6 +648,17 @@ export async function handleAssignOrgBrand(
     await env.DB.prepare(
       "INSERT INTO org_brands (org_id, brand_id, is_primary) VALUES (?, ?, ?)",
     ).bind(orgId, body.brand_id, body.is_primary ? 1 : 0).run();
+
+    // Enroll in the monitoring watchlist so the dark-web + app-store scanners
+    // pick the brand up (their needsSeed step then creates the per-platform
+    // brand_monitor_schedule rows). Without this, an org-assigned brand was
+    // never monitored by those scanners. Best-effort — never block assignment.
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO monitored_brands (brand_id, tenant_id, added_by, status)
+       VALUES (?, '__internal__', ?, 'active')`,
+    ).bind(body.brand_id, ctx.userId).run().catch((err) =>
+      console.error('[assign_org_brand] monitored_brands enroll failed:', err));
+
     // NX2: same backfill-on-claim as handleCreateOrg / handleConvertLeadToTenant.
     // Deferred via waitUntil so the response returns instantly; idempotent.
     if (workerCtx) {

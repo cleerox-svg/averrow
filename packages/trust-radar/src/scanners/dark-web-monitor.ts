@@ -860,11 +860,13 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
       rowsUpserted += results.length;
       alertsCreated += results.filter((r) => r.alert_id !== null).length;
 
+      // brand_monitor_schedule has no updated_at column (migration 0036).
+      // Referencing it throws "no such column" and silently freezes next_check
+      // (every schedule advance fails) — keep this UPDATE to existing columns only.
       await env.DB.prepare(`
         UPDATE brand_monitor_schedule
         SET last_checked = ?,
-            next_check = datetime(?, '+' || check_interval_hours || ' hours'),
-            updated_at = datetime('now')
+            next_check = datetime(?, '+' || check_interval_hours || ' hours')
         WHERE brand_id = ? AND monitor_type = ? AND platform = ? AND enabled = 1
       `).bind(now, now, brand.id, MONITOR_TYPE, SCHEDULE_PLATFORM).run();
 
@@ -879,8 +881,7 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
       await env.DB.prepare(`
         UPDATE brand_monitor_schedule
         SET last_checked = ?,
-            next_check = datetime(?, '+' || check_interval_hours || ' hours'),
-            updated_at = datetime('now')
+            next_check = datetime(?, '+' || check_interval_hours || ' hours')
         WHERE brand_id = ? AND monitor_type = ? AND platform = ? AND enabled = 1
       `).bind(now, now, brand.id, MONITOR_TYPE, SCHEDULE_PLATFORM).run().catch(() => {});
     }

@@ -207,8 +207,7 @@ export async function handleTriggerDarkWebScan(
     await env.DB.prepare(`
       UPDATE brand_monitor_schedule
       SET last_checked = ?,
-          next_check = datetime(?, '+' || check_interval_hours || ' hours'),
-          updated_at = datetime('now')
+          next_check = datetime(?, '+' || check_interval_hours || ' hours')
       WHERE brand_id = ? AND monitor_type = 'darkweb' AND enabled = 1
     `).bind(now, now, brandId).run();
 
