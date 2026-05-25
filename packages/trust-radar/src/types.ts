@@ -73,6 +73,10 @@ export interface Env {
   // City CSV (~80MB compressed) needs the staging bucket to fit in
   // a single Worker invocation under the 30s CPU ceiling.
   GEOIP_STAGING?: R2Bucket;
+  // Tenant-uploaded trademark logo/wordmark images (Trademark module).
+  // Optional so non-instrumented entry points (tests/scripts) needn't bind it;
+  // the upload/serve handlers return a clear error when it's absent.
+  TRADEMARK_ASSETS?: R2Bucket;
   // Threat intelligence feeds (optional)
   OTX_API_KEY?: string;
   ABUSEIPDB_API_KEY?: string;

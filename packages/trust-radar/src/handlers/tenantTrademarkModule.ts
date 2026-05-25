@@ -28,6 +28,210 @@ function verifyOrgAccess(ctx: AuthContext, orgId: string): string | null {
   return null;
 }
 
+// Asset management (upload/delete) requires an org analyst+ role.
+const ORG_ROLE_HIERARCHY: Record<string, number> = { viewer: 1, analyst: 2, admin: 3, owner: 4 };
+function canManageAssets(ctx: AuthContext): boolean {
+  if (ctx.role === "super_admin") return true;
+  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= 2;
+}
+
+const MAX_ASSET_BYTES = 2 * 1024 * 1024; // 2 MB
+const ALLOWED_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]);
+const ALLOWED_ASSET_TYPES = new Set(["logo", "wordmark", "combined"]);
+
+function r2KeyFor(orgIdNum: number, brandId: string, assetId: string): string {
+  return `org/${orgIdNum}/brand/${brandId}/${assetId}`;
+}
+
+function decodeBase64(input: string): Uint8Array<ArrayBuffer> {
+  // Accept raw base64 or a data: URL.
+  const comma = input.indexOf(",");
+  const b64 = input.startsWith("data:") && comma >= 0 ? input.slice(comma + 1) : input;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(new ArrayBuffer(bin.length));
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+interface UploadAssetBody {
+  asset_type?:           string;
+  asset_name?:           string;
+  content_type?:         string;
+  data_base64?:          string;
+  registration_country?: string;
+  registration_number?:  string;
+  registration_date?:    string;
+}
+
+// ─── POST /api/orgs/:orgId/modules/trademark/brands/:brandId/assets ──
+//
+// Upload a logo/wordmark image. Stores raw bytes in R2 + computes SHA-256
+// now; pHash is computed in Phase 2 from the stored bytes (the matching
+// pipeline). asset_url points at the auth-gated image-serve endpoint.
+
+export async function handleUploadTrademarkAsset(
+  request: Request,
+  env:     Env,
+  orgId:   string,
+  brandId: string,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) return json({ success: false, error: "Invalid organization id" }, 400, origin);
+
+  try {
+    if (ctx.role !== "super_admin") await requireModule(env, orgIdNum, "trademark");
+  } catch (err) {
+    if (err instanceof ModuleNotEntitledError) {
+      return json({ success: false, error: "Trademark Infringement isn't enabled for your organization.", code: "MODULE_NOT_ENTITLED" }, 403, origin);
+    }
+    throw err;
+  }
+
+  if (!canManageAssets(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
+  }
+  if (!env.TRADEMARK_ASSETS) {
+    return json({ success: false, error: "Asset storage is not configured" }, 503, origin);
+  }
+
+  // Brand must belong to the org.
+  const owned = await env.DB.prepare(
+    "SELECT 1 FROM org_brands WHERE org_id = ? AND brand_id = ?",
+  ).bind(orgIdNum, brandId).first();
+  if (!owned) return json({ success: false, error: "Brand not assigned to your organization" }, 404, origin);
+
+  let body: UploadAssetBody;
+  try {
+    body = await request.json() as UploadAssetBody;
+  } catch {
+    return json({ success: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const assetType = (body.asset_type ?? "").toLowerCase();
+  if (!ALLOWED_ASSET_TYPES.has(assetType)) {
+    return json({ success: false, error: "asset_type must be one of: logo, wordmark, combined" }, 400, origin);
+  }
+  const contentType = (body.content_type ?? "").toLowerCase();
+  if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
+    return json({ success: false, error: "Unsupported image type (png, jpeg, webp, gif, svg only)" }, 400, origin);
+  }
+  if (!body.data_base64) {
+    return json({ success: false, error: "data_base64 is required" }, 400, origin);
+  }
+
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = decodeBase64(body.data_base64);
+  } catch {
+    return json({ success: false, error: "data_base64 is not valid base64" }, 400, origin);
+  }
+  if (bytes.byteLength === 0) return json({ success: false, error: "Empty image" }, 400, origin);
+  if (bytes.byteLength > MAX_ASSET_BYTES) {
+    return json({ success: false, error: "Image exceeds 2 MB limit" }, 413, origin);
+  }
+
+  const assetId = `tm-asset-up-${crypto.randomUUID()}`;
+  const sha256 = await sha256Hex(bytes);
+  const key = r2KeyFor(orgIdNum, brandId, assetId);
+  const assetUrl = `/api/orgs/${orgIdNum}/modules/trademark/assets/${assetId}/image`;
+
+  await env.TRADEMARK_ASSETS.put(key, bytes, { httpMetadata: { contentType } });
+
+  await env.DB.prepare(
+    `INSERT INTO trademark_assets
+       (id, brand_id, asset_type, asset_name, asset_url, asset_hash, phash,
+        registration_country, registration_number, registration_date, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'active', ?)`,
+  ).bind(
+    assetId, brandId, assetType, body.asset_name ?? null, assetUrl, sha256,
+    body.registration_country ?? null, body.registration_number ?? null, body.registration_date ?? null,
+    ctx.userId,
+  ).run();
+
+  return json({ success: true, data: { id: assetId, asset_url: assetUrl, asset_hash: sha256, asset_type: assetType } }, 201, origin);
+}
+
+// ─── GET /api/orgs/:orgId/modules/trademark/assets/:assetId/image ──
+// Auth-gated image stream. Verifies the asset's brand belongs to the org.
+
+export async function handleServeTrademarkAssetImage(
+  request: Request,
+  env:     Env,
+  orgId:   string,
+  assetId: string,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) return json({ success: false, error: "Invalid organization id" }, 400, origin);
+  if (!env.TRADEMARK_ASSETS) return json({ success: false, error: "Asset storage is not configured" }, 503, origin);
+
+  const row = await env.DB.prepare(
+    `SELECT a.brand_id FROM trademark_assets a
+     JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+     WHERE a.id = ?`,
+  ).bind(orgIdNum, assetId).first<{ brand_id: string }>();
+  if (!row) return json({ success: false, error: "Asset not found" }, 404, origin);
+
+  const obj = await env.TRADEMARK_ASSETS.get(r2KeyFor(orgIdNum, row.brand_id, assetId));
+  if (!obj) return json({ success: false, error: "Asset image not found" }, 404, origin);
+
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set("Cache-Control", "private, max-age=300");
+  headers.set("Access-Control-Allow-Origin", origin ?? "*");
+  return new Response(obj.body, { status: 200, headers });
+}
+
+// ─── DELETE /api/orgs/:orgId/modules/trademark/assets/:assetId ──
+
+export async function handleDeleteTrademarkAsset(
+  request: Request,
+  env:     Env,
+  orgId:   string,
+  assetId: string,
+  ctx:     AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessError = verifyOrgAccess(ctx, orgId);
+  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  if (!canManageAssets(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
+  }
+
+  const orgIdNum = Number(orgId);
+  if (!Number.isFinite(orgIdNum)) return json({ success: false, error: "Invalid organization id" }, 400, origin);
+
+  const row = await env.DB.prepare(
+    `SELECT a.brand_id FROM trademark_assets a
+     JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+     WHERE a.id = ?`,
+  ).bind(orgIdNum, assetId).first<{ brand_id: string }>();
+  if (!row) return json({ success: false, error: "Asset not found" }, 404, origin);
+
+  if (env.TRADEMARK_ASSETS) {
+    await env.TRADEMARK_ASSETS.delete(r2KeyFor(orgIdNum, row.brand_id, assetId)).catch(() => {});
+  }
+  await env.DB.prepare(
+    "UPDATE trademark_assets SET status = 'retired', updated_at = datetime('now') WHERE id = ?",
+  ).bind(assetId).run();
+
+  return json({ success: true, message: "Asset removed" }, 200, origin);
+}
+
 interface TrademarkBrandSummary {
   brand_id:                 string;
   brand_name:               string;

@@ -222,6 +222,15 @@ dataset = "trust_radar_d1_reads"
 binding = "GEOIP_STAGING"
 bucket_name = "geoip-staging"
 
+# ─── R2 Storage (tenant-uploaded trademark assets — logos/wordmarks) ──
+# Customer-uploaded logo/wordmark images for the Trademark module. The
+# upload endpoint stores raw bytes here keyed by org/brand/asset; the
+# image-serve endpoint streams them back (auth-gated). pHash is computed
+# in Phase 2 from these stored bytes. See docs/TRADEMARK_MONITORING.md.
+[[r2_buckets]]
+binding = "TRADEMARK_ASSETS"
+bucket_name = "trust-radar-trademark-assets"
+
 # ─── Durable Objects (WebSocket push hub + CertStream monitor) ──
 [[durable_objects.bindings]]
 name = "THREAT_PUSH_HUB"

@@ -6,16 +6,20 @@
 //
 // Phase B sprint 7.
 
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import {
   useBrandTrademarkFindings,
   useTrademarkModuleSummary,
+  useUploadTrademarkAsset,
+  useDeleteTrademarkAsset,
   ASSET_TYPE_LABELS,
   CONTEXT_LABELS,
   type TrademarkAssetRow,
   type TrademarkFindingRow,
 } from '@/lib/trademarkModule';
+import { getToken } from '@/lib/api';
 
 export function BrandTrademarkFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -46,7 +50,7 @@ export function BrandTrademarkFindings() {
 
       {data && (
         <>
-          <AssetsSection assets={data.assets} />
+          <AssetsSection assets={data.assets} brandId={data.brand_id} />
           {data.findings.length === 0 ? (
             <EmptyFindings hasAssets={data.assets.length > 0} />
           ) : (
@@ -58,28 +62,103 @@ export function BrandTrademarkFindings() {
   );
 }
 
-function AssetsSection({ assets }: { assets: TrademarkAssetRow[] }) {
+function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]; brandId: string }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Registered assets <span className="text-white/30">({assets.length})</span>
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
+          Registered assets <span className="text-white/30">({assets.length})</span>
+        </h2>
+      </div>
+
+      <AssetUploader brandId={brandId} />
+
       {assets.length === 0 ? (
-        <div className="rounded-xl border border-amber/[0.30] bg-amber/[0.06] p-6 text-center">
-          <ImageIcon className="inline" size={20} />
-          <p className="text-white/75 text-sm mt-2">No registered assets for this brand yet.</p>
-          <p className="text-white/45 text-xs mt-1">Upload a logo or wordmark to start scanning. The scanner uses pHash + vision-LLM verification to find lookalike uses.</p>
+        <div className="rounded-xl border border-white/[0.08] bg-bg-card p-6 text-center">
+          <ImageIcon className="inline text-white/40" size={20} />
+          <p className="text-white/55 text-sm mt-2">No assets registered yet.</p>
+          <p className="text-white/40 text-xs mt-1">Upload a logo or wordmark above. Active logo-image scanning lands with Phase 2; today this registers the mark and stores it for matching.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {assets.map((a) => <AssetCard key={a.id} asset={a} />)}
+          {assets.map((a) => <AssetCard key={a.id} asset={a} brandId={brandId} />)}
         </div>
       )}
     </section>
   );
 }
 
-function AssetCard({ asset: a }: { asset: TrademarkAssetRow }) {
+// File picker → base64 → upload mutation. 2 MB cap (matches the server).
+function AssetUploader({ brandId }: { brandId: string }) {
+  const upload = useUploadTrademarkAsset();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [assetType, setAssetType] = useState<'logo' | 'wordmark' | 'combined'>('logo');
+  const [name, setName] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const onPick = async (file: File) => {
+    setLocalError(null);
+    if (file.size > 2 * 1024 * 1024) { setLocalError('Image exceeds 2 MB.'); return; }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('Could not read file'));
+      reader.readAsDataURL(file);
+    });
+    upload.mutate(
+      {
+        brand_id: brandId,
+        asset_type: assetType,
+        asset_name: name.trim() || file.name,
+        content_type: file.type || 'application/octet-stream',
+        data_base64: dataUrl,
+      },
+      {
+        onSuccess: () => { setName(''); if (fileRef.current) fileRef.current.value = ''; },
+        onError: (e) => setLocalError((e as Error).message),
+      },
+    );
+  };
+
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-bg-card p-3 flex flex-wrap items-center gap-2">
+      <select
+        value={assetType}
+        onChange={(e) => setAssetType(e.target.value as 'logo' | 'wordmark' | 'combined')}
+        className="rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 font-mono"
+      >
+        <option value="logo">Logo</option>
+        <option value="wordmark">Wordmark</option>
+        <option value="combined">Combined</option>
+      </select>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Asset name (optional)"
+        className="flex-1 min-w-[140px] rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/30"
+      />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPick(f); }}
+      />
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={upload.isPending}
+        className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] hover:bg-amber/[0.16] border border-amber/[0.30] rounded px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Upload size={12} /> {upload.isPending ? 'Uploading…' : 'Upload image'}
+      </button>
+      {localError && <span className="text-[11px] text-sev-critical font-mono w-full">{localError}</span>}
+    </div>
+  );
+}
+
+function AssetCard({ asset: a, brandId }: { asset: TrademarkAssetRow; brandId: string }) {
+  const del = useDeleteTrademarkAsset(brandId);
   return (
     <article className="rounded-xl border border-white/[0.06] bg-bg-card p-3">
       <div className="flex items-start gap-3">
@@ -89,6 +168,15 @@ function AssetCard({ asset: a }: { asset: TrademarkAssetRow }) {
             <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
               {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type}
             </span>
+            <button
+              type="button"
+              onClick={() => del.mutate(a.id)}
+              disabled={del.isPending}
+              title="Remove asset"
+              className="ml-auto text-white/30 hover:text-sev-critical transition-colors disabled:opacity-40"
+            >
+              <Trash2 size={13} />
+            </button>
           </div>
           <div className="text-sm font-semibold text-white/90 truncate">{a.asset_name ?? '(unnamed)'}</div>
           {(a.registration_country ?? a.registration_number) && (
@@ -209,9 +297,38 @@ function ImagePair({ source, found }: { source: string | null; found: string | n
 
 function AssetImage({ src, fallback, small }: { src: string | null; fallback: string; small?: boolean }) {
   const dim = small ? 'w-10 h-10' : 'w-14 h-14';
-  return src ? (
-    <img src={src} alt="" className={`${dim} rounded-lg bg-white/10 border border-white/10 object-contain`} />
-  ) : (
+  // Our own image-serve endpoint is auth-gated, so a bare <img src> can't load
+  // it (no Bearer header). Fetch those as a blob with the token and use an
+  // object URL. External URLs (e.g. a brand's public logo) load directly.
+  const needsAuth = !!src && src.startsWith('/api/');
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!needsAuth || !src) return;
+    let revoked = false;
+    let url: string | null = null;
+    (async () => {
+      try {
+        const token = getToken();
+        const res = await fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (!res.ok) { setFailed(true); return; }
+        const blob = await res.blob();
+        if (revoked) return;
+        url = URL.createObjectURL(blob);
+        setObjectUrl(url);
+      } catch {
+        setFailed(true);
+      }
+    })();
+    return () => { revoked = true; if (url) URL.revokeObjectURL(url); };
+  }, [needsAuth, src]);
+
+  const resolved = needsAuth ? objectUrl : src;
+  if (resolved && !failed) {
+    return <img src={resolved} alt="" className={`${dim} rounded-lg bg-white/10 border border-white/10 object-contain`} />;
+  }
+  return (
     <div className={`${dim} rounded-lg bg-white/10 border border-white/10 flex items-center justify-center text-base font-bold text-white/70`}>
       {fallback.toUpperCase()}
     </div>
