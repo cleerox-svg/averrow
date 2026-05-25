@@ -44,6 +44,7 @@ export type AgentName =
   | "honeypot_generator"
   | "brand_enricher"
   | "lookalike_scanner"
+  | "trademark_monitor"
   | "admin_classify"
   | "url_scan"
   | "scan_report"

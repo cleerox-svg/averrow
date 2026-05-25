@@ -541,6 +541,13 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     results.push(result);
   }
 
+  // Trademark correlation — runs every hourly tick (internal-only, cheap;
+  // unifies wordmark misuse across social/app-store/domain signals).
+  {
+    const result = await runJob('trademark_scan', () => runTrademarkScan(env));
+    results.push(result);
+  }
+
   // Log summary
   logger.info('cron_complete', {
     jobs_run: results.length,
@@ -1305,6 +1312,15 @@ async function runLookalikeDomainCheck(env: Env): Promise<void> {
   const { lookalikeScannerAgent } = await import('../agents/lookalike-scanner');
   const { executeAgent } = await import('../lib/agentRunner');
   await executeAgent(env, lookalikeScannerAgent, {}, 'cron', 'scheduled');
+}
+
+async function runTrademarkScan(env: Env): Promise<void> {
+  // Phase 1 trademark correlation — internal-only (no external calls / AI),
+  // so it rides the hourly tick like ct_monitor + lookalike_check. ONE
+  // agent_runs row per tick. See scanners/trademark-monitor.ts.
+  const { trademarkMonitorAgent } = await import('../agents/trademarkMonitor');
+  const { executeAgent } = await import('../lib/agentRunner');
+  await executeAgent(env, trademarkMonitorAgent, {}, 'cron', 'scheduled');
 }
 
 async function runThreatNarratives(env: Env): Promise<void> {

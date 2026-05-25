@@ -18,6 +18,7 @@ const Brands = React.lazy(() => import('@/features/brands/Brands').then(m => ({ 
 const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetailV3 })));
 const Apps = React.lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = React.lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
+const Trademarks = React.lazy(() => import('@/features/trademarks/Trademarks').then(m => ({ default: m.Trademarks })));
 const Agents = React.lazy(() => import('@/features/agents/Agents').then(m => ({ default: m.Agents })));
 const AgentApprovals = React.lazy(() => import('@/features/agents/AgentApprovals').then(m => ({ default: m.AgentApprovals })));
 const AgentReview = React.lazy(() => import('@/features/agents/AgentReview').then(m => ({ default: m.AgentReview })));
@@ -144,6 +145,7 @@ export default function App() {
         <Route path="brands-v3/:brandId" element={<RedirectToBrand />} />
         <Route path="apps" element={lazyRoute(<Apps />)} />
         <Route path="dark-web" element={lazyRoute(<DarkWeb />)} />
+        <Route path="trademarks" element={lazyRoute(<Trademarks />)} />
         <Route path="threats" element={lazyRoute(<Threats />)} />
         <Route path="providers" element={lazyRoute(<Providers />)} />
         {/* `providers/:providerId` retired — provider detail is inline-only via card expansion. */}

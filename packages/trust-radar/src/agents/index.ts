@@ -45,6 +45,7 @@ import { brandDeepScanAgent } from "./brand-deep-scan";
 import { honeypotGeneratorAgent } from "./honeypot-generator";
 import { brandEnricherAgent } from "./brand-enricher";
 import { lookalikeScannerAgent } from "./lookalike-scanner";
+import { trademarkMonitorAgent } from "./trademarkMonitor";
 import { adminClassifyAgent } from "./admin-classify";
 import { urlScanAgent } from "./url-scan";
 import { scanReportAgent } from "./scan-report";
@@ -90,6 +91,7 @@ export const agentModules: Record<string, AgentModule> = {
   "honeypot_generator": honeypotGeneratorAgent,
   "brand_enricher": brandEnricherAgent,
   "lookalike_scanner": lookalikeScannerAgent,
+  "trademark_monitor": trademarkMonitorAgent,
   "admin_classify": adminClassifyAgent,
   "url_scan": urlScanAgent,
   "scan_report": scanReportAgent,

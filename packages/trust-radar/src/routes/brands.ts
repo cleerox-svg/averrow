@@ -40,6 +40,7 @@ import {
   handleListDarkWebMentions, handleTriggerDarkWebScan,
   handleUpdateDarkWebMention, handleDarkWebOverview,
 } from "../handlers/darkWebMonitor";
+import { handleTrademarkOverview } from "../handlers/trademarkMonitor";
 import {
   handleListCertificates, handleCertStats,
   handleUpdateCertificate, handleTriggerCTScan,
@@ -375,6 +376,13 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateDarkWebMention(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+
+  // ─── Trademark Monitoring (ops overview) ─────────────────────────
+  router.get("/api/trademarks/overview", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTrademarkOverview(request, env, ctx);
   });
 
   // ─── Certificate Transparency Monitoring ─────────────────────────

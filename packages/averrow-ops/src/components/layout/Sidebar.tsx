@@ -4,7 +4,7 @@ import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
   Gavel, Bell, Inbox, Mail, Target, Siren, Radar,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
-  Smartphone, EyeOff, BellRing, BarChart3, DollarSign,
+  Smartphone, EyeOff, BellRing, BarChart3, DollarSign, Award,
   Sun, Moon, Laptop, PanelLeftClose, PanelLeftOpen, LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -134,6 +134,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         { label: 'Threats',      path: '/threats',       icon: Crosshair },
         { label: 'Apps',         path: '/apps',          icon: Smartphone },
         { label: 'Dark Web',     path: '/dark-web',      icon: EyeOff },
+        { label: 'Trademarks',   path: '/trademarks',    icon: Award },
         { label: 'Providers',    path: '/providers',     icon: Server },
         { label: 'Campaigns',    path: '/campaigns',     icon: Activity },
         { label: 'Threat Actors', path: '/threat-actors', icon: Crosshair },
