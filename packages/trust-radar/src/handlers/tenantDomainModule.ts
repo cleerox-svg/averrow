@@ -287,9 +287,10 @@ export async function handleGetBrandDomainFindings(
     env.DB.prepare(
       `SELECT t.id, t.threat_type, t.malicious_domain, t.malicious_url,
               t.source_feed, t.severity, t.status,
-              t.first_seen, t.last_seen, t.hosting_provider, t.country_code,
+              t.first_seen, t.last_seen, hp.name AS hosting_provider, t.country_code,
               tr.status AS takedown_status, tr.id AS takedown_id
        FROM threats t
+       LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
        LEFT JOIN takedown_requests tr
          ON tr.source_type = 'threat'
         AND tr.source_id = t.id

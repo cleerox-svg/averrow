@@ -117,9 +117,11 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
   // 'domain', so we don't need to duplicate that here.
   if (body.source_type === "threat" && body.source_id) {
     const threat = await env.DB.prepare(
-      `SELECT severity, source_feed, threat_type, malicious_domain,
-              hosting_provider, country_code, first_seen
-       FROM threats WHERE id = ? AND target_brand_id = ?`
+      `SELECT t.severity, t.source_feed, t.threat_type, t.malicious_domain,
+              hp.name AS hosting_provider, t.country_code, t.first_seen
+       FROM threats t
+       LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+       WHERE t.id = ? AND t.target_brand_id = ?`
     ).bind(body.source_id, brandId).first<{
       severity: string | null;
       source_feed: string;
@@ -161,7 +163,11 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
     }
   } else if (targetType === "domain") {
     const threat = await env.DB.prepare(
-      "SELECT hosting_provider, hosting_provider_abuse_email FROM threats WHERE malicious_domain = ? LIMIT 1"
+      `SELECT hp.name AS hosting_provider, pac.abuse_email AS hosting_provider_abuse_email
+       FROM threats t
+       LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+       LEFT JOIN provider_abuse_contacts pac ON pac.id = hp.abuse_contact_id
+       WHERE t.malicious_domain = ? LIMIT 1`
     ).bind(targetValue).first<{ hosting_provider: string | null; hosting_provider_abuse_email: string | null }>();
     if (threat) {
       providerName = threat.hosting_provider;
