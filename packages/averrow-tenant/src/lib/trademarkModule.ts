@@ -4,8 +4,8 @@
 //   GET /api/orgs/:orgId/modules/trademark
 //   GET /api/orgs/:orgId/modules/trademark/brands/:brandId
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from './api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiGet, apiPost, apiDelete } from './api';
 import { useAuth } from './auth';
 
 export interface TrademarkBrandSummary {
@@ -110,6 +110,57 @@ export function useBrandTrademarkFindings(brandId: string | null) {
     },
     enabled: !!orgId && !!brandId,
     staleTime: 30_000,
+  });
+}
+
+export interface UploadAssetInput {
+  brand_id:              string;
+  asset_type:            'logo' | 'wordmark' | 'combined';
+  asset_name?:           string;
+  content_type:          string;
+  data_base64:           string;
+  registration_country?: string;
+  registration_number?:  string;
+}
+
+/** Upload a logo/wordmark image for a brand. Stores it server-side (R2)
+ *  and registers a trademark_assets row. Invalidates the brand findings
+ *  query so the new asset appears without a manual refresh. */
+export function useUploadTrademarkAsset() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UploadAssetInput) => {
+      if (!orgId) throw new Error('No organization');
+      const { brand_id, ...payload } = input;
+      const res = await apiPost<{ id: string; asset_url: string }>(
+        `/api/orgs/${orgId}/modules/trademark/brands/${brand_id}/assets`,
+        payload,
+      );
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['trademark-brand-findings', orgId, vars.brand_id] });
+      qc.invalidateQueries({ queryKey: ['trademark-module', orgId] });
+    },
+  });
+}
+
+/** Remove (retire) an uploaded asset. */
+export function useDeleteTrademarkAsset(brandId: string | null) {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (assetId: string) => {
+      if (!orgId) throw new Error('No organization');
+      await apiDelete(`/api/orgs/${orgId}/modules/trademark/assets/${assetId}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['trademark-brand-findings', orgId, brandId] });
+      qc.invalidateQueries({ queryKey: ['trademark-module', orgId] });
+    },
   });
 }
 

@@ -1517,7 +1517,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "GEOIP_REFRESH",
         "GEOIP_STAGING",
         "NEXUS_RUN",
-        "THREAT_PUSH_HUB"
+        "THREAT_PUSH_HUB",
+        "TRADEMARK_ASSETS"
       ]
     }
   ],

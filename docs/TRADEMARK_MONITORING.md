@@ -51,6 +51,27 @@ no AI tokens are spent. Findings link to the brand's wordmark asset via
 - **Ops:** `GET /api/trademarks/overview` → `features/trademarks/Trademarks.tsx` (`/v2/trademarks`).
 - **Tenant:** existing `GET /api/orgs/:orgId/modules/trademark[/brands/:id]` handlers + the `Trademark` / `BrandTrademarkFindings` pages — already wired; they light up once the scanner runs.
 
+### Customer-uploaded assets (free, no external API)
+
+Beyond the auto-seeded marks, customers (org analyst+) can upload their own
+logo/wordmark images on the brand drill-down page:
+
+- `POST /api/orgs/:orgId/modules/trademark/brands/:brandId/assets` — JSON
+  body with `data_base64` (≤2 MB, png/jpeg/webp/gif/svg). Bytes are stored in
+  the **`TRADEMARK_ASSETS` R2 bucket** (`trust-radar-trademark-assets`), keyed
+  `org/<orgId>/brand/<brandId>/<assetId>`; **SHA-256** is computed in-Worker;
+  a `trademark_assets` row is written with `asset_url` pointing at the
+  image-serve endpoint.
+- `GET /api/orgs/:orgId/modules/trademark/assets/:assetId/image` — auth-gated
+  stream (the tenant UI fetches it as a blob with the Bearer token since
+  `<img>` can't send auth headers).
+- `DELETE /api/orgs/:orgId/modules/trademark/assets/:assetId` — retire + R2 delete.
+
+**`phash` is intentionally left NULL on upload.** A true perceptual hash needs
+image decoding, which isn't reliably free in a Worker — and it's only *used*
+by Phase 2 matching. Phase 2 computes it from the stored R2 bytes when the
+matching pipeline lands. Until then, uploads register + store the mark.
+
 ---
 
 ## Phase 2 — logo / image misuse (deferred, PAID — when we have customers)

@@ -46,6 +46,7 @@ import {
 } from "../handlers/tenantAbuseMailboxModule";
 import {
   handleGetTrademarkModuleSummary, handleGetBrandTrademarkFindings,
+  handleUploadTrademarkAsset, handleServeTrademarkAssetImage, handleDeleteTrademarkAsset,
 } from "../handlers/tenantTrademarkModule";
 import {
   handleGetThreatActorModuleSummary, handleGetThreatActorDetail,
@@ -427,6 +428,21 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
       request.params["brandId"] ?? "",
       ctx,
     );
+  });
+  router.post("/api/orgs/:orgId/modules/trademark/brands/:brandId/assets", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUploadTrademarkAsset(request, env, request.params["orgId"] ?? "", request.params["brandId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/trademark/assets/:assetId/image", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleServeTrademarkAssetImage(request, env, request.params["orgId"] ?? "", request.params["assetId"] ?? "", ctx);
+  });
+  router.delete("/api/orgs/:orgId/modules/trademark/assets/:assetId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleDeleteTrademarkAsset(request, env, request.params["orgId"] ?? "", request.params["assetId"] ?? "", ctx);
   });
 
   // ─── Module surfaces — Threat-Actor Intelligence (v3 Phase B) ──

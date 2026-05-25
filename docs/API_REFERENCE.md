@@ -658,6 +658,9 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | GET | `/api/orgs/:orgId/takedowns` | Member | List takedown requests |
 | GET | `/api/orgs/:orgId/takedowns/:id` | Member | Get takedown detail |
 | PATCH | `/api/orgs/:orgId/takedowns/:id` | Admin (org) | Update takedown |
+| POST | `/api/orgs/:orgId/modules/trademark/brands/:brandId/assets` | Org analyst+ | Upload a logo/wordmark image (JSON `{asset_type, asset_name?, content_type, data_base64, registration_*?}`, ≤2 MB). Stores bytes in R2, computes SHA-256, inserts a `trademark_assets` row (phash deferred to Phase 2). |
+| GET | `/api/orgs/:orgId/modules/trademark/assets/:assetId/image` | Member | Auth-gated image stream for an uploaded asset (verifies the asset's brand belongs to the org). |
+| DELETE | `/api/orgs/:orgId/modules/trademark/assets/:assetId` | Org analyst+ | Retire an asset + delete its R2 object. |
 
 ## Internal Endpoints
 
