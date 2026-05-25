@@ -18,6 +18,7 @@ import {
   type MaliciousDomainRow,
 } from '@/lib/domainModule';
 import { THREAT_TYPE_LABELS } from '@/lib/threats';
+import { SortableTable, SEVERITY_RANK, type Column } from '@/components/SortableTable';
 
 export function BrandDomainFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -88,6 +89,30 @@ function MaliciousDomainsSection({
   const criticalCount = rows.filter((r) => r.severity === 'critical').length;
   const highCount     = rows.filter((r) => r.severity === 'high').length;
 
+  const columns: Column<MaliciousDomainRow>[] = [
+    { key: 'target', header: 'Domain / URL', sortAccessor: (r) => r.malicious_domain ?? r.malicious_url ?? '',
+      cellClassName: 'font-mono max-w-[280px] truncate',
+      render: (r) => <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>{r.malicious_domain ?? r.malicious_url ?? '—'}</span> },
+    { key: 'type', header: 'Type', sortAccessor: (r) => r.threat_type,
+      render: (r) => <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">{THREAT_TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}</span> },
+    { key: 'severity', header: 'Severity', sortAccessor: (r) => SEVERITY_RANK[(r.severity ?? '').toLowerCase()] ?? 0,
+      render: (r) => <SeverityPill severity={r.severity} /> },
+    { key: 'source', header: 'Source', sortAccessor: (r) => r.source_feed, render: (r) => <SourceChip source={r.source_feed} /> },
+    { key: 'hosting', header: 'Hosting', sortAccessor: (r) => r.hosting_provider ?? '', cellClassName: 'max-w-[180px] truncate',
+      render: (r) => (
+        <span className="text-white/55">
+          {r.hosting_provider ?? <span className="text-white/30">unknown</span>}
+          {r.country_code && <span className="ml-1.5 text-[10px] font-mono text-white/35">{r.country_code}</span>}
+        </span>
+      ) },
+    { key: 'first_seen', header: 'First seen', align: 'right', sortAccessor: (r) => r.first_seen ?? '',
+      render: (r) => <span className="text-white/45 font-mono text-[11px]">{r.first_seen ? new Date(r.first_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
+    { key: 'action', header: 'Action', align: 'right',
+      render: (r) => r.takedown_status
+        ? <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
+        : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
+  ];
+
   return (
     <section>
       <div className="flex items-baseline justify-between mb-3">
@@ -110,63 +135,12 @@ function MaliciousDomainsSection({
           </Link>
         </div>
       </div>
-      <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
-        <table className="w-full text-[12px]">
-          <thead className="border-b border-white/[0.06] bg-white/[0.02]">
-            <tr className="text-left">
-              <Th>Domain / URL</Th>
-              <Th>Type</Th>
-              <Th>Severity</Th>
-              <Th>Source</Th>
-              <Th>Hosting</Th>
-              <Th>First seen</Th>
-              <Th>Action</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0">
-                <Td className="font-mono max-w-[280px] truncate">
-                  <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>
-                    {r.malicious_domain ?? r.malicious_url ?? '—'}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
-                    {THREAT_TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}
-                  </span>
-                </Td>
-                <Td><SeverityPill severity={r.severity} /></Td>
-                <Td>
-                  <SourceChip source={r.source_feed} />
-                </Td>
-                <Td className="text-white/55 truncate max-w-[180px]">
-                  {r.hosting_provider ?? <span className="text-white/30">unknown</span>}
-                  {r.country_code && (
-                    <span className="ml-1.5 text-[10px] font-mono text-white/35">{r.country_code}</span>
-                  )}
-                </Td>
-                <Td className="text-white/45 font-mono text-[11px]">
-                  {r.first_seen ? new Date(r.first_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
-                </Td>
-                <Td>
-                  {r.takedown_status ? (
-                    <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRow(r)}
-                      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors"
-                    >
-                      Request takedown
-                    </button>
-                  )}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <SortableTable
+        columns={columns}
+        rows={rows}
+        getRowKey={(r) => r.id}
+        initialSort={{ key: 'severity', dir: 'desc' }}
+      />
       {confirmRow && (
         <RequestTakedownDialog
           row={confirmRow}
@@ -374,47 +348,31 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
     );
   }
 
+  const columns: Column<LookalikeRow>[] = [
+    { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono',
+      render: (r) => <span className={r.registered ? 'text-white/90' : 'text-white/40'}>{r.domain}</span> },
+    { key: 'type', header: 'Type', sortAccessor: (r) => r.permutation_type, cellClassName: 'text-white/55 capitalize',
+      render: (r) => r.permutation_type.replace(/_/g, ' ') },
+    { key: 'threat', header: 'Threat', sortAccessor: (r) => SEVERITY_RANK[(r.threat_level ?? '').toLowerCase()] ?? 0,
+      render: (r) => <ThreatPill level={r.threat_level} /> },
+    { key: 'status', header: 'Status', sortAccessor: (r) => r.status, render: (r) => <StatusPill status={r.status} /> },
+    { key: 'signals', header: 'Signals', render: (r) => (
+      <div className="flex items-center gap-1.5">
+        {r.registered === 1 && <SignalChip>registered</SignalChip>}
+        {r.has_web === 1 && <SignalChip>web</SignalChip>}
+        {r.has_mx === 1 && <SignalChip>mx</SignalChip>}
+      </div>
+    ) },
+    { key: 'last_checked', header: 'Last seen', align: 'right', sortAccessor: (r) => r.last_checked ?? '',
+      render: (r) => <span className="text-white/45 font-mono text-[11px]">{r.last_checked ? new Date(r.last_checked).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
+  ];
+
   return (
     <section>
       <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
         Lookalike Domains <span className="text-white/30">({rows.length})</span>
       </h2>
-      <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
-        <table className="w-full text-[12px]">
-          <thead className="border-b border-white/[0.06] bg-white/[0.02]">
-            <tr className="text-left">
-              <Th>Domain</Th>
-              <Th>Type</Th>
-              <Th>Threat</Th>
-              <Th>Status</Th>
-              <Th>Signals</Th>
-              <Th>Last seen</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0">
-                <Td className="font-mono">
-                  <span className={r.registered ? 'text-white/90' : 'text-white/40'}>{r.domain}</span>
-                </Td>
-                <Td className="text-white/55 capitalize">{r.permutation_type.replace(/_/g, ' ')}</Td>
-                <Td><ThreatPill level={r.threat_level} /></Td>
-                <Td><StatusPill status={r.status} /></Td>
-                <Td>
-                  <div className="flex items-center gap-1.5">
-                    {r.registered === 1 && <SignalChip>registered</SignalChip>}
-                    {r.has_web === 1 && <SignalChip>web</SignalChip>}
-                    {r.has_mx === 1 && <SignalChip>mx</SignalChip>}
-                  </div>
-                </Td>
-                <Td className="text-white/45 font-mono text-[11px]">
-                  {r.last_checked ? new Date(r.last_checked).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'threat', dir: 'desc' }} />
     </section>
   );
 }
@@ -433,43 +391,22 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
     );
   }
 
+  const columns: Column<CertRow>[] = [
+    { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono', render: (r) => r.domain },
+    { key: 'issuer', header: 'Issuer', sortAccessor: (r) => r.issuer ?? '', cellClassName: 'text-white/55 truncate max-w-[200px]', render: (r) => r.issuer ?? '—' },
+    { key: 'suspicious', header: 'Suspicious', align: 'center', sortAccessor: (r) => r.suspicious,
+      render: (r) => r.suspicious === 1 ? <span className="text-amber">●</span> : <span className="text-white/30">●</span> },
+    { key: 'status', header: 'Status', sortAccessor: (r) => r.status, render: (r) => <CertStatusPill status={r.status} /> },
+    { key: 'issued', header: 'Issued', align: 'right', sortAccessor: (r) => r.created_at,
+      render: (r) => <span className="text-white/45 font-mono text-[11px]">{new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> },
+  ];
+
   return (
     <section>
       <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
         Certificate Transparency <span className="text-white/30">({rows.length})</span>
       </h2>
-      <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
-        <table className="w-full text-[12px]">
-          <thead className="border-b border-white/[0.06] bg-white/[0.02]">
-            <tr className="text-left">
-              <Th>Domain</Th>
-              <Th>Issuer</Th>
-              <Th>Suspicious</Th>
-              <Th>Status</Th>
-              <Th>Issued</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0">
-                <Td className="font-mono">{r.domain}</Td>
-                <Td className="text-white/55 truncate max-w-[200px]">{r.issuer ?? '—'}</Td>
-                <Td>
-                  {r.suspicious === 1 ? (
-                    <span className="text-amber">●</span>
-                  ) : (
-                    <span className="text-white/30">●</span>
-                  )}
-                </Td>
-                <Td><CertStatusPill status={r.status} /></Td>
-                <Td className="text-white/45 font-mono text-[11px]">
-                  {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'suspicious', dir: 'desc' }} />
     </section>
   );
 }
@@ -522,10 +459,3 @@ function SignalChip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2 text-[10px] uppercase tracking-widest font-mono text-white/45 font-normal">{children}</th>;
-}
-
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2.5 ${className}`}>{children}</td>;
-}

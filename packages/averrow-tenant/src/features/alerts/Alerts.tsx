@@ -156,38 +156,76 @@ function FilterBar<T extends string>({
   );
 }
 
+// ai_recommendations is sometimes a JSON-encoded array (["...","..."]),
+// sometimes a plain string. Parse to a clean list either way so we never
+// dump a raw bracketed array at the user.
+function parseRecommendations(raw: string | null): string[] {
+  if (!raw) return [];
+  const t = raw.trim();
+  if (t.startsWith('[')) {
+    try {
+      const arr = JSON.parse(t);
+      if (Array.isArray(arr)) return arr.map((x) => String(x).trim()).filter(Boolean);
+    } catch { /* fall through to plain text */ }
+  }
+  return [t];
+}
+
 function AlertRow({ alert: a }: { alert: Alert }) {
   const sev = (a.severity ?? '').toLowerCase();
-  const tone =
-    sev === 'critical' ? 'border-sev-critical/[0.30]' :
-    sev === 'high'     ? 'border-amber/[0.30]'        :
-                         'border-white/[0.06]';
+  const accent =
+    sev === 'critical' ? 'border-l-sev-critical/70' :
+    sev === 'high'     ? 'border-l-amber/70'        :
+    sev === 'medium'   ? 'border-l-amber/40'        :
+                         'border-l-white/15';
+  const recs = parseRecommendations(a.ai_recommendations);
   return (
-    <article className={`rounded-xl border bg-bg-card p-4 ${tone}`}>
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <SeverityPill level={a.severity} />
-            <StatusPill status={a.status} />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
-              {a.alert_type.replace(/_/g, ' ')}
-            </span>
-          </div>
-          <h3 className="text-sm font-semibold text-white/90">{a.title}</h3>
-          <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>
+    <article className={`rounded-xl border border-white/[0.07] border-l-2 ${accent} bg-bg-card p-4 hover:border-white/[0.16] transition-colors`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SeverityPill level={a.severity} />
+          <StatusPill status={a.status} />
+          <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
+            {a.alert_type.replace(/_/g, ' ')}
+          </span>
         </div>
         <div className="text-right text-[10px] font-mono text-white/40 flex-shrink-0">
           <div>{new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
-          <div className="mt-0.5 truncate max-w-[140px]">{a.brand_name}</div>
+          <div className="mt-0.5 truncate max-w-[140px] text-white/55">{a.brand_name}</div>
         </div>
       </div>
 
-      {a.ai_recommendations && (
-        <p className="text-[11px] text-amber/80 mt-2 font-mono">
-          → {a.ai_recommendations}
-        </p>
-      )}
+      <h3 className="text-[15px] font-semibold text-white/90 mt-2 leading-snug">{a.title}</h3>
+      {a.summary && <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>}
+      {recs.length > 0 && <Recommendations items={recs} />}
     </article>
+  );
+}
+
+function Recommendations({ items }: { items: string[] }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? items : items.slice(0, 2);
+  return (
+    <div className="mt-3 rounded-lg border border-amber/[0.16] bg-amber/[0.04] px-3 py-2.5">
+      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-1.5">Recommended actions</div>
+      <ul className="space-y-1.5">
+        {shown.map((r, i) => (
+          <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">
+            <span className="text-amber/60 flex-shrink-0 mt-[2px]">▸</span>
+            <span>{r}</span>
+          </li>
+        ))}
+      </ul>
+      {items.length > 2 && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-amber/70 hover:text-amber"
+        >
+          {open ? 'show less' : `+${items.length - 2} more`}
+        </button>
+      )}
+    </div>
   );
 }
 
