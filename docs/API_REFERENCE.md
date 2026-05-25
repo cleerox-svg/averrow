@@ -324,6 +324,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/darkweb/mentions/:brandId` | User | List mentions + schedule for a brand. Filters: `source`, `classification`, `severity`, `match_type`, `status`, `limit`, `offset`. |
 | POST | `/api/darkweb/scan/:brandId` | User | Trigger an immediate scan + AI drain for this brand. |
 | PATCH | `/api/darkweb/:id` | User | Update a mention's `classification` or `status` (manual override, wins over AI/system). |
+| GET | `/api/trademarks/overview` | User | Cross-brand trademark rollup: per-brand active asset count + finding counts (total/confirmed/likely/unknown/high_critical) + cross-brand totals. Admin scope sees all brands with trademark data; org scope sees its `org_brands` subset. Default page KV-cached 120s. Data from the Phase 1 correlation scanner (`scanners/trademark-monitor.ts`). |
 
 **Classification values:** `confirmed`, `suspicious`, `false_positive`, `resolved`, `unknown`.
 **Status values:** `active`, `resolved`, `false_positive`, `investigating`.

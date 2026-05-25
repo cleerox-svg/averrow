@@ -201,6 +201,17 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <circle cx="22" cy="26" r="1.5" fill="currentColor" opacity="0.7"/>
     </svg>
   ),
+  // Herald — Trademark Monitor. Registered-mark seal guarding the wordmark.
+  trademark_monitor: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      {/* protective seal ring */}
+      <circle cx="18" cy="18" r="11" stroke="currentColor" strokeWidth="1.4" fill="currentColor" fillOpacity="0.08"/>
+      <circle cx="18" cy="18" r="13.5" stroke="currentColor" strokeWidth="0.7" opacity="0.3"/>
+      {/* the mark — a stylized R (registered) */}
+      <path d="M14 12.5H19C20.7 12.5 22 13.8 22 15.5C22 17.2 20.7 18.5 19 18.5H14M14 12.5V23.5M14 18.5H18L21.5 23.5"
+            stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  ),
   // Mockingbird — Social Monitor. Songbird with sound waves; mimicry detector.
   social_monitor: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">

@@ -28,6 +28,7 @@ export type AgentId =
   | 'social_monitor'
   | 'app_store_monitor'
   | 'dark_web_monitor'
+  | 'trademark_monitor'
   | 'auto_seeder'
   | 'seed_strategist'
   | 'enricher'
@@ -238,6 +239,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#94A3B8',
     category: 'intelligence',
     pipelinePosition: 18,
+  },
+  trademark_monitor: {
+    id: 'trademark_monitor',
+    displayName: 'Herald',
+    codename: 'trademark_monitor',
+    subtitle: 'Unifies brand wordmark misuse across social, app-store, and domain signals (Phase 1, no external cost)',
+    color: '#E5A832',
+    category: 'intelligence',
+    pipelinePosition: 39,
   },
   auto_seeder: {
     id: 'auto_seeder',
