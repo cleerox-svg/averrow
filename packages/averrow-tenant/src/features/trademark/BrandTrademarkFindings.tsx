@@ -125,11 +125,12 @@ function AssetUploader({ brandId }: { brandId: string }) {
       <select
         value={assetType}
         onChange={(e) => setAssetType(e.target.value as 'logo' | 'wordmark' | 'combined')}
+        style={{ colorScheme: 'dark' }}
         className="rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 font-mono"
       >
-        <option value="logo">Logo</option>
-        <option value="wordmark">Wordmark</option>
-        <option value="combined">Combined</option>
+        <option value="logo" className="bg-[#0d1320] text-white">Logo</option>
+        <option value="wordmark" className="bg-[#0d1320] text-white">Wordmark</option>
+        <option value="combined" className="bg-[#0d1320] text-white">Combined</option>
       </select>
       <input
         value={name}

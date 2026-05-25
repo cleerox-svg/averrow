@@ -20,6 +20,7 @@ import {
   type ThreatType,
 } from '@/lib/threats';
 import { useTenantDashboard } from '@/lib/dashboard';
+import { SortableTable, SeverityPill, SEVERITY_RANK, type Column } from '@/components/SortableTable';
 
 const PAGE_SIZE = 50;
 
@@ -209,11 +210,12 @@ function FilterBar({
         <select
           value={brandId}
           onChange={(e) => onBrand(e.target.value)}
+          style={{ colorScheme: 'dark' }}
           className="rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-3 py-1.5 text-[12px] text-white/90 font-mono"
         >
-          <option value="">All brands</option>
+          <option value="" className="bg-[#0d1320] text-white">All brands</option>
           {brands.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
+            <option key={b.id} value={b.id} className="bg-[#0d1320] text-white">{b.name}</option>
           ))}
         </select>
 
@@ -272,43 +274,40 @@ function chipClass(active: boolean): string {
 // ─── Table ─────────────────────────────────────────────────────────
 
 function ThreatsTable({ rows }: { rows: Threat[] }) {
+  const columns: Column<Threat>[] = [
+    { key: 'brand', header: 'Brand', sortAccessor: (r) => r.brand_name,
+      render: (r) => <span className="text-white/85">{r.brand_name}</span> },
+    { key: 'type', header: 'Type', sortAccessor: (r) => r.threat_type,
+      render: (r) => <TypePill type={r.threat_type} /> },
+    { key: 'target', header: 'Domain / URL', sortAccessor: (r) => r.malicious_domain ?? r.malicious_url ?? '',
+      cellClassName: 'font-mono max-w-[300px] truncate',
+      render: (r) => (
+        <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>
+          {r.malicious_domain ?? r.malicious_url ?? <span className="text-white/30">—</span>}
+        </span>
+      ) },
+    { key: 'severity', header: 'Severity', sortAccessor: (r) => SEVERITY_RANK[(r.severity ?? '').toLowerCase()] ?? 0,
+      render: (r) => <SeverityPill severity={r.severity} /> },
+    { key: 'status', header: 'Status', sortAccessor: (r) => r.status,
+      render: (r) => <StatusPill status={r.status} /> },
+    { key: 'source', header: 'Source', sortAccessor: (r) => r.source_feed,
+      render: (r) => <span className="text-white/55 font-mono text-[11px]">{r.source_feed.replace(/_/g, ' ')}</span> },
+    { key: 'country', header: 'Country', align: 'center', sortAccessor: (r) => r.country_code ?? '',
+      render: (r) => <span className="text-white/45 font-mono text-[11px]">{r.country_code ?? '—'}</span> },
+    { key: 'last_seen', header: 'Last seen', align: 'right', sortAccessor: (r) => r.last_seen ?? '',
+      render: (r) => (
+        <span className="text-white/45 font-mono text-[11px]">
+          {r.last_seen ? new Date(r.last_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+        </span>
+      ) },
+  ];
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
-      <table className="w-full text-[12px]">
-        <thead className="border-b border-white/[0.06] bg-white/[0.02]">
-          <tr className="text-left">
-            <Th>Brand</Th>
-            <Th>Type</Th>
-            <Th>Domain / URL</Th>
-            <Th>Severity</Th>
-            <Th>Status</Th>
-            <Th>Source</Th>
-            <Th>Country</Th>
-            <Th>Last seen</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id} className="border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02]">
-              <Td className="text-white/80">{r.brand_name}</Td>
-              <Td><TypePill type={r.threat_type} /></Td>
-              <Td className="font-mono max-w-[280px] truncate">
-                <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>
-                  {r.malicious_domain ?? r.malicious_url ?? <span className="text-white/30">—</span>}
-                </span>
-              </Td>
-              <Td><SeverityPill severity={r.severity} /></Td>
-              <Td><StatusPill status={r.status} /></Td>
-              <Td className="text-white/55 font-mono text-[11px]">{r.source_feed.replace(/_/g, ' ')}</Td>
-              <Td className="text-white/45 font-mono text-[11px]">{r.country_code ?? '—'}</Td>
-              <Td className="text-white/45 font-mono text-[11px]">
-                {r.last_seen ? new Date(r.last_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <SortableTable
+      columns={columns}
+      rows={rows}
+      getRowKey={(r) => r.id}
+      initialSort={{ key: 'severity', dir: 'desc' }}
+    />
   );
 }
 
@@ -356,20 +355,6 @@ function TypePill({ type }: { type: string }) {
   );
 }
 
-function SeverityPill({ severity }: { severity: string }) {
-  const sev = (severity ?? '').toLowerCase();
-  const tone =
-    sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
-                         'text-white/55     bg-white/[0.04]        border-white/[0.08]';
-  return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {sev || 'info'}
-    </span>
-  );
-}
-
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'active'     ? 'text-sev-critical bg-sev-critical/[0.08] border-sev-critical/[0.16]' :
@@ -382,10 +367,3 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2 text-[10px] uppercase tracking-widest font-mono text-white/45 font-normal">{children}</th>;
-}
-
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2.5 ${className}`}>{children}</td>;
-}

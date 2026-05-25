@@ -66,52 +66,51 @@ function ProfilesSection({ rows }: { rows: SocialProfileRow[] }) {
 }
 
 function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
-  const tone =
-    p.classification === 'impersonation' ? 'border-sev-critical/[0.30]' :
-    p.classification === 'suspicious'    ? 'border-amber/[0.30]'        :
-                                           'border-white/[0.06]';
+  const accent =
+    p.classification === 'impersonation' ? 'border-l-sev-critical/70' :
+    p.classification === 'suspicious'    ? 'border-l-amber/70'        :
+                                           'border-l-white/15';
+  const secondary = p.classification_reason || p.bio;
   return (
-    <article className={`rounded-xl border bg-bg-card p-4 ${tone}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          <Avatar src={p.avatar_url} fallback={p.handle?.[0] ?? '?'} verified={p.verified === 1} />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <PlatformChip platform={p.platform} />
-              <SeverityPill level={p.severity} />
-              <ClassificationPill classification={p.classification} />
-            </div>
-            <div className="text-sm font-semibold text-white/90">
-              @{p.handle}
-              {p.display_name && (
-                <span className="text-white/55 font-normal"> — {p.display_name}</span>
-              )}
-            </div>
-            {p.bio && (
-              <p className="text-[12px] text-white/55 mt-1 leading-relaxed line-clamp-2">{p.bio}</p>
-            )}
-            {p.classification_reason && (
-              <p className="text-[11px] text-white/40 mt-2 italic">{p.classification_reason}</p>
-            )}
-            <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-white/40">
-              {p.followers_count !== null && (
-                <span>{formatFollowers(p.followers_count)} followers</span>
-              )}
-              {p.impersonation_score > 0 && (
-                <span className="text-amber/70">score {Math.round(p.impersonation_score * 100)}%</span>
-              )}
-              {p.profile_url && (
-                <a
-                  href={p.profile_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-amber hover:underline"
-                >
-                  <ExternalLink size={11} /> open
-                </a>
-              )}
-            </div>
+    <article className={`rounded-lg border border-white/[0.07] border-l-2 ${accent} bg-bg-card px-3.5 py-2.5 flex items-center gap-3 hover:border-white/[0.18] transition-colors`}>
+      <Avatar src={p.avatar_url} fallback={p.handle?.[0] ?? '?'} verified={p.verified === 1} />
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-white/90 truncate">@{p.handle}</span>
+          {p.display_name && <span className="text-[12px] text-white/45 truncate hidden sm:inline">{p.display_name}</span>}
+          <PlatformChip platform={p.platform} />
+          <SeverityPill level={p.severity} />
+          <ClassificationPill classification={p.classification} />
+        </div>
+        {secondary && (
+          <p className="text-[11px] text-white/45 mt-0.5 truncate">{secondary}</p>
+        )}
+      </div>
+
+      <div className="flex flex-col items-end gap-0.5 flex-shrink-0 pl-2">
+        {p.impersonation_score > 0 && (
+          <div className="text-right leading-none">
+            <span className={`text-lg font-bold tabular-nums ${p.impersonation_score >= 0.7 ? 'text-sev-critical' : 'text-amber'}`}>
+              {Math.round(p.impersonation_score * 100)}%
+            </span>
+            <div className="text-[8px] uppercase tracking-widest font-mono text-white/35 mt-0.5">match</div>
           </div>
+        )}
+        <div className="flex items-center gap-2 mt-0.5">
+          {p.followers_count !== null && (
+            <span className="text-[10px] font-mono text-white/40">{formatFollowers(p.followers_count)}</span>
+          )}
+          {p.profile_url && (
+            <a
+              href={p.profile_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber hover:underline"
+            >
+              <ExternalLink size={10} /> open
+            </a>
+          )}
         </div>
       </div>
     </article>
