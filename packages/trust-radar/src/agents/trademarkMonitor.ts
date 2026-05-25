@@ -29,7 +29,7 @@ export const trademarkMonitorAgent: AgentModule = {
   outputs: [{ type: "diagnostic" }],
   status: "active",
   category: "intelligence",
-  pipelinePosition: 19,
+  pipelinePosition: 39,
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const stats = await runTrademarkScanBatch(ctx.env);

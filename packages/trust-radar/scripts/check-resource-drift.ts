@@ -109,6 +109,7 @@ const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
   social_ai_assessor: "social-ai-assessor",
   social_discovery: "socialDiscovery",
   social_monitor: "socialMonitor",
+  trademark_monitor: "trademarkMonitor",
   url_scan: "url-scan",
 };
 

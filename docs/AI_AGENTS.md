@@ -407,6 +407,7 @@ These cron-driven scanners feed the threat mesh. Each delegates to a scanner mod
 | **Outrider** (`social_discovery`) | Every 6h | Discovers brand-owned social handles before Mockingbird monitors them |
 | **Marshal** (`app_store_monitor`) | Every 6h | iOS App Store impersonation scanner — bundle-ID + name similarity |
 | **Sounder** (`dark_web_monitor`) | Every 6h | Pastebin / breach-archive monitoring for brand mentions |
+| **Herald** (`trademark_monitor`) | Hourly tick | Phase 1 trademark monitoring — seeds brand marks + unifies wordmark misuse across social / app-store / domain signals (no external cost). See docs/TRADEMARK_MONITORING.md |
 | **Recon** (`auto_seeder`) | Weekly (Sun 05:07 UTC) | Plants spam-trap addresses into harvester channels and tracks per-location yield |
 | **Lookalike Scanner** (`lookalike_scanner`) | Hourly | Cron-driven scanner — DNS / HTTP / MX checks + Haiku assessment of newly-registered typosquat candidates |
 | **Enricher** (`enricher`) | Hourly | Domain geo, brand logo / HQ, brand sector / RDAP enrichment — runs every hourly tick |
