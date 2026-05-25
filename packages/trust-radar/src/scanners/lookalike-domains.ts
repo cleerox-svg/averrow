@@ -59,6 +59,44 @@ export async function generateAndStoreLookalikes(
   return inserted;
 }
 
+/**
+ * Seed lookalike candidates for tenant-monitored brands that don't have
+ * any yet. Without this, generateAndStoreLookalikes only ran via the
+ * on-demand API handler, so the cron checker (checkLookalikeBatch) had an
+ * empty candidate pool for nearly every brand and produced no findings.
+ *
+ * Generation is cheap (permutation inserts only — DNS/AI happens later in
+ * the throttled checker), and org_brands is a small set, so we seed up to
+ * `brandLimit` un-seeded brands per tick. Returns brands + candidates seeded.
+ */
+export async function seedLookalikesForOrgBrands(
+  env: Env,
+  brandLimit = 10,
+): Promise<{ brands_seeded: number; candidates_created: number }> {
+  const brands = await env.DB.prepare(
+    `SELECT DISTINCT b.id AS brand_id, b.canonical_domain AS domain
+     FROM brands b
+     JOIN org_brands ob ON ob.brand_id = b.id
+     WHERE b.canonical_domain IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM lookalike_domains ld WHERE ld.brand_id = b.id)
+     LIMIT ?`,
+  ).bind(brandLimit).all<{ brand_id: string; domain: string }>();
+
+  let brandsSeeded = 0;
+  let candidatesCreated = 0;
+  for (const b of brands.results) {
+    const created = await generateAndStoreLookalikes(env, b.brand_id, b.domain);
+    candidatesCreated += created;
+    brandsSeeded++;
+  }
+
+  if (brandsSeeded > 0) {
+    logger.info('lookalike_seed_org_brands', { brands_seeded: brandsSeeded, candidates_created: candidatesCreated });
+  }
+
+  return { brands_seeded: brandsSeeded, candidates_created: candidatesCreated };
+}
+
 // ─── Batch Check (called by cron) ────────────────────────────────
 
 /**

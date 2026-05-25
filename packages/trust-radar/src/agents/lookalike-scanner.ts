@@ -17,7 +17,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
-import { checkLookalikeBatch } from "../scanners/lookalike-domains";
+import { checkLookalikeBatch, seedLookalikesForOrgBrands } from "../scanners/lookalike-domains";
 
 export const lookalikeScannerAgent: AgentModule = {
   name: "lookalike_scanner",
@@ -41,6 +41,28 @@ export const lookalikeScannerAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const agentOutputs: AgentOutputEntry[] = [];
     let scanError: string | null = null;
+
+    // Seed candidates for tenant-monitored brands that have none yet, so the
+    // checker below has a non-empty pool. Best-effort — a seeding failure must
+    // not block the check pass.
+    try {
+      const seed = await seedLookalikesForOrgBrands(ctx.env);
+      if (seed.brands_seeded > 0) {
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `Seeded lookalike candidates for ${seed.brands_seeded} brand(s): ${seed.candidates_created} new permutations`,
+          severity: "info",
+          details: seed,
+        });
+      }
+    } catch (err) {
+      agentOutputs.push({
+        type: "diagnostic",
+        summary: `lookalike seed step failed: ${err instanceof Error ? err.message : String(err)}`,
+        severity: "low",
+        details: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
 
     try {
       await checkLookalikeBatch(ctx.env);
