@@ -58,6 +58,7 @@
 //   keeps Navigator's primary mission (dns-backfill) unblocked.
 
 import type { Env } from '../types';
+import { cachedCount } from './cached-count';
 
 const CURSOR_KEY = 'reconciler:dns_queue:cursor';
 const CHUNK_SIZE = 50;
@@ -184,12 +185,21 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     const toInsert = [...uniqueByDomain.values()];
 
     // ── 4. Read current queue size — cheap, observability only ──
+    // Cached on the shared `count.dns_queue.size` key (also read by
+    // Flight Control) so this 5-min tick stops full-scanning the whole
+    // ~35K-row dns_queue every run. PR-BI's read-budget math accounted
+    // for the cursor-paginated candidate read but missed this COUNT(*),
+    // which alone was ~288 ticks × ~35K rows ≈ 10M reads/day on
+    // DNS_QUEUE_DB. queueSize is only logged for drift telemetry, so a
+    // 600s TTL (>tick interval, so alternate ticks hit) is harmless.
     let queueSize = 0;
     try {
-      const r = await env.DNS_QUEUE_DB.prepare(
-        'SELECT COUNT(*) AS n FROM dns_queue'
-      ).first<{ n: number }>();
-      queueSize = r?.n ?? 0;
+      queueSize = await cachedCount(env, 'count.dns_queue.size', 600, async () => {
+        const r = await env.DNS_QUEUE_DB!.prepare(
+          'SELECT COUNT(*) AS n FROM dns_queue'
+        ).first<{ n: number }>();
+        return r?.n ?? 0;
+      });
     } catch {
       // Non-fatal — leave at 0, surface via lastError if other
       // queries fail too.
