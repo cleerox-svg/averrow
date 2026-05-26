@@ -41,6 +41,8 @@ export interface ThreatRow {
   campaign_id?: string | null;
   ioc_value?: string | null;
   severity?: "critical" | "high" | "medium" | "low" | "info" | null;
+  technique?: string | null;        // finer-grained TTP, e.g. 'device_code_phishing' (migration 0205)
+  named_threat_id?: string | null;  // link to named_threats catalog (migration 0204)
 }
 
 /** Helper to generate a deterministic ID from source + IOC to prevent duplicates */

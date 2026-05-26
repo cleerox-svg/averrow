@@ -65,6 +65,8 @@ export type NotificationEventKey =
   // ── PR-AW — abuse mailbox family ──
   | 'abuse_mailbox_verdict'
   | 'abuse_mailbox_flood_detected'
+  // ── named-threat catalog — identified a known threat by name ──
+  | 'named_threat_identified'
   // ── N6c — digest envelope (§12.3) ──
   | 'notification_digest';
 
@@ -425,6 +427,17 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Abuse Mailbox Flood Detected',
     description: 'Per-sender or per-domain rate-limit triggered on the public abuse aliases',
     dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  // Fires when an incoming signal (abuse-mailbox lure) matches a known
+  // named threat in the catalog — e.g. "Kali365". Super_admin audience;
+  // dedup is per (named_threat|day) via group_key.
+  {
+    key: 'named_threat_identified',
+    label: 'Named Threat Identified',
+    description: 'An incoming indicator matched a known named threat (PhaaS kit, malware family, campaign)',
+    dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,
   },

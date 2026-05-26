@@ -78,6 +78,12 @@ import { talos_ips } from "./talos_ips";
 // parse layers.
 import { taxii } from "./taxii";
 
+// ─── Advisory ingestion → named-threat catalog ──────────────────
+// CISA / CISA-FBI joint advisories. Extracts named threats (PhaaS
+// kits, malware families, campaigns) into named_threats so incoming
+// indicators can be identified by name. See feeds/advisories.ts.
+import { advisories } from "./advisories";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -125,6 +131,9 @@ export const feedModules: Record<string, FeedModule> = {
   // STIX/TAXII collections — all dispatch to the same generic
   // module; the per-collection params live in feed_configs columns.
   taxii_otx: taxii,
+
+  // Advisory ingestion — populates the named-threat catalog.
+  advisories,
 };
 
 /**

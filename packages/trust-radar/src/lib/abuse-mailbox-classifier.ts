@@ -28,6 +28,11 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../types';
 import { callAnthropicJSON, AnthropicError } from './anthropic';
 import { HOT_PATH_HAIKU } from './ai-models';
+import { detectDeviceCodePhishing } from './device-code-detector';
+import {
+  loadNamedThreatCatalog, matchNamedThreat, recordNamedThreatMatch,
+  type NamedThreatEntry,
+} from './named-threat-matcher';
 
 // ─── Public types ────────────────────────────────────────────────
 
@@ -374,6 +379,16 @@ export async function runAbuseClassifierBackfill(
   );
   const brandMap = await loadBrandsForClassifier(env.DB, brandIds);
 
+  // Load the named-threat catalog ONCE for the batch (small table, one
+  // indexed read) so the per-message matcher stays pure + I/O-free.
+  // Degrade silently if the table isn't present yet (pre-migration 0204).
+  let namedThreatCatalog: NamedThreatEntry[] = [];
+  try {
+    namedThreatCatalog = await loadNamedThreatCatalog(env);
+  } catch (err) {
+    console.warn('[abuse-mailbox-classifier] named-threat catalog load failed:', err);
+  }
+
   const result: ClassifyBackfillResult = {
     scanned:    rows.results.length,
     classified: 0,
@@ -497,6 +512,75 @@ export async function runAbuseClassifierBackfill(
       m.id,
     ).run();
 
+    // ─── Kali365 detection: device-code technique + named threat ──
+    //
+    // Runs on EVERY classified message regardless of the Haiku verdict.
+    // Device-code phishing (Kali365 et al.) is engineered to defeat the
+    // domain/lookalike detection the rest of the platform relies on —
+    // the victim visits the REAL microsoft.com/devicelogin — so the only
+    // detectable artifact is the lure CONTENT. Both detectors are pure.
+    const deviceCode = detectDeviceCodePhishing({
+      subject: m.original_subject,
+      body:    m.original_body_snippet,
+      urls:    urlList ?? [],
+    });
+    const namedMatch = matchNamedThreat(namedThreatCatalog, {
+      subject:   m.original_subject,
+      body:      m.original_body_snippet,
+      urls:      urlList ?? [],
+      ips:       m.sender_ip ? [m.sender_ip] : [],
+      technique: deviceCode.technique,
+    });
+    const detectedTechnique = deviceCode.detected ? deviceCode.technique : (namedMatch?.technique ?? null);
+    const namedThreatId   = namedMatch?.id ?? null;
+    const namedThreatName = namedMatch?.name ?? null;
+
+    if (detectedTechnique || namedThreatId) {
+      try {
+        await env.DB.prepare(
+          `UPDATE abuse_inbox_messages
+           SET detected_technique = ?, named_threat_id = ?, named_threat_name = ?
+           WHERE id = ?`,
+        ).bind(detectedTechnique, namedThreatId, namedThreatName, m.id).run();
+      } catch (err) {
+        // Non-fatal — e.g. migration 0206 not yet applied. Detection
+        // shouldn't break the classification loop.
+        console.warn(`[abuse-mailbox-classifier] technique stamp failed for ${m.id}:`, err);
+      }
+    }
+    if (namedThreatId) {
+      try { await recordNamedThreatMatch(env, namedThreatId); } catch { /* telemetry only */ }
+      // High-signal operator alert: we identified a named threat by name.
+      // Deduped per named threat per day so a campaign doesn't flood.
+      try {
+        const { createNotification } = await import("./notifications");
+        const today = new Date().toISOString().slice(0, 10);
+        await createNotification(env, {
+          type: "named_threat_identified",
+          severity: namedMatch?.severity === "critical" ? "high" : "medium",
+          title: `Named threat identified: ${namedThreatName}`,
+          message: `Abuse-mailbox submission matched ${namedThreatName}` +
+            (detectedTechnique ? ` (${detectedTechnique.replace(/_/g, " ")})` : "") +
+            `. Verdict: ${verdict.classification} @ ${verdict.confidence}%.`,
+          link: "/admin/abuse-mailbox",
+          audience: "super_admin",
+          groupKey: `named_threat_identified:${namedThreatId}:${today}`,
+          reasonText: "An incoming abuse-mailbox report matched a known named threat in the catalog.",
+          recommendedAction: "Review the captured message and any promoted indicators in the Abuse Mailbox.",
+          metadata: {
+            message_id: m.id,
+            named_threat_id: namedThreatId,
+            named_threat_name: namedThreatName,
+            technique: detectedTechnique,
+            device_code_score: deviceCode.score,
+            device_code_signals: deviceCode.signals,
+          },
+        });
+      } catch (err) {
+        console.warn(`[abuse-mailbox-classifier] named-threat notification failed for ${m.id}:`, err);
+      }
+    }
+
     // ─── PR-AX: promote to platform threats ─────────────────────
     //
     // Runs BEFORE the determination email so the email's "What we
@@ -508,21 +592,42 @@ export async function runAbuseClassifierBackfill(
     // id from threatId(source, type, value) keeps repeated reports
     // idempotent. Stamps the new IDs back to the row so the UI can
     // show "promoted to platform" with deep-links.
+    //
+    // Kali365 override: a high-specificity device-code signature
+    // (endpoint + code cue, score >= 0.8) lets a phishing/malware verdict
+    // promote even when Haiku UNDER-RATED its severity (e.g. landed it at
+    // MEDIUM). We deliberately do NOT promote when Haiku said benign/spam
+    // — promoting a "phishing" threat while the determination email tells
+    // the user "benign" would be a contradiction. For that rarer case the
+    // named_threat_identified notification above surfaces it to an
+    // operator for human review instead.
+    // Legitimate Microsoft endpoints (deviceCode.legitEndpointUrls) are
+    // excluded from promotion — we never flag microsoft.com as malicious.
     let promotedIds: string[] = [];
-    if (
-      (verdict.classification === "phishing" || verdict.classification === "malware") &&
-      (severity === "HIGH" || severity === "CRITICAL") &&
-      urlList && urlList.length > 0
-    ) {
+    const verdictIsPhishingOrMalware =
+      verdict.classification === "phishing" || verdict.classification === "malware";
+    const verdictQualifies =
+      verdictIsPhishingOrMalware && (severity === "HIGH" || severity === "CRITICAL");
+    const deviceCodeQualifies =
+      deviceCode.detected && deviceCode.score >= 0.8 && verdictIsPhishingOrMalware;
+    if ((verdictQualifies || deviceCodeQualifies) && urlList && urlList.length > 0) {
       try {
         const { promoteToThreats } = await import("./abuse-mailbox-iocs");
+        const promoteClassification: "phishing" | "malware" =
+          verdict.classification === "malware" ? "malware" : "phishing";
+        const promoteConfidence = verdictQualifies
+          ? verdict.confidence
+          : Math.max(verdict.confidence, Math.round(deviceCode.score * 100));
         promotedIds = await promoteToThreats(env, {
           urls: urlList,
-          classification: verdict.classification,
-          confidence:     verdict.confidence,
+          classification: promoteClassification,
+          confidence:     promoteConfidence,
           brandId:        m.brand_id,
           senderIp:       m.sender_ip,
           messageId:      m.id,
+          technique:      detectedTechnique,
+          namedThreatId:  namedThreatId,
+          excludeUrls:    deviceCode.legitEndpointUrls,
         });
         if (promotedIds.length > 0) {
           await env.DB.prepare(

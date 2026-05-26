@@ -277,6 +277,14 @@ export interface PromoteOptions {
   brandId:        string | null;
   senderIp:       string | null;
   messageId:      string;
+  // PR — Kali365 detection. When a device-code phishing technique is
+  // detected and/or a named threat is matched, label the promoted
+  // threats. `excludeUrls` lists legitimate endpoints (e.g. the real
+  // microsoft.com/devicelogin a device-code lure steers victims to) that
+  // must NEVER be promoted as malicious.
+  technique?:     string | null;
+  namedThreatId?: string | null;
+  excludeUrls?:   ReadonlyArray<string>;
 }
 
 /**
@@ -299,11 +307,16 @@ export async function promoteToThreats(
   const severity: NonNullable<ThreatRow["severity"]> =
     opts.confidence >= 80 ? "high" : "medium";
   const ids: string[] = [];
+  // Never promote a legitimate endpoint (e.g. the real
+  // microsoft.com/devicelogin a device-code lure points at). Flagging
+  // microsoft.com itself as malicious would be a serious false positive.
+  const exclude = new Set((opts.excludeUrls ?? []).map((u) => u.toLowerCase()));
   // Cap the same way correlateUrls does. A wildly URL-heavy submission
   // shouldn't be able to mass-create threats either.
   const capped = opts.urls.slice(0, 20);
   for (const u of capped) {
     if (!u.url) continue;
+    if (exclude.has(u.url.toLowerCase())) continue;
     const id = threatId("abuse_mailbox", "url", u.url);
     const row: ThreatRow = {
       id,
@@ -317,9 +330,22 @@ export async function promoteToThreats(
       confidence_score: opts.confidence,
       ioc_value:        u.url,
       severity,
+      technique:        opts.technique ?? null,
+      named_threat_id:  opts.namedThreatId ?? null,
     };
     try {
       await insertThreat(env.DB, row);
+      // insertThreat is INSERT OR IGNORE — a repeat report of the same
+      // URL won't overwrite. Backfill the technique / named-threat label
+      // onto an existing row so naming sticks even on dedup.
+      if (opts.technique || opts.namedThreatId) {
+        await env.DB.prepare(
+          `UPDATE threats
+           SET technique = COALESCE(technique, ?),
+               named_threat_id = COALESCE(named_threat_id, ?)
+           WHERE id = ?`,
+        ).bind(opts.technique ?? null, opts.namedThreatId ?? null, id).run();
+      }
       ids.push(id);
     } catch (err) {
       console.warn(
