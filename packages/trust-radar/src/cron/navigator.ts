@@ -28,7 +28,7 @@ import {
   checkAndFireIngestionMilestones,
 } from '../lib/platform-milestones';
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
-import { reconcileDnsQueue, type ReconcileResult } from '../lib/dns-queue-reconciler';
+import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
@@ -203,6 +203,23 @@ async function runNavigatorImpl(
       // errors. This try/catch ensures any escape doesn't degrade
       // Navigator's overall status.
       console.error('[navigator] dns-queue-reconcile escape:', err);
+    }
+
+    // ── 2b-2. DNS queue historical backfill (one-time tail drain) ──
+    // The forward reconciler above only enqueues threats newer than its
+    // cursor. This drains the pre-cursor backlog (~63K unresolved-DNS
+    // threats found outside the queue in the 2026-05-27 audit) one
+    // bounded page per tick, then self-terminates via a KV done flag
+    // (zero D1 cost thereafter). Never throws.
+    try {
+      const bf = await backfillDnsQueueHistory(env);
+      if (!bf.skipped && bf.scanned > 0) {
+        console.log(
+          `[navigator] dns-queue-backfill: scanned=${bf.scanned} enqueued=${bf.enqueued} cursor→${bf.cursorAfter ?? 'unchanged'} done=${bf.done} duration=${bf.durationMs}ms`,
+        );
+      }
+    } catch (err) {
+      console.error('[navigator] dns-queue-backfill escape:', err);
     }
 
     // ── 2c. DNS queue reaper (PR-BI, daily) ──

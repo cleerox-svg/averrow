@@ -437,9 +437,21 @@ async function autoPauseFeed(
   // OTX cycling through pause → recover → fail → pause every 4h
   // because last_failure aged out of the freshness window.
   const isAuthError = /\b(401|403)\b/.test(lastError);
+  // Permanent upstream death (URL gone, repo archived) is not transient
+  // either — same rationale as auth errors. The 4h auto-recovery sweep
+  // only revives `auto:consecutive_failures`, so routing a dead upstream
+  // to its own reason keeps it paused until an operator fixes the source.
+  // Symptom this fixes: c2_tracker / phishtank cycling pause → recover →
+  // fail every 4h on a 404 / archived upstream, spamming feed_health
+  // notifications.
+  const isPermanentError =
+    /\b(404|410)\b/.test(lastError) ||
+    /upstream archived|no longer publishes|\bGone\b/i.test(lastError);
   const pausedReason = isAuthError
     ? 'auto:auth_failure'
-    : 'auto:consecutive_failures';
+    : isPermanentError
+      ? 'auto:upstream_dead'
+      : 'auto:consecutive_failures';
 
   await env.DB.prepare(
     `UPDATE feed_configs

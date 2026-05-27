@@ -1320,6 +1320,14 @@ async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> 
           trend_direction = excluded.trend_direction,
           trend_pct = excluded.trend_pct,
           computed_at = excluded.computed_at
+        WHERE provider_threat_stats.threat_count   IS NOT excluded.threat_count
+           OR provider_threat_stats.critical_count IS NOT excluded.critical_count
+           OR provider_threat_stats.high_count     IS NOT excluded.high_count
+           OR provider_threat_stats.phishing_count IS NOT excluded.phishing_count
+           OR provider_threat_stats.malware_count  IS NOT excluded.malware_count
+           OR provider_threat_stats.top_countries  IS NOT excluded.top_countries
+           OR provider_threat_stats.trend_direction IS NOT excluded.trend_direction
+           OR provider_threat_stats.trend_pct      IS NOT excluded.trend_pct
       `).bind(
         id, providerName, period.key,
         row.threat_count, row.critical_count, row.high_count,

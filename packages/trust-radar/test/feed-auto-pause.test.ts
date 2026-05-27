@@ -274,6 +274,34 @@ describe("runFeed auto-pause", () => {
     expect(pauseCall!.bindArgs[0]).toBe("auto:auth_failure");
   });
 
+  it("permanent upstream death (404 / archived) routes to paused_reason='auto:upstream_dead'", async () => {
+    // c2_tracker / phishtank failure mode: a dead/archived upstream
+    // should pause STICKY (auto:upstream_dead is not auto-recovered),
+    // not as auto:consecutive_failures which the 4h sweep would revive
+    // into an endless pause→recover→fail loop.
+    for (const errMsg of [
+      "c2_tracker upstream archived (montysecurity/C2-Tracker no longer publishes data/)",
+      "PhishTank HTTP 404: not found",
+    ]) {
+      const state: MockState = {
+        feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },
+        feed_status: { test_feed: { health_status: "degraded", consecutive_failures: 4 } },
+        system_config: { feed_consecutive_failure_threshold: "5" },
+      };
+      const { db, calls } = makeMockDb(state);
+      const config = makeConfig();
+      const mod = makeFailingFeedModule(errMsg);
+
+      await expect(runFeed(makeEnv(db), config, mod)).rejects.toThrow();
+
+      expect(state.feed_configs["test_feed"]!.enabled).toBe(0);
+      expect(state.feed_configs["test_feed"]!.paused_reason).toBe("auto:upstream_dead");
+
+      const pauseCall = calls.find((c) => /UPDATE feed_configs\s+SET enabled = 0/i.test(c.sql));
+      expect(pauseCall!.bindArgs[0]).toBe("auto:upstream_dead");
+    }
+  });
+
   it("fires exactly one critical notification on the auto-pause transition", async () => {
     const state: MockState = {
       feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },

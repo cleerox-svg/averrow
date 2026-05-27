@@ -87,6 +87,18 @@ export interface PlatformGeoipRefreshStalledVars {
   refresh_log_id: string;
   minutes_running: number;
   source_version: string | null;
+  /**
+   * Discriminates the two trigger paths that share this template:
+   *  - 'stuck' (default): a geo_ip_refresh_log row is still in 'running'
+   *    state past the stuck threshold — the import workflow hung.
+   *  - 'stale': the LAST SUCCESSFUL refresh is older than the staleness
+   *    threshold. The referenced row SUCCEEDED; nothing is "stuck". Using
+   *    the stuck wording here produced confusing alerts that named a
+   *    completed workflow as stuck-running (platform audit 2026-05-27).
+   */
+  kind?: 'stuck' | 'stale';
+  /** Days since last successful refresh — only set when kind === 'stale'. */
+  stale_days?: number;
 }
 
 export interface PlatformWorkflowDispatchSilentVars {
@@ -370,6 +382,30 @@ export function renderPlatformFeedSilent(v: PlatformFeedSilentVars): RenderedTem
  */
 export function renderPlatformGeoipRefreshStalled(v: PlatformGeoipRefreshStalledVars): RenderedTemplate {
   const versionSuffix = v.source_version ? ` (release ${v.source_version})` : '';
+
+  // Stale-data path: the referenced refresh SUCCEEDED — it's just old.
+  // Don't call a completed workflow "stuck"; report the staleness plainly.
+  if (v.kind === 'stale') {
+    const days = v.stale_days ?? Math.round(v.minutes_running / (24 * 60));
+    return {
+      title: `GeoIP data stale — last refresh ${days}d ago`,
+      message:
+        `The most recent successful GeoIP refresh (${v.refresh_log_id}${versionSuffix}) completed ` +
+        `${days} days ago, past the ${days >= 7 ? '7' : 'staleness'}-day threshold. The import itself is ` +
+        `not stuck — subsequent scheduled refreshes have failed or not run, so the GeoLite2 ranges are aging.`,
+      reason_text: `Platform alert — operational only.`,
+      recommended_action:
+        `Check geo_ip_refresh_log for failed attempts since this success. Trigger a manual refresh via ` +
+        `the Force button on the GeoIP Pipeline tile or POST /api/admin/geoip-refresh with { forceReload: true }.`,
+      link: PLATFORM_AGENTS_LINK,
+      // Day-scoped so a persistently-stale DB rolls up to one alert/day
+      // instead of one per id (which would re-fire only on a new success).
+      group_key: `platform_geoip_refresh_stalled:stale:${todayKey()}`,
+      audience: 'super_admin',
+      severity: 'high',
+    };
+  }
+
   return {
     title: `GeoIP refresh stalled (${v.minutes_running} min)`,
     message:

@@ -300,8 +300,11 @@ export async function enrichThreatsGeo(db: D1Database, kv?: KVNamespace, token?:
   for (const row of rows.results) {
     if (isPrivateIP(row.ip_address)) {
       try {
+        // Guard on country_code IS NULL (mirrors the 'XX' no-result path
+        // below) so an already-marked private IP isn't rewritten on a
+        // re-pass — 'PRIV' is terminal (Phase 2 write-budget cut).
         await db.prepare(
-          "UPDATE threats SET country_code = 'PRIV' WHERE id = ?"
+          "UPDATE threats SET country_code = 'PRIV' WHERE id = ? AND country_code IS NULL"
         ).bind(row.id).run();
         result.skippedPrivate++;
       } catch (err) {

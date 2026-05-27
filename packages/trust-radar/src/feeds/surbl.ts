@@ -182,10 +182,15 @@ export const surbl: FeedModule = {
 
           itemsNew++;
         } else {
-          // Mark as checked but clean
+          // Mark as checked but clean. Guard on surbl_checked = 0 so we
+          // don't rewrite the (often many) sibling threats that share this
+          // domain and were already flagged checked on a prior pass —
+          // surbl_checked = 1 is terminal, so re-writing them is pure
+          // wasted D1 write volume (Phase 2 write-budget cut).
           await env.DB.prepare(`
             UPDATE threats SET surbl_checked = 1
             WHERE malicious_domain = ?
+              AND surbl_checked = 0
           `).bind(row.malicious_domain).run();
 
           itemsDuplicate++; // "duplicate" in the sense of no new finding

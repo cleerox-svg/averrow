@@ -326,6 +326,11 @@ export async function computeBrandScoresBatch(env: Env): Promise<BatchScoreSumma
           brand_health_grade = excluded.brand_health_grade,
           health_inputs_json = excluded.health_inputs_json,
           exposure_inputs_json = excluded.exposure_inputs_json
+        WHERE brand_score_snapshots.brand_health_score   IS NOT excluded.brand_health_score
+           OR brand_score_snapshots.brand_exposure_score IS NOT excluded.brand_exposure_score
+           OR brand_score_snapshots.brand_health_grade   IS NOT excluded.brand_health_grade
+           OR brand_score_snapshots.health_inputs_json   IS NOT excluded.health_inputs_json
+           OR brand_score_snapshots.exposure_inputs_json IS NOT excluded.exposure_inputs_json
       `).bind(
         id, today,
         result.brand_health_score ?? null,

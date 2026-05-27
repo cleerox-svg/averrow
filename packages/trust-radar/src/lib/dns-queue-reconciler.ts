@@ -64,6 +64,25 @@ const CURSOR_KEY = 'reconciler:dns_queue:cursor';
 const CHUNK_SIZE = 50;
 const READ_LIMIT = 500;
 
+// ── Historical backfill (one-time drain of the pre-cursor tail) ──
+// The forward reconciler only walks created_at >= cursor, so threats
+// that were already old when the cursor architecture went live (PR-BI)
+// — and any that slipped through during outages — never get enqueued.
+// In the 2026-05-27 audit ~63K active, unresolved-DNS threats existed
+// outside the queue (needs_dns ≈ 99K, queue ≈ 36K), keeping the
+// dns_queue parity-drift alert permanently lit and starving those
+// threats of DNS resolution.
+//
+// The backfill walks created_at DESCENDING from a fixed boundary (the
+// forward cursor at init) down through history, a bounded page per
+// tick, INSERT OR IGNORE (the queue PK absorbs any overlap). Because
+// created_at only increases, once a page comes back short the tail is
+// fully drained — we set a done flag and every later tick is a single
+// KV read with zero D1 cost. Self-terminating and idempotent.
+const BACKFILL_CURSOR_KEY = 'reconciler:dns_queue:backfill_cursor';
+const BACKFILL_DONE_KEY = 'reconciler:dns_queue:backfill_done';
+const BACKFILL_LIMIT = 500;
+
 // Bootstrap default — when the cursor KV key is missing (first
 // deploy, or KV got wiped), we start from this many minutes back.
 // 30 min is plenty: previous reconciler runs (set-diff variant)
@@ -283,5 +302,140 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
       batchesFailed,
       lastError: lastError ?? (err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
     };
+  }
+}
+
+export interface BackfillResult {
+  skipped: boolean;
+  reason?: string;
+  /** rows_written on the queue side from INSERT OR IGNORE this tick. */
+  enqueued: number;
+  /** Candidate rows pulled from threats this tick (pre-dedupe). */
+  scanned: number;
+  /** Boundary the descending walk advanced to (ISO timestamp), or null. */
+  cursorAfter: string | null;
+  /** True once the historical tail is fully drained. */
+  done: boolean;
+  durationMs: number;
+}
+
+/**
+ * One bounded page of the historical DNS-queue backfill. Walks
+ * threats.created_at DESCENDING from a fixed boundary (the forward
+ * reconciler cursor at init) into history, enqueuing the pre-cursor
+ * tail the forward reconciler can never reach. Self-terminating
+ * (sets a KV done flag) and idempotent (INSERT OR IGNORE). Never
+ * throws — like the reconciler, drift is recoverable next tick.
+ *
+ * Invoked from the Navigator tick right after reconcileDnsQueue.
+ */
+export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult> {
+  const start = Date.now();
+  const base: BackfillResult = {
+    skipped: false, enqueued: 0, scanned: 0, cursorAfter: null, done: false,
+    durationMs: 0,
+  };
+
+  if (!env.DNS_QUEUE_DB) {
+    return { ...base, skipped: true, reason: 'binding_unset', durationMs: Date.now() - start };
+  }
+
+  try {
+    // Done already? One KV read, zero D1 cost — the steady state after
+    // the tail drains.
+    let done: string | null = null;
+    try { done = await env.CACHE.get(BACKFILL_DONE_KEY); } catch { /* treat as not-done */ }
+    if (done) {
+      return { ...base, skipped: true, reason: 'already_done', done: true, durationMs: Date.now() - start };
+    }
+
+    // Boundary cursor: initialize from the forward cursor (so the two
+    // walks meet without a gap), else from "now" (covers all history).
+    let boundary: string | null = null;
+    try { boundary = await env.CACHE.get(BACKFILL_CURSOR_KEY); } catch { /* init below */ }
+    if (!boundary) {
+      let forward: string | null = null;
+      try { forward = await env.CACHE.get(CURSOR_KEY); } catch { /* fall through */ }
+      boundary = forward ?? new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    }
+
+    // Same candidate predicate as the forward reconciler, walking DOWN.
+    const res = await env.DB.prepare(`
+      SELECT malicious_domain, source_feed, created_at
+      FROM threats INDEXED BY idx_threats_status_created
+      WHERE status = 'active'
+        AND created_at < ?
+        AND ip_address IS NULL
+        AND malicious_domain IS NOT NULL
+        AND malicious_domain != ''
+        AND malicious_domain NOT LIKE '*%'
+        AND malicious_domain LIKE '%.%'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).bind(boundary, BACKFILL_LIMIT).all<{
+      malicious_domain: string;
+      source_feed: string | null;
+      created_at: string;
+    }>();
+
+    const rows = res.results;
+    const scanned = rows.length;
+
+    // A short page means we've reached the oldest candidate — the tail
+    // is drained. Mark done so later ticks short-circuit on the KV read.
+    if (scanned === 0) {
+      try { await env.CACHE.put(BACKFILL_DONE_KEY, '1', { expirationTtl: 86_400 * 30 }); } catch { /* non-fatal */ }
+      return { ...base, scanned: 0, done: true, durationMs: Date.now() - start };
+    }
+
+    // Dedupe by domain (same DB-batch safety rationale as the reconciler)
+    // and track the minimum created_at to advance the descending cursor.
+    const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
+    let minCreatedAt = boundary;
+    for (const r of rows) {
+      if (!uniqueByDomain.has(r.malicious_domain)) uniqueByDomain.set(r.malicious_domain, r);
+      if (r.created_at < minCreatedAt) minCreatedAt = r.created_at;
+    }
+    const toInsert = [...uniqueByDomain.values()];
+
+    let enqueued = 0;
+    for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+      const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+      const stmts = chunk.map((c) =>
+        env.DNS_QUEUE_DB!.prepare(`
+          INSERT OR IGNORE INTO dns_queue
+            (malicious_domain, enrichment_attempts, attempted_resolve_at, source_feed, enqueued_at)
+          VALUES (?, 0, NULL, ?, datetime('now'))
+        `).bind(c.malicious_domain, c.source_feed)
+      );
+      try {
+        const results = await env.DNS_QUEUE_DB.batch(stmts);
+        for (const r of results) enqueued += r.meta?.changes ?? 0;
+      } catch (err) {
+        console.error('[dns-queue-backfill] enqueue batch failed:', err);
+      }
+    }
+
+    // Advance the boundary down past this page. A short page (fewer than
+    // a full read limit) also means the tail is drained → mark done.
+    const reachedEnd = scanned < BACKFILL_LIMIT;
+    try {
+      await env.CACHE.put(BACKFILL_CURSOR_KEY, minCreatedAt, { expirationTtl: 86_400 * 7 });
+      if (reachedEnd) await env.CACHE.put(BACKFILL_DONE_KEY, '1', { expirationTtl: 86_400 * 30 });
+    } catch (err) {
+      console.error('[dns-queue-backfill] cursor write failed:', err);
+    }
+
+    return {
+      skipped: false,
+      enqueued,
+      scanned,
+      cursorAfter: minCreatedAt,
+      done: reachedEnd,
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    console.error('[dns-queue-backfill] fatal:', err);
+    return { ...base, skipped: true, reason: err instanceof Error ? err.message : 'fatal_error', durationMs: Date.now() - start };
   }
 }
