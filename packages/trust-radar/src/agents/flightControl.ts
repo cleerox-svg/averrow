@@ -766,6 +766,7 @@ export const flightControlAgent: AgentModule = {
               FROM threats
               WHERE ip_address IS NULL
                 AND status = 'active'
+                AND dns_exhausted_at IS NULL
                 AND malicious_domain IS NOT NULL
                 AND malicious_domain != ''
                 AND malicious_domain NOT LIKE '*%'

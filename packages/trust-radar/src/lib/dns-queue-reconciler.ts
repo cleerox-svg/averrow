@@ -172,6 +172,7 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
       WHERE status = 'active'
         AND created_at >= ?
         AND ip_address IS NULL
+        AND dns_exhausted_at IS NULL
         AND malicious_domain IS NOT NULL
         AND malicious_domain != ''
         AND malicious_domain NOT LIKE '*%'
@@ -366,6 +367,7 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
       WHERE status = 'active'
         AND created_at < ?
         AND ip_address IS NULL
+        AND dns_exhausted_at IS NULL
         AND malicious_domain IS NOT NULL
         AND malicious_domain != ''
         AND malicious_domain NOT LIKE '*%'

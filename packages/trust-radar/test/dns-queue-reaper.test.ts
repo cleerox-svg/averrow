@@ -23,7 +23,8 @@ import { reapDnsQueue } from "../src/lib/dns-queue-reaper";
 import type { Env } from "../src/types";
 
 interface MakeEnvOpts {
-  queueDomains?: string[];
+  queueDomains?: string[]; // under-cap rows (enrichment_attempts 0)
+  exhaustedDomains?: string[]; // capped rows (enrichment_attempts 8)
   threatsAlive?: string[]; // subset of queueDomains still candidates
   noQueueBinding?: boolean;
   existenceThrows?: boolean;
@@ -32,19 +33,23 @@ interface MakeEnvOpts {
 
 interface Captured {
   selects: { sql: string; binds: unknown[] }[];
+  marks: { sql: string; binds: unknown[] }[];
   deletes: { sql: string; binds: unknown[] }[];
   kvPuts: { key: string; value: string }[];
 }
 
 function makeEnv(opts: MakeEnvOpts = {}): { env: Env; captured: Captured } {
-  const captured: Captured = { selects: [], deletes: [], kvPuts: [] };
+  const captured: Captured = { selects: [], marks: [], deletes: [], kvPuts: [] };
 
   const queueDb = {
     prepare(sql: string) {
-      if (/SELECT\s+malicious_domain\s+FROM\s+dns_queue/i.test(sql)) {
+      if (/SELECT[\s\S]*FROM\s+dns_queue/i.test(sql)) {
         return {
           all: async () => ({
-            results: (opts.queueDomains ?? []).map((d) => ({ malicious_domain: d })),
+            results: [
+              ...(opts.queueDomains ?? []).map((d) => ({ malicious_domain: d, enrichment_attempts: 0 })),
+              ...(opts.exhaustedDomains ?? []).map((d) => ({ malicious_domain: d, enrichment_attempts: 8 })),
+            ],
           }),
         };
       }
@@ -75,6 +80,11 @@ function makeEnv(opts: MakeEnvOpts = {}): { env: Env; captured: Captured } {
               const alive = new Set(opts.threatsAlive ?? []);
               const here = (binds as string[]).filter((d) => alive.has(d));
               return { results: here.map((d) => ({ malicious_domain: d })) };
+            },
+            run: async () => {
+              // The exhausted-mark UPDATE on threats.
+              captured.marks.push({ sql, binds });
+              return { success: true, meta: { changes: binds.length } };
             },
           }),
         };
@@ -164,6 +174,32 @@ describe("reapDnsQueue", () => {
     expect(result.staleRemoved).toBe(0);
     expect(captured.deletes).toHaveLength(0);
     errorSpy.mockRestore();
+  });
+
+  it("marks exhausted (attempts>=8) threats and deletes their queue rows", async () => {
+    // The pre-0209 backlog: rows capped at 8 attempts that never resolved.
+    // The reaper stamps dns_exhausted_at on their threats (so they leave
+    // the candidate set) and removes the queue rows — without touching the
+    // under-cap rows' existence check.
+    const { env, captured } = makeEnv({
+      queueDomains: ["alive.com"],
+      threatsAlive: ["alive.com"],
+      exhaustedDomains: ["dead1.com", "dead2.com"],
+    });
+    const result = await reapDnsQueue(env);
+
+    expect(result.scanned).toBe(3);
+    expect(result.exhaustedMarked).toBe(2);
+    // alive.com is still a candidate → not deleted; the two exhausted
+    // rows are deleted.
+    const deleted = new Set(captured.deletes.flatMap((d) => d.binds as string[]));
+    expect(deleted).toEqual(new Set(["dead1.com", "dead2.com"]));
+    // The mark UPDATE targeted the exhausted domains and stamps dns_exhausted_at.
+    expect(captured.marks).toHaveLength(1);
+    expect(captured.marks[0]!.sql).toMatch(/dns_exhausted_at\s*=\s*datetime\('now'\)/);
+    expect(new Set(captured.marks[0]!.binds as string[])).toEqual(
+      new Set(["dead1.com", "dead2.com"]),
+    );
   });
 
   it("writes KV stamps after a successful run", async () => {

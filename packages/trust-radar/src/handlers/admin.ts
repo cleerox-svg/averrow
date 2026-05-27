@@ -1459,6 +1459,7 @@ export async function handleBackfillDomainGeo(
         FROM threats
         WHERE ip_address IS NULL
           AND status = 'active'
+          AND dns_exhausted_at IS NULL
           AND COALESCE(enrichment_attempts, 0) < 8
           AND malicious_domain IS NOT NULL
           AND malicious_domain != ''

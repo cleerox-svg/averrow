@@ -327,7 +327,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         SUM(CASE WHEN lat IS NOT NULL AND enriched_at >= datetime('now', '-1 hour') THEN 1 ELSE 0 END) AS enriched_last_hour,
         SUM(CASE WHEN lat IS NOT NULL AND enriched_at >= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS enriched_last_24h,
         SUM(CASE WHEN enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL THEN 1 ELSE 0 END) AS stuck_pile,
-        SUM(CASE WHEN ip_address IS NULL AND malicious_domain IS NOT NULL THEN 1 ELSE 0 END) AS needs_dns
+        SUM(CASE WHEN ip_address IS NULL AND dns_exhausted_at IS NULL AND malicious_domain IS NOT NULL THEN 1 ELSE 0 END) AS needs_dns
       FROM threats
     `).first<{
       total_threats: number;

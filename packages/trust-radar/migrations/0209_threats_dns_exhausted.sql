@@ -1,0 +1,22 @@
+-- DNS resolution give-up marker on threats.
+--
+-- Set when a malicious_domain reaches the 8-attempt cap in dns_queue —
+-- either confirmed-dead (all resolvers NXDOMAIN / no A record) or 8
+-- transient DoH failures. Before this column, exhausted domains had
+-- nowhere to record "we gave up": their threats stayed
+-- ip_address IS NULL / status='active' forever, so they kept matching
+-- the DNS candidate predicate. The queue rows (attempts>=8) were
+-- excluded from draining but never removed, and the FC drift metric
+-- (threats-needing-dns vs queue size) could never reach zero — keeping
+-- platform_dns_queue_drift / _stalled permanently lit (29,008 such rows
+-- at the 2026-05-27 audit, 60% of the queue).
+--
+-- With this marker:
+--   - the reconciler / backfill stop re-enqueuing exhausted domains
+--   - dns-backfill marks the threat + deletes the queue row on exhaustion
+--   - the reaper sweeps any already-exhausted queue rows (marks + deletes)
+--   - FC drift + diagnostics needs_dns exclude them, so the metrics clear
+--
+-- NULL = still eligible for resolution. To re-try a domain (e.g. after a
+-- resolver fix), set dns_exhausted_at back to NULL.
+ALTER TABLE threats ADD COLUMN dns_exhausted_at TEXT;

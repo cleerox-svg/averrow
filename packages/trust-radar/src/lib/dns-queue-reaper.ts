@@ -72,8 +72,10 @@ export interface ReaperResult {
   scanned: number;
   /** Rows in threats matching the candidate predicate (subset of scanned). */
   candidatesInThreats: number;
-  /** Rows DELETEd from dns_queue. */
+  /** Rows DELETEd from dns_queue (stale + exhausted). */
   staleRemoved: number;
+  /** Exhausted-cap threats stamped dns_exhausted_at this run. */
+  exhaustedMarked: number;
   /** Negative if rows were removed; positive only in pathological cases. */
   delta: number;
   durationMs: number;
@@ -93,6 +95,7 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
     scanned: 0,
     candidatesInThreats: 0,
     staleRemoved: 0,
+    exhaustedMarked: 0,
     delta: 0,
     durationMs: 0,
     batchesAttempted: 0,
@@ -106,13 +109,26 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
 
   try {
     // ── 1. Read full dns_queue snapshot ──
-    // One full scan per day; the queue is small (~17K rows) so this
-    // is bounded. Indexed by PK on the queue side; ordered scan.
+    // One full scan per day; the queue is small so this is bounded.
+    // We read enrichment_attempts too: rows at the 8-attempt cap are
+    // "exhausted" (confirmed-dead or transiently abandoned). dns-backfill
+    // marks + drains them in real time on the tick they cross the cap,
+    // but it can never re-select an already-capped row (its SELECT filters
+    // attempts < 8), so any pre-existing backlog can only be cleared here.
+    // Exhausted rows get their threat marked dns_exhausted_at (step 2a) and
+    // the queue row removed (step 3). Rows under the cap go through the
+    // normal still-a-candidate existence check.
     const queueRes = await env.DNS_QUEUE_DB.prepare(
-      'SELECT malicious_domain FROM dns_queue ORDER BY malicious_domain',
-    ).all<{ malicious_domain: string }>();
-    const queueDomains = queueRes.results.map((r) => r.malicious_domain);
-    const scanned = queueDomains.length;
+      'SELECT malicious_domain, enrichment_attempts FROM dns_queue ORDER BY malicious_domain',
+    ).all<{ malicious_domain: string; enrichment_attempts: number }>();
+    const allRows = queueRes.results;
+    const scanned = allRows.length;
+    const exhaustedDomains = allRows
+      .filter((r) => (r.enrichment_attempts ?? 0) >= 8)
+      .map((r) => r.malicious_domain);
+    const queueDomains = allRows
+      .filter((r) => (r.enrichment_attempts ?? 0) < 8)
+      .map((r) => r.malicious_domain);
 
     if (scanned === 0) {
       return {
@@ -157,6 +173,7 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
            WHERE malicious_domain IN (${placeholders})
              AND status = 'active'
              AND ip_address IS NULL
+             AND dns_exhausted_at IS NULL
              AND malicious_domain IS NOT NULL
              AND malicious_domain != ''
              AND malicious_domain NOT LIKE '*%'
@@ -177,17 +194,57 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
     }
 
     const candidatesInThreats = matched.size;
-    const stale = queueDomains.filter((d) => !matched.has(d));
 
-    // ── 3. DELETE stale rows in chunks ──
+    // ── 2a. Mark exhausted threats (attempts >= 8) ──
+    // These domains hit the resolution cap (confirmed-dead or 8 transient
+    // failures). Stamp dns_exhausted_at on their still-active, unresolved
+    // threats so they leave the DNS candidate set — the reconciler,
+    // backfill, FC drift count, and diagnostics all filter
+    // dns_exhausted_at IS NULL, so they stop inflating the drift metric
+    // and never get re-enqueued. The queue rows are removed in step 3.
+    // Idempotent: the dns_exhausted_at IS NULL guard makes already-marked
+    // rows free, and once a queue row is deleted it never reappears here.
+    let exhaustedMarked = 0;
+    for (let i = 0; i < exhaustedDomains.length; i += DELETE_CHUNK_SIZE) {
+      if (Date.now() - start > REAPER_SOFT_CAP_MS) {
+        softCapHit = true;
+        console.warn(`[dns-queue-reaper] soft-cap hit at mark chunk ${i / DELETE_CHUNK_SIZE}; bailing`);
+        break;
+      }
+      const chunk = exhaustedDomains.slice(i, i + DELETE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      batchesAttempted++;
+      try {
+        await env.DB.prepare(`
+          UPDATE threats
+             SET dns_exhausted_at = datetime('now')
+           WHERE malicious_domain IN (${placeholders})
+             AND status = 'active'
+             AND ip_address IS NULL
+             AND dns_exhausted_at IS NULL
+        `).bind(...chunk).run();
+        exhaustedMarked += chunk.length;
+      } catch (err) {
+        batchesFailed++;
+        if (!lastError) {
+          lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        }
+        console.error('[dns-queue-reaper] exhausted-mark batch failed:', err);
+      }
+    }
+
+    // ── 3. DELETE stale + exhausted rows in chunks ──
+    // stale = under-cap rows whose threat is no longer a candidate;
+    // exhausted = capped rows marked above. Both leave the queue.
+    const toDelete = [...queueDomains.filter((d) => !matched.has(d)), ...exhaustedDomains];
     let staleRemoved = 0;
-    for (let i = 0; i < stale.length; i += DELETE_CHUNK_SIZE) {
+    for (let i = 0; i < toDelete.length; i += DELETE_CHUNK_SIZE) {
       if (Date.now() - start > REAPER_SOFT_CAP_MS) {
         softCapHit = true;
         console.warn(`[dns-queue-reaper] soft-cap hit at delete chunk ${i / DELETE_CHUNK_SIZE}; bailing`);
         break;
       }
-      const chunk = stale.slice(i, i + DELETE_CHUNK_SIZE);
+      const chunk = toDelete.slice(i, i + DELETE_CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       batchesAttempted++;
       try {
@@ -228,6 +285,7 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
       scanned,
       candidatesInThreats,
       staleRemoved,
+      exhaustedMarked,
       delta: -staleRemoved,
       durationMs: Date.now() - start,
       batchesAttempted,

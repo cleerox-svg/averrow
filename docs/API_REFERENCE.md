@@ -677,6 +677,7 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 | POST | `/api/internal/agents/nexus/workflow` | Dispatch NEXUS as a durable Workflow |
 | GET | `/api/internal/agents/nexus/workflow/:instanceId` | Check NEXUS workflow status |
 | POST | `/api/internal/briefing/send` | Manually generate and email the daily briefing |
+| POST | `/api/internal/dns-queue/reap` | AVERROW_INTERNAL_SECRET. On-demand DNS-queue reaper (normally Navigator-dispatched daily at hour===0). Sweeps stale rows (threat flipped inactive) and attempt-capped/exhausted rows — marking their threats `dns_exhausted_at` and deleting the queue rows. Idempotent + soft-capped; safe to call repeatedly to drain a backlog. |
 | GET | `/api/certstream/stats` | CertStream Durable Object stats |
 | POST | `/api/certstream/reload-brands` | Reload brand watchlist in CertStream DO |
 

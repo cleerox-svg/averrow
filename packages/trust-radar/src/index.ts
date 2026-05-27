@@ -349,6 +349,24 @@ export default {
         return Response.json({ success: true, data: result });
       }
 
+      // POST /api/internal/dns-queue/reap
+      // On-demand trigger for the DNS-queue reaper (normally Navigator-
+      // dispatched daily at hour===0). Sweeps stale rows (threat flipped
+      // inactive) AND attempt-capped/exhausted rows — marking their
+      // threats dns_exhausted_at and removing the queue rows. Idempotent
+      // and soft-capped; safe to call repeatedly to drain a large backlog
+      // (e.g. the 29K exhausted rows from before migration 0209).
+      if (url.pathname === '/api/internal/dns-queue/reap' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { reapDnsQueue } = await import('./lib/dns-queue-reaper');
+        const result = await reapDnsQueue(env);
+        return Response.json({ success: true, data: result });
+      }
+
       // GET /api/internal/taxii/discover?root_url=<url>&auth_type=<type>&api_key_env=<env_var>&username=<u>
       // Operator helper for adding new TAXII collections without
       // guessing collection IDs (which bit us on the OTX seed —

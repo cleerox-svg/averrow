@@ -64,6 +64,54 @@ const DEFAULT_TIMEOUT_MS = 8000;
 const CONCURRENCY = 50;
 
 /**
+ * Mark a batch of domains as DNS-exhausted on the threats side and drop
+ * their dns_queue rows. Called when domains reach the attempt cap —
+ * confirmed-dead (NXDOMAIN / no A record) or 8 transient DoH failures.
+ *
+ * The threats-side `dns_exhausted_at` stamp is what keeps the reconciler,
+ * backfill, FC drift count, and reaper from treating these as live DNS
+ * candidates (all filter `dns_exhausted_at IS NULL`). Before this marker
+ * existed, capped rows stayed in the queue forever and their threats kept
+ * counting toward the drift metric — see migration 0209. Deleting the
+ * queue row in the same step keeps the queue lean; the threats marker
+ * prevents re-enqueue. Returns rows removed from the queue.
+ */
+async function markExhaustedAndDrain(
+  env: Env,
+  queueDb: D1Database,
+  domains: string[],
+): Promise<number> {
+  if (domains.length === 0) return 0;
+  const CHUNK = 50;
+  let removed = 0;
+  for (let i = 0; i < domains.length; i += CHUNK) {
+    const chunk = domains.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    try {
+      await env.DB.prepare(`
+        UPDATE threats
+           SET dns_exhausted_at = datetime('now')
+         WHERE malicious_domain IN (${ph})
+           AND status = 'active'
+           AND ip_address IS NULL
+           AND dns_exhausted_at IS NULL
+      `).bind(...chunk).run();
+    } catch (err) {
+      console.error('[dns-backfill] exhausted-mark failed:', err);
+    }
+    try {
+      const r = await queueDb.prepare(
+        `DELETE FROM dns_queue WHERE malicious_domain IN (${ph})`,
+      ).bind(...chunk).run();
+      removed += r.meta?.changes ?? 0;
+    } catch (err) {
+      console.error('[dns-backfill] exhausted-drain failed:', err);
+    }
+  }
+  return removed;
+}
+
+/**
  * Resolve one batch of unresolved malicious_domain values and write the
  * resulting IP addresses back to the threats table via db.batch().
  *
@@ -129,6 +177,7 @@ export async function runDomainGeoBackfillBatch(
         FROM threats INDEXED BY idx_threats_dns_pending_strict
         WHERE ip_address IS NULL
           AND status = 'active'
+          AND dns_exhausted_at IS NULL
           AND COALESCE(enrichment_attempts, 0) < 8
           AND malicious_domain IS NOT NULL
           AND malicious_domain != ''
@@ -318,46 +367,26 @@ export async function runDomainGeoBackfillBatch(
 
     // ── Step 3a: graduate confirmed-dead domains ──
     // All 3 resolvers said NXDOMAIN or no A record — authoritative
-    // enough to stop trying. Stamp enrichment_attempts to the cap
-    // (8) and last_outcome='dead' in dns_queue.
+    // enough to stop trying. Mark the threat dns_exhausted_at (so it
+    // leaves the DNS candidate set everywhere) and delete the queue row.
     //
-    // PR-4 cleanup: switched from DELETE to UPDATE on dns_queue
-    // because the reconciler reads candidates from threats by
-    // existence (ip_address IS NULL). If we DELETE from the queue,
-    // the reconciler re-adds on its next tick — there's no threats-
-    // side state left to flag the row as graduated. Keeping the
-    // dead row with attempts=8 makes the reconciler's queueSet
-    // check return true → no re-add, while the dns-backfill SELECT
-    // filter (enrichment_attempts < 8) still excludes it from
-    // future draining. Cleanup of dead rows is a follow-up reaper.
-    //
-    // We no longer write threats.enrichment_attempts — dns_queue is
-    // the source of truth for state, and threats only holds the
-    // ip_address deliverable.
+    // Migration 0209 added the threats-side `dns_exhausted_at` flag,
+    // which is what makes DELETE safe again: previously we had to keep
+    // the dead row at attempts=8 (UPDATE, not DELETE) because there was
+    // no threats-side state to stop the reconciler re-adding it. Now the
+    // marker is the stop signal, so dead rows leave the queue cleanly.
     let graduatedDead = 0;
     if (confirmedDead.size > 0 && useQueueDb && queueDb) {
-      const DEAD_CHUNK = 50;
-      const deadArr = [...confirmedDead];
-      for (let i = 0; i < deadArr.length; i += DEAD_CHUNK) {
-        if (isOverCap()) { softCapHit = true; break; }
-        const chunk = deadArr.slice(i, i + DEAD_CHUNK);
-        const placeholders = chunk.map(() => '?').join(',');
-        try {
-          const r = await queueDb.prepare(`
-            UPDATE dns_queue
-            SET enrichment_attempts = 8,
-                last_outcome = 'dead'
-            WHERE malicious_domain IN (${placeholders})
-          `).bind(...chunk).run();
-          graduatedDead += r.meta?.changes ?? 0;
-        } catch (err) {
-          console.error('[dns-backfill] dead-domain graduation failed:', err);
-        }
+      if (isOverCap()) {
+        softCapHit = true;
+      } else {
+        graduatedDead += await markExhaustedAndDrain(env, queueDb, [...confirmedDead]);
       }
     } else if (confirmedDead.size > 0) {
-      // Legacy threats-only path. Threats.enrichment_attempts=8 is
-      // the historical exhausted marker for environments without
-      // DNS_QUEUE_DB bound.
+      // Legacy threats-only path (dev, no DNS_QUEUE_DB). Stamp both the
+      // historical enrichment_attempts=8 marker and dns_exhausted_at so
+      // the candidate predicate (now filtering dns_exhausted_at IS NULL)
+      // excludes them.
       const DEAD_CHUNK = 50;
       const deadArr = [...confirmedDead];
       for (let i = 0; i < deadArr.length; i += DEAD_CHUNK) {
@@ -367,7 +396,8 @@ export async function runDomainGeoBackfillBatch(
         try {
           const r = await env.DB.prepare(`
             UPDATE threats
-            SET enrichment_attempts = 8
+            SET enrichment_attempts = 8,
+                dns_exhausted_at = datetime('now')
             WHERE malicious_domain IN (${placeholders})
               AND (ip_address IS NULL OR ip_address = '')
           `).bind(...chunk).run();
@@ -409,6 +439,32 @@ export async function runDomainGeoBackfillBatch(
           `).bind(...chunk).run();
         } catch (err) {
           console.error('[dns-backfill] transient bump failed:', err);
+        }
+      }
+      // Domains whose bump just pushed them to the cap are now exhausted
+      // (8 transient failures, never resolved). Without this they'd sit in
+      // the queue forever with last_outcome=NULL and keep their threats in
+      // the drift count — the exact 29K pile migration 0209 addresses.
+      // Mark the threat + drop the queue row, same as confirmed-dead.
+      if (!isOverCap()) {
+        const nowExhausted: string[] = [];
+        for (let i = 0; i < transient.length; i += STAMP_CHUNK) {
+          if (isOverCap()) { softCapHit = true; break; }
+          const chunk = transient.slice(i, i + STAMP_CHUNK);
+          const placeholders = chunk.map(() => '?').join(',');
+          try {
+            const r = await queueDb.prepare(`
+              SELECT malicious_domain FROM dns_queue
+              WHERE malicious_domain IN (${placeholders})
+                AND enrichment_attempts >= 8
+            `).bind(...chunk).all<{ malicious_domain: string }>();
+            for (const row of r.results) nowExhausted.push(row.malicious_domain);
+          } catch (err) {
+            console.error('[dns-backfill] transient-exhaustion scan failed:', err);
+          }
+        }
+        if (nowExhausted.length > 0) {
+          graduatedDead += await markExhaustedAndDrain(env, queueDb, nowExhausted);
         }
       }
     } else if (transient.length > 0) {

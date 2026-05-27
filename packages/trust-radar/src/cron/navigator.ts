@@ -235,7 +235,7 @@ async function runNavigatorImpl(
         reaperResult = await reapDnsQueue(env);
         if (!reaperResult.skipped) {
           console.log(
-            `[navigator] dns-queue-reap: scanned=${reaperResult.scanned} candidates=${reaperResult.candidatesInThreats} stale_removed=${reaperResult.staleRemoved} softCap=${reaperResult.softCapHit ? 'YES' : 'no'} duration=${reaperResult.durationMs}ms`,
+            `[navigator] dns-queue-reap: scanned=${reaperResult.scanned} candidates=${reaperResult.candidatesInThreats} stale_removed=${reaperResult.staleRemoved} exhausted_marked=${reaperResult.exhaustedMarked} softCap=${reaperResult.softCapHit ? 'YES' : 'no'} duration=${reaperResult.durationMs}ms`,
           );
         }
       } catch (err) {

@@ -40,9 +40,11 @@ let runOrder = 0;
 function makeEnv(opts: {
   selectDomains?: string[];
   preStampThrows?: boolean;
+  queueBound?: boolean;
 }) {
   runOrder = 0;
   const calls: CapturedRun[] = [];
+  const queueCalls: CapturedRun[] = [];
   const selectDomains = opts.selectDomains ?? ["a.test", "b.test", "c.test"];
 
   // Pre-stamp throw matches BOTH split branches (ip_address IS NULL
@@ -98,7 +100,38 @@ function makeEnv(opts: {
     },
   } as unknown as Env;
 
-  return { env, calls };
+  if (opts.queueBound) {
+    // Minimal dns_queue mock for exercising the production (queue) path:
+    // candidate SELECT + pre-stamp + transient-bump + the new
+    // exhausted-mark DELETE. The threats-side mark UPDATE still lands on
+    // env.DB (captured in `calls`); queue ops are captured in queueCalls.
+    (env as unknown as { DNS_QUEUE_DB: unknown }).DNS_QUEUE_DB = {
+      prepare(sql: string) {
+        return {
+          bind: (...bindArgs: unknown[]) => ({
+            run: async () => {
+              queueCalls.push({ sql, bindArgs, order: runOrder++, ts: Date.now() });
+              return { success: true, meta: { changes: bindArgs.length } };
+            },
+            all: async () => {
+              queueCalls.push({ sql, bindArgs, order: runOrder++, ts: Date.now() });
+              // Candidate SELECT (enrichment_attempts < 8 + LIMIT) seeds the
+              // batch; the transient-exhaustion scan (>= 8) returns nothing.
+              if (/enrichment_attempts\s*<\s*8/.test(sql)) {
+                return { results: selectDomains.map((d) => ({ malicious_domain: d })) };
+              }
+              return { results: [] as Array<{ malicious_domain: string }> };
+            },
+          }),
+          all: async () => ({
+            results: selectDomains.map((d) => ({ malicious_domain: d })),
+          }),
+        };
+      },
+    };
+  }
+
+  return { env, calls, queueCalls };
 }
 
 describe("dns-backfill pre-stamp claim", () => {
@@ -166,6 +199,30 @@ describe("dns-backfill pre-stamp claim", () => {
     );
     expect(grad).toBeDefined();
     expect(grad!.sql).not.toMatch(/attempted_resolve_at/);
+  });
+
+  it("queue path: confirmed-dead domain marks the threat dns_exhausted_at and deletes the queue row", async () => {
+    // Migration 0209 behavior: on the production (DNS_QUEUE_DB) path a
+    // dead domain no longer lingers as an attempts=8 queue row. We stamp
+    // dns_exhausted_at on the threat (so it leaves the candidate set) and
+    // DELETE the queue row in the same step.
+    vi.spyOn(resolverModule, "resolveDomain").mockResolvedValue({ kind: "nxdomain" });
+    const { env, calls, queueCalls } = makeEnv({ selectDomains: ["dead.test"], queueBound: true });
+    await runDomainGeoBackfillBatch(env, { batchSize: 1, timeoutMs: 30_000 });
+
+    // threats marked exhausted (lands on env.DB)
+    const mark = calls.find((c) => /UPDATE threats[\s\S]*SET dns_exhausted_at = datetime\('now'\)/.test(c.sql));
+    expect(mark).toBeDefined();
+    expect(mark!.bindArgs).toContain("dead.test");
+
+    // queue row deleted (lands on DNS_QUEUE_DB)
+    const del = queueCalls.find((c) => /DELETE\s+FROM\s+dns_queue/.test(c.sql));
+    expect(del).toBeDefined();
+    expect(del!.bindArgs).toContain("dead.test");
+
+    // and crucially NOT the old "keep it at attempts=8" UPDATE
+    const oldGraduate = queueCalls.find((c) => /UPDATE\s+dns_queue[\s\S]*last_outcome\s*=\s*'dead'/.test(c.sql));
+    expect(oldGraduate).toBeUndefined();
   });
 
   it("chunks the pre-stamp UPDATE to stay under D1's max-SQL-variables limit", async () => {
