@@ -112,6 +112,13 @@ jobs:
           }
           migrate_with_retry "pnpm run db:migrate:prod" "DB migration"
           migrate_with_retry "pnpm run db:migrate:audit:prod" "Audit migration"
+          # Side DBs were historically hand-migrated (no d1_migrations
+          # tracking) and absent from CI — which is how geoip migration
+          # 0002 sat unapplied and broke every refresh. Their tracking
+          # tables have been seeded to mark already-applied migrations so
+          # these applies are no-ops until a NEW migration lands.
+          migrate_with_retry "pnpm run db:migrate:geoip:prod" "GeoIP migration"
+          migrate_with_retry "pnpm run db:migrate:dnsq:prod" "DNS-queue migration"
 
       # PR-AI: post-migration seed verification. wrangler reports
       # `migrations apply` as successful when statements don't error,
