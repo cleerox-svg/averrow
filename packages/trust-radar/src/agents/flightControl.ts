@@ -581,21 +581,56 @@ export const flightControlAgent: AgentModule = {
         id: string; name: string;
         current_count: number; baseline_count: number;
       }>();
-      for (const row of escRows.results) {
-        const delta = row.current_count - row.baseline_count;
-        const multiplier = row.baseline_count > 0
-          ? row.current_count / row.baseline_count
-          : row.current_count; // pure new-provider surge case
-        await emitPlatformNotification(env, 'platform_provider_escalation',
-          renderPlatformProviderEscalation({
-            provider_id:    row.id,
-            provider_name:  row.name,
-            current_count:  row.current_count,
-            baseline_count: row.baseline_count,
-            delta,
-            multiplier,
-          }),
-        );
+      // Bulk-event guard: a real campaign rarely lights up many major
+      // providers in the same tick. When ≥5 trip at once it's almost
+      // always a bulk re-attribution / enrichment pass that backfilled
+      // hosting_provider_id on a large batch while the 7d baseline (which
+      // Cartographer rolls up hourly) hasn't caught up. Emitting one alert
+      // per provider produced a ~12-notification storm (Cloudflare 39×,
+      // Amazon 73×, Fastly 56×, … all in one minute — platform audit
+      // 2026-05-27). Roll them up into a single notification instead.
+      const BULK_ESCALATION_THRESHOLD = 5;
+      const tripped = escRows.results;
+      if (tripped.length >= BULK_ESCALATION_THRESHOLD) {
+        const top = [...tripped]
+          .sort((a, b) => (b.current_count - b.baseline_count) - (a.current_count - a.baseline_count))
+          .slice(0, 3)
+          .map((r) => `${r.name} (${r.current_count.toLocaleString()})`)
+          .join(', ');
+        await emitPlatformNotification(env, 'platform_provider_escalation', {
+          title: `Provider surge across ${tripped.length} providers — likely bulk re-attribution`,
+          message:
+            `${tripped.length} hosting providers crossed the escalation threshold in the same tick ` +
+            `(top: ${top}). Simultaneous spikes across many major providers almost always mean a bulk ` +
+            `enrichment/attribution pass moved a large batch of threats at once, not ${tripped.length} ` +
+            `concurrent campaigns. The 7d baseline will catch up on the next Cartographer rollup.`,
+          reason_text: `Platform alert — operational only.`,
+          recommended_action:
+            `Confirm a recent bulk attribution/enrichment run, then review the Providers page once the ` +
+            `7d baseline refreshes. If a single provider is genuinely surging it will re-alert on its own.`,
+          link: '/providers',
+          // Day-scoped so the rolled-up event dedups to one alert per day.
+          group_key: `platform_provider_escalation:bulk:${new Date().toISOString().slice(0, 10)}`,
+          audience: 'super_admin',
+          severity: 'high',
+        });
+      } else {
+        for (const row of tripped) {
+          const delta = row.current_count - row.baseline_count;
+          const multiplier = row.baseline_count > 0
+            ? row.current_count / row.baseline_count
+            : row.current_count; // pure new-provider surge case
+          await emitPlatformNotification(env, 'platform_provider_escalation',
+            renderPlatformProviderEscalation({
+              provider_id:    row.id,
+              provider_name:  row.name,
+              current_count:  row.current_count,
+              baseline_count: row.baseline_count,
+              delta,
+              multiplier,
+            }),
+          );
+        }
       }
     } catch { /* notification failures never break FC */ }
 
@@ -1330,6 +1365,8 @@ export const flightControlAgent: AgentModule = {
               refresh_log_id: lastSuccess.id,
               minutes_running: lastSuccess.age_days * 24 * 60,
               source_version: lastSuccess.source_version,
+              kind: 'stale',
+              stale_days: lastSuccess.age_days,
             }),
           );
         }
