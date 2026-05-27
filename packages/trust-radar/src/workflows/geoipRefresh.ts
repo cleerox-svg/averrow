@@ -314,8 +314,10 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // Memory: 22 MB locations map + small streaming buffer ≈ 25 MB.
     // Worker ceiling is 128 MB, so plenty of headroom.
     //
-    // Wall time: ~30 min worst-case (1× Locations parse, 1× Blocks
-    // stream, ~3.5M D1 batched inserts). Step timeout is 1 hour.
+    // Wall time: the clean 2026-05-16 run took ~50 min (1× Locations
+    // parse, 1× Blocks stream, ~3.7M D1 batched inserts). Step timeout
+    // is 2 hours (see below) to give that real headroom — at the old
+    // 1-hour cap a normal run sat right at the edge and slow runs died.
     //
     // Retry semantics (Step 3 of remediation): a transient failure
     // retries the whole step. The CSV stream is re-fetched from the
