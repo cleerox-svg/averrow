@@ -204,13 +204,15 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
       const placeholders = chunk.map(() => '?').join(',');
       batchesAttempted++;
       try {
-        // INDEXED BY idx_threats_malicious_domain forces the bounded
-        // lookup. Without the hint the planner can fall back to
-        // idx_threats_status_created on `status='active'` and then
-        // re-filter on domain, which scans many more rows.
+        // INDEXED BY idx_threats_unresolved_domain forces the bounded
+        // lookup. It's the partial index on malicious_domain WHERE
+        // ip_address IS NULL — exactly this query's subset. (The old hint
+        // named idx_threats_malicious_domain, which does not exist, so
+        // every batch failed with "no such index" and the check fell back
+        // to all-candidate — no stale removal ever happened.)
         const res = await env.DB.prepare(`
           SELECT DISTINCT malicious_domain
-            FROM threats INDEXED BY idx_threats_malicious_domain
+            FROM threats INDEXED BY idx_threats_unresolved_domain
            WHERE malicious_domain IN (${placeholders})
              AND status = 'active'
              AND ip_address IS NULL

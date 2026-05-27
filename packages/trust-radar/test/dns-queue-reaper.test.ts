@@ -134,7 +134,7 @@ describe("reapDnsQueue", () => {
     // Same predicate the reconciler uses — without this, oscillation:
     // reaper deletes a domain → reconciler re-enqueues it → repeat.
     expect(sql).toMatch(/FROM\s+threats/);
-    expect(sql).toMatch(/INDEXED BY idx_threats_malicious_domain/);
+    expect(sql).toMatch(/INDEXED BY idx_threats_unresolved_domain/);
     expect(sql).toMatch(/status\s*=\s*'active'/);
     expect(sql).toMatch(/ip_address\s+IS\s+NULL/);
     expect(sql).toMatch(/malicious_domain\s+NOT\s+LIKE\s+'\*%'/);
