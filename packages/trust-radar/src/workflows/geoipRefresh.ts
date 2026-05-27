@@ -314,8 +314,10 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // Memory: 22 MB locations map + small streaming buffer ≈ 25 MB.
     // Worker ceiling is 128 MB, so plenty of headroom.
     //
-    // Wall time: ~30 min worst-case (1× Locations parse, 1× Blocks
-    // stream, ~3.5M D1 batched inserts). Step timeout is 1 hour.
+    // Wall time: the clean 2026-05-16 run took ~50 min (1× Locations
+    // parse, 1× Blocks stream, ~3.7M D1 batched inserts). Step timeout
+    // is 2 hours (see below) to give that real headroom — at the old
+    // 1-hour cap a normal run sat right at the edge and slow runs died.
     //
     // Retry semantics (Step 3 of remediation): a transient failure
     // retries the whole step. The CSV stream is re-fetched from the
@@ -324,9 +326,17 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // already-written rows — only NEW work hits D1. INSERT OR IGNORE
     // remains the safety net.
     const refreshLogIdForProgress = refreshLogId;
+    // Timeout 2h (was 1h): the clean 2026-05-16 run took ~50 min end to
+    // end, leaving almost no margin under a 60-min cap — a slightly slower
+    // run (D1 load, slow CDN, or a resume that re-parses already-committed
+    // rows) blew past 60 min and was killed, never completing. 2h gives the
+    // import real headroom; the per-batch checkpoint + INSERT OR IGNORE make
+    // a long run safely resumable. Flight Control's stuck-detector was also
+    // raised above this so it stops force-failing legitimately-long imports
+    // (see GEOIP_STUCK_THRESHOLD_MIN in flightControl.ts).
     const importResult = await step.do(
       'import',
-      { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 hour' },
+      { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
       async () => {
         let zip: ZipReaderLike;
         if (isManualR2Import) {

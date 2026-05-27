@@ -223,12 +223,13 @@ export const flightControlAgent: AgentModule = {
     { kind: "d1_table", name: "feed_pull_history" },
     { kind: "d1_table", name: "feed_status" },
     // PR-B (2026-05-16 audit): provider-escalation watcher joins
-    // hosting_providers against the 7d provider_threat_stats rollup
-    // each tick to surface providers whose active_threat_count
-    // spiked vs baseline (Cloudflare 0→51K with no signal was the
-    // motivating gap).
+    // hosting_providers against yesterday's daily_snapshots active-
+    // threat count each tick to surface providers whose active footprint
+    // surged day-over-day (Cloudflare 0→51K with no signal was the
+    // motivating gap). Baseline switched from provider_threat_stats(7d)
+    // to daily_snapshots on 2026-05-27 — see the watcher below.
     { kind: "d1_table", name: "hosting_providers" },
-    { kind: "d1_table", name: "provider_threat_stats" },
+    { kind: "d1_table", name: "daily_snapshots" },
     // N6c briefing-silent self-monitor reads any open
     // auto:platform_briefing_silent incident so it can auto-resolve
     // it on heal. Bundle F (2026-05-07).
@@ -540,55 +541,57 @@ export const flightControlAgent: AgentModule = {
 
     mark('feed_at_risk_emit');
 
-    // ── Provider-escalation watcher (PR-B from 2026-05-16 audit) ───
-    // Fires when a hosting provider's active_threat_count jumps
-    // significantly vs its 7-day baseline. Motivating case:
-    // Cloudflare 0 → 51,235 active threats with zero notification.
+    // ── Provider-escalation watcher (PR-B; baseline fixed 2026-05-27) ──
+    // Fires when a hosting provider's active footprint jumps day-over-day.
+    // Motivating case: Cloudflare 0 → 51,235 active threats with no signal.
     //
-    // Baseline reads from provider_threat_stats (period='7d') — the
-    // existing rollup populated by Cartographer. We treat a provider
-    // as "escalating" when:
-    //   - current active_threat_count ≥ 50 (filter near-empty
-    //     providers — bot scanner churn would otherwise wake on
-    //     1→10 movements)
-    //   - AND current ≥ 5× the 7d baseline OR delta ≥ 200
+    // BASELINE FIX (2026-05-27 audit): the original query compared
+    // hosting_providers.active_threat_count (ALL-TIME active count) against
+    // provider_threat_stats period='7d' (threats CREATED in the last 7
+    // days). Those are different quantities — for any established provider
+    // all-time-active hugely exceeds the 7-day-created count, so the "5×"
+    // test was ~always true and every large provider fired daily (Cloudflare
+    // active=54,591 vs 7d=1,342). We now compare against yesterday's
+    // active-threat snapshot from daily_snapshots — a like-for-like
+    // active-footprint count — so only a genuine day-over-day surge fires.
     //
-    // Dedup key includes provider_id only (not the date) since the
-    // event-key catalog declares a 24h dedup window — emitPlatform
-    // takes care of suppressing repeat fires within the window.
+    //   - current active_threat_count ≥ 50 (ignore near-empty providers)
+    //   - a yesterday snapshot must EXIST (INNER JOIN). No baseline ⇒ skip,
+    //     not fire — avoids the "missing row ⇒ baseline 0 ⇒ always fires"
+    //     trap that produced the original storm.
+    //   - AND current ≥ 2× yesterday  (a doubling; with baseline≈0 this
+    //     reduces to the absolute-delta rule, catching the 0→big case)
+    //   - AND current − yesterday ≥ 200 net-new active threats.
     //
-    // group_key intentionally collides with intel_provider_pivot's
-    // namespace prefix? No — see platform-templates for the actual
-    // key: `platform_provider_escalation:<provider_id>`.
+    // group_key is `platform_provider_escalation:<provider_id>` with a 24h
+    // dedup window (see platform-templates).
     try {
-      // provider_threat_stats joins on provider_name, not provider_id
-      // (composite UNIQUE(provider_name, period)). For the baseline we
-      // pick period='7d' which Cartographer populates every hour.
+      // daily_snapshots stores entity_id = hosting_providers.id for
+      // entity_type='provider' (lib/snapshots.ts), and active_threats =
+      // COUNT(*) WHERE status='active' as of that night — the exact
+      // like-for-like counterpart to hosting_providers.active_threat_count.
       const escRows = await db.prepare(`
         SELECT hp.id, hp.name, hp.active_threat_count AS current_count,
-               COALESCE(pts.threat_count, 0) AS baseline_count
+               ds.active_threats AS baseline_count
           FROM hosting_providers hp
-          LEFT JOIN provider_threat_stats pts
-            ON pts.provider_name = hp.name AND pts.period = '7d'
+          JOIN daily_snapshots ds
+            ON ds.entity_type = 'provider'
+           AND ds.entity_id = hp.id
+           AND ds.date = date('now', '-1 day')
          WHERE hp.active_threat_count >= 50
-           AND (
-                hp.active_threat_count >= 5 * COALESCE(pts.threat_count, 0)
-             OR hp.active_threat_count - COALESCE(pts.threat_count, 0) >= 200
-           )
-         ORDER BY (hp.active_threat_count - COALESCE(pts.threat_count, 0)) DESC
+           AND hp.active_threat_count >= 2 * ds.active_threats
+           AND hp.active_threat_count - ds.active_threats >= 200
+         ORDER BY (hp.active_threat_count - ds.active_threats) DESC
          LIMIT 10
       `).all<{
         id: string; name: string;
         current_count: number; baseline_count: number;
       }>();
-      // Bulk-event guard: a real campaign rarely lights up many major
-      // providers in the same tick. When ≥5 trip at once it's almost
-      // always a bulk re-attribution / enrichment pass that backfilled
-      // hosting_provider_id on a large batch while the 7d baseline (which
-      // Cartographer rolls up hourly) hasn't caught up. Emitting one alert
-      // per provider produced a ~12-notification storm (Cloudflare 39×,
-      // Amazon 73×, Fastly 56×, … all in one minute — platform audit
-      // 2026-05-27). Roll them up into a single notification instead.
+      // Bulk-event guard (belt-and-suspenders): with the corrected baseline
+      // a real >=5-provider day-over-day surge is rare, but if it happens
+      // it's far more likely a bulk re-attribution/enrichment pass than 5
+      // concurrent campaigns — roll those up into a single notification
+      // rather than spamming one per provider.
       const BULK_ESCALATION_THRESHOLD = 5;
       const tripped = escRows.results;
       if (tripped.length >= BULK_ESCALATION_THRESHOLD) {
@@ -600,14 +603,14 @@ export const flightControlAgent: AgentModule = {
         await emitPlatformNotification(env, 'platform_provider_escalation', {
           title: `Provider surge across ${tripped.length} providers — likely bulk re-attribution`,
           message:
-            `${tripped.length} hosting providers crossed the escalation threshold in the same tick ` +
-            `(top: ${top}). Simultaneous spikes across many major providers almost always mean a bulk ` +
-            `enrichment/attribution pass moved a large batch of threats at once, not ${tripped.length} ` +
-            `concurrent campaigns. The 7d baseline will catch up on the next Cartographer rollup.`,
+            `${tripped.length} hosting providers more than doubled their active-threat footprint vs ` +
+            `yesterday in the same tick (top: ${top}). Simultaneous day-over-day jumps across many major ` +
+            `providers almost always mean a bulk enrichment/attribution pass moved a large batch of ` +
+            `threats at once, not ${tripped.length} concurrent campaigns.`,
           reason_text: `Platform alert — operational only.`,
           recommended_action:
-            `Confirm a recent bulk attribution/enrichment run, then review the Providers page once the ` +
-            `7d baseline refreshes. If a single provider is genuinely surging it will re-alert on its own.`,
+            `Confirm a recent bulk attribution/enrichment run. If a single provider is genuinely surging ` +
+            `it will re-alert on its own once the others settle.`,
           link: '/providers',
           // Day-scoped so the rolled-up event dedups to one alert per day.
           group_key: `platform_provider_escalation:bulk:${new Date().toISOString().slice(0, 10)}`,
@@ -1293,14 +1296,19 @@ export const flightControlAgent: AgentModule = {
     // ~1 hour after the workflow died. Aligned with the existing
     // platform_agent_stalled pattern (§14.3 dedup via group_key).
     //
-    // STUCK_THRESHOLD_MIN matches the agent's value (60). Any row
-    // older than that AND still 'running' is force-failed; the
-    // operator gets one notification per stuck workflow id.
+    // STUCK_THRESHOLD_MIN must sit ABOVE the import step's own timeout
+    // (raised to 2h in workflows/geoipRefresh.ts), else FC force-fails a
+    // legitimately-long import mid-flight — which is exactly what killed
+    // the 2026-05-24 run (import was progressing at 60 min; FC marked it
+    // failed). This age is measured from geo_ip_refresh_log.started_at,
+    // which spans the whole workflow incl. retries, so it must clear a
+    // single 2h attempt plus margin. 180 min is the backstop for TRULY
+    // hung workflows; the step's own 2h timeout is the primary guard.
     //
     // Skipped when GEOIP_DB binding is unset — the table won't
     // exist, throwing on the SELECT. Wrapping in try/catch keeps
     // FC's tick robust against optional bindings.
-    const GEOIP_STUCK_THRESHOLD_MIN = 60;
+    const GEOIP_STUCK_THRESHOLD_MIN = 180;
     if (env.GEOIP_DB) {
       try {
         const stuck = await env.GEOIP_DB.prepare(`
