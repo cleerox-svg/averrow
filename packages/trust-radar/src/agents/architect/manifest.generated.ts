@@ -51,7 +51,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 1168,
-      "last_modified": "2026-05-25T13:58:11.502Z"
+      "last_modified": "2026-05-26T14:51:29.922Z"
     },
     {
       "name": "appStoreMonitor",
@@ -184,8 +184,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1343,
-      "last_modified": "2026-05-25T13:58:11.506Z"
+      "loc": 1351,
+      "last_modified": "2026-05-27T03:07:58.374Z"
     },
     {
       "name": "cube-healer",
@@ -208,7 +208,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 465,
-      "last_modified": "2026-05-25T13:58:11.506Z"
+      "last_modified": "2026-05-26T14:51:29.924Z"
     },
     {
       "name": "curator",
@@ -275,6 +275,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "backlog_history",
         "brands",
         "budget_ledger",
+        "daily_snapshots",
         "dns_queue",
         "feed_configs",
         "feed_pull_history",
@@ -282,7 +283,6 @@ export const REPO_MANIFEST: RepoInventory = {
         "geo_ip_refresh_log",
         "hosting_providers",
         "incidents",
-        "provider_threat_stats",
         "push_subscriptions",
         "social_mentions",
         "threat_briefings",
@@ -297,8 +297,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 2481,
-      "last_modified": "2026-05-25T13:58:11.510Z"
+      "loc": 2531,
+      "last_modified": "2026-05-27T12:53:53.332Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -355,7 +355,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "writes": [],
       "ai_models_referenced": [],
       "loc": 95,
-      "last_modified": "2026-05-25T14:38:12.854Z"
+      "last_modified": "2026-05-26T14:51:29.928Z"
     },
     {
       "name": "narrator",
@@ -593,7 +593,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 746,
-      "last_modified": "2026-05-25T13:58:11.510Z"
+      "last_modified": "2026-05-26T14:51:29.932Z"
     },
     {
       "name": "social-ai-assessor",
@@ -699,7 +699,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "writes": [],
       "ai_models_referenced": [],
       "loc": 56,
-      "last_modified": "2026-05-25T17:59:46.693Z"
+      "last_modified": "2026-05-26T14:51:29.932Z"
     },
     {
       "name": "trustbot",
@@ -761,6 +761,14 @@ export const REPO_MANIFEST: RepoInventory = {
       "schedule": null,
       "loc": 265,
       "last_modified": "2026-05-22T18:07:18.063Z"
+    },
+    {
+      "name": "advisories",
+      "path": "packages/trust-radar/src/feeds/advisories.ts",
+      "source_type": "rss",
+      "schedule": null,
+      "loc": 326,
+      "last_modified": "2026-05-27T02:57:30.262Z"
     },
     {
       "name": "blocklistde",
@@ -856,7 +864,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "source_type": "http",
       "schedule": null,
       "loc": 228,
-      "last_modified": "2026-05-25T13:58:11.510Z"
+      "last_modified": "2026-05-26T14:51:29.932Z"
     },
     {
       "name": "digitalside_osint",
@@ -1063,8 +1071,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/trust-radar/src/feeds/surbl.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 205,
-      "last_modified": "2026-05-22T18:07:18.075Z"
+      "loc": 210,
+      "last_modified": "2026-05-27T03:07:39.518Z"
     },
     {
       "name": "talos_ips",
@@ -1524,7 +1532,7 @@ export const REPO_MANIFEST: RepoInventory = {
   ],
   "totals": {
     "agents": 39,
-    "feeds": 49,
+    "feeds": 50,
     "crons": 13,
     "workers": 1
   }
