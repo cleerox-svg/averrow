@@ -45,18 +45,18 @@ import type { Env } from '../types';
 const REAPER_LAST_RUN_KEY = 'reconciler:dns_queue:reaper_last_run';
 const REAPER_LAST_DELTA_KEY = 'reconciler:dns_queue:reaper_last_delta';
 
-// IN (?, ?, ...) chunk for the threats existence check. SQLite's
-// default SQLITE_MAX_VARIABLE_NUMBER is 999; D1's effective ceiling
-// is lower (~100 in some configs). 200 fits comfortably under
-// `?` × 200 = 200 variables. Verified empirically on D1 in the
-// dns-backfill chunk size.
-const EXISTENCE_CHUNK_SIZE = 200;
+// IN (?, ?, ...) chunk for the threats existence check. D1's effective
+// SQLITE_MAX_VARIABLE_NUMBER is 100 — a 200-placeholder IN(...) fails
+// every batch with "too many SQL variables", which silently sent the
+// existence check down its all-candidate fallback (no stale removal —
+// observed as total_stale_removed=0 across runs). 90 leaves head-room
+// under the 100 ceiling, matching dns-backfill's PRE_STAMP_CHUNK=99.
+const EXISTENCE_CHUNK_SIZE = 90;
 
-// DELETE … WHERE malicious_domain IN (?, ?, …) chunk size.
-// Conservative — D1 has tripped on 100+ in past spawn paths
-// (see PR-2a fix in reconciler). 50 mirrors the reconciler's
-// CHUNK_SIZE for the same reason.
-const DELETE_CHUNK_SIZE = 50;
+// DELETE / UPDATE … WHERE malicious_domain IN (?, ?, …) chunk size.
+// Same 100-variable ceiling; 90 drains the exhausted backlog ~1.8×
+// faster than the old 50 while staying safely under the limit.
+const DELETE_CHUNK_SIZE = 90;
 
 // Soft cap to avoid the reaper itself becoming a long-running
 // risk. At 17K rows / 200 chunk size / ~50ms per SELECT, we
@@ -141,22 +141,63 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
       };
     }
 
-    // ── 2. Existence check on threats, in chunks ──
-    // For each chunk of queue domains, ask threats which ones still
-    // match the candidate predicate. The set difference (queue MINUS
-    // matched) is the stale set.
-    //
-    // Predicate must match lib/dns-queue-reconciler.ts EXACTLY —
-    // otherwise we'd delete domains that the reconciler is about to
-    // re-enqueue (oscillation). Source of truth: the WHERE clause in
-    // reconcileDnsQueue's candidate SELECT.
-    const matched = new Set<string>();
     let softCapHit = false;
+    let staleRemoved = 0;
 
+    // ── 2. Exhausted backlog first: mark threat + delete queue row ──
+    // Rows at the 8-attempt cap (confirmed-dead or transiently abandoned).
+    // These are unconditionally removed — no existence check needed — so
+    // we process them BEFORE the (slower) existence check to guarantee the
+    // high-value cleanup fits the soft-cap budget. Mark and delete are
+    // paired per chunk: a soft-cap mid-loop leaves a consistent state
+    // (each processed chunk is both marked AND removed), and because the
+    // deleted rows don't reappear in the next run's snapshot, every run
+    // makes forward progress until the backlog drains.
+    let exhaustedMarked = 0;
+    for (let i = 0; i < exhaustedDomains.length; i += DELETE_CHUNK_SIZE) {
+      if (Date.now() - start > REAPER_SOFT_CAP_MS) {
+        softCapHit = true;
+        console.warn(`[dns-queue-reaper] soft-cap hit at exhausted chunk ${i / DELETE_CHUNK_SIZE}; bailing`);
+        break;
+      }
+      const chunk = exhaustedDomains.slice(i, i + DELETE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      batchesAttempted++;
+      try {
+        const m = await env.DB.prepare(`
+          UPDATE threats
+             SET dns_exhausted_at = datetime('now')
+           WHERE malicious_domain IN (${placeholders})
+             AND status = 'active'
+             AND ip_address IS NULL
+             AND dns_exhausted_at IS NULL
+        `).bind(...chunk).run();
+        exhaustedMarked += m.meta?.changes ?? 0;
+        const d = await env.DNS_QUEUE_DB.prepare(
+          `DELETE FROM dns_queue WHERE malicious_domain IN (${placeholders})`,
+        ).bind(...chunk).run();
+        staleRemoved += d.meta?.changes ?? 0;
+      } catch (err) {
+        batchesFailed++;
+        if (!lastError) {
+          lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        }
+        console.error('[dns-queue-reaper] exhausted cleanup batch failed:', err);
+      }
+    }
+
+    // ── 3. Existence check on under-cap rows, in chunks ──
+    // For each chunk, ask threats which domains still match the candidate
+    // predicate. The set difference (queue MINUS matched) is the stale set.
+    //
+    // Predicate must match lib/dns-queue-reconciler.ts EXACTLY — otherwise
+    // we'd delete domains the reconciler is about to re-enqueue
+    // (oscillation). Source of truth: reconcileDnsQueue's candidate SELECT.
+    const matched = new Set<string>();
     for (let i = 0; i < queueDomains.length; i += EXISTENCE_CHUNK_SIZE) {
       if (Date.now() - start > REAPER_SOFT_CAP_MS) {
         softCapHit = true;
-        console.warn(`[dns-queue-reaper] soft-cap hit at chunk ${i / EXISTENCE_CHUNK_SIZE}; bailing out of existence loop`);
+        console.warn(`[dns-queue-reaper] soft-cap hit at existence chunk ${i / EXISTENCE_CHUNK_SIZE}; bailing`);
         break;
       }
       const chunk = queueDomains.slice(i, i + EXISTENCE_CHUNK_SIZE);
@@ -195,56 +236,15 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
 
     const candidatesInThreats = matched.size;
 
-    // ── 2a. Mark exhausted threats (attempts >= 8) ──
-    // These domains hit the resolution cap (confirmed-dead or 8 transient
-    // failures). Stamp dns_exhausted_at on their still-active, unresolved
-    // threats so they leave the DNS candidate set — the reconciler,
-    // backfill, FC drift count, and diagnostics all filter
-    // dns_exhausted_at IS NULL, so they stop inflating the drift metric
-    // and never get re-enqueued. The queue rows are removed in step 3.
-    // Idempotent: the dns_exhausted_at IS NULL guard makes already-marked
-    // rows free, and once a queue row is deleted it never reappears here.
-    let exhaustedMarked = 0;
-    for (let i = 0; i < exhaustedDomains.length; i += DELETE_CHUNK_SIZE) {
-      if (Date.now() - start > REAPER_SOFT_CAP_MS) {
-        softCapHit = true;
-        console.warn(`[dns-queue-reaper] soft-cap hit at mark chunk ${i / DELETE_CHUNK_SIZE}; bailing`);
-        break;
-      }
-      const chunk = exhaustedDomains.slice(i, i + DELETE_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(',');
-      batchesAttempted++;
-      try {
-        await env.DB.prepare(`
-          UPDATE threats
-             SET dns_exhausted_at = datetime('now')
-           WHERE malicious_domain IN (${placeholders})
-             AND status = 'active'
-             AND ip_address IS NULL
-             AND dns_exhausted_at IS NULL
-        `).bind(...chunk).run();
-        exhaustedMarked += chunk.length;
-      } catch (err) {
-        batchesFailed++;
-        if (!lastError) {
-          lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-        }
-        console.error('[dns-queue-reaper] exhausted-mark batch failed:', err);
-      }
-    }
-
-    // ── 3. DELETE stale + exhausted rows in chunks ──
-    // stale = under-cap rows whose threat is no longer a candidate;
-    // exhausted = capped rows marked above. Both leave the queue.
-    const toDelete = [...queueDomains.filter((d) => !matched.has(d)), ...exhaustedDomains];
-    let staleRemoved = 0;
-    for (let i = 0; i < toDelete.length; i += DELETE_CHUNK_SIZE) {
+    // ── 4. DELETE stale under-cap rows (threat no longer a candidate) ──
+    const stale = queueDomains.filter((d) => !matched.has(d));
+    for (let i = 0; i < stale.length; i += DELETE_CHUNK_SIZE) {
       if (Date.now() - start > REAPER_SOFT_CAP_MS) {
         softCapHit = true;
         console.warn(`[dns-queue-reaper] soft-cap hit at delete chunk ${i / DELETE_CHUNK_SIZE}; bailing`);
         break;
       }
-      const chunk = toDelete.slice(i, i + DELETE_CHUNK_SIZE);
+      const chunk = stale.slice(i, i + DELETE_CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       batchesAttempted++;
       try {
