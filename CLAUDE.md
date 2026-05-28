@@ -271,21 +271,24 @@ All three self-gate internally. Don't add per-route logic to control them.
 
 ### Agent status field (`AgentModule.status`)
 
-The `status` value on each AgentModule registration controls how the
-agent is treated by the runtime:
+The `status` value on each AgentModule registration is **descriptive,
+not enforced** — it controls how operators classify the agent and how
+the `/v2/agents` UI surfaces it, but `executeAgent` / `runSyncAgent`
+(`lib/agentRunner.ts:302,526`) do **not** gate dispatch on it. The
+per-agent circuit-breaker (`agent_configs.enabled`) is the only
+runtime kill-switch.
 
 | Value | Meaning |
 |---|---|
 | `active` | Normal operation — dispatched per its trigger field |
-| `paused` | Temporarily halted — FC supervises but doesn't dispatch |
-| `shadow` | Dispatched but writes go to a side table (A/B comparison) |
-| `retired` | No real usage; kept callable for backward-compat / re-activation |
+| `paused` | Operator-flagged halt — dispatch is the caller's responsibility |
+| `shadow` | Used by some agents to label A/B test variants — pure marker |
+| `retired` | No real usage; **still callable** via existing manual/sync handlers |
 
-**Retired-as-of 2026-05-14 (PR-P, item #9 from morning audit)**:
-audit of `agent_runs` showed 11 manual/api agents with zero traffic
-since 2026-04-30 (a one-time test harness produced ~32 runs each,
-then nothing). Files and API routes remain; only the status field
-was flipped:
+**Retired-as-of 2026-05-14 (PR-P)**: audit of `agent_runs` showed 11
+manual/api agents with zero traffic since 2026-04-30 (a one-time test
+harness produced ~32 runs each, then nothing). Files and API routes
+remain; only the status field was flipped:
 
 ```
 admin_classify, brand_analysis, brand_deep_scan, brand_report,
@@ -293,9 +296,22 @@ geo_campaign_assessment, honeypot_generator, public_trust_check,
 qualified_report, scan_report, social_ai_assessor, url_scan
 ```
 
-To re-activate: flip the agent's status back to `"active"` and remove
-the PR-P retirement comment. Operators expecting any of these to
-"just work" should be aware they're flagged dormant.
+**Important caveat (WS-B truth-up):** these agents continue to be
+called from live handlers. `public_trust_check` is wired into the
+public homepage scan widget (`handlers/admin.ts`); `brand_deep_scan`
+is dispatched by the brand-page "AI DEEP SCAN" button; etc. The
+`/v2/agents` page shows them with their pretty subtitles but
+`0 runs / 24h` because sync invocations don't always write to
+`agent_runs`. To genuinely retire an agent: also remove the
+manual/api handler that dispatches it. To pause runtime dispatch
+without changing the status field: flip
+`agent_configs.enabled = 0`.
+
+To re-promote a retired agent to first-class status: flip its
+status back to `"active"`. Operators expecting any of these to
+"just work" via the agent mesh should be aware they're flagged
+dormant — but if a CTA on a customer-facing page calls them, the
+CTA still works.
 
 Distinct from `pathfinder` — that agent was explicitly demoted to
 `trigger: "manual"` in April after producing 1 run / 7 days under
