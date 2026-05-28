@@ -21,6 +21,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     const source = url.searchParams.get("source");
     const search = url.searchParams.get("q");
     const country = url.searchParams.get("country");
+    const brandId = url.searchParams.get("brand_id");
 
     // Whitelisted server-side sort (shared with the tenant endpoint so the
     // shared <ThreatsTable> behaves identically). Severity ranks critical
@@ -37,7 +38,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
 
     // KV cache: threats list with complex JOINs — cache for 5 minutes.
     const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
-    const cacheKey = `threats_list:${severity ?? ""}:${type ?? ""}:${status ?? ""}:${source ?? ""}:${country ?? ""}:${search ?? ""}:${sortParam}:${dir}:${limit}:${offset}:${scopeHash}`;
+    const cacheKey = `threats_list:${severity ?? ""}:${type ?? ""}:${status ?? ""}:${source ?? ""}:${country ?? ""}:${brandId ?? ""}:${search ?? ""}:${sortParam}:${dir}:${limit}:${offset}:${scopeHash}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return attachBookmark(json(JSON.parse(cached), 200, origin), session);
 
@@ -59,6 +60,14 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     if (status) { conditions.push("t.status = ?"); params.push(status); }
     if (source) { conditions.push("t.source_feed = ?"); params.push(source); }
     if (country) { conditions.push("t.country_code = ?"); params.push(country); }
+    if (brandId) {
+      conditions.push("t.target_brand_id = ?");
+      params.push(brandId);
+      // Exclude domains the brand explicitly owns so we don't surface
+      // their own infrastructure as threats targeting them.
+      conditions.push("t.malicious_domain NOT IN (SELECT domain FROM brand_safe_domains WHERE brand_id = ?)");
+      params.push(brandId);
+    }
     if (search) {
       conditions.push("(t.malicious_domain LIKE ? OR t.malicious_url LIKE ? OR t.ip_address LIKE ? OR t.ioc_value LIKE ?)");
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);

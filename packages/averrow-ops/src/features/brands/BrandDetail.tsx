@@ -15,6 +15,9 @@
 
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
+import { api } from '@/lib/api';
 import {
   useBrandFullDetail,
   useBrandTimeline,
@@ -53,6 +56,11 @@ const SEVERITY_COLORS: Record<string, string> = {
 const V3_TABS = [
   { id: 'surface',  label: 'Surface',  hint: "What we know about you" },
   { id: 'risk',     label: 'Risk',     hint: "What's threatening you now" },
+  // Threats tab is the brand-scoped view of the raw threats table —
+  // the evidence behind the Risk tab's counts. Same plumbing as the
+  // global /v2/threats page, scoped to this brand's target_brand_id
+  // and excluding the brand's own safe domains.
+  { id: 'threats',  label: 'Threats',  hint: "Every raw threat targeting this brand (the evidence behind Risk)" },
   // NX3: Signals tab gives SOC analysts a brand-scoped view of every
   // alert (impersonation, typosquat, BIMI/DMARC drift, dark-web, etc.)
   // for this brand — same data the tenant sees on /alerts, scoped here.
@@ -231,6 +239,10 @@ export function BrandDetailV3() {
         />
       )}
 
+      {activeTab === 'threats' && (
+        <ThreatsTab brandId={id} />
+      )}
+
       {activeTab === 'signals' && (
         <SignalsTab signals={allSignals} brandId={id} />
       )}
@@ -241,6 +253,85 @@ export function BrandDetailV3() {
           takedowns={brandTakedowns}
         />
       )}
+    </div>
+  );
+}
+
+// ── THREATS ──────────────────────────────────────────────────────────────
+// Brand-scoped view of the raw threats table — the evidence behind the
+// Risk tab's severity counts. Reuses the shared <ThreatsTable> from the
+// global /threats page; only difference is brand_id is fixed and the
+// brand column / filter is dropped (it would always be the same brand).
+function ThreatsTab({ brandId }: { brandId: string }) {
+  const navigate = useNavigate();
+  const table = useThreatsTable({
+    pageSize: 25,
+    initial: { brandId },
+  });
+  const s = table.state;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['brand-threats', brandId, table.params],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('limit', String(table.params.limit));
+      p.set('offset', String(table.params.offset));
+      p.set('sort', table.params.sort);
+      p.set('dir', table.params.dir);
+      p.set('brand_id', brandId);
+      if (s.severity) p.set('severity', s.severity);
+      if (s.type)     p.set('type', s.type);
+      if (s.status)   p.set('status', s.status);
+      if (s.country)  p.set('country', s.country);
+      if (s.q)        p.set('q', s.q);
+      const res = await api.get<{ threats: ThreatRow[]; total: number }>(`/api/threats?${p}`);
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Failed');
+      return res.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  return (
+    <div className="space-y-4">
+      <DeepCard padding="lg">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-sm font-semibold text-[var(--text-primary)]">Threats</div>
+            <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+              {(data?.total ?? 0).toLocaleString()} total · raw indicators feeding into this brand's Risk score
+            </div>
+          </div>
+          <a
+            href={`/v2/threats?brand_id=${encodeURIComponent(brandId)}`}
+            className="text-[11px] font-mono text-[var(--amber)] hover:underline"
+          >
+            Open in /threats →
+          </a>
+        </div>
+        <ThreatsTable
+          columns={['type', 'target', 'actor', 'technique', 'severity', 'status', 'evidence', 'last_seen']}
+          rows={data?.threats ?? []}
+          total={data?.total ?? 0}
+          loading={isLoading}
+          state={table.state}
+          pageSize={table.pageSize}
+          onFilter={table.setFilter}
+          onSearch={table.setSearch}
+          onToggleSort={table.toggleSort}
+          onPage={table.setPage}
+          controls={['severity', 'type', 'status', 'country', 'search']}
+          sortKeys={{ type: 'type', target: 'target', severity: 'severity', status: 'status', last_seen: 'last_seen' }}
+          renderExtraDetail={(r) => {
+            const actorId = r.actor_id;
+            return actorId ? (
+              <div style={{ marginTop: 14, display: 'flex', gap: 16 }}>
+                <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/threat-actors/${actorId}`)}>↗ Threat actor</button>
+              </div>
+            ) : null;
+          }}
+          emptyText="No threats targeting this brand yet."
+        />
+      </DeepCard>
     </div>
   );
 }

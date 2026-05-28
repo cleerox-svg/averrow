@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -60,7 +60,12 @@ function sinceLabelToIso(label: string): string | undefined {
 
 export function Threats() {
   const navigate = useNavigate();
-  const table = useThreatsTable({ pageSize: 50 });
+  const [searchParams] = useSearchParams();
+  const initialBrandId = searchParams.get('brand_id') ?? '';
+  const table = useThreatsTable({
+    pageSize: 50,
+    initial: initialBrandId ? { brandId: initialBrandId } : undefined,
+  });
   const s = table.state;
 
   // Aggregate fuels the slice-summary strip + brand/country option lists,
@@ -87,6 +92,7 @@ export function Threats() {
       if (s.type)     p.set('type', s.type);
       if (s.status)   p.set('status', s.status);
       if (s.country)  p.set('country', s.country);
+      if (s.brandId)  p.set('brand_id', s.brandId);
       if (s.q)        p.set('q', s.q);
       const res = await api.get<{ threats: Threat[]; total: number }>(`/api/threats?${p}`);
       if (!res.success || !res.data) throw new Error(res.error ?? 'Failed');
