@@ -267,6 +267,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/email-security/stats` | User | Email security statistics |
 | GET | `/api/email-security/scan-all` | Admin | Scan all monitored brands |
 | GET | `/api/email-security/:brandId` | User | Get brand email security posture |
+| GET | `/api/email-security/:brandId/history?limit=N` | User | Up to N most-recent scans with per-scan `protocols_passing` (0–4) for the brand-detail Surface tab posture sparkline |
 | POST | `/api/email-security/scan/:brandId` | User | Trigger email security scan |
 
 ## DMARC Reports

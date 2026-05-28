@@ -3,6 +3,7 @@
  * Email Security Posture — API Route Handlers
  *
  * GET  /api/email-security/:brandId          → Get latest scan for a brand
+ * GET  /api/email-security/:brandId/history  → Recent historical scans (timeline)
  * POST /api/email-security/scan/:brandId     → Trigger manual scan for a brand
  * GET  /api/email-security/scan-all          → Trigger scan of all brands (admin)
  * GET  /api/v1/public/email-security/:domain → Public endpoint (live scan)
@@ -45,6 +46,64 @@ export async function handleGetEmailSecurity(
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+// ─── GET /api/email-security/:brandId/history ─────────────────────────────
+//
+// Returns up to N most-recent scans for a brand as a compact timeline.
+// One row per scan with a derived `protocols_passing` count (out of 4 —
+// SPF / DKIM / DMARC / MX, matching the rendering on the brand card)
+// and the DMARC policy at each point in time. Used by the Email
+// Posture history strip on the brand Surface tab so operators can see
+// when a brand strengthened or weakened its email posture.
+
+export async function handleGetEmailSecurityHistory(
+  request: Request,
+  env: Env,
+  brandId: string,
+): Promise<Response> {
+  const origin = request.headers.get('Origin');
+  try {
+    const url = new URL(request.url);
+    const limit = Math.min(90, Math.max(1, parseInt(url.searchParams.get('limit') ?? '30', 10)));
+
+    const rows = await env.DB.prepare(`
+      SELECT id, scanned_at, spf_exists, dkim_exists, dmarc_exists, dmarc_policy, mx_exists
+      FROM email_security_scans
+      WHERE brand_id = ?
+      ORDER BY scanned_at DESC
+      LIMIT ?
+    `).bind(brandId, limit).all<{
+      id: number;
+      scanned_at: string;
+      spf_exists: number;
+      dkim_exists: number;
+      dmarc_exists: number;
+      dmarc_policy: string | null;
+      mx_exists: number;
+    }>();
+
+    const history = (rows.results ?? []).map((row) => {
+      const passing =
+        (row.spf_exists ? 1 : 0) +
+        (row.dkim_exists ? 1 : 0) +
+        (row.dmarc_exists ? 1 : 0) +
+        (row.mx_exists ? 1 : 0);
+      return {
+        scanned_at:   row.scanned_at,
+        spf_exists:   !!row.spf_exists,
+        dkim_exists:  !!row.dkim_exists,
+        dmarc_exists: !!row.dmarc_exists,
+        dmarc_policy: row.dmarc_policy,
+        mx_exists:    !!row.mx_exists,
+        protocols_passing: passing,
+      };
+    });
+
+    return json({ success: true, data: history }, 200, origin);
+  } catch {
+    return json({ success: false, error: 'An internal error occurred' }, 500, origin);
   }
 }
 

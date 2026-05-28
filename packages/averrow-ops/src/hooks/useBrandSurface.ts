@@ -76,3 +76,59 @@ export function useBrandFirmographics(brandId: string) {
     staleTime: 5 * 60_000,
   });
 }
+
+// Narrator agent output. ~55 rows in production at audit time; the
+// /api/narratives/:brandId endpoint has been live but had no UI
+// consumer until WS-A #3 — see AUDIT_dark_data.md.
+export interface BrandNarrative {
+  id:           string;
+  brand_id:     string;
+  title:        string;
+  summary:      string;
+  signal_types: string[];
+  severity:     string;           // 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
+  confidence:   number | null;
+  attack_stage: string | null;
+  status:       string;           // 'active' | 'archived' | ...
+  generated_by: string | null;
+  created_at:   string;
+  updated_at:   string;
+}
+
+export function useBrandNarratives(brandId: string, limit: number = 5) {
+  return useQuery({
+    queryKey: ['brand-narratives', brandId, limit],
+    queryFn: async () => {
+      const res = await api.get<BrandNarrative[]>(
+        `/api/narratives/${brandId}?status=active&limit=${limit}`,
+      );
+      return (res.data ?? []) as BrandNarrative[];
+    },
+    enabled: !!brandId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export interface EmailSecurityHistoryPoint {
+  scanned_at:        string;
+  spf_exists:        boolean;
+  dkim_exists:       boolean;
+  dmarc_exists:      boolean;
+  dmarc_policy:      string | null;
+  mx_exists:         boolean;
+  protocols_passing: number;     // 0–4
+}
+
+export function useEmailSecurityHistory(brandId: string, limit: number = 30) {
+  return useQuery({
+    queryKey: ['brand-email-security-history', brandId, limit],
+    queryFn: async () => {
+      const res = await api.get<EmailSecurityHistoryPoint[]>(
+        `/api/email-security/${brandId}/history?limit=${limit}`,
+      );
+      return (res.data ?? []) as EmailSecurityHistoryPoint[];
+    },
+    enabled: !!brandId,
+    staleTime: 5 * 60_000,
+  });
+}

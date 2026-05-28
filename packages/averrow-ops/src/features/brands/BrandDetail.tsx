@@ -30,7 +30,9 @@ import { useDarkWebMentions } from '@/hooks/useDarkWebMonitor';
 import { useAppStoreMonitor } from '@/hooks/useAppStoreMonitor';
 import {
   useBrandDomains, useBrandFirmographics, useBrandScoreHistory,
+  useBrandNarratives, useEmailSecurityHistory,
   type BrandDomain, type BrandFirmographics, type BrandScoreSnapshot,
+  type BrandNarrative, type EmailSecurityHistoryPoint,
 } from '@/hooks/useBrandSurface';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
@@ -111,6 +113,8 @@ export function BrandDetailV3() {
   const { data: brandDomains = [] } = useBrandDomains(id);
   const { data: firmographics = null } = useBrandFirmographics(id);
   const { data: scoreHistory = [] } = useBrandScoreHistory(id, 30);
+  const { data: narratives = [] } = useBrandNarratives(id, 5);
+  const { data: emailSecHistory = [] } = useEmailSecurityHistory(id, 30);
 
   const suspiciousSocials = useMemo(
     () => socialProfiles.filter((p: any) => p.classification === 'suspicious' || p.classification === 'impersonation'),
@@ -210,6 +214,7 @@ export function BrandDetailV3() {
         <SurfaceTab
           brand={brand}
           emailSec={emailSec}
+          emailSecHistory={emailSecHistory}
           safeDomains={safeDomains}
           officialSocials={officialSocials}
           appListings={appListings}
@@ -230,6 +235,7 @@ export function BrandDetailV3() {
           darkWebMentions={darkWebMentions}
           alerts={alerts}
           scoreHistory={scoreHistory}
+          narratives={narratives}
           onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
           onScanSocials={() => scanProfiles.mutate(id)}
           onDiscoverSocials={() => discoverProfiles.mutate(id)}
@@ -592,11 +598,12 @@ function SignalFilterRow({
 // (PR4 enricher) — both rendered honestly: empty/sparse where the
 // data isn't there yet rather than hidden.
 function SurfaceTab({
-  brand, emailSec, safeDomains, officialSocials, appListings,
+  brand, emailSec, emailSecHistory, safeDomains, officialSocials, appListings,
   brandDomains, firmographics, onJumpV2,
 }: {
   brand: any;
   emailSec: any;
+  emailSecHistory: EmailSecurityHistoryPoint[];
   safeDomains: any[];
   officialSocials: any[];
   appListings: any[];
@@ -613,7 +620,10 @@ function SurfaceTab({
       <FirmographicBlock firmographics={firmographics} brand={brand} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+        <div className="space-y-3">
+          <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
+          <EmailSecurityHistoryStrip history={emailSecHistory} />
+        </div>
 
         <Card hover={false}>
           <SectionLabel>Confirmed presence</SectionLabel>
@@ -645,7 +655,7 @@ function SurfaceTab({
 // are getting their own audits.
 function RiskTab({
   brand, threats, emailSec, socialProfiles, suspiciousSocials, suspiciousApps,
-  darkWebMentions, alerts, scoreHistory, onJumpV2, onScanSocials, onDiscoverSocials,
+  darkWebMentions, alerts, scoreHistory, narratives, onJumpV2, onScanSocials, onDiscoverSocials,
   onAiDeepScan, aiPending, scanPending, discoverPending,
 }: any) {
   const newAlertCount = alerts.length;
@@ -732,6 +742,8 @@ function RiskTab({
         </div>
       </Card>
 
+      <NarrativesPanel narratives={narratives as BrandNarrative[]} />
+
       <TyposquatsSection threats={threats} />
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -740,6 +752,155 @@ function RiskTab({
         </DimensionalButton>
       </div>
     </div>
+  );
+}
+
+// ── EMAIL SECURITY HISTORY STRIP ────────────────────────────────────
+// 30-most-recent scans rendered as a left-to-right strip. Each dot is
+// a scan; height encodes protocols_passing (out of 4) so the strip is
+// a sparkline-ish "did this brand strengthen or weaken its email
+// posture" at-a-glance. Surfaces the email_security_scans history
+// that the audit flagged as 95% dark — handler only returned the
+// latest scan before WS-A #3 added /history.
+function EmailSecurityHistoryStrip({ history }: { history: EmailSecurityHistoryPoint[] }) {
+  if (!history || history.length === 0) return null;
+  // API returns newest first; chart reads left→right oldest→newest.
+  const chrono = [...history].reverse();
+  const max = 4;
+
+  const colorFor = (n: number) =>
+    n >= 4 ? 'var(--green)'
+    : n >= 3 ? 'var(--sev-medium)'
+    : n >= 2 ? 'var(--sev-high)'
+    : 'var(--sev-critical)';
+
+  const last = chrono[chrono.length - 1];
+  const first = chrono[0];
+
+  return (
+    <Card hover={false}>
+      <div className="flex items-center justify-between mb-2">
+        <SectionLabel>Email posture · {chrono.length}-scan history</SectionLabel>
+        <div className="font-mono text-[10px] text-[var(--text-tertiary)]">
+          {first.protocols_passing}/4 → {last.protocols_passing}/4
+        </div>
+      </div>
+      <div
+        className="flex items-end gap-1 mt-3 px-1"
+        style={{ height: 48, background: 'var(--bg-card-deep)', borderRadius: 6, padding: '8px 6px' }}
+      >
+        {chrono.map((p, i) => {
+          const pct = (p.protocols_passing / max) * 100;
+          const c = colorFor(p.protocols_passing);
+          return (
+            <div
+              key={`${p.scanned_at}-${i}`}
+              className="flex-1 rounded-sm transition-all"
+              title={`${p.scanned_at}: ${p.protocols_passing}/4 protocols${p.dmarc_policy ? ` · DMARC ${p.dmarc_policy}` : ''}`}
+              style={{
+                height: `${Math.max(8, pct)}%`,
+                minWidth: 4,
+                background: `linear-gradient(180deg, ${c} 0%, ${c}80 100%)`,
+                boxShadow: `0 0 6px ${c}40, inset 0 1px 0 rgba(255,255,255,0.20)`,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between mt-2 font-mono text-[10px] text-[var(--text-muted)]">
+        <span>{first.scanned_at?.slice(0, 10) ?? ''}</span>
+        <span>SPF · DKIM · DMARC · MX</span>
+        <span>{last.scanned_at?.slice(0, 10) ?? ''}</span>
+      </div>
+    </Card>
+  );
+}
+
+// ── NARRATIVES ──────────────────────────────────────────────────────
+// Narrator agent output, scoped to this brand. AI-written summary of
+// each active threat pattern. Surfaces the data the audit found 100%
+// dark — the endpoint had existed since the Narrator agent shipped
+// but no React hook ever called it. Rendered on the Risk tab between
+// the surface rollup and the per-typosquat list because narratives
+// interpret the same signals those tiles count.
+function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
+  if (!narratives || narratives.length === 0) return null;
+
+  const SEV: Record<string, { color: string; label: string }> = {
+    CRITICAL: { color: 'var(--sev-critical)', label: 'Critical' },
+    HIGH:     { color: 'var(--sev-high)',     label: 'High' },
+    MEDIUM:   { color: 'var(--sev-medium)',   label: 'Medium' },
+    LOW:      { color: 'var(--sev-low)',      label: 'Low' },
+    INFO:     { color: 'var(--text-secondary)', label: 'Info' },
+  };
+
+  return (
+    <DeepCard padding="lg">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <SectionLabel>Brand narratives</SectionLabel>
+          <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+            Narrator agent · what the platform thinks is happening to this brand
+          </div>
+        </div>
+        <div className="font-mono text-[10px] text-[var(--text-tertiary)]">
+          {narratives.length} active
+        </div>
+      </div>
+      <div className="space-y-2.5">
+        {narratives.map((n) => {
+          const sev = SEV[(n.severity ?? 'INFO').toUpperCase()] ?? SEV.INFO;
+          return (
+            <div
+              key={n.id}
+              className="rounded-lg p-3"
+              style={{
+                background: 'var(--bg-card-deep)',
+                borderLeft: `3px solid ${sev.color}`,
+                border: `1px solid ${sev.color}25`,
+                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 14px ${sev.color}10`,
+              }}
+            >
+              <div className="flex items-start gap-3 mb-1.5">
+                <span
+                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider flex-shrink-0"
+                  style={{ background: `${sev.color}20`, color: sev.color, border: `1px solid ${sev.color}40` }}
+                >
+                  <span style={{ width: 5, height: 5, borderRadius: 999, background: sev.color, boxShadow: `0 0 6px ${sev.color}` }} />
+                  {sev.label}
+                </span>
+                <div className="text-[13px] font-semibold text-[var(--text-primary)] leading-tight flex-1">
+                  {n.title}
+                </div>
+                <div className="font-mono text-[10px] text-[var(--text-tertiary)] flex-shrink-0">
+                  {timeAgo(n.created_at)}
+                </div>
+              </div>
+              <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed mt-1.5">
+                {n.summary}
+              </p>
+              {Array.isArray(n.signal_types) && n.signal_types.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {n.signal_types.slice(0, 6).map((s) => (
+                    <span
+                      key={s}
+                      className="px-1.5 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider"
+                      style={{
+                        background: 'var(--bg-card)',
+                        color: 'var(--text-tertiary)',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                      }}
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </DeepCard>
   );
 }
 

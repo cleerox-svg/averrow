@@ -4,6 +4,7 @@ import type { Env } from "../types";
 import { requireStaff, requireAdmin, isAuthContext } from "../middleware/auth";
 import {
   handleGetEmailSecurity,
+  handleGetEmailSecurityHistory,
   handleScanBrandEmailSecurity,
   handleScanAllEmailSecurity,
   handleEmailSecurityStats,
@@ -26,6 +27,12 @@ export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void 
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleScanAllEmailSecurity(request, env);
+  });
+  // Note: /history must be registered BEFORE the bare /:brandId catch-all.
+  router.get("/api/email-security/:brandId/history", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetEmailSecurityHistory(request, env, request.params["brandId"] ?? "");
   });
   router.get("/api/email-security/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireStaff(request, env);
