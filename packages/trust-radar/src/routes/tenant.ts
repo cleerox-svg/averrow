@@ -40,6 +40,7 @@ import {
 } from "../handlers/tenantAppStoreModule";
 import {
   handleGetDarkWebModuleSummary, handleGetBrandDarkWebFindings,
+  handleGetOrgDarkWebMentions,
 } from "../handlers/tenantDarkWebModule";
 import {
   handleGetAbuseMailboxModuleSummary, handleListAbuseInboxMessages,
@@ -364,6 +365,11 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetDarkWebModuleSummary(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/modules/dark-web/mentions", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetOrgDarkWebMentions(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.get("/api/orgs/:orgId/modules/dark-web/brands/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);

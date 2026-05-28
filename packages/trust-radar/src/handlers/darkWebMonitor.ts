@@ -65,6 +65,179 @@ async function assertBrandAccess(
   return { brand };
 }
 
+// ─── GET /api/darkweb/mentions ───────────────────────────────────
+// Global mention list across all monitored brands. Powers the
+// platform-standard table view on the ops Dark Web page. Mirrors
+// the per-brand handler's shape but without the brand-scoping
+// guard — auth alone is enough since dark web is staff-side.
+//
+// Aggregates are computed on the UNFILTERED active slice and
+// returned alongside the page rows so the UI can render source-
+// mix and severity-mix sidecars without a second round trip and
+// without the cache key thrashing on every filter combination.
+
+export async function handleListAllDarkWebMentions(
+  request: Request,
+  env: Env,
+  _ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const url = new URL(request.url);
+    const source = url.searchParams.get("source");
+    const classification = url.searchParams.get("classification");
+    const severity = url.searchParams.get("severity");
+    const matchType = url.searchParams.get("match_type");
+    const status = url.searchParams.get("status") ?? "active";
+    const brandId = url.searchParams.get("brand_id");
+    const q = url.searchParams.get("q")?.trim();
+    const sort = (url.searchParams.get("sort") ?? "last_seen").toLowerCase();
+    const dirRaw = (url.searchParams.get("dir") ?? "desc").toLowerCase();
+    const dir: "asc" | "desc" = dirRaw === "asc" ? "asc" : "desc";
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10)));
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10));
+
+    const sortColumn = (() => {
+      switch (sort) {
+        case "first_seen": return "dwm.first_seen";
+        case "posted_at":  return "COALESCE(dwm.posted_at, dwm.first_seen)";
+        case "severity":   return "CASE dwm.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END";
+        case "source":     return "dwm.source";
+        case "brand":      return "b.name";
+        default:           return "COALESCE(dwm.last_seen, dwm.first_seen)";
+      }
+    })();
+    // For severity, DESC reads natural ("worst first") because CASE
+    // assigns ascending integers; flip the SQL direction so DESC in
+    // the UI means severity-descending.
+    const sqlDir = sort === "severity"
+      ? (dir === "asc" ? "DESC" : "ASC")
+      : (dir === "asc" ? "ASC" : "DESC");
+
+    // Cache key encodes ALL filters + sort + page. Default view (no
+    // filters, status=active, page 0, default sort) gets a reduced
+    // key so the most-loaded combo hits the same slot regardless of
+    // user. 60s TTL — operators want freshness.
+    const cacheVersion = await getCacheVersion(env, "darkweb");
+    const isDefaultView = !source && !classification && !severity && !matchType
+      && !brandId && !q && status === "active" && offset === 0 && limit === 50
+      && sort === "last_seen" && dir === "desc";
+    const cacheKey = isDefaultView
+      ? `darkweb_all_mentions:v${cacheVersion}:default`
+      : `darkweb_all_mentions:v${cacheVersion}:${status}:${source ?? ""}:${classification ?? ""}:${severity ?? ""}:${matchType ?? ""}:${brandId ?? ""}:${q ?? ""}:${sort}:${dir}:${limit}:${offset}`;
+
+    const dbCtx = getDbContext(request);
+    const session = getReadSession(env, dbCtx);
+
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) {
+      recordD1Reads(env, "darkweb_all_mentions", newTally());
+      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
+    }
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (status)         { where.push("dwm.status = ?");          params.push(status); }
+    if (source)         { where.push("dwm.source = ?");          params.push(source); }
+    if (classification) { where.push("dwm.classification = ?");  params.push(classification); }
+    if (severity)       { where.push("dwm.severity = ?");        params.push(severity); }
+    if (matchType)      { where.push("dwm.match_type = ?");      params.push(matchType); }
+    if (brandId)        { where.push("dwm.brand_id = ?");        params.push(brandId); }
+    if (q)              { where.push("(dwm.content_snippet LIKE ? OR dwm.source_channel LIKE ? OR b.name LIKE ?)");
+                          const like = `%${q}%`;
+                          params.push(like, like, like); }
+    const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const tally = newTally();
+
+    // Page rows + filtered total + global aggregates in parallel.
+    // Aggregates use only status=active so they stay cacheable and
+    // give the UI a stable "what's on the dark web overall" picture
+    // independent of the user's filter combo.
+    const [rowsRes, countRow, aggRow, bySourceRes, bySeverityRes] = await Promise.all([
+      session.prepare(`
+        SELECT dwm.id, dwm.brand_id, dwm.source, dwm.source_url, dwm.source_channel,
+               dwm.source_author, dwm.posted_at, dwm.content_snippet,
+               dwm.matched_terms, dwm.match_type, dwm.classification,
+               dwm.classified_by, dwm.classification_confidence,
+               dwm.classification_reason, dwm.severity, dwm.status,
+               dwm.first_seen, dwm.last_seen, dwm.ai_action,
+               b.name AS brand_name, b.canonical_domain AS brand_domain
+        FROM dark_web_mentions dwm
+        LEFT JOIN brands b ON b.id = dwm.brand_id
+        ${whereClause}
+        ORDER BY ${sortColumn} ${sqlDir}, dwm.id
+        LIMIT ? OFFSET ?
+      `).bind(...params, limit, offset).all(),
+      session.prepare(`
+        SELECT COUNT(*) AS n
+        FROM dark_web_mentions dwm
+        LEFT JOIN brands b ON b.id = dwm.brand_id
+        ${whereClause}
+      `).bind(...params).first<{ n: number }>(),
+      session.prepare(`
+        SELECT
+          COUNT(*) AS total_active,
+          SUM(CASE WHEN classification = 'confirmed'  THEN 1 ELSE 0 END) AS confirmed_active,
+          SUM(CASE WHEN classification = 'suspicious' THEN 1 ELSE 0 END) AS suspicious_active,
+          SUM(CASE WHEN severity = 'CRITICAL'         THEN 1 ELSE 0 END) AS critical_active,
+          SUM(CASE WHEN severity = 'HIGH'             THEN 1 ELSE 0 END) AS high_active,
+          SUM(CASE WHEN severity = 'MEDIUM'           THEN 1 ELSE 0 END) AS medium_active,
+          SUM(CASE WHEN severity = 'LOW'              THEN 1 ELSE 0 END) AS low_active
+        FROM dark_web_mentions
+        WHERE status = 'active'
+      `).first<{
+        total_active: number; confirmed_active: number; suspicious_active: number;
+        critical_active: number; high_active: number; medium_active: number; low_active: number;
+      }>(),
+      session.prepare(`
+        SELECT source, COUNT(*) AS n
+        FROM dark_web_mentions
+        WHERE status = 'active'
+        GROUP BY source
+        ORDER BY n DESC
+      `).all<{ source: string; n: number }>(),
+      session.prepare(`
+        SELECT severity, COUNT(*) AS n
+        FROM dark_web_mentions
+        WHERE status = 'active'
+        GROUP BY severity
+      `).all<{ severity: string; n: number }>(),
+    ]);
+
+    addToTally(tally, rowsRes.meta);
+    addToTally(tally, bySourceRes.meta);
+    addToTally(tally, bySeverityRes.meta);
+    tally.queries += 2; // countRow + aggRow from .first()
+    recordD1Reads(env, "darkweb_all_mentions", tally);
+
+    const responseBody = {
+      success: true,
+      data: {
+        results: rowsRes.results,
+        total: countRow?.n ?? 0,
+        aggregates: {
+          slice: aggRow ?? {
+            total_active: 0, confirmed_active: 0, suspicious_active: 0,
+            critical_active: 0, high_active: 0, medium_active: 0, low_active: 0,
+          },
+          by_source:   bySourceRes.results,
+          by_severity: bySeverityRes.results,
+        },
+        applied: {
+          source, classification, severity, match_type: matchType,
+          status, brand_id: brandId, q, sort, dir, limit, offset,
+        },
+      },
+    };
+
+    await env.CACHE.put(cacheKey, JSON.stringify(responseBody), { expirationTtl: 60 });
+    return attachBookmark(json(responseBody, 200, origin), session);
+  } catch {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
 // ─── GET /api/darkweb/mentions/:brandId ──────────────────────────
 
 export async function handleListDarkWebMentions(

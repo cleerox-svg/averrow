@@ -246,43 +246,25 @@ async function ingestViaWebPreview(
 
   const html = await response.text();
 
-  // Parse messages from the public preview HTML
-  // Messages are in <div class="tgme_widget_message_wrap">
-  const messagePattern = /data-post="([^"]+\/(\d+))"[\s\S]*?<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
-  let match: RegExpExecArray | null;
-  const messages: Array<{ postId: string; messageId: number; html: string }> = [];
+  // Parse via HTMLRewriter — the previous regex pattern
+  // (`[\s\S]*?<\/div>`) breaks on nested divs inside the message
+  // body (link previews, polls, replies), matching the first inner
+  // closing tag and truncating to empty. Web preview was returning
+  // healthy=true with 0 ingested rows for all channels. HTMLRewriter
+  // is a streaming HTML parser native to Workers — no dependency
+  // added, no regex landmines.
+  const messages = await parseTelegramPreview(html);
 
-  while ((match = messagePattern.exec(html)) !== null && messages.length < MAX_MESSAGES_PER_CHANNEL) {
-    messages.push({
-      postId: match[1]!,
-      messageId: parseInt(match[2]!, 10),
-      html: match[3]!,
-    });
-  }
-
-  // Also try a simpler pattern if the above didn't match
-  if (messages.length === 0) {
-    const simplePattern = /data-post="([^"]+\/(\d+))"[\s\S]*?<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
-    while ((match = simplePattern.exec(html)) !== null && messages.length < MAX_MESSAGES_PER_CHANNEL) {
-      messages.push({
-        postId: match[1]!,
-        messageId: parseInt(match[2]!, 10),
-        html: match[3]!,
-      });
-    }
-  }
-
-  for (const msg of messages) {
-    const text = stripHtml(msg.html).slice(0, 2000);
-    if (!text.trim()) continue;
+  for (const msg of messages.slice(0, MAX_MESSAGES_PER_CHANNEL)) {
+    if (!msg.text.trim()) continue;
 
     fetched++;
     const result = await matchAndInsert(env, {
       messageId: msg.messageId,
       channelName: channel,
-      text,
-      date: 0, // Web preview doesn't reliably provide timestamps
-      views: undefined,
+      text: msg.text,
+      date: msg.date,
+      views: msg.views,
       forwards: undefined,
     }, brands);
 
@@ -291,6 +273,101 @@ async function ingestViaWebPreview(
   }
 
   return { fetched, new: newCount, duplicate };
+}
+
+// ─── HTMLRewriter-based preview parser ──────────────────────────
+
+interface ParsedPreviewMessage {
+  postId: string;
+  messageId: number;
+  text: string;
+  /** Unix seconds, 0 when not parseable. */
+  date: number;
+  views?: number;
+}
+
+async function parseTelegramPreview(html: string): Promise<ParsedPreviewMessage[]> {
+  const messages: ParsedPreviewMessage[] = [];
+  let current: ParsedPreviewMessage | null = null;
+
+  const flush = () => {
+    if (current && current.text.trim()) {
+      messages.push({ ...current, text: current.text.trim().slice(0, 2000) });
+    }
+    current = null;
+  };
+
+  // HTMLRewriter requires a Response to transform; we build one
+  // from the static HTML string. The .text() at the end fully
+  // consumes the stream and drains all handlers.
+  const response = new Response(html, {
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
+
+  await new HTMLRewriter()
+    // Each preview message is anchored on the inner
+    // `tgme_widget_message` div which carries data-post.
+    // Opening this element flushes the prior message and starts
+    // a new accumulator.
+    .on('div.tgme_widget_message[data-post]', {
+      element(el) {
+        flush();
+        const postAttr = el.getAttribute('data-post');
+        if (!postAttr) return;
+        const parts = postAttr.split('/');
+        const last = parts[parts.length - 1];
+        const messageId = last ? parseInt(last, 10) : NaN;
+        if (Number.isNaN(messageId)) return;
+        current = { postId: postAttr, messageId, text: '', date: 0 };
+      },
+    })
+    // Text nodes inside the message body (and any descendants —
+    // links, code spans, etc.) get appended in stream order.
+    // Insert a leading space between non-contiguous chunks so
+    // "wordlink" doesn't merge into "wordlinktext" across tag
+    // boundaries.
+    .on('div.tgme_widget_message_text', {
+      text(chunk) {
+        if (current) current.text += chunk.text;
+      },
+    })
+    // <br/> inside the body — preserve as newline so credential-
+    // dump line patterns survive the parse.
+    .on('div.tgme_widget_message_text br', {
+      element() {
+        if (current) current.text += '\n';
+      },
+    })
+    // Footer's <time datetime="..."> is the canonical post
+    // timestamp. Captured here so dark_web_mentions.posted_at
+    // reflects the actual post date, not "now".
+    .on('time[datetime]', {
+      element(el) {
+        if (!current) return;
+        const dt = el.getAttribute('datetime');
+        if (!dt) return;
+        const ts = Date.parse(dt);
+        if (!Number.isNaN(ts)) current.date = Math.floor(ts / 1000);
+      },
+    })
+    // View count — best-effort parsing of "1.2K" / "47" style.
+    .on('span.tgme_widget_message_views', {
+      text(chunk) {
+        if (!current) return;
+        const raw = chunk.text.trim();
+        if (!raw) return;
+        const mult = /K\b/i.test(raw) ? 1_000 : /M\b/i.test(raw) ? 1_000_000 : 1;
+        const numStr = raw.replace(/[^\d.]/g, '');
+        if (!numStr) return;
+        const n = parseFloat(numStr);
+        if (!Number.isNaN(n)) current.views = Math.floor(n * mult);
+      },
+    })
+    .transform(response)
+    .text();
+
+  flush();
+  return messages;
 }
 
 // ─── Brand Matching & Insert ────────────────────────────────────
