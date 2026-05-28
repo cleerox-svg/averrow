@@ -172,6 +172,95 @@ export interface DarkWebOverviewResponse {
   };
 }
 
+// ─── Global mentions table ──────────────────────────────────────
+// Powers the platform-standard table view on the ops Dark Web page.
+// Mirrors useThreatsTable's filter/sort/pagination contract.
+
+export type DarkWebSortKey =
+  | 'last_seen'
+  | 'first_seen'
+  | 'posted_at'
+  | 'severity'
+  | 'source'
+  | 'brand';
+
+export interface DarkWebAllMentionsParams {
+  source?: string;
+  classification?: DarkWebClassification;
+  severity?: Severity;
+  match_type?: DarkWebMatchType;
+  status?: DarkWebStatus;
+  brand_id?: string;
+  q?: string;
+  sort?: DarkWebSortKey;
+  dir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface DarkWebMentionWithBrand extends DarkWebMention {
+  brand_name: string | null;
+  brand_domain: string | null;
+}
+
+export interface DarkWebAllMentionsResponse {
+  results: DarkWebMentionWithBrand[];
+  total: number;
+  aggregates: {
+    slice: {
+      total_active: number;
+      confirmed_active: number;
+      suspicious_active: number;
+      critical_active: number;
+      high_active: number;
+      medium_active: number;
+      low_active: number;
+    };
+    by_source:   Array<{ source: string;   n: number }>;
+    by_severity: Array<{ severity: string; n: number }>;
+  };
+  applied: Record<string, unknown>;
+}
+
+export function useDarkWebAllMentions(params: DarkWebAllMentionsParams = {}) {
+  const qs = new URLSearchParams();
+  if (params.source)         qs.set('source', params.source);
+  if (params.classification) qs.set('classification', params.classification);
+  if (params.severity)       qs.set('severity', params.severity);
+  if (params.match_type)     qs.set('match_type', params.match_type);
+  if (params.status)         qs.set('status', params.status);
+  if (params.brand_id)       qs.set('brand_id', params.brand_id);
+  if (params.q)              qs.set('q', params.q);
+  if (params.sort)           qs.set('sort', params.sort);
+  if (params.dir)            qs.set('dir', params.dir);
+  if (params.limit !== undefined)  qs.set('limit',  String(params.limit));
+  if (params.offset !== undefined) qs.set('offset', String(params.offset));
+  const query = qs.toString();
+
+  return useQuery({
+    queryKey: ['dark-web-all-mentions', params],
+    queryFn: async () => {
+      const res = await api.get<DarkWebAllMentionsResponse>(
+        `/api/darkweb/mentions${query ? `?${query}` : ''}`,
+      );
+      return (res.data ?? {
+        results: [],
+        total: 0,
+        aggregates: {
+          slice: {
+            total_active: 0, confirmed_active: 0, suspicious_active: 0,
+            critical_active: 0, high_active: 0, medium_active: 0, low_active: 0,
+          },
+          by_source: [],
+          by_severity: [],
+        },
+        applied: {},
+      }) as DarkWebAllMentionsResponse;
+    },
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useDarkWebOverview(params: { limit?: number; offset?: number } = {}) {
   const qs = new URLSearchParams();
   if (params.limit !== undefined) qs.set('limit', String(params.limit));

@@ -39,6 +39,7 @@ import {
 import {
   handleListDarkWebMentions, handleTriggerDarkWebScan,
   handleUpdateDarkWebMention, handleDarkWebOverview,
+  handleListAllDarkWebMentions,
 } from "../handlers/darkWebMonitor";
 import { handleTrademarkOverview } from "../handlers/trademarkMonitor";
 import {
@@ -361,6 +362,11 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleDarkWebOverview(request, env, ctx);
+  });
+  router.get("/api/darkweb/mentions", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListAllDarkWebMentions(request, env, ctx);
   });
   router.get("/api/darkweb/mentions/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
