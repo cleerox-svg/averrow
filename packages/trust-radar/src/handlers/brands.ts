@@ -925,6 +925,15 @@ export async function handleBrandScoreHistory(request: Request, env: Env, brandI
 }
 
 // GET /api/brands/:id/threats
+//
+// Brand-scoped threats. Returns the same enriched column set + joins as
+// `/api/threats` (saas_techniques, threat_actor_infrastructure, hosting
+// providers) so callers see TTP + actor + multi-vendor evidence without
+// a second round-trip. Response shape stays `{ data: rows, total }` —
+// distinct from `/api/threats`'s `{ data: { threats, total } }` —
+// because existing consumers (useBrandDetail, useBrands) depend on the
+// flat-array layout. Also now honors ?type / ?status / ?severity, which
+// the earlier slim version silently ignored.
 export async function handleBrandThreats(request: Request, env: Env, brandId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -933,30 +942,90 @@ export async function handleBrandThreats(request: Request, env: Env, brandId: st
     const url = new URL(request.url);
     const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
-    const threatType = url.searchParams.get("threat_type");
-    const typeClause = threatType ? " AND threat_type = ?" : "";
-    const typeBind: unknown[] = threatType ? [threatType] : [];
+    const threatType = url.searchParams.get("threat_type") ?? url.searchParams.get("type");
+    const status = url.searchParams.get("status");
+    const severity = url.searchParams.get("severity");
 
-    const rows = await session.prepare(`
-      SELECT id, threat_type, severity, status, malicious_domain, malicious_url,
-             ip_address, country_code, hosting_provider_id, campaign_id,
-             source_feed, confidence_score,
-             first_seen, last_seen, created_at
-      FROM threats WHERE target_brand_id = ?
-        AND malicious_domain NOT IN (SELECT domain FROM brand_safe_domains WHERE brand_id = ?)
-        ${typeClause}
-      ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).bind(brandId, brandId, ...typeBind, limit, offset).all();
+    const conditions: string[] = [
+      "t.target_brand_id = ?",
+      "t.malicious_domain NOT IN (SELECT domain FROM brand_safe_domains WHERE brand_id = ?)",
+    ];
+    const params: unknown[] = [brandId, brandId];
+    if (threatType) { conditions.push("t.threat_type = ?"); params.push(threatType); }
+    if (status)     { conditions.push("t.status = ?");      params.push(status); }
+    if (severity)   { conditions.push("t.severity = ?");    params.push(severity); }
 
-    // TODO: migrate to getThreatsByBrand() from db/threats.ts when safe-domain filtering is supported there
+    const where = `WHERE ${conditions.join(" AND ")}`;
+    const queryParams = [...params, limit, offset];
+
+    let rows: D1Result;
+    try {
+      rows = await session.prepare(
+        `SELECT t.id, t.threat_type, t.severity, t.confidence_score, t.status, t.source_feed,
+                t.ioc_value, t.malicious_domain, t.malicious_url, t.ip_address, t.asn,
+                t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
+                t.cluster_id, t.registrar, t.registration_date,
+                t.vt_checked, t.vt_malicious, t.vt_reputation,
+                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                t.surbl_checked, t.surbl_listed,
+                t.greynoise_checked, t.greynoise_classification,
+                t.seclookup_checked, t.seclookup_risk_score,
+                t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
+                t.first_seen, t.last_seen, t.created_at, t.lat, t.lng,
+                t.saas_technique_id,
+                st.name        AS saas_technique_name,
+                st.phase       AS saas_technique_phase,
+                st.phase_label AS saas_technique_phase_label,
+                st.severity    AS saas_technique_severity,
+                hp.name AS hosting_provider,
+                b.name AS brand_name,
+                tai.threat_actor_id AS actor_id,
+                ta.name AS actor_name
+         FROM threats t
+         LEFT JOIN brands b ON b.id = t.target_brand_id
+         LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+         LEFT JOIN saas_techniques st ON st.id = t.saas_technique_id
+         LEFT JOIN (SELECT asn, threat_actor_id FROM threat_actor_infrastructure GROUP BY asn) tai ON tai.asn = t.asn
+         LEFT JOIN threat_actors ta ON ta.id = tai.threat_actor_id
+         ${where}
+         ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
+      ).bind(...queryParams).all();
+    } catch {
+      // Fallback if threat_actor_infrastructure or saas_techniques aren't present.
+      rows = await session.prepare(
+        `SELECT t.id, t.threat_type, t.severity, t.confidence_score, t.status, t.source_feed,
+                t.ioc_value, t.malicious_domain, t.malicious_url, t.ip_address, t.asn,
+                t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
+                t.cluster_id, t.registrar, t.registration_date,
+                t.vt_checked, t.vt_malicious, t.vt_reputation,
+                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                t.surbl_checked, t.surbl_listed,
+                t.greynoise_checked, t.greynoise_classification,
+                t.seclookup_checked, t.seclookup_risk_score,
+                t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
+                t.first_seen, t.last_seen, t.created_at, t.lat, t.lng,
+                NULL AS saas_technique_id,
+                NULL AS saas_technique_name,
+                NULL AS saas_technique_phase,
+                NULL AS saas_technique_phase_label,
+                NULL AS saas_technique_severity,
+                NULL AS hosting_provider,
+                b.name AS brand_name,
+                NULL AS actor_id,
+                NULL AS actor_name
+         FROM threats t
+         LEFT JOIN brands b ON b.id = t.target_brand_id
+         ${where}
+         ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
+      ).bind(...queryParams).all();
+    }
+
     const total = await session.prepare(
-      `SELECT COUNT(*) AS n FROM threats WHERE target_brand_id = ?
-         AND malicious_domain NOT IN (SELECT domain FROM brand_safe_domains WHERE brand_id = ?)
-         ${typeClause}`
-    ).bind(brandId, brandId, ...typeBind).first<{ n: number }>();
+      `SELECT COUNT(*) AS n FROM threats t ${where}`
+    ).bind(...params).first<{ n: number }>();
 
     return attachBookmark(json({ success: true, data: rows.results, total: total?.n ?? 0 }, 200, origin), session);
-  } catch (err) {
+  } catch {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }
 }
