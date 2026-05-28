@@ -168,44 +168,33 @@ function matchVictimsToBrands(
   victims: NormalizedVictim[],
   brands: BrandRow[],
 ): MatchedVictim[] {
-  // Build two indexes: by canonical domain (exact) and by lower-
-  // cased brand name (substring match in victim_label). Domain
-  // wins when both fire.
+  // Domain-exact only. The initial release also tried a brand-name
+  // substring fallback in (victim_label + description); under live
+  // data that fired on common English-word brand names ("Office",
+  // "One", "Line", "Current", "Tesla") against unrelated victim
+  // descriptions and on a junk catalog row "Www" (canonical_domain
+  // www.gov.uk) that matched any URL containing "www.". First post-
+  // merge cron produced ~94% false-positive CRITICAL alerts. Audit
+  // confirmed only domain-exact matches survived.
+  //
+  // DLS posts always carry a victim website (`website` / `domain`
+  // field per source), so domain-exact is the right precision/recall
+  // tradeoff for unattended CRITICAL alerting. A stricter name
+  // matcher (require token boundaries + name length >= 5 + stoplist +
+  // demote severity from CRITICAL to MEDIUM) can be added later if
+  // needed.
   const byDomain = new Map<string, BrandRow>();
-  const nameIndex: Array<{ lower: string; brand: BrandRow }> = [];
   for (const b of brands) {
     if (b.canonical_domain) {
       byDomain.set(b.canonical_domain.toLowerCase().replace(/^www\./, ''), b);
     }
-    if (b.name && b.name.length >= 3) {
-      nameIndex.push({ lower: b.name.toLowerCase(), brand: b });
-    }
   }
 
   const matched: MatchedVictim[] = [];
-  const seenPerBrand = new Set<string>(); // dedup within one run
+  const seenPerBrand = new Set<string>();
   for (const v of victims) {
-    let brand: BrandRow | null = null;
-    if (v.victim_domain) {
-      brand = byDomain.get(v.victim_domain) ?? null;
-    }
-    if (!brand) {
-      const haystack = `${v.victim_label} ${v.description ?? ''}`.toLowerCase();
-      for (const { lower, brand: b } of nameIndex) {
-        // Word-boundary check: avoid "ge" matching "georgia"
-        if (
-          haystack === lower ||
-          haystack.startsWith(`${lower} `) ||
-          haystack.endsWith(` ${lower}`) ||
-          haystack.includes(` ${lower} `) ||
-          haystack.includes(`${lower}.`) ||
-          haystack.includes(`${lower},`)
-        ) {
-          brand = b;
-          break;
-        }
-      }
-    }
+    if (!v.victim_domain) continue;
+    const brand = byDomain.get(v.victim_domain) ?? null;
     if (!brand) continue;
     const dedupKey = `${brand.id}:${v.source_name}:${v.post_url ?? v.victim_label}`;
     if (seenPerBrand.has(dedupKey)) continue;
