@@ -191,13 +191,13 @@ function IntelTab({ isStaff }: { isStaff: boolean }) {
           title="Improving brands"
           rows={postureAgg?.improving_brands}
           tone="ok"
-          emptyMsg="No brands moving up >+5 health pts this week"
+          emptyMsg="No brand-health improvements detected this week"
         />
         <PostureMoversCard
           title="Declining brands"
           rows={postureAgg?.declining_brands}
           tone="crit"
-          emptyMsg="No brands moving down >-5 health pts this week"
+          emptyMsg="No brand-health declines detected this week"
         />
       </div>
 

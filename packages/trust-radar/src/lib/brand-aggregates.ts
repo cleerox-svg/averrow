@@ -303,6 +303,16 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
       // full 7-day diff as history accumulates. brand_score_snapshots
       // is keyed by (brand_id, snapshot_day) so the windowed CTE is
       // cheap (index seek per brand).
+      //
+      // WS-A #4: dropped the `ABS(delta) >= 5` threshold. Brand-health
+      // score moves slowly — production had 5,000 paired brands but
+      // only TWO over the threshold, leaving the Improving / Declining
+      // cards permanently empty. The card already renders the actual
+      // delta beside each brand, so a top-K-by-magnitude is more
+      // informative: even a +2 / -3 mover is the BIGGEST shift in the
+      // portfolio that day. Tie-break by latest DESC so when several
+      // brands have identical small deltas we surface the higher-score
+      // ones first.
       const movers = await env.DB.prepare(`
         WITH paired AS (
           SELECT
@@ -326,9 +336,9 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
           p.latest, (p.latest - p.prev) AS delta
         FROM paired p
         JOIN brands b ON b.id = p.brand_id
-        WHERE p.prev IS NOT NULL AND ABS(p.latest - p.prev) >= 5
-        ORDER BY ABS(p.latest - p.prev) DESC
-        LIMIT 16
+        WHERE p.prev IS NOT NULL AND p.latest <> p.prev
+        ORDER BY ABS(p.latest - p.prev) DESC, p.latest DESC
+        LIMIT 20
       `).all<{
         brand_id: string; brand_name: string; canonical_domain: string;
         logo_url: string | null; latest: number; delta: number;
