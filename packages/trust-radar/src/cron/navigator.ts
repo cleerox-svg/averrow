@@ -41,7 +41,6 @@ import { handleListAgents } from '../handlers/agents';
 import { handleListOperations, handleOperationsStats } from '../handlers/operations';
 import { handleListBrands, handleBrandStats } from '../handlers/brands';
 import { handleListThreatActors, handleThreatActorStats } from '../handlers/threatActors';
-import { handleListBreaches, handleListATOEvents, handleListEmailAuth, handleListCloudIncidents } from '../handlers/intel';
 import { getBudgetState, shouldSkipNonEssentialWarms, recordNavigatorSkip, DAILY_BUDGET, WARN_THRESHOLD } from '../lib/d1-budget';
 
 /** Canonical agent_id written to agent_runs / agent_outputs / agent_events. */
@@ -546,17 +545,16 @@ async function runNavigatorImpl(
         cacheWarmed += pageResults.filter(r => r.status === 'fulfilled').length;
       }
 
-      // Phase C: Brands, Threat Actors, Intelligence — every 30 min
+      // Phase C: Brands, Threat Actors — every 30 min
+      // (Breaches / ATO / Email-auth / Cloud-incidents pre-warm dropped
+      // in WS-B cull — those endpoints had no producers and warming the
+      // empty cache was burning ~4 D1 reads per Navigator tick.)
       if (runPhaseC && !isOverCap() && !skipNonEssential) {
         const moduleResults = await Promise.allSettled([
           handleListBrands(fakeReq('/api/brands?limit=50&sort=threats'), env),
           handleBrandStats(fakeReq('/api/brands/stats'), env),
           handleListThreatActors(fakeReq('/api/threat-actors?limit=50'), env),
           handleThreatActorStats(fakeReq('/api/threat-actors/stats'), env),
-          handleListBreaches(fakeReq('/api/breaches?limit=50'), env),
-          handleListATOEvents(fakeReq('/api/ato-events?limit=50'), env),
-          handleListEmailAuth(fakeReq('/api/email-auth?limit=50'), env),
-          handleListCloudIncidents(fakeReq('/api/cloud-incidents?limit=50'), env),
         ]);
         cacheWarmed += moduleResults.filter(r => r.status === 'fulfilled').length;
       }

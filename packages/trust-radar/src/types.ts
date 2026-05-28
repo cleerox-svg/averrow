@@ -713,10 +713,6 @@ export interface MonitoringConfigBody {
   excluded_domains?: string[];
 }
 
-export interface UpdateATOEventBody {
-  status: string;
-}
-
 export interface PaginationParams {
   limit: number;
   offset: number;

@@ -457,11 +457,6 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 |--------|------|------|-------------|
 | GET | `/api/intel/hotlist` | Staff | Mass-impersonation IPs + multi-feed-consensus IPs + recent temporal bursts (KV cached 5min). Powers the Home "Intel Hotlist" section — PR-A from the 2026-05-16 platform audit. |
 | GET | `/api/intel/critical-banner` | Staff | Prioritized "Critical Intelligence" events (provider surges, bursts, mass-impersonation IPs, new campaigns, falls back to open-critical alerts). Powers the red banner on Home — replaces the bare `alertStats.critical` count that conflated severity with operator concern. KV cached 60s. |
-| GET | `/api/breaches` | User | Breach check data (KV cached, read replicas) |
-| GET | `/api/ato-events` | User | Account takeover events (KV cached, read replicas) |
-| PATCH | `/api/ato-events/:id` | User | Update ATO event |
-| GET | `/api/email-auth` | User | Email auth reports (KV cached, read replicas) |
-| GET | `/api/cloud-incidents` | User | Cloud security incidents (KV cached, read replicas) |
 | GET | `/api/trust-scores` | User | Trust score history |
 | GET | `/api/social-iocs` | User | Social IOCs |
 

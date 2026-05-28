@@ -30,8 +30,7 @@ import {
   handleGeoCampaignAssessment,
 } from "../handlers/geopolitical";
 import {
-  handleListBreaches, handleListATOEvents, handleUpdateATOEvent,
-  handleListEmailAuth, handleListCloudIncidents, handleTrustScoreHistory,
+  handleTrustScoreHistory,
   handleIntelHotlist,
   handleIntelCriticalBanner,
 } from "../handlers/intel";
@@ -307,39 +306,6 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleIntelCriticalBanner(request, env);
-  });
-
-  // ─── Intel: Breach Checks ─────────────────────────────────────────
-  router.get("/api/breaches", async (request: Request, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleListBreaches(request, env);
-  });
-
-  // ─── Intel: Account Takeover ──────────────────────────────────────
-  router.get("/api/ato-events", async (request: Request, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleListATOEvents(request, env);
-  });
-  router.patch("/api/ato-events/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAdmin(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleUpdateATOEvent(request, env, request.params["id"] ?? "");
-  });
-
-  // ─── Intel: Email Auth Reports ────────────────────────────────────
-  router.get("/api/email-auth", async (request: Request, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleListEmailAuth(request, env);
-  });
-
-  // ─── Intel: Cloud Incidents ───────────────────────────────────────
-  router.get("/api/cloud-incidents", async (request: Request, env: Env) => {
-    const ctx = await requireAuth(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleListCloudIncidents(request, env);
   });
 
   // ─── Trust Score History ──────────────────────────────────────────
