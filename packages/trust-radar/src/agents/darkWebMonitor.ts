@@ -42,18 +42,26 @@ export const darkWebMonitorAgent: AgentModule = {
     const stats = await runDarkWebMonitorBatch(env);
 
     const outputs: AgentOutputEntry[] = [];
-    if (stats.brands_processed > 0) {
+    const didWork =
+      stats.brands_processed > 0 ||
+      stats.ransomware_inserted > 0 ||
+      stats.ransomware_alerts > 0;
+    if (didWork) {
+      const ransomNote = stats.ransomware_inserted > 0 || stats.ransomware_alerts > 0
+        ? ` | ransomware DLS: ${stats.ransomware_inserted} new (${stats.ransomware_alerts} alerts)`
+        : "";
       outputs.push({
         type: "diagnostic",
-        summary: `Dark-web scan: ${stats.brands_processed} brands, ${stats.rows_upserted} mentions upserted, ${stats.alerts_created} alerts, ${stats.ai_processed} AI-reviewed (${stats.ai_upgraded} promoted)`,
-        severity: stats.alerts_created > 0 ? "medium" : "info",
+        summary: `Dark-web scan: ${stats.brands_processed} brands, ${stats.rows_upserted} mentions upserted, ${stats.alerts_created} alerts, ${stats.ai_processed} AI-reviewed (${stats.ai_upgraded} promoted)${ransomNote}`,
+        severity:
+          stats.alerts_created > 0 || stats.ransomware_alerts > 0 ? "medium" : "info",
         details: stats,
       });
     }
 
     return {
       itemsProcessed: stats.brands_processed,
-      itemsCreated: stats.rows_upserted,
+      itemsCreated: stats.rows_upserted + stats.ransomware_inserted,
       itemsUpdated: 0,
       output: stats,
       agentOutputs: outputs,

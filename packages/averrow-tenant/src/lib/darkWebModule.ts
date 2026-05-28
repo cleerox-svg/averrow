@@ -97,11 +97,12 @@ export function useBrandDarkWebFindings(brandId: string | null) {
 
 // Customer-friendly source labels.
 export const SOURCE_LABELS: Record<string, string> = {
-  pastebin: 'Pastebin',
-  telegram: 'Telegram',
-  hibp:     'HIBP',
-  flare:    'Flare',
-  darkowl:  'DarkOwl',
+  pastebin:        'Pastebin',
+  telegram:        'Telegram leak channel',
+  ransomware_leak: 'Ransomware leak site',
+  hibp:            'HIBP',
+  flare:           'Flare',
+  darkowl:         'DarkOwl',
 };
 
 export const MATCH_TYPE_LABELS: Record<string, string> = {

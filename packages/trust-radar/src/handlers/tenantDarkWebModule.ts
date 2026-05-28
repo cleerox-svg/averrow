@@ -69,21 +69,37 @@ export async function handleGetDarkWebModuleSummary(
     throw err;
   }
 
+  // 5-min KV cache. Invalidated implicitly on the same cadence as
+  // the staff darkweb handler (which uses cache_version:darkweb).
+  // The data this page renders is hourly/6-hourly in nature (scans
+  // run on the dark_web_monitor cron) so a 5-min TTL is operator-
+  // imperceptible and absorbs the cost of repeated tenant page loads.
+  const cacheKey = `tenant:dark_web:summary:v2:${orgIdNum}`;
+  const cached = await env.CACHE.get(cacheKey);
+  if (cached) return json(JSON.parse(cached), 200, origin);
+
+  // Single GROUP BY against the brand×mention join — replaces the
+  // previous 7 correlated subqueries per brand row (N brands ×
+  // 7 = 7N sub-requests) with one indexed scan. dwm.brand_id is
+  // indexed (idx_dark_web_mentions_brand) so the LEFT JOIN walks
+  // mentions cheaply per brand and aggregates in one pass.
   const result = await env.DB.prepare(
     `SELECT
        b.id AS brand_id,
        b.name AS brand_name,
        b.canonical_domain,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active') AS mentions_total,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.classification = 'confirmed') AS mentions_confirmed,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.classification = 'suspicious') AS mentions_suspicious,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND dwm.classification = 'unknown') AS mentions_unknown,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.classification = 'false_positive') AS mentions_false_positive,
-       (SELECT COUNT(*) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active' AND LOWER(dwm.severity) IN ('high','critical')) AS mentions_high_critical,
-       (SELECT COUNT(DISTINCT dwm.source) FROM dark_web_mentions dwm WHERE dwm.brand_id = b.id AND dwm.status = 'active') AS sources_covered
+       COALESCE(SUM(CASE WHEN dwm.status = 'active' THEN 1 ELSE 0 END), 0) AS mentions_total,
+       COALESCE(SUM(CASE WHEN dwm.status = 'active' AND dwm.classification = 'confirmed' THEN 1 ELSE 0 END), 0) AS mentions_confirmed,
+       COALESCE(SUM(CASE WHEN dwm.status = 'active' AND dwm.classification = 'suspicious' THEN 1 ELSE 0 END), 0) AS mentions_suspicious,
+       COALESCE(SUM(CASE WHEN dwm.status = 'active' AND dwm.classification = 'unknown' THEN 1 ELSE 0 END), 0) AS mentions_unknown,
+       COALESCE(SUM(CASE WHEN dwm.classification = 'false_positive' THEN 1 ELSE 0 END), 0) AS mentions_false_positive,
+       COALESCE(SUM(CASE WHEN dwm.status = 'active' AND LOWER(dwm.severity) IN ('high','critical') THEN 1 ELSE 0 END), 0) AS mentions_high_critical,
+       COUNT(DISTINCT CASE WHEN dwm.status = 'active' THEN dwm.source END) AS sources_covered
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
+     LEFT JOIN dark_web_mentions dwm ON dwm.brand_id = b.id
      WHERE ob.org_id = ?
+     GROUP BY b.id, b.name, b.canonical_domain, ob.is_primary
      ORDER BY ob.is_primary DESC, b.name`,
   ).bind(orgIdNum).all<DarkWebBrandSummary>();
 
@@ -101,10 +117,12 @@ export async function handleGetDarkWebModuleSummary(
     mentions_unknown: 0, mentions_false_positive: 0, mentions_high_critical: 0,
   });
 
-  return json({
+  const body = {
     success: true,
     data: { org_id: orgIdNum, brands, totals },
-  }, 200, origin);
+  };
+  await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 300 });
+  return json(body, 200, origin);
 }
 
 // ─── GET /api/orgs/:orgId/modules/dark-web/brands/:brandId ──────

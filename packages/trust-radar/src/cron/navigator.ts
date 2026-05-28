@@ -30,6 +30,7 @@ import {
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
+import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour, getCubeSourceWatermark } from '../lib/cube-builder';
@@ -220,6 +221,22 @@ async function runNavigatorImpl(
       }
     } catch (err) {
       console.error('[navigator] dns-queue-backfill escape:', err);
+    }
+
+    // ── 2b-3. Dark Web reconciler (Telegram → dark_web_mentions) ──
+    // Cursor-paginated promotion of brand-matched Telegram leak-
+    // channel messages from social_mentions into dark_web_mentions
+    // (source='telegram'). Classification is deterministic — no AI
+    // tokens. Never throws — returns {skipped} on any failure.
+    try {
+      const dwResult = await reconcileDarkWeb(env);
+      if (!dwResult.skipped && (dwResult.scanned > 0 || dwResult.inserted > 0)) {
+        console.log(
+          `[navigator] dark-web-reconcile: scanned=${dwResult.scanned} qualified=${dwResult.qualified} inserted=${dwResult.inserted} cursor=${dwResult.cursorBefore ?? 'null'}→${dwResult.cursorAfter ?? 'unchanged'} lag=${dwResult.cursorLagMinutes}m duration=${dwResult.durationMs}ms`,
+        );
+      }
+    } catch (err) {
+      console.error('[navigator] dark-web-reconcile escape:', err);
     }
 
     // ── 2c. DNS queue reaper (PR-BI, daily) ──
