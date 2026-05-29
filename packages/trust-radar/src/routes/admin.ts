@@ -160,6 +160,16 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleAdminAbuseMailboxIntel(request, env, ctx);
   });
 
+  // WS-B #4 — one-shot bulk re-encrypt of org_integrations.config_encrypted.
+  // Super-admin only because it round-trips every integration credential
+  // through the master key. Idempotent — safe to call repeatedly.
+  router.post("/api/admin/integrations/rewrap", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleBulkRewrapIntegrations } = await import("../handlers/organizations");
+    return handleBulkRewrapIntegrations(request, env);
+  });
+
   // Wave 2.1 PR-AF — seed-domain config (admin-gated). Operator
   // surface for the auto-seeder target list. See
   // docs/SEED_DOMAINS_RUNBOOK.md for the workflow.

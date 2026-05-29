@@ -107,6 +107,12 @@ export interface Env {
    *  provision doesn't break the unsubscribe path. */
   ABUSE_UNSUBSCRIBE_SECRET?: string;
   AVERROW_INTERNAL_SECRET?: string;
+  /** Master key for org_integrations.config_encrypted (AES-GCM, 32
+   *  bytes, base64). Set via `wrangler secret put INTEGRATION_CONFIG_KEY`.
+   *  When absent the encryption helpers throw on every read/write —
+   *  the worker boots fine but every integration call surfaces a
+   *  clear error rather than silently storing plaintext. */
+  INTEGRATION_CONFIG_KEY?: string;
 }
 
 // ─── Enums ──────────────────────────────────────────────────────

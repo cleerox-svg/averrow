@@ -1356,8 +1356,11 @@ export async function handleCreateIntegration(
     return json({ success: false, error: "type, category, and name are required" }, 400, origin);
   }
 
-  // TODO: Encrypt config with AES-GCM using env secret in production
-  const configStr = body.config ? JSON.stringify(body.config) : null;
+  // WS-B #4: config is wrapped via AES-GCM before storage. The helper
+  // throws if INTEGRATION_CONFIG_KEY isn't set so we never silently
+  // store plaintext.
+  const { encryptConfig } = await import("../lib/integration-secret");
+  const configStr = await encryptConfig(env, body.config ?? null);
 
   await env.DB.prepare(`
     INSERT INTO org_integrations (org_id, type, category, name, config_encrypted, status)
@@ -1404,8 +1407,9 @@ export async function handleUpdateIntegration(
   const vals: unknown[] = [];
 
   if (body.config !== undefined) {
+    const { encryptConfig } = await import("../lib/integration-secret");
     sets.push("config_encrypted = ?");
-    vals.push(JSON.stringify(body.config));
+    vals.push(await encryptConfig(env, body.config));
   }
   if (body.status !== undefined) {
     sets.push("status = ?");
@@ -1488,4 +1492,63 @@ export async function handleTestIntegration(
   }
 
   return json({ success: false, data: { status: "error", message: "No configuration found" } }, 400, origin);
+}
+
+// ─── Bulk Re-Encrypt (WS-B #4 migration) ────────────────────
+//
+// One-shot admin endpoint: walks org_integrations, decrypts each
+// row (falling back to legacy plaintext for un-prefixed values),
+// and writes it back encrypted with the current key. Idempotent —
+// already-encrypted rows round-trip with a fresh nonce, plaintext
+// rows get wrapped, malformed rows are skipped and reported in the
+// response so the operator can investigate them.
+//
+// Intended to be called once after the encryption helper ships,
+// while INTEGRATION_CONFIG_KEY is configured. Returns a summary:
+//   { total, encrypted, skipped_already_encrypted, errors[] }
+
+export async function handleBulkRewrapIntegrations(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const { encryptConfig, decryptConfig, isEncrypted } = await import("../lib/integration-secret");
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, config_encrypted FROM org_integrations WHERE config_encrypted IS NOT NULL`
+  ).all<{ id: number; config_encrypted: string }>();
+
+  let total = 0;
+  let rewrapped = 0;
+  const errors: Array<{ id: number; error: string }> = [];
+
+  for (const row of results) {
+    total += 1;
+    try {
+      // Decrypt handles both legacy plaintext and v1 ciphertext; the
+      // re-encrypt step always writes a fresh nonce so rotating the
+      // key later is a single call away.
+      const cfg = await decryptConfig(env, row.config_encrypted);
+      if (cfg == null) continue; // empty or unparseable — leave alone
+      const next = await encryptConfig(env, cfg);
+      await env.DB.prepare(
+        `UPDATE org_integrations SET config_encrypted = ?, updated_at = datetime('now') WHERE id = ?`
+      ).bind(next, row.id).run();
+      rewrapped += 1;
+    } catch (err) {
+      errors.push({ id: row.id, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return json({
+    success: true,
+    data: {
+      total,
+      rewrapped,
+      // Sanity-check breakdown: how many rows the operator was
+      // looking at and which ones were already v1 to begin with.
+      already_v1: results.filter((r) => isEncrypted(r.config_encrypted)).length,
+      errors,
+    },
+  }, 200, origin);
 }
