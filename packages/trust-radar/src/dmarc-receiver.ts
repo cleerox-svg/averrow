@@ -436,7 +436,6 @@ async function saveDmarcReport(
     .first<{ id: number }>();
 
   const brandId = brand?.id ?? null;
-  const reportId = crypto.randomUUID();
 
   // Compute totals
   let passCount = 0;
@@ -453,36 +452,47 @@ async function saveDmarcReport(
   // Cap raw XML at 50KB
   const cappedXml = rawXml.length > 50000 ? rawXml.slice(0, 50000) + "…[truncated]" : rawXml;
 
-  await db
+  // dmarc_reports uses an INTEGER AUTOINCREMENT primary key (migration
+  // 0043), so we let SQLite assign the id and read it back from
+  // meta.last_row_id to use as the FK for the per-source records below.
+  const insertResult = await db
     .prepare(
       `INSERT INTO dmarc_reports
-         (id, brand_id, domain, reporter_org, reporter_email, date_begin, date_end,
-          email_count, pass_count, fail_count, dmarc_policy, raw_xml, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT DO NOTHING`,
+         (brand_id, domain, reporter_org, reporter_email, report_id,
+          date_begin, date_end, total_records, total_messages,
+          total_pass, total_fail, policy_published, raw_xml, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     )
     .bind(
-      reportId, brandId, report.domain, report.reporter_org, senderEmail,
-      report.date_begin, report.date_end, emailCount, passCount, failCount,
-      report.dmarc_policy, cappedXml,
+      brandId, report.domain, report.reporter_org, senderEmail, report.report_id,
+      String(report.date_begin), String(report.date_end), report.records.length,
+      emailCount, passCount, failCount, report.dmarc_policy, cappedXml,
     )
     .run();
 
-  // Insert records in D1 batches of 50
+  const reportRowId = insertResult.meta?.last_row_id;
+  if (!reportRowId) {
+    console.error("[dmarc] no last_row_id after report insert — skipping records");
+    return;
+  }
+
+  // Insert records in D1 batches of 50. The records table also uses an
+  // INTEGER AUTOINCREMENT id, the message-count column is `count`, and
+  // there is no `envelope_to` column (migration 0043).
   const BATCH = 50;
   for (let i = 0; i < report.records.length; i += BATCH) {
     const stmts = report.records.slice(i, i + BATCH).map((r) =>
       db
         .prepare(
           `INSERT INTO dmarc_report_records
-             (id, report_id, source_ip, message_count, disposition,
-              dkim_result, spf_result, header_from, envelope_from, envelope_to)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (report_id, source_ip, count, disposition,
+              dkim_result, spf_result, header_from, envelope_from)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
-          crypto.randomUUID(), reportId, r.source_ip, r.message_count,
+          reportRowId, r.source_ip, r.message_count,
           r.disposition, r.dkim_result, r.spf_result,
-          r.header_from, r.envelope_from, r.envelope_to,
+          r.header_from, r.envelope_from,
         ),
     );
     await db.batch(stmts);
@@ -507,22 +517,27 @@ async function saveDmarcReport(
     .slice(0, 5)
     .map(([ip, count]) => ({ ip, count }));
 
+  // dmarc_daily_stats columns are total_messages / passed / failed /
+  // top_fail_ips / reporters, INTEGER AUTOINCREMENT id, unique index on
+  // (domain, date) — see migration 0043.
   await db
     .prepare(
       `INSERT INTO dmarc_daily_stats
-         (id, domain, date, email_count, pass_count, fail_count, unique_sources, top_failing_ips)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         (domain, brand_id, date, total_messages, passed, failed,
+          unique_sources, top_fail_ips, reporters)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(domain, date) DO UPDATE SET
-         email_count    = email_count    + excluded.email_count,
-         pass_count     = pass_count     + excluded.pass_count,
-         fail_count     = fail_count     + excluded.fail_count,
+         total_messages = total_messages + excluded.total_messages,
+         passed         = passed         + excluded.passed,
+         failed         = failed         + excluded.failed,
          unique_sources = excluded.unique_sources,
-         top_failing_ips = excluded.top_failing_ips`,
+         top_fail_ips   = excluded.top_fail_ips,
+         reporters      = excluded.reporters`,
     )
     .bind(
-      crypto.randomUUID(), report.domain, reportDate,
+      report.domain, brandId, reportDate,
       emailCount, passCount, failCount, uniqueSources,
-      JSON.stringify(topFailing),
+      JSON.stringify(topFailing), JSON.stringify([report.reporter_org]),
     )
     .run();
 
