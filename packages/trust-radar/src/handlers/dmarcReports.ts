@@ -20,10 +20,10 @@ export async function handleGetDmarcOverview(request: Request, env: Env): Promis
   const [totals, topDomains, recentReports] = await Promise.all([
     env.DB.prepare(`
       SELECT
-        COUNT(*)              AS total_reports,
-        SUM(email_count)      AS total_emails,
-        SUM(pass_count)       AS total_pass,
-        SUM(fail_count)       AS total_fail,
+        COUNT(*)                  AS total_reports,
+        SUM(total_messages)       AS total_emails,
+        SUM(total_pass)           AS total_pass,
+        SUM(total_fail)           AS total_fail,
         COUNT(DISTINCT domain)        AS monitored_domains,
         COUNT(DISTINCT reporter_org)  AS reporter_count
       FROM dmarc_reports
@@ -35,10 +35,10 @@ export async function handleGetDmarcOverview(request: Request, env: Env): Promis
 
     env.DB.prepare(`
       SELECT domain,
-             COUNT(*)         AS report_count,
-             SUM(email_count) AS total_emails,
-             SUM(fail_count)  AS total_fail,
-             MAX(received_at) AS last_report
+             COUNT(*)            AS report_count,
+             SUM(total_messages) AS total_emails,
+             SUM(total_fail)     AS total_fail,
+             MAX(received_at)    AS last_report
       FROM dmarc_reports
       WHERE received_at > datetime('now', '-30 days')
       GROUP BY domain
@@ -50,12 +50,16 @@ export async function handleGetDmarcOverview(request: Request, env: Env): Promis
     }>(),
 
     env.DB.prepare(`
-      SELECT id, domain, reporter_org, email_count, pass_count, fail_count, received_at
+      SELECT id, domain, reporter_org,
+             total_messages AS email_count,
+             total_pass     AS pass_count,
+             total_fail     AS fail_count,
+             received_at
       FROM dmarc_reports
       ORDER BY received_at DESC
       LIMIT 20
     `).all<{
-      id: string; domain: string; reporter_org: string;
+      id: number; domain: string; reporter_org: string;
       email_count: number; pass_count: number; fail_count: number; received_at: string;
     }>(),
   ]);
@@ -79,23 +83,27 @@ export async function handleGetDmarcReports(
   const [reports, totals] = await Promise.all([
     env.DB.prepare(`
       SELECT id, domain, reporter_org, reporter_email,
-             date_begin, date_end, email_count, pass_count, fail_count,
-             dmarc_policy, received_at
+             date_begin, date_end,
+             total_messages   AS email_count,
+             total_pass       AS pass_count,
+             total_fail       AS fail_count,
+             policy_published AS dmarc_policy,
+             received_at
       FROM dmarc_reports
       WHERE brand_id = ?
       ORDER BY received_at DESC
       LIMIT ?
     `).bind(brandId, limit).all<{
-      id: string; domain: string; reporter_org: string; reporter_email: string;
-      date_begin: number; date_end: number; email_count: number;
+      id: number; domain: string; reporter_org: string; reporter_email: string;
+      date_begin: string; date_end: string; email_count: number;
       pass_count: number; fail_count: number; dmarc_policy: string; received_at: string;
     }>(),
 
     env.DB.prepare(`
       SELECT COUNT(*)              AS report_count,
-             SUM(email_count)      AS total_emails,
-             SUM(pass_count)       AS total_pass,
-             SUM(fail_count)       AS total_fail,
+             SUM(total_messages)   AS total_emails,
+             SUM(total_pass)       AS total_pass,
+             SUM(total_fail)       AS total_fail,
              COUNT(DISTINCT reporter_org) AS reporter_count
       FROM dmarc_reports
       WHERE brand_id = ?
@@ -124,7 +132,12 @@ export async function handleGetDmarcStats(
 
   const [daily, totals] = await Promise.all([
     env.DB.prepare(`
-      SELECT date, email_count, pass_count, fail_count, unique_sources, top_failing_ips
+      SELECT date,
+             total_messages AS email_count,
+             passed         AS pass_count,
+             failed         AS fail_count,
+             unique_sources,
+             top_fail_ips   AS top_failing_ips
       FROM dmarc_daily_stats
       WHERE domain = ?
       ORDER BY date DESC
@@ -136,9 +149,9 @@ export async function handleGetDmarcStats(
 
     env.DB.prepare(`
       SELECT COUNT(*)              AS report_count,
-             SUM(email_count)      AS total_emails,
-             SUM(pass_count)       AS total_pass,
-             SUM(fail_count)       AS total_fail,
+             SUM(total_messages)   AS total_emails,
+             SUM(total_pass)       AS total_pass,
+             SUM(total_fail)       AS total_fail,
              COUNT(DISTINCT reporter_org) AS reporter_count
       FROM dmarc_reports WHERE brand_id = ?
     `).bind(brandId).first<{
@@ -178,9 +191,9 @@ export async function handleGetDmarcSources(
   const sources = await env.DB.prepare(`
     SELECT
       rr.source_ip,
-      SUM(rr.message_count) AS total_messages,
+      SUM(rr.count) AS total_messages,
       SUM(CASE WHEN rr.dkim_result != 'pass' OR rr.spf_result != 'pass'
-               THEN rr.message_count ELSE 0 END) AS fail_messages,
+               THEN rr.count ELSE 0 END) AS fail_messages,
       rr.country_code,
       rr.org,
       rr.asn,
