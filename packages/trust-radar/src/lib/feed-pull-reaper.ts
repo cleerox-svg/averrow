@@ -23,13 +23,35 @@
 // Tested via `test/feed-pull-reaper.test.ts`.
 
 import type { Env } from "../types";
+import { applyReapPenalty } from "./feedRunner";
 
 /** Minimum age for a partial row to be considered orphaned. */
 export const REAP_AGE_MINUTES = 15;
 
+const REAP_ERROR =
+  `reaped by navigator: pull row stuck partial > ${REAP_AGE_MINUTES}min — worker likely terminated mid-run`;
+
 /** Returns the number of rows reaped. Never throws. */
 export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
   try {
+    // Capture which feeds are about to be reaped BEFORE flipping the rows,
+    // so we can advance each feed's circuit breaker. A worker-killed pull
+    // bypasses runFeed's catch, so without this the breaker never sees the
+    // failure and the feed silently death-loops (enabled, "due" every
+    // tick, dies every time) — the root cause of feeds sitting silent for
+    // 11h+ while still enabled. distinct feed_name → penalize once per feed.
+    let doomedFeeds: string[] = [];
+    try {
+      const doomed = await env.DB.prepare(
+        `SELECT DISTINCT feed_name FROM feed_pull_history
+          WHERE status = 'partial'
+            AND completed_at IS NULL
+            AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
+      ).all<{ feed_name: string }>();
+      doomedFeeds = doomed.results.map((r) => r.feed_name);
+    } catch (err) {
+      console.error("[feed-pull-reaper] doomed-feed pre-scan failed:", err);
+    }
     // Both sides of the comparison MUST go through `datetime()` so the
     // engine compares parsed timestamps, not raw strings. feedRunner
     // inserts `started_at` via `new Date().toISOString()` ("…T20:11:49.957Z")
@@ -46,12 +68,20 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
               completed_at = datetime('now'),
               error_message = COALESCE(
                 error_message,
-                'reaped by navigator: pull row stuck partial > ${REAP_AGE_MINUTES}min — worker likely terminated mid-run'
+                '${REAP_ERROR}'
               )
         WHERE status = 'partial'
           AND completed_at IS NULL
           AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
     ).run();
+
+    // Advance the circuit breaker for each reaped feed so worker-killed
+    // death-loops back off + eventually auto-pause instead of staying
+    // silently overdue. Best-effort per feed; never blocks the reap.
+    for (const feedName of doomedFeeds) {
+      await applyReapPenalty(env, feedName, REAP_ERROR);
+    }
+
     return result.meta?.changes ?? 0;
   } catch (err) {
     console.error("[feed-pull-reaper] orphan reap failed:", err);

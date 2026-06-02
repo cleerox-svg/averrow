@@ -23,7 +23,13 @@ export interface GreyNoiseResult {
 
 const DAILY_LIMIT = 45; // Community tier = 50, cap at 45 for safety
 const BATCH_SIZE = 8;   // 8 per run × 6 runs/day = 48 (under limit)
-const DELAY_MS = 30_000; // 30s between calls
+const DELAY_MS = 30_000; // 30s between calls (respects community rate limit)
+// Hard wall-clock cap for the per-run loop. With a dedicated cron this
+// feed gets its own fresh budget, but this guard guarantees a single run
+// can never approach Navigator's 15-min orphan-reap threshold even if an
+// upstream stalls — it just leaves the remaining IPs for the next run.
+const BUDGET_MS = 240_000;
+const FETCH_TIMEOUT_MS = 10_000; // was 30s — don't let one hung lookup pin the run
 
 /**
  * Check a single IP against GreyNoise Community API.
@@ -40,7 +46,7 @@ export async function checkGreyNoise(ip: string, env: Env): Promise<GreyNoiseRes
   }
 
   const res = await fetch(`https://api.greynoise.io/v3/community/${encodeURIComponent(ip)}`, {
-    signal: AbortSignal.timeout(30_000), headers: {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: {
       key: env.GREYNOISE_API_KEY,
       Accept: "application/json",
     },
@@ -146,7 +152,14 @@ export const greynoise: FeedModule = {
     let itemsDuplicate = 0;
     let itemsError = 0;
 
+    const loopStart = Date.now();
     for (const threat of threats) {
+      // Wall-clock guard: stop cleanly before the run could be reaped,
+      // leaving remaining IPs for the next dedicated-cron tick.
+      if (Date.now() - loopStart > BUDGET_MS) {
+        logger.info("greynoise_budget_reached", { processed: itemsFetched, remaining: threats.length - itemsFetched });
+        break;
+      }
       itemsFetched++;
       try {
         const result = await checkGreyNoise(threat.ip_address, env);

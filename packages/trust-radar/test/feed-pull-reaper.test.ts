@@ -28,13 +28,28 @@ function makeEnv(opts: {
   const env = {
     DB: {
       prepare(sql: string) {
-        return {
+        const stmt = {
+          // bind() is chainable so the breaker-advance pre-scan and
+          // applyReapPenalty's parameterized reads/writes don't blow up.
+          bind: () => stmt,
+          // The doomed-feed pre-scan uses .all(); return no doomed feeds
+          // by default so applyReapPenalty isn't invoked and the existing
+          // single-UPDATE assertions below hold (captured stays length 1).
+          all: async () => {
+            if (opts.throws) throw new Error("network connection lost");
+            return { results: [] as Array<{ feed_name: string }> };
+          },
+          first: async () => {
+            if (opts.throws) throw new Error("network connection lost");
+            return null;
+          },
           run: async () => {
             captured.push({ sql });
             if (opts.throws) throw new Error("network connection lost");
             return { success: true, meta: { changes: opts.changes ?? 0 } };
           },
         };
+        return stmt;
       },
     },
   } as unknown as Env;
