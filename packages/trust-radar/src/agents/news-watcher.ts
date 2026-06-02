@@ -37,6 +37,7 @@ import { checkCostGuard } from "../lib/haiku";
 import { upsertActorByName } from "../lib/otx-attribution";
 import { parseRss, type RssItem } from "../lib/rss-parser";
 import { extractFromArticle, type NewsExtraction } from "../lib/news-extractor";
+import { withD1Retry } from "../lib/d1-retry";
 
 const ARTICLES_PER_RUN = 30;
 
@@ -246,26 +247,34 @@ export const newsWatcherAgent: AgentModule = {
           extractedFailed++;
         }
 
-        // Always insert the article row (extraction status reflects success/failure)
-        await env.DB
-          .prepare(`
-            INSERT OR IGNORE INTO news_articles
-              (id, source_feed, article_url, title, excerpt, published_at,
-               extracted, extract_status, is_geopolitical)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-          .bind(
-            id,
-            feed.id,
-            item.link,
-            item.title.slice(0, 500),
-            item.description.slice(0, 1000),
-            item.publishedAt,
-            extraction ? JSON.stringify(extraction) : null,
-            extractStatus,
-            extraction?.is_geopolitical ? 1 : 0,
-          )
-          .run();
+        // Always insert the article row (extraction status reflects
+        // success/failure). Retry on transient D1 errors — this per-item
+        // INSERT OR IGNORE is the agent's hottest write and was the likely
+        // source of the "D1_ERROR: Network connection lost" run failures.
+        // Idempotent (INSERT OR IGNORE on a deterministic id) → safe to retry.
+        await withD1Retry(
+          () =>
+            env.DB
+              .prepare(`
+                INSERT OR IGNORE INTO news_articles
+                  (id, source_feed, article_url, title, excerpt, published_at,
+                   extracted, extract_status, is_geopolitical)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+              .bind(
+                id,
+                feed.id,
+                item.link,
+                item.title.slice(0, 500),
+                item.description.slice(0, 1000),
+                item.publishedAt,
+                extraction ? JSON.stringify(extraction) : null,
+                extractStatus,
+                extraction?.is_geopolitical ? 1 : 0,
+              )
+              .run(),
+          { label: "news_watcher article insert" },
+        );
 
         if (!extraction || extraction.actors.length === 0) continue;
 
