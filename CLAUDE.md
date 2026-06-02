@@ -409,6 +409,21 @@ auto-seeder:  (no dedicated cron — gated inside the hourly orchestrator
                on Sundays at hour===5, runs at 05:07 UTC. CF rejects
                the 5-field cron `23 5 * * 0` with code 10100, so this
                is dispatched from the existing hourly cron path.)
+greynoise:    19 */4 * * * (every 4h at :19 — dedicated enrichment-feed cron.
+                             Was inline in runAllEnrichmentFeeds; its 8×30s
+                             sequential sleeps blew the orchestrator worker's
+                             wall-clock budget → worker killed → pull reaped
+                             silently → breaker never advanced → feed sat
+                             overdue 11h+ while still enabled. Own invocation
+                             = fresh budget. Skipped inline via
+                             DEDICATED_ENRICHMENT_FEEDS. Cadence matches the
+                             45/day community cap (8/run × 6 = 48).)
+seclookup:    21 * * * *   (hourly at :21 — dedicated enrichment-feed cron,
+                             same rationale as greynoise; 100×1s sequential
+                             lookups were the worst starvation victim. Hourly
+                             cadence drains its enrichment backlog. Both feeds
+                             also carry a per-run wall-clock budget guard so a
+                             single run can't approach the 15-min reap window.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -465,6 +480,19 @@ On failure, the column is stamped with an exponential-backoff timestamp
 the window expires. On any successful pull, the column is cleared
 (half-open → closed transition). Cleared independently of the auto-pause
 threshold below, which still owns hard pauses after N consecutive failures.
+
+**Worker-killed pulls also advance the breaker.** When a pull row is
+reaped (worker terminated mid-run → `runFeed`'s catch never executes),
+`lib/feed-pull-reaper.ts` now calls `feedRunner.applyReapPenalty` for
+each reaped feed: it increments `consecutive_failures`, stamps the same
+exponential-backoff `next_retry_at`, and auto-pauses at threshold. Before
+this, reaped pulls left the breaker blind, so a feed whose pulls were
+always killed (e.g. greynoise/seclookup starved in the inline enrichment
+chain) death-looped silently — enabled, "due" every tick, dying every
+time, never backing off, never auto-pausing, never alerting. Heavy
+enrichment feeds were additionally moved to dedicated crons (greynoise
+`19 */4`, seclookup `21`) so they get a fresh per-invocation budget; both
+also carry a per-run wall-clock budget guard.
 
 Backoff schedule (base, before jitter):
 

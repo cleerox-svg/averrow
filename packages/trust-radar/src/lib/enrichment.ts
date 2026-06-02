@@ -411,19 +411,13 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   }
 
   // ─── Stage 5: Sync hosting_providers counts ───────────────────
+  // Change-guarded via syncHostingProviderCounts — only providers whose
+  // counts actually changed are written. The prior unguarded full rewrite
+  // re-wrote all ~20K rows every run (6×/day), the bulk of the D1 write
+  // overage. Now writes ≈ the number of providers that genuinely moved.
   try {
-    const providerUpdate = await env.DB.prepare(`
-      UPDATE hosting_providers SET
-        active_threat_count = (
-          SELECT COUNT(*) FROM threats
-          WHERE threats.hosting_provider_id = hosting_providers.id AND threats.status = 'active'
-        ),
-        total_threat_count = (
-          SELECT COUNT(*) FROM threats
-          WHERE threats.hosting_provider_id = hosting_providers.id
-        )
-    `).run();
-    result.providerCountsUpdated = providerUpdate.meta.changes ?? 0;
+    const { syncHostingProviderCounts } = await import("./provider-counts");
+    result.providerCountsUpdated = await syncHostingProviderCounts(env);
   } catch (err) {
     console.error("[enrich] Stage 5 provider count update failed:", err);
   }

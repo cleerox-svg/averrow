@@ -15,6 +15,7 @@ import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "../feeds/ty
 import { createNotification } from "./notifications";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./threatScoring";
 import { isPrivateIP } from "./geoip";
+import { withD1Retry } from "./d1-retry";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -149,6 +150,105 @@ export function computeFeedRetryAt(consecutiveFailures: number, now: Date = new 
   return retryAt.toISOString().replace('T', ' ').slice(0, 19); // SQLite datetime
 }
 
+// ─── Dedicated-cron enrichment feeds ─────────────────────────────
+//
+// These enrichment feeds were starving (and being starved by) the rest
+// of the inline-sequential enrichment chain in the hourly orchestrator:
+// their self-imposed inter-call sleeps (greynoise 8×30s, seclookup
+// 100×1s) accumulated past the worker's wall-clock budget, the worker
+// was killed, and the in-flight pull was reaped — silently, forever
+// (seclookup sat 11h+ overdue). They now run on their own cron triggers
+// with a fresh per-invocation budget (same escape-hatch pattern as
+// enricher/cartographer/strategist). runAllEnrichmentFeeds SKIPS them so
+// they don't also run inline and re-create the starvation.
+export const DEDICATED_ENRICHMENT_FEEDS = new Set<string>(["greynoise", "seclookup"]);
+
+/**
+ * Dispatch a single enrichment feed by name from its dedicated cron.
+ * Loads the feed_configs row, honors the enabled flag and the per-feed
+ * circuit-breaker (next_retry_at backoff), then runs it. The cron itself
+ * IS the schedule, so the schedule-interval check is intentionally NOT
+ * applied here — only the breaker gate is. Never throws.
+ */
+export async function dispatchEnrichmentFeed(
+  env: Env,
+  name: string,
+  mod: FeedModule,
+): Promise<void> {
+  try {
+    const config = await env.DB.prepare(
+      `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
+              batch_size, retry_count, enabled, consecutive_failure_threshold
+         FROM feed_configs WHERE feed_name = ?`,
+    ).bind(name).first<FeedConfigRow>();
+    if (!config) {
+      console.warn(`[dispatchEnrichmentFeed] ${name}: no feed_configs row — skipping`);
+      return;
+    }
+    if (config.enabled === 0) {
+      console.log(`[dispatchEnrichmentFeed] ${name}: disabled — skipping`);
+      return;
+    }
+
+    // Respect the circuit breaker: if a prior failure stamped a future
+    // next_retry_at, stay backed off until the window opens.
+    const status = await env.DB.prepare(
+      "SELECT next_retry_at FROM feed_status WHERE feed_name = ?",
+    ).bind(name).first<{ next_retry_at: string | null }>();
+    if (status?.next_retry_at) {
+      const r = status.next_retry_at;
+      const retryMs = new Date(r.includes("Z") || r.includes("+") ? r : r + "Z").getTime();
+      if (Date.now() < retryMs) {
+        console.log(`[dispatchEnrichmentFeed] ${name}: in backoff until ${r} — skipping`);
+        return;
+      }
+    }
+
+    await runFeed(env, config, mod);
+  } catch (err) {
+    console.error(`[dispatchEnrichmentFeed] ${name} failed:`, err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ─── Bounded concurrency ─────────────────────────────────────────
+
+/**
+ * Max feeds run concurrently in runAllFeeds. Bounds the number of feeds
+ * issuing bulk db.batch() writes at the single D1 instance at once so a
+ * busy tick can't overload it (the "object reset" / "connection lost"
+ * errors). 4 keeps throughput high while staying well clear of contention.
+ */
+const FEED_CONCURRENCY = 4;
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight at a time,
+ * returning results in input order with the same shape as
+ * Promise.allSettled (so callers branch on .status / .value / .reason).
+ * A rejected worker never aborts the others.
+ */
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let next = 0;
+  const runner = async (): Promise<void> => {
+    while (true) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      try {
+        results[idx] = { status: "fulfilled", value: await worker(items[idx]!) };
+      } catch (reason) {
+        results[idx] = { status: "rejected", reason };
+      }
+    }
+  };
+  const poolSize = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => runner()));
+  return results;
+}
+
 // ─── Auto-pause threshold ────────────────────────────────────────
 
 /** Default number of consecutive failures before a feed is auto-paused. */
@@ -216,13 +316,20 @@ export async function runFeed(
   try {
     const result = await feedModule.ingest(ctx);
     const durationMs = Date.now() - start;
-    // Log success in pull history
-    const pullUpdate = await env.DB.prepare(
-      `UPDATE feed_pull_history SET
-         status = 'success', records_ingested = ?, records_rejected = ?,
-         duration_ms = ?, completed_at = datetime('now')
-       WHERE id = ?`
-    ).bind(result.itemsNew, result.itemsDuplicate + result.itemsError, durationMs, pullId).run();
+    // Log success in pull history. Retry on transient D1 errors: the pull
+    // already succeeded, so a blip here must not leave the row 'partial'
+    // (which the orphan reaper would later flip to failed + now also
+    // penalize the breaker). Idempotent UPDATE keyed on pullId.
+    const pullUpdate = await withD1Retry(
+      () =>
+        env.DB.prepare(
+          `UPDATE feed_pull_history SET
+             status = 'success', records_ingested = ?, records_rejected = ?,
+             duration_ms = ?, completed_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(result.itemsNew, result.itemsDuplicate + result.itemsError, durationMs, pullId).run(),
+      { label: `${config.feed_name} pull-success finalize` },
+    );
 
     // Ensure feed_status row exists (INSERT OR IGNORE), then update
     await env.DB.prepare(
@@ -513,6 +620,71 @@ async function autoPauseFeed(
   }
 }
 
+// ─── Reap penalty (breaker advance for worker-killed pulls) ──────
+//
+// When the worker is terminated mid-pull (CPU/wall ceiling), runFeed's
+// try/catch never runs, so feed_status.consecutive_failures never
+// advances and next_retry_at is never stamped — the feed silently
+// death-loops: it shows "due" every tick, dies every time, and never
+// trips the circuit breaker or auto-pause. The feed-pull-history reaper
+// fixes the orphan row, but without this the breaker stayed blind to
+// worker-killed pulls (the root cause of seclookup/greynoise sitting
+// silent for 11h+ while still "enabled").
+//
+// This applies the SAME breaker penalty runFeed's catch applies on a
+// caught failure: increment the counter, stamp an exponential-backoff
+// next_retry_at, mark degraded, and auto-pause if the threshold is
+// crossed. Called by the reaper for each distinct feed it reaps.
+// Idempotent-safe and never throws — the reaper must not be broken by it.
+export async function applyReapPenalty(
+  env: Env,
+  feedName: string,
+  reapError: string,
+): Promise<void> {
+  try {
+    // Pull the config so we can resolve the per-feed threshold + display
+    // name for auto-pause. If the feed has no config row (or is already
+    // disabled), there's nothing to penalize.
+    const config = await env.DB.prepare(
+      `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
+              batch_size, retry_count, enabled, consecutive_failure_threshold
+         FROM feed_configs WHERE feed_name = ?`,
+    ).bind(feedName).first<FeedConfigRow>();
+    if (!config || config.enabled === 0) return;
+
+    // Ensure a feed_status row exists, then read the current counter.
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')",
+    ).bind(feedName).run();
+    const prev = await env.DB.prepare(
+      "SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?",
+    ).bind(feedName).first<{ health_status: string; consecutive_failures: number | null }>();
+
+    const newFailureCount = (prev?.consecutive_failures ?? 0) + 1;
+    const nextRetryAt = computeFeedRetryAt(newFailureCount);
+    await env.DB.prepare(
+      `UPDATE feed_status SET
+         last_failure = datetime('now'),
+         health_status = 'degraded',
+         last_error = ?,
+         consecutive_failures = ?,
+         next_retry_at = ?
+       WHERE feed_name = ?`,
+    ).bind(reapError.slice(0, 500), newFailureCount, nextRetryAt, feedName).run();
+
+    // Auto-pause once the feed crosses its threshold — same path runFeed
+    // uses, so a reaped death-loop now surfaces as a critical operator
+    // notification instead of silent overdue-ness.
+    const globalThreshold = await getGlobalFailureThreshold(env.DB);
+    const threshold = resolveFailureThreshold(config, globalThreshold);
+    if (newFailureCount >= threshold) {
+      await autoPauseFeed(env, config, newFailureCount, threshold, reapError);
+    }
+  } catch (e) {
+    console.error(`[applyReapPenalty] failed for ${feedName}:`, e);
+  }
+}
+
 // ─── Coordinator ─────────────────────────────────────────────────
 
 /** Run all enabled feeds */
@@ -602,9 +774,19 @@ export async function runAllFeeds(
     toRun.push({ config, mod });
   }
 
-  // Run all eligible feeds concurrently
-  const results = await Promise.allSettled(
-    toRun.map(({ config, mod }) => runFeed(env, config, mod))
+  // Run eligible feeds with BOUNDED concurrency. Unbounded
+  // Promise.allSettled fan-out had every due feed firing its bulk
+  // db.batch() INSERTs at the single trust-radar-v2 D1 instance
+  // simultaneously; on busy ticks (many feeds due at once) that overloaded
+  // the one D1 object and surfaced as "Internal error in D1 DB storage
+  // caused object to be reset" / "Network connection lost" on otx_alienvault,
+  // ct_logs, tweetfeed, urlhaus. Cloudflare's documented remedy is to spread
+  // the write load. A small pool keeps a few feeds in flight without the
+  // thundering-herd write contention.
+  const results = await runWithConcurrency(
+    toRun,
+    FEED_CONCURRENCY,
+    ({ config, mod }) => runFeed(env, config, mod),
   );
 
   for (const [i, r] of results.entries()) {
@@ -658,6 +840,8 @@ export function parseCronIntervalMs(cron: string): number {
 
   const minute = parts[0] ?? "*";
   const hour = parts[1] ?? "*";
+  const dayOfMonth = parts[2] ?? "*";
+  const dayOfWeek = parts[4] ?? "*";
 
   // "*/N * * * *" — every N minutes
   if (minute.startsWith("*/")) {
@@ -672,6 +856,19 @@ export function parseCronIntervalMs(cron: string): number {
   // "0 * * * *" — hourly
   if (minute === "0" && hour === "*") {
     return 60 * 60 * 1000;
+  }
+
+  // "M H * * D" — specific day-of-week → weekly. MUST be checked before
+  // the daily branch below: a weekly cron like "0 0 * * 0" (Sundays) has
+  // numeric minute+hour and would otherwise fall through to the 24h daily
+  // interval, silently running 7× too often. This bug ran the
+  // disposable_email reference load (intended weekly) every single day,
+  // truncating + re-inserting ~5,600 rows daily — a 7× write overrun.
+  if (
+    /^\d+$/.test(minute) && /^\d+$/.test(hour) &&
+    dayOfMonth === "*" && /^\d+$/.test(dayOfWeek)
+  ) {
+    return 7 * 24 * 60 * 60 * 1000;
   }
 
   // "0 0 * * *" — daily (specific hour, no wildcard)
@@ -735,6 +932,14 @@ export async function runAllEnrichmentFeeds(
 
     // Iterate every registered enrichment module
     for (const [name, mod] of Object.entries(enrichmentModules)) {
+      // Skip feeds that have their own dedicated cron — running them here
+      // too would double-dispatch and re-create the inline-chain starvation
+      // they were moved out of.
+      if (DEDICATED_ENRICHMENT_FEEDS.has(name)) {
+        feedsSkipped++;
+        continue;
+      }
+
       // Check enabled status: if we have config data and feed is disabled, skip
       const dbConfig = configMap.get(name);
       if (dbConfig && !dbConfig.enabled) {

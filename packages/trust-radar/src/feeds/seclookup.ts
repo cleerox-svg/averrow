@@ -25,6 +25,12 @@ export interface SecLookupResult {
 const MONTHLY_LIMIT = 950_000; // 1M free tier, cap at 950K
 const BATCH_SIZE = 100;
 const DELAY_MS = 1_000; // 1s between calls (be respectful)
+// Hard wall-clock cap for the per-run loop. 100 sequential lookups ×
+// (1s delay + fetch + cross-feed SQL) could exceed Navigator's 15-min
+// orphan-reap threshold on a slow upstream; this guarantees the run ends
+// well before that, leaving the rest of the batch for the next cron tick.
+const BUDGET_MS = 120_000;
+const FETCH_TIMEOUT_MS = 10_000; // was 30s — cap a single hung lookup
 
 /**
  * Check a single indicator (domain or IP) against SecLookup.
@@ -41,7 +47,7 @@ export async function checkSecLookup(
     : `https://api.seclookup.com/v1/ip/${encodeURIComponent(indicator)}`;
 
   const res = await fetch(endpoint, {
-    signal: AbortSignal.timeout(30_000), headers: {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: {
       Authorization: `Bearer ${env.SECLOOKUP_API_KEY}`,
       Accept: "application/json",
     },
@@ -164,7 +170,14 @@ export const seclookup: FeedModule = {
     let itemsDuplicate = 0;
     let itemsError = 0;
 
+    const loopStart = Date.now();
     for (const threat of threats) {
+      // Wall-clock guard: stop cleanly before the run could be reaped,
+      // leaving remaining indicators for the next dedicated-cron tick.
+      if (Date.now() - loopStart > BUDGET_MS) {
+        logger.info("seclookup_budget_reached", { processed: itemsFetched, remaining: threats.length - itemsFetched });
+        break;
+      }
       itemsFetched++;
       try {
         // Check domain first if available, IP as fallback

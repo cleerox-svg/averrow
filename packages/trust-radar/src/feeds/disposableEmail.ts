@@ -31,9 +31,15 @@ export const disposable_email: FeedModule = {
 
     const uniqueDomains = [...new Set(allDomains)];
 
-    // Truncate and reload — reference snapshot
-    await db.prepare("DELETE FROM disposable_email_domains").run();
-
+    // Insert-only sync (no truncate). The previous "DELETE FROM … then
+    // re-INSERT every row" pattern billed ~2× the full list (delete +
+    // insert) on every run — pure write churn since this blocklist only
+    // grows in practice. INSERT OR IGNORE writes ONLY genuinely-new
+    // domains (existing rows conflict and cost no write), so a steady-state
+    // run writes ~0 rows. The upstream list effectively only adds domains;
+    // the rare removal of a stale entry is harmless to leave flagged (worst
+    // case a throwaway domain stays classified disposable), so we trade
+    // exact-mirror semantics for eliminating the truncate churn.
     let itemsNew = 0;
     let firstError: string | null = null;
 

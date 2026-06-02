@@ -17,6 +17,7 @@ import { callAnthropicJSON } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { cachedCount } from "../lib/cached-count";
+import { withD1Retry } from "../lib/d1-retry";
 
 // ─── Sibling-domain dedup (Lever #3) ─────────────────────────────
 
@@ -210,18 +211,26 @@ export const sentinelAgent: AgentModule = {
       ? monitoredBrands.results.map((b) => b.name.toLowerCase().replace(/[^a-z0-9]/g, "")).filter((k) => k.length >= 3)
       : FALLBACK_BRAND_KEYWORDS;
 
-    // Get unclassified threats (no confidence_score yet)
-    const threats = await env.DB.prepare(
-      `SELECT id, malicious_url, malicious_domain, ip_address, asn, country_code, source_feed, ioc_value, threat_type, target_brand_id
-       FROM threats
-       WHERE confidence_score IS NULL
-       ORDER BY created_at DESC LIMIT 50`
-    ).all<{
-      id: string; malicious_url: string | null; malicious_domain: string | null;
-      ip_address: string | null; asn: string | null; country_code: string | null;
-      source_feed: string; ioc_value: string | null;
-      threat_type: string; target_brand_id: string | null;
-    }>();
+    // Get unclassified threats (no confidence_score yet). Wrapped in
+    // withD1Retry: this top-level read is unguarded (unlike monitoredBrands
+    // above, which has a .catch fallback) and a transient "Network
+    // connection lost" here threw straight out of execute(), failing the
+    // whole run. Idempotent read → safe to retry.
+    const threats = await withD1Retry(
+      () =>
+        env.DB.prepare(
+          `SELECT id, malicious_url, malicious_domain, ip_address, asn, country_code, source_feed, ioc_value, threat_type, target_brand_id
+           FROM threats
+           WHERE confidence_score IS NULL
+           ORDER BY created_at DESC LIMIT 50`,
+        ).all<{
+          id: string; malicious_url: string | null; malicious_domain: string | null;
+          ip_address: string | null; asn: string | null; country_code: string | null;
+          source_feed: string; ioc_value: string | null;
+          threat_type: string; target_brand_id: string | null;
+        }>(),
+      { label: "sentinel unclassified-threats read" },
+    );
 
     // Both counts are diagnostic only — cache via cachedCount (KV-
     // backed) so we don't full-scan the 174K-row threats table on

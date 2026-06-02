@@ -520,8 +520,13 @@ export async function countStatusCubeForHour(
 export async function buildDarkWebBrandSummary(env: Env): Promise<CubeBuildResult> {
   const start = Date.now();
   try {
+    // Write-quota note: was INSERT OR REPLACE (DELETE+INSERT every brand
+    // row each 6h rebuild, billed even when unchanged). Now a guarded
+    // upsert — a brand whose counts didn't move between rebuilds is not
+    // rewritten. updated_at is left out of the WHERE so it only refreshes
+    // when a real data column changed. Same pattern as the threat cubes.
     const result = await env.DB.prepare(`
-      INSERT OR REPLACE INTO dark_web_brand_summary
+      INSERT INTO dark_web_brand_summary
         (brand_id, total_active,
          confirmed_active, suspicious_active,
          critical_active, high_active, medium_active, low_active,
@@ -539,6 +544,22 @@ export async function buildDarkWebBrandSummary(env: Env): Promise<CubeBuildResul
       FROM dark_web_mentions
       WHERE status = 'active' AND brand_id IS NOT NULL
       GROUP BY brand_id
+      ON CONFLICT(brand_id) DO UPDATE SET
+        total_active      = excluded.total_active,
+        confirmed_active  = excluded.confirmed_active,
+        suspicious_active = excluded.suspicious_active,
+        critical_active   = excluded.critical_active,
+        high_active       = excluded.high_active,
+        medium_active     = excluded.medium_active,
+        low_active        = excluded.low_active,
+        updated_at        = excluded.updated_at
+      WHERE dark_web_brand_summary.total_active      IS NOT excluded.total_active
+         OR dark_web_brand_summary.confirmed_active  IS NOT excluded.confirmed_active
+         OR dark_web_brand_summary.suspicious_active IS NOT excluded.suspicious_active
+         OR dark_web_brand_summary.critical_active   IS NOT excluded.critical_active
+         OR dark_web_brand_summary.high_active       IS NOT excluded.high_active
+         OR dark_web_brand_summary.medium_active     IS NOT excluded.medium_active
+         OR dark_web_brand_summary.low_active        IS NOT excluded.low_active
     `).run();
 
     return {
@@ -558,8 +579,12 @@ export async function buildDarkWebBrandSummary(env: Env): Promise<CubeBuildResul
 export async function buildAppStoreBrandSummary(env: Env): Promise<CubeBuildResult> {
   const start = Date.now();
   try {
+    // Write-quota note: was INSERT OR REPLACE (full-table DELETE+INSERT
+    // every 6h, billed even when unchanged). Now a guarded upsert keyed on
+    // brand_id — unchanged brands are skipped. updated_at refreshes only
+    // when a data column actually moved. Mirrors the threat-cube pattern.
     const result = await env.DB.prepare(`
-      INSERT OR REPLACE INTO app_store_brand_summary
+      INSERT INTO app_store_brand_summary
         (brand_id, total_active,
          impersonation_active, suspicious_active, legitimate_active, official_active,
          critical_active, high_active,
@@ -577,6 +602,22 @@ export async function buildAppStoreBrandSummary(env: Env): Promise<CubeBuildResu
       FROM app_store_listings
       WHERE status = 'active' AND brand_id IS NOT NULL
       GROUP BY brand_id
+      ON CONFLICT(brand_id) DO UPDATE SET
+        total_active         = excluded.total_active,
+        impersonation_active = excluded.impersonation_active,
+        suspicious_active    = excluded.suspicious_active,
+        legitimate_active    = excluded.legitimate_active,
+        official_active      = excluded.official_active,
+        critical_active      = excluded.critical_active,
+        high_active          = excluded.high_active,
+        updated_at           = excluded.updated_at
+      WHERE app_store_brand_summary.total_active         IS NOT excluded.total_active
+         OR app_store_brand_summary.impersonation_active IS NOT excluded.impersonation_active
+         OR app_store_brand_summary.suspicious_active    IS NOT excluded.suspicious_active
+         OR app_store_brand_summary.legitimate_active    IS NOT excluded.legitimate_active
+         OR app_store_brand_summary.official_active      IS NOT excluded.official_active
+         OR app_store_brand_summary.critical_active      IS NOT excluded.critical_active
+         OR app_store_brand_summary.high_active          IS NOT excluded.high_active
     `).run();
 
     return {

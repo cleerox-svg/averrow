@@ -178,6 +178,37 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Dedicated enrichment-feed crons (greynoise :19/4h, seclookup :21) ───
+  //
+  // Both were starving inside runAllEnrichmentFeeds' inline-sequential
+  // chain (greynoise 8×30s + seclookup 100×1s sleeps blew the orchestrator
+  // worker's wall-clock budget → worker killed → pull reaped silently →
+  // breaker never advanced → feed sat overdue 11h+ while still enabled).
+  // Each now runs in its own Worker invocation with a fresh budget; they
+  // are SKIPPED in runAllEnrichmentFeeds (DEDICATED_ENRICHMENT_FEEDS) so
+  // they don't double-dispatch. dispatchEnrichmentFeed honors enabled +
+  // the circuit-breaker backoff but not the schedule interval (the cron is
+  // the schedule). Same escape-hatch template as enricher/cartographer.
+  if (event.cron === '19 */4 * * *') {
+    try {
+      const { dispatchEnrichmentFeed } = await import('../lib/feedRunner');
+      await dispatchEnrichmentFeed(env, 'greynoise', enrichmentModules['greynoise']!);
+    } catch (err) {
+      logger.error('greynoise_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '21 * * * *') {
+    try {
+      const { dispatchEnrichmentFeed } = await import('../lib/feedRunner');
+      await dispatchEnrichmentFeed(env, 'seclookup', enrichmentModules['seclookup']!);
+    } catch (err) {
+      logger.error('seclookup_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Abuse mailbox classifier dispatch (PR-AY) ─────────────────────
   //
   // Hourly at :17. Previously gated inside runThreatFeedScan at line ~1142

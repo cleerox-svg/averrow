@@ -8,6 +8,7 @@
 
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
+import { withD1Retry } from "./d1-retry";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -450,15 +451,24 @@ export async function executeAgent(
 
     const finalStatus: RunStatus = result.approvals?.length ? "partial" : "success";
 
-    await env.DB.prepare(
-      `UPDATE agent_runs SET
-         status = ?, duration_ms = ?, records_processed = ?,
-         outputs_generated = ?, tokens_used = ?, completed_at = datetime('now')
-       WHERE id = ?`
-    ).bind(
-      finalStatus, durationMs, result.itemsProcessed,
-      outputsGenerated, result.tokensUsed ?? 0, runId,
-    ).run();
+    // Finalize under retry: the agent body succeeded, so a transient D1
+    // blip on THIS write must not leave the run stuck at 'partial' (which
+    // the Navigator reaper would later mark failed at the per-agent
+    // ceiling — the false-positive stalls seen for cartographer/analyst/
+    // strategist). Idempotent UPDATE keyed on runId → safe to re-run.
+    await withD1Retry(
+      () =>
+        env.DB.prepare(
+          `UPDATE agent_runs SET
+             status = ?, duration_ms = ?, records_processed = ?,
+             outputs_generated = ?, tokens_used = ?, completed_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(
+          finalStatus, durationMs, result.itemsProcessed,
+          outputsGenerated, result.tokensUsed ?? 0, runId,
+        ).run(),
+      { label: `${agentId} finalize-success` },
+    );
 
     // ── Circuit breaker: reset counter on success/partial ────
     await env.DB.prepare(
@@ -470,9 +480,16 @@ export async function executeAgent(
     const durationMs = Date.now() - start;
     const errorMsg = err instanceof Error ? err.message : String(err);
 
-    await env.DB.prepare(
-      `UPDATE agent_runs SET status = 'failed', error_message = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?`
-    ).bind(errorMsg, durationMs, runId).run();
+    // Finalize the failure under retry for the same reason as the success
+    // path: a transient D1 error while recording the failure must not
+    // leave the run orphaned at 'partial'. Idempotent UPDATE keyed on runId.
+    await withD1Retry(
+      () =>
+        env.DB.prepare(
+          `UPDATE agent_runs SET status = 'failed', error_message = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?`,
+        ).bind(errorMsg, durationMs, runId).run(),
+      { label: `${agentId} finalize-failure` },
+    );
 
     // ── Circuit breaker: increment counter + maybe trip ──────
     try {

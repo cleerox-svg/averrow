@@ -380,7 +380,12 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
     // admin dashboard whichever value is freshest across all callers
     // and eliminates one compute path per TTL window.
     adminCachedCount('count.threats.total', 3600, "SELECT COUNT(*) AS n FROM threats"),
-    adminCachedCount('count.threats.active', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
+    // TTL aligned to 3600s to match every other caller of this shared
+    // key (dashboard.ts, cartographer.ts). A shorter TTL here rejected
+    // entries the 3600s callers had warmed, forcing a ~488K-row recompute
+    // on each admin load and dragging the global cached_count hit_rate
+    // below the 70% target. Same fix already applied to count.threats.total above.
+    adminCachedCount('count.threats.active', 3600, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
     env.DB.prepare(
       "SELECT COUNT(*) AS active_sessions FROM sessions WHERE expires_at > datetime('now') AND revoked_at IS NULL",
     ).first<{ active_sessions: number }>(),
@@ -1388,13 +1393,11 @@ export async function handleBackfillGeo(request: Request, env: Env): Promise<Res
       }
     }
 
-    // Sync provider counts after backfill
+    // Sync provider counts after backfill (change-guarded shared helper —
+    // only writes providers whose counts actually moved).
     try {
-      await env.DB.prepare(`
-        UPDATE hosting_providers SET
-          active_threat_count = (SELECT COUNT(*) FROM threats WHERE threats.hosting_provider_id = hosting_providers.id AND threats.status = 'active'),
-          total_threat_count = (SELECT COUNT(*) FROM threats WHERE threats.hosting_provider_id = hosting_providers.id)
-      `).run();
+      const { syncHostingProviderCounts } = await import("../lib/provider-counts");
+      await syncHostingProviderCounts(env);
     } catch { /* non-critical */ }
 
     const remaining = Math.max(0, totalPending - totalEnriched - totalSkippedPrivate - totalSkippedNoResult);

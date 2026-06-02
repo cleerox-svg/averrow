@@ -121,7 +121,7 @@ export async function checkAndFireThreatMilestones(
   env: Env,
   agentRunId?: string | null,
 ): Promise<MilestoneCheckResult> {
-  const current = await cachedCount(env, 'count.threats.total', 1800, async () => {
+  const current = await cachedCount(env, 'count.threats.total', 3600, async () => {
     const row = await env.DB
       .prepare(`SELECT COUNT(*) AS n FROM threats`)
       .first<{ n: number }>();

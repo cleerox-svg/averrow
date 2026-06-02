@@ -23,9 +23,13 @@
 // Tested via `test/feed-pull-reaper.test.ts`.
 
 import type { Env } from "../types";
+import { applyReapPenalty } from "./feedRunner";
 
 /** Minimum age for a partial row to be considered orphaned. */
 export const REAP_AGE_MINUTES = 15;
+
+const REAP_ERROR =
+  `reaped by navigator: pull row stuck partial > ${REAP_AGE_MINUTES}min — worker likely terminated mid-run`;
 
 /** Returns the number of rows reaped. Never throws. */
 export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
@@ -40,19 +44,39 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
     // left 13 reapable orphans visible in production despite the reaper
     // running every 5 min for hours. Wrapping the LHS in datetime()
     // forces SQLite to coerce both into the same canonical representation.
+    //
+    // RETURNING feed_name gives us EXACTLY the rows this statement reaped —
+    // not a separate pre-scan SELECT. That matters for the breaker penalty
+    // below: a pre-scan would have a TOCTOU window where a stuck pull could
+    // finalize to 'success' (via runFeed's retry) or be reaped by an
+    // overlapping Navigator tick between the scan and the UPDATE, and we'd
+    // then wrongly penalize / auto-pause a feed that didn't actually get
+    // reaped here. Penalizing only the returned rows closes that window.
     const result = await env.DB.prepare(
       `UPDATE feed_pull_history
           SET status = 'failed',
               completed_at = datetime('now'),
               error_message = COALESCE(
                 error_message,
-                'reaped by navigator: pull row stuck partial > ${REAP_AGE_MINUTES}min — worker likely terminated mid-run'
+                '${REAP_ERROR}'
               )
         WHERE status = 'partial'
           AND completed_at IS NULL
-          AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
-    ).run();
-    return result.meta?.changes ?? 0;
+          AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')
+        RETURNING feed_name`,
+    ).all<{ feed_name: string }>();
+
+    const reapedRows = result.results ?? [];
+
+    // Advance the circuit breaker once per DISTINCT feed that was actually
+    // reaped here, so worker-killed death-loops back off + eventually
+    // auto-pause instead of staying silently overdue. Best-effort per
+    // feed; never blocks the reap.
+    for (const feedName of new Set(reapedRows.map((r) => r.feed_name))) {
+      await applyReapPenalty(env, feedName, REAP_ERROR);
+    }
+
+    return reapedRows.length;
   } catch (err) {
     console.error("[feed-pull-reaper] orphan reap failed:", err);
     return 0;

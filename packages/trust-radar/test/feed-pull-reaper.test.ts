@@ -21,20 +21,39 @@ interface CapturedRun {
 }
 
 function makeEnv(opts: {
-  changes?: number;
+  /** Rows the reap UPDATE ... RETURNING feed_name reports as reaped. */
+  reaped?: Array<{ feed_name: string }>;
   throws?: boolean;
 }): { env: Env; captured: CapturedRun[] } {
   const captured: CapturedRun[] = [];
   const env = {
     DB: {
       prepare(sql: string) {
-        return {
+        const stmt = {
+          // bind() is chainable so applyReapPenalty's parameterized
+          // reads/writes don't blow up if it gets invoked.
+          bind: () => stmt,
+          // The reap UPDATE now uses RETURNING + .all(); capture its SQL
+          // here. applyReapPenalty's feed_configs lookup (also .first())
+          // returns null below so it no-ops without touching the DB further.
+          all: async () => {
+            captured.push({ sql });
+            if (opts.throws) throw new Error("network connection lost");
+            return { results: opts.reaped ?? [] };
+          },
+          // applyReapPenalty's config lookup → null → early return, so the
+          // breaker path is exercised but doesn't require a full mock.
+          first: async () => {
+            if (opts.throws) throw new Error("network connection lost");
+            return null;
+          },
           run: async () => {
             captured.push({ sql });
             if (opts.throws) throw new Error("network connection lost");
-            return { success: true, meta: { changes: opts.changes ?? 0 } };
+            return { success: true, meta: { changes: 0 } };
           },
         };
+        return stmt;
       },
     },
   } as unknown as Env;
@@ -43,12 +62,24 @@ function makeEnv(opts: {
 
 describe("reapOrphanFeedPullHistory", () => {
   it("targets only orphan partial rows older than the grace window", async () => {
-    const { env, captured } = makeEnv({ changes: 7 });
+    // 7 reaped rows across 2 feeds → reaped count 7, breaker penalized
+    // once per distinct feed (applyReapPenalty no-ops on the null config).
+    const { env, captured } = makeEnv({
+      reaped: [
+        { feed_name: "seclookup" }, { feed_name: "seclookup" }, { feed_name: "seclookup" },
+        { feed_name: "greynoise" }, { feed_name: "greynoise" },
+        { feed_name: "greynoise" }, { feed_name: "greynoise" },
+      ],
+    });
     const reaped = await reapOrphanFeedPullHistory(env);
 
     expect(reaped).toBe(7);
-    expect(captured).toHaveLength(1);
+    // The reap UPDATE is the only statement that records into `captured`
+    // (applyReapPenalty's config lookup uses .first(), which doesn't).
     const sql = captured[0]!.sql;
+    // RETURNING feed_name is what lets the breaker penalty target exactly
+    // the rows this UPDATE reaped (no TOCTOU pre-scan).
+    expect(sql).toMatch(/RETURNING\s+feed_name/);
 
     // All three guardrails must be in the WHERE clause — missing any
     // of them would either over-reap (live rows) or under-reap (rows
@@ -79,6 +110,17 @@ describe("reapOrphanFeedPullHistory", () => {
     expect(reaped).toBe(0);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("does not penalize the breaker when nothing is reaped", async () => {
+    // Empty RETURNING → no feed gets a breaker penalty. Guards against the
+    // earlier pre-scan design that could penalize a feed which finalized in
+    // the window between the scan and the UPDATE.
+    const { env, captured } = makeEnv({ reaped: [] });
+    const reaped = await reapOrphanFeedPullHistory(env);
+    expect(reaped).toBe(0);
+    // Only the reap UPDATE ran; no applyReapPenalty writes (.run) followed.
+    expect(captured.every((c) => /UPDATE\s+feed_pull_history/.test(c.sql))).toBe(true);
   });
 
   it("exposes the grace constant for callers and platform docs", () => {

@@ -681,7 +681,12 @@ export const cartographerAgent: AgentModule = {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
       return row?.n ?? 0;
     }) };
-    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', 1800, async () => {
+    // count.threats.active is a SHARED key (dashboard.ts, admin.ts also
+    // read it) — pinned to 3600s across every caller so no caller's
+    // shorter TTL forces a full-scan recompute of an entry another caller
+    // already warmed. The three cartographer-only count.* keys above keep
+    // their 1800s budget since nothing else reads them.
+    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', 3600, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE status = 'active'").first<{ n: number }>();
       return row?.n ?? 0;
     }) };

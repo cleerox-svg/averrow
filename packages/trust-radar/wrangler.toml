@@ -67,7 +67,20 @@ not_found_handling = "404-page"
 # /api/internal/platform-diagnostics: zero `cron:daily` entries
 # in threat_briefings between 2026-05-02 and 2026-05-05 despite
 # the orchestrator firing every hour during that window.
-crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *"]
+# `19 */4 * * *` (greynoise) and `21 * * * *` (seclookup) are dedicated
+# enrichment-feed triggers. Both feeds were death-looping inside the
+# inline-sequential enrichment chain of the hourly orchestrator: their
+# inter-call sleeps (greynoise 8×30s, seclookup 100×1s) pushed the shared
+# worker past its wall-clock budget, the worker was killed, and the
+# in-flight pull was reaped — silently, so the breaker never advanced and
+# the feed sat overdue for 11h+ while still enabled. Same escape-hatch
+# pattern as enricher (:08) / cartographer (:09) / strategist (:10): own
+# cron = fresh per-invocation budget. Minutes 19/21 are off the */5
+# Navigator grid and distinct from the other dedicated crons. greynoise at
+# every-4h matches its 45/day community cap (8/run × 6 = 48); seclookup
+# hourly drains its enrichment backlog. handleScheduled dispatches each by
+# exact event.cron match (no minute gates — cron-audit-safe).
+crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "19 */4 * * *", "21 * * * *"]
 
 # ─── Workflows (durable multi-step processing) ──────────────
 [[workflows]]
