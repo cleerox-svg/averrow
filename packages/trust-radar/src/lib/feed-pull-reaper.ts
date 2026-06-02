@@ -34,24 +34,6 @@ const REAP_ERROR =
 /** Returns the number of rows reaped. Never throws. */
 export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
   try {
-    // Capture which feeds are about to be reaped BEFORE flipping the rows,
-    // so we can advance each feed's circuit breaker. A worker-killed pull
-    // bypasses runFeed's catch, so without this the breaker never sees the
-    // failure and the feed silently death-loops (enabled, "due" every
-    // tick, dies every time) — the root cause of feeds sitting silent for
-    // 11h+ while still enabled. distinct feed_name → penalize once per feed.
-    let doomedFeeds: string[] = [];
-    try {
-      const doomed = await env.DB.prepare(
-        `SELECT DISTINCT feed_name FROM feed_pull_history
-          WHERE status = 'partial'
-            AND completed_at IS NULL
-            AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
-      ).all<{ feed_name: string }>();
-      doomedFeeds = doomed.results.map((r) => r.feed_name);
-    } catch (err) {
-      console.error("[feed-pull-reaper] doomed-feed pre-scan failed:", err);
-    }
     // Both sides of the comparison MUST go through `datetime()` so the
     // engine compares parsed timestamps, not raw strings. feedRunner
     // inserts `started_at` via `new Date().toISOString()` ("…T20:11:49.957Z")
@@ -62,6 +44,14 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
     // left 13 reapable orphans visible in production despite the reaper
     // running every 5 min for hours. Wrapping the LHS in datetime()
     // forces SQLite to coerce both into the same canonical representation.
+    //
+    // RETURNING feed_name gives us EXACTLY the rows this statement reaped —
+    // not a separate pre-scan SELECT. That matters for the breaker penalty
+    // below: a pre-scan would have a TOCTOU window where a stuck pull could
+    // finalize to 'success' (via runFeed's retry) or be reaped by an
+    // overlapping Navigator tick between the scan and the UPDATE, and we'd
+    // then wrongly penalize / auto-pause a feed that didn't actually get
+    // reaped here. Penalizing only the returned rows closes that window.
     const result = await env.DB.prepare(
       `UPDATE feed_pull_history
           SET status = 'failed',
@@ -72,17 +62,21 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
               )
         WHERE status = 'partial'
           AND completed_at IS NULL
-          AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')`,
-    ).run();
+          AND datetime(started_at) <= datetime('now', '-${REAP_AGE_MINUTES} minutes')
+        RETURNING feed_name`,
+    ).all<{ feed_name: string }>();
 
-    // Advance the circuit breaker for each reaped feed so worker-killed
-    // death-loops back off + eventually auto-pause instead of staying
-    // silently overdue. Best-effort per feed; never blocks the reap.
-    for (const feedName of doomedFeeds) {
+    const reapedRows = result.results ?? [];
+
+    // Advance the circuit breaker once per DISTINCT feed that was actually
+    // reaped here, so worker-killed death-loops back off + eventually
+    // auto-pause instead of staying silently overdue. Best-effort per
+    // feed; never blocks the reap.
+    for (const feedName of new Set(reapedRows.map((r) => r.feed_name))) {
       await applyReapPenalty(env, feedName, REAP_ERROR);
     }
 
-    return result.meta?.changes ?? 0;
+    return reapedRows.length;
   } catch (err) {
     console.error("[feed-pull-reaper] orphan reap failed:", err);
     return 0;
