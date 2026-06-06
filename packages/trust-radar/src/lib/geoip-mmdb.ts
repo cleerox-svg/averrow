@@ -32,7 +32,6 @@
 
 import type { Env } from '../types';
 import { cachedCount } from './cached-count';
-import { cachedValue } from './cached-value';
 
 // KV cache TTL — geographic data for a given IP changes on the order of
 // weeks/months. 24h is a good balance of freshness and cache hit rate.
@@ -254,40 +253,11 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
     // Wrapped with a 1-day TTL since the row count only changes on the
     // weekly GeoIP refresh — operator sees fresh values within a day of
     // each refresh, plenty for a status panel.
-    const [count, shadowCount, lastRefresh, recentAttempts, runningStats] = await Promise.all([
+    const [count, lastRefresh, recentAttempts, runningStats] = await Promise.all([
       cachedCount(env, 'count.geo_ip_ranges.total', 24 * 60 * 60, async () => {
         const r = await db.prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`).first<{ n: number }>();
         return r?.n ?? 0;
       }).then((n) => ({ n })),
-      // Shadow table only exists while a Workflow is mid-import.
-      // When the swap step runs, geo_ip_ranges_new is renamed to
-      // geo_ip_ranges and this query throws. We catch and report
-      // null for shadow_row_count when that happens.
-      //
-      // KV-cached with a short 30s TTL because during refresh the
-      // table grows to 3.5M+ rows and concurrent COUNT(*) scans
-      // saturate D1 / risk worker timeout. Production 2026-05-16
-      // 19:45 UTC: an admin clicked the GeoIP card mid-refresh and
-      // the worker timed out trying to COUNT a 3.5M-row actively-
-      // written table, returning an empty 500 that surfaced as
-      // "Failed to load detail" in the operator UI. 30s TTL is short
-      // enough that operators watching shadow progress still see it
-      // tick, but bounds the underlying scan to ≤2 calls/min.
-      cachedValue<number | null>(
-        env,
-        'count.geo_ip_ranges_new.shadow',
-        30,
-        async () => {
-          try {
-            const r = await db
-              .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges_new`)
-              .first<{ n: number }>();
-            return r?.n ?? null;
-          } catch {
-            return null;
-          }
-        },
-      ).then((n) => (n != null ? { n } : null)),
       db.prepare(`
         SELECT completed_at, status, source, rows_written, duration_ms, error_message
         FROM geo_ip_refresh_log
@@ -317,24 +287,48 @@ export async function getGeoMmdbStatus(env: Env): Promise<{
         duration_ms: number | null;
         error_message: string | null;
       }>(),
+      // Shadow-import progress WITHOUT scanning the shadow table.
+      //
+      // Previously this ran `COUNT(*) FROM geo_ip_ranges_new`. During a
+      // refresh that table grows to 3.5M+ rows and is actively written,
+      // so the full scan saturated D1 / timed out the worker. Production
+      // 2026-05-16 19:45 UTC: an admin clicked the GeoIP card mid-refresh
+      // and the worker died COUNTing the actively-written shadow table,
+      // returning a plain-text 500 the UI couldn't parse — the detail
+      // drill-down hung on "Loading detail…" forever. The 30s KV cache
+      // we added then only bounded the *frequency* of the killer scan;
+      // the cold-cache call still died, so the panel failed ~every 30s
+      // for the whole ~50-min import.
+      //
+      // The import already checkpoints its progress into
+      // geo_ip_refresh_log.last_committed_row (geoipRefresh.ts onProgress).
+      // That's a single tiny-table row read — no shadow-table scan — and
+      // gives the same "X / 3.5M rows imported so far" gauge. The shadow
+      // table exists exactly while a refresh is 'running', so we derive
+      // both presence and progress from the running log row.
       db.prepare(`
         SELECT COUNT(*) AS n,
-               MIN(started_at) AS oldest
+               MIN(started_at) AS oldest,
+               MAX(last_committed_row) AS progress
         FROM geo_ip_refresh_log
         WHERE status = 'running'
-      `).first<{ n: number; oldest: string | null }>(),
+      `).first<{ n: number; oldest: string | null; progress: number | null }>(),
     ]);
 
     const oldestRunningAge = runningStats?.oldest
       ? Math.floor((Date.now() - Date.parse(runningStats.oldest + 'Z')) / 60_000)
       : null;
+    const refreshRunning = (runningStats?.n ?? 0) > 0;
+    // shadow_row_count is the in-flight import progress; only meaningful
+    // while a refresh is running. null otherwise (no shadow table).
+    const shadowProgress = refreshRunning ? (runningStats?.progress ?? null) : null;
 
     return {
       configured: true,
       row_count: count?.n ?? 0,
-      shadow_row_count: shadowCount?.n ?? null,
-      has_shadow_table: shadowCount !== null,
-      any_running_refresh: (runningStats?.n ?? 0) > 0,
+      shadow_row_count: shadowProgress,
+      has_shadow_table: refreshRunning,
+      any_running_refresh: refreshRunning,
       oldest_running_refresh_age_min: oldestRunningAge,
       recent_attempts: recentAttempts.results ?? [],
       last_refresh_at: lastRefresh?.completed_at ?? null,

@@ -284,7 +284,18 @@ export function usePipelineDetail(pipelineId: string | null) {
     queryFn: async () => {
       if (!pipelineId) return null;
       const res = await api.get<PipelineDetail>(`/api/admin/pipeline-status/${pipelineId}`);
-      return res.data ?? null;
+      // The API client doesn't throw on non-2xx — it just returns the
+      // parsed body (or, for an unparseable 500, would have thrown in
+      // fetch). A `{ success: false }` body therefore arrives here with
+      // `data` undefined. Returning `?? null` made react-query resolve
+      // the query *successfully* to null, which the detail panel renders
+      // as an infinite "Loading detail…" (it can't tell loaded-empty from
+      // still-loading) with no retry. Throw instead so `isError` fires,
+      // the panel shows its error state, and react-query auto-retries.
+      if (!res.success || !res.data) {
+        throw new Error(res.error || 'Failed to load pipeline detail');
+      }
+      return res.data;
     },
     placeholderData: keepPreviousData,
     // Detail sheet refreshes every 30s so a triaging operator sees
