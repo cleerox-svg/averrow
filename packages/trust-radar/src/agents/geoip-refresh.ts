@@ -479,9 +479,12 @@ export const geoipRefreshAgent: AgentModule = {
       `Probe ok (sha256 ${probe.source_sha256_first_chars ?? '?'}, ` +
       `${probe.durationMs}ms). License key is valid and entitled.`;
 
-    // Phase 3.5 dropped the GEOIP_STAGING (R2) requirement —
-    // the Workflow now fetches MaxMind directly via HTTP Range.
-    // Only GEOIP_REFRESH (the Workflow binding) needs to be bound.
+    // The Workflow stages MaxMind's archive to R2 once, then reads it
+    // from R2 — so both GEOIP_REFRESH (the Workflow binding) AND
+    // GEOIP_STAGING (the R2 bucket) must be bound. (Phase 3.5 briefly
+    // dropped the R2 requirement and read MaxMind directly via HTTP
+    // Range, but that paid the metered endpoint ~7×/import and tripped
+    // MaxMind's daily quota — see workflows/geoipRefresh.ts.)
     if (!env.GEOIP_REFRESH) {
       try {
         await env.GEOIP_DB!.prepare(`
@@ -513,6 +516,44 @@ export const geoipRefreshAgent: AgentModule = {
         itemsCreated: 0,
         itemsUpdated: 0,
         output: { phase: 'probe_ok_awaiting_workflow_binding', probe, config, durationMs },
+        agentOutputs,
+      };
+    }
+
+    // The auto-poll path stages MaxMind's archive to R2 (GEOIP_STAGING)
+    // before importing. Without the bucket the workflow would fail at
+    // its stage-to-r2 step; catch it here so the operator gets a clear
+    // pre-dispatch diagnostic instead of a mid-workflow failure.
+    if (!config.stagingBound) {
+      try {
+        await env.GEOIP_DB!.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'failed',
+              completed_at = datetime('now'),
+              duration_ms = ?,
+              error_message = ?,
+              source_version = ?
+          WHERE id = ?
+        `).bind(
+          durationMs,
+          `${probeMessage} GEOIP_STAGING (R2) not bound — the refresh stages the MaxMind archive to R2 before import. Add the [[r2_buckets]] GEOIP_STAGING block in wrangler.toml and redeploy.`,
+          probe.source_sha256_first_chars,
+          refreshId,
+        ).run();
+      } catch { /* non-fatal */ }
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary:
+          `${probeMessage} GEOIP_STAGING (R2) binding missing — bind it in ` +
+          `wrangler.toml so the workflow can stage the archive before import.`,
+        severity: 'high',
+        details: { phase: 'awaiting_staging_binding', probe, config, durationMs },
+      });
+      return {
+        itemsProcessed: 0,
+        itemsCreated: 0,
+        itemsUpdated: 0,
+        output: { phase: 'awaiting_staging_binding', probe, config, durationMs },
         agentOutputs,
       };
     }

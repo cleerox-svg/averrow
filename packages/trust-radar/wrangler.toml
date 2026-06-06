@@ -222,15 +222,18 @@ dataset = "trust_radar_d1_reads"
 # binding = "EVIDENCE"
 # bucket_name = "trust-radar-evidence"
 
-# ─── R2 Storage (GeoIP staging — operator-uploaded archives) ──
-# Re-introduced in Phase 4 to support the manual-import path:
-# `POST /api/admin/geoip/import-from-r2?key=<key>&sha256=<hex>`.
-# The operator downloads `GeoLite2-City-CSV_<release>.zip` via
-# their browser session (no API quota), uploads to this bucket,
-# then triggers the import. Lets us bootstrap geo_ip_ranges
-# without burning the daily MaxMind quota — the auto-poll workflow
-# still uses HttpZipReader against MaxMind's CDN for weekly
-# refreshes; this bucket is only touched on manual import.
+# ─── R2 Storage (GeoIP staging) ──────────────────────────────
+# Used by BOTH GeoIP import paths:
+#   1. Manual import: the operator downloads
+#      `GeoLite2-City-CSV_<release>.zip` via their browser session,
+#      uploads it here, then triggers
+#      `POST /api/admin/geoip/import-from-r2?key=<key>&sha256=<hex>`.
+#   2. Auto-poll (weekly) refresh: the GeoipRefreshWorkflow streams
+#      the MaxMind archive to this bucket in ONE metered download
+#      (step stage-to-r2), then Range-reads it from R2 for the import.
+#      This caps MaxMind requests at one GET/refresh — Range-reading
+#      MaxMind's metered endpoint directly previously tripped the
+#      daily download quota. See workflows/geoipRefresh.ts.
 [[r2_buckets]]
 binding = "GEOIP_STAGING"
 bucket_name = "geoip-staging"

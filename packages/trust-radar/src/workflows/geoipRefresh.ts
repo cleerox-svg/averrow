@@ -4,13 +4,18 @@
  * Pipeline shape
  * ──────────────
  *   Step 1  probe                → verify license key + fetch the
- *                                  release sha256 fingerprint
+ *                                  release sha256 fingerprint (1 metered
+ *                                  MaxMind request)
  *   Step 2  skip-if-current      → bail early if the live data
  *                                  already matches this sha256
  *   Step 3  prepare-shadow-table → drop+create geo_ip_ranges_new
- *   Step 4  import               → range-fetch + DEFLATE-decompress
+ *   Step 3.7 stage-to-r2         → ONE metered MaxMind GET, streamed
+ *                                  straight into the GEOIP_STAGING R2
+ *                                  bucket (auto path; manual path reuses
+ *                                  the operator-uploaded key)
+ *   Step 4  import               → R2 Range-read + DEFLATE-decompress
  *                                  Locations CSV (~22 MB in-memory map),
- *                                  then range-fetch + decompress Blocks
+ *                                  then R2 Range-read + decompress Blocks
  *                                  CSV, joining each Block to its
  *                                  Location and INSERT-OR-IGNORE'ing
  *                                  100 rows per D1 round-trip
@@ -18,10 +23,24 @@
  *                                  next lookup hits the new data
  *   Step 6  finalize             → mark refresh log success +
  *                                  stamp source_version (sha256)
+ *   Step 7.5 cleanup             → delete the auto-staged R2 archive
  *
- * No R2 dependency — `HttpZipReader` walks the MaxMind archive via
- * HTTP Range requests, so the Worker never holds more than ~1MB
- * of ZIP bytes in memory.
+ * MaxMind quota hygiene — stage once, read from R2
+ * ────────────────────────────────────────────────
+ * MaxMind's `geoip_download` endpoint is metered (a daily download
+ * quota per license key) and 302-redirects to its CDN, so EVERY
+ * request to it — including HEAD and Range reads — counts against the
+ * quota. The previous design pointed `HttpZipReader` directly at that
+ * endpoint, paying ~7 metered requests per import attempt and re-paying
+ * them on each of the import step's 3 retries; a single run could
+ * exhaust the quota (the "Daily GeoIP Download Limit Reached" email).
+ * We now do exactly ONE metered GET (step 3.7), stream it to R2, and
+ * Range-read the archive from R2 (internal, free, non-expiring) for the
+ * import. Import-step retries — and even FC re-dispatches of the same
+ * release — cost zero MaxMind requests (step 3.7 head-checks R2 first).
+ * A 429 from the probe or the staging GET stamps the shared
+ * `geoip:maxmind:cooldown_until` KV key so the agent + FC stop
+ * re-dispatching until the window resets.
  *
  * Why Locations + Blocks are one step
  * ────────────────────────────────────
@@ -36,16 +55,18 @@
  *
  * Memory profile
  * ──────────────
- *   - HEAD + EOCD + central directory ranges: ~1MB peak
+ *   - stage-to-r2: HTTP body streamed straight into R2 — never buffered
+ *   - EOCD + central directory R2 ranges: ~1MB peak
  *   - Locations map (within the import step): ~22MB
  *   - Blocks streaming (within the import step): ~few KB at a time
  *
  * Recovery semantics
  * ──────────────────
  * Each step has its own retry policy. A network blip retries the
- * whole `import` step from the beginning — that re-fetches Locations
- * and Blocks. INSERT OR IGNORE against the shadow table's PRIMARY
- * KEY makes the re-run idempotent.
+ * whole `import` step from the beginning — that re-reads Locations
+ * and Blocks from the staged R2 object (no MaxMind cost). INSERT OR
+ * IGNORE against the shadow table's PRIMARY KEY makes the re-run
+ * idempotent.
  *
  * The shadow table approach also means a partially-written failure
  * NEVER affects the live `geo_ip_ranges` until the atomic-swap step
@@ -54,13 +75,12 @@
  */
 
 import { WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent } from 'cloudflare:workers';
-import { HttpZipReader } from '../lib/zip-reader';
+import { NonRetryableError } from 'cloudflare:workflows';
 import { R2ZipReader } from '../lib/r2-zip-reader';
 import {
   runGeoipBlocksImport,
   prepareShadowTable as prepareShadowTableHelper,
   atomicSwap as atomicSwapHelper,
-  type ZipReaderLike,
 } from '../lib/geoip-import';
 
 interface GeoipRefreshParams {
@@ -93,11 +113,22 @@ interface GeoipRefreshEnv {
    *  hit MaxMind so it doesn't need the license key. The probe
    *  step throws if both are missing AND r2Key is unset. */
   MAXMIND_LICENSE_KEY?: string;
-  /** R2 bucket holding operator-uploaded archives. Optional in
-   *  the env — only required when r2Key is set on the workflow
-   *  payload. */
+  /** R2 bucket holding both operator-uploaded archives AND the
+   *  auto-poll path's staged MaxMind download. Required for the
+   *  MaxMind path now that we stage-once-then-read-from-R2 (see
+   *  the stage-to-r2 step) instead of Range-reading MaxMind's
+   *  metered endpoint ~7×/import. */
   GEOIP_STAGING?: R2Bucket;
   AE?: AnalyticsEngineDataset;
+  /** KV used to stamp the MaxMind 429 cooldown from inside the
+   *  workflow. Previously only the geoip_refresh agent's pre-flight
+   *  probe stamped this key — so when the WORKFLOW (probe / archive
+   *  download) hit a 429 mid-run, nothing recorded the cooldown and
+   *  FC's staleness self-heal re-dispatched ~6h later, re-downloading
+   *  and re-tripping the daily quota (the "Daily GeoIP Download Limit
+   *  Reached" email loop). Stamping here breaks that loop. Same key
+   *  the agent reads: `geoip:maxmind:cooldown_until`. */
+  CACHE?: KVNamespace;
 }
 
 export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, GeoipRefreshParams> {
@@ -138,6 +169,24 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     }
   }
 
+  /**
+   * Stamp the shared 24h MaxMind 429 cooldown so the geoip_refresh
+   * agent + Flight Control's staleness self-heal refuse to re-dispatch
+   * (and re-download) until the quota window resets. Mirrors the
+   * agent's Layer-D logic (geoip-refresh.ts) using the same KV key.
+   * Best-effort — a KV miss must never mask the underlying 429.
+   */
+  private async stampMaxMindCooldown(reason: string): Promise<void> {
+    if (!this.env.CACHE) return;
+    try {
+      const until = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+      await this.env.CACHE.put('geoip:maxmind:cooldown_until', until, {
+        expirationTtl: 24 * 60 * 60,
+      });
+      console.warn(`[geoip-workflow] MaxMind 429 cooldown stamped until ${until} (${reason})`);
+    } catch { /* best-effort */ }
+  }
+
   private async runImpl(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
     const refreshLogId = event.payload.refreshLogId;
     const forceReload = event.payload.forceReload ?? false;
@@ -174,6 +223,14 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
           { retries: { limit: 3, delay: '15 seconds', backoff: 'exponential' }, timeout: '30 seconds' },
           async (): Promise<{ sha256First12: string; full: string }> => {
             const res = await fetch(`${baseUrl}&suffix=zip.sha256`, { signal: AbortSignal.timeout(20_000) });
+            if (res.status === 429) {
+              // Daily quota exhausted. Stamp the cooldown and fail the
+              // whole workflow immediately — retrying the probe would
+              // just burn more quota against a wall that won't move
+              // until the 24h window resets.
+              await this.stampMaxMindCooldown('probe saw HTTP 429');
+              throw new NonRetryableError('MaxMind probe 429 — daily download quota exhausted. Cooldown stamped.');
+            }
             if (!res.ok) {
               throw new Error(`MaxMind probe ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
             }
@@ -301,6 +358,66 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       },
     );
 
+    // ── Step 3.7: stage-to-r2 (MaxMind path only) ────────────
+    // Download the archive to R2 in a SINGLE metered request, then
+    // let the import step Range-read from R2 (free, no expiry).
+    //
+    // Why: the previous design pointed HttpZipReader straight at
+    // MaxMind's `geoip_download` endpoint, which 302-redirects to
+    // the CDN — so EVERY HEAD/Range request (HEAD + EOCD tail + central
+    // directory + 2× local-header + 2× entry body ≈ 7 per import) hit
+    // the *metered* endpoint, and each of the import step's 3 retries
+    // re-paid that ≈7. A single fully-retrying import could exhaust the
+    // daily quota on its own (the "Daily GeoIP Download Limit Reached"
+    // email). Staging once collapses that to exactly ONE metered GET
+    // per refresh; import-step retries then read from R2 at zero
+    // MaxMind cost.
+    //
+    // Reuse: keyed by the release sha256, and we head-check before
+    // downloading. If a prior failed attempt (or an FC re-dispatch of
+    // the same release) already staged this archive, we reuse it and
+    // skip the download entirely — so even cross-workflow retries cost
+    // zero MaxMind requests.
+    //
+    // The manual-R2 path keeps using the operator-supplied r2Key as-is.
+    const stagingKey = isManualR2Import
+      ? r2Key!
+      : await step.do(
+          'stage-to-r2',
+          { retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
+          async (): Promise<string> => {
+            if (!this.env.GEOIP_STAGING) {
+              throw new NonRetryableError(
+                'GEOIP_STAGING (R2) binding not configured — cannot stage MaxMind archive.',
+              );
+            }
+            const key = `auto/GeoLite2-City-CSV_${probe.sha256First12}.zip`;
+
+            // Reuse an already-staged copy of this exact release.
+            const existing = await this.env.GEOIP_STAGING.head(key).catch(() => null);
+            if (existing && existing.size > 1024) {
+              console.log(`[geoip-workflow] reusing staged archive ${key} (${existing.size} bytes) — no MaxMind download`);
+              return key;
+            }
+
+            const archiveUrl = `${baseUrl}&suffix=zip`;
+            const res = await fetch(archiveUrl, { signal: AbortSignal.timeout(240_000) });
+            if (res.status === 429) {
+              await this.stampMaxMindCooldown('stage-to-r2 saw HTTP 429');
+              throw new NonRetryableError(
+                'MaxMind archive download 429 — daily download quota exhausted. Cooldown stamped.',
+              );
+            }
+            if (!res.ok || !res.body) {
+              throw new Error(`MaxMind archive download ${archiveUrl} → ${res.status}`);
+            }
+            // Stream the body straight into R2 — never buffer the
+            // ~80MB archive in Worker memory.
+            await this.env.GEOIP_STAGING.put(key, res.body);
+            return key;
+          },
+        );
+
     // ── Step 4: import (Locations + Blocks in one step) ─────
     // Both branches converge on the same `runGeoipBlocksImport`
     // helper — the only thing that varies is the byte source. The
@@ -320,8 +437,8 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // 1-hour cap a normal run sat right at the edge and slow runs died.
     //
     // Retry semantics (Step 3 of remediation): a transient failure
-    // retries the whole step. The CSV stream is re-fetched from the
-    // start (gzip not seekable), but the loader now reads
+    // retries the whole step. The CSV is re-read from the staged R2
+    // object (zero MaxMind cost), and the loader reads
     // last_committed_row before each attempt and stream-skips the
     // already-written rows — only NEW work hits D1. INSERT OR IGNORE
     // remains the safety net.
@@ -338,17 +455,12 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       'import',
       { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
       async () => {
-        let zip: ZipReaderLike;
-        if (isManualR2Import) {
-          const r2Reader = new R2ZipReader(this.env.GEOIP_STAGING!, r2Key!);
-          await r2Reader.open();
-          zip = r2Reader;
-        } else {
-          const archiveUrl = `${baseUrl}&suffix=zip`;
-          const httpReader = new HttpZipReader(archiveUrl);
-          await httpReader.open();
-          zip = httpReader;
-        }
+        // Both the manual-upload and auto-poll paths now read the
+        // archive from R2 (the auto path staged it in step 3.7). R2
+        // Range reads are internal/free and never expire, so import-
+        // step retries cost zero MaxMind requests.
+        const zip = new R2ZipReader(this.env.GEOIP_STAGING!, stagingKey);
+        await zip.open();
         return await runGeoipBlocksImport(this.env.GEOIP_DB, zip, {
           resumeFromRow: resumeState.resumeFromRow,
           onProgress: async (rowsProcessed) => {
@@ -402,6 +514,20 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         refreshLogId,
       ).run();
     });
+
+    // ── Step 7.5: cleanup auto-staged archive ────────────────
+    // The auto-poll path staged ~80MB to R2 in step 3.7; once the
+    // swap has landed we don't need it (a same-release re-run would
+    // short-circuit at skip-if-current). The manual-upload path's
+    // r2Key is operator-owned — leave it untouched. Best-effort; an
+    // orphaned object just wastes a little R2, never correctness.
+    if (!isManualR2Import && this.env.GEOIP_STAGING) {
+      await step.do('cleanup-staged-archive', async () => {
+        try {
+          await this.env.GEOIP_STAGING!.delete(stagingKey);
+        } catch { /* best-effort — orphan cleanup is not load-bearing */ }
+      });
+    }
 
     // §14.2 — AE writeDataPoint per agent run / workflow run.
     // Lets the Agents page sparkline + cost dashboards reflect
