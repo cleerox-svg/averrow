@@ -48,6 +48,47 @@ const BLOCKS_FILENAME = "GeoLite2-City-Blocks-IPv4.csv";
  */
 const D1_BATCH_LIMIT = 500;
 
+/**
+ * 64-bit content hash of a geo_ip_ranges row's mutable fields, as 16
+ * lowercase hex chars. Used by the diff loader to decide whether an
+ * incoming row differs from what's already live, so unchanged rows are
+ * skipped instead of rewritten.
+ *
+ * Two parallel FNV-1a 32-bit lanes (different primes) concatenated into
+ * 64 bits — collision probability across ~3.76M rows is ~3.7M²/2⁶⁵ ≈
+ * negligible, so a hash match reliably means "row unchanged". The hash
+ * is only ever compared against another hash we computed the same way,
+ * so it doesn't need to match any SQL-side computation — only be stable
+ * across runs for identical field values. `start_ip_int` is the key and
+ * is excluded; everything that can change for a given key is included.
+ */
+export function computeRowHash(
+  endIpInt: number,
+  countryCode: string | null,
+  countryName: string | null,
+  region: string | null,
+  city: string | null,
+  postalCode: string | null,
+  lat: number | null,
+  lng: number | null,
+): string {
+  const s =
+    `${endIpInt}${countryCode ?? ""}${countryName ?? ""}` +
+    `${region ?? ""}${city ?? ""}${postalCode ?? ""}` +
+    `${lat ?? ""}${lng ?? ""}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  return (
+    (h1 >>> 0).toString(16).padStart(8, "0") +
+    (h2 >>> 0).toString(16).padStart(8, "0")
+  );
+}
+
 export interface GeoipImportResult {
   rowsWritten: number;
   rowsParsed: number;
@@ -177,22 +218,27 @@ export async function runGeoipBlocksImport(
       : row.registeredCountryGeonameId
         ? locations.get(row.registeredCountryGeonameId)
         : undefined;
+    const countryCode = loc?.countryCode ?? null;
+    const countryName = loc?.countryName ?? null;
+    const region = loc?.region ?? null;
+    const city = loc?.city ?? null;
     pendingBatch.push(
       db.prepare(`
         INSERT OR IGNORE INTO geo_ip_ranges_new
           (start_ip_int, end_ip_int, country_code, country_name,
-           region, city, postal_code, lat, lng, asn, asn_org, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'maxmind-geolite2-city')
+           region, city, postal_code, lat, lng, asn, asn_org, source, row_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'maxmind-geolite2-city', ?)
       `).bind(
         range.start,
         range.end,
-        loc?.countryCode ?? null,
-        loc?.countryName ?? null,
-        loc?.region ?? null,
-        loc?.city ?? null,
+        countryCode,
+        countryName,
+        region,
+        city,
         row.postalCode,
         row.lat,
         row.lng,
+        computeRowHash(range.end, countryCode, countryName, region, city, row.postalCode, row.lat, row.lng),
       ),
     );
     if (pendingBatch.length >= D1_BATCH_LIMIT) {
@@ -274,6 +320,7 @@ export async function prepareShadowTable(
         asn          TEXT,
         asn_org      TEXT,
         source       TEXT NOT NULL,
+        row_hash     TEXT,
         loaded_at    TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `),
@@ -311,4 +358,233 @@ export async function atomicSwap(
     ),
   ]);
   return { newRowCount };
+}
+
+// ─── Diff-only import (write-budget remediation) ──────────────────
+//
+// Instead of rebuilding the whole table, compare the incoming MaxMind
+// release against the LIVE geo_ip_ranges row-by-row and write only the
+// deltas: INSERT new keys, UPDATE changed rows (matched by row_hash),
+// skip unchanged, and DELETE keys MaxMind dropped. Typical inter-release
+// churn is 1-5%, so this writes ~50-200K rows instead of ~3.76M.
+//
+// In-place (no shadow + swap): the diff is idempotent — a retry re-reads
+// everything and writes nothing already applied — and each D1 batch is
+// transactional, so the range-lookup readers (cartographer Phase 0.5)
+// never see a torn dataset. The first refresh after deploy runs as a
+// FULL rebuild (see the workflow's decide-mode step) which repopulates
+// row_hash on every row, so subsequent diffs have hashes to compare.
+
+export interface GeoipDiffResult {
+  rowsParsed: number;
+  rowsInserted: number;
+  rowsUpdated: number;
+  rowsUnchanged: number;
+  rowsDeleted: number;
+  locationsCount: number;
+}
+
+interface DiffRow {
+  startIp: number;
+  endIp: number;
+  countryCode: string | null;
+  countryName: string | null;
+  region: string | null;
+  city: string | null;
+  postalCode: string | null;
+  lat: number | null;
+  lng: number | null;
+  hash: string;
+}
+
+/** INSERT OR REPLACE the live row (covers both insert and update). */
+function upsertLiveRow(db: D1Database, r: DiffRow): D1PreparedStatement {
+  return db.prepare(`
+    INSERT OR REPLACE INTO geo_ip_ranges
+      (start_ip_int, end_ip_int, country_code, country_name,
+       region, city, postal_code, lat, lng, asn, asn_org, source, row_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'maxmind-geolite2-city', ?)
+  `).bind(
+    r.startIp, r.endIp, r.countryCode, r.countryName,
+    r.region, r.city, r.postalCode, r.lat, r.lng, r.hash,
+  );
+}
+
+/** Binary-search a sorted Uint32Array view for `target`. */
+function sortedHas(keys: Uint32Array, target: number): boolean {
+  let lo = 0;
+  let hi = keys.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    const v = keys[mid]!;
+    if (v === target) return true;
+    if (v < target) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return false;
+}
+
+export async function runGeoipDiffImport(
+  db: D1Database,
+  zip: ZipReaderLike,
+  options: GeoipImportOptions = {},
+): Promise<GeoipDiffResult> {
+  const onProgress = options.onProgress;
+
+  const locEntry = zip.findEntry(LOCATIONS_FILENAME);
+  if (!locEntry) {
+    throw new Error(
+      `Locations CSV missing in archive — listed entries: ` +
+        zip.listEntries().map((e) => e.name).slice(0, 5).join(", "),
+    );
+  }
+  const locations = await streamLocationsCsv(await zip.streamEntry(locEntry));
+
+  const blocksEntry = zip.findEntry(BLOCKS_FILENAME);
+  if (!blocksEntry) {
+    throw new Error(`Blocks CSV missing in archive`);
+  }
+  const blocksStream = await zip.streamEntry(blocksEntry);
+
+  let rowsInserted = 0;
+  let rowsUpdated = 0;
+  let rowsUnchanged = 0;
+  let rowsDeleted = 0;
+  let rowsProcessed = 0;
+
+  // Every incoming key, collected for the delete pass. MaxMind sorts the
+  // Blocks CSV by network, so keys arrive ascending; we track that and
+  // only sort defensively if the assumption is ever violated. uint32 →
+  // ~15MB at 3.76M keys, well under the 128MB Worker ceiling.
+  let keyBuf = new Uint32Array(4_200_000);
+  let keyCount = 0;
+  let keysAscending = true;
+  let lastKey = -1;
+  const pushKey = (k: number) => {
+    if (keyCount >= keyBuf.length) {
+      const grown = new Uint32Array(keyBuf.length * 2);
+      grown.set(keyBuf);
+      keyBuf = grown;
+    }
+    keyBuf[keyCount++] = k;
+    if (k < lastKey) keysAscending = false;
+    lastKey = k;
+  };
+
+  let buffer: DiffRow[] = [];
+
+  const processChunk = async () => {
+    if (buffer.length === 0) return;
+    const keys = buffer.map((r) => r.startIp);
+    const existing = await db
+      .prepare(
+        `SELECT start_ip_int, row_hash FROM geo_ip_ranges
+          WHERE start_ip_int IN (${keys.map(() => "?").join(",")})`,
+      )
+      .bind(...keys)
+      .all<{ start_ip_int: number; row_hash: string | null }>();
+    const existingHash = new Map<number, string | null>();
+    for (const e of existing.results) existingHash.set(e.start_ip_int, e.row_hash);
+
+    const writes: D1PreparedStatement[] = [];
+    for (const r of buffer) {
+      pushKey(r.startIp);
+      if (!existingHash.has(r.startIp)) {
+        writes.push(upsertLiveRow(db, r));
+        rowsInserted++;
+      } else if (existingHash.get(r.startIp) !== r.hash) {
+        writes.push(upsertLiveRow(db, r));
+        rowsUpdated++;
+      } else {
+        rowsUnchanged++;
+      }
+    }
+    if (writes.length > 0) await db.batch(writes);
+    buffer = [];
+    if (onProgress) {
+      try {
+        await onProgress(rowsProcessed);
+      } catch (err) {
+        console.warn(
+          `[geoip-diff] onProgress failed at row ${rowsProcessed}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  };
+
+  const { rowsParsed } = await streamBlocksCsv(blocksStream, async (row) => {
+    rowsProcessed++;
+    const range = cidrToIntRange(row.network);
+    if (!range) return;
+    const loc = row.geonameId
+      ? locations.get(row.geonameId)
+      : row.registeredCountryGeonameId
+        ? locations.get(row.registeredCountryGeonameId)
+        : undefined;
+    const countryCode = loc?.countryCode ?? null;
+    const countryName = loc?.countryName ?? null;
+    const region = loc?.region ?? null;
+    const city = loc?.city ?? null;
+    buffer.push({
+      startIp: range.start,
+      endIp: range.end,
+      countryCode,
+      countryName,
+      region,
+      city,
+      postalCode: row.postalCode,
+      lat: row.lat,
+      lng: row.lng,
+      hash: computeRowHash(range.end, countryCode, countryName, region, city, row.postalCode, row.lat, row.lng),
+    });
+    if (buffer.length >= D1_BATCH_LIMIT) await processChunk();
+  });
+  await processChunk();
+
+  // ── Delete pass ──
+  // Keyset-paginate the live table by PRIMARY KEY (efficient on the
+  // rowid) and delete any key not present in the incoming set. Handles
+  // ranges MaxMind removed since the last load.
+  const newKeys = keyBuf.subarray(0, keyCount);
+  if (!keysAscending) newKeys.sort();
+  let cursor = -1;
+  let deleteBatch: D1PreparedStatement[] = [];
+  const flushDeletes = async () => {
+    if (deleteBatch.length === 0) return;
+    await db.batch(deleteBatch);
+    deleteBatch = [];
+  };
+  const PAGE = 5000;
+  for (;;) {
+    const page = await db
+      .prepare(
+        `SELECT start_ip_int FROM geo_ip_ranges
+          WHERE start_ip_int > ? ORDER BY start_ip_int LIMIT ?`,
+      )
+      .bind(cursor, PAGE)
+      .all<{ start_ip_int: number }>();
+    if (page.results.length === 0) break;
+    for (const liveRow of page.results) {
+      cursor = liveRow.start_ip_int;
+      if (!sortedHas(newKeys, liveRow.start_ip_int)) {
+        deleteBatch.push(
+          db.prepare(`DELETE FROM geo_ip_ranges WHERE start_ip_int = ?`).bind(liveRow.start_ip_int),
+        );
+        rowsDeleted++;
+        if (deleteBatch.length >= D1_BATCH_LIMIT) await flushDeletes();
+      }
+    }
+    if (page.results.length < PAGE) break;
+  }
+  await flushDeletes();
+
+  return {
+    rowsParsed,
+    rowsInserted,
+    rowsUpdated,
+    rowsUnchanged,
+    rowsDeleted,
+    locationsCount: locations.size,
+  };
 }

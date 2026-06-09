@@ -79,9 +79,13 @@ import { NonRetryableError } from 'cloudflare:workflows';
 import { R2ZipReader } from '../lib/r2-zip-reader';
 import {
   runGeoipBlocksImport,
+  runGeoipDiffImport,
   prepareShadowTable as prepareShadowTableHelper,
   atomicSwap as atomicSwapHelper,
 } from '../lib/geoip-import';
+
+/** Days between forced full rebuilds (quarterly GC of dropped ranges). */
+const FULL_REBUILD_MAX_AGE_DAYS = 85;
 
 interface GeoipRefreshParams {
   /** Refresh log row id created by the geoip_refresh agent (or the
@@ -300,7 +304,33 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       ).run();
     });
 
-    // ── Step 3: prepare-shadow-table ─────────────────────────
+    // ── decide-mode: in-place diff vs full rebuild ───────────
+    // Diff writes only changed rows (~1-5% of the table) instead of
+    // rebuilding all ~3.76M. A FULL rebuild is forced when: the operator
+    // asked for one (forceReload), it's a manual R2 import, the live
+    // table is empty (bootstrap), or no successful full rebuild has run
+    // in FULL_REBUILD_MAX_AGE_DAYS (quarterly GC of ranges MaxMind
+    // dropped + a clean repopulation of row_hash). Otherwise diff.
+    // Historical log rows have mode=NULL, so the first post-deploy run
+    // finds no tracked full rebuild and runs full — which populates
+    // row_hash on every row so subsequent diffs have hashes to compare.
+    const mode = await step.do('decide-mode', async (): Promise<'full' | 'diff'> => {
+      if (forceReload || isManualR2Import) return 'full';
+      const live = await this.env.GEOIP_DB
+        .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`)
+        .first<{ n: number }>();
+      if ((live?.n ?? 0) === 0) return 'full';
+      const lastFull = await this.env.GEOIP_DB.prepare(`
+        SELECT completed_at FROM geo_ip_refresh_log
+         WHERE status = 'success' AND mode = 'full'
+         ORDER BY completed_at DESC LIMIT 1
+      `).first<{ completed_at: string | null }>();
+      if (!lastFull?.completed_at) return 'full';
+      const ageDays = (Date.now() - Date.parse(lastFull.completed_at)) / 86_400_000;
+      return ageDays >= FULL_REBUILD_MAX_AGE_DAYS ? 'full' : 'diff';
+    });
+
+    // ── Step 3: prepare-shadow-table (FULL path only) ────────
     // Atomic-swap pattern: write to geo_ip_ranges_new, then rename
     // at the end. Concurrent cartographer Phase 0.5 lookups never
     // observe a half-loaded dataset.
@@ -314,49 +344,55 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // Mismatch handling: a different shadow_version means the orphan
     // came from an earlier MaxMind release; mixing rows from two
     // releases would corrupt the lookup. The DROP path handles it.
-    const resumeState = await step.do('check-resume', async () => {
-      const row = await this.env.GEOIP_DB.prepare(`
-        SELECT last_committed_row, shadow_version
-          FROM geo_ip_refresh_log
-         WHERE id = ?
-      `).bind(refreshLogId).first<{
-        last_committed_row: number | null;
-        shadow_version: string | null;
-      }>();
-      const checkpoint = row?.last_committed_row ?? 0;
-      const matches = row?.shadow_version === probe.sha256First12;
-      return {
-        resumeFromRow: matches && checkpoint > 0 ? checkpoint : 0,
-        versionMatches: matches,
-      };
-    });
+    let resumeState: { resumeFromRow: number; versionMatches: boolean } = {
+      resumeFromRow: 0,
+      versionMatches: false,
+    };
+    if (mode === 'full') {
+      resumeState = await step.do('check-resume', async () => {
+        const row = await this.env.GEOIP_DB.prepare(`
+          SELECT last_committed_row, shadow_version
+            FROM geo_ip_refresh_log
+           WHERE id = ?
+        `).bind(refreshLogId).first<{
+          last_committed_row: number | null;
+          shadow_version: string | null;
+        }>();
+        const checkpoint = row?.last_committed_row ?? 0;
+        const matches = row?.shadow_version === probe.sha256First12;
+        return {
+          resumeFromRow: matches && checkpoint > 0 ? checkpoint : 0,
+          versionMatches: matches,
+        };
+      });
 
-    await step.do(
-      'prepare-shadow-table',
-      { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '60 seconds' },
-      async () => {
-        const { keptExisting } = await prepareShadowTableHelper(
-          this.env.GEOIP_DB,
-          { keepExisting: resumeState.resumeFromRow > 0 },
-        );
-        if (keptExisting) {
-          console.log(
-            `[geoip-workflow] resuming from row ${resumeState.resumeFromRow} ` +
-            `(shadow_version match)`,
+      await step.do(
+        'prepare-shadow-table',
+        { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '60 seconds' },
+        async () => {
+          const { keptExisting } = await prepareShadowTableHelper(
+            this.env.GEOIP_DB,
+            { keepExisting: resumeState.resumeFromRow > 0 },
           );
-        } else {
-          // Fresh start: stamp the new shadow_version + reset the
-          // checkpoint. Done here (not in log-refresh-starting) so the
-          // reset is paired atomically with the shadow recreation.
-          await this.env.GEOIP_DB.prepare(`
-            UPDATE geo_ip_refresh_log
-               SET shadow_version = ?,
-                   last_committed_row = 0
-             WHERE id = ?
-          `).bind(probe.sha256First12, refreshLogId).run();
-        }
-      },
-    );
+          if (keptExisting) {
+            console.log(
+              `[geoip-workflow] resuming from row ${resumeState.resumeFromRow} ` +
+              `(shadow_version match)`,
+            );
+          } else {
+            // Fresh start: stamp the new shadow_version + reset the
+            // checkpoint. Done here (not in log-refresh-starting) so the
+            // reset is paired atomically with the shadow recreation.
+            await this.env.GEOIP_DB.prepare(`
+              UPDATE geo_ip_refresh_log
+                 SET shadow_version = ?,
+                     last_committed_row = 0
+               WHERE id = ?
+            `).bind(probe.sha256First12, refreshLogId).run();
+          }
+        },
+      );
+    }
 
     // ── Step 3.7: stage-to-r2 (MaxMind path only) ────────────
     // Download the archive to R2 in a SINGLE metered request, then
@@ -418,102 +454,144 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
           },
         );
 
-    // ── Step 4: import (Locations + Blocks in one step) ─────
-    // Both branches converge on the same `runGeoipBlocksImport`
-    // helper — the only thing that varies is the byte source. The
-    // Locations Map (~22 MB) lives entirely inside this step's
-    // closure (held in Worker memory, never serialized as a step
-    // return value). Returning the map across step boundaries
-    // would blow the Workflows 1 MiB cap — verified in production
-    // (2026-05-04: every prior attempt failed with "Step
-    // import-locations-1 output is too large").
-    //
-    // Memory: 22 MB locations map + small streaming buffer ≈ 25 MB.
-    // Worker ceiling is 128 MB, so plenty of headroom.
-    //
-    // Wall time: the clean 2026-05-16 run took ~50 min (1× Locations
-    // parse, 1× Blocks stream, ~3.7M D1 batched inserts). Step timeout
-    // is 2 hours (see below) to give that real headroom — at the old
-    // 1-hour cap a normal run sat right at the edge and slow runs died.
-    //
-    // Retry semantics (Step 3 of remediation): a transient failure
-    // retries the whole step. The CSV is re-read from the staged R2
-    // object (zero MaxMind cost), and the loader reads
-    // last_committed_row before each attempt and stream-skips the
-    // already-written rows — only NEW work hits D1. INSERT OR IGNORE
-    // remains the safety net.
-    const refreshLogIdForProgress = refreshLogId;
-    // Timeout 2h (was 1h): the clean 2026-05-16 run took ~50 min end to
-    // end, leaving almost no margin under a 60-min cap — a slightly slower
-    // run (D1 load, slow CDN, or a resume that re-parses already-committed
-    // rows) blew past 60 min and was killed, never completing. 2h gives the
-    // import real headroom; the per-batch checkpoint + INSERT OR IGNORE make
-    // a long run safely resumable. Flight Control's stuck-detector was also
-    // raised above this so it stops force-failing legitimately-long imports
-    // (see GEOIP_STUCK_THRESHOLD_MIN in flightControl.ts).
-    const importResult = await step.do(
-      'import',
-      { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
-      async () => {
-        // Both the manual-upload and auto-poll paths now read the
-        // archive from R2 (the auto path staged it in step 3.7). R2
-        // Range reads are internal/free and never expire, so import-
-        // step retries cost zero MaxMind requests.
-        const zip = new R2ZipReader(this.env.GEOIP_STAGING!, stagingKey);
-        await zip.open();
-        return await runGeoipBlocksImport(this.env.GEOIP_DB, zip, {
-          resumeFromRow: resumeState.resumeFromRow,
-          onProgress: async (rowsProcessed) => {
-            await this.env.GEOIP_DB.prepare(`
-              UPDATE geo_ip_refresh_log
-                 SET last_committed_row = ?
-               WHERE id = ?
-            `).bind(rowsProcessed, refreshLogIdForProgress).run();
-          },
-        });
-      },
-    );
+    // ── Step 4/5: import + commit ────────────────────────────
+    // Two strategies (decided above). Both read the archive from the
+    // staged R2 object — R2 Range reads are internal/free and never
+    // expire, so step retries cost zero MaxMind requests. The Locations
+    // Map (~22 MB) lives entirely inside the step closure (held in
+    // Worker memory, never serialized across a step boundary — returning
+    // it would blow the Workflows 1 MiB cap; verified in production
+    // 2026-05-04 "Step import-locations-1 output is too large").
+    let liveRowCount = 0;
+    let rowsWritten = 0;
+    let rowsParsed = 0;
+    let summaryMessage = '';
 
-    await step.do('log-import-done', async () => {
-      await this.env.GEOIP_DB.prepare(`
-        UPDATE geo_ip_refresh_log
-        SET rows_written = ?,
-            error_message = ?
-        WHERE id = ?
-      `).bind(
-        importResult.rowsWritten,
-        `Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed rows ` +
-          `(${importResult.locationsCount} locations); preparing atomic swap.`,
-        refreshLogId,
-      ).run();
-    });
+    if (mode === 'diff') {
+      // In-place diff: write only changed rows + delete dropped ranges
+      // (~1-5% of the table vs a full ~3.76M rebuild). Idempotent — a
+      // retry re-diffs and writes nothing already applied — and each D1
+      // batch is transactional, so cartographer's range lookups never
+      // observe a torn table. No shadow/swap needed.
+      const diffResult = await step.do(
+        'diff-apply',
+        { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
+        async () => {
+          const zip = new R2ZipReader(this.env.GEOIP_STAGING!, stagingKey);
+          await zip.open();
+          return await runGeoipDiffImport(this.env.GEOIP_DB, zip, {
+            onProgress: async (rowsProcessed) => {
+              await this.env.GEOIP_DB.prepare(`
+                UPDATE geo_ip_refresh_log SET last_committed_row = ? WHERE id = ?
+              `).bind(rowsProcessed, refreshLogId).run();
+            },
+          });
+        },
+      );
 
-    // ── Step 6: atomic-swap ──────────────────────────────────
-    // Single D1 batch transaction. Either every operation lands or
-    // none do — no broken-table window for cartographer lookups.
-    const swapped = await step.do(
-      'atomic-swap',
-      { retries: { limit: 2, delay: '10 seconds', backoff: 'constant' }, timeout: '60 seconds' },
-      async () => atomicSwapHelper(this.env.GEOIP_DB),
-    );
+      const liveCount = await step.do('count-live', async () => {
+        const r = await this.env.GEOIP_DB
+          .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`)
+          .first<{ n: number }>();
+        return r?.n ?? 0;
+      });
 
-    // ── Step 7: finalize ─────────────────────────────────────
-    await step.do('finalize', async () => {
-      await this.env.GEOIP_DB.prepare(`
-        UPDATE geo_ip_refresh_log
-        SET status = 'success',
-            completed_at = datetime('now'),
-            rows_written = ?,
-            source_version = ?,
-            error_message = ?
-        WHERE id = ?
-      `).bind(
-        importResult.rowsWritten,
-        probe.full,
-        `MaxMind release ${probe.sha256First12} live: ${swapped.newRowCount} rows. Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed.`,
-        refreshLogId,
-      ).run();
-    });
+      const changed = diffResult.rowsInserted + diffResult.rowsUpdated;
+      summaryMessage =
+        `Diff vs MaxMind ${probe.sha256First12}: +${diffResult.rowsInserted} ` +
+        `~${diffResult.rowsUpdated} -${diffResult.rowsDeleted} ` +
+        `(${diffResult.rowsUnchanged} unchanged of ${diffResult.rowsParsed} parsed); ` +
+        `${liveCount} rows live.`;
+
+      await step.do('finalize-diff', async () => {
+        await this.env.GEOIP_DB.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'success',
+              completed_at = datetime('now'),
+              rows_written = ?,
+              rows_deleted = ?,
+              mode = 'diff',
+              source_version = ?,
+              error_message = ?
+          WHERE id = ?
+        `).bind(changed, diffResult.rowsDeleted, probe.full, summaryMessage, refreshLogId).run();
+      });
+
+      liveRowCount = liveCount;
+      rowsWritten = changed;
+      rowsParsed = diffResult.rowsParsed;
+    } else {
+      // ── Full rebuild: shadow-table import + atomic swap ──
+      // Used on bootstrap, operator force, manual R2 import, and the
+      // ~quarterly GC. Timeout 2h: the clean 2026-05-16 run took ~50 min;
+      // the per-batch checkpoint + INSERT OR IGNORE make a long run
+      // resumable (the loader stream-skips already-committed rows on
+      // retry — only NEW work hits D1).
+      const importResult = await step.do(
+        'import',
+        { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
+        async () => {
+          const zip = new R2ZipReader(this.env.GEOIP_STAGING!, stagingKey);
+          await zip.open();
+          return await runGeoipBlocksImport(this.env.GEOIP_DB, zip, {
+            resumeFromRow: resumeState.resumeFromRow,
+            onProgress: async (rowsProcessed) => {
+              await this.env.GEOIP_DB.prepare(`
+                UPDATE geo_ip_refresh_log
+                   SET last_committed_row = ?
+                 WHERE id = ?
+              `).bind(rowsProcessed, refreshLogId).run();
+            },
+          });
+        },
+      );
+
+      await step.do('log-import-done', async () => {
+        await this.env.GEOIP_DB.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET rows_written = ?,
+              error_message = ?
+          WHERE id = ?
+        `).bind(
+          importResult.rowsWritten,
+          `Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed rows ` +
+            `(${importResult.locationsCount} locations); preparing atomic swap.`,
+          refreshLogId,
+        ).run();
+      });
+
+      // ── atomic-swap ──
+      // Single D1 batch transaction. Either every operation lands or
+      // none do — no broken-table window for cartographer lookups.
+      const swapped = await step.do(
+        'atomic-swap',
+        { retries: { limit: 2, delay: '10 seconds', backoff: 'constant' }, timeout: '60 seconds' },
+        async () => atomicSwapHelper(this.env.GEOIP_DB),
+      );
+
+      summaryMessage =
+        `MaxMind release ${probe.sha256First12} live: ${swapped.newRowCount} rows. ` +
+        `Imported ${importResult.rowsWritten} of ${importResult.rowsParsed} parsed.`;
+
+      // ── finalize ──
+      await step.do('finalize', async () => {
+        await this.env.GEOIP_DB.prepare(`
+          UPDATE geo_ip_refresh_log
+          SET status = 'success',
+              completed_at = datetime('now'),
+              rows_written = ?,
+              rows_deleted = 0,
+              mode = 'full',
+              source_version = ?,
+              error_message = ?
+          WHERE id = ?
+        `).bind(importResult.rowsWritten, probe.full, summaryMessage, refreshLogId).run();
+      });
+
+      liveRowCount = swapped.newRowCount;
+      rowsWritten = importResult.rowsWritten;
+      rowsParsed = importResult.rowsParsed;
+    }
 
     // ── Step 7.5: cleanup auto-staged archive ────────────────
     // The auto-poll path staged ~80MB to R2 in step 3.7; once the
@@ -534,18 +612,19 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // refresh activity beyond the geo_ip_refresh_log table.
     try {
       this.env.AE?.writeDataPoint({
-        blobs: ['geoip_refresh', 'success', 'maxmind-geolite2-city'],
-        doubles: [importResult.rowsWritten, swapped.newRowCount],
+        blobs: ['geoip_refresh', 'success', `maxmind-geolite2-city:${mode}`],
+        doubles: [rowsWritten, liveRowCount],
         indexes: ['geoip_refresh'],
       });
     } catch { /* AE write is best-effort */ }
 
     return {
-      message: `MaxMind release ${probe.sha256First12} imported: ${swapped.newRowCount} rows live.`,
+      message: summaryMessage,
       sha256: probe.full,
-      rowsWritten: importResult.rowsWritten,
-      rowsParsed: importResult.rowsParsed,
-      liveRowCount: swapped.newRowCount,
+      mode,
+      rowsWritten,
+      rowsParsed,
+      liveRowCount,
     };
   }
 }

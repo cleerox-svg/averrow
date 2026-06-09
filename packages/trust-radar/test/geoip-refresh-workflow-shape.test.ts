@@ -70,4 +70,23 @@ describe("GeoipRefreshWorkflow — 1 MiB step-output invariant", () => {
     expect(source).not.toMatch(/\bLocationRow\b/);
     expect(source).not.toMatch(/\bHttpZipMetadata\b/);
   });
+
+  // ── Diff-only import (write-budget remediation 2026-06-09) ──
+  it("declares the diff/full mode branch steps", () => {
+    // The workflow chooses in-place diff (write only deltas) vs a full
+    // shadow rebuild. Guard the step names that implement that branch so
+    // a future refactor can't silently drop the cheap path.
+    expect(source).toMatch(/step\.do\(\s*['"]decide-mode['"]/);
+    expect(source).toMatch(/step\.do\(\s*['"]diff-apply['"]/);
+    expect(source).toMatch(/step\.do\(\s*['"]finalize-diff['"]/);
+  });
+
+  it("keeps the diff path inside the 1 MiB step-output invariant", () => {
+    // diff-apply must not return the Locations map either — same cap that
+    // sank the old import-locations step. It returns only counters.
+    expect(source).not.toMatch(/step\.do\(\s*['"]import-locations['"]/);
+    // The diff helper builds its own Locations map inside the helper's
+    // closure (lib/geoip-import.ts), never across a workflow step.
+    expect(source).not.toMatch(/return\s*\{\s*[^}]*\blocations\s*:/);
+  });
 });

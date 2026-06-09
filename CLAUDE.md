@@ -799,10 +799,19 @@ DNS_QUEUE_DB (trust-radar-dns-queue):
                             ip_address writes go back to threats.
 
 GEOIP_DB (geoip-db):
-  geo_ip_ranges           ← MaxMind GeoLite2-City ranges (~5M rows). Loaded by
-                            geoip_refresh agent, queried by Cartographer Phase 0.5.
+  geo_ip_ranges           ← MaxMind GeoLite2-City ranges (~3.76M rows). Queried by
+                            Cartographer Phase 0.5. Loaded by the GeoipRefresh
+                            workflow as an in-place DIFF (writes only changed/new/
+                            deleted rows, matched via geo_ip_ranges.row_hash) on the
+                            weekly refresh, with a ~quarterly full shadow rebuild for
+                            GC (geo_ip_refresh_log.mode = 'diff' | 'full' | 'no-op').
+                            Diff replaced the per-release full 3.76M-row rebuild that
+                            was 61% of all account D1 writes — see lib/geoip-import.ts
+                            (runGeoipDiffImport) + workflows/geoipRefresh.ts.
   geo_ip_refresh_log      ← Per-import audit + workflow self-heal log (FC reads
-                            for stuck-workflow detection).
+                            for stuck-workflow detection). `mode` records which
+                            strategy each refresh used; `rows_deleted` tracks diff
+                            deletions.
 ```
 
 ---

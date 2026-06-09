@@ -1,0 +1,39 @@
+-- Diff-only GeoIP import (write-budget remediation, 2026-06-09).
+--
+-- Before this, every refresh rebuilt the entire geo_ip_ranges table
+-- (~3.76M row writes) into a shadow table and atomic-swapped it in.
+-- MaxMind GeoLite2-City publishes ~twice a week, so the weekly refresh
+-- almost always saw a new fingerprint and did a full rebuild — ~45.5M
+-- writes/billing-cycle, 61% of all account D1 writes and the sole
+-- driver of the 50M/month write-quota overage.
+--
+-- New model (hybrid): compare the incoming release against the live
+-- table row-by-row and write ONLY the rows that actually changed
+-- (insert/update/delete), with a periodic full rebuild (~quarterly) to
+-- garbage-collect drift. Typical inter-release churn is 1-5%, so a diff
+-- refresh writes ~50-200K rows instead of 3.76M.
+--
+-- Two columns support this:
+--
+--   geo_ip_ranges.row_hash      — a 64-bit content hash of the row's
+--                                 geo fields (end_ip_int, country,
+--                                 region, city, postal, lat, lng). The
+--                                 diff loader compares this against the
+--                                 incoming row's hash to decide
+--                                 skip-vs-write. NULL on rows that
+--                                 predate this migration; the first
+--                                 post-deploy refresh runs as a full
+--                                 rebuild (see geo_ip_refresh_log.mode
+--                                 below), which repopulates every hash.
+--
+--   geo_ip_refresh_log.mode     — 'full' | 'diff' | 'no-op'. Lets the
+--                                 workflow find the last successful FULL
+--                                 rebuild to schedule the next quarterly
+--                                 GC, and gives operators visibility into
+--                                 which strategy each refresh used. NULL
+--                                 on historical rows (treated as "no
+--                                 tracked full rebuild" → next run is
+--                                 full, which bootstraps row_hash).
+
+ALTER TABLE geo_ip_ranges ADD COLUMN row_hash TEXT;
+ALTER TABLE geo_ip_refresh_log ADD COLUMN mode TEXT;
