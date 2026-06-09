@@ -88,7 +88,23 @@ export const urlscanio: FeedModule = {
     if (apiKey) headers["API-Key"] = apiKey;
 
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) throw new Error(`urlscan.io HTTP ${res.status}`);
+    if (!res.ok) {
+      // Surface urlscan's response body in the error. A bare status
+      // code hides WHY a request was refused — with a valid API key
+      // (confirmed via the key's recorded search activity), a 403 here
+      // is a per-query rejection (plan-restricted field, search window,
+      // or visibility), not an auth failure. urlscan returns a JSON
+      // body like {"status":403,"message":"..."} / {"description":"..."}
+      // explaining it. Bounded + whitespace-collapsed to keep the
+      // feed_status.last_error column small.
+      let detail = "";
+      try {
+        detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 300);
+      } catch {
+        // body unreadable — fall through with status only
+      }
+      throw new Error(`urlscan.io HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+    }
 
     const body = (await res.json()) as UrlscanSearchResponse;
     const results = body.results ?? [];
