@@ -210,11 +210,15 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     // ~35K-row dns_queue every run. PR-BI's read-budget math accounted
     // for the cursor-paginated candidate read but missed this COUNT(*),
     // which alone was ~288 ticks × ~35K rows ≈ 10M reads/day on
-    // DNS_QUEUE_DB. queueSize is only logged for drift telemetry, so a
-    // 600s TTL (>tick interval, so alternate ticks hit) is harmless.
+    // DNS_QUEUE_DB. queueSize is only logged for drift telemetry here, so
+    // staleness is harmless. The old 600s TTL only cleared alternate 5-min
+    // ticks (~50% hit ceiling); 1800s lets ~5 of every 6 ticks hit (~83%)
+    // while bounding staleness to ≤30min — well inside FC's 500-row drift
+    // tolerance (the queue moves only tens of rows over 30min). MUST stay
+    // in sync with the FC reader's TTL so the shared key is coherent.
     let queueSize = 0;
     try {
-      queueSize = await cachedCount(env, 'count.dns_queue.size', 600, async () => {
+      queueSize = await cachedCount(env, 'count.dns_queue.size', 1800, async () => {
         const r = await env.DNS_QUEUE_DB!.prepare(
           'SELECT COUNT(*) AS n FROM dns_queue'
         ).first<{ n: number }>();

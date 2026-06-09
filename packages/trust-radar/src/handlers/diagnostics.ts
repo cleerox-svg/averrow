@@ -760,7 +760,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         MAX(completed_at) AS last_completed_at,
         MAX(CASE WHEN status = 'failed' THEN error_message END) AS last_error,
         SUM(records_processed) AS total_records_processed,
-        AVG(duration_ms) AS avg_duration_ms
+        -- Average only over runs that completed normally. Reaped runs are
+        -- stamped status='failed' with a duration spanning the full reap
+        -- ceiling (e.g. 510min for strategist), which otherwise dominates
+        -- the mean and makes avg_duration_ms meaningless. Mid-run kills are
+        -- status='partial' with completed_at NULL. Excluding both (and any
+        -- still-'running' row) keeps the figure representative of real
+        -- execution time.
+        AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
       WHERE started_at >= datetime('now', '-' || ? || ' hours')
       GROUP BY agent_id
@@ -875,7 +882,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
              SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS not_success,
              MAX(completed_at) AS last_run_at,
-             AVG(duration_ms) AS avg_duration_ms
+             -- See per-agent query above: exclude reaped/failed runs and
+             -- mid-run kills so a single reaped cron run (e.g. navigator
+             -- stamped at the 60min reap ceiling) can't dominate the mean.
+             AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
       WHERE agent_id IN ('navigator', 'fast_tick', 'flight_control', 'orchestrator')
         AND started_at >= datetime('now', '-' || ? || ' hours')

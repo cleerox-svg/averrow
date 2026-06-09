@@ -744,13 +744,15 @@ export const flightControlAgent: AgentModule = {
         const queueDb = env.DNS_QUEUE_DB;
 
         // Snapshot queue size + threats-drainable in parallel.
-        // TTL 600s (was 300) so this key coheres with the dns-queue
-        // reconciler, which also reads it every 5-min Navigator tick —
-        // a TTL above the tick interval lets alternate ticks hit the
-        // cache instead of re-scanning the queue. Queue size is a
-        // drift-telemetry gauge; 10-min staleness is harmless here.
+        // TTL 1800s so this key coheres with the dns-queue reconciler,
+        // which reads it every 5-min Navigator tick — at a 300s tick a
+        // 600s TTL only cleared alternate ticks (~50% hit ceiling), so
+        // 1800s lifts the Navigator path to ~83% hits. Queue size feeds
+        // the drift gauge below (threshold 500); 30-min staleness moves
+        // it only tens of rows, far under that threshold, so the alert
+        // stays correct. MUST match the reconciler's TTL.
         const [queueSizeRow, drainableRow] = await Promise.all([
-          cachedCount(env, 'count.dns_queue.size', 600, async () => {
+          cachedCount(env, 'count.dns_queue.size', 1800, async () => {
             const r = await queueDb.prepare('SELECT COUNT(*) AS n FROM dns_queue').first<{ n: number }>();
             return r?.n ?? 0;
           }).then((n) => ({ n })),
