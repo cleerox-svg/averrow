@@ -70,7 +70,7 @@ async function getFcTickTimings(db: D1Database): Promise<{
   }
 }
 
-export async function fetchD1Metrics(env: Env, databaseId: string): Promise<D1Metrics> {
+export async function fetchD1Metrics(env: Env): Promise<D1Metrics> {
   const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
   const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
 
@@ -91,12 +91,19 @@ export async function fetchD1Metrics(env: Env, databaseId: string): Promise<D1Me
   }
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // No databaseId filter: the projection below is expressed as a
+  // percentage of the account-wide 25B/month ceiling, so the 24h
+  // numerator must also be account-wide. Filtering to the primary `DB`
+  // binding under-counted reads (and, more visibly, rows_written — the
+  // audit DB dominates writes) and made monthly_rows_read_projection /
+  // pct_of_25b_plan_ceiling read low. Mirrors fetchBillingCycleMetrics;
+  // the groups are summed below across whatever databases CF returns.
   const query = `
     query {
       viewer {
         accounts(filter: { accountTag: "${accountId}" }) {
           d1AnalyticsAdaptiveGroups(
-            filter: { datetimeHour_geq: "${since}", databaseId: "${databaseId}" }
+            filter: { datetimeHour_geq: "${since}" }
             limit: 1000
           ) {
             sum {
@@ -904,11 +911,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
 
     // D1 metrics from Cloudflare GraphQL Analytics API. Awaited in
     // parallel with the D1 queries so it doesn't extend the diagnostic.
-    // Database id matches wrangler.toml's [[d1_databases]] entry — kept
-    // as a literal to avoid passing it through env (which would require
-    // additional secret config).
-    const D1_DATABASE_ID = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
-    const d1MetricsP = fetchD1Metrics(env, D1_DATABASE_ID);
+    // Account-wide (all databases) so the 25B-ceiling projection is
+    // computed against a matching numerator — see fetchD1Metrics.
+    const d1MetricsP = fetchD1Metrics(env);
     const d1AttributionP = fetchD1EndpointAttribution(env);
     // Soft-cap state (Navigator skip tracking + thresholds) and the
     // per-query top-N from CF's d1QueriesAdaptiveGroups. Both fail
@@ -1436,16 +1441,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         cached_count: cachedCountStats,
 
         // D1 row-read tracking against the 25B/month plan ceiling.
+        // Account-wide (all databases) rolling 24h — the numerator now
+        // matches the account-wide ceiling in pct_of_25b_plan_ceiling.
         // setup_required: true when CF_API_TOKEN / CF_ACCOUNT_ID aren't
         // configured — set them via `wrangler secret put` to enable.
         d1_metrics_24h: d1Metrics,
 
         // PR-X: Cloudflare billing-cycle (18th → 17th) tracker. Sums
-        // rows_read/written across ALL D1 databases on the account
-        // (the rolling-24h block above only covers the primary DB).
-        // Drives the "Billing-cycle projection" meter on /admin/metrics
-        // and gives operators an honest "X of 30 days elapsed, on pace
-        // for Y% of the 25B ceiling" read.
+        // rows_read/written across ALL D1 databases on the account, with
+        // a per-database breakdown and cycle-to-date pace. The rolling-24h
+        // block above is the same account-wide scope over the last 24h;
+        // this is the cycle-to-date view. Drives the "Billing-cycle
+        // projection" meter on /admin/metrics and gives operators an
+        // honest "X of N days elapsed, on pace for Y% of the 25B ceiling".
         d1_billing_cycle: d1BillingCycle,
 
         // PR-AM: per-database read/write activity over the requested

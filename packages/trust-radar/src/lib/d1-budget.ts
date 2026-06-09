@@ -35,15 +35,6 @@ import type { Env } from "../types";
 /** Plan ceiling: 25B reads/month. */
 const PLAN_CEILING_PER_MONTH = 25_000_000_000;
 
-/**
- * D1 database id — same literal used in `handlers/diagnostics.ts`
- * and matches `database_id` in `wrangler.toml`. Hardcoded here too
- * because there's no `D1_DATABASE_ID` env var configured on the
- * worker (the binding is named `DB`); we need the literal to query
- * CF GraphQL by databaseId.
- */
-const D1_DATABASE_ID = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
-
 /** Daily budget (1/30 of the monthly ceiling). */
 export const DAILY_BUDGET = Math.round(PLAN_CEILING_PER_MONTH / 30);
 
@@ -81,7 +72,6 @@ export async function getBudgetState(env: Env): Promise<BudgetState | null> {
   const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
   const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
   if (!token || !accountId) return null;
-  const databaseId = D1_DATABASE_ID;
 
   const cachedRaw = await env.CACHE.get(KV_KEY);
   if (cachedRaw) {
@@ -97,7 +87,7 @@ export async function getBudgetState(env: Env): Promise<BudgetState | null> {
     }
   }
 
-  const fresh = await fetchRowsRead24h(token, accountId, databaseId);
+  const fresh = await fetchRowsRead24h(token, accountId);
   if (fresh == null) {
     // CF GraphQL failed — fall back to the (stale) cached value if any.
     if (cachedRaw) {
@@ -353,14 +343,22 @@ export async function fetchD1TopQueries(
   }
 }
 
-async function fetchRowsRead24h(token: string, accountId: string, databaseId: string): Promise<number | null> {
+async function fetchRowsRead24h(token: string, accountId: string): Promise<number | null> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // No databaseId filter: the daily soft-cap and the warn/breach alert
+  // it drives are measured against DAILY_BUDGET (= the account-wide 25B
+  // ceiling ÷ 30), so the numerator must be account-wide too. Filtering
+  // to the primary `DB` binding under-counted by the share of reads from
+  // the other account databases (AUDIT_DB, GEOIP_DB, DNS_QUEUE_DB, …),
+  // which made the cap and its alert fire late. Same fix the PR-X
+  // billing-cycle tracker already applies; the per-DB rows are summed
+  // below regardless of how many databases CF returns.
   const query = `
     query {
       viewer {
         accounts(filter: { accountTag: "${accountId}" }) {
           d1AnalyticsAdaptiveGroups(
-            filter: { datetimeHour_geq: "${since}", databaseId: "${databaseId}" }
+            filter: { datetimeHour_geq: "${since}" }
             limit: 1000
           ) {
             sum { rowsRead }

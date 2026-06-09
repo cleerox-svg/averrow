@@ -2951,11 +2951,9 @@ export async function handleD1Budget(request: Request, env: Env): Promise<Respon
   const { fetchD1Metrics, fetchD1EndpointAttribution } = await import("./diagnostics");
   const { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics } = await import("../lib/d1-budget");
 
-  const D1_DATABASE_ID = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
-
   const [budget, metrics, attribution, topQueries, billingCycle] = await Promise.all([
     getBudgetDiagnostics(env),
-    fetchD1Metrics(env, D1_DATABASE_ID),
+    fetchD1Metrics(env),
     fetchD1EndpointAttribution(env),
     fetchD1TopQueries(env),
     fetchBillingCycleMetrics(env),
