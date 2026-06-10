@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAdmin, requireSuperAdmin, isAuthContext } from "../middleware/auth";
+import { requireAdmin, requireSuperAdmin, requireSales, requirePermission, isAuthContext } from "../middleware/auth";
 import { json } from "../lib/cors";
 import {
   handleAdminStats, handleAdminListUsers, handleAdminUpdateUser, handleAdminHealth, handleSystemHealth,
@@ -418,35 +418,45 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Invites ──────────────────────────────────────────────────────
+  // M4 (2026-06-10 audit): gated on the `manage_invites` permission
+  // (sales + admin + super_admin per lib/role-permissions.ts) so sales
+  // staff can send invites per the documented RBAC model. The
+  // role-escalation check stays in handleCreateInvite: non-super_admins
+  // (including sales) cannot invite admin or super_admin roles.
   router.post("/api/admin/invites", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
+    const ctx = await requirePermission("manage_invites")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreateInvite(request, env, ctx.userId, ctx.role);
   });
   router.get("/api/admin/invites", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
+    const ctx = await requirePermission("manage_invites")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListInvites(request, env);
   });
   router.delete("/api/admin/invites/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAdmin(request, env);
+    const ctx = await requirePermission("manage_invites")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRevokeInvite(request, env, request.params["id"] ?? "", ctx.userId);
   });
 
-  // ─── Organizations (superadmin) ───────────────────────────────────
+  // ─── Organizations ────────────────────────────────────────────────
+  // M4 (2026-06-10 audit): reads are gated on `read_customers`
+  // (analyst/sales/support + admin/super_admin per role-permissions)
+  // so sales + support staff can browse customer data. Mutations
+  // (create/update org) stay super_admin — the matrix only documents
+  // a read permission for customer data.
   router.post("/api/admin/organizations", async (request: Request, env: Env, workerCtx: ExecutionContext) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreateOrg(request, env, ctx.userId, workerCtx);
   });
   router.get("/api/admin/organizations", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("read_customers")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListOrgs(request, env);
   });
   router.get("/api/admin/organizations/:orgId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("read_customers")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetOrg(request, env, request.params["orgId"] ?? "");
   });
@@ -456,43 +466,49 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleUpdateOrg(request, env, request.params["orgId"] ?? "");
   });
 
-  // ─── Customers (super_admin pricing surface) ──────────────────
+  // ─── Customers (Stripe + pricing surface) ─────────────────────
   // /api/admin/customers/* mirrors /api/admin/organizations/* but
   // adds the Stripe + pricing read endpoints. The averrow-ops
   // sidebar entry "Organizations" is being renamed to "Customers"
   // in a sibling sprint.
+  //
+  // M4 (2026-06-10 audit): permission-gated per role-permissions —
+  // reads on `view_billing`, mutations on `edit_pricing`. Both flags
+  // grant sales + billing (+ admin/super_admin), matching CLAUDE.md §7
+  // ("sales — edit pricing", "billing — Stripe + pricing only").
+  // handlers/adminPricing.ts enforces the same flags internally.
   router.get("/api/admin/customers/:orgId/pricing", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("view_billing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetCustomerPricing(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.get("/api/admin/pricing/plans", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("view_billing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListPricingPlans(request, env, ctx);
   });
   router.get("/api/admin/pricing/modules", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("view_billing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListModulePrices(request, env, ctx);
   });
   router.patch("/api/admin/pricing/plans/:planId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("edit_pricing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdatePricingPlan(request, env, request.params["planId"] ?? "", ctx);
   });
   router.patch("/api/admin/pricing/modules/:moduleKey", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("edit_pricing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateModulePrice(request, env, request.params["moduleKey"] ?? "", ctx);
   });
   router.post("/api/admin/customers/:orgId/pricing-overrides", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("edit_pricing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreatePricingOverride(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.patch("/api/admin/customers/:orgId/pricing-overrides/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("edit_pricing")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRevokePricingOverride(
       request, env,
@@ -507,14 +523,17 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleSearchBrands(request, env);
   });
 
-  // ─── Takedown Queue (superadmin) ─────────────────────────────────
+  // ─── Takedown Queue ──────────────────────────────────────────────
+  // M4 (2026-06-10 audit): gated on `manage_takedowns` (analyst +
+  // admin/super_admin per role-permissions) so SOC analysts can work
+  // the takedown queue per the documented RBAC model.
   router.get("/api/admin/takedowns", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminListTakedowns(request, env);
   });
   router.patch("/api/admin/takedowns/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminUpdateTakedown(request, env, request.params["id"] ?? "", ctx);
   });
@@ -532,53 +551,60 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Sales Leads (Prospector) ─────────────────────────────────────
+  // M4 (2026-06-10 audit): the lead lifecycle (read, update, status
+  // transitions, activity log, firmographic refresh) is the sales
+  // team's core workflow, so these use the requireSales sub-role
+  // guard (sales + admin + super_admin). No permission flag covers
+  // prospect data in role-permissions.ts — the named role guard is
+  // the documented mechanism here. DELETE stays super_admin: it
+  // irreversibly removes the lead AND its activity log.
   router.get("/api/admin/sales-leads", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListSalesLeads(request, env);
   });
   router.get("/api/admin/sales-leads/stats", async (request: Request, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleSalesLeadStats(request, env);
   });
   router.get("/api/admin/sales-leads/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetSalesLead(request, env, request.params["id"] ?? "");
   });
   router.patch("/api/admin/sales-leads/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateSalesLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/approve", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleApproveLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/send", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleSendLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/respond", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleRespondLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/book", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBookLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/convert", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleConvertLead(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/decline", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleDeclineLead(request, env, request.params["id"] ?? "");
   });
@@ -588,12 +614,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleDeleteSalesLead(request, env, request.params["id"] ?? "");
   });
   router.get("/api/admin/sales-leads/:id/activity", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleLeadActivity(request, env, request.params["id"] ?? "");
   });
   router.post("/api/admin/sales-leads/:id/refresh-firmographics", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireSuperAdmin(request, env);
+    const ctx = await requireSales(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const { handleRefreshLeadFirmographics } = await import("../handlers/salesLeads");
     return handleRefreshLeadFirmographics(request, env, request.params["id"] ?? "");

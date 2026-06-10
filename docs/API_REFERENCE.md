@@ -544,27 +544,29 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | PATCH | `/api/admin/users/:id` | Admin | Update user |
 | GET | `/api/admin/sessions` | Admin | Active sessions |
 | POST | `/api/admin/users/:id/force-logout` | Admin | Force logout user |
-| GET | `/api/admin/invites` | Admin | List invites |
-| POST | `/api/admin/invites` | Admin | Create invite |
-| DELETE | `/api/admin/invites/:id` | Admin | Revoke invite |
+| GET | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | List invites |
+| POST | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | Create invite. Handler-level check: only super_admin may invite `admin` / `super_admin` roles. |
+| DELETE | `/api/admin/invites/:id` | `manage_invites` (sales, admin, super_admin) | Revoke invite |
 | GET | `/api/admin/audit` | Admin | Audit log |
 | GET | `/api/admin/audit/export` | Admin | Export audit log |
 | GET | `/api/admin/brands` | Admin | List all brands (admin) |
 | POST | `/api/admin/brands/bulk-monitor` | Admin | Bulk add brands |
 | POST | `/api/admin/brands/bulk-delete` | Admin | Bulk delete brands |
-| GET | `/api/admin/sales-leads` | Admin | List sales leads |
-| GET | `/api/admin/sales-leads/stats` | Admin | Lead statistics |
-| GET | `/api/admin/sales-leads/:id` | Admin | Get lead detail |
-| PATCH | `/api/admin/sales-leads/:id` | Admin | Update lead |
-| POST | `/api/admin/sales-leads/:id/approve` | Admin | Approve lead |
-| POST | `/api/admin/sales-leads/:id/send` | Admin | Send outreach |
-| POST | `/api/admin/sales-leads/:id/respond` | Admin | Record response |
-| POST | `/api/admin/sales-leads/:id/book` | Admin | Book demo |
-| POST | `/api/admin/sales-leads/:id/convert` | Admin | Convert to customer |
-| POST | `/api/admin/sales-leads/:id/decline` | Admin | Decline lead |
-| DELETE | `/api/admin/sales-leads/:id` | Admin | Delete lead |
-| GET | `/api/admin/sales-leads/:id/activity` | Admin | Lead activity log |
-| POST | `/api/admin/sales-leads/:id/refresh-firmographics` | SuperAdmin | Re-run SEC/Wikidata enricher for this lead's brand and copy the refreshed firmographic + buying-signal data onto the lead snapshot. Cheap (no AI). |
+| GET | `/api/admin/sales-leads` | Sales+ | List sales leads |
+| GET | `/api/admin/sales-leads/stats` | Sales+ | Lead statistics |
+| GET | `/api/admin/sales-leads/:id` | Sales+ | Get lead detail |
+| PATCH | `/api/admin/sales-leads/:id` | Sales+ | Update lead |
+| POST | `/api/admin/sales-leads/:id/approve` | Sales+ | Approve lead |
+| POST | `/api/admin/sales-leads/:id/send` | Sales+ | Send outreach |
+| POST | `/api/admin/sales-leads/:id/respond` | Sales+ | Record response |
+| POST | `/api/admin/sales-leads/:id/book` | Sales+ | Book demo |
+| POST | `/api/admin/sales-leads/:id/convert` | Sales+ | Convert to customer |
+| POST | `/api/admin/sales-leads/:id/decline` | Sales+ | Decline lead |
+| DELETE | `/api/admin/sales-leads/:id` | Super Admin | Delete lead (irreversible — also deletes activity log) |
+| GET | `/api/admin/sales-leads/:id/activity` | Sales+ | Lead activity log |
+| POST | `/api/admin/sales-leads/:id/refresh-firmographics` | Sales+ | Re-run SEC/Wikidata enricher for this lead's brand and copy the refreshed firmographic + buying-signal data onto the lead snapshot. Cheap (no AI). |
+
+"Sales+" = `requireSales` guard (sales, admin, super_admin). Permission-flag auth values (e.g. `manage_invites`, `read_customers`) mean the route is gated via `requirePermission(flag)` per the matrix in `lib/role-permissions.ts`; admin + super_admin always qualify.
 | GET  | `/api/admin/notifications/stats` | SuperAdmin | NX5 Notification Center — fired-by-(type, audience, severity) breakdown over a window (default 24h, max 720h via `?hours=`). |
 | GET  | `/api/admin/notifications/mutes` | SuperAdmin | NX5 — list active system-wide notification type mutes. |
 | POST | `/api/admin/notifications/mute` | SuperAdmin | NX5 — system-wide mute for a notification type. Body: `{ type, hours, reason? }`. |
@@ -586,15 +588,22 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/system-health` | Admin | System health dashboard |
 | GET | `/api/admin/budget/status` | Admin | AI budget status and spend |
 | GET | `/api/admin/budget/breakdown` | Admin | Budget breakdown by agent |
-| GET | `/api/admin/organizations` | Super Admin | List all organizations |
+| GET | `/api/admin/organizations` | `read_customers` (analyst, sales, support, admin, super_admin) | List all organizations |
 | POST | `/api/admin/organizations` | Super Admin | Create organization |
-| GET | `/api/admin/organizations/:orgId` | Super Admin | Get organization detail |
+| GET | `/api/admin/organizations/:orgId` | `read_customers` (analyst, sales, support, admin, super_admin) | Get organization detail |
 | PATCH | `/api/admin/organizations/:orgId` | Super Admin | Update organization |
 | GET | `/api/admin/brands/search` | Super Admin | Search brands for org assignment |
 | GET | `/api/admin/leads` | Admin | List leads |
 | PATCH | `/api/admin/leads/:id` | Admin | Update lead |
-| GET | `/api/admin/takedowns` | Super Admin | List takedowns across orgs |
-| PATCH | `/api/admin/takedowns/:id` | Super Admin | Update takedown status |
+| GET | `/api/admin/takedowns` | `manage_takedowns` (analyst, admin, super_admin) | List takedowns across orgs |
+| PATCH | `/api/admin/takedowns/:id` | `manage_takedowns` (analyst, admin, super_admin) | Update takedown status |
+| GET | `/api/admin/pricing/plans` | `view_billing` (sales, billing, admin, super_admin) | List pricing plans |
+| GET | `/api/admin/pricing/modules` | `view_billing` (sales, billing, admin, super_admin) | List module prices |
+| PATCH | `/api/admin/pricing/plans/:planId` | `edit_pricing` (sales, billing, admin, super_admin) | Update a pricing plan (display name, price, trial days, included modules, Stripe price id, active flag, sort order) |
+| PATCH | `/api/admin/pricing/modules/:moduleKey` | `edit_pricing` (sales, billing, admin, super_admin) | Update a module price |
+| GET | `/api/admin/customers/:orgId/pricing` | `view_billing` (sales, billing, admin, super_admin) | Customer pricing summary (plan, module prices, active overrides, Stripe linkage) |
+| POST | `/api/admin/customers/:orgId/pricing-overrides` | `edit_pricing` (sales, billing, admin, super_admin) | Create a pricing override. Body: `{ override_type: tier_price \| module_price \| discount_percent, reason (required), plan_id?, module_key?, custom_price_cents?, discount_pct?, effective_until? }` |
+| PATCH | `/api/admin/customers/:orgId/pricing-overrides/:id` | `edit_pricing` (sales, billing, admin, super_admin) | Revoke a pricing override |
 | POST | `/api/admin/discover-social-batch` | Super Admin | Run social discovery batch |
 | POST | `/api/admin/pathfinder-enrich` | Super Admin | Pathfinder AI enrichment batch |
 

@@ -370,7 +370,7 @@ export async function handleUpdateTakedown(
   }
 }
 
-// ─── GET /api/admin/takedowns (superadmin SOC queue) ─────────
+// ─── GET /api/admin/takedowns (SOC queue — `manage_takedowns`) ─
 
 export const handleAdminListTakedowns = handler(async (request, env, ctx) => {
   const url = new URL(request.url);

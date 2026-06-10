@@ -2,6 +2,7 @@
 
 import { verifyJWT } from "../lib/jwt";
 import { json } from "../lib/cors";
+import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import type { Env, JWTPayload, UserRole } from "../types";
 
 export interface AuthContext {
@@ -175,6 +176,37 @@ export async function requireBilling(request: Request, env: Env): Promise<AuthCo
   if (!isAuthContext(ctx)) return ctx;
   if (ctx.role === "super_admin" || ctx.role === "admin" || ctx.role === "billing") return ctx;
   return json({ success: false, error: "Forbidden: requires billing role or higher" }, 403, request.headers.get("Origin"));
+}
+
+/**
+ * Permission-matrix guard (M4, 2026-06-10 audit). Gates a route on a
+ * single StaffPermission flag from lib/role-permissions.ts — the
+ * single source of truth for WHO can do WHAT. Prefer this over the
+ * role-name guards above when multiple sub-roles legitimately share
+ * an endpoint (e.g. pricing: sales AND billing both hold
+ * `edit_pricing`).
+ *
+ * super_admin + admin satisfy every permission via their full-grant
+ * rows in ROLE_PERMISSIONS, so the "admins can do everything"
+ * convention holds without a special case here.
+ *
+ * Usage:
+ *   const ctx = await requirePermission("edit_pricing")(request, env);
+ *   if (!isAuthContext(ctx)) return ctx;
+ */
+export function requirePermission(permission: StaffPermission) {
+  return async (request: Request, env: Env): Promise<AuthContext | Response> => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    if (!roleHasPermission(ctx.role, permission)) {
+      return json(
+        { success: false, error: `Forbidden: requires '${permission}' permission` },
+        403,
+        request.headers.get("Origin"),
+      );
+    }
+    return ctx;
+  };
 }
 
 export function isAuthContext(val: AuthContext | Response): val is AuthContext {

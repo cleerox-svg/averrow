@@ -552,9 +552,23 @@ in `lib/role-permissions.ts` and is the single source of truth.
   admin, super_admin)
 - `requireAdmin` — admin or super_admin
 - `requireSuperAdmin` — super_admin only
+- `requirePermission(flag)` — gates on a `StaffPermission` flag via
+  `roleHasPermission`; preferred when the access decision maps to a
+  documented permission, especially when multiple sub-roles share an
+  endpoint (e.g. pricing routes gate on `edit_pricing`, held by both
+  sales and billing). Wired (M4, 2026-06-10 audit) onto: org reads
+  (`read_customers`), pricing reads (`view_billing`), pricing
+  mutations (`edit_pricing`), staff invites (`manage_invites`), and
+  the admin takedown queue (`manage_takedowns`).
 - `requireSales` / `requireSupport` / `requireBilling` — specialty
   sub-role guards (super_admin + admin always satisfy any sub-role
-  guard since they grant everything)
+  guard since they grant everything). `requireSales` is wired onto
+  the `/api/admin/sales-leads/*` lifecycle (prospect data has no
+  permission flag; lead DELETE stays super_admin).
+  `requireSupport` / `requireBilling` currently have no call sites:
+  support's job (customer reads + alerts) is covered by
+  `read_customers` + the `requireStaff`-gated `/api/alerts/*`
+  surface, and billing's by `view_billing` / `edit_pricing`.
 
 **Org-level roles** (`org_members.role`) are a SEPARATE namespace:
 `viewer < analyst < admin < owner`. The string `analyst` exists in

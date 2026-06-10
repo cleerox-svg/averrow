@@ -1,12 +1,17 @@
-// Super_admin pricing handlers — read-side only in this PR.
+// Staff pricing handlers.
 //
-// Mutation endpoints (PATCH plans / module_prices, POST overrides)
-// land in a follow-up sprint once the read surface and Customers
-// page rename are stable.
+// M4 (2026-06-10 audit): access is permission-gated per
+// lib/role-permissions.ts — reads require `view_billing`, mutations
+// require `edit_pricing`. Both flags grant sales + billing (+ admin
+// and super_admin via their full-grant rows), matching the
+// documented RBAC model. The route layer (routes/admin.ts) applies
+// the same requirePermission guards; this in-handler check is
+// defense-in-depth for any future caller that skips the router.
 //
 // v3 Phase D Stripe sprint 1.
 
 import { json } from "../lib/cors";
+import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import {
@@ -23,8 +28,10 @@ import {
 } from "../lib/pricing";
 import type { ModuleKey } from "../lib/entitlements";
 
-function requireSuperAdmin(ctx: AuthContext): string | null {
-  if (ctx.role !== "super_admin") return "Forbidden: super_admin role required";
+function checkPermission(ctx: AuthContext, permission: StaffPermission): string | null {
+  if (!roleHasPermission(ctx.role, permission)) {
+    return `Forbidden: requires '${permission}' permission`;
+  }
   return null;
 }
 
@@ -36,7 +43,7 @@ export async function handleListPricingPlans(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "view_billing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   const plans = await listPricingPlans(env);
@@ -51,7 +58,7 @@ export async function handleListModulePrices(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "view_billing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   const modules = await listModulePrices(env);
@@ -67,7 +74,7 @@ export async function handleGetCustomerPricing(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "view_billing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   const orgIdNum = Number(orgId);
@@ -114,7 +121,7 @@ export async function handleUpdatePricingPlan(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "edit_pricing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   let body: RawPlanPatch;
@@ -164,7 +171,7 @@ export async function handleUpdateModulePrice(
   ctx:       AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "edit_pricing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   let body: RawModulePatch;
@@ -205,7 +212,7 @@ export async function handleCreatePricingOverride(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "edit_pricing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   const orgIdNum = Number(orgId);
@@ -259,7 +266,7 @@ export async function handleRevokePricingOverride(
   ctx:        AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const err = requireSuperAdmin(ctx);
+  const err = checkPermission(ctx, "edit_pricing");
   if (err) return json({ success: false, error: err }, 403, origin);
 
   await revokePricingOverride(env, overrideId);
