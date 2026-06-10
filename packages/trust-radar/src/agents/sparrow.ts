@@ -860,10 +860,17 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
   let submitted = 0;
   let skipped   = 0;
 
-  const { isModuleAuthorized } = await import("../lib/takedown-authorizations");
+  const { isModuleAuthorized, isUnderMonthlyTakedownCap } = await import("../lib/takedown-authorizations");
   const { dispatchSubmission } = await import("../lib/takedown-submitters");
   const { isModuleEnabled }    = await import("../lib/entitlements");
   type ModuleKey = Parameters<typeof isModuleAuthorized>[2];
+
+  // S1 — per-org monthly cap (scope_json.max_takedowns_per_month).
+  // Resolved once per org per run, then decremented locally so a single
+  // batch can't overshoot the cap. Note PHASE_G_BATCH doubles as the
+  // per-run send ceiling in live mode.
+  const capByOrg = new Map<number, { under: boolean; used: number; cap: number | null }>();
+  const capNotifiedOrgs = new Set<number>();
 
   for (const row of candidates.results ?? []) {
     try {
@@ -877,6 +884,36 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
         isModuleAuthorized(env, orgId, modKey),
       ]);
       if (!enabled || !authorized) { skipped++; continue; }
+
+      // Consent boundary: stop automating once the signed monthly cap is
+      // spent. The takedown stays 'draft' for ops/manual handling.
+      let capStatus = capByOrg.get(orgId);
+      if (!capStatus) {
+        capStatus = await isUnderMonthlyTakedownCap(env, orgId);
+        capByOrg.set(orgId, capStatus);
+      }
+      if (!capStatus.under) {
+        skipped++;
+        if (!capNotifiedOrgs.has(orgId)) {
+          capNotifiedOrgs.add(orgId);
+          const month = new Date().toISOString().slice(0, 7);
+          const { createNotification } = await import("../lib/notifications");
+          await createNotification(env, {
+            type:     "takedown_monthly_cap_reached",
+            severity: "medium",
+            title:    "Takedown automation paused — monthly cap reached",
+            message:  `Automated takedown submissions for this month are at the signed limit (${capStatus.used}/${capStatus.cap}). New takedowns stay in draft until next month, or raise the cap by re-signing the takedown authorization.`,
+            audience: "tenant",
+            brandId:  row.brand_id,
+            orgId:    String(orgId),
+            groupKey: `takedown_monthly_cap_reached:org_${orgId}:${month}`,
+            metadata: { org_id: orgId, used: capStatus.used, cap: capStatus.cap },
+          }).catch((err) => {
+            console.error(`[Sparrow] cap notification failed for org ${orgId}: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+        continue;
+      }
 
       const providerRow = await env.DB.prepare(
         `SELECT id, provider_name, provider_type, abuse_email, abuse_url,
@@ -930,6 +967,13 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
          WHERE id = ? AND status = 'draft'`,
       ).bind(row.id).run();
       submitted++;
+
+      // In-run cap accounting: only live sends (outcome='submitted')
+      // consume cap — queued drafts don't (they're not outbound).
+      if (result.outcome === "submitted" && capStatus.cap !== null) {
+        capStatus.used += 1;
+        capStatus.under = capStatus.used < capStatus.cap;
+      }
     } catch (err) {
       console.error(`[Sparrow] Phase G dispatch failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
       skipped++;
@@ -1071,6 +1115,7 @@ async function runPhaseHAutoFollowup(env: Env): Promise<{ followups: number; ski
       );
 
       const result = await followupDraftSubmitter.submitFollowup(
+        env,
         {
           id:                     row.id,
           org_id:                 row.org_id,

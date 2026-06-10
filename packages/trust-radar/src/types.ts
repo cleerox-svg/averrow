@@ -99,6 +99,11 @@ export interface Env {
   ANTHROPIC_ADMIN_KEY?: string;
   // Resend email API (briefing delivery)
   RESEND_API_KEY?: string;
+  /** Takedown outbound-email rollout flag (S1, IMPROVEMENT_PLAN_2026-06).
+   *  'live' → email-send submitter actually sends abuse reports via Resend.
+   *  Any other value (default 'draft') → queued-draft behavior, no outbound
+   *  side effect. Flipping back to 'draft' is the kill switch. */
+  TAKEDOWN_SEND_MODE?: string;
   /** Override the daily-briefing recipient. Defaults to claude.leroux@averrow.com when unset. */
   BRIEFING_RECIPIENT?: string;
   /** HMAC secret for List-Unsubscribe one-click tokens

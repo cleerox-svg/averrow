@@ -67,6 +67,8 @@ export type NotificationEventKey =
   | 'abuse_mailbox_flood_detected'
   // ── named-threat catalog — identified a known threat by name ──
   | 'named_threat_identified'
+  // ── S1 — takedown automation (IMPROVEMENT_PLAN_2026-06) ──
+  | 'takedown_monthly_cap_reached'
   // ── N6c — digest envelope (§12.3) ──
   | 'notification_digest';
 
@@ -437,6 +439,20 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'named_threat_identified',
     label: 'Named Threat Identified',
     description: 'An incoming indicator matched a known named threat (PhaaS kit, malware family, campaign)',
+    dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+
+  // ─── S1 — takedown automation ───────────────────────────────────────
+  // Fires when Sparrow Phase G skips auto-submission because the org's
+  // signed scope_json.max_takedowns_per_month is exhausted. The takedown
+  // stays in 'draft' for manual handling. Dedup is per (org|month) via
+  // group_key; the window here is the fallback.
+  {
+    key: 'takedown_monthly_cap_reached',
+    label: 'Takedown Monthly Cap Reached',
+    description: 'Automated takedown submission paused for the rest of the month — signed authorization cap reached',
     dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,

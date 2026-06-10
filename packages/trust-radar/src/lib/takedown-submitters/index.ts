@@ -20,6 +20,7 @@
 
 import type { Env } from "../../types";
 import { emailDraftSubmitter } from "./email-draft";
+import { emailSendSubmitter } from "./email-send";
 import { followupDraftSubmitter } from "./followup-draft";
 import type {
   ProviderRecord,
@@ -32,18 +33,25 @@ import type {
  * Submitters in priority order. First match wins. The email-draft
  * fallback stays last so any provider-specific implementation
  * shadows it once landed.
+ *
+ * S1: emailSendSubmitter sits ahead of the draft fallback but its
+ * canHandle() only matches when TAKEDOWN_SEND_MODE='live' — in draft
+ * mode (the default) selection falls through to emailDraftSubmitter
+ * and behavior is identical to pre-S1.
  */
 const SUBMITTERS: Submitter[] = [
   // future: cloudflareSubmitter, godaddySubmitter, twitterSubmitter, …
+  emailSendSubmitter,
   emailDraftSubmitter,
 ];
 
 export function pickSubmitter(
+  env: Env,
   takedown: TakedownRecord,
   provider: ProviderRecord,
 ): Submitter | null {
   for (const s of SUBMITTERS) {
-    if (s.canHandle(takedown, provider)) return s;
+    if (s.canHandle(env, takedown, provider)) return s;
   }
   return null;
 }
@@ -58,7 +66,7 @@ export async function dispatchSubmission(
   takedown: TakedownRecord,
   provider: ProviderRecord,
 ): Promise<DispatchResult> {
-  const submitter = pickSubmitter(takedown, provider);
+  const submitter = pickSubmitter(env, takedown, provider);
 
   let result: SubmissionResult;
   if (!submitter) {
@@ -71,7 +79,7 @@ export async function dispatchSubmission(
     };
   } else {
     try {
-      result = await submitter.submit(takedown, provider);
+      result = await submitter.submit(env, takedown, provider);
     } catch (err) {
       // Submitters are required to not throw; defend anyway.
       result = {
@@ -128,5 +136,6 @@ export async function recordSubmissionAttempt(
 }
 
 export { emailDraftSubmitter } from "./email-draft";
+export { emailSendSubmitter, isLiveSendMode } from "./email-send";
 export { followupDraftSubmitter, type FollowupContext } from "./followup-draft";
 export type { Submitter, SubmissionResult, TakedownRecord, ProviderRecord } from "./types";

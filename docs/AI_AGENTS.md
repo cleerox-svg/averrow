@@ -279,6 +279,19 @@ Processes up to 5 prospects per run. Results are stored in the `sales_leads` tab
 
 Sparrow identifies active threats with high confidence and drafts takedown notices routed to hosting provider abuse desks, registrars, and brand-protection platforms.
 
+**Outbound email (S1, 2026-06):** Phase G dispatches through
+`lib/takedown-submitters/`. When `TAKEDOWN_SEND_MODE='live'` (wrangler var,
+default `'draft'`), the email-send submitter delivers the abuse report via
+Resend from `takedowns@averrow.com` (Reply-To routes into the abuse-mailbox
+pipeline, migration 0214) and Phase H follow-ups send the same way. In draft
+mode behavior is the historical queued-draft flow for manual ops send.
+Gates, all required: org entitlement (`org_modules`) + signed
+`takedown_authorizations` covering the module + provider
+`auto_submit_enabled=1` + the signed `scope_json.max_takedowns_per_month`
+(enforced in Phase G; cap exhaustion leaves drafts and fires a
+`takedown_monthly_cap_reached` tenant notification once per org per month).
+Kill switch: flip the var back to `'draft'`.
+
 **Inputs:** Active threats with resolved hosting/registrar attribution
 **Outputs:** Takedown submissions tracked in `takedowns` table; `agent_outputs` entries
 

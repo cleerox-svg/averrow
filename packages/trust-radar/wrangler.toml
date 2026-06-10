@@ -278,6 +278,12 @@ cpu_ms = 300_000
 # ─── Environment variables ────────────────────────────────────
 [vars]
 ENVIRONMENT = "production"
+# Takedown outbound email (S1, docs/IMPROVEMENT_PLAN_2026-06.md).
+# 'draft' = queue drafts for manual ops send (safe default, pre-S1 behavior).
+# 'live'  = email-send submitter delivers abuse reports via Resend from
+#           takedowns@averrow.com. Owner flips this deliberately; flipping
+#           back to 'draft' is the kill switch.
+TAKEDOWN_SEND_MODE = "draft"
 
 # ─── Secrets (set via: wrangler secret put <NAME>) ────────────
 # ANTHROPIC_API_KEY        — Anthropic API key for Claude Haiku AI analysis

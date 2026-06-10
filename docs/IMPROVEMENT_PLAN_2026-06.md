@@ -41,7 +41,7 @@ The assessment's core finding: detection is strong, but takedowns are ~20% built
 (drafts queued, never sent) and the tenant app has 5 GA blockers. Until Wave 1 lands,
 the paid tier is "monitoring + report drafts," which DoppelDown commoditizes at $49/mo.
 
-### S1 — Takedown email delivery ⬜
+### S1 — Takedown email delivery 🟡 (PR open — ships dark, TAKEDOWN_SEND_MODE='draft')
 Convert the email-draft submitter from `queued` to actually **sent**.
 - Wire Resend (already used in `lib/briefing-email.ts`, `lib/lead-outreach-email.ts`,
   `lib/invite-email.ts`, etc.) into `lib/takedown-submitters/email-draft.ts` and
@@ -114,9 +114,9 @@ Table stakes at every competitor; partial scaffolding exists (`evidence_assemble
 - Est: 2 days code + owner's Stripe dashboard work. Dependencies: none.
 
 ### S7 — Auto-submission policy + MSA ⬜
-- Wire the signed-MSA scope (`takedown_authorizations` per module + monthly cap) as
-  the gate that flips S1 from queued→sent per org. Add per-org monthly submission
-  counter enforcement.
+- ~~Monthly cap enforcement~~ — pulled forward into S1 (consent boundary).
+  Remaining: `high_risk_requires_per_takedown_approval` enforcement + the
+  per-takedown approval surface in averrow-tenant.
 - **Owner action:** legal review of the MSA text in `lib/takedown-msa.ts` (currently
   placeholder). Code ships behind the existing signature flow regardless.
 - **Acceptance:** org without signed MSA gets drafts only; signed org gets auto-send
@@ -173,7 +173,7 @@ of a roadmap promise.
 
 ## Wave 3 — Hygiene that protects velocity (P3, cheap and parallel)
 
-### S11 — Documentation truth-up ⬜
+### S11 — Documentation truth-up ✅ (PRs #1480/#1481, merged 2026-06-10)
 Per the staleness audit, in priority order:
 1. Rewrite ARCHITECTURE.md cron section from wrangler.toml:43-83 (30 min).
 2. Purge 29 ghost routes from API_REFERENCE.md; add the ~40 missing legit routes

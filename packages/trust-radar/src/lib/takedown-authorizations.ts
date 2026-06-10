@@ -127,6 +127,43 @@ export async function getActiveAuthorization(
   });
 }
 
+/**
+ * Monthly-cap check (S1, IMPROVEMENT_PLAN_2026-06). Counts this
+ * calendar month's outbound submissions (outcome='submitted') across
+ * the org's takedowns and compares against the signed
+ * scope_json.max_takedowns_per_month. null cap = unlimited.
+ *
+ * Counts only primary submissions — follow-ups (submitter_kind LIKE
+ * 'followup_%') reference an already-counted takedown and don't
+ * consume cap. Drafts (outcome='queued') don't count either: the cap
+ * governs outbound automation, and the same takedown's later live
+ * send is the single counted event.
+ *
+ * Not cached: Sparrow Phase G is the only caller and runs 6-hourly
+ * on small batches; correctness at the consent boundary beats a KV
+ * round-trip saved.
+ */
+export async function isUnderMonthlyTakedownCap(
+  env:   Env,
+  orgId: number,
+): Promise<{ under: boolean; used: number; cap: number | null }> {
+  const auth = await getActiveAuthorization(env, orgId);
+  const cap = auth?.scope.max_takedowns_per_month ?? null;
+  if (cap === null) return { under: true, used: 0, cap: null };
+
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n
+     FROM takedown_submissions ts
+     JOIN takedown_requests tr ON tr.id = ts.takedown_id
+     WHERE tr.org_id = ?
+       AND ts.outcome = 'submitted'
+       AND ts.submitter_kind NOT LIKE 'followup_%'
+       AND ts.attempted_at >= datetime('now', 'start of month')`,
+  ).bind(orgId).first<{ n: number }>();
+  const used = row?.n ?? 0;
+  return { under: used < cap, used, cap };
+}
+
 /** True iff the org has signed an active authorization that covers `moduleKey`. */
 export async function isModuleAuthorized(
   env:       Env,

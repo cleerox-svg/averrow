@@ -53,9 +53,13 @@ function makeEnv(captured: { sql: string; binds: unknown[] }[]): Env {
   } as unknown as Env;
 }
 
+// S1: submitFollowup takes Env first; draft mode keeps historical behavior.
+const draftEnv = { TAKEDOWN_SEND_MODE: "draft" } as unknown as Env;
+
 describe("followupDraftSubmitter", () => {
   it("returns outcome='queued' (no outbound side effect)", async () => {
     const result = await followupDraftSubmitter.submitFollowup(
+      draftEnv,
       makeTakedown(), makeProvider(),
       { originalSubmittedAt: "2026-05-01T00:00:00Z", hoursElapsed: 96 },
     );
@@ -66,6 +70,7 @@ describe("followupDraftSubmitter", () => {
 
   it("body references the prior ticket id when provided", async () => {
     const result = await followupDraftSubmitter.submitFollowup(
+      draftEnv,
       makeTakedown(), makeProvider(),
       {
         originalSubmittedAt: "2026-05-01T00:00:00Z",
@@ -80,6 +85,7 @@ describe("followupDraftSubmitter", () => {
 
   it("falls back to the takedown id when no prior ticket id is known", async () => {
     const result = await followupDraftSubmitter.submitFollowup(
+      draftEnv,
       makeTakedown({ id: "td-abc" }), makeProvider(),
       { originalSubmittedAt: "2026-05-01T00:00:00Z", hoursElapsed: 24 },
     );
@@ -89,6 +95,7 @@ describe("followupDraftSubmitter", () => {
 
   it("body lists the original target value, severity, and module", async () => {
     const result = await followupDraftSubmitter.submitFollowup(
+      draftEnv,
       makeTakedown({ target_value: "phisher.example", severity: "CRITICAL", module_key: "social" }),
       makeProvider(),
       { originalSubmittedAt: "2026-05-01T00:00:00Z", hoursElapsed: 72 },
@@ -101,6 +108,7 @@ describe("followupDraftSubmitter", () => {
   it("truncates request_summary to 500 chars", async () => {
     const longDetail = "x".repeat(2000);
     const result = await followupDraftSubmitter.submitFollowup(
+      draftEnv,
       makeTakedown({ evidence_detail: longDetail }), makeProvider(),
       { originalSubmittedAt: "2026-05-01T00:00:00Z", hoursElapsed: 24 },
     );

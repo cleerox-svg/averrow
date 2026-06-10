@@ -1,7 +1,10 @@
 // Shared types for the takedown-submitters dispatcher and individual submitters.
 //
 // Phase C sprint 1.
+// S1 (IMPROVEMENT_PLAN_2026-06): submitters receive Env so live submitters
+// can reach transport secrets (Resend) and the TAKEDOWN_SEND_MODE flag.
 
+import type { Env } from "../../types";
 import type { ModuleKey } from "../entitlements";
 
 export interface TakedownRecord {
@@ -63,7 +66,7 @@ export interface Submitter {
   /** Stable kind identifier — written to takedown_submissions.submitter_kind. */
   readonly kind: string;
   /** True iff this submitter can handle the given (takedown, provider) pair. */
-  canHandle(takedown: TakedownRecord, provider: ProviderRecord): boolean;
+  canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean;
   /** Perform the submission. Implementations must not throw — catch + return outcome='failed'. */
-  submit(takedown: TakedownRecord, provider: ProviderRecord): Promise<SubmissionResult>;
+  submit(env: Env, takedown: TakedownRecord, provider: ProviderRecord): Promise<SubmissionResult>;
 }
