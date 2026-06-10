@@ -1,0 +1,163 @@
+name: Deploy — imprsn8 (imprsn8.com)
+
+# Replaces the workflow removed in PR #1473, which could never succeed:
+# it referenced a packages/frontend that has never existed in this repo,
+# and the SPA assets in packages/imprsn8/public/ are gitignored (built
+# and deployed manually, source outside this repo).
+#
+# This version deploys the WORKER CODE ONLY while preserving whatever
+# assets are live in production, via the Cloudflare REST upload API:
+#   - keep_assets: true        → previous version's static assets retained
+#   - keep_bindings: secrets   → JWT_SECRET etc. retained
+# Plain `wrangler deploy` cannot do this — it requires ./public to exist
+# and replaces the asset manifest wholesale, which would wipe the live
+# SPA (login/register/upgrade pages). Do NOT "simplify" this back to
+# `wrangler deploy` unless the SPA source is committed to this repo.
+#
+# Bindings below MUST stay in sync with packages/imprsn8/wrangler.toml.
+# Recovery: Cloudflare dashboard → Workers → imprsn8 → Deployments →
+# instant rollback to the previous version.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "packages/imprsn8/**"
+      - ".github/workflows/deploy-imprsn8.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-imprsn8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check (worker)
+        working-directory: packages/imprsn8
+        run: pnpm typecheck
+
+  deploy:
+    name: Deploy worker (assets preserved)
+    needs: typecheck
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Inject resource IDs into wrangler.toml
+        working-directory: packages/imprsn8
+        env:
+          IMPRSN8_D1_DATABASE_ID: ${{ secrets.IMPRSN8_D1_DATABASE_ID }}
+          IMPRSN8_KV_NAMESPACE_ID: ${{ secrets.IMPRSN8_KV_NAMESPACE_ID }}
+        run: envsubst < wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
+
+      - name: Run DB migrations (production)
+        working-directory: packages/imprsn8
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # wrangler parses [assets] from wrangler.toml even for d1 commands
+          mkdir -p public
+          for i in 1 2 3 4; do
+            if pnpm run db:migrate:prod; then exit 0; fi
+            echo "DB migration attempt $i failed, retrying in $((i * 4))s..."
+            sleep $((i * 4))
+          done
+          echo "::error::DB migration failed after 4 attempts"
+          exit 1
+
+      - name: Bundle worker
+        working-directory: packages/imprsn8
+        run: |
+          mkdir -p public   # empty placeholder so the bundler accepts [assets]; dry-run uploads nothing
+          npx wrangler deploy --dry-run --outdir dist
+          test -f dist/index.js
+
+      - name: Upload worker version (keep_assets + keep secrets)
+        working-directory: packages/imprsn8
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IMPRSN8_D1_DATABASE_ID: ${{ secrets.IMPRSN8_D1_DATABASE_ID }}
+          IMPRSN8_KV_NAMESPACE_ID: ${{ secrets.IMPRSN8_KV_NAMESPACE_ID }}
+        run: |
+          set -euo pipefail
+          # Keep in sync with packages/imprsn8/wrangler.toml
+          jq -n \
+            --arg d1 "$IMPRSN8_D1_DATABASE_ID" \
+            --arg kv "$IMPRSN8_KV_NAMESPACE_ID" \
+            '{
+              main_module: "index.js",
+              compatibility_date: "2024-12-01",
+              compatibility_flags: ["nodejs_compat"],
+              keep_assets: true,
+              keep_bindings: ["secret_text", "secret_key"],
+              assets: { config: { not_found_handling: "single-page-application" } },
+              bindings: [
+                { type: "assets",       name: "ASSETS" },
+                { type: "d1",           name: "DB",             id: $d1 },
+                { type: "kv_namespace", name: "SESSIONS",       namespace_id: $kv },
+                { type: "r2_bucket",    name: "PROFILE_ASSETS", bucket_name: "imprsn8-assets" },
+                { type: "plain_text",   name: "ENVIRONMENT",    text: "production" }
+              ]
+            }' > metadata.json
+
+          http_code=$(curl -sS -o upload-response.json -w "%{http_code}" -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/imprsn8" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -F "metadata=@metadata.json;type=application/json" \
+            -F "index.js=@dist/index.js;type=application/javascript+module")
+
+          jq '{success, errors, messages}' upload-response.json || cat upload-response.json
+          if [ "$http_code" != "200" ] || ! jq -e '.success == true' upload-response.json > /dev/null; then
+            echo "::error::Worker upload failed (HTTP $http_code)"
+            exit 1
+          fi
+
+      - name: Smoke checks (new code live, assets intact)
+        run: |
+          set -euo pipefail
+          sleep 10
+          # 1. Homepage renders (server template path)
+          curl -fsS https://imprsn8.com/ | grep -qi "imprsn" \
+            || { echo "::error::Homepage failed to render"; exit 1; }
+          # 2. New security headers prove the patched code is live (audit M5)
+          curl -fsSI https://imprsn8.com/ | grep -qi "x-frame-options" \
+            || { echo "::error::Security headers missing — old code still serving?"; exit 1; }
+          # 3. SPA asset fallback still serves (proves assets were retained)
+          login_code=$(curl -sS -o /dev/null -w "%{http_code}" https://imprsn8.com/login)
+          if [ "$login_code" != "200" ]; then
+            echo "::error::/login returned $login_code — SPA assets may be missing. Roll back via Cloudflare dashboard → Workers → imprsn8 → Deployments."
+            exit 1
+          fi
+          echo "All smoke checks passed."
