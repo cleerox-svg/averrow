@@ -123,17 +123,101 @@ export async function handlePublicFeeds(request: Request, env: Env): Promise<Res
 
 // ─── POST /api/v1/public/assess ──────────────────────────────────
 
+/** H4(b): global daily ceiling on paid public AI assessments.
+ *  Configurable via env.PUBLIC_ASSESS_DAILY_CAP (string, optional —
+ *  not declared in wrangler.toml [vars]); defaults to 200/day. */
+const PUBLIC_ASSESS_DAILY_CAP_DEFAULT = 200;
+
+/** H4(c): shared per-IP limiter (10/hour) for every entry point that
+ *  can trigger a paid public assessment. Used by both
+ *  POST /api/v1/public/assess and the homepage POST /assess form so
+ *  they draw from the same KV bucket. Returns a 429 Response when
+ *  limited, null when the request may proceed. */
+export async function publicAssessIpLimit(request: Request, env: Env): Promise<Response | null> {
+  const origin = request.headers.get("Origin");
+  // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const rateLimitKey = `pub_assess_${ip}`;
+  const currentCount = parseInt(await env.CACHE.get(rateLimitKey) || "0", 10);
+  if (currentCount >= 10) {
+    return json({ success: false, error: "Rate limit exceeded. Please try again in an hour." }, 429, origin);
+  }
+  await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
+  return null;
+}
+
+interface StoredAssessmentIntel {
+  threat_count?: number;
+  provider_count?: number;
+  campaign_count?: number;
+  threat_types?: { threat_type: string; count: number }[];
+  is_monitored?: boolean;
+  brand_name?: string;
+}
+
+/** H4(a): fetch the most recent completed assessment for a domain.
+ *  `maxAgeModifier` is a SQLite datetime modifier (e.g. '-24 hours');
+ *  pass null for "most recent, any age" (global-cap fallback). */
+async function getRecentAssessment(
+  env: Env,
+  domain: string,
+  maxAgeModifier: string | null,
+): Promise<Record<string, unknown> | null> {
+  const stmt = maxAgeModifier
+    ? env.DB.prepare(
+        `SELECT id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at
+         FROM assessments
+         WHERE domain = ? AND completed_at IS NOT NULL AND completed_at >= datetime('now', ?)
+         ORDER BY completed_at DESC LIMIT 1`,
+      ).bind(domain, maxAgeModifier)
+    : env.DB.prepare(
+        `SELECT id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at
+         FROM assessments
+         WHERE domain = ? AND completed_at IS NOT NULL
+         ORDER BY completed_at DESC LIMIT 1`,
+      ).bind(domain);
+
+  const row = await stmt.first<{
+    id: string; domain: string; trust_score: number; grade: string;
+    summary_text: string | null; threat_intel_results: string | null;
+    completed_at: string;
+  }>();
+  if (!row) return null;
+
+  let intel: StoredAssessmentIntel = {};
+  try {
+    intel = JSON.parse(row.threat_intel_results ?? "{}") as StoredAssessmentIntel;
+  } catch { /* legacy rows may hold malformed JSON — fall back to defaults */ }
+
+  const keyword = row.domain.split(".")[0] ?? row.domain;
+  const fallbackBrand = keyword.charAt(0).toUpperCase() + keyword.slice(1);
+
+  return {
+    assessment_id: row.id,
+    domain: row.domain,
+    brand_name: intel.brand_name ?? fallbackBrand,
+    trust_score: row.trust_score,
+    grade: row.grade,
+    threat_count: intel.threat_count ?? 0,
+    provider_count: intel.provider_count ?? 0,
+    campaign_count: intel.campaign_count ?? 0,
+    threat_types: intel.threat_types ?? [],
+    is_monitored: intel.is_monitored ?? false,
+    assessment_text: row.summary_text ?? "",
+    spam_trap: null,
+    assessed_at: row.completed_at,
+    cached: true,
+  };
+}
+
 export async function handlePublicAssess(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // Rate limit: 10 per IP per hour
-    const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
-    const rateLimitKey = `pub_assess_${ip}`;
-    const currentCount = parseInt(await env.CACHE.get(rateLimitKey) || "0", 10);
-    if (currentCount >= 10) {
-      return json({ success: false, error: "Rate limit exceeded. Please try again in an hour." }, 429, origin);
-    }
-    await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
+    // Rate limit: 10 per IP per hour (shared bucket with POST /assess)
+    const limited = await publicAssessIpLimit(request, env);
+    if (limited) return limited;
+    // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
 
     const body = await request.json().catch(() => null) as { domain?: string } | null;
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
@@ -142,6 +226,13 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     const domain = body.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
     if (!domain || !domain.includes(".") || domain.includes("@")) {
       return json({ success: false, error: "Please enter a valid domain (e.g. yourbrand.com)" }, 400, origin);
+    }
+
+    // H4(a): a recent assessment for this domain short-circuits the
+    // paid agent run entirely — same answer, zero AI spend.
+    const recent = await getRecentAssessment(env, domain, "-24 hours");
+    if (recent) {
+      return json({ success: true, data: recent }, 200, origin);
     }
 
     const keyword = domain.split(".")[0]!;
@@ -233,6 +324,24 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     // deterministic fallback if either path fails. Handler stays
     // responsible for the surrounding I/O — DB lookups, rate limits,
     // and storing the assessment row.
+
+    // H4(b): global daily ceiling on paid AI runs. Counter increments
+    // only here — i.e. only when an AI run is actually about to start.
+    // When the cap is hit, fall back to the most recent stored
+    // assessment for this domain (any age); otherwise 429.
+    const dailyCap = parseInt(env.PUBLIC_ASSESS_DAILY_CAP ?? "", 10) || PUBLIC_ASSESS_DAILY_CAP_DEFAULT;
+    const capKey = `public_assess:global:${new Date().toISOString().slice(0, 10)}`;
+    const globalCount = parseInt(await env.CACHE.get(capKey) || "0", 10);
+    if (globalCount >= dailyCap) {
+      const fallback = await getRecentAssessment(env, domain, null);
+      if (fallback) {
+        return json({ success: true, data: fallback }, 200, origin);
+      }
+      return json({ success: false, error: "Daily assessment capacity reached. Please try again tomorrow." }, 429, origin);
+    }
+    // 48h TTL comfortably outlives the UTC-day window the key encodes.
+    await env.CACHE.put(capKey, String(globalCount + 1), { expirationTtl: 172800 });
+
     const agentRun = await runSyncAgent<PublicTrustCheckOutput>(
       env,
       publicTrustCheckAgent,
@@ -265,7 +374,9 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
     ).bind(
       assessmentId, domain, trustScore, grade, assessmentText,
-      JSON.stringify({ threat_count: threatCount, provider_count: providerCount, campaign_count: campaignCount, threat_types: threatTypes }),
+      // is_monitored + brand_name ride along so the H4 cached-replay
+      // path can reconstruct the full response shape from this row.
+      JSON.stringify({ threat_count: threatCount, provider_count: providerCount, campaign_count: campaignCount, threat_types: threatTypes, is_monitored: isMonitored, brand_name: monitoredBrand?.name ?? brandName }),
       ip,
     ).run();
 
@@ -316,8 +427,8 @@ const FREEMAIL_DOMAINS = new Set([
 export async function handlePublicLeadCapture(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // Rate limit
-    const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+    // Rate limit (L2: CF-Connecting-IP only — XFF is client-spoofable)
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     const rateLimitKey = `pub_lead_${ip}`;
     const currentCount = parseInt(await env.CACHE.get(rateLimitKey) || "0", 10);
     if (currentCount >= 5) {
@@ -367,8 +478,8 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
 export async function handlePublicMonitor(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // Rate limit: 5 per IP per hour
-    const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+    // Rate limit: 5 per IP per hour (L2: CF-Connecting-IP only)
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     const rateLimitKey = `pub_monitor_${ip}`;
     const currentCount = parseInt(await env.CACHE.get(rateLimitKey) || "0", 10);
     if (currentCount >= 5) {

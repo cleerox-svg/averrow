@@ -32,9 +32,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 };
 
 function getClientIP(request: Request): string {
-  return request.headers.get("CF-Connecting-IP")
-    ?? request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim()
-    ?? "unknown";
+  // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable and
+  // would let an attacker rotate rate-limit identities for free.
+  return request.headers.get("CF-Connecting-IP") ?? "unknown";
 }
 
 /**
@@ -78,8 +78,17 @@ export async function rateLimit(
 
     await env.CACHE.put(key, String(current + 1), { expirationTtl: config.windowSeconds * 2 });
   } catch {
-    // If KV fails, allow the request through (fail-open)
     logger.warn("rate_limit.kv_error", { bucket: config.key, identifier });
+    // L1: the auth bucket fails CLOSED — an attacker must not be able to
+    // bypass login/credential throttling by inducing KV failures. All
+    // other buckets keep failing open (availability over strictness).
+    if (config.key === "auth") {
+      return json(
+        { success: false, error: "Too many requests. Please try again later." },
+        429,
+        request.headers.get("Origin"),
+      );
+    }
   }
 
   return null;
@@ -124,6 +133,15 @@ export async function rateLimitCustom(
     await env.CACHE.put(key, String(current + 1), { expirationTtl: config.windowSeconds * 2 });
   } catch {
     logger.warn("rate_limit.kv_error", { bucket: config.key, identifier });
+    // L1: keep parity with the preset path — an 'auth'-keyed custom
+    // config also fails closed on KV errors.
+    if (config.key === "auth") {
+      return json(
+        { success: false, error: "Too many requests. Please try again later." },
+        429,
+        request.headers.get("Origin"),
+      );
+    }
   }
 
   return null;

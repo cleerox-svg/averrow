@@ -126,7 +126,11 @@ describe("handleAbuseMailboxUnsubscribe — PR-BR hardening", () => {
     expect(res.status).toBe(401);
   });
 
-  it("falls back to AVERROW_INTERNAL_SECRET when ABUSE_UNSUBSCRIBE_SECRET is unset", async () => {
+  // L5 (SECURITY_AUDIT_2026-06-10): the AVERROW_INTERNAL_SECRET
+  // fallback was removed — ABUSE_UNSUBSCRIBE_SECRET is now required
+  // exclusively. A token minted with the internal secret must NOT
+  // verify; the endpoint fails closed instead.
+  it("does NOT fall back to AVERROW_INTERNAL_SECRET when ABUSE_UNSUBSCRIBE_SECRET is unset", async () => {
     const secret = "internal-secret-fallback";
     const email = "user@example.com";
     const token = await genToken(email, secret);
@@ -138,7 +142,8 @@ describe("handleAbuseMailboxUnsubscribe — PR-BR hardening", () => {
       { method: "POST" },
     );
     const res = await handleAbuseMailboxUnsubscribe(req, env as never);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(503);
+    expect(dbCalls.length).toBe(0);
   });
 });
 

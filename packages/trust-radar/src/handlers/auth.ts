@@ -32,7 +32,11 @@ export async function handleOAuthLogin(request: Request, env: Env): Promise<Resp
   const redirectUri = getRedirectUri(request);
   const authUrl = buildGoogleAuthURL(env.GOOGLE_CLIENT_ID, redirectUri, nonce);
 
-  return Response.redirect(authUrl, 302);
+  // H3: bind the OAuth state to this browser via a short-lived cookie
+  // holding sha256(nonce). The callback requires it to match the state
+  // param, so a stolen/forged state can't complete login from another
+  // browser.
+  return oauthRedirectWithStateCookie(authUrl, await hashToken(nonce), request);
 }
 
 // ─── OAuth: initiate login via invite ───────────────────────────
@@ -69,7 +73,9 @@ export async function handleOAuthInviteLogin(request: Request, env: Env): Promis
   const redirectUri = getRedirectUri(request);
   const authUrl = buildGoogleAuthURL(env.GOOGLE_CLIENT_ID, redirectUri, nonce);
 
-  return Response.redirect(authUrl, 302);
+  // H3: same browser-binding cookie as the regular login flow — both
+  // paths land on the same /api/auth/callback.
+  return oauthRedirectWithStateCookie(authUrl, await hashToken(nonce), request);
 }
 
 // ─── OAuth: callback ────────────────────────────────────────────
@@ -91,18 +97,51 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
     return json({ success: false, error: "OAuth not configured" }, 503, origin);
   }
 
+  // H3: validate browser binding — the radar_oauth_state cookie set at
+  // initiation must contain sha256(state). Without it, a state nonce
+  // stolen (or planted) from another browser can't complete the flow.
+  // Only the Google OAuth callback is guarded here; magic-link and
+  // passkey flows have their own tokens and never touch oauth_state.
+  const cookies = parseCookies(request.headers.get("Cookie") ?? "");
+  const stateCookie = cookies[OAUTH_STATE_COOKIE];
+  if (!stateCookie || stateCookie !== await hashToken(state)) {
+    await audit(env, { action: "oauth_state_cookie_mismatch", outcome: "denied", request }).catch(() => {});
+    return clearOAuthStateCookie(redirectWithError(CANONICAL_ORIGIN, "Invalid or expired OAuth state"), request);
+  }
+
   // Validate CSRF state
   const storedState = await env.CACHE.get(`oauth_state:${state}`);
   if (!storedState) {
-    return redirectWithError(CANONICAL_ORIGIN, "Invalid or expired OAuth state");
+    return clearOAuthStateCookie(redirectWithError(CANONICAL_ORIGIN, "Invalid or expired OAuth state"), request);
   }
   await env.CACHE.delete(`oauth_state:${state}`);
 
+  // State validated + consumed — the one-time cookie is cleared on
+  // whatever response the rest of the flow produces.
+  const response = await completeOAuthCallback(
+    request, env, code, storedState,
+    env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET,
+  );
+  return clearOAuthStateCookie(response, request);
+}
+
+/** Post-state-validation half of the OAuth callback: code exchange,
+ *  user lookup / invite acceptance, session issuance. Split out so the
+ *  caller can uniformly clear the one-time state cookie on every exit.
+ *  Client id/secret are passed pre-narrowed (caller 503s when unset). */
+async function completeOAuthCallback(
+  request: Request,
+  env: Env,
+  code: string,
+  storedState: string,
+  googleClientId: string,
+  googleClientSecret: string,
+): Promise<Response> {
   // Exchange code for tokens
   const redirectUri = getRedirectUri(request);
   let googleUser;
   try {
-    const tokens = await exchangeCodeForTokens(code, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, redirectUri);
+    const tokens = await exchangeCodeForTokens(code, googleClientId, googleClientSecret, redirectUri);
     googleUser = await fetchGoogleUserInfo(tokens.access_token);
   } catch (err) {
     await audit(env, { action: "oauth_token_exchange_failed", details: { error: "An internal error occurred" }, outcome: "failure", request });
@@ -452,7 +491,8 @@ export async function issueSession(
 
   // Create session record
   const sessionId = crypto.randomUUID();
-  const ip = request.headers.get("CF-Connecting-IP") ?? request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ?? null;
+  // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
+  const ip = request.headers.get("CF-Connecting-IP") ?? null;
   const ua = request.headers.get("User-Agent") ?? null;
 
   await env.DB.prepare(
@@ -510,6 +550,34 @@ function setRefreshCookie(response: Response, refreshToken: string, request: Req
   headers.append(
     "Set-Cookie",
     `radar_refresh=${refreshToken}; HttpOnly; ${isSecure ? "Secure; " : ""}SameSite=Strict; Path=/api/auth; Max-Age=${REFRESH_TOKEN_TTL}`,
+  );
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+// ─── OAuth state cookie (H3 browser binding) ────────────────────
+//
+// Set at login initiation, holds sha256(state nonce). SameSite MUST
+// be Lax (not Strict): the callback is a cross-site top-level
+// navigation from accounts.google.com, and Strict cookies are not
+// sent on cross-site navigations — the flow would always fail.
+const OAUTH_STATE_COOKIE = "radar_oauth_state";
+
+function oauthRedirectWithStateCookie(authUrl: string, stateHash: string, request: Request): Response {
+  const isSecure = new URL(request.url).protocol === "https:";
+  const headers = new Headers({ Location: authUrl });
+  headers.append(
+    "Set-Cookie",
+    `${OAUTH_STATE_COOKIE}=${stateHash}; HttpOnly; ${isSecure ? "Secure; " : ""}SameSite=Lax; Path=/api/auth; Max-Age=600`,
+  );
+  return new Response(null, { status: 302, headers });
+}
+
+function clearOAuthStateCookie(response: Response, request: Request): Response {
+  const isSecure = new URL(request.url).protocol === "https:";
+  const headers = new Headers(response.headers);
+  headers.append(
+    "Set-Cookie",
+    `${OAUTH_STATE_COOKIE}=; HttpOnly; ${isSecure ? "Secure; " : ""}SameSite=Lax; Path=/api/auth; Max-Age=0`,
   );
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -594,9 +662,8 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
     // Generate the token, hash it, persist the row, send the email.
     const token = generateMagicLinkToken();
     const tokenHash = await hashMagicLinkToken(token);
-    const ip = request.headers.get("CF-Connecting-IP")
-      ?? request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim()
-      ?? null;
+    // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
+    const ip = request.headers.get("CF-Connecting-IP") ?? null;
     const ua = request.headers.get("User-Agent") ?? null;
     const returnTo = sanitizeReturnTo(body.return_to);
 

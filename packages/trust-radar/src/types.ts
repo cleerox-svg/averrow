@@ -102,10 +102,17 @@ export interface Env {
   /** Override the daily-briefing recipient. Defaults to claude.leroux@averrow.com when unset. */
   BRIEFING_RECIPIENT?: string;
   /** HMAC secret for List-Unsubscribe one-click tokens
-   *  (lib/handlers/abuseMailboxUnsubscribe.ts). Falls back to
-   *  AVERROW_INTERNAL_SECRET when unset so a missed Worker-secret
-   *  provision doesn't break the unsubscribe path. */
+   *  (handlers/abuseMailboxUnsubscribe.ts). REQUIRED for the
+   *  unsubscribe path — must be set via
+   *  `wrangler secret put ABUSE_UNSUBSCRIBE_SECRET`. When unset the
+   *  verify endpoint fails closed (503) and link generation returns
+   *  null (no AVERROW_INTERNAL_SECRET fallback — L5,
+   *  SECURITY_AUDIT_2026-06-10). */
   ABUSE_UNSUBSCRIBE_SECRET?: string;
+  /** Global daily ceiling on paid public AI assessments
+   *  (handlers/public.ts handlePublicAssess). Optional override —
+   *  defaults to 200/day when unset. Plain var, not a secret. */
+  PUBLIC_ASSESS_DAILY_CAP?: string;
   AVERROW_INTERNAL_SECRET?: string;
   /** Master key for org_integrations.config_encrypted (AES-GCM, 32
    *  bytes, base64). Set via `wrangler secret put INTEGRATION_CONFIG_KEY`.

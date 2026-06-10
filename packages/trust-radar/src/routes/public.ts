@@ -1,7 +1,6 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { rateLimit } from "../middleware/rateLimit";
 import { json } from "../lib/cors";
 // R6 cutover: marketing pages (/, /platform, /about, /pricing, /security,
 // /contact, /report-abuse, /blog, /changelog) are now served as static
@@ -26,7 +25,7 @@ import { handleScanPage } from "../handlers/scanPage";
 import { handlePublicBrandScan } from "../handlers/brandScan";
 import {
   handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
-  handlePublicMonitor, handlePublicFeeds,
+  handlePublicMonitor, handlePublicFeeds, publicAssessIpLimit,
 } from "../handlers/public";
 import { handlePublicStats as handlePublicStatsV2 } from "../handlers/stats";
 import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
@@ -105,7 +104,10 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
 
   // ─── Public Assessment ───────────────────────────────────────────
   router.post("/assess", async (request: Request, env: Env) => {
-    const limited = await rateLimit(request, env, "scan");
+    // H4(c): this form path triggers the same paid AI scan as
+    // /api/v1/public/assess, so it shares the same per-IP 10/hour
+    // KV bucket instead of the looser shared 30/min 'scan' preset.
+    const limited = await publicAssessIpLimit(request, env);
     if (limited) return limited;
     try {
       const ct = request.headers.get("Content-Type") ?? "";

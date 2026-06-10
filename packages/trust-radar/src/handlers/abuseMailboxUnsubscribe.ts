@@ -18,9 +18,14 @@
 //   400 — missing/invalid params
 //   401 — token mismatch
 //
-// Reads from `ABUSE_UNSUBSCRIBE_SECRET` (Worker secret). If unset,
-// the endpoint falls back to AVERROW_INTERNAL_SECRET so a typo in
-// secrets doesn't break the unsubscribe path.
+// Reads from `ABUSE_UNSUBSCRIBE_SECRET` (Worker secret, set via
+// `wrangler secret put ABUSE_UNSUBSCRIBE_SECRET`). The secret is
+// REQUIRED — there is intentionally no fallback to
+// AVERROW_INTERNAL_SECRET anymore (L5, SECURITY_AUDIT_2026-06-10):
+// reusing the internal API bearer token as HMAC key material meant a
+// leak of either secret compromised both surfaces. When unset, token
+// verification fails closed (503) and link generation returns null so
+// outbound emails never carry a broken/forgeable unsubscribe URL.
 
 import type { Env } from "../types";
 import { timingSafeEqual } from "../lib/internal-secret";
@@ -45,13 +50,22 @@ async function hmacToken(email: string, secret: string): Promise<string> {
 }
 
 /** Build the public unsubscribe URL for the responder to embed in
- *  the List-Unsubscribe header. */
+ *  the List-Unsubscribe header. Returns null when
+ *  ABUSE_UNSUBSCRIBE_SECRET is not configured — callers must omit the
+ *  List-Unsubscribe headers rather than emit a broken link (L5). */
 export async function unsubscribeUrl(
   env: Env,
   email: string,
   messageId: string,
-): Promise<string> {
-  const secret = env.ABUSE_UNSUBSCRIBE_SECRET ?? env.AVERROW_INTERNAL_SECRET ?? "";
+): Promise<string | null> {
+  const secret = env.ABUSE_UNSUBSCRIBE_SECRET;
+  if (!secret) {
+    console.error(
+      "[abuse-mailbox-unsubscribe] ABUSE_UNSUBSCRIBE_SECRET not configured — " +
+      "skipping List-Unsubscribe link generation (set via `wrangler secret put`)",
+    );
+    return null;
+  }
   const token = await hmacToken(email, secret);
   const u = new URL("https://averrow.com/api/abuse-mailbox/unsubscribe");
   u.searchParams.set("email", email);
@@ -88,17 +102,14 @@ export async function handleAbuseMailboxUnsubscribe(
     return new Response("Missing token", { status: 400 });
   }
 
-  // PR-BR: fail-closed when no secret is configured. Previously the
-  // empty-string fallback would still compute a deterministic HMAC,
-  // meaning anyone who knows the email + secret-of-empty-string
-  // could forge a token. Far less of an issue than the path being
-  // unreachable in prod (secrets are always set), but a misconfig
-  // shouldn't open auth bypass.
-  const secret = env.ABUSE_UNSUBSCRIBE_SECRET ?? env.AVERROW_INTERNAL_SECRET;
+  // PR-BR + L5: fail-closed when the secret is not configured, and
+  // require ABUSE_UNSUBSCRIBE_SECRET exclusively (no
+  // AVERROW_INTERNAL_SECRET fallback — see header comment).
+  const secret = env.ABUSE_UNSUBSCRIBE_SECRET;
   if (!secret) {
     console.error(
-      "[abuse-mailbox-unsubscribe] no ABUSE_UNSUBSCRIBE_SECRET or " +
-      "AVERROW_INTERNAL_SECRET configured — failing closed",
+      "[abuse-mailbox-unsubscribe] ABUSE_UNSUBSCRIBE_SECRET not " +
+      "configured — failing closed (set via `wrangler secret put`)",
     );
     return new Response("Service not configured", { status: 503 });
   }

@@ -407,11 +407,13 @@ export async function sendAck(
   // for senders Gmail considers "bulk-adjacent" and a strong positive
   // reputation signal regardless of volume.
   const { unsubscribeUrl } = await import("../handlers/abuseMailboxUnsubscribe");
+  // L5: unsubscribeUrl returns null when ABUSE_UNSUBSCRIBE_SECRET is
+  // unset — omit the headers entirely rather than emit a broken link.
   const unsubUrl = await unsubscribeUrl(env, cleanedTo, ctx.messageId);
-  const extraHeaders = {
+  const extraHeaders = unsubUrl ? {
     "List-Unsubscribe": `<${unsubUrl}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-  };
+  } : undefined;
 
   const res = await sendViaResend(env.RESEND_API_KEY, cleanedTo, subject, html, text, extraHeaders, ctx.inboundAlias);
   if (!res.ok) {
@@ -805,11 +807,13 @@ export async function sendDetermination(
   const subject = `Averrow · ${v.label} (Ref: ${ref})`;
 
   const { unsubscribeUrl } = await import("../handlers/abuseMailboxUnsubscribe");
+  // L5: unsubscribeUrl returns null when ABUSE_UNSUBSCRIBE_SECRET is
+  // unset — omit the headers entirely rather than emit a broken link.
   const unsubUrl = await unsubscribeUrl(env, cleanedTo, ctx.messageId);
-  const extraHeaders = {
+  const extraHeaders = unsubUrl ? {
     "List-Unsubscribe": `<${unsubUrl}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-  };
+  } : undefined;
 
   const res = await sendViaResend(
     env.RESEND_API_KEY,
