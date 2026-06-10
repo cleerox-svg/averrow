@@ -1,3 +1,5 @@
+> Archived 2026-06-10: superseded by AVERROW_UI_STANDARD.md + design-system tokens.css.
+
 # TRUST RADAR — VISUAL DESIGN SPECIFICATION
 
 ## Claude Code Build Reference

@@ -88,7 +88,7 @@ jobs:
       # step the Worker deploys with no Astro output and every public
       # page falls through to the dashboard.html SPA fallback in
       # routes/public.ts:356. Added 2026-05 after R7 cutover went
-      # live missing this step — see audit-screenshots/r8-*.png.
+      # live missing this step — see docs/archive/audit-screenshots-2026-05/r8-*.png.
       - name: Build Astro marketing site (@averrow/marketing — /)
         working-directory: packages/averrow-marketing
         run: pnpm run build

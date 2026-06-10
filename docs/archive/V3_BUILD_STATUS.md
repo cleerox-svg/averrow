@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time v3 build status snapshot (2026-05-08 session).
+
 # v3 Build Status — 2026-05-08 session
 
 Snapshot of what landed in this session and what's left for v3

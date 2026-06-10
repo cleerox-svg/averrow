@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time v3 Phase 0 audit (2026-05-07); still cited by kept ADRs in docs/v3/.
+
 # Phase 0 — §8.6 Customer-Profile Audit
 
 **Date run:** 2026-05-07

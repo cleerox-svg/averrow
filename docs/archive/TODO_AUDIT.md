@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time claims-vs-reality audit (2026-03-21).
+
 # TRUST RADAR — TODO AUDIT
 
 ## Claims vs. Reality

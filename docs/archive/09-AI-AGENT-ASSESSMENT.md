@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time agent stats (2026-03-28); superseded by docs/AGENT_AUDIT.md; dark web monitor since built.
+
 # AI Agent Assessment + Advancement Plan
 
 ## Current Performance Audit

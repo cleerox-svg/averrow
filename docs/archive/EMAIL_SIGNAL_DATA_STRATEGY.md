@@ -1,3 +1,5 @@
+> Archived 2026-06-10: executed — email security posture engine + DMARC receiver shipped; see docs/EMAIL_SECURITY_ENGINE.md.
+
 # EMAIL SIGNAL DATA STRATEGY — Trust Radar
 
 ## The Goal

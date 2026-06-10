@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time v3 Phase 0 closeout (2026-05-07).
+
 # Phase 0 — Closeout
 
 **Status:** Closeout (Phase 0 step 8 — operator-action list)

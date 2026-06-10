@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time production ops investigation (2026-05-07); incidents resolved.
+
 # Bundle F — Production Ops Investigation
 **Date:** 2026-05-07
 **Trigger:** UI audit (`docs/UI_AUDIT_2026-05-06.md`) flagged 4 live production issues (C5, C6, C7, C12)

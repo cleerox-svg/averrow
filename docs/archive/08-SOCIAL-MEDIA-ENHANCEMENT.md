@@ -1,3 +1,5 @@
+> Archived 2026-06-10: roadmap item substantially shipped — instagram/reddit/telegram coverage live; current doc is docs/SOCIAL_MONITORING.md.
+
 # Enhanced Social Media Monitoring
 
 ## Current State

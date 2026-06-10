@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time follow-up to UI_AUDIT_2026-05-06; fixes shipped.
+
 # UI Audit follow-up — what shipped, what's deferred, what needs scoping
 
 **Date:** 2026-05-07

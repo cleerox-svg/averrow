@@ -1,3 +1,5 @@
+> Archived 2026-06-10: decision executed — Astro marketing site shipped (packages/averrow-marketing).
+
 # Marketing Site Rebuild — Stack Evaluation
 
 > **Status:** Recommendation pending sign-off

@@ -12,8 +12,25 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/auth/refresh` | Cookie | Refresh access token |
 | POST | `/api/auth/logout` | Cookie | Logout and clear session |
 | GET | `/api/auth/me` | User | Get current user info |
+| POST | `/api/auth/magic-link/request` | — (rate-limited) | Request a magic sign-in link by email. Body: `{ email, return_to? }` |
+| GET | `/api/auth/magic-link/:token` | — (rate-limited) | Verify magic link from the email body; mints a session and 302s to the SPA like the OAuth callback |
+| GET | `/api/profile` | User | Get editable profile (display_name, timezone, theme_preference). Distinct from `/api/auth/me` (read-only session bootstrap) |
+| PATCH | `/api/profile` | User | Update a partial set of profile fields; pass `null` to clear a field back to its default |
 | GET | `/api/invites/:token` | — | Validate an invite token before acceptance |
 | GET | `/invite` | — | Invite landing page (HTML) |
+
+### Passkeys (WebAuthn)
+
+Registration is auth-required (passkey is added to a signed-in user). Authentication is public (it produces a fresh session).
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/passkeys/register/begin` | User | Begin passkey registration (returns WebAuthn creation options) |
+| POST | `/api/passkeys/register/finish` | User | Finish passkey registration (verifies attestation) |
+| POST | `/api/passkeys/auth/begin` | — (rate-limited) | Begin passkey authentication (returns WebAuthn request options) |
+| POST | `/api/passkeys/auth/finish` | — (rate-limited) | Finish passkey authentication; mints a session |
+| GET | `/api/passkeys` | User | List the caller's registered passkeys |
+| DELETE | `/api/passkeys/:id` | User | Delete one of the caller's passkeys |
 
 ## Public Endpoints (No Auth)
 
@@ -33,6 +50,10 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/brand-scan/public/:id` | Get public scan results |
 | GET | `/api/stats/public` | Public platform statistics |
 | POST | `/api/contact` | Contact form submission |
+| POST | `/api/leads` | Lead capture (rate-limited) |
+| POST | `/api/abuse-mailbox/unsubscribe` | RFC 8058 one-click unsubscribe target for abuse-mailbox responder emails. Token is an HMAC of the email address — no auth, no body |
+| GET | `/api/abuse-mailbox/unsubscribe` | Manual-click fallback for the unsubscribe link (same HMAC token gate) |
+| POST | `/api/stripe/webhook` | Stripe billing lifecycle webhook. No bearer auth — the handler verifies the `Stripe-Signature` HMAC before trusting any payload |
 | GET | `/status` | Public platform status page (HTML). Server-rendered 30-day uptime rollup with per-day bars per category (Feeds / Agents / Processing). Inline script polls `/api/v1/public/platform-status` every 60s for live updates. |
 | GET | `/status/incidents` | Public incident archive (HTML). Lists every public incident, newest first, grouped by month. Linked from the recent-incidents section on `/status`. Same visibility gate as the rest. |
 | GET | `/status/feed.xml` | RSS 2.0 feed of public incidents (Content-Type `application/rss+xml`). Most recent 50, newest first by latest activity. Each item links to the `/status/incidents/:id` permalink. Cached 5 min. |
@@ -74,9 +95,16 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/brands/monitored` | Staff | Monitored brands |
 | GET | `/api/brands/stats` | Staff | Brand aggregate statistics |
 | GET | `/api/brands/movers` | Staff | 7-day movers (rising / falling by active threat delta) |
+| GET | `/api/brands/aggregate/composition` | Staff | Catalog composition aggregate (cachedValue, 5-min TTL) |
+| GET | `/api/brands/aggregate/email-security` | Staff | Email-security posture aggregate across the catalog |
+| GET | `/api/brands/aggregate/posture` | Staff | Brand posture aggregate |
+| GET | `/api/brands/aggregate/pressure` | Staff | Threat-pressure aggregate |
 | POST | `/api/brands/monitor` | Admin | Add brand to monitoring |
 | DELETE | `/api/brands/monitor/:id` | Admin | Remove brand from monitoring |
 | GET | `/api/brands/:id` | Staff | Get brand detail |
+| GET | `/api/brands/:id/domains` | Staff | Domains associated with the brand |
+| GET | `/api/brands/:id/firmographics` | Staff | Brand firmographic data (SEC/Wikidata enrichment) |
+| GET | `/api/brands/:id/score-history` | Staff | Brand score snapshots over time (`brand_score_snapshots`) |
 | GET | `/api/brands/:id/threats` | Staff | Brand's active threats |
 | GET | `/api/brands/:id/threats/locations` | Staff | Threat geo locations |
 | GET | `/api/brands/:id/threats/timeline` | Staff | Threat timeline |
@@ -99,19 +127,13 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/brands/:id/social-profiles/:profileId/assess` | Staff | Re-assess a social profile |
 | POST | `/api/brands/:id/compute-score` | Staff | Recompute brand threat score |
 
-## Brand Profiles (DEPRECATED)
+## Brand Profiles (RETIRED 2026-05-07)
 
-> These endpoints support the social monitoring system. They will be replaced when social data is unified with the core brand model.
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/brand-profiles` | User | Create brand profile |
-| GET | `/api/brand-profiles` | User | List brand profiles |
-| GET | `/api/brand-profiles/:id` | User | Get brand profile |
-| PATCH | `/api/brand-profiles/:id` | User | Update brand profile |
-| DELETE | `/api/brand-profiles/:id` | User | Delete brand profile |
-| POST | `/api/brand-profiles/:id/handles` | User | Update official handles |
-| GET | `/api/brand-profiles/:id/handles` | User | Get official handles |
+> The `/api/brand-profiles*` endpoints were retired on 2026-05-07. All seven
+> paths (POST/GET `/api/brand-profiles`, GET/PATCH/DELETE `/api/brand-profiles/:id`,
+> POST/GET `/api/brand-profiles/:id/handles`) remain registered as tombstones that
+> return `410 Gone` with a pointer to `/api/orgs/:orgId/brands`.
+> See `docs/v3/BRAND_PROFILES_DEPRECATION.md`.
 
 ## Social Monitoring
 
@@ -133,6 +155,8 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/threats/geo-clusters` | Staff | Geographic clusters |
 | GET | `/api/threats/attack-flows` | Staff | Attack flow visualization |
 | GET | `/api/threats/heatmap` | Staff | Paginated, KV-cached threat heatmap data |
+| GET | `/api/threats/aggregate` | Staff | Slice-aware catalog aggregate for the Threats Intel surface. Honors the same filters as the list endpoint; org-scope-gated so tenants get their own slice |
+| GET | `/api/threats/inflow` | Staff | Stacked-area inflow series for the Threats page. Reads `threat_cube_status` (no raw threat COUNTs). Accepts `?window=24h\|7d` |
 | GET | `/api/threats/:id` | Staff | Get threat detail |
 | PATCH | `/api/threats/:id` | Admin | Update threat status |
 | POST | `/api/threats/enrich-geo` | Admin | Enrich threats with geo data |
@@ -151,6 +175,9 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | POST | `/api/feeds/:id/trigger` | Admin | Trigger single feed |
 | POST | `/api/feeds/:id/reset` | Admin | Reset feed state |
 | POST | `/api/feeds/:id/unpause` | Admin | Clear auto-pause: enabled=1, paused_reason=NULL, consecutive_failures=0, health_status='healthy' |
+| POST | `/api/feeds/:id/pause` | Admin | Manually pause a feed |
+| POST | `/api/feeds` | — | Stub — always returns `501` ("Feed creation via API deferred to v2 admin module") |
+| DELETE | `/api/feeds/:id` | — | Stub — always returns `501` ("Feed deletion via API deferred to v2 admin module") |
 | POST | `/api/feeds/trigger-all` | Admin | Trigger all feeds |
 | POST | `/api/feeds/trigger-tier/:tier` | Admin | Trigger feeds by tier |
 | GET | `/api/feeds/overview` | User | Aggregated feed-health overview (tier summary, last-run freshness) |
@@ -175,6 +202,13 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/admin/agents/api-usage` | Admin | AI API usage stats |
 | GET | `/api/admin/agents/config` | Admin | Agent configuration |
 | GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor, top-N by threat count. Powers the Admin "Attribution Backlog" queue. KV cached 5 min. PR-B from 2026-05-16 audit. |
+| GET | `/api/admin/agents/approvals/pending` | Super Admin | List pending agent deployment approvals (AGENT_STANDARD §12.1, Phase 5.4a) |
+| GET | `/api/admin/agents/approvals/:id` | Super Admin | Get an approval record |
+| GET | `/api/admin/agents/approvals/:id/review-bundle` | Super Admin | Full review bundle for an approval |
+| POST | `/api/admin/agents/approvals/:id/approve` | Super Admin | Approve an agent deployment |
+| POST | `/api/admin/agents/approvals/:id/reject` | Super Admin | Reject an agent deployment |
+| POST | `/api/admin/agents/approvals/:id/request-changes` | Super Admin | Request changes on an agent deployment |
+| GET | `/api/admin/agents/:id/module-metadata` | Super Admin | AgentModule declared fields (supervision, budget, reads/writes, outputs) + current-month budget-vs-spend rollup for the agent detail UI (Phase 5.5) |
 | GET | `/api/agents/token-usage` | User | Agent token usage breakdown |
 | POST | `/api/agents/:name/toggle` | Admin | Enable/disable agent |
 | POST | `/api/agents/:name/reset-circuit` | Admin | Reset agent circuit breaker |
@@ -199,6 +233,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/briefings` | Staff | List briefings |
+| GET | `/api/briefings/latest` | Staff | Most recent briefing |
 | GET | `/api/briefings/history` | Staff | Briefing history |
 | GET | `/api/briefings/:id` | Staff | Get briefing detail |
 | POST | `/api/briefings/generate` | Staff | Generate new briefing |
@@ -236,6 +271,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/campaigns/geo/:slug/brands` | Staff | Targeted brands heat map data |
 | GET | `/api/campaigns/geo/:slug/asns` | Staff | ASN cluster analysis (marks known adversary ASNs) |
 | GET | `/api/campaigns/geo/:slug/attack-types` | Staff | Attack type breakdown with severity counts |
+| POST | `/api/campaigns/geo/:slug/assessment` | Staff | Generate AI assessment for the campaign |
 
 ## Providers
 
@@ -251,6 +287,7 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/providers/:id/brands` | Staff | Brands affected by provider |
 | GET | `/api/providers/:id/timeline` | Staff | Provider timeline |
 | GET | `/api/providers/:id/locations` | Staff | Provider locations |
+| GET | `/api/providers/:id/clusters` | Staff | Infrastructure clusters on this provider (distinct from the cross-provider `/api/providers/clusters`) |
 
 ### Provider Endpoints v2
 
@@ -298,6 +335,7 @@ HIGH/CRITICAL impersonation findings create `alerts` rows of type
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET | `/api/appstore/overview` | Staff | Cross-brand app-store dashboard: one row per monitored brand with severity-bucketed counts and schedule info. |
 | GET | `/api/appstore/monitor/:brandId` | Staff | List app-store listings + schedule for a brand. Filters: `store`, `classification`, `severity`, `status`, `limit`, `offset`. |
 | POST | `/api/appstore/scan/:brandId` | Staff | Trigger an immediate iOS scan + AI drain for this brand. |
 | PATCH | `/api/appstore/:id` | Staff | Update a listing's `classification` or `status` (manual override, wins over AI/system). |
@@ -322,6 +360,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/darkweb/overview` | Staff | Cross-brand dashboard: one row per monitored brand with severity-bucketed counts and schedule info. Admin scope sees all; tenant scope sees `monitored_brands.added_by = :userId`. |
+| GET | `/api/darkweb/mentions` | Staff | Cross-brand mentions list (org-scope aware) |
 | GET | `/api/darkweb/mentions/:brandId` | Staff | List mentions + schedule for a brand. Filters: `source`, `classification`, `severity`, `match_type`, `status`, `limit`, `offset`. |
 | POST | `/api/darkweb/scan/:brandId` | Staff | Trigger an immediate scan + AI drain for this brand. |
 | PATCH | `/api/darkweb/:id` | Staff | Update a mention's `classification` or `status` (manual override, wins over AI/system). |
@@ -363,6 +402,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 |--------|------|------|-------------|
 | GET | `/api/alerts` | Staff | List alerts |
 | GET | `/api/alerts/stats` | Staff | Alert statistics |
+| GET | `/api/alerts/triage-summary` | Staff | Auto-triage rollup (dismissed/kept counts) for the alerts surface |
 | GET | `/api/alerts/:id` | Staff | Get alert detail |
 | PATCH | `/api/alerts/:id` | Staff | Update alert status |
 | POST | `/api/alerts/bulk-acknowledge` | Staff | Bulk acknowledge alerts |
@@ -378,7 +418,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/notifications` | User | List notifications. Query params: `state=inbox\|snoozed\|done\|all` (default `inbox` hides done + unexpired snoozed), `unread=true`, `type`, `severity`, `q`, `cursor`, `limit` |
 | GET | `/api/notifications/unread-count` | User | Unread count |
 | GET | `/api/notifications/preferences` | User | Notification preferences |
-| PUT | `/api/notifications/preferences` | User | Update preferences |
+| PATCH | `/api/notifications/preferences` | User | Update preferences |
 | POST | `/api/notifications/:id/read` | User | Mark as read |
 | POST | `/api/notifications/read-all` | User | Mark all as read |
 | POST | `/api/notifications/:id/snooze` | User | Snooze until ISO-8601 timestamp (body: `{until}`) |
@@ -388,6 +428,17 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/notifications/subscriptions` | User | List per-brand subscriptions joined with brand metadata |
 | PUT | `/api/notifications/subscriptions/:brandId` | User | Set level (watching\|default\|ignored), optional `snoozed_until` |
 | DELETE | `/api/notifications/subscriptions/:brandId` | User | Remove subscription |
+
+### Web Push devices
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/notifications/config` | — | Push config bootstrap (VAPID public key). No auth — nothing user-specific |
+| GET | `/api/notifications/devices` | User | Caller's push devices (`push_subscriptions`). Distinct from `/api/notifications/subscriptions` (per-brand watch levels) |
+| POST | `/api/notifications/subscribe` | User | Register a PushManager subscription for the caller |
+| DELETE | `/api/notifications/subscribe/:id` | User | Remove a push subscription by id |
+| DELETE | `/api/notifications/unsubscribe` | User | Remove a push subscription by endpoint URL |
+| POST | `/api/notifications/test` | User | Send a test push notification to the caller's devices |
 
 ## Trends
 
@@ -490,6 +541,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/admin/abuse-mailbox/messages/:id/unthrottle` | Super-admin | Clear rate-limit flag on a message + queue for next classifier pass (PR-AT) |
 | PATCH | `/api/admin/abuse-mailbox/messages/:id/status` | Super-admin | Update message status (new / investigating / resolved / dismissed) — PR-BD |
 | GET | `/api/admin/abuse-mailbox/intel` | Super-admin | Aggregated intel summary from `deep_analysis` rows: active campaigns, recent takedown recommendations, top hosting providers, 7d/30d analyzed counts (PR-BD) |
+| POST | `/api/admin/abuse-mailbox/run-classifier` | Admin | Run the abuse-mailbox AI classifier over the pending pile (`?limit=&offset=`). Idempotent on retry; parse-failure rows stay `pending` |
 
 ## Data Export
 
@@ -507,6 +559,11 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 |--------|------|------|-------------|
 | GET | `/api/admin/stats` | Admin | Platform statistics |
 | GET | `/api/admin/pipeline-status` | Admin | Pipeline backlog counts with trend direction, owning agent, last run time. Reads from pre-computed backlog_history + agent_runs — no COUNT queries on threats. 5-min KV cache. |
+| GET | `/api/admin/pipeline-status/:id` | Admin | Per-pipeline drill-down detail |
+| GET | `/api/admin/metrics/d1-budget` | Admin | Metrics page — D1 read/write budget section |
+| GET | `/api/admin/metrics/ai-spend` | Admin | Metrics page — AI spend breakdown |
+| GET | `/api/admin/metrics/geo-coverage` | Admin | Metrics page — geo enrichment coverage |
+| GET | `/api/admin/metrics/feed-failures` | Admin | Metrics page — feed failure rates |
 | GET | `/api/admin/health` | Admin | System health |
 | GET | `/api/admin/budget/ledger-health` | Admin | Budget ledger fill diagnostic — surfaces per-call-site rows in the last 24h, flags any expected agentId that has not landed a row, and returns BudgetManager.getStatus() so operators can spot-check monthly_spend / throttle_level after the wrapper refactor. |
 | GET | `/api/admin/metrics/ai-cost-optimization` | Admin | Measurement endpoint for the AI cost-reduction plan. Returns per-call efficiency metrics (calls, in/out tokens, cost) for the three focus agents (cartographer, analyst, sentinel) across 24h/7d/30d windows, plus cartographer's 30-day daily series + a static lever roster (id, title, target_agent, status, estimated_savings, indicator). Powers the Cost Optimization tab on /admin/metrics. 5-min KV cache. |
@@ -577,17 +634,26 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/admin/backfill-domain-geo` | Admin | Resolve malicious domains → IP → geo + hosting provider (Cloudflare DoH, 500/call) |
 | POST | `/api/admin/geoip-refresh` | Admin | Trigger the `geoip_refresh` agent. Polls MaxMind for a new GeoLite2-City release; auto-reimports only if the .sha256 differs from the last loaded version. Body `{ "forceReload": true }` bypasses the version guard. Auto-runs Sundays at 02:00 UTC. |
 | GET  | `/api/admin/geoip-status` | Admin | Dedicated GeoIP DB status: row count, last refresh, last error. Used by the Pipeline Automation card. |
+| POST | `/api/admin/geoip/import-from-r2` | Admin | Kick a GeoIP import workflow from a pre-staged R2 object (`?key=<r2-object-key>&sha256=<hash>`). Returns 202 with the workflow instance id; poll `/api/admin/geoip-status` for progress. |
 | POST | `/api/admin/backfill-brand-match` | SuperAdmin | Backfill brand matching |
 | POST | `/api/admin/backfill-brand-enrichment` | Admin | Populate brand logo_url, website_url, hq_lat/lng/country via Clearbit + DNS + ipapi (50/call) |
 | POST | `/api/admin/backfill-brand-sector` | Admin | Classify brand sector via Haiku + fetch RDAP registrant data (20/call) |
 | POST | `/api/admin/backfill-safe-domains` | SuperAdmin | Backfill safe domains |
 | POST | `/api/admin/backfill-ai-attribution` | SuperAdmin | Backfill AI attribution |
+| POST | `/api/admin/backfill-social-config` | SuperAdmin | Backfill brand social-monitoring config |
+| GET | `/api/admin/brand-candidates` | Admin | List brand candidates awaiting promotion |
+| POST | `/api/admin/brand-candidates/aggregate` | Admin | Aggregate candidate brands from threat data |
+| POST | `/api/admin/brand-candidates/:id/promote` | Admin | Promote a candidate into the brand catalog |
+| POST | `/api/admin/brand-candidates/:id/reject` | Admin | Reject a brand candidate |
+| POST | `/api/admin/brand-scores/recompute-all` | Admin | Recompute brand scores across the full catalog (same path as the daily `brand_scores` cron) |
+| POST | `/api/admin/brand-firmographics/enrich` | Admin | Run the SEC/Wikidata firmographics enricher batch |
 | POST | `/api/admin/import-tranco` | SuperAdmin | Import Tranco top sites |
 | POST | `/api/admin/honeypot/generate` | SuperAdmin | Generate honeypot sites |
 | POST | `/api/admin/cube-backfill` | Admin | Backfill `threat_cube_geo` / `threat_cube_provider` OLAP tables via streaming NDJSON. Query params: `cube=geo\|provider\|brand\|all` (required), `days=1..365` (default 30), `dry_run=true\|false`, `resume_from=<hour_bucket>`. Returns one NDJSON line per hour plus a summary line with `resume_from` if the 25s budget is hit. |
 | GET | `/api/admin/system-health` | Admin | System health dashboard |
 | GET | `/api/admin/budget/status` | Admin | AI budget status and spend |
 | GET | `/api/admin/budget/breakdown` | Admin | Budget breakdown by agent |
+| PATCH | `/api/admin/budget/config` | Super Admin | Update AI budget config (monthly cap, throttle thresholds) |
 | GET | `/api/admin/organizations` | `read_customers` (analyst, sales, support, admin, super_admin) | List all organizations |
 | POST | `/api/admin/organizations` | Super Admin | Create organization |
 | GET | `/api/admin/organizations/:orgId` | `read_customers` (analyst, sales, support, admin, super_admin) | Get organization detail |
@@ -606,6 +672,14 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | PATCH | `/api/admin/customers/:orgId/pricing-overrides/:id` | `edit_pricing` (sales, billing, admin, super_admin) | Revoke a pricing override |
 | POST | `/api/admin/discover-social-batch` | Super Admin | Run social discovery batch |
 | POST | `/api/admin/pathfinder-enrich` | Super Admin | Pathfinder AI enrichment batch |
+| POST | `/api/admin/orgs/:orgId/modules` | Super Admin (handler-enforced) | Activate / suspend a module on an org. Body: `{ module_key, action: activate\|suspend, trial_ends_at?, config_json? }` |
+| POST | `/api/admin/orgs/:orgId/sync-plan-modules` | Super Admin (handler-enforced) | "Sync now": align an org's `org_modules` rows with its current `plan_id` (for enterprise/custom-billed orgs that bypass the Stripe webhook path) |
+| POST | `/api/admin/orgs/sync-all-plan-modules` | Super Admin (handler-enforced) | Bulk-sync every org with a `plan_id` (companion to the 0164 backfill). Idempotent |
+| POST | `/api/admin/orgs/:orgId/takedown-authorization` | Super Admin (handler-enforced) | Record a signed takedown authorization on a tenant's behalf (support-style cases) |
+| POST | `/api/admin/push/generate-vapid-keys` | Super Admin | Generate a VAPID key pair for the Web Push backend (bootstrap) |
+| GET | `/api/admin/push/config` | Super Admin | Read Web Push config |
+| PUT | `/api/admin/push/config` | Super Admin | Update Web Push config |
+| POST | `/api/admin/push/test` | Super Admin | Send a test push to the caller |
 
 ARCHITECT is now a standard agent triggered via `POST /api/agents/architect/trigger` (Admin auth, see [Agents section](#agents)). The full audit pipeline (collect → analyze → synthesize) runs inline in one execute() call. The markdown report, computed scorecard, and per-section analyses are stored in the latest `agent_outputs.details` row for `agent_id='architect'`; read them via `GET /api/agents/architect/outputs?limit=5`.
 
@@ -634,8 +708,10 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | POST | `/api/orgs/:orgId/invite` | Admin (org) | Invite a user to the organization |
 | DELETE | `/api/orgs/:orgId/members/:userId` | Admin (org) | Remove a member |
 | PATCH | `/api/orgs/:orgId/members/:userId` | Admin (org) | Update a member role |
+| POST | `/api/orgs/:orgId/transfer-ownership` | Owner (org) | Atomically demote the current owner to `admin` and promote the target member to `owner`. Body: `{ new_owner_user_id }` |
 | GET | `/api/orgs/:orgId/invites` | Admin (org) | List outstanding invites |
 | DELETE | `/api/orgs/:orgId/invites/:inviteId` | Admin (org) | Revoke an invite |
+| POST | `/api/orgs/:orgId/invites/:inviteId/resend` | Admin (org) | Resend an outstanding invite email |
 | GET | `/api/orgs/:orgId/brands` | Member | List brands assigned to the org |
 | POST | `/api/orgs/:orgId/brands` | Admin (org) | Assign a brand to the org |
 | DELETE | `/api/orgs/:orgId/brands/:brandId` | Admin (org) | Unassign a brand |
@@ -664,9 +740,41 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | GET | `/api/orgs/:orgId/takedowns` | Member | List takedown requests |
 | GET | `/api/orgs/:orgId/takedowns/:id` | Member | Get takedown detail |
 | PATCH | `/api/orgs/:orgId/takedowns/:id` | Admin (org) | Update takedown |
+| GET | `/api/orgs/:orgId/takedown-authorization` | Member | Read the org's active takedown authorization |
+| POST | `/api/orgs/:orgId/takedown-authorization` | Admin (org) | Sign a takedown authorization (org admin/owner or super_admin) |
+| DELETE | `/api/orgs/:orgId/takedown-authorization` | Admin (org) | Revoke the active takedown authorization |
+| GET | `/api/orgs/:orgId/billing` | Member | Tenant billing summary — same shape as `/api/admin/customers/:orgId/pricing` but scoped to the caller's org |
+| POST | `/api/orgs/:orgId/billing/checkout-session` | Member | Create a Stripe Checkout session for plan purchase |
+| POST | `/api/orgs/:orgId/billing/portal-session` | Member | Create a Stripe customer-portal session (requires an existing Stripe customer) |
+
+### Tenant Modules (v3 Phase A)
+
+Module reads are member-gated and additionally check the module is active on the org.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/orgs/:orgId/modules` | Member | List the org's modules + per-module monthly usage |
+| GET | `/api/orgs/:orgId/modules/domain` | Member | Domain module summary |
+| GET | `/api/orgs/:orgId/modules/domain/brands/:brandId` | Member | Domain module per-brand detail |
+| GET | `/api/orgs/:orgId/modules/social` | Member | Social module summary |
+| GET | `/api/orgs/:orgId/modules/social/brands/:brandId` | Member | Social module per-brand detail |
+| GET | `/api/orgs/:orgId/modules/app-store` | Member | App-store module summary |
+| GET | `/api/orgs/:orgId/modules/app-store/brands/:brandId` | Member | App-store module per-brand detail |
+| GET | `/api/orgs/:orgId/modules/dark-web` | Member | Dark-web module summary |
+| GET | `/api/orgs/:orgId/modules/dark-web/mentions` | Member | Org-wide dark-web mentions list |
+| GET | `/api/orgs/:orgId/modules/dark-web/brands/:brandId` | Member | Dark-web module per-brand findings |
+| GET | `/api/orgs/:orgId/modules/abuse-mailbox` | Member | Abuse-mailbox module summary |
+| GET | `/api/orgs/:orgId/modules/abuse-mailbox/messages` | Member | List the org's abuse-inbox messages |
+| GET | `/api/orgs/:orgId/modules/abuse-mailbox/messages/:id` | Member | Abuse-inbox message detail |
+| PATCH | `/api/orgs/:orgId/modules/abuse-mailbox/messages/:id/status` | Member | Update message status (new / investigating / resolved / dismissed) |
+| GET | `/api/orgs/:orgId/modules/abuse-mailbox/intel` | Member | Aggregated abuse-mailbox intel summary for the org |
+| GET | `/api/orgs/:orgId/modules/trademark` | Member | Trademark module summary |
+| GET | `/api/orgs/:orgId/modules/trademark/brands/:brandId` | Member | Trademark module per-brand findings |
 | POST | `/api/orgs/:orgId/modules/trademark/brands/:brandId/assets` | Org analyst+ | Upload a logo/wordmark image (JSON `{asset_type, asset_name?, content_type, data_base64, registration_*?}`, ≤2 MB). Stores bytes in R2, computes SHA-256, inserts a `trademark_assets` row (phash deferred to Phase 2). |
 | GET | `/api/orgs/:orgId/modules/trademark/assets/:assetId/image` | Member | Auth-gated image stream for an uploaded asset (verifies the asset's brand belongs to the org). |
 | DELETE | `/api/orgs/:orgId/modules/trademark/assets/:assetId` | Org analyst+ | Retire an asset + delete its R2 object. |
+| GET | `/api/orgs/:orgId/modules/threat-actor` | Member | Threat-actor module summary |
+| GET | `/api/orgs/:orgId/modules/threat-actor/actors/:actorId` | Member | Threat-actor module actor detail |
 
 ## Internal Endpoints
 
@@ -682,7 +790,14 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 | GET | `/api/internal/agents/cartographer/backfill-workflow/:instanceId` | Check backfill workflow status |
 | POST | `/api/internal/agents/nexus/workflow` | Dispatch NEXUS as a durable Workflow |
 | GET | `/api/internal/agents/nexus/workflow/:instanceId` | Check NEXUS workflow status |
+| POST | `/api/internal/agents/cartographer/main-workflow` | Dispatch the Cartographer main run as a durable Workflow (PR-M manual validation hook) |
 | POST | `/api/internal/briefing/send` | Manually generate and email the daily briefing |
+| POST | `/api/internal/cubes/brand-summaries/rebuild` | Out-of-band rebuild of the dark-web + app-store brand summary cubes (idempotent; use when you can't wait for cube_healer's 6-hour tick) |
+| GET | `/api/internal/geoip-status` | MCP-callable mirror of `/api/admin/geoip-status` (getGeoMmdbStatus: row count, shadow progress, recent attempts) |
+| POST | `/api/internal/geoip-refresh` | MCP-callable mirror of `/api/admin/geoip-refresh`. Body `{ "forceReload": true }` bypasses the skip-if-current guard |
+| GET | `/api/internal/taxii/discover` | TAXII server discovery helper (`?root_url=&auth_type=&api_key_env=&username=`). Walks api_roots → collections and returns a flat inventory. Used by `scripts/taxii-discover.sh` |
+| POST | `/api/internal/notifications/sweep-stale-platform` | Mark `platform_*` notifications older than `?olderThanMinutes` (default 60) as done |
+| POST | `/api/internal/auth/mint-service-jwt` | Mint a 90-day service-account JWT for averrow-mcp UI verification tools |
 | POST | `/api/internal/dns-queue/reap` | AVERROW_INTERNAL_SECRET. On-demand DNS-queue reaper (normally Navigator-dispatched daily at hour===0). Sweeps stale rows (threat flipped inactive) and attempt-capped/exhausted rows — marking their threats `dns_exhausted_at` and deleting the queue rows. Idempotent + soft-capped; safe to call repeatedly to drain a backlog. |
 | GET | `/api/certstream/stats` | CertStream Durable Object stats |
 | POST | `/api/certstream/reload-brands` | Reload brand watchlist in CertStream DO |

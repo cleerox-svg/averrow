@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time tenant audit; superseded by the v3 tenant build (docs/v3 ADRs).
+
 # Organizations module — live tenant audit (2026-05-07)
 
 **Auth context:** logged in as `service-mcp@averrow.local` (super_admin, no org binding) per the JWT minted by `/api/internal/auth/mint-service-jwt`. Empty-state rendering is real for any super_admin without an org; data-state rendering for cleeroxtest@gmail.com (org_id=1, role `analyst`, Acme Corp) follows the same component tree with populated data.

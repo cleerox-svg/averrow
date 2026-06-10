@@ -1,3 +1,5 @@
+> Archived 2026-06-10: roadmap item shipped — spam-trap war room live (averrow-ops features/spam-trap).
+
 # Spam Trap — Super Admin War Room
 
 ## Concept

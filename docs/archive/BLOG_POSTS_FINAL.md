@@ -1,3 +1,5 @@
+> Archived 2026-06-10: blog content shipped on the marketing site; point-in-time content plan.
+
 # TRUST RADAR BLOG POSTS — FINAL CONTENT
 
 ## For Claude Code: Embed these verbatim in blog post templates.

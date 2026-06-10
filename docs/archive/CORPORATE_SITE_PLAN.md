@@ -1,3 +1,5 @@
+> Archived 2026-06-10: corporate site shipped; plan predates the Averrow rebrand (references trustradar.ca).
+
 # TRUST RADAR — CORPORATE SITE PLAN
 
 ## Full Site Architecture & Content Strategy
