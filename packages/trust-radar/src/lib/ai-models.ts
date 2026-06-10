@@ -16,3 +16,14 @@
  * Haiku call. Reverted to claude-haiku-4-5-20251001 the same day.
  */
 export const HOT_PATH_HAIKU = "claude-haiku-4-5-20251001" as const;
+
+/**
+ * Driver model for the agentic tool-use loop (Campaign Hunter and future
+ * real agents). Sonnet 4.6 is the cost/quality sweet spot for multi-turn
+ * tool use (adaptive thinking + structured outputs); Haiku is too weak for
+ * open-ended pivoting and Opus is reserved for a premium tier.
+ *
+ * Cost reference (per 1M tokens): claude-sonnet-4-6  $3.00 in / $15.00 out.
+ * Must be present in COST_PER_MILLION (lib/budgetManager.ts) for the ledger.
+ */
+export const AGENT_LOOP_SONNET = "claude-sonnet-4-6" as const;

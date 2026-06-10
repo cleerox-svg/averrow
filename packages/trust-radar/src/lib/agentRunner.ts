@@ -54,7 +54,8 @@ export type AgentName =
   | "evidence_assembler"
   | "geoip_refresh"
   | "attributor"
-  | "news_watcher";
+  | "news_watcher"
+  | "campaign_hunter";
 
 export type TriggerType = "scheduled" | "event" | "manual" | "api";
 export type RunStatus = "success" | "partial" | "failed";

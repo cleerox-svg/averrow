@@ -25,6 +25,8 @@ export const COST_PER_MILLION: Record<string, { input: number; output: number }>
   // Current production models
   'claude-haiku-4-5-20251001':   { input: 1.00, output: 5.00 },
   'claude-sonnet-4-5-20250929':  { input: 3.00, output: 15.00 },
+  // Agentic tool-use loop driver (Campaign Hunter) — see lib/ai-models.ts AGENT_LOOP_SONNET
+  'claude-sonnet-4-6':           { input: 3.00, output: 15.00 },
   // Legacy models kept for historical ledger queries + usage reports
   'claude-3-haiku-20240307':     { input: 0.25, output: 1.25 },
   'claude-3-5-haiku-20241022':   { input: 0.80, output: 4.00 },
