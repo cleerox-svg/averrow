@@ -147,14 +147,26 @@ jobs:
       - name: Smoke checks (new code live, assets intact)
         run: |
           set -euo pipefail
-          sleep 10
-          # 1. Homepage renders (server template path)
+          # 1. Site responds (may be served by the static-asset layer OR the worker)
           curl -fsS https://imprsn8.com/ | grep -qi "imprsn" \
             || { echo "::error::Homepage failed to render"; exit 1; }
-          # 2. New security headers prove the patched code is live (audit M5)
-          curl -fsSI https://imprsn8.com/ | grep -qi "x-frame-options" \
-            || { echo "::error::Security headers missing — old code still serving?"; exit 1; }
-          # 3. SPA asset fallback still serves (proves assets were retained)
+          # 2. Security headers on a guaranteed WORKER-routed path prove the
+          #    patched code is live (audit M5). Cannot use "/" — when the SPA
+          #    index.html exists in assets, "/" is served by the asset layer
+          #    without invoking the worker, so worker headers never appear
+          #    there. /dashboard is a server-rendered template with no asset
+          #    file. Must be GET (router.get does not match HEAD). Retry to
+          #    ride out global propagation (~30-60s worst case).
+          ok=""
+          for i in 1 2 3 4 5 6; do
+            if curl -sS -D - -o /dev/null https://imprsn8.com/dashboard | grep -qi "x-frame-options"; then
+              ok=1; break
+            fi
+            echo "Header check attempt $i: not yet, retrying in 10s..."
+            sleep 10
+          done
+          [ -n "$ok" ] || { echo "::error::Security headers missing on /dashboard after 6 attempts — old code may still be serving"; exit 1; }
+          # 3. SPA serves (proves assets were retained by keep_assets)
           login_code=$(curl -sS -o /dev/null -w "%{http_code}" https://imprsn8.com/login)
           if [ "$login_code" != "200" ]; then
             echo "::error::/login returned $login_code — SPA assets may be missing. Roll back via Cloudflare dashboard → Workers → imprsn8 → Deployments."
