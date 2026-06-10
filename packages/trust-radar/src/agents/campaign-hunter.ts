@@ -105,7 +105,7 @@ export const campaignHunterAgent: AgentModule = {
   outputs: [{ type: "insight" }, { type: "diagnostic" }],
   status: "active",
   category: "sync",
-  pipelinePosition: 35,
+  pipelinePosition: 40,
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env } = ctx;

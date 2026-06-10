@@ -108,6 +108,18 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <circle cx="18" cy="28" r="4.5" stroke="currentColor" strokeWidth="0.8" opacity="0.4"/>
     </svg>
   ),
+  campaign_hunter: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      <circle cx="16" cy="16" r="9" stroke="currentColor" strokeWidth="1.4"/>
+      <circle cx="16" cy="16" r="4" stroke="currentColor" strokeWidth="1" opacity="0.5"/>
+      <path d="M16 5V9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.7"/>
+      <path d="M16 23V27" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.7"/>
+      <path d="M5 16H9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.7"/>
+      <path d="M23 16H27" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.7"/>
+      <circle cx="16" cy="16" r="1.4" fill="currentColor"/>
+      <path d="M22.5 22.5L31 31" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+    </svg>
+  ),
   flight_control: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
       <circle cx="18" cy="18" r="14" stroke="currentColor" strokeWidth="1" opacity="0.2"/>

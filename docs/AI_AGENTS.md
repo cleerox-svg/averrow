@@ -437,6 +437,39 @@ The Phase 3 sync-agent class (AGENT_STANDARD §2). Each is HTTP-handler-driven (
 
 ---
 
+## Agentic Agents
+
+The platform's first **real agent** — distinct from the single-shot batch
+classifiers above. Where every other agent gathers context with SQL and makes
+one model call per row, an agentic agent runs a **multi-turn tool-use loop**:
+the model decides which tool to call next, reads the result, and pivots until
+it calls a terminal tool. The existing deterministic pipeline becomes the
+agent's tool substrate. See `docs/AGENTIC_DEEP_SCAN_SPEC.md`.
+
+### Campaign Hunter (`campaign_hunter`)
+
+- **Surface:** `trigger: "api"` — `POST /api/internal/agents/campaign_hunter/run`.
+- **Loop:** `lib/agent-loop.ts` — generic manual tool-use loop (hard turn cap,
+  tool-result threading, audit trail, injectable model call + durable-step seam
+  for the Phase 2 Workflow runtime).
+- **Tools (`lib/hunter-tools.ts`):** four read-only tools over the existing
+  substrate — `brand_overview`, `query_brand_threats`, `provider_history`,
+  `scan_lookalikes` — plus a terminal `submit_report` (strict schema that
+  doubles as the loop terminator). Inputs are Zod-validated; all queries are
+  prepared statements.
+- **Driver model:** `claude-sonnet-4-6` (cost/quality balance for tool use).
+- **Output:** a structured verdict (`active_campaign` / `isolated_threats` /
+  `no_significant_threat`) with confidence, findings, and the full reasoning
+  trail, persisted to `agent_outputs` as an `insight`.
+- **Guardrails:** `costGuard: "enforced"` (global throttle), per-turn
+  `checkAgentBudget`, 12-turn hard cap, read-only tools, `agent_configs.enabled`
+  kill-switch.
+- **Phase 1** runs inline via the standard runner. **Phase 2** moves the loop
+  into a Cloudflare Workflow for durable per-turn checkpointing; live
+  dns/whois lookup tools are also Phase 2.
+
+---
+
 ## Agent Scheduling Summary
 
 The hourly mesh cron is `7 * * * *`. All time gates below use hour-only checks on `event.scheduledTime.getUTCHours()` — never minute gates (see `CLAUDE.md §6 — Cron-audit rule`).

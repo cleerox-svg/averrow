@@ -46,7 +46,8 @@ export type AgentId =
   | 'scan_report'
   | 'social_ai_assessor'
   | 'geo_campaign_assessment'
-  | 'evidence_assembler';
+  | 'evidence_assembler'
+  | 'campaign_hunter';
 
 export interface AgentMetadata {
   id: AgentId;
@@ -419,6 +420,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#A8C878',
     category: 'intelligence',
     pipelinePosition: 36,
+  },
+  campaign_hunter: {
+    id: 'campaign_hunter',
+    displayName: 'Campaign Hunter',
+    codename: 'campaign_hunter',
+    subtitle: 'Agentic investigation — multi-turn tool-use loop that decides its own next step to determine whether a brand is the target of a coordinated campaign (the platform’s first non-batch agent)',
+    color: '#A855F7',
+    category: 'sync',
+    pipelinePosition: 40,
   },
 };
 
