@@ -38,14 +38,15 @@ const httpClient: AuthHttpClient = {
 };
 
 // Tenant has no client-redirect gate — this IS the customer
-// surface. The cookie-based silent refresh is also unused here
-// (tenant doesn't carry a refresh cookie); skipping it keeps the
-// initial paint fast.
+// surface. Cookie-based silent refresh (H5): the access token is
+// memory-only, so every reload bootstraps via the HttpOnly
+// radar_refresh cookie — which the backend sets on every
+// session-issuing flow, tenant logins included.
 const config: AuthProviderConfig = {
   userCacheKey:   'averrow-tenant-user',
   loginPath:      '/api/auth/login?return_to=/tenant/',
   returnToPrefix: '/tenant',
-  refreshMode:    'token-only',
+  refreshMode:    'cookie-refresh',
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {

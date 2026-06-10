@@ -43,7 +43,11 @@ export interface AuthApiResponse<T> {
 export interface AuthHttpClient {
   /** Read the current bearer token (used to gate cache hydration). */
   getToken():       string | null;
-  /** Persist a new access token (and optionally refresh token). */
+  /** Store a new access token — IN MEMORY ONLY (H5,
+   *  SECURITY_AUDIT_2026-06-10). Implementations must never write
+   *  tokens to localStorage/sessionStorage. The `refresh` parameter
+   *  is legacy-shaped and always passed as '' — the refresh token
+   *  lives exclusively in the HttpOnly `radar_refresh` cookie. */
   setTokens(access: string, refresh: string): void;
   /** Clear all tokens locally. Called on logout + 401s. */
   clearTokens():    void;
@@ -99,9 +103,11 @@ export interface AuthProviderConfig {
   /** Called during logout so the host can clear product-specific
    *  side state (e.g. lastSignInMethod, theme overrides). */
   onLogoutCleanup?: () => void;
-  /** Logout-redirect mode. 'cookie-refresh' tries the silent
-   *  refresh path first; 'token-only' skips it (tenant doesn't
-   *  use cookie refresh). Default 'cookie-refresh'. */
+  /** Silent-refresh mode. 'cookie-refresh' (default, and what both
+   *  averrow-ops and averrow-tenant use since H5) attempts the
+   *  HttpOnly-cookie refresh on boot when no access token is in
+   *  memory. 'token-only' skips it — only for hosts that genuinely
+   *  never receive the radar_refresh cookie. */
   refreshMode?:     'cookie-refresh' | 'token-only';
 }
 

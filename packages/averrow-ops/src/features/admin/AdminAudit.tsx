@@ -3,6 +3,7 @@ import { useAuditLog } from '@/hooks/useAuditLog';
 import type { AuditEntry } from '@/hooks/useAuditLog';
 import { Button, Input } from '@/design-system/components';
 import { formatDate } from '@/lib/time';
+import { api } from '@/lib/api';
 
 /* ─── Glass styles ────────────────────────────────────────────────── */
 
@@ -252,7 +253,9 @@ export function AdminAudit() {
   const showTo = Math.min(page * PAGE_SIZE, total);
 
   const handleExport = useCallback(() => {
-    const token = localStorage.getItem('averrow_token');
+    // H5: the access token is memory-only now — read it from the api
+    // client instead of localStorage (which no longer carries tokens).
+    const token = api.getToken();
     const url = `/api/admin/audit/export`;
     // Open in new tab with auth
     const a = document.createElement('a');

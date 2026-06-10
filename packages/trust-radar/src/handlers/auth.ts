@@ -194,6 +194,23 @@ async function completeOAuthCallback(
 }
 
 // ─── Token refresh ──────────────────────────────────────────────
+//
+// H5 (SECURITY_AUDIT_2026-06-10): the refresh token is sourced ONLY
+// from the HttpOnly `radar_refresh` cookie — never from the request
+// body. This is deliberate: every session-issuing flow (OAuth
+// callback, invite acceptance, magic-link verify, passkey
+// auth/finish) routes through `issueSession`, which always sets the
+// cookie, so every live session already carries it. A body-token
+// fallback was considered for migration and rejected — no client
+// ever held a usable refresh token in JS-readable storage (the
+// redirect hash never included one, and the legacy ops body-refresh
+// path parsed a response shape this endpoint never returned), so a
+// body path would only widen the attack surface XSS-stolen tokens
+// could exploit. Do not add one.
+//
+// The rotated refresh token is likewise returned ONLY via
+// Set-Cookie; the JSON envelope carries just the short-lived access
+// token, which the SPAs hold in memory.
 
 export async function handleRefreshToken(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");

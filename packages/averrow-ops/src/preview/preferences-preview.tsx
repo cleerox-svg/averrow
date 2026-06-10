@@ -8,6 +8,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NotificationPreferences } from '../features/settings/NotificationPreferences';
 import { AuthProvider } from '../lib/auth';
+import { api } from '../lib/api';
 import '../index.css';
 
 // Seed the shared AuthProvider's cache so it hydrates as a super_admin
@@ -23,7 +24,10 @@ const MOCK_USER = {
   organization: null,
 };
 localStorage.setItem('averrow-user', JSON.stringify(MOCK_USER));
-localStorage.setItem('averrow.accessToken', 'mock.access.token');
+// H5: tokens are memory-only — seed the api client directly so
+// api.getToken() doesn't return null (localStorage no longer carries
+// tokens).
+api.setTokens('mock.access.token', '');
 
 // Toggle this to preview the "push not enabled" vs "push enabled" state.
 // Set ?subscribed=1 in the URL to flip to enabled.

@@ -6,10 +6,21 @@
 //
 // Lifecycle steps (all products):
 //   1. Hydrate from localStorage cache (no-flash UX).
-//   2. Read tokens from URL hash/query (OAuth + magic-link callbacks).
-//   3. If no token, attempt cookie-based refresh (silent re-auth).
+//   2. Read the access token from the URL hash/query (OAuth +
+//      magic-link callbacks).
+//   3. If no token, attempt cookie-based refresh (silent re-auth via
+//      the HttpOnly `radar_refresh` cookie). This is the normal boot
+//      path on every reload now that access tokens are memory-only
+//      (H5, SECURITY_AUDIT_2026-06-10) — `loading` stays true until
+//      the attempt settles, so hosts must not redirect to login
+//      while `loading` is set.
 //   4. Validate via /api/auth/me. Apply onValidatedUser hook.
 //   5. Set loading=false, render.
+//
+// Token storage model (H5): the refresh token lives ONLY in the
+// HttpOnly cookie — it never appears in JS-readable storage or in
+// any JSON response. The access token lives ONLY in host-app
+// memory (httpClient adapters must not persist it to localStorage).
 //
 // Logout (all products):
 //   1. POST /api/auth/logout (best-effort; revokes refresh cookie).
@@ -32,7 +43,6 @@ const AuthContext = createContext<SharedAuthState | null>(null);
 
 interface TokenPayload {
   accessToken:  string;
-  refreshToken: string;
   returnTo:     string | null;
   source:       'hash' | 'query';
 }
@@ -87,6 +97,10 @@ export function isValidCachedUser(value: unknown): value is SharedAuthUser {
   return true;
 }
 
+// H5: only the short-lived access token rides the callback URL. The
+// refresh token is delivered exclusively via the HttpOnly
+// `radar_refresh` Set-Cookie on the session-issuing response and is
+// never readable from JS.
 function readTokensFromUrl(): TokenPayload | null {
   if (typeof window === 'undefined') return null;
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
@@ -94,7 +108,6 @@ function readTokensFromUrl(): TokenPayload | null {
   if (hashToken) {
     return {
       accessToken:  hashToken,
-      refreshToken: hashParams.get('refresh_token') ?? '',
       returnTo:     hashParams.get('return_to'),
       source:       'hash',
     };
@@ -104,7 +117,6 @@ function readTokensFromUrl(): TokenPayload | null {
   if (queryToken) {
     return {
       accessToken:  queryToken,
-      refreshToken: queryParams.get('refresh_token') ?? '',
       returnTo:     null,
       source:       'query',
     };
@@ -167,7 +179,11 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
   }, [userCacheKey]);
 
   // Hydrate from cache on first render so the shell paints
-  // immediately. Validation runs in the background.
+  // immediately. Validation runs in the background. With memory-only
+  // access tokens (H5) a full page reload starts with getToken() ===
+  // null, so this fast path only fires when the provider remounts
+  // within an already-bootstrapped document; reloads take the
+  // cookie-refresh path in checkAuth with loading=true throughout.
   const [user, setUserState] = useState<SharedAuthUser | null>(() => {
     const cached = loadCachedUser();
     return cached && httpClient.getToken() ? cached : null;
@@ -182,10 +198,10 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
   }, [saveCachedUser]);
 
   const checkAuth = useCallback(async () => {
-    // 1. Pull tokens from URL if this is a callback.
+    // 1. Pull the access token from the URL if this is a callback.
     const fromUrl = readTokensFromUrl();
     if (fromUrl && typeof window !== 'undefined') {
-      httpClient.setTokens(fromUrl.accessToken, fromUrl.refreshToken);
+      httpClient.setTokens(fromUrl.accessToken, '');
       if (fromUrl.source === 'hash' && fromUrl.returnTo && isSafeReturnTo(fromUrl.returnTo, returnToPrefix)) {
         window.history.replaceState({}, '', fromUrl.returnTo);
       } else {
@@ -195,14 +211,24 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
       }
     }
 
-    // 2. No token → try silent cookie refresh (ops only).
+    // 2. No token → try silent cookie refresh. This is the standard
+    //    reload path for BOTH products now that access tokens are
+    //    memory-only (H5): the HttpOnly radar_refresh cookie (set on
+    //    every session-issuing flow) mints a fresh access token.
+    //    credentials: 'same-origin' — the SPAs are served from the
+    //    same origin as the API (worker assets in prod, Vite proxy in
+    //    dev), and the cookie is SameSite=Strict anyway.
     if (!httpClient.getToken() && refreshMode === 'cookie-refresh') {
       try {
         const refreshRes = await fetch(refreshPath, {
           method:      'POST',
-          credentials: 'include',
+          credentials: 'same-origin',
           headers:     { 'Content-Type': 'application/json' },
-          signal:      AbortSignal.timeout(3000),
+          // 10s, not the old 3s: with memory-only access tokens this
+          // refresh gates EVERY reload of a signed-in user — an
+          // aborted attempt reads as "logged out" and bounces them to
+          // the public homepage, so we give slow networks headroom.
+          signal:      AbortSignal.timeout(10000),
         });
         if (refreshRes.ok) {
           const data = await refreshRes.json() as { data?: { token?: string } };

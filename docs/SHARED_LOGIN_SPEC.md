@@ -403,6 +403,44 @@ The shared package carries the auth-critical surfaces (Profile,
 Login UI, Auth context, Passkeys). The architecture deliberately
 keeps the shared package side-effect-light and host-driven:
 
+### Token storage model (H5 — updated 2026-06-10; FarmTrack must mirror)
+
+**This is a required-parity delta from the previous model. FarmTrack
+must adopt the same scheme.**
+
+| Token | Where it lives | Never |
+|---|---|---|
+| Refresh token | HttpOnly cookie (`radar_refresh` on Averrow; FarmTrack picks its own name) — `HttpOnly; Secure; SameSite=Strict; Path=/api/auth` | In localStorage, sessionStorage, JSON response bodies, or URL fragments. JS never sees it. |
+| Access token | Host-app **memory only** (module variable / class field) | In localStorage or sessionStorage. |
+
+Flow:
+
+1. **Login (all methods — Google, magic-link, passkey):** the backend's
+   session-issuing path sets the refresh cookie via `Set-Cookie` and
+   delivers ONLY the short-lived access token to the SPA (URL hash for
+   browser-navigation flows, JSON envelope for the passkey XHR flow).
+2. **Page reload:** the access token is gone (memory-only). The shared
+   `AuthProvider` POSTs `/api/auth/refresh` with
+   `credentials: 'same-origin'`; the cookie mints a fresh access token
+   and the rotated refresh token comes back ONLY via `Set-Cookie`.
+   `loading` stays `true` until this settles — hosts must not redirect
+   to login while `loading` is set.
+3. **Mid-session 401** (access token expired in a long-lived tab): the
+   host HTTP client retries once after the same cookie-based refresh.
+4. **Logout:** `POST /api/auth/logout` revokes the session row and
+   clears the cookie server-side; the client drops the in-memory token
+   + cached user.
+
+Both products run the AuthProvider with `refreshMode: 'cookie-refresh'`
+(the default). `'token-only'` exists only for hosts that genuinely
+never receive the refresh cookie — neither Averrow surface uses it.
+
+Migration: both SPAs perform a one-time purge of the legacy
+localStorage token keys (`averrow_token`, `averrow_refresh`) at module
+load. No body-token fallback exists on `/api/auth/refresh` — every
+live session already carries the cookie because every session-issuing
+flow has always set it. Do not add one.
+
 ### Trust contract
 - The host app (averrow-ops or averrow-tenant) owns the HTTP
   client. The shared package only sees URLs that come back from
@@ -423,10 +461,10 @@ keeps the shared package side-effect-light and host-driven:
 | Malicious `return_to` from URL | `isSafeReturnTo(returnTo, prefix)` requires the prefix to be followed by `/`, `?`, `#`, or end-of-string. Defends against `/v2evil/path` style attacks where `startsWith` would naively accept. Failing values fall through to `window.location.pathname`, never echoed back. |
 | Cached user shape drift / poisoning | `isValidCachedUser(value)` does runtime type checks on `id`, `email`, `name`, `role`, and the optional `organization` block. Mismatches are treated as "no cache" and the offending entry is removed from localStorage. |
 | Per-product redirect mistake | `loginPath` is a REQUIRED config field (no default). Each product's wrapper must explicitly state where the OAuth start URL goes. |
-| CSRF | Bearer tokens for all state-changing API calls. The only cookie-bearing request is `/api/auth/refresh`, which returns a new access token (not a state mutation). |
-| Token in localStorage exposure to XSS | The shared package never injects HTML, never uses `dangerouslySetInnerHTML`, never `eval`s. React's auto-escaping handles all rendered user content. CSP headers on the worker are the defense against host-app XSS. |
+| CSRF | Bearer tokens for all state-changing API calls. The cookie-bearing requests are `/api/auth/refresh` (returns a new access token, not a state mutation) and `/api/auth/logout` (Bearer-authenticated; the cookie only identifies which session row to revoke). The cookie is `SameSite=Strict; Path=/api/auth`, so it never rides cross-site requests. |
+| Token theft via XSS (H5) | Refresh token is HttpOnly-cookie-only — unreachable from JS. Access token is memory-only (never localStorage), so XSS exposure is bounded by the access-token TTL within the compromised tab, not a durable refresh credential. The shared package never injects HTML, never uses `dangerouslySetInnerHTML`, never `eval`s. React's auto-escaping handles all rendered user content. CSP headers on the worker are the defense against host-app XSS. |
 | Adapter trust | `httpClient`, `passkeyAdapter`, `apiClient` are all host-supplied. By contract: a compromised host wrapper compromises everything. The shared package does NOT make raw `fetch` calls except for the cookie-refresh path. |
-| Logout cleanup | `clearLastSignInMethod()` runs in `onLogoutCleanup`. `clearTokens()` clears both access + refresh local state. The backend `/api/auth/logout` revokes the refresh-token cookie + sessions row server-side. |
+| Logout cleanup | `clearLastSignInMethod()` runs in `onLogoutCleanup`. `clearTokens()` drops the in-memory access token (and on ops, messages the SW to clear the API cache). The backend `/api/auth/logout` revokes the refresh-token cookie + sessions row server-side. |
 
 ### Storage namespacing (host-owned)
 
