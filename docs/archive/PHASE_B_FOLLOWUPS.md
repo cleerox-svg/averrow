@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time Phase B deferred-items list (2026-05).
+
 # Phase B follow-ups — items deferred to keep sprint cadence
 
 Deliberate "save for later" items captured during Phase B sprints.

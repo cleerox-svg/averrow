@@ -1,3 +1,5 @@
+> Archived 2026-06-10: point-in-time v3 staff-pages status tracker.
+
 # Staff /v2 Pages — V3 Rebuild Status
 
 Tracks the v3 redesigns of `/v2/*` staff-back-office pages. Distinct

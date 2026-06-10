@@ -1,3 +1,5 @@
+> Archived 2026-06-10: completed — /v2 React is the live platform (cutover done).
+
 # Phase 8 Cutover — /v2 as Default Route
 
 ## What This Means

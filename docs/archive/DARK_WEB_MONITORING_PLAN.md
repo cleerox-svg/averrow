@@ -1,3 +1,5 @@
+> Archived 2026-06-10: executed — dark web monitor shipped (src/scanners/dark-web-monitor.ts, migration 0103).
+
 # Dark Web Monitoring — Build Plan
 
 Status: draft (planning only — no code yet)

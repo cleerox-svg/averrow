@@ -1,3 +1,5 @@
+> Archived 2026-06-10: roadmap item shipped — Stripe integration live (handlers/stripeWebhook.ts); residual dashboard work tracked in IMPROVEMENT_PLAN_2026-06 (S6).
+
 # Stripe Payments + Accounting Integration
 
 ## Pricing Tiers

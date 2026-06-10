@@ -1,3 +1,5 @@
+> Archived 2026-06-10: one-time post-deploy checklist for migration 0119; canonical spec is docs/SHARED_LOGIN_SPEC.md.
+
 # Login + PWA + Biometric — On-Device Wiring Audit Checklist
 
 **Purpose:** verify the FarmTrack-aligned login/profile/push/biometric
