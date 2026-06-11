@@ -37,6 +37,7 @@ export { CertStreamMonitor } from "./durableObjects/CertStreamMonitor";
 export { CartographerBackfillWorkflow } from "./workflows/cartographerBackfill";
 export { CartographerMainWorkflow } from "./workflows/cartographerMain";
 export { NexusWorkflow } from "./workflows/nexusRun";
+export { CampaignHunterWorkflow } from "./workflows/campaignHunter";
 export { GeoipRefreshWorkflow } from "./workflows/geoipRefresh";
 
 // ─── Honeypot Domain Server ─────────────────────────────────────────
@@ -547,6 +548,35 @@ export default {
           const instance = await env.CARTOGRAPHER_MAIN.create({ id, params: {} });
           return Response.json({ triggered: true, instanceId: instance.id });
         }
+
+        // Campaign Hunter durable workflow — agentic investigation (Phase 2).
+        // Dispatches the loop as a Workflow and returns a run_id to poll via
+        // GET /api/internal/agents/campaign_hunter/status?run_id=...
+        if (url.pathname === '/api/internal/agents/campaign_hunter/workflow') {
+          let body: { brandName?: string; brandDomain?: string; brandId?: string };
+          try {
+            body = await request.json();
+          } catch {
+            return Response.json({ error: 'invalid JSON body' }, { status: 400 });
+          }
+          const brandName = typeof body.brandName === 'string' ? body.brandName : '';
+          const brandDomain = typeof body.brandDomain === 'string' ? body.brandDomain : '';
+          if (!brandName || !brandDomain) {
+            return Response.json({ error: 'brandName and brandDomain are required' }, { status: 400 });
+          }
+          const runId = crypto.randomUUID();
+          const { dispatchWorkflow } = await import('./lib/workflow-dispatch');
+          const outcome = await dispatchWorkflow(env, {
+            workflow: env.CAMPAIGN_HUNTER,
+            workflowName: 'campaign-hunter',
+            agentId: 'campaign_hunter',
+            params: { brandName, brandDomain, brandId: body.brandId, runId },
+          });
+          if (outcome.kind === 'dispatched') {
+            return Response.json({ triggered: true, runId, instanceId: outcome.instance_id });
+          }
+          return Response.json({ triggered: false, runId, outcome }, { status: 503 });
+        }
       }
 
       // ─── Internal GET endpoints (AVERROW_INTERNAL_SECRET auth, for MCP server) ──
@@ -555,6 +585,18 @@ export default {
         const authHeader = request.headers.get('Authorization');
         if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
+        }
+
+        // Campaign Hunter run status — poll a dispatched investigation.
+        if (url.pathname === '/api/internal/agents/campaign_hunter/status') {
+          const runId = url.searchParams.get('run_id') ?? '';
+          if (!runId) return Response.json({ error: 'run_id is required' }, { status: 400 });
+          const row = await env.DB.prepare(
+            `SELECT id, status, started_at, completed_at, duration_ms, records_processed, outputs_generated, error_message
+               FROM agent_runs WHERE id = ? AND agent_id = 'campaign_hunter'`,
+          ).bind(runId).first();
+          if (!row) return Response.json({ error: 'run not found' }, { status: 404 });
+          return Response.json({ run: row });
         }
 
         if (url.pathname === '/api/internal/platform-diagnostics') {

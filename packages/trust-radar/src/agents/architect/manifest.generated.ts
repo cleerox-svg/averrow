@@ -167,8 +167,8 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "writes": [],
       "ai_models_referenced": [],
-      "loc": 228,
-      "last_modified": "2026-06-10T13:55:37.248Z"
+      "loc": 284,
+      "last_modified": "2026-06-11T02:52:13.579Z"
     },
     {
       "name": "cartographer",
@@ -678,8 +678,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "url_scan_results"
       ],
       "ai_models_referenced": [],
-      "loc": 1107,
-      "last_modified": "2026-06-06T12:54:01.819Z"
+      "loc": 1152,
+      "last_modified": "2026-06-11T02:52:13.342Z"
     },
     {
       "name": "strategist",
@@ -1576,6 +1576,33 @@ export const REPO_MANIFEST: RepoInventory = {
         "strategist",
         "trademarkMonitor"
       ]
+    },
+    {
+      "pattern": "24 14 * * 1",
+      "handler_path": "packages/trust-radar/src/index.ts",
+      "agents_invoked": [
+        "analyst",
+        "appStoreMonitor",
+        "attributor",
+        "auto-seeder",
+        "cartographer",
+        "cube-healer",
+        "darkWebMonitor",
+        "flightControl",
+        "geoip-refresh",
+        "lookalike-scanner",
+        "narrator",
+        "news-watcher",
+        "nexus",
+        "notification_narrator",
+        "observer",
+        "seed-strategist",
+        "socialDiscovery",
+        "socialMonitor",
+        "sparrow",
+        "strategist",
+        "trademarkMonitor"
+      ]
     }
   ],
   "workers": [
@@ -1586,6 +1613,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "ARCHITECT_BUNDLES",
         "AUDIT_DB",
         "CACHE",
+        "CAMPAIGN_HUNTER",
         "CARTOGRAPHER_BACKFILL",
         "CARTOGRAPHER_MAIN",
         "CERTSTREAM_MONITOR",
@@ -1603,7 +1631,7 @@ export const REPO_MANIFEST: RepoInventory = {
   "totals": {
     "agents": 40,
     "feeds": 50,
-    "crons": 15,
+    "crons": 16,
     "workers": 1
   }
 };

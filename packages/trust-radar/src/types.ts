@@ -32,6 +32,9 @@ export interface Env {
   CARTOGRAPHER_BACKFILL: Workflow;
   CARTOGRAPHER_MAIN: Workflow;
   NEXUS_RUN: Workflow;
+  /** Durable Campaign Hunter runtime — agentic investigation loop with
+   *  per-turn checkpointing (workflows/campaignHunter.ts). */
+  CAMPAIGN_HUNTER: Workflow;
   /** Durable refresh of the GeoLite2-City CSVs into GEOIP_DB.
    *  Optional because the binding is provisioned alongside the
    *  GEOIP_DB / GEOIP_STAGING setup — older deploys without

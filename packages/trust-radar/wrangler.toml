@@ -109,6 +109,15 @@ name = "nexus-run"
 binding = "NEXUS_RUN"
 class_name = "NexusWorkflow"
 
+# Durable Campaign Hunter — agentic investigation loop (Phase 2). Each model
+# turn is a step.do() checkpoint, so a worker recycle mid-investigation
+# resumes from the last completed turn instead of restarting the loop.
+# Dispatched via POST /api/internal/agents/campaign_hunter/workflow.
+[[workflows]]
+name = "campaign-hunter"
+binding = "CAMPAIGN_HUNTER"
+class_name = "CampaignHunterWorkflow"
+
 # Durable GeoIP refresh — multi-step CSV import into GEOIP_DB.
 # Triggered by the geoip_refresh agent (or POST /api/admin/geoip-refresh).
 # Steps: verify-staging → load-locations → chunk-import → atomic-swap.

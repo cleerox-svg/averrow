@@ -85,6 +85,27 @@ describe("runAgentLoop", () => {
     expect(result.trail).toHaveLength(0);
   });
 
+  it("wraps each model turn in the injected step (Workflow durability seam)", async () => {
+    const script: AnthropicResponse[] = [
+      resp([toolUse("query_brand_threats", {})]),
+      resp([toolUse("submit_report", { verdict: "active_campaign", confidence: 80 })]),
+    ];
+    let turn = 0;
+    const stepLabels: string[] = [];
+    const result = await runAgentLoop(
+      baseOpts(async () => script[turn++]!, {
+        step: async (label, fn) => {
+          stepLabels.push(label);
+          return fn();
+        },
+      }),
+    );
+
+    expect(result.stoppedBy).toBe("submit_report");
+    // One step per model turn, with stable unique labels (so replay is durable).
+    expect(stepLabels).toEqual(["agent-loop-turn-1", "agent-loop-turn-2"]);
+  });
+
   it("captures tool errors into the trail without aborting the loop", async () => {
     const script: AnthropicResponse[] = [
       resp([toolUse("provider_history", { asn: 1 })]),

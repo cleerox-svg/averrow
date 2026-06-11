@@ -791,6 +791,8 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 | POST | `/api/internal/agents/nexus/workflow` | Dispatch NEXUS as a durable Workflow |
 | GET | `/api/internal/agents/nexus/workflow/:instanceId` | Check NEXUS workflow status |
 | POST | `/api/internal/agents/cartographer/main-workflow` | Dispatch the Cartographer main run as a durable Workflow (PR-M manual validation hook) |
+| POST | `/api/internal/agents/campaign_hunter/workflow` | Dispatch Campaign Hunter as a durable Workflow (agentic investigation loop). Body: `{ brandName, brandDomain, brandId? }`. Returns `{ triggered, runId, instanceId }`; poll the run via the status endpoint below. |
+| GET | `/api/internal/agents/campaign_hunter/status?run_id=...` | Poll a dispatched Campaign Hunter run — returns the `agent_runs` row (`status`, `completed_at`, `records_processed`, `error_message`). The investigation report lands in `agent_outputs` (type `insight`). |
 | POST | `/api/internal/briefing/send` | Manually generate and email the daily briefing |
 | POST | `/api/internal/cubes/brand-summaries/rebuild` | Out-of-band rebuild of the dark-web + app-store brand summary cubes (idempotent; use when you can't wait for cube_healer's 6-hour tick) |
 | POST | `/api/internal/digest/weekly-tenant/run` | Manual trigger for the tenant weekly digest (S4). Optional JSON body: `org_id` (restrict to one org), `force` (bypass KV week-stamp dedup), `ignore_mode` (bypass `TENANT_DIGEST_MODE` for a supervised test send) |

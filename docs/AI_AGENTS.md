@@ -519,9 +519,15 @@ agent's tool substrate. See `docs/AGENTIC_DEEP_SCAN_SPEC.md`.
 - **Guardrails:** `costGuard: "enforced"` (global throttle), per-turn
   `checkAgentBudget`, 12-turn hard cap, read-only tools, `agent_configs.enabled`
   kill-switch.
-- **Phase 1** runs inline via the standard runner. **Phase 2** moves the loop
-  into a Cloudflare Workflow for durable per-turn checkpointing; live
-  dns/whois lookup tools are also Phase 2.
+- **Runtimes:** the inline agent module (`POST /api/internal/agents/campaign_hunter/run`)
+  and a durable **Cloudflare Workflow** (`CampaignHunterWorkflow`, dispatched via
+  `POST /api/internal/agents/campaign_hunter/workflow`, polled via
+  `…/campaign_hunter/status?run_id=`). Both share the same core
+  (`resolveHunterBrand` + `runHuntAndSummarize`); the Workflow wraps each model
+  turn in `step.do()` so an investigation checkpoints and survives a worker
+  recycle. The deterministic idempotency key makes any step replay free.
+- **Still Phase 2-pending:** rewiring the customer "AI DEEP SCAN" button to the
+  async Workflow path, live dns/whois lookup tools, and a scored eval harness.
 
 ---
 
