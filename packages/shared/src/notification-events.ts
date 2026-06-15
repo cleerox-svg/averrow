@@ -69,6 +69,8 @@ export type NotificationEventKey =
   | 'named_threat_identified'
   // ── S1 — takedown automation (IMPROVEMENT_PLAN_2026-06) ──
   | 'takedown_monthly_cap_reached'
+  // ── Sales / CRM (staff-facing) ──
+  | 'new_lead'
   // ── N6c — digest envelope (§12.3) ──
   | 'notification_digest';
 
@@ -454,6 +456,22 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'Takedown Monthly Cap Reached',
     description: 'Automated takedown submission paused for the rest of the month — signed authorization cap reached',
     dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+
+  // ─── Sales / CRM — staff-facing lead capture ────────────────────────
+  // Fires when a visitor submits the public domain-scan lead form
+  // (handleLeadCapture → scan_leads). Audience is 'team' so every
+  // non-client staff member (sales, support, admins, super_admins) sees
+  // it in the bell — not just the sales@ inbox alert. Dedup is per-lead
+  // via group_key (`new_lead:<leadId>`), so the window here is only a
+  // belt-and-braces fallback; distinct leads never collide.
+  {
+    key: 'new_lead',
+    label: 'New Lead',
+    description: 'A visitor submitted the public domain-scan lead form',
+    dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,
   },

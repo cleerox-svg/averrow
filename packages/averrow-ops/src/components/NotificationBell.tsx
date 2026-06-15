@@ -23,7 +23,7 @@ import {
   Bell, AlertTriangle, Clock, Check, MoreHorizontal, Settings, CheckCheck,
   Radio, Cpu, Brain, Mail, Database, TrendingUp, UserX, Lightbulb,
   PauseCircle, DollarSign, Layers, FileText, Workflow, Globe,
-  ShieldAlert, Inbox,
+  ShieldAlert, Inbox, UserPlus,
   type LucideIcon,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useWindowWidth';
@@ -69,6 +69,8 @@ function iconForType(type: string): LucideIcon {
   if (type === 'feed_health') return Radio;
   if (type === 'circuit_breaker_tripped') return PauseCircle;
   if (type === 'notification_digest') return FileText;
+  // Sales / CRM
+  if (type === 'new_lead') return UserPlus;
   return Bell;
 }
 

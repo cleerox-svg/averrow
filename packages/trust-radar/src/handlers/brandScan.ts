@@ -529,17 +529,27 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
       correlatedBrandId,
     ).run();
 
-    // Fire-and-forget emails. Both wrapped in try/catch so the prospect's
-    // submission isn't impacted by an email pipeline hiccup (the lead row
-    // is already committed). Logged on failure (lib/logger).
-    //   1. Internal alert to sales@averrow.com.
+    // Fire-and-forget side effects. All wrapped so the prospect's
+    // submission isn't impacted by a downstream hiccup (the lead row is
+    // already committed). Logged on failure (lib/logger).
+    //   1. Internal alert email to sales@averrow.com.
     //   2. Prospect-facing acknowledgement — the scan-results page tells
     //      the visitor "check your inbox" the instant they submit, so we
     //      owe them an actual email. The full report is still delivered by
     //      sales; this confirms receipt and sets that expectation.
+    //   3. In-app notification (audience 'team') so the lead surfaces in
+    //      the platform notification bell for sales/support/admins — not
+    //      only in the sales@ inbox. group_key is per-lead so distinct
+    //      leads never dedup against each other.
     try {
-      const { notifySalesOfNewLead, sendScanReportAcknowledgement } = await import("../lib/scan-lead-notify");
+      const [{ notifySalesOfNewLead, sendScanReportAcknowledgement }, { createNotification }] =
+        await Promise.all([
+          import("../lib/scan-lead-notify"),
+          import("../lib/notifications"),
+        ]);
       const url = new URL(request.url);
+      const leadLabel = body.name?.trim() || body.email;
+      const scannedDomain = body.domain?.trim() || "their domain";
       await Promise.allSettled([
         notifySalesOfNewLead(env, {
           leadId: id,
@@ -556,6 +566,24 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
           email: body.email,
           name: body.name ?? null,
           domain: body.domain ?? null,
+        }),
+        createNotification(env, {
+          type: "new_lead",
+          audience: "team",
+          severity: "low",
+          title: `New lead — ${leadLabel}`,
+          message: `${leadLabel} scanned ${scannedDomain}${body.company ? ` (${body.company})` : ""} and requested the full report.`,
+          link: "/v2/leads?view=scan",
+          groupKey: `new_lead:${id}`,
+          reasonText: "A visitor submitted the public domain-scan lead form.",
+          recommendedAction: "Review the lead and generate a qualified report or reach out.",
+          metadata: {
+            lead_id: id,
+            email: body.email,
+            domain: body.domain ?? null,
+            company: body.company ?? null,
+            correlated_brand_id: correlatedBrandId,
+          },
         }),
       ]);
     } catch { /* swallow — lead capture is the priority */ }
