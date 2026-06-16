@@ -101,6 +101,16 @@ export interface ScanLeadIntel {
     created_at: string;
     expires_at: string;
   } | null;
+  platform_history: {
+    known_brand: {
+      id: string;
+      name: string;
+      sector: string | null;
+      threat_count_all_time: number;
+      first_seen: string;
+    } | null;
+    prior_assessment: { grade: string | null; trust_score: number | null; assessed_at: string } | null;
+  };
 }
 
 export interface ScanLeadDetailResponse {

@@ -702,6 +702,18 @@ interface LeadIntel {
   lookalikes_count: number;
   correlated_brand: { id: string; name: string } | null;
   latest_report: { share_token: string; risk_grade: string | null; created_at: string; expires_at: string } | null;
+  // "Have we seen this domain before?" — efficient, indexed history so the
+  // drill-down can say what the platform already knows about the brand.
+  platform_history: {
+    known_brand: {
+      id: string;
+      name: string;
+      sector: string | null;
+      threat_count_all_time: number;
+      first_seen: string;
+    } | null;
+    prior_assessment: { grade: string | null; trust_score: number | null; assessed_at: string } | null;
+  };
 }
 
 async function buildLeadIntel(
@@ -712,21 +724,23 @@ async function buildLeadIntel(
 ): Promise<LeadIntel> {
   const keyword = domain.split(".")[0] ?? domain;
 
-  // Resolve the brand once (indexed). All threat aggregation below is
-  // scoped by target_brand_id so it rides idx_threats_brand_status /
-  // idx_threats_brand_created instead of a full-table scan.
+  // Resolve the brand once (indexed: PK or idx_brands_domain). All threat
+  // aggregation below is scoped by target_brand_id so it rides
+  // idx_threats_brand_status / idx_threats_brand_created instead of a
+  // full-table scan. NOTE: spf/dmarc/mx are NOT columns on `brands` — they
+  // live on email_security_scans — so they are fetched separately below.
   const brand = await (correlatedBrandId
     ? env.DB.prepare(
-        `SELECT id, name, email_security_grade, spf_policy, dmarc_policy, mx_count
+        `SELECT id, name, sector, email_security_grade, threat_count, first_seen
            FROM brands WHERE id = ? LIMIT 1`,
       ).bind(correlatedBrandId)
     : env.DB.prepare(
-        `SELECT id, name, email_security_grade, spf_policy, dmarc_policy, mx_count
+        `SELECT id, name, sector, email_security_grade, threat_count, first_seen
            FROM brands WHERE canonical_domain = ? LIMIT 1`,
       ).bind(domain)
   ).first<{
-    id: string; name: string; email_security_grade: string | null;
-    spf_policy: string | null; dmarc_policy: string | null; mx_count: number | null;
+    id: string; name: string; sector: string | null;
+    email_security_grade: string | null; threat_count: number | null; first_seen: string;
   }>();
 
   const brandId = brand?.id ?? null;
@@ -766,10 +780,28 @@ async function buildLeadIntel(
     sampleResults = samp.results;
   }
 
-  const [lookalikes, latestReport] = await Promise.all([
+  // All bounded/indexed reads:
+  //  - email_security_scans by domain (idx_ess_domain, migration 0216)
+  //  - lookalike_domains by keyword (small table)
+  //  - assessments by domain (idx_assessments_domain)
+  //  - qualified_reports by lead_id
+  const [emailScan, lookalikes, priorAssessment, latestReport] = await Promise.all([
+    env.DB.prepare(
+      `SELECT spf_policy, dmarc_policy, mx_exists, mx_providers, email_security_grade
+         FROM email_security_scans WHERE domain = ?
+        ORDER BY scanned_at DESC LIMIT 1`,
+    ).bind(domain).first<{
+      spf_policy: string | null; dmarc_policy: string | null;
+      mx_exists: number | null; mx_providers: string | null; email_security_grade: string | null;
+    }>(),
     env.DB.prepare(
       `SELECT COUNT(*) AS n FROM lookalike_domains WHERE target_brand LIKE ?`,
     ).bind(`%${keyword}%`).first<{ n: number }>(),
+    env.DB.prepare(
+      `SELECT trust_score, grade, completed_at FROM assessments
+        WHERE domain = ? AND completed_at IS NOT NULL
+        ORDER BY completed_at DESC LIMIT 1`,
+    ).bind(domain).first<{ trust_score: number | null; grade: string | null; completed_at: string }>(),
     env.DB.prepare(
       `SELECT share_token, payload_json, created_at, expires_at
          FROM qualified_reports WHERE lead_id = ?
@@ -800,17 +832,46 @@ async function buildLeadIntel(
     };
   }
 
+  // Email security: grade from the brand row (cheap, already loaded);
+  // SPF/DMARC/MX detail from the latest scan. mx_count is derived from the
+  // provider list since the scan stores providers, not a count.
+  const grade = brand?.email_security_grade ?? emailScan?.email_security_grade ?? null;
+  let emailSecurity: LeadIntel["email_security"] = null;
+  if (grade != null || emailScan) {
+    const mxCount = emailScan?.mx_providers
+      ? emailScan.mx_providers.split(",").filter((s) => s.trim()).length
+      : (emailScan?.mx_exists ? 1 : 0);
+    emailSecurity = {
+      grade,
+      spf: emailScan?.spf_policy ?? null,
+      dmarc: emailScan?.dmarc_policy ?? null,
+      mx_count: mxCount,
+    };
+  }
+
   return {
     domain,
     threats: { active_total: activeTotal, by_severity: bySeverity, samples: sampleResults },
-    email_security: brand
-      ? { grade: brand.email_security_grade, spf: brand.spf_policy, dmarc: brand.dmarc_policy, mx_count: brand.mx_count ?? 0 }
-      : null,
+    email_security: emailSecurity,
     top_providers: providerResults,
     top_countries: countryResults,
     lookalikes_count: lookalikes?.n ?? 0,
     correlated_brand: brand ? { id: brand.id, name: brand.name } : null,
     latest_report: report,
+    platform_history: {
+      known_brand: brand
+        ? {
+            id: brand.id,
+            name: brand.name,
+            sector: brand.sector,
+            threat_count_all_time: brand.threat_count ?? 0,
+            first_seen: brand.first_seen,
+          }
+        : null,
+      prior_assessment: priorAssessment
+        ? { grade: priorAssessment.grade, trust_score: priorAssessment.trust_score, assessed_at: priorAssessment.completed_at }
+        : null,
+    },
   };
 }
 
