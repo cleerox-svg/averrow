@@ -509,6 +509,51 @@ function ScanLeadDetailBody({
       {/* Customer intel */}
       {intel ? (
         <>
+          {/* What we already know — has this domain surfaced before? */}
+          <Card>
+            <div className="space-y-2">
+              <h3 className="text-xs font-mono uppercase tracking-wider text-[var(--text-tertiary,#8A8F9C)]">
+                What we already know
+              </h3>
+              {intel.platform_history.known_brand ? (
+                <div className="text-sm space-y-1">
+                  <div>
+                    Known brand:{" "}
+                    <Link
+                      to={`/brands/${intel.platform_history.known_brand.id}`}
+                      className="text-[var(--amber,#E5A832)] hover:underline inline-flex items-center gap-1"
+                    >
+                      {intel.platform_history.known_brand.name}
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
+                    {intel.platform_history.known_brand.sector ? (
+                      <span className="text-[var(--text-tertiary,#8A8F9C)]"> · {intel.platform_history.known_brand.sector}</span>
+                    ) : null}
+                  </div>
+                  <div className="text-[var(--text-secondary,#7a8ba8)]">
+                    First seen {relativeTime(intel.platform_history.known_brand.first_seen)} ·{" "}
+                    {intel.platform_history.known_brand.threat_count_all_time} threats on record
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-[var(--text-secondary,#7a8ba8)]">
+                  First time we've seen <span className="font-mono">{intel.domain}</span> — not yet a tracked brand.
+                </div>
+              )}
+              {intel.platform_history.prior_assessment ? (
+                <div className="text-xs text-[var(--text-tertiary,#8A8F9C)]">
+                  Last assessed {relativeTime(intel.platform_history.prior_assessment.assessed_at)} · Grade{" "}
+                  <span style={{ color: gradeColor(intel.platform_history.prior_assessment.grade) }}>
+                    {intel.platform_history.prior_assessment.grade ?? "—"}
+                  </span>
+                  {intel.platform_history.prior_assessment.trust_score != null
+                    ? ` (${intel.platform_history.prior_assessment.trust_score})`
+                    : ""}
+                </div>
+              ) : null}
+            </div>
+          </Card>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Threat posture */}
             <Card>
@@ -707,11 +752,17 @@ function ScanLeadDetailBody({
             </Card>
           ) : null}
         </>
-      ) : (
+      ) : !lead.domain ? (
         <EmptyState
           icon={<Globe className="w-10 h-10" />}
           title="No domain on this lead"
           description="This lead didn't include a domain, so there's no customer intel to show."
+        />
+      ) : (
+        <EmptyState
+          icon={<Globe className="w-10 h-10" />}
+          title="Intel temporarily unavailable"
+          description={`We couldn't load customer intel for ${lead.domain} right now. Try again in a moment.`}
         />
       )}
     </div>

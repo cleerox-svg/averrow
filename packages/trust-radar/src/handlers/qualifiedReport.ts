@@ -93,7 +93,7 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
   const domain = lead.domain.toLowerCase().trim();
 
   // Run all data reads in parallel — independent queries.
-  const [threatsResult, severityResult, providersResult, countriesResult, campaignsResult, lookalikesResult, brandRow] = await Promise.all([
+  const [threatsResult, severityResult, providersResult, countriesResult, campaignsResult, lookalikesResult, brandRow, emailScanRow] = await Promise.all([
     env.DB.prepare(`
       SELECT id, threat_type, severity, source_feed, malicious_domain, ip_address, country_code, created_at AS first_seen
       FROM threats
@@ -131,10 +131,18 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
     env.DB.prepare(`
       SELECT COUNT(*) AS n FROM lookalike_domains WHERE target_brand LIKE ?
     `).bind(`%${domain.split(".")[0]}%`).first<{ n: number }>(),
+    // spf/dmarc/mx are NOT columns on `brands` — they live on
+    // email_security_scans (keyed by domain). Selecting them off brands
+    // here used to throw and 500 the whole report generation.
     env.DB.prepare(`
-      SELECT name, email_security_grade, spf_policy, dmarc_policy, mx_count
+      SELECT name, email_security_grade
       FROM brands WHERE canonical_domain = ? LIMIT 1
-    `).bind(domain).first<{ name: string; email_security_grade: string | null; spf_policy: string | null; dmarc_policy: string | null; mx_count: number | null }>(),
+    `).bind(domain).first<{ name: string; email_security_grade: string | null }>(),
+    env.DB.prepare(`
+      SELECT spf_policy, dmarc_policy, mx_exists, mx_providers
+      FROM email_security_scans WHERE domain = ?
+      ORDER BY scanned_at DESC LIMIT 1
+    `).bind(domain).first<{ spf_policy: string | null; dmarc_policy: string | null; mx_exists: number | null; mx_providers: string | null }>(),
   ]);
 
   const totalThreats = threatsResult.results.length;
@@ -174,8 +182,8 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
       topCountries: countriesResult.results.map(c => c.country).slice(0, 10),
       campaignCount: campaignsResult.results.length,
       emailGrade,
-      spfPolicy: brandRow?.spf_policy ?? null,
-      dmarcPolicy: brandRow?.dmarc_policy ?? null,
+      spfPolicy: emailScanRow?.spf_policy ?? null,
+      dmarcPolicy: emailScanRow?.dmarc_policy ?? null,
     },
   );
 
@@ -199,10 +207,12 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
     executive_summary: { risk_grade: riskGrade, key_findings: keyFindings },
     email_security: {
       grade: emailGrade,
-      spf: brandRow?.spf_policy ?? null,
-      dmarc: brandRow?.dmarc_policy ?? null,
+      spf: emailScanRow?.spf_policy ?? null,
+      dmarc: emailScanRow?.dmarc_policy ?? null,
       dkim_found: false, // not tracked yet on brands table
-      mx_count: brandRow?.mx_count ?? 0,
+      mx_count: emailScanRow?.mx_providers
+        ? emailScanRow.mx_providers.split(",").filter((s) => s.trim()).length
+        : (emailScanRow?.mx_exists ? 1 : 0),
     },
     active_threats: { total: totalThreats, by_severity: bySeverity, samples: threatsResult.results },
     infrastructure: {
