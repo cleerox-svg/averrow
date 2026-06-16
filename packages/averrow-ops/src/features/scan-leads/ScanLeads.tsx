@@ -181,9 +181,9 @@ function ScanLeadRow({ lead, onOpen }: { lead: ScanLead; onOpen: (id: string) =>
       </Td>
       <Td>
         <div className="font-mono text-xs text-[var(--text-primary,var(--text-primary))]">{lead.email}</div>
-        {lead.name ? (
-          <div className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))]">{lead.name}</div>
-        ) : null}
+        <div className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))]">
+          {lead.name ? `${lead.name} · ` : ""}<span className="font-mono">#{shortId(lead.id)}</span>
+        </div>
       </Td>
       <Td>
         <div className="font-mono text-xs">{lead.domain ?? "—"}</div>
@@ -231,7 +231,9 @@ function ScanLeadCard({ lead, onOpen }: { lead: ScanLead; onOpen: (id: string) =
         <div className="text-[11px] text-[var(--text-secondary,var(--text-secondary))]">
           {lead.name ?? "—"} · {lead.company ?? "—"}
         </div>
-        <div className="font-mono text-[11px] mt-1">{lead.domain ?? "—"}</div>
+        <div className="font-mono text-[11px] mt-1">
+          {lead.domain ?? "—"} <span className="text-[var(--text-tertiary,var(--text-tertiary))]">· #{shortId(lead.id)}</span>
+        </div>
       </div>
       <FunnelStateChips lead={lead} />
       <div onClick={(e) => e.stopPropagation()}>
@@ -373,6 +375,13 @@ function ActionMenu({ lead, actions }: { lead: ScanLead; actions: LeadActions })
 
 // ─── Drill-down: single lead + live customer intel ────────────────
 
+// Every lead carries a UUID `id`; surface a short, copyable reference so
+// otherwise-identical leads (same email + domain) are distinguishable and
+// the deep-linked drill-down is unambiguous.
+function shortId(id: string): string {
+  return id.replace(/-/g, "").slice(0, 8).toUpperCase();
+}
+
 function gradeColor(g: string | null | undefined): string {
   if (!g) return "var(--text-tertiary,#8A8F9C)";
   const u = g.toUpperCase();
@@ -433,6 +442,7 @@ function ScanLeadDetailBody({
   backBtn: React.ReactNode;
 }) {
   const actions = useLeadActions(lead);
+  const { showToast } = useToast();
 
   return (
     <div className="space-y-6">
@@ -454,6 +464,17 @@ function ScanLeadDetailBody({
               <div className="text-sm text-[var(--text-secondary,#7a8ba8)]">
                 {lead.company ?? "Unknown company"}
               </div>
+              <button
+                type="button"
+                title={`Copy full lead ID (${lead.id})`}
+                onClick={() => {
+                  navigator.clipboard?.writeText(lead.id).catch(() => undefined);
+                  showToast("Lead ID copied", "success");
+                }}
+                className="mt-1 inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-tertiary,#8A8F9C)] hover:text-[var(--amber,#E5A832)]"
+              >
+                <Copy className="w-3 h-3" /> Lead #{shortId(lead.id)}
+              </button>
             </div>
             <Badge severity={STATUS_BADGE[lead.status]}>{lead.status.replace("_", " ")}</Badge>
           </div>
