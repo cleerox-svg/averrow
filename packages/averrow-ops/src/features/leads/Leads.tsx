@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useLeads, useLeadStats, useEnrichLead, useUpdateLead, useRefreshLeadFirmographics } from '@/hooks/useLeads';
+import { useState, useMemo, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useLeads, useLead, useLeadStats, useEnrichLead, useUpdateLead, useRefreshLeadFirmographics } from '@/hooks/useLeads';
 import type { SalesLead, LeadStats } from '@/hooks/useLeads';
 import { ScanLeadsView } from '@/features/scan-leads/ScanLeads';
 import {
@@ -463,6 +463,10 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
   const updateLead = useUpdateLead();
   const refreshFirmographics = useRefreshLeadFirmographics();
   const { showToast } = useToast();
+  // The list endpoint doesn't carry the cross-pipeline link, so fetch the
+  // per-id detail to surface any inbound public scan lead for this company.
+  const { data: detail } = useLead(String(lead.id));
+  const correlatedScanLead = detail?.correlated_scan_lead ?? null;
 
   const outreach1 = parseOutreach(lead.outreach_variant_1);
   const outreach2 = parseOutreach(lead.outreach_variant_2);
@@ -655,6 +659,29 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
           )}
         </Card>
 
+        {/* Cross-pipeline link — inbound public scan for the same company */}
+        {correlatedScanLead && (
+          <Card hover={false}>
+            <SectionLabel className="mb-3">Also a public scan lead</SectionLabel>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm">
+                <div style={{ color: 'var(--text-secondary)' }}>
+                  Ran a public brand check — <span className="font-mono">{correlatedScanLead.email}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <Badge severity="info">{correlatedScanLead.status.replace('_', ' ')}</Badge>
+                  <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                    {relativeTime(correlatedScanLead.created_at)}
+                  </span>
+                </div>
+              </div>
+              <Link to={`/leads?view=scan&lead=${correlatedScanLead.id}`}>
+                <Button variant="secondary" size="sm">View scan lead</Button>
+              </Link>
+            </div>
+          </Card>
+        )}
+
         {/* Actions */}
         <Card hover={false}>
           <SectionLabel className="mb-3">Actions</SectionLabel>
@@ -803,6 +830,24 @@ export function Leads() {
 
   const leads = useMemo(() => leadsRes?.data || [], [leadsRes]);
 
+  // Deep link: `?lead=<id>` (e.g. the cross-pipeline link from a scan lead)
+  // auto-opens that sales lead's detail once the list has loaded.
+  const leadParam = searchParams.get('lead');
+  useEffect(() => {
+    if (!leadParam || selectedLead) return;
+    const match = leads.find((l) => String(l.id) === leadParam);
+    if (match) setSelectedLead(match);
+  }, [leadParam, leads, selectedLead]);
+
+  function closeDetail() {
+    setSelectedLead(null);
+    if (searchParams.has('lead')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('lead');
+      setSearchParams(next, { replace: true });
+    }
+  }
+
   function selectView(view: LeadsView) {
     setActiveView(view);
     // Keep the URL in sync so reload + share-link both work.
@@ -822,7 +867,7 @@ export function Leads() {
   if (selectedLead) {
     // Find fresh version of lead from data (in case it was updated)
     const freshLead = leads.find(l => l.id === selectedLead.id) ?? selectedLead;
-    return <LeadDetail lead={freshLead} onBack={() => setSelectedLead(null)} />;
+    return <LeadDetail lead={freshLead} onBack={closeDetail} />;
   }
 
   const subtitle = activeView === 'scan'

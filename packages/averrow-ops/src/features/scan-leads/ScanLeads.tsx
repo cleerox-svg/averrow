@@ -20,10 +20,13 @@ import {
   useScanLead,
   useUpdateScanLead,
   useGenerateQualifiedReport,
+  useRenewQualifiedReport,
+  useReportAndOutreach,
   useSendOutreach,
   useConvertToTenant,
   type ScanLead,
   type ScanLeadIntel,
+  type CorrelatedSalesLead,
 } from "@/hooks/useScanLeads";
 import { Card, Badge, Button, PageHeader, StatGrid, StatCard } from "@/design-system/components";
 import { Table, Th, Td } from "@/components/ui/Table";
@@ -274,6 +277,8 @@ function Chip({ on, children }: { on: boolean; children: React.ReactNode }) {
 
 interface LeadActions {
   generateReport: () => void;
+  reportAndOutreach: () => void;
+  renewReport: () => void;
   sendOutreach: () => void;
   convertToTenant: () => void;
   markStatus: (status: ScanLead["status"]) => void;
@@ -284,11 +289,19 @@ function useLeadActions(lead: ScanLead): LeadActions {
   const { showToast } = useToast();
   const update = useUpdateScanLead();
   const generate = useGenerateQualifiedReport();
+  const reportSend = useReportAndOutreach();
+  const renew = useRenewQualifiedReport();
   const outreach = useSendOutreach();
   const convert = useConvertToTenant();
 
   return {
-    isWorking: update.isPending || generate.isPending || outreach.isPending || convert.isPending,
+    isWorking:
+      update.isPending ||
+      generate.isPending ||
+      reportSend.isPending ||
+      renew.isPending ||
+      outreach.isPending ||
+      convert.isPending,
     markStatus: (status) => {
       update.mutate(
         { id: lead.id, status },
@@ -308,6 +321,29 @@ function useLeadActions(lead: ScanLead): LeadActions {
           window.open(res.share_url, "_blank", "noopener,noreferrer");
         },
         onError: (e) => showToast(`Report generation failed: ${(e as Error).message}`, "error"),
+      });
+    },
+    reportAndOutreach: () => {
+      reportSend.mutate(lead.id, {
+        onSuccess: (res) => {
+          if (res?.share_url) {
+            navigator.clipboard?.writeText(res.share_url).catch(() => undefined);
+          }
+          showToast(`Report generated & emailed to ${res?.sent_to ?? "the prospect"}`, "success");
+        },
+        onError: (e) => showToast(`Generate & send failed: ${(e as Error).message}`, "error"),
+      });
+    },
+    renewReport: () => {
+      renew.mutate(lead.id, {
+        onSuccess: (res) => {
+          if (res?.share_url) {
+            navigator.clipboard?.writeText(res.share_url).catch(() => undefined);
+          }
+          const until = res?.expires_at ? new Date(res.expires_at).toLocaleDateString() : "30 days out";
+          showToast(`Report renewed · link valid until ${until} (share URL copied)`, "success");
+        },
+        onError: (e) => showToast(`Renew failed: ${(e as Error).message}`, "error"),
       });
     },
     sendOutreach: () => {
@@ -342,6 +378,14 @@ function ActionMenu({ lead, actions }: { lead: ScanLead; actions: LeadActions })
         disabled={actions.isWorking || !lead.domain}
       >
         Report
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={actions.reportAndOutreach}
+        disabled={actions.isWorking || !lead.domain}
+      >
+        Generate &amp; Send
       </Button>
       <Button
         size="sm"
@@ -429,16 +473,25 @@ export function ScanLeadDetail({ leadId, onBack }: { leadId: string; onBack: () 
     );
   }
 
-  return <ScanLeadDetailBody lead={data.lead} intel={data.intel} backBtn={backBtn} />;
+  return (
+    <ScanLeadDetailBody
+      lead={data.lead}
+      intel={data.intel}
+      correlatedSalesLead={data.correlated_sales_lead}
+      backBtn={backBtn}
+    />
+  );
 }
 
 function ScanLeadDetailBody({
   lead,
   intel,
+  correlatedSalesLead,
   backBtn,
 }: {
   lead: ScanLead;
   intel: ScanLeadIntel | null;
+  correlatedSalesLead: CorrelatedSalesLead | null;
   backBtn: React.ReactNode;
 }) {
   const actions = useLeadActions(lead);
@@ -481,6 +534,34 @@ function ScanLeadDetailBody({
           <FunnelStateChips lead={lead} />
         </div>
       </Card>
+
+      {/* Cross-pipeline link — outbound sales prospect for the same company */}
+      {correlatedSalesLead ? (
+        <Card>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              <h3 className="text-xs font-mono uppercase tracking-wider text-[var(--text-tertiary,#8A8F9C)]">
+                Also an outbound prospect
+              </h3>
+              <div className="mt-1 text-[var(--text-secondary,#7a8ba8)]">
+                {correlatedSalesLead.company_name ?? "Sales lead"}
+                {correlatedSalesLead.prospect_score != null
+                  ? ` · score ${correlatedSalesLead.prospect_score}`
+                  : ""}
+                {correlatedSalesLead.pitch_angle ? ` · ${correlatedSalesLead.pitch_angle}` : ""}
+              </div>
+              <div className="mt-1.5">
+                <Badge severity="info">{correlatedSalesLead.status.replace("_", " ")}</Badge>
+              </div>
+            </div>
+            <Link to={`/leads?lead=${correlatedSalesLead.id}`}>
+              <Button size="sm" variant="secondary">
+                View sales lead <ExternalLink className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {/* Contact */}
       <Card>
@@ -737,6 +818,15 @@ function ScanLeadDetailBody({
                     }}
                   >
                     <Copy className="w-3.5 h-3.5 mr-1" /> Copy link
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={actions.renewReport}
+                    disabled={actions.isWorking}
+                    title="Rebuild with fresh data + reset the 30-day expiry, keeping the same share link"
+                  >
+                    Renew
                   </Button>
                   <a
                     href={`/qualified-report/${intel.latest_report.share_token}`}

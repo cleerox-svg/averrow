@@ -29,6 +29,8 @@ export interface ScanLead {
   notes: string | null;
   // Funnel-state fields from migration 0117
   correlated_brand_id: string | null;
+  // Cross-pipeline link to an outbound sales_leads row (migration 0218)
+  correlated_sales_lead_id: string | null;
   outreach_sent_at: string | null;
   outreach_email_id: string | null;
   converted_org_id: number | null;
@@ -113,9 +115,21 @@ export interface ScanLeadIntel {
   };
 }
 
+// The outbound sales_leads counterpart for the same company, matched at
+// read time by domain ↔ company_domain (backend GET /api/admin/leads/:id).
+export interface CorrelatedSalesLead {
+  id: number;
+  company_name: string | null;
+  status: string;
+  prospect_score: number | null;
+  pitch_angle: string | null;
+  created_at: string;
+}
+
 export interface ScanLeadDetailResponse {
   lead: ScanLead;
   intel: ScanLeadIntel | null;
+  correlated_sales_lead: CorrelatedSalesLead | null;
 }
 
 export function useScanLead(id: string | null) {
@@ -165,10 +179,46 @@ export function useGenerateQualifiedReport() {
   });
 }
 
+export interface RenewReportResponse extends QualifiedReportResponse {
+  renewed: boolean;
+}
+
+// Renew the most recent report for a lead: fresh payload + fresh 30-day
+// expiry, SAME share_token, so a link already sent to a prospect stays
+// alive. 404s if no report has ever been generated for the lead.
+export function useRenewQualifiedReport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.post<RenewReportResponse>(`/api/admin/leads/${id}/qualified-report/renew`, {});
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scan-leads"] });
+      qc.invalidateQueries({ queryKey: ["scan-lead"] });
+    },
+  });
+}
+
 export interface OutreachResponse {
   sent_to: string;
   email_id: string;
   share_url: string;
+}
+
+// One-click: generate a fresh report AND email it to the prospect.
+export function useReportAndOutreach() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.post<OutreachResponse>(`/api/admin/leads/${id}/report-and-outreach`, {});
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scan-leads"] });
+      qc.invalidateQueries({ queryKey: ["scan-lead"] });
+    },
+  });
 }
 
 export function useSendOutreach() {

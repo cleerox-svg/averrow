@@ -109,12 +109,26 @@ export function useLeads(options?: { status?: string; pitch_angle?: string }) {
   });
 }
 
+// The inbound scan_leads counterpart for the same company, matched at
+// read time by company_domain ↔ domain (backend GET /api/admin/sales-leads/:id).
+export interface CorrelatedScanLead {
+  id: string;
+  email: string;
+  company: string | null;
+  status: string;
+  created_at: string;
+}
+
+export type SalesLeadDetail = SalesLead & {
+  correlated_scan_lead?: CorrelatedScanLead | null;
+};
+
 export function useLead(id: string | null) {
   return useQuery({
     queryKey: ['lead', id],
     queryFn: async () => {
       if (!id) return null;
-      const res = await api.get<SalesLead>(`/api/admin/sales-leads/${id}`);
+      const res = await api.get<SalesLeadDetail>(`/api/admin/sales-leads/${id}`);
       return res.data || null;
     },
     placeholderData: keepPreviousData,
