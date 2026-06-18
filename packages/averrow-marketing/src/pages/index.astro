@@ -1,7 +1,7 @@
 ---
 /*
  * Homepage. Hero with radar SVG + synthetic intercept ticker + scan
- * form, stat row, agent squadron, how-it-works, capabilities, trust
+ * form, stat row, agent mesh, how-it-works, capabilities, trust
  * signals, CTA. Ported from
  * packages/trust-radar/src/templates/homepage.ts.
  *
@@ -27,7 +27,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Averrow — AI-Powered Brand Protection"
-  description="Averrow — AI-powered brand protection. Detect impersonation, phishing, domain abuse, and social media threats before they reach your customers. Free domain scan — no signup required."
+  description="Averrow — AI-powered threat intelligence and brand protection. Detect impersonation, phishing, domain abuse, and social media threats before they reach your customers. Free brand scan — no signup required."
 >
   <section class="hero">
     <div class="hero-bg"></div>
@@ -67,16 +67,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
 
     <div class="hero-content">
-      <div class="hero-tag">Threat Interceptor</div>
+      <div class="hero-tag">AI Threat Intelligence &amp; Brand Protection</div>
       <h1 class="hero-h1">Your brand is under attack<br />right now.</h1>
       <p class="hero-p">
-        Averrow intercepts impersonation, phishing, and brand abuse across
-        domains, email, and social &mdash; before it reaches your customers.
+        Averrow detects and shuts down impersonation, phishing, and brand abuse
+        across domains, email, and social &mdash; before it reaches your customers.
       </p>
 
-      <div class="hero-ticker" role="img" aria-label="Sample of recent threat intercepts">
+      <div class="hero-ticker" role="img" aria-label="Sample of recent threat detections">
         <div class="hero-ticker-label">
-          Live Intercept Feed <span class="hero-ticker-dot"></span>
+          Live Threat Feed <span class="hero-ticker-dot"></span>
         </div>
         <div class="hero-ticker-viewport">
           <ul class="hero-ticker-list">
@@ -96,11 +96,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
       <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
         <input class="scan-input" id="domainInput" name="domain" placeholder="Enter any domain" autocomplete="off" />
-        <button class="scan-btn" type="submit">Launch Sortie</button>
+        <button class="scan-btn" type="submit">Scan My Brand &mdash; Free</button>
       </form>
       <div class="scan-hint">
         Enter any domain &mdash; no signup required &middot;
-        <span class="scan-hint-emphasis">Intercept feed above is illustrative</span>
+        <span class="scan-hint-emphasis">Threat feed above is illustrative</span>
       </div>
     </div>
   </section>
@@ -138,8 +138,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </div>
 
   <section class="squadron">
-    <div class="section-label">Agent Squadron</div>
-    <h2 class="squadron-title">Six core agents. {stats.agents_deployed} on the field.</h2>
+    <div class="section-label">The Agent Mesh</div>
+    <h2 class="squadron-title">Six core agents. {stats.agents_deployed} working continuously.</h2>
     <p class="squadron-subtitle">
       A deployed mesh of {stats.agents_deployed} AI agents &mdash; six core
       agents shown here, plus specialized agents handling enrichment,
@@ -157,7 +157,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </svg>
         <div class="agent-name">Sentinel</div>
         <div class="agent-role">Threat Detection</div>
-        <div class="agent-desc">Continuous radar sweep across all feeds</div>
+        <div class="agent-desc">Continuous monitoring across all threat feeds</div>
       </div>
       <div class="agent-card" style="--agent-color: #E5A832;">
         <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#E5A832">
@@ -168,7 +168,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <circle cx="14" cy="14" r="1.5" fill="currentColor"/>
         </svg>
         <div class="agent-name">ASTRA</div>
-        <div class="agent-role">Fire Control</div>
+        <div class="agent-role">Scoring &amp; Triage</div>
         <div class="agent-desc">Classifies, scores, and prioritizes threat severity</div>
       </div>
       <div class="agent-card" style="--agent-color: #0A8AB5;">
@@ -200,7 +200,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <circle cx="23.5" cy="8.5" r="2" fill="#C83C3C" opacity="0.9"/>
         </svg>
         <div class="agent-name">Blackbox</div>
-        <div class="agent-role">Flight Recorder</div>
+        <div class="agent-role">Timeline &amp; Narrative</div>
         <div class="agent-desc">Captures threat timelines and narratives</div>
       </div>
       <div class="agent-card" style="--agent-color: #3CB878;">
@@ -211,7 +211,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <path d="M17.5 2.5 L20 5.5 L22.5 2.5 L20 0 Z" fill="currentColor"/>
         </svg>
         <div class="agent-name">Pathfinder</div>
-        <div class="agent-role">Target Acquisition</div>
+        <div class="agent-role">Prospect Intelligence</div>
         <div class="agent-desc">Identifies prospects and generates outreach</div>
       </div>
     </div>
@@ -231,7 +231,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="step">
         <div class="step-num">02</div>
         <div class="step-title">We scan everything</div>
-        <div class="step-desc">Six AI agents sweep threat feeds, email authentication, domains, and social platforms.</div>
+        <div class="step-desc">Six AI agents monitor threat feeds, email authentication, domains, and social platforms.</div>
       </div>
       <div class="step-arrow">&rarr;</div>
       <div class="step">
@@ -292,7 +292,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <circle cx="16" cy="16" r="4" stroke="currentColor" stroke-width="1.5"/>
           <circle cx="16" cy="16" r="1.5" fill="currentColor"/>
         </svg>
-        <div class="cap-title">Social Airspace Monitoring</div>
+        <div class="cap-title">Social Media Monitoring</div>
         <div class="cap-desc">Fake accounts, handle squatting, and unauthorized brand usage across six platforms.</div>
         <div class="cap-mock" aria-label="Sample social impersonation match">
           <div class="cap-mock-social">

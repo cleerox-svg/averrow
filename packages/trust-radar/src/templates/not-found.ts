@@ -467,7 +467,7 @@ img { max-width: 100%; }
       </svg>
       <div>
         <span class="nav-brand-text">Averrow</span>
-        <span class="nav-brand-sub">Threat Interceptor</span>
+        <span class="nav-brand-sub">Threat Intelligence</span>
       </div>
     </a>
     <ul class="nav-links">
@@ -526,7 +526,7 @@ img { max-width: 100%; }
             <span class="nav-brand-text" style="font-size:1rem">Averrow</span>
           </div>
         </a>
-        <p>AI-powered airspace defense platform by LRX Enterprises Inc. Continuous monitoring for brand impersonation, phishing, and domain abuse.</p>
+        <p>AI-powered threat intelligence platform by LRX Enterprises Inc. Continuous monitoring for brand impersonation, phishing, and domain abuse.</p>
         <p style="margin-top:1rem;font-size:0.82rem;color:var(--text-tertiary)">
           <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
         </p>

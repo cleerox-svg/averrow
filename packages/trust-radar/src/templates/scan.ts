@@ -671,7 +671,7 @@ body {
   <!-- Loading -->
   <div class="loading" id="loading">
     <div class="loading-spinner"></div>
-    <p>Launching sortie...</p>
+    <p>Running brand scan...</p>
     <p class="loading-detail">Checking email security, lookalike domains, threat feeds, and social handles</p>
   </div>
 
@@ -805,7 +805,7 @@ async function runScan() {
     errEl.classList.add('visible');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Scan Domain';  // reset after sortie completes
+    btn.textContent = 'Scan Domain';  // reset after scan completes
     loadingEl.classList.remove('visible');
   }
 }

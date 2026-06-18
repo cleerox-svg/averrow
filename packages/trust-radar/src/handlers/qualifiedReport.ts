@@ -28,7 +28,15 @@ import { json } from "../lib/cors";
 import { runSyncAgent } from "../lib/agentRunner";
 import { qualifiedReportAgent } from "../agents/qualified-report";
 import type { QualifiedReportOutput } from "../agents/qualified-report";
+import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import type { Env } from "../types";
+
+// Email-posture freshness: if the latest email_security_scans row for the
+// lead's domain is older than this (or missing), re-scan at report-build
+// time rather than serving a possibly weeks-old grade. Bounded by a
+// wall-clock guard so a slow DNS lookup can't stall report generation.
+const EMAIL_SCAN_STALE_MS = 14 * 24 * 60 * 60 * 1000;
+const EMAIL_SCAN_BUDGET_MS = 8_000;
 
 // ─── ROI defaults ──────────────────────────────────────────────────
 // Per CLAUDE.md §13: positioning is "replaces 2-3 analyst headcount"
@@ -135,22 +143,63 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
     // email_security_scans (keyed by domain). Selecting them off brands
     // here used to throw and 500 the whole report generation.
     env.DB.prepare(`
-      SELECT name, email_security_grade
+      SELECT id, name, email_security_grade
       FROM brands WHERE canonical_domain = ? LIMIT 1
-    `).bind(domain).first<{ name: string; email_security_grade: string | null }>(),
+    `).bind(domain).first<{ id: number; name: string; email_security_grade: string | null }>(),
     env.DB.prepare(`
-      SELECT spf_policy, dmarc_policy, mx_exists, mx_providers
+      SELECT spf_policy, dmarc_policy, mx_exists, mx_providers, email_security_grade, scanned_at
       FROM email_security_scans WHERE domain = ?
       ORDER BY scanned_at DESC LIMIT 1
-    `).bind(domain).first<{ spf_policy: string | null; dmarc_policy: string | null; mx_exists: number | null; mx_providers: string | null }>(),
+    `).bind(domain).first<{ spf_policy: string | null; dmarc_policy: string | null; mx_exists: number | null; mx_providers: string | null; email_security_grade: string | null; scanned_at: string | null }>(),
   ]);
+
+  // ── Email-posture freshness (B6) ──────────────────────────────────
+  // The brands.email_security_grade column and the latest
+  // email_security_scans row can both be weeks stale. When stale or
+  // missing, run a fresh scan now so the report reflects current
+  // posture. Best-effort + time-boxed: on timeout/failure we keep the
+  // cached values rather than blocking report generation.
+  let freshEmail: { spf: string | null; dmarc: string | null; mxCount: number; grade: string | null } | null = null;
+  const scanAgeMs = emailScanRow?.scanned_at
+    ? Date.now() - new Date(emailScanRow.scanned_at).getTime()
+    : Infinity;
+  if (scanAgeMs > EMAIL_SCAN_STALE_MS) {
+    try {
+      const scan = await Promise.race([
+        runEmailSecurityScan(domain),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("email scan timed out")), EMAIL_SCAN_BUDGET_MS)),
+      ]);
+      freshEmail = {
+        spf: scan.spf.policy,
+        dmarc: scan.dmarc.policy,
+        mxCount: scan.mx.providers.length,
+        grade: scan.grade,
+      };
+      // Persist for next time (only when we have a brand row to key on;
+      // the scans table's brand_id is required). Best-effort.
+      if (brandRow?.id != null) {
+        try { await saveEmailSecurityScan(env.DB, brandRow.id, scan); } catch { /* ignore */ }
+      }
+    } catch { /* keep cached values */ }
+  }
 
   const totalThreats = threatsResult.results.length;
   const bySeverity: Record<string, number> = {};
   for (const row of severityResult.results) bySeverity[row.severity ?? "unknown"] = row.n;
 
   // Risk grade derived from threat count + email security grade.
-  const emailGrade = brandRow?.email_security_grade ?? "F";
+  // Prefer a fresh scan, then the latest stored scan row, then the
+  // (possibly stale) brands column, before defaulting to F.
+  const emailGrade = freshEmail?.grade
+    ?? emailScanRow?.email_security_grade
+    ?? brandRow?.email_security_grade
+    ?? "F";
+  const spfPolicy = freshEmail?.spf ?? emailScanRow?.spf_policy ?? null;
+  const dmarcPolicy = freshEmail?.dmarc ?? emailScanRow?.dmarc_policy ?? null;
+  const mxCount = freshEmail?.mxCount
+    ?? (emailScanRow?.mx_providers
+      ? emailScanRow.mx_providers.split(",").filter((s) => s.trim()).length
+      : (emailScanRow?.mx_exists ? 1 : 0));
   const riskGrade = totalThreats >= 20 || emailGrade === "F"
     ? "CRITICAL"
     : totalThreats >= 10 || emailGrade === "D"
@@ -182,8 +231,8 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
       topCountries: countriesResult.results.map(c => c.country).slice(0, 10),
       campaignCount: campaignsResult.results.length,
       emailGrade,
-      spfPolicy: emailScanRow?.spf_policy ?? null,
-      dmarcPolicy: emailScanRow?.dmarc_policy ?? null,
+      spfPolicy,
+      dmarcPolicy,
     },
   );
 
@@ -207,12 +256,10 @@ async function buildReportPayload(env: Env, lead: { domain: string; company: str
     executive_summary: { risk_grade: riskGrade, key_findings: keyFindings },
     email_security: {
       grade: emailGrade,
-      spf: emailScanRow?.spf_policy ?? null,
-      dmarc: emailScanRow?.dmarc_policy ?? null,
+      spf: spfPolicy,
+      dmarc: dmarcPolicy,
       dkim_found: false, // not tracked yet on brands table
-      mx_count: emailScanRow?.mx_providers
-        ? emailScanRow.mx_providers.split(",").filter((s) => s.trim()).length
-        : (emailScanRow?.mx_exists ? 1 : 0),
+      mx_count: mxCount,
     },
     active_threats: { total: totalThreats, by_severity: bySeverity, samples: threatsResult.results },
     infrastructure: {
@@ -278,6 +325,71 @@ export async function handleGenerateQualifiedReport(
         share_token: shareToken,
         expires_at: expiresAt,
         risk_grade: payload.executive_summary.risk_grade,
+      },
+    }, 200, origin);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json({ success: false, error: message }, 500, origin);
+  }
+}
+
+// ─── Renew handler (admin) ─────────────────────────────────────────
+//
+// Re-stamps the most recent qualified report for a lead with a fresh
+// 30-day expiry AND a freshly-built payload, while KEEPING the existing
+// share_token so any link already sent to the prospect keeps working
+// through a long sales cycle. Without this, a report that lapses
+// mid-deal forces the admin to generate a brand-new link.
+
+export async function handleRenewQualifiedReport(
+  request: Request,
+  env: Env,
+  leadId: string,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const lead = await env.DB.prepare(
+      "SELECT id, company, domain FROM scan_leads WHERE id = ?",
+    ).bind(leadId).first<{ id: string; company: string | null; domain: string | null }>();
+
+    if (!lead) return json({ success: false, error: "Lead not found" }, 404, origin);
+    if (!lead.domain) return json({ success: false, error: "Lead has no domain to scan" }, 400, origin);
+
+    // Most recent report regardless of expiry — renewing a lapsed link is
+    // the whole point.
+    const existing = await env.DB.prepare(`
+      SELECT id, share_token FROM qualified_reports
+      WHERE lead_id = ? ORDER BY created_at DESC LIMIT 1
+    `).bind(leadId).first<{ id: string; share_token: string }>();
+
+    if (!existing) {
+      return json({
+        success: false,
+        error: "No report to renew for this lead. Generate one first via POST /api/admin/leads/:id/qualified-report.",
+      }, 404, origin);
+    }
+
+    const payload = await buildReportPayload(env, { domain: lead.domain, company: lead.company });
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    await env.DB.prepare(`
+      UPDATE qualified_reports
+      SET payload_json = ?, expires_at = ?
+      WHERE id = ?
+    `).bind(JSON.stringify(payload), expiresAt, existing.id).run();
+
+    const url = new URL(request.url);
+    const shareUrl = `${url.origin}/qualified-report/${existing.share_token}`;
+
+    return json({
+      success: true,
+      data: {
+        report_id: existing.id,
+        share_url: shareUrl,
+        share_token: existing.share_token,
+        expires_at: expiresAt,
+        risk_grade: payload.executive_summary.risk_grade,
+        renewed: true,
       },
     }, 200, origin);
   } catch (err) {

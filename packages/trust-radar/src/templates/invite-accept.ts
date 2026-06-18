@@ -133,7 +133,7 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
       This invitation expires on ${formattedExpiry}.
     </div>
 
-    <div class="footer">Averrow Threat Interceptor</div>
+    <div class="footer">Averrow Threat Intelligence</div>
   </div>
 </body>
 </html>`;

@@ -24,7 +24,7 @@ export function renderNav(): string {
       </svg>
       <div>
         <span class="nav-brand-text">AVERROW</span>
-        <span class="nav-brand-sub">THREAT INTERCEPTOR</span>
+        <span class="nav-brand-sub">THREAT INTELLIGENCE</span>
       </div>
     </a>
     <ul class="nav-links">
@@ -122,7 +122,7 @@ export function renderFooter(): string {
             <span class="nav-brand-text" style="font-size:18px">AVERROW</span>
           </div>
         </a>
-        <p>AI-powered brand protection by LRX Enterprises Inc. Continuous airspace defense against impersonation, phishing, and social media abuse.</p>
+        <p>AI-powered brand protection by LRX Enterprises Inc. Continuous monitoring against impersonation, phishing, and social media abuse.</p>
         <p style="margin-top:1rem;font-size:0.82rem;color:var(--text-tertiary)">
           <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
         </p>

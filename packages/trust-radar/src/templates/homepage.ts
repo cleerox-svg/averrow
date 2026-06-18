@@ -1672,7 +1672,7 @@ export function renderAssessResults(scanId: string): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trust Score Results — Averrow</title>
+<title>Brand Check Results — Averrow</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -1721,7 +1721,7 @@ export function renderAssessResults(scanId: string): string {
       <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-assess)"/>
       <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
     </svg>
-    <div><span class="brand-name">AVERROW</span><span class="brand-sub">Threat Interceptor</span></div>
+    <div><span class="brand-name">AVERROW</span><span class="brand-sub">Threat Intelligence</span></div>
   </a>
   <a class="login-btn" href="/login">Sign In</a>
 </nav>

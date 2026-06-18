@@ -71,9 +71,31 @@ export async function handleListSalesLeads(request: Request, env: Env): Promise<
 export async function handleGetSalesLead(request: Request, env: Env, id: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const lead = await env.DB.prepare("SELECT * FROM sales_leads WHERE id = ?").bind(id).first();
+    const lead = await env.DB.prepare("SELECT * FROM sales_leads WHERE id = ?").bind(id).first<Record<string, unknown> & { company_domain: string | null; correlated_scan_lead_id: string | null }>();
     if (!lead) return json({ success: false, error: "Lead not found" }, 404, origin);
-    return json({ success: true, data: lead }, 200, origin);
+
+    // Cross-pipeline link (B5): surface any inbound public scan lead for
+    // the same company (sales_leads.company_domain ↔ scan_leads.domain) so
+    // a rep sees "this prospect already ran a scan". Best-effort + cached.
+    let correlatedScanLead: Record<string, unknown> | null = null;
+    const companyDomain = lead.company_domain ? lead.company_domain.toLowerCase().trim() : null;
+    if (companyDomain) {
+      try {
+        correlatedScanLead = await env.DB.prepare(
+          `SELECT id, email, company, status, created_at
+             FROM scan_leads WHERE lower(domain) = ?
+             ORDER BY created_at DESC LIMIT 1`,
+        ).bind(companyDomain).first<Record<string, unknown>>();
+        if (correlatedScanLead && lead.correlated_scan_lead_id == null) {
+          await env.DB.prepare(
+            `UPDATE sales_leads SET correlated_scan_lead_id = ?
+               WHERE id = ? AND correlated_scan_lead_id IS NULL`,
+          ).bind(correlatedScanLead["id"] as string, id).run();
+        }
+      } catch { correlatedScanLead = null; }
+    }
+
+    return json({ success: true, data: { ...lead, correlated_scan_lead: correlatedScanLead } }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }

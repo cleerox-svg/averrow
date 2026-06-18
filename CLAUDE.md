@@ -969,6 +969,6 @@ infrastructure, and get ahead of them. Threats are evidence. Patterns are the pr
 Never pay AI tokens to do what `GROUP BY` can do in 50ms.
 
 **Pricing:** Free | Professional $1,499/mo | Business $3,999/mo | Enterprise
-**Positioning:** Global (not Canada-first). Avro Arrow heritage on About page only.
+**Positioning:** Global (not Canada-first). Straight threat-intelligence + brand-protection messaging — **no aviation/military framing** in customer-facing copy (the Avro Arrow heritage narrative was removed from About in Jun 2026; agent role labels are reframed by function). The "Averrow" name is retained as the legal brand; its aviation derivation is no longer narrated. Internal agent code names (Sentinel/ASTRA/Observer/Navigator/Blackbox/Pathfinder) are unchanged.
 **Parent company:** LRX Enterprises Inc. (Canadian-incorporated)
 **Domains:** averrow.com (primary), averrow.ca (Canadian market)

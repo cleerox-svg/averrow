@@ -53,7 +53,7 @@ import {
 } from "../handlers/incidents";
 import { handleCartographerHealth } from "../handlers/cartographer-health";
 import { handleD1Health } from "../handlers/d1-health";
-import { handleGenerateQualifiedReport } from "../handlers/qualifiedReport";
+import { handleGenerateQualifiedReport, handleRenewQualifiedReport } from "../handlers/qualifiedReport";
 import {
   handleListPricingPlans, handleListModulePrices, handleGetCustomerPricing,
   handleUpdatePricingPlan, handleUpdateModulePrice,
@@ -382,6 +382,28 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleSendLeadOutreach(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+
+  // Renew the most recent qualified report for a lead: fresh payload +
+  // fresh 30-day expiry, same share_token, so a link already sent to the
+  // prospect stays alive through a long sales cycle.
+  router.post("/api/admin/leads/:id/qualified-report/renew", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRenewQualifiedReport(request, env, request.params["id"] ?? "");
+  });
+
+  // One-click: generate a fresh qualified report AND email it to the
+  // prospect in a single call. Composes the generate + outreach handlers;
+  // neither reads the request body, so reusing `request` is safe.
+  router.post("/api/admin/leads/:id/report-and-outreach", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const id = request.params["id"] ?? "";
+    const genRes = await handleGenerateQualifiedReport(request, env, id, ctx.userId);
+    const genData = await genRes.clone().json() as { success: boolean };
+    if (!genData.success) return genRes; // surface the generate error as-is
+    return handleSendLeadOutreach(request, env, id, ctx.userId);
   });
 
   // Convert a qualified lead to a tenant organization. Creates org +

@@ -1,8 +1,8 @@
 ---
 /*
- * Platform page. Hero with Squadron Status panel, sticky cap-nav,
- * four capability sections (Radar Sweep / Email Posture / Social
- * Airspace / Agent Squadron), architecture flow, integrations split,
+ * Platform page. Hero with Platform Status panel, sticky cap-nav,
+ * four capability sections (Continuous Monitoring / Email Posture /
+ * Social / Agent Mesh), architecture flow, integrations split,
  * CTA. Ported from packages/trust-radar/src/templates/platform.ts.
  */
 import Layout from "../layouts/Layout.astro";
@@ -12,21 +12,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Platform — Averrow"
-  description="One platform. Twenty-seven agents. Zero blind spots. AI-powered brand protection across phishing, domains, email, and social — fused into a single exposure picture by an agent squadron that reasons about threats."
+  description="One platform. Twenty-seven agents. Zero blind spots. AI-powered brand protection across phishing, domains, email, and social — fused into a single exposure picture by an AI agent mesh that reasons about threats."
 >
   <section class="plat-hero">
     <div class="container">
       <div class="plat-hero-section-label">The Platform</div>
       <h1>One platform.<br /><span class="hero-accent">Twenty-seven agents.</span><br />Zero blind spots.</h1>
       <p>
-        Continuous radar across phishing, domains, email, and social &mdash;
-        fused into a single brand exposure picture by an AI agent squadron
+        Continuous monitoring across phishing, domains, email, and social &mdash;
+        fused into a single brand exposure picture by an AI agent mesh
         that reasons about threats, not just lists them.
       </p>
-      <div class="squadron-status" aria-label="Live squadron status">
+      <div class="squadron-status" aria-label="Live platform status">
         <div class="squadron-status-label">
           <span class="squadron-status-dot" aria-hidden="true"></span>
-          Squadron Status &mdash; All Systems Operational
+          Platform Status &mdash; All Systems Operational
         </div>
         <div class="squadron-grid">
           <div class="squadron-row"><span class="squadron-name">Sentinel</span><span class="squadron-state">SCANNING</span></div>
@@ -42,21 +42,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <div class="cap-nav">
     <div class="cap-nav-inner">
-      <a href="#radar-sweep" class="cap-tab active">Radar Sweep</a>
+      <a href="#monitoring" class="cap-tab active">Continuous Monitoring</a>
       <a href="#email-posture" class="cap-tab">Email Posture Engine</a>
-      <a href="#social-airspace" class="cap-tab">Social Airspace</a>
-      <a href="#agent-squadron" class="cap-tab">Agent Squadron</a>
+      <a href="#social" class="cap-tab">Social Monitoring</a>
+      <a href="#agents" class="cap-tab">Agent Mesh</a>
     </div>
   </div>
 
-  <section class="cap-section" id="radar-sweep">
+  <section class="cap-section" id="monitoring">
     <div class="cap-row">
       <div class="cap-text">
         <div class="section-label">Capability 01</div>
-        <h2>Radar Sweep &mdash; Continuous Brand Monitoring</h2>
-        <p>Sentinel sweeps phishing databases, malware feeds, CT logs, and DNS intelligence on a 360&deg; loop &mdash; surfacing anyone targeting your brand the moment they appear in the open feed network.</p>
+        <h2>Continuous Brand Monitoring</h2>
+        <p>Sentinel monitors phishing databases, malware feeds, CT logs, and DNS intelligence around the clock &mdash; surfacing anyone targeting your brand the moment they appear in the open feed network.</p>
         <ul class="cap-features">
-          <li>Continuous scanning across all radar feeds</li>
+          <li>Continuous scanning across all threat feeds</li>
           <li>Parallel feed processing for speed</li>
           <li>Automatic deduplication and false positive filtering</li>
           <li>Safe domains allowlist to reduce noise</li>
@@ -143,11 +143,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <section class="cap-section" id="social-airspace">
+  <section class="cap-section" id="social">
     <div class="cap-row">
       <div class="cap-text">
         <div class="section-label">Capability 03</div>
-        <h2>Social Airspace Monitoring</h2>
+        <h2>Social Media Monitoring</h2>
         <p>Impersonation on social is the fastest-growing attack vector. Averrow monitors six platforms for fake accounts, handle squatting, and unauthorized brand usage &mdash; with AI confidence scoring so you only see what actually warrants a takedown.</p>
         <ul class="cap-features">
           <li>AI-powered profile assessment (confidence scoring)</li>
@@ -159,7 +159,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </ul>
       </div>
       <div class="cap-visual">
-        <div class="social-eyebrow">Airspace Status</div>
+        <div class="social-eyebrow">Monitoring Status</div>
         <div class="social-grid">
           <div class="social-item"><div class="social-name">Twitter/X</div><div class="social-status"><span class="social-dot green"></span>Verified</div></div>
           <div class="social-item"><div class="social-name">LinkedIn</div><div class="social-status"><span class="social-dot green"></span>Verified</div></div>
@@ -172,17 +172,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <section class="cap-section" id="agent-squadron">
+  <section class="cap-section" id="agents">
     <div class="cap-row reversed">
       <div class="cap-text">
         <div class="section-label">Capability 04</div>
-        <h2>Agent Squadron</h2>
-        <p>Six core agents don&rsquo;t just detect threats &mdash; they reason about them. They cross-reference signals across email, domains, social, and radar feeds to produce a single Brand Exposure Score and natural-language briefings your team can act on.</p>
+        <h2>The Agent Mesh</h2>
+        <p>Six core agents don&rsquo;t just detect threats &mdash; they reason about them. They cross-reference signals across email, domains, social, and threat feeds to produce a single Brand Exposure Score and natural-language briefings your team can act on.</p>
         <ul class="cap-features">
           <li>Cross-system signal fusion (email + social + threats + domains)</li>
           <li>Social intelligence correlation in risk scoring</li>
           <li>Composite Brand Exposure Score</li>
-          <li>Natural language intercept reports</li>
+          <li>Natural language threat reports</li>
           <li>Automated takedown evidence generation</li>
           <li>Daily intelligence briefings from Observer</li>
         </ul>
@@ -190,14 +190,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="cap-visual">
         <div class="agent-grid-vert">
           <div class="agent-row" style="border-left-color:#C83C3C;"><div class="ar-name" style="color:#C83C3C;">Sentinel</div><div class="ar-role">Threat Detection</div></div>
-          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:#E5A832;">ASTRA</div><div class="ar-role">Fire Control</div></div>
+          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:#E5A832;">ASTRA</div><div class="ar-role">Scoring &amp; Triage</div></div>
           <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:#0A8AB5;">Observer</div><div class="ar-role">Strategic Intel</div></div>
           <div class="agent-row" style="border-left-color:#065A78;"><div class="ar-name" style="color:#065A78;">Navigator</div><div class="ar-role">Geo Mapping</div></div>
-          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:#8A8F9C;">Blackbox</div><div class="ar-role">Flight Recorder</div></div>
-          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:#3CB878;">Pathfinder</div><div class="ar-role">Target Acquisition</div></div>
+          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:#8A8F9C;">Blackbox</div><div class="ar-role">Timeline &amp; Narrative</div></div>
+          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:#3CB878;">Pathfinder</div><div class="ar-role">Prospect Intelligence</div></div>
         </div>
         <div class="narrative-block">
-          <div class="narrative-label"><span class="narrative-dot"></span> Blackbox &mdash; Flight Recorder</div>
+          <div class="narrative-label"><span class="narrative-dot"></span> Blackbox &mdash; Timeline &amp; Narrative</div>
           &ldquo;A phishing domain matching your brand was registered 48 hours ago with active MX records, combined with your current DKIM gap on the proofpoint selector. This creates a HIGH-severity compound risk &mdash; attackers can send spoofed emails that pass basic checks.&rdquo;
         </div>
       </div>
@@ -787,7 +787,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   // Sticky cap-nav scroll-spy: set the active tab to the section
   // currently most in view as the user scrolls.
   (function () {
-    const sections = ["radar-sweep", "email-posture", "social-airspace", "agent-squadron"];
+    const sections = ["monitoring", "email-posture", "social", "agents"];
     const tabs = document.querySelectorAll<HTMLAnchorElement>(".cap-tab");
     if (!("IntersectionObserver" in window)) return;
     const observer = new IntersectionObserver(

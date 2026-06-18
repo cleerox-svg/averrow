@@ -880,10 +880,11 @@ export async function handleGetLead(request: Request, env: Env, id: string): Pro
   try {
     const lead = await env.DB.prepare(
       `SELECT id, email, name, company, phone, domain, form_type, source, message,
-              status, notes, correlated_brand_id, outreach_sent_at, outreach_email_id,
+              status, notes, correlated_brand_id, correlated_sales_lead_id,
+              outreach_sent_at, outreach_email_id,
               converted_org_id, converted_at, created_at, updated_at
          FROM scan_leads WHERE id = ?`,
-    ).bind(id).first<Record<string, unknown> & { domain: string | null; correlated_brand_id: string | null }>();
+    ).bind(id).first<Record<string, unknown> & { domain: string | null; correlated_brand_id: string | null; correlated_sales_lead_id: string | null }>();
 
     if (!lead) return json({ success: false, error: "Lead not found" }, 404, origin);
 
@@ -901,7 +902,29 @@ export async function handleGetLead(request: Request, env: Env, id: string): Pro
       }
     }
 
-    return json({ success: true, data: { lead, intel } }, 200, origin);
+    // Cross-pipeline link (B5): surface any outbound Pathfinder-researched
+    // prospect for the same company so a rep sees "we already researched
+    // this". Matched by domain ↔ sales_leads.company_domain. Best-effort:
+    // a failure here must not drop the lead. Opportunistically cache the
+    // link on the row when first discovered.
+    let correlatedSalesLead: Record<string, unknown> | null = null;
+    if (domain) {
+      try {
+        correlatedSalesLead = await env.DB.prepare(
+          `SELECT id, company_name, status, prospect_score, pitch_angle, created_at
+             FROM sales_leads WHERE lower(company_domain) = ?
+             ORDER BY created_at DESC LIMIT 1`,
+        ).bind(domain).first<Record<string, unknown>>();
+        if (correlatedSalesLead && lead.correlated_sales_lead_id == null) {
+          await env.DB.prepare(
+            `UPDATE scan_leads SET correlated_sales_lead_id = ?
+               WHERE id = ? AND correlated_sales_lead_id IS NULL`,
+          ).bind(correlatedSalesLead["id"] as string, id).run();
+        }
+      } catch { correlatedSalesLead = null; }
+    }
+
+    return json({ success: true, data: { lead, intel, correlated_sales_lead: correlatedSalesLead } }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
