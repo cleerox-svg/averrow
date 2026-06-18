@@ -1,6 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
-import { threatId } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { diagnosticFetch } from "../lib/feedDiagnostic";
 
 /**
  * NIST National Vulnerability Database — CVE 2.0 JSON API.
@@ -20,16 +19,32 @@ import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
  *     window of newly-published CVEs so the correlation surface
  *     covers vulns BEFORE they hit KEV.
  *
- * The CVE rows land in `threats` as `threat_type: 'malicious_ip'`
- * with a `cve:<id>` prefix in ioc_value. We don't try to map every
- * CVE to a real IOC (most CVEs don't carry indicators); the value
- * is in the cross-table JOIN — when an incoming threat is later
- * tagged with a CVE reference, this corpus lets us answer
- * "what's the CVSS score?" without a fresh NVD round-trip.
+ * Storage convention (re-architected 2026-06-18, PR for issue tracked
+ * in CLAUDE.md §8 — supersedes migration 0173's disable):
+ *   A CVE is NOT an IP/URL/domain, so it does NOT belong in the
+ *   `threats` table. The original module wrote CVE rows with
+ *   threat_type='malicious_ip', which polluted every geo/provider/
+ *   severity aggregate. We now mirror feeds/cisa_kev.ts: write a
+ *   single aggregated INSIGHT digest to `agent_outputs`
+ *   (type='insight') per pull so the Observer agent can reference
+ *   recent CVEs in daily briefings, without skewing threat counts.
+ *
+ * Upstream resilience: NVD's public endpoint is chronically flaky
+ * (frequent HTTP 503 + slow responses). A single transient 503 used
+ * to throw → trip the per-feed circuit breaker → auto-pause →
+ * auto-recover → re-fail loop that spammed operator alerts. We now
+ * retry 503/429/network-timeout a few times with backoff before
+ * giving up, so a transient blip no longer counts as a feed failure.
  */
 const NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 const PUBLISHED_WINDOW_HOURS = 24;
 const PAGE_LIMIT = 2000;
+/** Cap the CVEs we serialize into the digest details so one row stays bounded. */
+const DETAILS_LIMIT = 50;
+/** Transient-failure retry policy for NVD's flaky endpoint. */
+const FETCH_ATTEMPTS = 3;
+const FETCH_BACKOFF_MS = [1_000, 3_000]; // delays BETWEEN attempts (n-1 entries)
+const FETCH_TIMEOUT_MS = 30_000;
 
 interface NvdResponse {
   resultsPerPage?: number;
@@ -60,7 +75,9 @@ interface NvdCve {
   references?: Array<{ url?: string }>;
 }
 
-function cvssToSeverity(score: number | undefined): "critical" | "high" | "medium" | "low" | "info" {
+type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+function cvssToSeverity(score: number | undefined): Severity {
   if (score === undefined || score === null) return "info";
   if (score >= 9.0) return "critical";
   if (score >= 7.0) return "high";
@@ -78,12 +95,67 @@ function extractCvss(cve: NvdCve): number | undefined {
   return undefined;
 }
 
+function severityBand(cve: NvdCve): string | null {
+  return (
+    cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity ??
+    cve.metrics?.cvssMetricV30?.[0]?.cvssData?.baseSeverity ??
+    cve.metrics?.cvssMetricV2?.[0]?.cvssData?.baseSeverity ??
+    null
+  );
+}
+
 function isoNow(): string {
   return new Date().toISOString();
 }
 
 function isoHoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 3600_000).toISOString();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True for failures worth retrying: 5xx, 429, and network/timeout aborts. */
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Fetch the NVD page with bounded retry on transient failures. Throws only
+ * after exhausting attempts, so the circuit breaker trips on sustained
+ * outages but not on a single 503/timeout.
+ */
+async function fetchNvdWindow(ctx: FeedContext, url: string): Promise<NvdResponse> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+    try {
+      const res = await diagnosticFetch(ctx.env.DB, "nvd_cve", url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Averrow-ThreatIntel/1.0",
+        },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (res.ok) {
+        return (await res.json()) as NvdResponse;
+      }
+      lastError = `NVD HTTP ${res.status}`;
+      if (!isTransientStatus(res.status)) {
+        // 4xx (other than 429) won't fix itself on retry — fail fast.
+        throw new Error(lastError);
+      }
+    } catch (err) {
+      // diagnosticFetch re-throws network/abort errors; AbortSignal.timeout
+      // surfaces as a TimeoutError. Treat all of these as transient.
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+
+    if (attempt < FETCH_ATTEMPTS) {
+      await sleep(FETCH_BACKOFF_MS[attempt - 1] ?? 3_000);
+    }
+  }
+  throw new Error(`NVD unreachable after ${FETCH_ATTEMPTS} attempts: ${lastError}`);
 }
 
 export const nvd_cve: FeedModule = {
@@ -97,72 +169,97 @@ export const nvd_cve: FeedModule = {
     });
     const url = (ctx.feedUrl || NVD_API) + "?" + params.toString();
 
-    const res = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Averrow-ThreatIntel/1.0",
-      },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
+    const body = await fetchNvdWindow(ctx, url);
+    const vulns = (body.vulnerabilities ?? [])
+      .map((v) => v.cve)
+      .filter((c): c is NvdCve => !!c?.id);
 
-    const body = (await res.json()) as NvdResponse;
-    const vulns = body.vulnerabilities ?? [];
-
-    let itemsFetched = 0;
-    let itemsNew = 0;
-    let itemsDuplicate = 0;
-    let itemsError = 0;
-
-    for (const v of vulns) {
-      const cve = v.cve;
-      if (!cve?.id) continue;
-      itemsFetched++;
-      try {
-        const cveId = cve.id;
-        if (await isDuplicate(ctx.env, "cve", cveId)) {
-          itemsDuplicate++;
-          continue;
-        }
-
-        const cvss = extractCvss(cve);
-        const description = cve.descriptions?.find((d) => d.lang === "en")?.value ?? null;
-        const confidence = typeof cvss === "number" ? Math.min(95, Math.round(cvss * 10)) : 70;
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("nvd_cve", "cve", cveId),
-          source_feed: "nvd_cve",
-          // CVEs aren't IPs/URLs/domains. We tag them as malicious_ip
-          // as the closest enum value to "infrastructure-class
-          // signal" — the real value is the JOIN against threats
-          // that reference this CVE elsewhere.
-          threat_type: "malicious_ip",
-          malicious_url: null,
-          malicious_domain: null,
-          ip_address: null,
-          ioc_value: JSON.stringify({
-            cve: cveId,
-            cvss,
-            severity_band: cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity
-              ?? cve.metrics?.cvssMetricV30?.[0]?.cvssData?.baseSeverity
-              ?? cve.metrics?.cvssMetricV2?.[0]?.cvssData?.baseSeverity
-              ?? null,
-            published: cve.published,
-            description: description ? description.slice(0, 500) : null,
-            references: (cve.references ?? []).slice(0, 5).map((r) => r.url).filter(Boolean),
-          }),
-          severity: cvssToSeverity(cvss),
-          confidence_score: confidence,
-          status: "active",
-        });
-        await markSeen(ctx.env, "cve", cveId);
-        itemsNew++;
-      } catch (err) {
-        itemsError++;
-        console.error(`[nvd_cve] insert error for ${cve.id}:`, err);
-      }
+    const itemsFetched = vulns.length;
+    if (itemsFetched === 0) {
+      // Empty window is a legitimate success (a quiet 24h), not a failure.
+      return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 
-    return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
+    // Rank by CVSS desc so the digest leads with the most severe CVEs.
+    const ranked = [...vulns].sort(
+      (a, b) => (extractCvss(b) ?? -1) - (extractCvss(a) ?? -1),
+    );
+
+    // Dedup: if the newest-by-publish CVE id already appears in the most
+    // recent NVD insight, this window adds nothing — skip the write.
+    const newestCve =
+      [...vulns].sort((a, b) =>
+        (b.published ?? "").localeCompare(a.published ?? ""),
+      )[0]?.id ?? "none";
+
+    const lastDigest = await ctx.env.DB.prepare(
+      "SELECT summary FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'insight' AND summary LIKE 'NVD CVE%' ORDER BY created_at DESC LIMIT 1",
+    ).first<{ summary: string }>();
+
+    if (lastDigest?.summary?.includes(newestCve)) {
+      return { itemsFetched, itemsNew: 0, itemsDuplicate: itemsFetched, itemsError: 0 };
+    }
+
+    const counts: Record<Severity, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      info: 0,
+    };
+    for (const cve of ranked) {
+      counts[cvssToSeverity(extractCvss(cve))]++;
+    }
+
+    const topEntries = ranked
+      .slice(0, 5)
+      .map((cve) => {
+        const score = extractCvss(cve);
+        const scoreStr = typeof score === "number" ? score.toFixed(1) : "n/a";
+        const desc = cve.descriptions?.find((d) => d.lang === "en")?.value ?? "";
+        return `${cve.id} (CVSS ${scoreStr}) — ${desc.slice(0, 120)}`;
+      })
+      .join("\n");
+
+    const summary =
+      `NVD CVE Update: ${itemsFetched} CVEs published in the last ${PUBLISHED_WINDOW_HOURS}h ` +
+      `(latest ${newestCve}). ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium. ` +
+      `Most severe:\n${topEntries}`;
+
+    const details = JSON.stringify(
+      ranked.slice(0, DETAILS_LIMIT).map((cve) => ({
+        cve: cve.id,
+        cvss: extractCvss(cve),
+        severity_band: severityBand(cve),
+        published: cve.published,
+        description:
+          cve.descriptions?.find((d) => d.lang === "en")?.value?.slice(0, 500) ?? null,
+        references: (cve.references ?? [])
+          .slice(0, 5)
+          .map((r) => r.url)
+          .filter(Boolean),
+      })),
+    );
+
+    // Digest severity = the worst band present in the window.
+    const digestSeverity: Severity =
+      counts.critical > 0 ? "critical" :
+      counts.high > 0 ? "high" :
+      counts.medium > 0 ? "medium" :
+      itemsFetched > 0 ? "low" : "info";
+
+    const digestId = "nvd_" + Date.now();
+    try {
+      await ctx.env.DB.prepare(
+        "INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at) VALUES (?, 'sentinel', 'insight', ?, ?, ?, datetime('now'))",
+      )
+        .bind(digestId, summary, digestSeverity, details)
+        .run();
+    } catch (insertErr) {
+      console.error(`[nvd_cve] INSERT FAILED: ${insertErr}`);
+      throw insertErr;
+    }
+
+    return { itemsFetched, itemsNew: 1, itemsDuplicate: itemsFetched - 1, itemsError: 0 };
   },
 };
