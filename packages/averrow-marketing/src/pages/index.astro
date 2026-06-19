@@ -353,6 +353,100 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <hr class="tr-divider-animated" />
 
+  <!-- ── INSIDE THE PLATFORM — dashboard preview ── -->
+  <section class="showcase">
+    <div class="showcase-label">Inside the platform</div>
+    <h2 class="showcase-title">One console. Every signal.</h2>
+    <p class="showcase-sub">Live threat corridors, brand-by-brand exposure scoring, and a continuous intelligence feed — the same surfaces your analysts work in.</p>
+
+    <div class="showcase-panel" role="img" aria-label="Averrow console preview: global threat map, brand exposure score, and a live intelligence feed">
+      <div class="sp-grid">
+        <!-- Global threat corridors -->
+        <div class="sp-card sp-map">
+          <div class="sp-card-head"><span class="sp-dot" /> Global threat corridors <span class="sp-live">LIVE</span></div>
+          <svg class="sp-map-svg" viewBox="0 0 560 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <defs>
+              <radialGradient id="sp-node-crit" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="var(--sev-critical)" stop-opacity="0.9" />
+                <stop offset="100%" stop-color="var(--sev-critical)" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="sp-arc-crit" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="var(--red)" stop-opacity="0.15" />
+                <stop offset="100%" stop-color="var(--sev-critical)" stop-opacity="0.95" />
+              </linearGradient>
+              <linearGradient id="sp-arc-high" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="var(--amber-dim)" stop-opacity="0.15" />
+                <stop offset="100%" stop-color="var(--sev-high)" stop-opacity="0.9" />
+              </linearGradient>
+            </defs>
+            <!-- faint lat/long grid -->
+            <g class="sp-map-grid">
+              <line x1="0" y1="60" x2="560" y2="60" /><line x1="0" y1="120" x2="560" y2="120" />
+              <line x1="0" y1="180" x2="560" y2="180" /><line x1="0" y1="240" x2="560" y2="240" />
+              <line x1="93" y1="0" x2="93" y2="300" /><line x1="186" y1="0" x2="186" y2="300" />
+              <line x1="280" y1="0" x2="280" y2="300" /><line x1="373" y1="0" x2="373" y2="300" />
+              <line x1="466" y1="0" x2="466" y2="300" />
+            </g>
+            <!-- arc corridors (drawn source → target) -->
+            <g fill="none" stroke-linecap="round">
+              <path class="sp-arc" d="M120 110 Q 260 20 400 90" stroke="url(#sp-arc-crit)" stroke-width="2" />
+              <path class="sp-arc sp-arc-2" d="M150 200 Q 300 130 470 150" stroke="url(#sp-arc-high)" stroke-width="2" />
+              <path class="sp-arc sp-arc-3" d="M430 210 Q 320 250 180 230" stroke="url(#sp-arc-crit)" stroke-width="1.5" />
+              <path class="sp-arc sp-arc-4" d="M400 90 Q 440 160 470 150" stroke="url(#sp-arc-high)" stroke-width="1.5" />
+            </g>
+            <!-- nodes -->
+            <g class="sp-nodes">
+              <circle cx="120" cy="110" r="16" fill="url(#sp-node-crit)" /><circle cx="120" cy="110" r="3.5" fill="var(--sev-critical)" />
+              <circle cx="400" cy="90"  r="14" fill="url(#sp-node-crit)" /><circle cx="400" cy="90"  r="3" fill="var(--sev-critical)" />
+              <circle cx="470" cy="150" r="11" fill="url(#sp-node-crit)" /><circle cx="470" cy="150" r="2.5" fill="var(--sev-high)" />
+              <circle cx="150" cy="200" r="9"  fill="url(#sp-node-crit)" /><circle cx="150" cy="200" r="2.5" fill="var(--sev-high)" />
+              <circle cx="430" cy="210" r="8"  fill="url(#sp-node-crit)" /><circle cx="430" cy="210" r="2.5" fill="var(--sev-medium)" />
+              <circle cx="180" cy="230" r="7"  fill="url(#sp-node-crit)" /><circle cx="180" cy="230" r="2" fill="var(--sev-medium)" />
+            </g>
+          </svg>
+          <div class="sp-map-foot"><span><b>7,412</b> active threats</span><span><b>38</b> countries</span><span><b>112</b> corridors</span></div>
+        </div>
+
+        <!-- Brand exposure score (ExposureGauge recreation) -->
+        <div class="sp-card sp-gauge">
+          <div class="sp-card-head"><span class="sp-dot" /> Brand exposure</div>
+          <svg viewBox="0 0 160 160" width="150" height="150" aria-hidden="true">
+            <!-- zone track -->
+            <circle cx="80" cy="80" r="64" fill="none" stroke="var(--border-strong)" stroke-width="10" />
+            <!-- score arc: 72/100 of a 270° sweep, rotated to start bottom-left -->
+            <circle cx="80" cy="80" r="64" fill="none" stroke="var(--amber)" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="289 402" stroke-dashoffset="0" transform="rotate(-90 80 80)" class="sp-gauge-arc" />
+            <text x="80" y="74" text-anchor="middle" class="sp-gauge-num">72</text>
+            <text x="80" y="98" text-anchor="middle" class="sp-gauge-grade">GRADE C</text>
+          </svg>
+          <div class="sp-gauge-meta">Moderate — email auth gaps + 3 active lookalikes</div>
+        </div>
+      </div>
+
+      <!-- Intel feed ticker (EventTicker recreation) -->
+      <div class="sp-ticker" aria-hidden="true">
+        <div class="sp-ticker-label"><span class="sp-dot" /> INTEL FEED</div>
+        <div class="sp-ticker-mask">
+          <div class="sp-ticker-track">
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>SNT</b> ▸ New lookalike detected: acme-login.com</span>
+            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>CART</b> ▸ Enriched 1,204 threats with geo + provider data</span>
+            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>NXS</b> ▸ Pivot detected — infrastructure cluster expanding</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>OBS</b> ▸ Coordinated phishing wave targeting finance sector</span>
+            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>STR</b> ▸ Actor APT-Nightjar shifting to a new ASN</span>
+            <!-- duplicated for seamless loop -->
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>SNT</b> ▸ New lookalike detected: acme-login.com</span>
+            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>CART</b> ▸ Enriched 1,204 threats with geo + provider data</span>
+            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>NXS</b> ▸ Pivot detected — infrastructure cluster expanding</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>OBS</b> ▸ Coordinated phishing wave targeting finance sector</span>
+            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>STR</b> ▸ Actor APT-Nightjar shifting to a new ASN</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="tr-divider-animated" />
+
   <section class="trust-signals">
     <TrustSignals />
   </section>
@@ -371,6 +465,42 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </Layout>
 
 <style>
+  /* ── INSIDE THE PLATFORM (dashboard preview) ── */
+  .showcase { padding: 3rem 2rem; max-width: 1200px; margin: 0 auto; text-align: center; }
+  .showcase-label { font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  .showcase-title { font-family: var(--font-display); font-size: clamp(24px, 4vw, 34px); font-weight: 800; color: var(--text-primary); margin: 0 0 8px; }
+  .showcase-sub { font-size: 15px; color: var(--text-secondary); max-width: 620px; margin: 0 auto 28px; line-height: 1.55; }
+  .showcase-panel { background: var(--glass-card-bg); border: 1px solid var(--glass-card-border); border-radius: var(--radius-lg); box-shadow: var(--glass-card-shadow); padding: 16px; }
+  .sp-grid { display: grid; grid-template-columns: 1fr 240px; gap: 16px; }
+  @media (max-width: 760px) { .sp-grid { grid-template-columns: 1fr; } }
+  .sp-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; text-align: left; }
+  .sp-card-head { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 10px; }
+  .sp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: sp-pulse 2s ease-in-out infinite; }
+  .sp-live { margin-left: auto; color: var(--sev-critical); font-weight: 700; }
+  .sp-map-svg { width: 100%; height: auto; display: block; }
+  .sp-map-grid line { stroke: var(--border); stroke-width: 1; }
+  .sp-arc { stroke-dasharray: 6 6; animation: sp-dash 3s linear infinite; }
+  .sp-arc-2 { animation-duration: 4s; } .sp-arc-3 { animation-duration: 5s; } .sp-arc-4 { animation-duration: 3.5s; }
+  .sp-map-foot { display: flex; gap: 18px; margin-top: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .sp-map-foot b { color: var(--text-primary); }
+  .sp-gauge { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .sp-gauge-num { font-family: var(--font-display); font-weight: 800; font-size: 38px; fill: var(--amber); }
+  .sp-gauge-grade { font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; fill: var(--text-tertiary); }
+  .sp-gauge-meta { font-size: 12px; color: var(--text-secondary); margin-top: 8px; max-width: 200px; }
+  .sp-ticker { display: flex; align-items: center; gap: 12px; margin-top: 16px; background: var(--bg-code); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; overflow: hidden; }
+  .sp-ticker-label { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; color: var(--text-tertiary); white-space: nowrap; }
+  .sp-ticker-mask { overflow: hidden; flex: 1; }
+  .sp-ticker-track { display: inline-flex; gap: 28px; white-space: nowrap; animation: sp-marquee 32s linear infinite; }
+  .sp-ti { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+  .sp-ti b { color: var(--text-primary); }
+  .sp-ti-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .sp-ti-dot.crit { background: var(--sev-critical); } .sp-ti-dot.high { background: var(--sev-high); }
+  .sp-ti-dot.warn { background: var(--sev-medium); } .sp-ti-dot.info { background: var(--blue); }
+  @keyframes sp-dash { to { stroke-dashoffset: -120; } }
+  @keyframes sp-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @keyframes sp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .sp-ticker-track, .sp-arc, .sp-dot { animation: none !important; } }
+
   /* ── HERO ── */
   .hero {
     display: flex;
