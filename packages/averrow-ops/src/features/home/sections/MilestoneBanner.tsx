@@ -14,7 +14,7 @@
 // - Animated number with count-up
 // - Tasteful — no confetti emoji explosion
 
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, Trophy, X } from 'lucide-react';
 import { useCountUp } from '@/design-system/hooks/useCountUp';
 import { useMilestoneLatest, useMilestoneDismissed } from '@/hooks/useMilestone';
 
@@ -55,16 +55,23 @@ export function MilestoneBanner() {
   if (!milestone || dismissed) return null;
 
   const since = relativeTime(milestone.fired_at);
+  // Million-and-up crossings get a distinct, more celebratory treatment so
+  // operators can tell a landmark (1M, 5M, 10M…) apart from a routine K-step.
+  const isMillion = milestone.value >= 1_000_000;
 
   return (
-    <section className="home-milestone-banner" role="status" aria-label="Platform milestone">
+    <section
+      className={`home-milestone-banner${isMillion ? ' home-milestone-banner--million' : ''}`}
+      role="status"
+      aria-label={isMillion ? 'Major platform milestone' : 'Platform milestone'}
+    >
       <div className="home-milestone-stripe" aria-hidden />
       <div className="home-milestone-icon" aria-hidden>
-        <Sparkles size={18} />
+        {isMillion ? <Trophy size={18} /> : <Sparkles size={18} />}
       </div>
       <div className="home-milestone-content">
         <div className="home-milestone-eyebrow">
-          MILESTONE{since ? ` · ${since}` : ''}
+          {isMillion ? 'MILLION MILESTONE' : 'MILESTONE'}{since ? ` · ${since}` : ''}
         </div>
         <div className="home-milestone-headline">
           <span className="home-milestone-number">
@@ -73,7 +80,7 @@ export function MilestoneBanner() {
           <span className="home-milestone-metric">{metricLabel(milestone.metric)}</span>
         </div>
         <div className="home-milestone-sublabel">
-          {shortLabel(milestone.value)} crossed — thanks to the agent mesh
+          {shortLabel(milestone.value)} crossed — {isMillion ? 'a landmark for the agent mesh' : 'thanks to the agent mesh'}
         </div>
       </div>
       <button
@@ -188,6 +195,40 @@ export function MilestoneBanner() {
             padding: 16px 20px 16px 22px;
           }
           .home-milestone-number { font-size: 30px; }
+          .home-milestone-banner--million .home-milestone-number { font-size: 38px; }
+        }
+
+        /* Million-and-up: brighter, larger, and gently pulsing so a
+           landmark crossing reads as an event, not a routine K-step. */
+        .home-milestone-banner--million {
+          background: linear-gradient(
+            135deg,
+            rgba(229, 168, 50, 0.18) 0%,
+            rgba(60, 184, 120, 0.18) 100%
+          );
+          border-color: rgba(229, 168, 50, 0.55);
+          box-shadow:
+            0 8px 40px rgba(0, 0, 0, 0.50),
+            0 0 40px rgba(229, 168, 50, 0.28),
+            inset 0 1px 0 rgba(229, 168, 50, 0.35);
+        }
+        .home-milestone-banner--million .home-milestone-eyebrow {
+          letter-spacing: 0.26em;
+        }
+        .home-milestone-banner--million .home-milestone-number {
+          font-size: 32px;
+        }
+        .home-milestone-banner--million .home-milestone-icon {
+          background: rgba(229, 168, 50, 0.20);
+          box-shadow: 0 0 24px rgba(229, 168, 50, 0.45);
+          animation: milestone-million-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes milestone-million-pulse {
+          0%, 100% { box-shadow: 0 0 18px rgba(229, 168, 50, 0.35); }
+          50%      { box-shadow: 0 0 34px rgba(229, 168, 50, 0.60); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .home-milestone-banner--million .home-milestone-icon { animation: none; }
         }
       `}</style>
     </section>
