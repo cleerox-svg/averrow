@@ -16,11 +16,6 @@ export interface PlatformMilestone {
   notes:        string | null;
 }
 
-interface MilestoneResponse {
-  success: boolean;
-  data:    PlatformMilestone | null;
-}
-
 const POLL_MS = 5 * 60_000;
 const DISMISSED_KEY = 'averrow_milestone_dismissed';
 
@@ -29,7 +24,7 @@ export function useMilestoneLatest() {
     queryKey: ['platform-milestone-latest'],
     queryFn: async (): Promise<PlatformMilestone | null> => {
       try {
-        const res = await api.get<MilestoneResponse>('/api/v1/public/milestones/latest');
+        const res = await api.get<PlatformMilestone | null>('/api/v1/public/milestones/latest');
         return res.data ?? null;
       } catch {
         return null;

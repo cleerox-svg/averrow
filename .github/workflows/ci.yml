@@ -81,3 +81,28 @@ jobs:
       - name: Run React UI tests
         working-directory: packages/averrow-ops
         run: pnpm test
+
+  # Gates the averrow-ops SPA on `tsc --noEmit`, matching the Workers
+  # typecheck. Previously the SPA had no typecheck in CI, so type
+  # regressions could ship as long as vitest stayed green.
+  typecheck-ui:
+    name: TypeCheck UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: packages/averrow-ops
+        run: pnpm typecheck

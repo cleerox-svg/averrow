@@ -25,17 +25,11 @@ export interface ProviderMoversData {
   falling: ProviderMover[];
 }
 
-interface ProviderMoversResponse {
-  success: boolean;
-  data?:   ProviderMoversData;
-  error?:  string;
-}
-
 export function useProviderMovers() {
   return useQuery({
     queryKey: ['provider-movers', 'v1'],
     queryFn: async (): Promise<ProviderMoversData> => {
-      const res = await api.get<ProviderMoversResponse>('/api/providers/movers');
+      const res = await api.get<ProviderMoversData>('/api/providers/movers');
       return res.data ?? { rising: [], falling: [] };
     },
     staleTime: 5 * 60_000,

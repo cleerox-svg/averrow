@@ -32,17 +32,11 @@ export interface BrandMoversData {
   falling: BrandMover[];
 }
 
-interface BrandMoversResponse {
-  success: boolean;
-  data?:   BrandMoversData;
-  error?:  string;
-}
-
 export function useBrandMovers() {
   return useQuery({
     queryKey: ['brand-movers', 'v1'],
     queryFn: async (): Promise<BrandMoversData> => {
-      const res = await api.get<BrandMoversResponse>('/api/brands/movers');
+      const res = await api.get<BrandMoversData>('/api/brands/movers');
       return res.data ?? { rising: [], falling: [] };
     },
     staleTime: 5 * 60_000,    // 5 min — matches the worker KV TTL

@@ -14,7 +14,6 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  type TooltipProps,
 } from 'recharts';
 import { api } from '@/lib/api';
 import { Card } from '@/components/ui';
@@ -283,12 +282,19 @@ interface InflowTooltipPayloadEntry {
   color?: string;
 }
 
+interface InflowTooltipProps {
+  active?: boolean;
+  payload?: InflowTooltipPayloadEntry[];
+  label?: string | number;
+  window: Window;
+}
+
 function InflowTooltip({
   active,
   payload,
   label,
   window,
-}: TooltipProps<number, string> & { window: Window }) {
+}: InflowTooltipProps) {
   if (!active || !payload?.length || typeof label !== 'string') return null;
   // Filter out zero-value entries so the tooltip stays compact during
   // quiet hours; Recharts always sends every series.

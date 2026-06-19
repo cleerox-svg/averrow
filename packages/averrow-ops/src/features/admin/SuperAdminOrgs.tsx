@@ -861,11 +861,16 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
           <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
             Type
           </label>
-          <Select value={type} onChange={(e) => setType(e.target.value as OverrideType)} className="w-full">
-            <option value="discount_percent">Discount %</option>
-            <option value="tier_price">Custom tier price</option>
-            <option value="module_price">Custom module price</option>
-          </Select>
+          <Select
+            value={type}
+            onChange={(e) => setType(e.target.value as OverrideType)}
+            className="w-full"
+            options={[
+              { value: 'discount_percent', label: 'Discount %' },
+              { value: 'tier_price', label: 'Custom tier price' },
+              { value: 'module_price', label: 'Custom module price' },
+            ]}
+          />
         </div>
 
         {type === 'tier_price' && (
@@ -873,12 +878,19 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
             <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
               Plan
             </label>
-            <Select value={planId} onChange={(e) => setPlanId(e.target.value)} className="w-full" required>
-              <option value="">Select a plan…</option>
-              {(plans?.plans ?? []).map((p) => (
-                <option key={p.id} value={p.id}>{p.display_name} ({formatCents(p.monthly_price_cents)} list)</option>
-              ))}
-            </Select>
+            <Select
+              value={planId}
+              onChange={(e) => setPlanId(e.target.value)}
+              className="w-full"
+              required
+              options={[
+                { value: '', label: 'Select a plan…' },
+                ...(plans?.plans ?? []).map((p) => ({
+                  value: String(p.id),
+                  label: `${p.display_name} (${formatCents(p.monthly_price_cents)} list)`,
+                })),
+              ]}
+            />
           </div>
         )}
 
@@ -887,14 +899,19 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
             <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
               Module
             </label>
-            <Select value={moduleKey} onChange={(e) => setModuleKey(e.target.value)} className="w-full" required>
-              <option value="">Select a module…</option>
-              {(modules?.modules ?? []).map((m) => (
-                <option key={m.module_key} value={m.module_key}>
-                  {m.display_name} ({formatCents(m.monthly_price_cents)} list)
-                </option>
-              ))}
-            </Select>
+            <Select
+              value={moduleKey}
+              onChange={(e) => setModuleKey(e.target.value)}
+              className="w-full"
+              required
+              options={[
+                { value: '', label: 'Select a module…' },
+                ...(modules?.modules ?? []).map((m) => ({
+                  value: String(m.module_key),
+                  label: `${m.display_name} (${formatCents(m.monthly_price_cents)} list)`,
+                })),
+              ]}
+            />
           </div>
         )}
 
