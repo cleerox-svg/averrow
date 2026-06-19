@@ -41,15 +41,21 @@ function relativeTime(iso: string): string {
 
 function metricLabel(metric: string): string {
   switch (metric) {
-    case 'total_ingested':   return 'total ingested';
-    case 'threats_ingested': return 'threats ingested'; // legacy — kept for back-compat
-    default:                 return metric.replace(/_/g, ' ');
+    case 'total_ingested':      return 'total ingested';
+    case 'threats_ingested':    return 'threats ingested';
+    case 'brands_monitored':    return 'brands monitored';
+    case 'clusters_mapped':     return 'infrastructure clusters mapped';
+    case 'providers_cataloged': return 'hosting providers cataloged';
+    case 'campaigns_tracked':   return 'threat campaigns tracked';
+    default:                    return metric.replace(/_/g, ' ');
   }
 }
 
 export function MilestoneBanner() {
   const { data: milestone } = useMilestoneLatest();
-  const { dismissed, dismiss } = useMilestoneDismissed(milestone?.value ?? null);
+  const { dismissed, dismiss } = useMilestoneDismissed(
+    milestone ? `${milestone.metric}:${milestone.value}` : null,
+  );
   const counted = useCountUp(milestone?.value ?? 0, 1600);
 
   if (!milestone || dismissed) return null;

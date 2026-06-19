@@ -36,47 +36,44 @@ export function useMilestoneLatest() {
 }
 
 /**
- * Returns true when the user has already dismissed this exact milestone
- * value on this device. Dismissals are scoped to the milestone value so
- * crossing the next threshold (e.g. 500K after 400K) shows the banner
- * again automatically.
+ * Returns true when the user has already dismissed this exact milestone on
+ * this device. Dismissals are scoped to a `metric:value` key so crossing the
+ * next threshold (e.g. 500K after 400K) shows the banner again automatically,
+ * AND two metrics that share a value (e.g. 1,000,000 total-ingested vs
+ * 1,000,000 brands) are dismissed independently.
  */
-export function useMilestoneDismissed(value: number | null): {
+export function useMilestoneDismissed(key: string | null): {
   dismissed: boolean;
   dismiss: () => void;
 } {
-  const [dismissed, setDismissed] = useState<boolean>(() => {
-    if (value == null || typeof window === 'undefined') return false;
+  const isDismissed = (k: string): boolean => {
+    if (typeof window === 'undefined') return false;
     try {
       const raw = window.localStorage.getItem(DISMISSED_KEY);
       if (!raw) return false;
-      const list = JSON.parse(raw) as number[];
-      return Array.isArray(list) && list.includes(value);
+      const list = JSON.parse(raw) as Array<string | number>;
+      return Array.isArray(list) && list.map(String).includes(k);
     } catch {
       return false;
     }
-  });
+  };
+
+  const [dismissed, setDismissed] = useState<boolean>(() =>
+    key == null ? false : isDismissed(key),
+  );
 
   useEffect(() => {
-    if (value == null || typeof window === 'undefined') {
-      setDismissed(false);
-      return;
-    }
-    try {
-      const raw = window.localStorage.getItem(DISMISSED_KEY);
-      const list = raw ? (JSON.parse(raw) as number[]) : [];
-      setDismissed(Array.isArray(list) && list.includes(value));
-    } catch {
-      setDismissed(false);
-    }
-  }, [value]);
+    setDismissed(key == null ? false : isDismissed(key));
+  }, [key]);
 
   const dismiss = () => {
-    if (value == null || typeof window === 'undefined') return;
+    if (key == null || typeof window === 'undefined') return;
     try {
       const raw = window.localStorage.getItem(DISMISSED_KEY);
-      const list = raw ? (JSON.parse(raw) as number[]) : [];
-      const next = Array.from(new Set([...(Array.isArray(list) ? list : []), value]));
+      const list = raw ? (JSON.parse(raw) as Array<string | number>) : [];
+      const next = Array.from(
+        new Set([...(Array.isArray(list) ? list.map(String) : []), key]),
+      );
       window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
       setDismissed(true);
     } catch {

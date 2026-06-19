@@ -1,28 +1,39 @@
-// Platform milestones — celebrate two parallel ingest signals.
+// Platform milestones — celebrate growth across the platform's headline
+// counters. Each metric is a row in the METRICS registry below; Navigator
+// evaluates all of them at the end of every 5-min tick.
 //
-// We track two complementary metrics:
+// Metrics:
+//   1. threats_ingested    — COUNT(*) FROM threats. Active threats currently
+//                            in the threats table. May dip when rows resolve.
+//   2. total_ingested      — SUM(records_ingested) FROM feed_pull_history.
+//                            Lifetime ingest volume. Only goes up. Same number
+//                            the /feeds page surfaces as "TOTAL INGESTED".
+//   3. brands_monitored    — COUNT(*) FROM brands. Brand catalog size.
+//   4. clusters_mapped     — COUNT(*) FROM infrastructure_clusters. NEXUS ops.
+//   5. providers_cataloged — COUNT(*) FROM hosting_providers.
+//   6. campaigns_tracked   — COUNT(*) FROM campaigns.
 //
-//   1. threats_ingested  — `COUNT(*) FROM threats`. Active threats
-//                          currently in the threats table. May dip
-//                          when rows are resolved or dropped.
-//   2. total_ingested    — `SUM(records_ingested) FROM feed_pull_history`.
-//                          Lifetime ingest volume from feed pulls.
-//                          Only goes up. Same number the /feeds page
-//                          surfaces as "TOTAL INGESTED".
+// Every metric fires against its own ladder (LARGE for the high-volume
+// counters, MID for the smaller registries). The platform_milestones PK is
+// composite (metric, value), so each metric crosses 100K / 1M / 10M
+// independently. The Home banner reads the most-recent genuine row across
+// every metric and labels accordingly.
 //
-// Both metrics fire against the same MILESTONE_VALUES list. The
-// platform_milestones PK is composite (metric, value), so each metric
-// can cross 400K / 1M / 10M independently. The Home banner reads the
-// most-recent row across either metric and labels accordingly.
+// Cold-start seeding: the first time a metric is ever evaluated we silently
+// "seed" every threshold it has ALREADY passed (notes='seed') instead of
+// celebrating them — otherwise adding a metric would throw a "just now" party
+// for a crossing that happened weeks ago. Only crossings that happen AFTER a
+// metric is initialized are celebrated. A metric counts as initialized once it
+// has a genuine (non-seed) row OR a KV init flag (milestone:init:<metric>).
 //
-// Navigator calls both checks at the end of every 5-min tick. Cheap:
-// each is a single aggregate query + one SELECT on the milestone
-// table + ≤ 1 INSERT per crossing. Idempotent under composite PK.
+// Cost: each metric is a single cached aggregate + one SELECT on the milestone
+// table + ≤1 INSERT per crossing. Idempotent under the composite PK.
 
 import type { Env } from '../types';
 import { cachedCount } from './cached-count';
 
-const MILESTONE_VALUES = [
+// High-volume counters: threats, lifetime ingest, brand catalog.
+const LARGE_LADDER = [
   100_000,
   200_000,
   250_000,
@@ -44,7 +55,119 @@ const MILESTONE_VALUES = [
   100_000_000,
 ] as const;
 
-export type MilestoneMetric = "threats_ingested" | "total_ingested";
+// Smaller registries: clusters, providers, campaigns. Finer steps at the
+// low end so a few-thousand-row table still gets meaningful milestones.
+const MID_LADDER = [
+  1_000,
+  2_500,
+  5_000,
+  10_000,
+  25_000,
+  50_000,
+  100_000,
+  250_000,
+  500_000,
+  1_000_000,
+  2_500_000,
+  5_000_000,
+  10_000_000,
+] as const;
+
+export type MilestoneMetric =
+  | "threats_ingested"
+  | "total_ingested"
+  | "brands_monitored"
+  | "clusters_mapped"
+  | "providers_cataloged"
+  | "campaigns_tracked";
+
+interface MetricDef {
+  metric: MilestoneMetric;
+  /** Human label — banner copy lives in the frontend; this is for logs. */
+  label: string;
+  ladder: readonly number[];
+  count: (env: Env) => Promise<number>;
+}
+
+const METRICS: readonly MetricDef[] = [
+  {
+    metric: "threats_ingested",
+    label: "threats ingested",
+    ladder: LARGE_LADDER,
+    // TTL 3600s: shared with the dashboard/admin `count.threats.total` entry
+    // so all callers warm one cache. Milestones advance slowly, so a 1h lag
+    // is invisible to operators. Navigator fires every 300s → ~1 miss/hour.
+    count: (env) =>
+      cachedCount(env, "count.threats.total", 3600, async () => {
+        const row = await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM threats`)
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+  {
+    metric: "total_ingested",
+    label: "total ingested",
+    ladder: LARGE_LADDER,
+    count: (env) =>
+      cachedCount(env, "count.feed_pulls.total_ingested", 1800, async () => {
+        const row = await env.DB
+          .prepare(
+            `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`,
+          )
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+  {
+    metric: "brands_monitored",
+    label: "brands monitored",
+    ladder: LARGE_LADDER,
+    count: (env) =>
+      cachedCount(env, "count.brands.total", 3600, async () => {
+        const row = await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM brands`)
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+  {
+    metric: "clusters_mapped",
+    label: "infrastructure clusters mapped",
+    ladder: MID_LADDER,
+    count: (env) =>
+      cachedCount(env, "count.clusters.total", 3600, async () => {
+        const row = await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM infrastructure_clusters`)
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+  {
+    metric: "providers_cataloged",
+    label: "hosting providers cataloged",
+    ladder: MID_LADDER,
+    count: (env) =>
+      cachedCount(env, "count.providers.total", 3600, async () => {
+        const row = await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM hosting_providers`)
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+  {
+    metric: "campaigns_tracked",
+    label: "threat campaigns tracked",
+    ladder: MID_LADDER,
+    count: (env) =>
+      cachedCount(env, "count.campaigns.total", 3600, async () => {
+        const row = await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM campaigns`)
+          .first<{ n: number }>();
+        return row?.n ?? 0;
+      }),
+  },
+];
 
 export interface MilestoneRow {
   value: number;
@@ -60,105 +183,104 @@ export interface MilestoneCheckResult {
   fired: number[];
 }
 
-async function fireCrossings(
+async function insertMilestone(
   db: D1Database,
-  metric: MilestoneMetric,
-  current: number,
+  metric: string,
+  value: number,
   agentRunId: string | null | undefined,
-): Promise<number[]> {
-  // Pull every fired value for THIS metric so the diff stays
-  // metric-scoped — composite PK means 400K under threats_ingested
-  // doesn't suppress 400K under total_ingested.
-  const firedRows = await db
-    .prepare(
-      `SELECT value FROM platform_milestones WHERE metric = ?`,
-    )
-    .bind(metric)
-    .all<{ value: number }>();
-  const alreadyFired = new Set((firedRows.results ?? []).map((r) => r.value));
+  notes: string | null,
+): Promise<boolean> {
+  try {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO platform_milestones
+            (metric, value, fired_at, agent_run_id, notes)
+         VALUES (?, ?, datetime('now'), ?, ?)`,
+      )
+      .bind(metric, value, agentRunId ?? null, notes)
+      .run();
+    return true;
+  } catch (err) {
+    // Non-fatal: re-attempt next tick.
+    console.error(`[platform-milestones] insert failed for ${metric}=${value}:`, err);
+    return false;
+  }
+}
+
+async function evaluateMetric(
+  env: Env,
+  def: MetricDef,
+  agentRunId?: string | null,
+): Promise<MilestoneCheckResult> {
+  const current = await def.count(env);
+
+  // Pull every fired value for THIS metric so the diff stays metric-scoped —
+  // composite PK means 1M under threats_ingested doesn't suppress 1M under
+  // total_ingested. `notes` distinguishes genuine celebrations from seeds.
+  const firedRows = await env.DB
+    .prepare(`SELECT value, notes FROM platform_milestones WHERE metric = ?`)
+    .bind(def.metric)
+    .all<{ value: number; notes: string | null }>();
+  const rows = firedRows.results ?? [];
+  const alreadyFired = new Set(rows.map((r) => r.value));
+  const hasGenuineRows = rows.some((r) => !r.notes);
+
+  const crossed = def.ladder.filter(
+    (v) => current >= v && !alreadyFired.has(v),
+  );
+
+  // Initialized = has a real celebration on record OR a KV seed flag. A
+  // brand-new metric is initialized on its first evaluation (even if nothing
+  // has crossed yet) so the NEXT crossing celebrates instead of seeding.
+  const seedKey = `milestone:init:${def.metric}`;
+  const initialized =
+    hasGenuineRows || (await env.CACHE.get(seedKey)) !== null;
+
+  if (!initialized) {
+    // Cold start: silently record already-passed thresholds, no celebration.
+    for (const v of crossed) {
+      await insertMilestone(env.DB, def.metric, v, agentRunId, "seed");
+    }
+    // No TTL — the flag is permanent; the metric only cold-starts once.
+    await env.CACHE.put(seedKey, new Date().toISOString());
+    return { metric: def.metric, current, fired: [] };
+  }
 
   const fired: number[] = [];
-  for (const milestone of MILESTONE_VALUES) {
-    if (current >= milestone && !alreadyFired.has(milestone)) {
-      try {
-        await db
-          .prepare(
-            `INSERT OR IGNORE INTO platform_milestones
-                (metric, value, fired_at, agent_run_id)
-             VALUES (?, ?, datetime('now'), ?)`,
-          )
-          .bind(metric, milestone, agentRunId ?? null)
-          .run();
-        fired.push(milestone);
-      } catch (err) {
-        // Non-fatal: re-attempt next tick.
-        console.error(`[platform-milestones] insert failed for ${metric}=${milestone}:`, err);
-      }
+  for (const v of crossed) {
+    if (await insertMilestone(env.DB, def.metric, v, agentRunId, null)) {
+      fired.push(v);
     }
   }
-  return fired;
+  return { metric: def.metric, current, fired };
 }
 
 /**
- * threats_ingested — `COUNT(*) FROM threats` against MILESTONE_VALUES.
- *
- * Called from Navigator on every 5-min tick (288x/day). Pre-PR-I this
- * was a bare `SELECT COUNT(*) FROM threats` that scanned the full table
- * each call — diag 2026-05-14 attributed ~87M rows-read across 306
- * calls (avg 285K rows/call). Routed through cachedCount.
- *
- * 2026-05-17 follow-up: TTL was 240s but Navigator fires every 300s,
- * so every tick missed cache (age=300 > TTL=240). Diagnostics still
- * showed 263 calls/24h × 360K rows = 94M reads/day on this query
- * hash. Bumped to 1800s (30 min) — matches the dashboard/admin TTLs
- * for `count.threats.total` so all callers share a single warm
- * entry. With 1800s, Navigator hits cache ~5 out of 6 ticks (~48
- * misses/day instead of 288). Milestone thresholds advance slowly
- * (next is 500K, current 299K), so a 30-min lag is invisible to
- * operators.
+ * Evaluate every registered metric. Each is isolated — one metric's failure
+ * (e.g. a missing table) never blocks the others. Called from Navigator on
+ * every 5-min tick.
  */
-export async function checkAndFireThreatMilestones(
+export async function checkAllMilestones(
   env: Env,
   agentRunId?: string | null,
-): Promise<MilestoneCheckResult> {
-  const current = await cachedCount(env, 'count.threats.total', 3600, async () => {
-    const row = await env.DB
-      .prepare(`SELECT COUNT(*) AS n FROM threats`)
-      .first<{ n: number }>();
-    return row?.n ?? 0;
-  });
-  const fired = await fireCrossings(env.DB, "threats_ingested", current, agentRunId);
-  return { metric: "threats_ingested", current, fired };
+): Promise<MilestoneCheckResult[]> {
+  const results: MilestoneCheckResult[] = [];
+  for (const def of METRICS) {
+    try {
+      results.push(await evaluateMetric(env, def, agentRunId));
+    } catch (err) {
+      console.error(`[platform-milestones] ${def.metric} check failed:`, err);
+      results.push({ metric: def.metric, current: 0, fired: [] });
+    }
+  }
+  return results;
 }
 
 /**
- * total_ingested — `SUM(records_ingested) FROM feed_pull_history`
- * against MILESTONE_VALUES. Same number the /feeds page surfaces.
- *
- * Same Navigator dispatch pattern as checkAndFireThreatMilestones —
- * TTL bumped from 240s to 1800s on 2026-05-17 for the same reason:
- * Navigator's 5-min tick was always past the 240s TTL, so every tick
- * missed cache. 30-min freshness is fine for a slow-growing lifetime
- * counter.
- */
-export async function checkAndFireIngestionMilestones(
-  env: Env,
-  agentRunId?: string | null,
-): Promise<MilestoneCheckResult> {
-  const current = await cachedCount(env, 'count.feed_pulls.total_ingested', 1800, async () => {
-    const row = await env.DB
-      .prepare(`SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`)
-      .first<{ n: number }>();
-    return row?.n ?? 0;
-  });
-  const fired = await fireCrossings(env.DB, "total_ingested", current, agentRunId);
-  return { metric: "total_ingested", current, fired };
-}
-
-/**
- * Most-recent fired milestone across ALL metrics. Drives the Home
- * banner — operators see the freshest celebration regardless of which
- * metric crossed.
+ * Most-recent genuine milestone across ALL metrics. Drives the Home banner —
+ * operators see the freshest real celebration regardless of which metric
+ * crossed. Seed rows (silent cold-start backfill) are excluded; the value
+ * tiebreak surfaces the most impressive threshold when several land at once.
  */
 export async function getLatestMilestone(
   db: D1Database,
@@ -167,13 +289,16 @@ export async function getLatestMilestone(
     .prepare(
       `SELECT value, metric, fired_at, agent_run_id, notes
          FROM platform_milestones
-        ORDER BY fired_at DESC
+        WHERE COALESCE(notes, '') <> 'seed'
+        ORDER BY fired_at DESC, value DESC
         LIMIT 1`,
     )
     .first<MilestoneRow>();
 }
 
-/** For diagnostics. */
+/** For diagnostics. Returns the union of every metric's ladder. */
 export function listMilestoneTargets(): readonly number[] {
-  return MILESTONE_VALUES;
+  return Array.from(new Set([...LARGE_LADDER, ...MID_LADDER])).sort(
+    (a, b) => a - b,
+  );
 }
