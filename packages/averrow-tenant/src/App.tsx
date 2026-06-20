@@ -5,6 +5,7 @@ import { Shell } from '@/layout/Shell';
 import { Modules } from '@/features/modules/Modules';
 import { ModulePlaceholder } from '@/features/modules/ModulePlaceholder';
 import { Settings, TakedownAuthorizationPage } from '@/features/settings/Settings';
+import { AutomationPolicy } from '@/features/settings/AutomationPolicy';
 import { Members } from '@/features/settings/Members';
 import { Profile } from '@/features/profile/Profile';
 import { Billing } from '@/features/billing/Billing';
@@ -75,6 +76,7 @@ export function App() {
               <Route path="modules/threat-actor/actors/:actorId" element={<ThreatActorDetail />} />
 
               <Route path="profile" element={<Profile />} />
+              <Route path="automation-policy" element={<AutomationPolicy />} />
               <Route path="settings" element={<Settings />} />
               <Route path="settings/takedown-authorization" element={<TakedownAuthorizationPage />} />
               <Route path="settings/billing" element={<Billing />} />
