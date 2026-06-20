@@ -1,4 +1,5 @@
-import { Fragment, useState, useMemo } from 'react';
+import { Fragment, useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { ThreatActorDetail } from './ThreatActorDetail';
 import {
@@ -523,12 +524,41 @@ function ActorCardClassic({ actor, onClick }: { actor: ThreatActor; onClick: () 
 type CountryFilter = 'all' | 'IR' | 'RU' | 'CN' | 'KP';
 
 export function ThreatActors() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusId = searchParams.get('focus');
+
   const [filter, setFilter] = useState<CountryFilter>('all');
   const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+  // Set when deep-linked via ?focus — drops the active-only filter so a
+  // dormant/disrupted target actor still appears. Stays on (independent of the
+  // now-stripped URL param) until the operator picks a country filter.
+  const [broaden, setBroaden] = useState(false);
   const country = filter === 'all' ? undefined : filter;
 
-  const { data: actors, isLoading } = useThreatActors({ country, status: 'active' });
+  const { data: actors, isLoading } = useThreatActors({
+    country,
+    status: broaden ? undefined : 'active',
+  });
   const { data: stats } = useThreatActorStats();
+
+  useEffect(() => {
+    if (!focusId) return;
+    setFilter('all');
+    setBroaden(true);
+    setSelectedActorId(focusId);
+    setPendingScrollId(focusId);
+    setSearchParams({}, { replace: true });
+  }, [focusId, setSearchParams]);
+
+  useEffect(() => {
+    if (!pendingScrollId) return;
+    const el = document.getElementById(`actor-detail-${pendingScrollId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setPendingScrollId(null);
+    }
+  }, [pendingScrollId, actors]);
 
   // Fallback: compute attribution groups from actors list if stats.by_attribution is empty
   const attributionGroups = useMemo(() => {
@@ -653,7 +683,7 @@ export function ThreatActors() {
       <FilterBar
         filters={filterOptions}
         active={filter}
-        onChange={(v) => setFilter(v as CountryFilter)}
+        onChange={(v) => { setFilter(v as CountryFilter); setBroaden(false); }}
       />
 
       {/* Actor List — grid collapses to 1 col on narrow viewports via min(100%,…) */}
@@ -681,7 +711,7 @@ export function ThreatActors() {
                 onClick={() => setSelectedActorId(prev => prev === actor.id ? null : actor.id)}
               />
               {selectedActorId === actor.id && (
-                <div style={{ gridColumn: '1 / -1' }}>
+                <div style={{ gridColumn: '1 / -1' }} id={`actor-detail-${actor.id}`}>
                   <ThreatActorDetail actorId={actor.id} inline />
                 </div>
               )}

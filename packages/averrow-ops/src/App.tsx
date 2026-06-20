@@ -113,6 +113,19 @@ function RedirectToBrand() {
   return <Navigate to={`/brands/${brandId ?? ''}`} replace />;
 }
 
+// Provider / Threat-Actor detail is inline-only (card expansion), but the
+// entity still needs to be a deep-link target so pivots (Campaign→Provider,
+// Brand→Actor, notifications) land on the right card instead of a bare list.
+// Forward the id as ?focus= so the list auto-expands + scrolls to it.
+function RedirectToProviderFocus() {
+  const { providerId } = useParams<{ providerId: string }>();
+  return <Navigate to={providerId ? `/providers?focus=${providerId}` : '/providers'} replace />;
+}
+function RedirectToActorFocus() {
+  const { actorId } = useParams<{ actorId: string }>();
+  return <Navigate to={actorId ? `/threat-actors?focus=${actorId}` : '/threat-actors'} replace />;
+}
+
 function RoleAwareHome() {
   const { isBrandAdmin } = useAuth();
   if (isBrandAdmin) {
@@ -148,14 +161,16 @@ export default function App() {
         <Route path="trademarks" element={lazyRoute(<Trademarks />)} />
         <Route path="threats" element={lazyRoute(<Threats />)} />
         <Route path="providers" element={lazyRoute(<Providers />)} />
-        {/* `providers/:providerId` retired — provider detail is inline-only via card expansion. */}
-        <Route path="providers/:providerId" element={<Navigate to="/providers" replace />} />
+        {/* `providers/:providerId` is inline-only — forward to ?focus so the
+            card auto-expands instead of dropping the pivot to a bare list. */}
+        <Route path="providers/:providerId" element={<RedirectToProviderFocus />} />
         <Route path="campaigns" element={lazyRoute(<Campaigns />)} />
         <Route path="campaigns/geo/:slug" element={lazyRoute(<GeopoliticalCampaignDashboard />)} />
         <Route path="campaigns/:campaignId" element={lazyRoute(<CampaignDetail />)} />
         <Route path="threat-actors" element={lazyRoute(<ThreatActors />)} />
-        {/* `threat-actors/:actorId` retired — detail is inline-only via card expansion. */}
-        <Route path="threat-actors/:actorId" element={<Navigate to="/threat-actors" replace />} />
+        {/* `threat-actors/:actorId` is inline-only — forward to ?focus so the
+            card auto-expands instead of dropping the pivot to a bare list. */}
+        <Route path="threat-actors/:actorId" element={<RedirectToActorFocus />} />
         <Route path="trends" element={lazyRoute(<Trends />)} />
         {/* Alias — sidebar entry says "Intelligence"; keep /intelligence
             navigable for bookmarks. Audit H8. */}

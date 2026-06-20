@@ -1,4 +1,5 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   Card,
@@ -782,11 +783,28 @@ const SORT_OPTIONS = [
 // ─── Main Page ───────────────────────────────────────────────
 
 export function Providers() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusId = searchParams.get('focus');
+
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('active_threats');
   const [search, setSearch] = useState('');
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+
+  // Deep-link target: a pivot (Campaign→Provider, notification) lands here with
+  // ?focus=:id. Clear filters so the provider is in the list, select it, queue
+  // a one-shot scroll, then strip the param so a later collapse won't re-fire.
+  useEffect(() => {
+    if (!focusId) return;
+    setStatusFilter('all');
+    setSearch('');
+    setSelectedClusterId(null);
+    setSelectedProviderId(focusId);
+    setPendingScrollId(focusId);
+    setSearchParams({}, { replace: true });
+  }, [focusId, setSearchParams]);
 
   const { data: intelligence, isLoading: intelLoading } = useProviderIntelligence();
   const { data: clusters, isLoading: clustersLoading } = useClusters();
@@ -797,6 +815,16 @@ export function Providers() {
     search: search || undefined,
     clusterId: selectedClusterId || undefined,
   });
+
+  // Scroll the focused card into view once it's rendered, exactly once.
+  useEffect(() => {
+    if (!pendingScrollId) return;
+    const el = document.getElementById(`provider-detail-${pendingScrollId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setPendingScrollId(null);
+    }
+  }, [pendingScrollId, providers]);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -895,7 +923,7 @@ export function Providers() {
                     onSelect={(id) => setSelectedProviderId(prev => prev === id ? null : id)}
                   />
                   {selectedProviderId === provider.id && (
-                    <div className="col-span-full">
+                    <div className="col-span-full" id={`provider-detail-${provider.id}`}>
                       <ProviderDetailPanel providerId={provider.id} />
                     </div>
                   )}

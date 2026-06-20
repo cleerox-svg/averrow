@@ -62,9 +62,17 @@ export function Threats() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialBrandId = searchParams.get('brand_id') ?? '';
+  // `q` lets pivots deep-link a specific threat by its domain/URL/IP — e.g.
+  // Campaign→Threat lands here pre-filtered to that indicator (there is no
+  // single-threat route; the filtered table is the resolution).
+  const initialQuery = searchParams.get('q') ?? '';
+  const seededState = {
+    ...(initialBrandId ? { brandId: initialBrandId } : {}),
+    ...(initialQuery ? { q: initialQuery } : {}),
+  };
   const table = useThreatsTable({
     pageSize: 50,
-    initial: initialBrandId ? { brandId: initialBrandId } : undefined,
+    initial: Object.keys(seededState).length ? seededState : undefined,
   });
   const s = table.state;
 

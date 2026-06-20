@@ -384,7 +384,7 @@ export function CampaignDetail() {
             (threats ?? []).slice(0, 25).map(t => (
               <Link
                 key={t.id}
-                to={`/threats/${t.id}`}
+                to={`/threats?q=${encodeURIComponent(t.malicious_domain || t.malicious_url || t.ip_address || t.id)}`}
                 className="flex items-center gap-3 px-1 py-2 transition-colors hover:bg-white/[0.03]"
               >
                 <SeverityPill severity={t.severity} />
