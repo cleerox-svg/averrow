@@ -821,6 +821,9 @@ campaigns                 ← Threat campaign groupings
 infrastructure_clusters   ← NEXUS operation clusters
 organizations             ← Multi-tenant org layer
 org_members               ← Org membership + roles
+investigations            ← Tenant case object (groups signals/threats/takedowns)
+investigation_items       ← Polymorphic case membership (alert|threat|takedown)
+investigation_notes       ← Per-case notes timeline
 ```
 
 ### Side-DB tables:

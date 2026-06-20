@@ -31,6 +31,8 @@ import { ThreatActorDetail } from '@/features/threat-actor/ThreatActorDetail';
 import { Takedowns } from '@/features/takedowns/Takedowns';
 import { TakedownDetail } from '@/features/takedowns/TakedownDetail';
 import { Console } from '@/features/console/Console';
+import { Investigations } from '@/features/investigations/Investigations';
+import { InvestigationDetail } from '@/features/investigations/InvestigationDetail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +55,8 @@ export function App() {
               <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="alerts/:alertId" element={<IntelligenceCard />} />
+              <Route path="investigations" element={<Investigations />} />
+              <Route path="investigations/:investigationId" element={<InvestigationDetail />} />
               <Route path="notifications" element={<Notifications />} />
 
               {/* Takedowns — Phase C sprint 4 */}

@@ -16,6 +16,7 @@ import { useThreatDetail } from '@/lib/threats';
 import type { ThreatRow } from '@averrow/shared/threats-table';
 import { AiAssessmentPanel } from './AiAssessment';
 import { AlertActions, AssigneeControl } from './AlertActions';
+import { AddToInvestigation } from '@/features/investigations/AddToInvestigation';
 import { AgePill } from '@/components/AgePill';
 
 type TabKey = 'overview' | 'evidence' | 'infrastructure' | 'related' | 'activity';
@@ -129,6 +130,13 @@ export function IntelligenceCard() {
               </p>
             )}
           </section>
+
+          {canTriage && (
+            <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
+              <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/40 mb-2.5">Investigation</div>
+              <AddToInvestigation itemType="alert" itemId={alert.id} defaultTitle={alert.title} />
+            </section>
+          )}
         </aside>
       </div>
     </div>

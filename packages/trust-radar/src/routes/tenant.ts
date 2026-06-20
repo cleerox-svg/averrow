@@ -60,6 +60,11 @@ import {
   handleCreateCheckoutSession,
   handleCreatePortalSession,
 } from "../handlers/tenantBilling";
+import {
+  handleListInvestigations, handleCreateInvestigation, handleGetInvestigation,
+  handleUpdateInvestigation, handleAddInvestigationItem, handleRemoveInvestigationItem,
+  handleAddInvestigationNote,
+} from "../handlers/tenantInvestigations";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -526,6 +531,47 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreatePortalSession(request, env, request.params["orgId"] ?? "", ctx);
+  });
+
+  // ─── Investigations / Cases (org-scoped) ─────────────────────────
+  // TENANT_ANALYST_UX_RESEARCH_2026-06 #7. Reads are member-visible;
+  // every mutation is analyst+ (enforced in the handlers). Collection
+  // routes register before /:investigationId so the bare path matches
+  // the list.
+  router.get("/api/orgs/:orgId/investigations", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListInvestigations(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/investigations", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreateInvestigation(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/investigations/:investigationId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetInvestigation(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", ctx);
+  });
+  router.patch("/api/orgs/:orgId/investigations/:investigationId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUpdateInvestigation(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/investigations/:investigationId/items", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAddInvestigationItem(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", ctx);
+  });
+  router.delete("/api/orgs/:orgId/investigations/:investigationId/items/:itemId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRemoveInvestigationItem(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", request.params["itemId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/investigations/:investigationId/notes", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAddInvestigationNote(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────
