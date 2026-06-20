@@ -137,8 +137,20 @@ const ROLE_HIERARCHY: Record<UserRole, number> = {
   sales:       3,
   support:     3,
   billing:     3,
+  // Read-only global seat. Sits at the staff tier (3) so it passes
+  // requireStaff but NEVER requireAdmin/requireSuperAdmin — it cannot reach
+  // any admin-only mutation gate. Its read reach comes from permission flags
+  // (read_customers/view_billing/view_audit) + the global org scope below,
+  // not from hierarchy level. (AUTH_AUDIT_2026-06)
+  auditor:     3,
   client:      1,
 };
+
+/** Roles that see ALL tenants' data unfiltered (no brand scoping). super_admin
+ *  by privilege; auditor as a deliberate read-only global seat. */
+export function hasGlobalReadScope(role: UserRole): boolean {
+  return role === "super_admin" || role === "auditor";
+}
 
 /**
  * Require a minimum role level. Roles are hierarchical —
@@ -280,7 +292,8 @@ export async function getOrgScope(
   ctx: AuthContext,
   db: D1Database,
 ): Promise<OrgScope | null> {
-  if (ctx.role === "super_admin") return null;
+  // Global-read roles (super_admin, auditor) see everything — no brand filter.
+  if (hasGlobalReadScope(ctx.role)) return null;
 
   // Fast path: JWT-embedded scope (zero D1 queries).
   if (ctx.embeddedScope !== undefined) {
@@ -319,7 +332,8 @@ export async function loadOrgScopeForToken(
   userId: string,
   role: UserRole,
 ): Promise<{ org_id: number; brand_ids: string[] } | undefined> {
-  if (role === "super_admin") return undefined;
+  // Global-read roles embed no scope (getOrgScope returns null by role).
+  if (hasGlobalReadScope(role)) return undefined;
 
   const membership = await db.prepare(
     "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1"

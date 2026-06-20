@@ -60,6 +60,13 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<StaffPermission>> = {
   billing: new Set<StaffPermission>([
     "edit_pricing", "view_billing",
   ]),
+  // Read-only global seat (AUTH_AUDIT_2026-06). ONLY read/view flags — never
+  // any edit_*/manage_*. Combined with the global org scope in
+  // middleware/auth.ts, this lets auditor SEE all backend + tenant data while
+  // being unable to mutate anything or reach super_admin-only actions.
+  auditor: new Set<StaffPermission>([
+    "read_customers", "view_billing", "view_audit",
+  ]),
   client: new Set<StaffPermission>(),
 };
 

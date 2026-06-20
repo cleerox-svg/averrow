@@ -179,7 +179,19 @@ export type UserRole =
   | "sales"         // Averrow sales — read customer data, edit pricing overrides, send invites
   | "support"       // Averrow customer support — read customer data + alerts, no edits
   | "billing"       // Averrow finance — Stripe + pricing only, no customer ops access
+  | "auditor"       // read-only global seat — sees ALL backend + tenant data, mutates nothing, never super_admin (AUTH_AUDIT_2026-06). Minted-only: see note below.
   | "client";       // customer (lives in /tenant; never reaches /v2)
+// NOTE on `auditor` (AUTH_AUDIT_2026-06): it is a fully-functional role at
+// the auth layer (read-only permission set + super_admin-style global org
+// scope) but is currently **minted-only** — issued via
+// /api/internal/auth/mint-ui-preview-jwt, never assigned to a stored user.
+// The prod `users.role`/`invitations.role` CHECK constraints only allow
+// super_admin/admin/analyst/client, and relaxing them needs a `users`
+// table rebuild that is UNSAFE to auto-apply (D1 enforces FKs, so dropping
+// the parent `users` cascades into sessions/passkeys/notifications). Until
+// that is done in a maintenance window, `auditor` is excluded from invite
+// VALID_ROLES and preview users are stored with a CHECK-valid placeholder
+// role while their minted JWT carries `auditor`.
 export type UserStatus = "active" | "suspended" | "deactivated";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 

@@ -1017,10 +1017,22 @@ const UI_PREVIEW_TENANT: UiPreviewPreset = {
   name: "Claude UI Preview (Tenant)",
   returnTo: "/tenant/",
 };
-/** Roles the staff preview may request. super_admin is deliberately absent. */
-const UI_PREVIEW_STAFF_ROLES: UserRole[] = ["analyst", "admin"];
+/** Roles the staff preview may request. super_admin is deliberately absent.
+ *  Default is `auditor` — read-only global visibility (AUTH_AUDIT_2026-06). */
+const UI_PREVIEW_STAFF_ROLES: UserRole[] = ["auditor", "analyst", "admin"];
 const UI_PREVIEW_DEFAULT_TTL_MIN = 60;
 const UI_PREVIEW_MAX_TTL_MIN = 240;
+
+/** The DB `users.role` value to persist for a given minted JWT role. `auditor`
+ *  isn't permitted by the users.role CHECK constraint and rebuilding that
+ *  table on D1 is unsafe (FK cascade), so the preview row stores a CHECK-valid
+ *  placeholder ('analyst', still staff so the SPA doesn't bounce it to
+ *  /tenant) while the minted JWT carries the real `auditor` role. Preview
+ *  tokens are standalone (no refresh cookie), so the DB role is never read
+ *  back to re-mint — only /api/auth/me surfaces it cosmetically. */
+export function uiPreviewDbRole(jwtRole: UserRole): UserRole {
+  return jwtRole === "auditor" ? "analyst" : jwtRole;
+}
 
 export async function handleMintUiPreviewJwt(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -1036,14 +1048,16 @@ export async function handleMintUiPreviewJwt(request: Request, env: Env): Promis
     const preset = surface === "staff" ? UI_PREVIEW_STAFF : UI_PREVIEW_TENANT;
     let role: UserRole;
     if (surface === "staff") {
-      const roleParam = (url.searchParams.get("role") ?? "analyst") as UserRole;
+      const roleParam = (url.searchParams.get("role") ?? "auditor") as UserRole;
       if (!UI_PREVIEW_STAFF_ROLES.includes(roleParam)) {
-        return json({ success: false, error: "staff role must be 'analyst' or 'admin'" }, 400, origin);
+        return json({ success: false, error: "staff role must be 'auditor', 'analyst', or 'admin'" }, 400, origin);
       }
       role = roleParam;
     } else {
       role = "client";
     }
+    // The JWT carries `role`; the DB row stores a CHECK-valid placeholder.
+    const dbRole = uiPreviewDbRole(role);
 
     // TTL clamp.
     const reqTtl = parseInt(url.searchParams.get("ttl_minutes") ?? "", 10);
@@ -1057,17 +1071,17 @@ export async function handleMintUiPreviewJwt(request: Request, env: Env): Promis
     await env.DB.prepare(
       `INSERT OR IGNORE INTO users (id, email, name, role, status, created_at)
        VALUES (?, ?, ?, ?, 'active', datetime('now'))`,
-    ).bind(preset.id, preset.email, preset.name, role).run();
+    ).bind(preset.id, preset.email, preset.name, dbRole).run();
 
     const existing = await env.DB.prepare("SELECT status, role FROM users WHERE id = ?")
       .bind(preset.id).first<{ status: string; role: string }>();
     if (!existing || existing.status !== "active") {
       return json({ success: false, error: "Preview user is suspended" }, 503, origin);
     }
-    // Keep the stored role in sync with the requested one (the JWT role is
-    // authoritative for access, but a consistent row avoids confusion).
-    if (existing.role !== role) {
-      await env.DB.prepare("UPDATE users SET role = ? WHERE id = ?").bind(role, preset.id).run();
+    // Keep the stored (CHECK-valid) role in sync with the placeholder for the
+    // requested JWT role. The JWT role is authoritative for access.
+    if (existing.role !== dbRole) {
+      await env.DB.prepare("UPDATE users SET role = ? WHERE id = ?").bind(dbRole, preset.id).run();
     }
 
     // Tenant preview: optionally scope to a real org so org-filtered pages

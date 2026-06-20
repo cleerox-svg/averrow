@@ -7,6 +7,10 @@ import { sendInviteEmail } from "../lib/invite-email";
 import { audit } from "../lib/audit";
 import type { Env, UserRole } from "../types";
 
+// NOTE: 'auditor' is intentionally absent (AUTH_AUDIT_2026-06). It's a real
+// UserRole but minted-only — the users/invitations.role CHECK constraints
+// don't permit it, so it can't be persisted via an invite until that CHECK
+// is relaxed in a maintenance window (see the note in types.ts UserRole).
 const VALID_ROLES: UserRole[] = [
   "super_admin", "admin", "analyst", "sales", "support", "billing", "client",
 ];

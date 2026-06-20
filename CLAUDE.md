@@ -538,8 +538,26 @@ analyst      level 3  — Averrow SOC: handles alerts/takedowns/incidents
 sales        level 3  — read customer data + edit pricing + send invites
 support      level 3  — read customer data + alerts (no edits)
 billing      level 3  — Stripe + pricing only
+auditor      level 3  — READ-ONLY global seat (AUTH_AUDIT_2026-06): sees
+                        ALL backend + tenant data (getOrgScope returns null,
+                        like super_admin), mutates nothing, never reaches an
+                        admin-only gate. Minted-only — see note below.
 client       level 1  — customer (lives at /tenant; never reaches /v2)
 ```
+
+**`auditor` is minted-only.** It's a real `UserRole` with a read-only
+permission set + global org scope, but it is NOT assignable to a stored
+user: the prod `users.role` / `invitations.role` CHECK constraints permit
+only `super_admin/admin/analyst/client`, and relaxing them requires a
+`users` table rebuild that is UNSAFE to auto-apply (D1 enforces FKs —
+`PRAGMA foreign_keys=1` — so `DROP TABLE users` cascades into
+sessions/passkeys/notifications). So `auditor` is issued only via
+`/api/internal/auth/mint-ui-preview-jwt`, where the preview row is stored
+under a CHECK-valid `analyst` placeholder while the minted JWT carries the
+real `auditor` role (preview tokens are standalone — no refresh — so the DB
+role is never read back to re-mint). To make `auditor` human-assignable,
+relax both CHECKs in a maintenance-window rebuild first, then add it to
+`VALID_ROLES` in `handlers/invites.ts`.
 
 The four sub-roles (analyst / sales / support / billing) all sit
 at level 3 because hierarchy can't capture their differentiated
