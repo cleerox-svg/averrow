@@ -22,6 +22,7 @@ import {
 } from '@/lib/alerts';
 import { AlertActions, AssigneeControl } from './AlertActions';
 import { AiAssessmentPanel } from './AiAssessment';
+import { AgePill } from '@/components/AgePill';
 import { cn } from '@/lib/cn';
 
 const PAGE_SIZE = 50;
@@ -197,6 +198,9 @@ function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean })
           <SeverityPill level={a.severity} />
           <ConfidencePill value={extractConfidence(a.details)} />
           <StatusPill status={a.status} />
+          {a.status !== 'resolved' && a.status !== 'false_positive' && (
+            <AgePill createdAt={a.created_at} severity={a.severity} />
+          )}
           <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
             {a.alert_type.replace(/_/g, ' ')}
           </span>

@@ -17,6 +17,7 @@ import { useTenantTakedowns, takedownActionsFor, type TakedownListRow } from '@/
 import { AlertActions, AssigneeControl } from '@/features/alerts/AlertActions';
 import { VerdictChip } from '@/features/alerts/AiAssessment';
 import { TakedownActions } from '@/features/takedowns/TakedownActions';
+import { AgePill } from '@/components/AgePill';
 
 const PREVIEW = 5;
 
@@ -107,6 +108,7 @@ function DraftRow({ takedown: t, canTriage }: { takedown: TakedownListRow; canTr
       <Link to={`/takedowns/${t.id}`} className="block p-3.5 hover:bg-white/[0.02] rounded-t-xl">
         <div className="flex items-center gap-2 flex-wrap mb-1">
           <SeverityPill level={t.severity} />
+          <AgePill createdAt={t.created_at} severity={t.severity} />
           {t.module_key && <Chip>{t.module_key.replace(/_/g, ' ')}</Chip>}
           <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{t.target_type}</span>
         </div>
@@ -126,6 +128,7 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
     <div className="rounded-xl border border-white/[0.07] bg-bg-card p-3.5">
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <SeverityPill level={a.severity} />
+        <AgePill createdAt={a.created_at} severity={a.severity} />
         {conf !== null && <Chip>{conf}% conf</Chip>}
         <VerdictChip raw={a.ai_assessment} />
         <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{a.alert_type.replace(/_/g, ' ')}</span>

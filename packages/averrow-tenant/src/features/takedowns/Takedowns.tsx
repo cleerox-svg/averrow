@@ -20,6 +20,7 @@ import {
 } from '@/lib/takedowns';
 import { useCanTriage } from '@/lib/alerts';
 import { TakedownActions } from './TakedownActions';
+import { AgePill } from '@/components/AgePill';
 
 export function Takedowns() {
   const [filters, setFilters] = useState<TakedownsFilters>({});
@@ -204,6 +205,9 @@ function TakedownRow({ takedown: t, canTriage }: { takedown: TakedownListRow; ca
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <SeverityPill level={t.severity} />
           <StatusPill status={t.status} />
+          {(t.status === 'draft' || t.status === 'requested') && (
+            <AgePill createdAt={t.created_at} severity={t.severity} />
+          )}
           {t.module_key && <ModuleChip module_key={t.module_key} />}
           <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
             {t.target_type}
