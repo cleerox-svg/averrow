@@ -56,6 +56,31 @@ export function useTenantThreats(params: ThreatsQueryParams) {
   });
 }
 
+/** Single threat record — the enrichment/infrastructure backing for a
+ *  threat-sourced signal's Intelligence Card. Backed by
+ *  GET /api/orgs/:orgId/threats/:threatId (handler handleTenantThreatDetail).
+ *  Pass the alert's source_id; the hook self-gates when it's absent or the
+ *  signal isn't threat-sourced. 404 → the threat is gone/aged; the card just
+ *  hides the infra tab rather than erroring. */
+export function useThreatDetail(threatId: string | null | undefined) {
+  const { user, hasOrg } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useQuery<ThreatRow | null>({
+    queryKey: ['tenant-threat', orgId, threatId],
+    queryFn: async () => {
+      try {
+        const res = await apiGet<ThreatRow>(`/api/orgs/${orgId}/threats/${threatId}`);
+        return res.data;
+      } catch {
+        return null; // aged-out / not found — infra tab simply won't render
+      }
+    },
+    enabled: hasOrg && !!orgId && !!threatId,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export const THREAT_TYPE_LABELS: Record<string, string> = {
   phishing:              'Phishing',
   typosquatting:         'Typosquatting',

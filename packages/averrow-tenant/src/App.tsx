@@ -12,6 +12,7 @@ import { Members } from '@/features/settings/Members';
 import { Profile } from '@/features/profile/Profile';
 import { Billing } from '@/features/billing/Billing';
 import { Alerts } from '@/features/alerts/Alerts';
+import { IntelligenceCard } from '@/features/alerts/IntelligenceCard';
 import { Threats } from '@/features/threats/Threats';
 import { Notifications } from '@/features/notifications/NotificationsInbox';
 import { Domain } from '@/features/domain/Domain';
@@ -51,6 +52,7 @@ export function App() {
               <Route path="console" element={<Console />} />
               <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
+              <Route path="alerts/:alertId" element={<IntelligenceCard />} />
               <Route path="notifications" element={<Notifications />} />
 
               {/* Takedowns — Phase C sprint 4 */}

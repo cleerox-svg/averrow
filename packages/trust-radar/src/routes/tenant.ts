@@ -13,8 +13,8 @@ import {
   handleDeleteIntegration, handleTestIntegration,
 } from "../handlers/organizations";
 import {
-  handleTenantDashboard, handleTenantAlerts, handleTenantUpdateAlert, handleTenantBulkUpdateAlerts, handleTenantAuditLog,
-  handleTenantOrgThreats,
+  handleTenantDashboard, handleTenantAlerts, handleTenantAlertDetail, handleTenantUpdateAlert, handleTenantBulkUpdateAlerts, handleTenantAuditLog,
+  handleTenantOrgThreats, handleTenantThreatDetail,
   handleTenantBrandDetail, handleTenantBrandThreats, handleTenantBrandSocialProfiles,
   handleGetMonitoringConfig, handleUpdateMonitoringConfig,
 } from "../handlers/tenantData";
@@ -213,6 +213,14 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleTenantOrgThreats(request, env, request.params["orgId"] ?? "", ctx);
   });
+  // Single-threat detail — enrichment backing for a threat-sourced
+  // signal's Intelligence Card. Registered after the list GET so the
+  // bare /threats path still matches the list.
+  router.get("/api/orgs/:orgId/threats/:threatId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTenantThreatDetail(request, env, request.params["orgId"] ?? "", request.params["threatId"] ?? "", ctx);
+  });
   router.post("/api/orgs/:orgId/alerts/bulk", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
@@ -222,6 +230,12 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTenantUpdateAlert(request, env, request.params["orgId"] ?? "", request.params["alertId"] ?? "", ctx);
+  });
+  // Single-signal detail for the Intelligence Card (deep-linkable).
+  router.get("/api/orgs/:orgId/alerts/:alertId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTenantAlertDetail(request, env, request.params["orgId"] ?? "", request.params["alertId"] ?? "", ctx);
   });
   router.get("/api/orgs/:orgId/brands/:brandId/detail", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
