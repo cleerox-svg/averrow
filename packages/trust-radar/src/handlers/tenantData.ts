@@ -569,6 +569,114 @@ export async function handleTenantUpdateAlert(
   }
 }
 
+// ─── POST /api/orgs/:orgId/alerts/bulk ───────────────────────
+//
+// Bulk triage: apply a status transition and/or an assignee to many signals
+// in one request (TENANT_ANALYST_UX_RESEARCH_2026-06 #12). Analyst+. Only
+// alerts that belong to the org's brands are touched; the rest are silently
+// skipped. One UPDATE, one audit row.
+export async function handleTenantBulkUpdateAlerts(
+  request: Request,
+  env: Env,
+  orgId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessErr = verifyOrgAccess(ctx, orgId);
+  if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  if (!canPerformHITL(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
+  }
+
+  try {
+    const body = await request.json() as { alert_ids?: unknown; status?: string; notes?: string; assigned_to?: string | null };
+    const ids = Array.isArray(body.alert_ids)
+      ? body.alert_ids.filter((x): x is string => typeof x === "string")
+      : [];
+    if (ids.length === 0) return json({ success: false, error: "alert_ids required" }, 400, origin);
+    if (ids.length > 200) return json({ success: false, error: "Too many alerts (max 200 per call)" }, 400, origin);
+
+    const hasStatus = typeof body.status === "string";
+    const hasAssignee = Object.prototype.hasOwnProperty.call(body, "assigned_to");
+    if (!hasStatus && !hasAssignee) {
+      return json({ success: false, error: "Provide a status and/or an assignee" }, 400, origin);
+    }
+    const validStatuses = ["acknowledged", "investigating", "resolved", "false_positive"];
+    if (hasStatus && !validStatuses.includes(body.status as string)) {
+      return json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` }, 400, origin);
+    }
+    if (hasAssignee && body.assigned_to != null) {
+      const member = await env.DB.prepare(
+        "SELECT 1 FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active'",
+      ).bind(orgId, body.assigned_to).first();
+      if (!member) {
+        return json({ success: false, error: "Assignee must be an active member of this organization" }, 400, origin);
+      }
+    }
+
+    // Restrict to alerts actually owned by this org.
+    const ph = ids.map(() => "?").join(",");
+    const owned = await env.DB.prepare(`
+      SELECT a.id FROM alerts a
+      JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+      WHERE a.id IN (${ph})
+    `).bind(orgId, ...ids).all<{ id: string }>();
+    const ownedIds = (owned.results ?? []).map((r) => r.id);
+    if (ownedIds.length === 0) {
+      return json({ success: true, data: { updated: 0 } }, 200, origin);
+    }
+
+    const now = new Date().toISOString();
+    const updates: string[] = ["updated_at = ?"];
+    const binds: unknown[] = [now];
+    if (hasStatus) {
+      updates.push("status = ?");
+      binds.push(body.status);
+      if (body.status === "acknowledged") {
+        updates.push("acknowledged_at = ?");
+        binds.push(now);
+      } else if (body.status === "resolved" || body.status === "false_positive") {
+        updates.push("resolved_at = ?");
+        binds.push(now);
+        if (body.notes) {
+          updates.push("resolution_notes = ?");
+          binds.push(body.notes);
+        }
+      }
+    }
+    if (hasAssignee) {
+      updates.push("assigned_to = ?");
+      binds.push(body.assigned_to ?? null);
+      updates.push("assigned_at = ?");
+      binds.push(body.assigned_to ? now : null);
+    }
+
+    const oph = ownedIds.map(() => "?").join(",");
+    await env.DB.prepare(`
+      UPDATE alerts SET ${updates.join(", ")} WHERE id IN (${oph})
+    `).bind(...binds, ...ownedIds).run();
+
+    await audit(env, {
+      action: "tenant_alert_bulk_update",
+      userId: ctx.userId,
+      resourceType: "alert",
+      details: {
+        org_id: orgId,
+        org_role: ctx.orgRole,
+        count: ownedIds.length,
+        new_status: hasStatus ? body.status : null,
+        assigned_to: hasAssignee ? (body.assigned_to ?? null) : undefined,
+      },
+      outcome: "success",
+      request,
+    });
+
+    return json({ success: true, data: { updated: ownedIds.length } }, 200, origin);
+  } catch (err) {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
 // ─── GET /api/orgs/:orgId/brands/:brandId ────────────────────
 
 export async function handleTenantBrandDetail(

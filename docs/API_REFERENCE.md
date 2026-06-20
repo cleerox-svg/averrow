@@ -747,6 +747,7 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | POST | `/api/orgs/:orgId/webhook/test` | Admin (org) | Send a test webhook delivery |
 | GET | `/api/orgs/:orgId/dashboard` | Member | Tenant-scoped dashboard |
 | GET | `/api/orgs/:orgId/alerts` | Member | Tenant alerts list |
+| POST | `/api/orgs/:orgId/alerts/bulk` | Analyst+ | Bulk triage. Body: `alert_ids` (≤200), plus `status` and/or `assigned_to` (+ optional `notes`). Applies to the org-owned subset only; returns `{ updated }`. |
 | PATCH | `/api/orgs/:orgId/alerts/:alertId` | Analyst+ | Triage a tenant signal. Body: `status` (acknowledged/investigating/resolved/false_positive) and/or `assigned_to` (a member user id, or `null` to unassign), `notes`. At least one of status/assigned_to required. `assigned_to` validated as an active org member. |
 | GET | `/api/orgs/:orgId/audit-log` | Analyst+ | Org-scoped audit trail (who/what/when of automation + human actions). Reads `AUDIT_DB.audit_log` filtered by `json_extract(details,'$.org_id')`; resolves actor names from the main DB; `ip_address`/`user_agent` not exposed. Params: `limit` (≤100), `offset`. Returns `{ data, total }`. |
 | GET | `/api/orgs/:orgId/threats` | Member | Org-wide threat records across all org brands. Filters: `brand_id`, `status` (default `active`, or `all`), `severity`, `threat_type`, `q` (domain LIKE), `limit` (≤100), `offset`. Returns `{ data, total, severity_breakdown, type_breakdown }`. Default page is KV-cached 90s. |

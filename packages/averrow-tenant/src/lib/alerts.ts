@@ -5,7 +5,7 @@
 // Org-scoped at handler level via org_brands ownership.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPatch } from './api';
+import { apiGet, apiPatch, apiPost } from './api';
 import { useAuth } from './auth';
 
 export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
@@ -161,6 +161,26 @@ export function useUpdateAlert() {
     },
     onSuccess: () => {
       // Prefix-match invalidation covers every severity/status filter variant.
+      qc.invalidateQueries({ queryKey: ['tenant-alerts', orgId] });
+      qc.invalidateQueries({ queryKey: ['tenant-dashboard', orgId] });
+    },
+  });
+}
+
+/** Bulk-triage many signals at once (status and/or assignee). */
+export function useBulkUpdateAlerts() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ alertIds, status, assignedTo }: { alertIds: string[]; status?: AlertAction; assignedTo?: string | null }) => {
+      const body: Record<string, unknown> = { alert_ids: alertIds };
+      if (status) body.status = status;
+      if (assignedTo !== undefined) body.assigned_to = assignedTo;
+      return apiPost<{ updated: number }>(`/api/orgs/${orgId}/alerts/bulk`, body);
+    },
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tenant-alerts', orgId] });
       qc.invalidateQueries({ queryKey: ['tenant-dashboard', orgId] });
     },

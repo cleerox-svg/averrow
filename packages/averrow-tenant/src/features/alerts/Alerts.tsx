@@ -15,11 +15,12 @@
 // read-only. (Phase 1, TENANT_ANALYST_UX_RESEARCH_2026-06 §6.)
 
 import { useState } from 'react';
-import { AlertTriangle, ShieldCheck, Bell, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Bell, Check, UserPlus, Loader2, X, type LucideIcon } from 'lucide-react';
 import {
-  useTenantAlerts, useCanTriage, extractConfidence,
+  useTenantAlerts, useCanTriage, useBulkUpdateAlerts, extractConfidence,
   type Alert, type AlertSeverity, type AlertStatus,
 } from '@/lib/alerts';
+import { useAuth } from '@/lib/auth';
 import { AlertActions, AssigneeControl } from './AlertActions';
 import { AiAssessmentPanel } from './AiAssessment';
 import { AgePill } from '@/components/AgePill';
@@ -50,13 +51,28 @@ export function Alerts() {
   const [severity, setSeverityState] = useState<SeverityFilter>('all');
   const [status, setStatusState]     = useState<StatusFilter>('new');
   const [page, setPage]              = useState(0);
+  const [selected, setSelected]      = useState<Set<string>>(new Set());
   const { data, isLoading, error } = useTenantAlerts({ severity, status, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
   const canTriage = useCanTriage();
 
-  // Changing a filter resets to the first page so the pager never strands
-  // the user on an out-of-range offset.
-  const setSeverity = (v: SeverityFilter) => { setSeverityState(v); setPage(0); };
-  const setStatus   = (v: StatusFilter)   => { setStatusState(v);   setPage(0); };
+  const clearSelection = () => setSelected(new Set());
+
+  // Changing a filter/page resets to the first page and drops the selection
+  // so the pager never strands an out-of-range offset and we never act on
+  // ids that are no longer on screen.
+  const setSeverity = (v: SeverityFilter) => { setSeverityState(v); setPage(0); clearSelection(); };
+  const setStatus   = (v: StatusFilter)   => { setStatusState(v);   setPage(0); clearSelection(); };
+  const goPage      = (p: number)         => { setPage(p); clearSelection(); };
+
+  const toggle = (id: string) => setSelected((s) => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const pageIds = data?.alerts.map((a) => a.id) ?? [];
+  const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const selectedIds = pageIds.filter((id) => selected.has(id));
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -82,10 +98,71 @@ export function Alerts() {
           <EmptyState status={status} severity={severity} />
         ) : (
           <section className="space-y-3">
-            {data.alerts.map((a) => <AlertRow key={a.id} alert={a} canTriage={canTriage} />)}
-            <Pager page={page} pageSize={PAGE_SIZE} shown={data.alerts.length} total={data.total} onPage={setPage} />
+            {canTriage && (
+              <BulkToolbar
+                allSelected={allSelected}
+                onToggleAll={() => setSelected(allSelected ? new Set() : new Set(pageIds))}
+                selectedIds={selectedIds}
+                onClear={clearSelection}
+              />
+            )}
+            {data.alerts.map((a) => (
+              <AlertRow
+                key={a.id}
+                alert={a}
+                canTriage={canTriage}
+                selected={selected.has(a.id)}
+                onToggleSelect={canTriage ? toggle : undefined}
+              />
+            ))}
+            <Pager page={page} pageSize={PAGE_SIZE} shown={data.alerts.length} total={data.total} onPage={goPage} />
           </section>
         )
+      )}
+    </div>
+  );
+}
+
+// Multi-select bulk triage bar (analyst+). Applies to the currently-selected
+// signals on this page via the bulk endpoint.
+function BulkToolbar({
+  allSelected, onToggleAll, selectedIds, onClear,
+}: {
+  allSelected: boolean;
+  onToggleAll: () => void;
+  selectedIds: string[];
+  onClear: () => void;
+}) {
+  const { user } = useAuth();
+  const bulk = useBulkUpdateAlerts();
+  const me = user?.id ?? null;
+  const n = selectedIds.length;
+
+  const run = (args: { status?: 'acknowledged' | 'resolved'; assignedTo?: string }) =>
+    bulk.mutate({ alertIds: selectedIds, ...args }, { onSuccess: onClear });
+
+  const btn = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50 bg-white/[0.04] text-white/65 border-white/[0.08] hover:text-white/95 hover:border-white/[0.18]';
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap rounded-lg border border-white/[0.07] bg-bg-card px-3 py-2">
+      <label className="inline-flex items-center gap-2 text-[11px] font-mono text-white/55 cursor-pointer select-none">
+        <input type="checkbox" checked={allSelected} onChange={onToggleAll} className="accent-amber w-3.5 h-3.5" />
+        Select all on page
+      </label>
+      {n > 0 && (
+        <>
+          <span className="text-[11px] font-mono text-amber/90">· {n} selected</span>
+          <div className="flex items-center gap-1.5 ml-1">
+            <button type="button" disabled={bulk.isPending} onClick={() => run({ status: 'acknowledged' })} className={btn}><Check size={11} /> Acknowledge</button>
+            <button type="button" disabled={bulk.isPending} onClick={() => run({ status: 'resolved' })} className={btn}><ShieldCheck size={11} /> Resolve</button>
+            {me && <button type="button" disabled={bulk.isPending} onClick={() => run({ assignedTo: me })} className={btn}><UserPlus size={11} /> Assign to me</button>}
+            <button type="button" disabled={bulk.isPending} onClick={onClear} className={btn}><X size={11} /> Clear</button>
+            {bulk.isPending && <Loader2 size={13} className="text-white/40 animate-spin" />}
+          </div>
+        </>
+      )}
+      {bulk.isError && (
+        <span className="text-[11px] text-sev-critical">{bulk.error instanceof Error ? bulk.error.message : 'Bulk action failed'}</span>
       )}
     </div>
   );
@@ -183,7 +260,9 @@ function parseRecommendations(raw: string | null): string[] {
   return [t];
 }
 
-function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }) {
+function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
+  alert: Alert; canTriage: boolean; selected?: boolean; onToggleSelect?: (id: string) => void;
+}) {
   const sev = (a.severity ?? '').toLowerCase();
   const accent =
     sev === 'critical' ? 'border-l-sev-critical/70' :
@@ -195,6 +274,15 @@ function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean })
     <article className={`rounded-xl border border-white/[0.07] border-l-2 ${accent} bg-bg-card p-4 hover:border-white/[0.16] transition-colors`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={() => onToggleSelect(a.id)}
+              className="accent-amber w-3.5 h-3.5 flex-shrink-0"
+              aria-label="Select signal"
+            />
+          )}
           <SeverityPill level={a.severity} />
           <ConfidencePill value={extractConfidence(a.details)} />
           <StatusPill status={a.status} />
