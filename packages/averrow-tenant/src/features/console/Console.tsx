@@ -15,6 +15,7 @@ import { Inbox, Bot, ArrowRight, ShieldAlert, Send, CheckCircle2, type LucideIco
 import { useTenantAlerts, useCanTriage, extractConfidence, type Alert, type AlertSeverity } from '@/lib/alerts';
 import { useTenantTakedowns, takedownActionsFor, type TakedownListRow } from '@/lib/takedowns';
 import { AlertActions } from '@/features/alerts/AlertActions';
+import { VerdictChip } from '@/features/alerts/AiAssessment';
 import { TakedownActions } from '@/features/takedowns/TakedownActions';
 
 const PREVIEW = 5;
@@ -126,6 +127,7 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <SeverityPill level={a.severity} />
         {conf !== null && <Chip>{conf}% conf</Chip>}
+        <VerdictChip raw={a.ai_assessment} />
         <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{a.alert_type.replace(/_/g, ' ')}</span>
         <span className="ml-auto text-[10px] font-mono text-white/35">{a.brand_name}</span>
       </div>

@@ -75,6 +75,32 @@ export function extractConfidence(details: string | null): number | null {
   }
 }
 
+// The AI judge (alert-ai-judge.ts) auto-resolves only at/above this
+// confidence; anything below is left in 'new' for a human. Surfaced so the
+// reasoning trail can explain *why* a signal wasn't auto-handled.
+export const AUTO_RESOLVE_CONFIDENCE_FLOOR = 90;
+
+export type AiVerdict = 'active_threat' | 'likely_safe' | 'needs_human' | string;
+export interface AiAssessment {
+  verdict:    AiVerdict;
+  confidence: number;
+  reasoning:  string;
+}
+
+/** Parse the AI judge's assessment, stored as a formatted string:
+ *  "[AI <verdict> @<confidence>%] <reasoning>". Returns null when absent or
+ *  in an unexpected shape. */
+export function parseAiAssessment(raw: string | null): AiAssessment | null {
+  if (!raw) return null;
+  const m = raw.match(/^\s*\[AI\s+([a-z_]+)\s*@\s*(\d+)\s*%\]\s*([\s\S]*)$/i);
+  if (!m) return null;
+  return {
+    verdict:    (m[1] ?? '').toLowerCase(),
+    confidence: parseInt(m[2] ?? '0', 10),
+    reasoning:  (m[3] ?? '').trim(),
+  };
+}
+
 export function useTenantAlerts(filters: AlertsFilters = {}) {
   const { user, hasOrg } = useAuth();
   const orgId = user?.organization?.id ?? null;

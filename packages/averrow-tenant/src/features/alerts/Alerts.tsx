@@ -21,6 +21,7 @@ import {
   type Alert, type AlertSeverity, type AlertStatus,
 } from '@/lib/alerts';
 import { AlertActions } from './AlertActions';
+import { AiAssessmentPanel } from './AiAssessment';
 import { cn } from '@/lib/cn';
 
 const PAGE_SIZE = 50;
@@ -208,6 +209,7 @@ function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean })
 
       <h3 className="text-[15px] font-semibold text-white/90 mt-2 leading-snug">{a.title}</h3>
       {a.summary && <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>}
+      <AiAssessmentPanel raw={a.ai_assessment} />
       {recs.length > 0 && <Recommendations items={recs} />}
       {a.resolution_notes && (a.status === 'resolved' || a.status === 'false_positive') && (
         <p className="text-[11px] text-white/45 mt-2 italic">
