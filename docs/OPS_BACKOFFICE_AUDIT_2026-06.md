@@ -81,7 +81,68 @@ list rows.
 
 ## 3. Inventory & redundancy map
 
-_Pending — populated from the full-surface recon pass._
+Source: full-surface recon of `src/App.tsx` + `components/layout/Sidebar.tsx`
+(`OPS_SECTIONS`). ~49 routes across **3 nav sections**.
+
+### 3.1 Information architecture (current Sidebar)
+
+```
+INTELLIGENCE   Home · Observatory · Brands · Threats · Apps · Dark Web ·
+               Trademarks · Providers · Campaigns · Threat Actors · Intelligence(→/trends)
+RESPONSE       Incidents · Takedowns · Signals(badge) · Spam Trap* · Abuse Mailbox* · Leads
+PLATFORM       Agents · Feeds · Metrics · Dashboard · Team · Customers* · Pricing* ·
+               Audit Log · Attribution Backlog
+                                                        (* = super_admin-only)
+```
+
+### 3.2 Redundancy — mostly already resolved (corrects my initial read)
+
+| Suspected dupe | Reality | Verdict |
+|---|---|---|
+| `observatory` vs `observatory-v3` | **Intentional A/B** — one nav item toggles via `ObservatoryVersionToggle`/`useObservatoryVersion()`; v3 = GPU particle viz, v2 = deck.gl. Both maintained. | Not redundant. (Open Q: is carrying two renderers worth the maintenance?) |
+| `brands` vs `brands-v3` | **Cleanly deprecated** — `/brands-v3[/:id]` *redirects* to `/brands[/:id]`; v2 brands decommissioned, "v3 IS the brands surface." | Resolved. |
+| `admin/customers` vs `admin/organizations` | Same component, alias kept for bookmarks (renamed in Stripe sprint). | Resolved. |
+| `leads` vs `admin/scan-leads` | Scan Leads is now a **tab** in Leads; legacy path redirects to `/leads?view=scan`. | Resolved. |
+
+**So the consolidation opportunity is NOT v2/v3 cruft** — that's been handled.
+The real findings are below.
+
+### 3.3 Real findings from the inventory
+
+**F-A · No deep-linkable entity detail for Providers & Threat Actors.**
+`/providers/:providerId` and `/threat-actors/:actorId` both **redirect to the
+list** — detail is "inline-only via card expansion." Brands and Campaigns
+*have* real detail routes (`/brands/:id`, `/campaigns/:id`). So the entity
+model is **inconsistent**: two of the four core entities can't be linked to,
+bookmarked, or pivoted *into* from elsewhere. (Direct hit on benchmark **E1/E2**.)
+
+**F-B · Label/route mismatch in the IA.** A nav item literally named
+**"Intelligence"** sits inside the **INTELLIGENCE** section and points to
+`/trends` (the Trends/briefings page). Confusing twice over.
+
+**F-C · 8 orphaned routes** (defined, not in nav). Some are deliberate
+(`/admin/push` = one-time VAPID bootstrap, surfaced as a dashboard card), but
+several are user-facing surfaces reachable only by header icon or direct URL:
+`/profile`, `/notifications`, `/notifications/preferences`,
+`/agents/approvals`, `/agents/:id/review`, `/agents/architect`,
+`/admin/notifications`. The **agent-approvals** orphans matter most — see
+Batch 3.
+
+**F-D · RBAC is mostly "shell-gated, not route-gated."** Most INTELLIGENCE/
+RESPONSE pages have **no route-level guard** — access is the staff-only app
+shell + brand-admins redirected home. A handful of admin pages add an explicit
+`isSuperAdmin` guard (Spam Trap, Abuse Mailbox, Customers, Pricing, Push,
+Notifications-admin, agent approvals). Coherent, but worth confirming the
+level-3 sub-roles (sales/support/billing/analyst) see a sensible subset rather
+than the full INTELLIGENCE firehose (revisit per-batch).
+
+**F-E · `RESPONSE` section mixes ops + sales.** Leads (sales pipeline) sits in
+the same section as Incidents/Takedowns/Signals (SOC response). Different jobs,
+different roles — an IA seam to revisit in Batch 5.
+
+> Full per-route table (component file · nav location · data sources · actions ·
+> RBAC) retained in the recon transcript; condensed here to the findings that
+> drive change.
 
 ---
 
