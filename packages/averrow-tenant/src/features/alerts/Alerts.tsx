@@ -17,10 +17,12 @@
 import { useState } from 'react';
 import { AlertTriangle, ShieldCheck, Bell, Check, Eye, Ban, Loader2, type LucideIcon } from 'lucide-react';
 import {
-  useTenantAlerts, useUpdateAlert, useCanTriage,
+  useTenantAlerts, useUpdateAlert, useCanTriage, extractConfidence,
   type Alert, type AlertAction, type AlertSeverity, type AlertStatus,
 } from '@/lib/alerts';
 import { cn } from '@/lib/cn';
+
+const PAGE_SIZE = 50;
 
 type SeverityFilter = AlertSeverity | 'all';
 type StatusFilter   = AlertStatus | 'all';
@@ -42,10 +44,16 @@ const STATUS_OPTIONS: Array<{ key: StatusFilter; label: string }> = [
 ];
 
 export function Alerts() {
-  const [severity, setSeverity] = useState<SeverityFilter>('all');
-  const [status, setStatus]     = useState<StatusFilter>('new');
-  const { data, isLoading, error } = useTenantAlerts({ severity, status });
+  const [severity, setSeverityState] = useState<SeverityFilter>('all');
+  const [status, setStatusState]     = useState<StatusFilter>('new');
+  const [page, setPage]              = useState(0);
+  const { data, isLoading, error } = useTenantAlerts({ severity, status, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
   const canTriage = useCanTriage();
+
+  // Changing a filter resets to the first page so the pager never strands
+  // the user on an out-of-range offset.
+  const setSeverity = (v: SeverityFilter) => { setSeverityState(v); setPage(0); };
+  const setStatus   = (v: StatusFilter)   => { setStatusState(v);   setPage(0); };
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -72,11 +80,7 @@ export function Alerts() {
         ) : (
           <section className="space-y-3">
             {data.alerts.map((a) => <AlertRow key={a.id} alert={a} canTriage={canTriage} />)}
-            {data.total > data.alerts.length && (
-              <p className="text-[11px] text-white/40 font-mono text-center pt-2">
-                showing {data.alerts.length} of {data.total} · paginate further coming soon
-              </p>
-            )}
+            <Pager page={page} pageSize={PAGE_SIZE} shown={data.alerts.length} total={data.total} onPage={setPage} />
           </section>
         )
       )}
@@ -189,6 +193,7 @@ function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean })
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           <SeverityPill level={a.severity} />
+          <ConfidencePill value={extractConfidence(a.details)} />
           <StatusPill status={a.status} />
           <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
             {a.alert_type.replace(/_/g, ' ')}
@@ -203,6 +208,12 @@ function AlertRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean })
       <h3 className="text-[15px] font-semibold text-white/90 mt-2 leading-snug">{a.title}</h3>
       {a.summary && <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>}
       {recs.length > 0 && <Recommendations items={recs} />}
+      {a.resolution_notes && (a.status === 'resolved' || a.status === 'false_positive') && (
+        <p className="text-[11px] text-white/45 mt-2 italic">
+          <span className="not-italic font-mono uppercase tracking-wider text-white/35">note · </span>
+          {a.resolution_notes}
+        </p>
+      )}
       {canTriage && <AlertActions alert={a} />}
     </article>
   );
@@ -368,6 +379,53 @@ function StatusPill({ status }: { status: AlertStatus }) {
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status.replace(/_/g, ' ')}
     </span>
+  );
+}
+
+// Detection confidence, shown distinct from severity (severity = how bad if
+// real; confidence = how sure the detection is). Rendered only when the alert
+// carries a structured score; absent for feed/campaign alerts.
+function ConfidencePill({ value }: { value: number | null }) {
+  if (value === null) return null;
+  const tone =
+    value >= 80 ? 'text-blue/90 bg-blue/[0.08] border-blue/[0.22]' :
+    value >= 50 ? 'text-blue/70 bg-blue/[0.05] border-blue/[0.15]' :
+                  'text-white/50 bg-white/[0.04] border-white/[0.08]';
+  return (
+    <span
+      title="Detection confidence"
+      className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}
+    >
+      {value}% conf
+    </span>
+  );
+}
+
+function Pager({
+  page, pageSize, shown, total, onPage,
+}: {
+  page: number; pageSize: number; shown: number; total: number; onPage: (p: number) => void;
+}) {
+  const start = total === 0 ? 0 : page * pageSize + 1;
+  const end = page * pageSize + shown;
+  const hasPrev = page > 0;
+  const hasNext = end < total;
+  if (!hasPrev && !hasNext) {
+    return (
+      <p className="text-[11px] text-white/40 font-mono text-center pt-2">
+        {total} signal{total === 1 ? '' : 's'}
+      </p>
+    );
+  }
+  const btn = 'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
+  return (
+    <div className="flex items-center justify-between pt-2">
+      <span className="text-[11px] text-white/40 font-mono">showing {start}–{end} of {total}</span>
+      <div className="flex items-center gap-1.5">
+        <button type="button" className={btn} disabled={!hasPrev} onClick={() => onPage(page - 1)}>Prev</button>
+        <button type="button" className={btn} disabled={!hasNext} onClick={() => onPage(page + 1)}>Next</button>
+      </div>
+    </div>
   );
 }
 

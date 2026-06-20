@@ -55,6 +55,24 @@ interface AlertsFilters {
   severity?: AlertSeverity | 'all';
   brandId?:  string;
   limit?:    number;
+  offset?:   number;
+}
+
+/** Detection confidence (0–100) when the alert carries a structured score —
+ *  impersonation alerts stash it in details.score / details.impersonation_score
+ *  (0–1). Returns null for alert types without a detection score (campaign /
+ *  phishing feeds), where severity carries the weight instead. */
+export function extractConfidence(details: string | null): number | null {
+  if (!details) return null;
+  try {
+    const d = JSON.parse(details) as Record<string, unknown>;
+    const raw = d.score ?? d.impersonation_score ?? d.confidence;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+    const pct = raw <= 1 ? raw * 100 : raw;
+    return Math.round(Math.max(0, Math.min(100, pct)));
+  } catch {
+    return null;
+  }
 }
 
 export function useTenantAlerts(filters: AlertsFilters = {}) {
@@ -66,6 +84,7 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
   if (filters.severity && filters.severity !== 'all') params.set('severity', filters.severity);
   if (filters.brandId)                                  params.set('brand_id', filters.brandId);
   params.set('limit', String(filters.limit ?? 50));
+  if (filters.offset)                                   params.set('offset', String(filters.offset));
 
   return useQuery<AlertsResponse>({
     queryKey: ['tenant-alerts', orgId, params.toString()],
