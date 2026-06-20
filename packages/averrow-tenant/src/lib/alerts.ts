@@ -136,6 +136,23 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
   });
 }
 
+/** Single-signal detail for the Intelligence Card. Deep-linkable: backed by
+ *  GET /api/orgs/:orgId/alerts/:alertId (handler handleTenantAlertDetail), so
+ *  the card resolves on a hard refresh / direct nav without the list cached. */
+export function useAlert(alertId: string | undefined) {
+  const { user, hasOrg } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  return useQuery<Alert>({
+    queryKey: ['tenant-alert', orgId, alertId],
+    queryFn: async () => {
+      const res = await apiGet<Alert>(`/api/orgs/${orgId}/alerts/${alertId}`);
+      return res.data;
+    },
+    enabled: hasOrg && !!orgId && !!alertId,
+    staleTime: 30_000,
+  });
+}
+
 /** Org roles permitted to triage signals — mirrors the backend
  *  `canPerformHITL` gate (analyst+ in the viewer<analyst<admin<owner
  *  hierarchy). A global super_admin also qualifies. */
@@ -162,6 +179,7 @@ export function useUpdateAlert() {
     onSuccess: () => {
       // Prefix-match invalidation covers every severity/status filter variant.
       qc.invalidateQueries({ queryKey: ['tenant-alerts', orgId] });
+      qc.invalidateQueries({ queryKey: ['tenant-alert', orgId] });
       qc.invalidateQueries({ queryKey: ['tenant-dashboard', orgId] });
     },
   });
@@ -203,6 +221,7 @@ export function useAssignAlert() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tenant-alerts', orgId] });
+      qc.invalidateQueries({ queryKey: ['tenant-alert', orgId] });
     },
   });
 }

@@ -134,7 +134,9 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
         <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{a.alert_type.replace(/_/g, ' ')}</span>
         <span className="ml-auto text-[10px] font-mono text-white/35">{a.brand_name}</span>
       </div>
-      <div className="text-[13.5px] font-semibold text-white/90 leading-snug">{a.title}</div>
+      <div className="text-[13.5px] font-semibold leading-snug">
+        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
+      </div>
       <div className="mt-2"><AssigneeControl alert={a} canTriage={canTriage} /></div>
       {canTriage && <AlertActions alert={a} />}
     </div>
@@ -146,7 +148,9 @@ function HandledRow({ alert: a }: { alert: Alert }) {
     <div className="flex items-start gap-3 px-4 py-3">
       <CheckCircle2 size={14} className="text-green/70 mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] text-white/80 truncate">{a.title}</div>
+        <div className="text-[12.5px] truncate">
+          <Link to={`/alerts/${a.id}`} className="text-white/80 hover:text-amber transition-colors">{a.title}</Link>
+        </div>
         <div className="text-[11px] text-white/40 mt-0.5 font-mono">
           {a.status.replace(/_/g, ' ')}{a.resolution_notes ? ` · ${a.resolution_notes}` : ''} · {a.brand_name}
         </div>

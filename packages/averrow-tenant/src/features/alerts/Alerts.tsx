@@ -15,6 +15,7 @@
 // read-only. (Phase 1, TENANT_ANALYST_UX_RESEARCH_2026-06 §6.)
 
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, ShieldCheck, Bell, Check, UserPlus, Loader2, X, type LucideIcon } from 'lucide-react';
 import {
   useTenantAlerts, useCanTriage, useBulkUpdateAlerts, extractConfidence,
@@ -302,7 +303,9 @@ function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
         </div>
       </div>
 
-      <h3 className="text-[15px] font-semibold text-white/90 mt-2 leading-snug">{a.title}</h3>
+      <h3 className="text-[15px] font-semibold mt-2 leading-snug">
+        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
+      </h3>
       {a.summary && <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>}
       <AiAssessmentPanel raw={a.ai_assessment} />
       {recs.length > 0 && <Recommendations items={recs} />}

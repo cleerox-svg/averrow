@@ -230,6 +230,54 @@ export async function handleTenantAlerts(
   }
 }
 
+// ─── GET /api/orgs/:orgId/alerts/:alertId ────────────────────
+//
+// Single-signal detail for the Intelligence Card
+// (TENANT_ANALYST_UX_RESEARCH_2026-06 §5.3). Same columns + brand JOIN
+// as the list, plus assignee-name resolution, scoped to the org's
+// owned brands via org_brands. Deep-linkable so the card survives a
+// hard refresh / direct nav without the list in cache.
+export async function handleTenantAlertDetail(
+  request: Request,
+  env: Env,
+  orgId: string,
+  alertId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessErr = verifyOrgAccess(ctx, orgId);
+  if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+
+  try {
+    const alert = await env.DB.prepare(`
+      SELECT a.*, b.name AS brand_name, b.canonical_domain AS brand_domain
+      FROM alerts a
+      JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+      JOIN brands b ON b.id = a.brand_id
+      WHERE a.id = ?
+    `).bind(orgId, alertId).first<Record<string, unknown>>();
+
+    if (!alert) {
+      return json({ success: false, error: "Signal not found" }, 404, origin);
+    }
+
+    let assignedToName: string | null = null;
+    if (alert.assigned_to && typeof alert.assigned_to === "string") {
+      const u = await env.DB.prepare(
+        "SELECT COALESCE(display_name, name, email) AS name FROM users WHERE id = ?",
+      ).bind(alert.assigned_to).first<{ name: string }>();
+      assignedToName = u?.name ?? null;
+    }
+
+    return json({
+      success: true,
+      data: { ...alert, assigned_to_name: assignedToName },
+    }, 200, origin);
+  } catch (err) {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
 // ─── GET /api/orgs/:orgId/audit-log ──────────────────────────
 //
 // Tenant-facing who/what/when of automation + human actions on the org
@@ -439,6 +487,58 @@ export async function handleTenantOrgThreats(
       severity_breakdown: result.severity_breakdown,
       type_breakdown: result.type_breakdown,
     }, 200, origin);
+  } catch (err) {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+// ─── GET /api/orgs/:orgId/threats/:threatId ──────────────────
+//
+// Single threat record — the enrichment/infrastructure backing for a
+// threat-sourced signal's Intelligence Card (DNS/WHOIS/certs +
+// reputation evidence). Same curated columns as the list, org-scoped
+// through org_brands. The Card calls this only when an alert carries
+// source_type='threat'.
+export async function handleTenantThreatDetail(
+  request: Request,
+  env: Env,
+  orgId: string,
+  threatId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessErr = verifyOrgAccess(ctx, orgId);
+  if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+
+  try {
+    const threat = await env.DB.prepare(`
+      SELECT t.id, t.threat_type, t.malicious_domain, t.malicious_url,
+             t.target_brand_id, t.source_feed, t.severity, t.status,
+             t.confidence_score, t.country_code, t.ip_address,
+             t.asn, t.registrar, t.registration_date,
+             t.campaign_id, t.cluster_id, t.saas_technique_id,
+             t.vt_checked, t.vt_malicious, t.vt_reputation,
+             t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+             t.surbl_checked, t.surbl_listed,
+             t.greynoise_checked, t.greynoise_classification,
+             t.seclookup_checked, t.seclookup_risk_score,
+             t.abuseipdb_checked, t.abuseipdb_score, t.abuseipdb_reports,
+             t.first_seen, t.last_seen,
+             hp.name AS hosting_provider, st.name AS saas_technique_name,
+             b.name AS brand_name, b.canonical_domain AS brand_domain
+      FROM threats t
+      JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+      JOIN brands b ON b.id = t.target_brand_id
+      LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+      LEFT JOIN saas_techniques st ON st.id = t.saas_technique_id
+      WHERE t.id = ?
+    `).bind(orgId, threatId).first<Record<string, unknown>>();
+
+    if (!threat) {
+      return json({ success: false, error: "Threat not found" }, 404, origin);
+    }
+
+    return json({ success: true, data: threat }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
