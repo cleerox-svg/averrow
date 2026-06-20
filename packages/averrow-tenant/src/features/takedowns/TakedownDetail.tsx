@@ -7,16 +7,20 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Mail, FileText } from 'lucide-react';
 import {
   useTenantTakedownDetail,
+  takedownActionsFor,
   STATUS_LABELS,
   MODULE_LABELS,
   SUBMITTER_KIND_LABELS,
   type TakedownDetailRow,
   type TakedownSubmissionAuditRow,
 } from '@/lib/takedowns';
+import { useCanTriage } from '@/lib/alerts';
+import { TakedownActions } from './TakedownActions';
 
 export function TakedownDetail() {
   const { takedownId } = useParams<{ takedownId: string }>();
   const { data, isLoading, error } = useTenantTakedownDetail(takedownId ?? null);
+  const canTriage = useCanTriage();
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -35,6 +39,15 @@ export function TakedownDetail() {
       {data && (
         <>
           <Header takedown={data.takedown} />
+          {canTriage && takedownActionsFor(data.takedown.status).length > 0 && (
+            <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-2">Your decision</div>
+              <p className="text-[12px] text-white/60 mb-3">
+                Review the evidence below, then approve to submit this request to the provider, or withdraw to decline it.
+              </p>
+              <TakedownActions takedownId={data.takedown.id} actions={takedownActionsFor(data.takedown.status)} />
+            </section>
+          )}
           <EvidenceSection takedown={data.takedown} />
           <SubmissionsSection rows={data.submissions} />
         </>

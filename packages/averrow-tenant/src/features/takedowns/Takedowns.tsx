@@ -11,16 +11,20 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, ShieldCheck, Send, Check, type LucideIcon } from 'lucide-react';
 import {
   useTenantTakedowns,
+  takedownActionsFor,
   STATUS_LABELS,
   MODULE_LABELS,
   type TakedownListRow,
   type TakedownTotals,
   type TakedownsFilters,
 } from '@/lib/takedowns';
+import { useCanTriage } from '@/lib/alerts';
+import { TakedownActions } from './TakedownActions';
 
 export function Takedowns() {
   const [filters, setFilters] = useState<TakedownsFilters>({});
   const { data, isLoading, error } = useTenantTakedowns(filters);
+  const canTriage = useCanTriage();
 
   const update = (patch: Partial<TakedownsFilters>) =>
     setFilters((f) => ({ ...f, ...patch }));
@@ -36,7 +40,7 @@ export function Takedowns() {
           <h1 className="text-[28px] font-bold text-white tracking-tight">Takedowns</h1>
         </div>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Submission requests issued to providers on your behalf. Auto-submitted under your signed authorization; status, provider, and response audit trail per request.
+          Submission requests issued to providers on your behalf. Drafts await analyst approval; approved requests are submitted under your signed authorization. Status, provider, and response audit trail per request.
         </p>
       </header>
 
@@ -55,7 +59,7 @@ export function Takedowns() {
           {data.takedowns.length === 0 ? (
             <EmptyState filtered={Object.values(filters).some(Boolean)} />
           ) : (
-            <TakedownsList rows={data.takedowns} />
+            <TakedownsList rows={data.takedowns} canTriage={canTriage} />
           )}
         </>
       )}
@@ -166,65 +170,76 @@ function FilterBar({
   );
 }
 
-function TakedownsList({ rows }: { rows: TakedownListRow[] }) {
+function TakedownsList({ rows, canTriage }: { rows: TakedownListRow[]; canTriage: boolean }) {
+  const pending = rows.filter((t) => t.status === 'draft').length;
   return (
     <section className="space-y-2">
       <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
         Requests <span className="text-white/30">({rows.length})</span>
+        {canTriage && pending > 0 && (
+          <span className="ml-2 text-amber/80 normal-case tracking-normal">· {pending} awaiting your approval</span>
+        )}
       </h2>
       <div className="space-y-2">
-        {rows.map((t) => <TakedownRow key={t.id} takedown={t} />)}
+        {rows.map((t) => <TakedownRow key={t.id} takedown={t} canTriage={canTriage} />)}
       </div>
     </section>
   );
 }
 
-function TakedownRow({ takedown: t }: { takedown: TakedownListRow }) {
+function TakedownRow({ takedown: t, canTriage }: { takedown: TakedownListRow; canTriage: boolean }) {
   const sev = (t.severity ?? '').toLowerCase();
   const tone =
     sev          === 'critical'                          ? 'border-sev-critical/[0.30]' :
     t.status     === 'failed'   || t.status === 'expired' ? 'border-sev-critical/[0.30]' :
     sev          === 'high'                              ? 'border-amber/[0.30]'        :
                                                             'border-white/[0.06]';
+  const actions = canTriage ? takedownActionsFor(t.status) : [];
   return (
-    <Link
-      to={`/takedowns/${t.id}`}
-      className={`block rounded-xl border bg-bg-card p-4 transition-colors hover:border-white/[0.20] ${tone}`}
-    >
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <SeverityPill level={t.severity} />
-        <StatusPill status={t.status} />
-        {t.module_key && <ModuleChip module_key={t.module_key} />}
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
-          {t.target_type}
-        </span>
-        {t.submission_count > 0 && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
-            {t.submission_count} submission{t.submission_count === 1 ? '' : 's'}
+    <div className={`rounded-xl border bg-bg-card transition-colors ${tone}`}>
+      <Link
+        to={`/takedowns/${t.id}`}
+        className="block p-4 transition-colors hover:bg-white/[0.02] rounded-t-xl"
+      >
+        <div className="flex items-center gap-2 flex-wrap mb-2">
+          <SeverityPill level={t.severity} />
+          <StatusPill status={t.status} />
+          {t.module_key && <ModuleChip module_key={t.module_key} />}
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
+            {t.target_type}
           </span>
-        )}
-      </div>
+          {t.submission_count > 0 && (
+            <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
+              {t.submission_count} submission{t.submission_count === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
 
-      <div className="text-sm font-semibold text-white/90 truncate font-mono">{t.target_value}</div>
-      <div className="text-[12px] text-white/55 mt-0.5">
-        target brand: {t.brand_name ?? t.brand_id}
-        {t.provider_name && (
-          <>
-            {' '}· provider: <span className="font-mono">{t.provider_name}</span>
-          </>
-        )}
-      </div>
+        <div className="text-sm font-semibold text-white/90 truncate font-mono">{t.target_value}</div>
+        <div className="text-[12px] text-white/55 mt-0.5">
+          target brand: {t.brand_name ?? t.brand_id}
+          {t.provider_name && (
+            <>
+              {' '}· provider: <span className="font-mono">{t.provider_name}</span>
+            </>
+          )}
+        </div>
 
-      {t.evidence_summary && (
-        <p className="text-[12px] text-white/65 mt-2 line-clamp-2">{t.evidence_summary}</p>
+        {t.evidence_summary && (
+          <p className="text-[12px] text-white/65 mt-2 line-clamp-2">{t.evidence_summary}</p>
+        )}
+
+        <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/40">
+          <span>created {formatDate(t.created_at)}</span>
+          {t.submitted_at && <span>· submitted {formatDate(t.submitted_at)}</span>}
+          {t.resolved_at  && <span>· resolved {formatDate(t.resolved_at)}</span>}
+        </div>
+      </Link>
+
+      {actions.length > 0 && (
+        <TakedownActions takedownId={t.id} actions={actions} className="px-4 py-2.5 border-t border-white/[0.06]" />
       )}
-
-      <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/40">
-        <span>created {formatDate(t.created_at)}</span>
-        {t.submitted_at && <span>· submitted {formatDate(t.submitted_at)}</span>}
-        {t.resolved_at  && <span>· resolved {formatDate(t.resolved_at)}</span>}
-      </div>
-    </Link>
+    </div>
   );
 }
 

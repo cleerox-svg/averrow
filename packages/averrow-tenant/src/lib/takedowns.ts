@@ -4,8 +4,8 @@
 //   GET /api/orgs/:orgId/takedowns
 //   GET /api/orgs/:orgId/takedowns/:takedownId
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from './api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiGet, apiPatch } from './api';
 import { useAuth } from './auth';
 
 export interface TakedownListRow {
@@ -123,6 +123,43 @@ export function useTenantTakedownDetail(takedownId: string | null) {
   });
 }
 
+/** Analyst-driven takedown transitions exposed to the tenant — mirrors the
+ *  backend TENANT_ALLOWED_TRANSITIONS (handlers/takedowns.ts):
+ *    draft     → requested (approve) | withdrawn (reject)
+ *    requested → withdrawn (pull back before submission)
+ *  'requested' hands the draft to the submission pipeline; 'withdrawn'
+ *  declines it. */
+export type TakedownAction = 'requested' | 'withdrawn';
+
+/** Which actions an analyst can take on a takedown in a given status. */
+export function takedownActionsFor(status: string): TakedownAction[] {
+  if (status === 'draft')     return ['requested', 'withdrawn'];
+  if (status === 'requested') return ['withdrawn'];
+  return [];
+}
+
+/** Approve (requested) or reject (withdrawn) a takedown. Invalidates the
+ *  takedowns list + detail so the queue and counts refresh. */
+export function useUpdateTakedown() {
+  const { user } = useAuth();
+  const orgId = user?.organization?.id ?? null;
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ takedownId, status, notes }: { takedownId: string; status: TakedownAction; notes?: string }) => {
+      return apiPatch<{ message: string }>(
+        `/api/orgs/${orgId}/takedowns/${takedownId}`,
+        { status, ...(notes ? { notes } : {}) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tenant-takedowns', orgId] });
+      qc.invalidateQueries({ queryKey: ['tenant-takedown-detail', orgId] });
+      qc.invalidateQueries({ queryKey: ['tenant-dashboard', orgId] });
+    },
+  });
+}
+
 export const STATUS_LABELS: Record<string, string> = {
   draft:            'Draft',
   requested:        'Requested',
@@ -131,6 +168,7 @@ export const STATUS_LABELS: Record<string, string> = {
   taken_down:       'Taken down',
   failed:           'Failed',
   expired:          'Expired',
+  withdrawn:        'Withdrawn',
 };
 
 export const MODULE_LABELS: Record<string, string> = {
