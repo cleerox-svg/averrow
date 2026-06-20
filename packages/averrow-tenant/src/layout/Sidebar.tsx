@@ -6,7 +6,7 @@
 // once that lands in Phase B).
 
 import { NavLink } from 'react-router-dom';
-import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, type LucideIcon } from 'lucide-react';
+import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, LayoutDashboard, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useCanViewAudit } from '@/lib/auditLog';
 import { useTheme } from '@/lib/useTheme';
@@ -75,6 +75,10 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         <Section label="Workspace">
+          <NavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+            <LayoutDashboard size={16} />
+            <span>Console</span>
+          </NavLink>
           <NavLink to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Globe size={16} />
             <span>Overview</span>
