@@ -28,6 +28,7 @@ import { ThreatActor } from '@/features/threat-actor/ThreatActor';
 import { ThreatActorDetail } from '@/features/threat-actor/ThreatActorDetail';
 import { Takedowns } from '@/features/takedowns/Takedowns';
 import { TakedownDetail } from '@/features/takedowns/TakedownDetail';
+import { Console } from '@/features/console/Console';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,6 +47,7 @@ export function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<Modules />} />
+              <Route path="console" element={<Console />} />
               <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="notifications" element={<Notifications />} />
