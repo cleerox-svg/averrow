@@ -6,8 +6,9 @@
 // once that lands in Phase B).
 
 import { NavLink } from 'react-router-dom';
-import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, type LucideIcon } from 'lucide-react';
+import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Radar, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
+import { useCanViewAudit } from '@/lib/auditLog';
 import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
 import { AverrowLogo } from './AverrowLogo';
@@ -52,6 +53,7 @@ export function Sidebar() {
   const { data, isLoading } = useTenantModules();
   const { theme, cycle: cycleTheme } = useTheme();
   const ThemeIcon = themeIconFor(theme);
+  const canViewAudit = useCanViewAudit();
 
   const active = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial');
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
@@ -142,6 +144,12 @@ export function Sidebar() {
             <SlidersHorizontal size={16} />
             <span>Automation Policy</span>
           </NavLink>
+          {canViewAudit && (
+            <NavLink to="/audit-log" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+              <ScrollText size={16} />
+              <span>Audit Log</span>
+            </NavLink>
+          )}
           <NavLink to="/settings" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Settings size={16} />
             <span>Settings</span>

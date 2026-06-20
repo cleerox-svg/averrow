@@ -211,6 +211,77 @@ export async function handleTenantAlerts(
   }
 }
 
+// ─── GET /api/orgs/:orgId/audit-log ──────────────────────────
+//
+// Tenant-facing who/what/when of automation + human actions on the org
+// (TENANT_ANALYST_UX_RESEARCH_2026-06 §5.5 — trust/defensibility). Audit
+// rows live in the separate AUDIT_DB and have no org_id column; org-scoped
+// actions stash org_id inside the details JSON, so we filter on
+// json_extract(details,'$.org_id'). Actor display names are resolved from
+// the main DB. ip_address / user_agent are intentionally NOT exposed.
+export async function handleTenantAuditLog(
+  request: Request,
+  env: Env,
+  orgId: string,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const accessErr = verifyOrgAccess(ctx, orgId);
+  if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  if (!canPerformHITL(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
+  }
+
+  try {
+    const url = new URL(request.url);
+    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 100);
+    const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+
+    const rows = await env.AUDIT_DB.prepare(`
+      SELECT id, timestamp, user_id, action, resource_type, resource_id, details, outcome
+      FROM audit_log
+      WHERE json_extract(details, '$.org_id') = ?
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `).bind(orgId, limit, offset).all<{
+      id: string; timestamp: string; user_id: string | null;
+      action: string; resource_type: string | null; resource_id: string | null;
+      details: string | null; outcome: string;
+    }>();
+
+    const countRow = await env.AUDIT_DB.prepare(`
+      SELECT COUNT(*) AS total FROM audit_log WHERE json_extract(details, '$.org_id') = ?
+    `).bind(orgId).first<{ total: number }>();
+
+    const entries = rows.results ?? [];
+
+    // Resolve actor display names from the main DB (cross-DB, so a second query).
+    const userIds = [...new Set(entries.map((e) => e.user_id).filter((id): id is string => !!id))];
+    const nameById: Record<string, string> = {};
+    if (userIds.length > 0) {
+      const placeholders = userIds.map(() => "?").join(",");
+      const users = await env.DB.prepare(
+        `SELECT id, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${placeholders})`,
+      ).bind(...userIds).all<{ id: string; name: string }>();
+      for (const u of users.results ?? []) nameById[u.id] = u.name;
+    }
+
+    const data = entries.map((e) => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      actor: e.user_id ? (nameById[e.user_id] ?? e.user_id) : null,
+      action: e.action,
+      resource_type: e.resource_type,
+      outcome: e.outcome,
+      details: e.details,
+    }));
+
+    return json({ success: true, data, total: countRow?.total ?? 0 }, 200, origin);
+  } catch (err) {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
 // ─── GET /api/orgs/:orgId/threats ────────────────────────────
 //
 // Org-wide threat browser. Lists individual threat records across

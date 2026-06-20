@@ -748,6 +748,7 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | GET | `/api/orgs/:orgId/dashboard` | Member | Tenant-scoped dashboard |
 | GET | `/api/orgs/:orgId/alerts` | Member | Tenant alerts list |
 | PATCH | `/api/orgs/:orgId/alerts/:alertId` | Member | Update tenant alert |
+| GET | `/api/orgs/:orgId/audit-log` | Analyst+ | Org-scoped audit trail (who/what/when of automation + human actions). Reads `AUDIT_DB.audit_log` filtered by `json_extract(details,'$.org_id')`; resolves actor names from the main DB; `ip_address`/`user_agent` not exposed. Params: `limit` (≤100), `offset`. Returns `{ data, total }`. |
 | GET | `/api/orgs/:orgId/threats` | Member | Org-wide threat records across all org brands. Filters: `brand_id`, `status` (default `active`, or `all`), `severity`, `threat_type`, `q` (domain LIKE), `limit` (≤100), `offset`. Returns `{ data, total, severity_breakdown, type_breakdown }`. Default page is KV-cached 90s. |
 | GET | `/api/orgs/:orgId/brands/:brandId/detail` | Member | Tenant brand detail |
 | GET | `/api/orgs/:orgId/brands/:brandId/threats` | Member | Tenant brand threats |
