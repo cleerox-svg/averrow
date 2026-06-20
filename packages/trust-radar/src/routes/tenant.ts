@@ -13,7 +13,7 @@ import {
   handleDeleteIntegration, handleTestIntegration,
 } from "../handlers/organizations";
 import {
-  handleTenantDashboard, handleTenantAlerts, handleTenantUpdateAlert,
+  handleTenantDashboard, handleTenantAlerts, handleTenantUpdateAlert, handleTenantAuditLog,
   handleTenantOrgThreats,
   handleTenantBrandDetail, handleTenantBrandThreats, handleTenantBrandSocialProfiles,
   handleGetMonitoringConfig, handleUpdateMonitoringConfig,
@@ -202,6 +202,11 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTenantAlerts(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/audit-log", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTenantAuditLog(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.get("/api/orgs/:orgId/threats", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
