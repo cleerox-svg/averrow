@@ -148,4 +148,86 @@ different roles — an IA seam to revisit in Batch 5.
 
 ## 4. Batch 1 — Entity/pivot gap analysis
 
-_Pending — populated from the entity/pivot deep recon._
+Deep recon of Brands, Providers, Threat Actors, Campaigns (list + detail +
+backing endpoints), scored against the **E1–E6** benchmark (§2.1).
+
+### 4.1 Per-entity scorecard (rubric: 0–5)
+
+| Lens | Brands | Providers | Threat Actors | Campaigns |
+|---|---|---|---|---|
+| Purpose clarity | 5 | 4 | 4 | 4 |
+| Drill-down depth | 4 | 2 | 2 | 3 |
+| Actionability | 4 (deep-scan, scans) | 1 (read-only) | 1 (read-only) | 1 (read-only) |
+| **Pivot (in/out)** | 3 (out to Actor only) | **0 (terminal)** | **0 (terminal)** | 2 (out to Actor only) |
+| Deep-linkable detail | 5 (`/brands/:id`) | **0 (redirects to list)** | **0 (redirects to list)** | 5 (`/campaigns/:id`) |
+| Cross-entity consistency | — | search ✓ / no detail route | **no search**, no detail route | **no search**, dead links |
+
+**Reading:** Brands is the reference implementation (6-tab outcome-shaped detail,
+real actions). The other three degrade sharply on **pivoting** and
+**deep-linkability** — the two things the benchmark says *define* a threat-intel
+console.
+
+### 4.2 The pivot graph — what connects vs what dead-ends
+
+```
+Brand ──click actor──▶ Threat Actor          ✓ works
+Campaign ──actor badge──▶ Threat Actor        ✓ works
+Brand ─▶ Provider / Campaign                  ✗ v2 deep-link only (not wired in v3)
+Campaign ─▶ Brand   (Brand Impact table)      ✗ shows count, NOT clickable
+Campaign ─▶ Provider (Infrastructure table)   ✗ shows count, NOT clickable
+Threat Actor ─▶ Campaign                       ✗ data exists (active_campaigns) but not rendered as links
+Provider ─▶ anything                           ✗ terminal node, zero outbound nav
+```
+
+Of the ~9 natural edges between these four entities, **only 2 are wired.** The
+data to wire most of the rest **already exists in the endpoint responses** —
+this is largely a UI-wiring gap, not a data gap.
+
+### 4.3 Gap table vs benchmark (severity-ranked)
+
+| # | Gap | Benchmark | Backend exists? | Severity |
+|---|---|---|---|---|
+| G1 | **Dead-end pivots** — Campaign→Brand, Campaign→Provider, Actor→Campaign render as plain text/counts despite the ids being in the response. | E2 | ✅ ids already returned | **Critical** |
+| G2 | **Providers & Threat Actors aren't deep-linkable** — `/providers/:id` and `/threat-actors/:id` redirect to the list; detail is inline-only, so nothing can link *into* them. | E1/E2 | ✅ `GET /:id` endpoints exist | **Critical** |
+| G3 | **Provider is a terminal node** — no "brands targeted / campaigns" lists to pivot out to (only counts shown). | E2/E4 | ⚠️ counts exist; needs a brands/campaigns-by-provider read | High |
+| G4 | **No interactive campaign graph** — infrastructure shown as 3 tables, not the connected Threat-Graph competitors use to expose attacker infra. | E5 | ⚠️ infra data exists | High |
+| G5 | **Threat-actor profile gaps** — strong on aliases/attribution/TTPs(MITRE)/sectors/infra, but missing **motivation**, explicit **active-since**, a **recent-activity timeline**, and clickable campaigns/IOCs. | E3 | ⚠️ partial | Medium |
+| G6 | **Cross-entity UX drift** — search on Brands/Providers but **not** Actors/Campaigns; pagination only on Brands; detail-route on Brands/Campaigns but not Providers/Actors. | E6 | — | Medium |
+| G7 | **Brand→Provider/Campaign still bounces to v2** — the only remaining v2 dependency in the entity graph. | E2 | ✅ v3 surfaces exist | Medium |
+
+**Headline:** of the 2 Critical gaps, **both are UI wiring on data that already
+exists** — the same pattern the tenant audit found. G1 is mostly turning
+existing names into `<Link>`s; G2 is making Providers/Actors deep-link targets.
+
+### 4.4 Consolidation / simplification (no feature loss)
+
+- **C1 — One shared entity-list shell.** Brands/Providers/Actors/Campaigns each
+  re-implement card grid + filters + sparkline + status badge slightly
+  differently. A shared `EntityList` (search + sort + pagination + status filter,
+  consistent) collapses four bespoke implementations into one and fixes G6 for
+  free. *Simplifies code AND UX; loses nothing.*
+- **C2 — Deep-link via `?focus=:id` auto-expand**, rather than reviving full
+  detail pages for Providers/Actors. Respects the existing "inline detail"
+  decision while making them linkable targets (fixes G2 cheaply).
+- **C3 — Resolve the `Intelligence`→`/trends` label/route mismatch** (F-B) — rename
+  the nav item to "Trends/Briefings" or move the route; it's mislabeled today.
+
+### 4.5 Recommended slice order (highest leverage first)
+
+1. **Slice A — Complete the pivot graph (G1 + G7).** Make the already-present
+   ids clickable: Campaign→Brand, Campaign→Provider, Actor→Campaign,
+   Brand→Provider/Campaign (v3). Mostly `<Link>` wiring. *Biggest logic win,
+   lowest cost.*
+2. **Slice B — Make Providers & Threat Actors deep-link targets (G2 + C2).**
+   `?focus=:id` auto-expands+scrolls the inline card. Unlocks Slice A's
+   destinations and bookmarkability.
+3. **Slice C — Provider pivot-out lists (G3).** Small read endpoint(s) for
+   "brands targeted / campaigns" by provider, rendered as links.
+4. **Slice D — Cross-entity consistency (G6 via C1).** Shared list shell: add
+   search to Actors/Campaigns, consistent sort/pagination.
+5. **Slice E — Actor profile completeness (G5).** Activity timeline + motivation
+   + active-since.
+6. **(Larger, separate) Slice F — Interactive campaign graph (G4).** Bigger
+   visualization lift; flag for its own batch/PR.
+
+> Slices A–B are the "make the entity graph logical" core and should ship first.
