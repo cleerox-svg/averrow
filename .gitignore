@@ -36,6 +36,9 @@ htmlcov/
 .claude/playwright-storage-state.json
 .playwright-mcp/
 
+# Browser smoke-test artifacts
+*-smoke.png
+
 # Editor
 .vscode/
 .idea/
