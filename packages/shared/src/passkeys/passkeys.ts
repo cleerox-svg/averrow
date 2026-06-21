@@ -116,6 +116,17 @@ export function createPasskeyClient(
     }
 
     const { access_token, expires_in, return_to } = finish.data;
+
+    // Host-side hydration (login audit F3): when the caller provides
+    // onSuccess, hand it the token and let the host set it in memory +
+    // refresh + SPA-navigate. This avoids the legacy hard-nav below, which
+    // could be a same-path hash change (no reload) and leave the login
+    // spinner hanging until a manual refresh.
+    if (opts.onSuccess) {
+      await opts.onSuccess(access_token, expires_in, return_to);
+      return true;
+    }
+
     if (typeof window !== 'undefined') {
       window.location.assign(`${return_to}#token=${access_token}&expires_in=${expires_in}`);
     }
@@ -126,11 +137,11 @@ export function createPasskeyClient(
    *  on Login page mount when `isAutofillSupported()` returns true
    *  and an email <input> with autocomplete="username webauthn"
    *  is in the DOM. */
-  async function startConditionalUI(returnTo?: string): Promise<void> {
+  async function startConditionalUI(returnTo?: string, onSuccess?: SignInOptions['onSuccess']): Promise<void> {
     if (!isSupported()) return;
     if (!(await isAutofillSupported())) return;
     try {
-      await signInWithPasskey({ conditional: true, returnTo: returnTo ?? options.defaultReturnTo });
+      await signInWithPasskey({ conditional: true, returnTo: returnTo ?? options.defaultReturnTo, onSuccess });
     } catch {
       // Conditional UI failures are silent — the user can still
       // click the explicit passkey button or use another method.

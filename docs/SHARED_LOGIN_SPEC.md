@@ -166,6 +166,15 @@ fixed order is intentional. **FarmTrack must mirror this behavior**
 to keep parity. The button styling (green passkey, amber Google,
 neutral Send-link) is unchanged.
 
+### Brand-locked theme (added 2026-06, login audit F2)
+
+The login is a **brand surface** and renders in the **dark brand theme
+regardless of the OS / stored preference** (which only governs the look
+*inside* the app). `<LoginPage>` sets `data-theme="dark"` on mount and
+restores the prior value on unmount. Rationale: without it, a light-OS
+device gets a white, off-brand login card — the only light surface in an
+otherwise dark, dark-first product. **FarmTrack must mirror this.**
+
 ---
 
 ## 2. Profile page
@@ -432,6 +441,15 @@ Flow:
    session-issuing path sets the refresh cookie via `Set-Cookie` and
    delivers ONLY the short-lived access token to the SPA (URL hash for
    browser-navigation flows, JSON envelope for the passkey XHR flow).
+   **Passkey host-hydration (login audit F3):** the passkey adapter takes an
+   `onSuccess(accessToken, expiresIn, returnTo)` callback; when provided,
+   `signInWithPasskey` hands the token to the host instead of doing a
+   `window.location.assign` hard-nav. The host sets the token in memory
+   (`api.setTokens`), calls `refreshUser()`, and SPA-navigates. This replaced
+   the prior hard-nav, which could be a same-path hash change (no reload) that
+   left the login spinner hanging until a manual refresh. **FarmTrack must
+   adopt the same host-hydration wiring** (build the passkey adapter inside the
+   Login component with `useNavigate` + `refreshUser`).
 2. **Page reload:** the access token is gone (memory-only). The shared
    `AuthProvider` POSTs `/api/auth/refresh` with
    `credentials: 'same-origin'`; the cookie mints a fresh access token

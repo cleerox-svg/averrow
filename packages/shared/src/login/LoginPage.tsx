@@ -69,6 +69,22 @@ export function LoginPage(props: LoginPageProps) {
   // primary doesn't match what they want today.
   const [showAll, setShowAll] = useState(false);
 
+  // Brand-lock to dark (login audit F2). The login is a brand surface, so
+  // it always renders in the dark brand theme regardless of the OS / stored
+  // preference (which only governs the look INSIDE the app). Without this,
+  // a light-OS device gets a white, off-brand login card. Restore the prior
+  // value on unmount so the app honours the user's theme once signed in.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const prev = root.getAttribute('data-theme');
+    root.setAttribute('data-theme', 'dark');
+    return () => {
+      if (prev === null) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', prev);
+    };
+  }, []);
+
   // Conditional UI — registered passkeys appear in the email field's
   // autofill dropdown. Spec-required and silent until interaction.
   useEffect(() => {

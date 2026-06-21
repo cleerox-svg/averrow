@@ -122,3 +122,23 @@ credential; offered to confirm with a WebAuthn **virtual authenticator** repro._
    (+ spinner timeout) after confirming the adapter-callback vs minimal approach.
 3. **F2** — brand-lock/dark-default the login (product call).
 4. *(optional)* design elevation of the login surface.
+
+---
+
+## Resolution (2026-06)
+
+- **F1 — shipped** (PR #1532): Tailwind `content` now scans `@averrow/shared`.
+- **F2 — shipped** (brand-lock dark): `<LoginPage>` forces `data-theme="dark"`
+  on mount, restores prior on unmount. Spec §1 updated. _Operator choice:
+  brand-lock to dark._
+- **F3 — shipped** (robust callback hydration): added `onSuccess(token, expiresIn,
+  returnTo)` to the passkey `SignInOptions`; when set, `signInWithPasskey` hands
+  the token to the host instead of the fragile `window.location.assign` hard-nav.
+  The ops Login wrapper now builds the passkey adapter inside the component and on
+  success: `api.setTokens(token)` (memory, H5) → `refreshUser()` → SPA-`navigate`.
+  No reload, no URL hash, no same-path no-op, no hanging spinner. Both the explicit
+  button and the conditional-UI ceremony route through it. Spec §1+§8 updated.
+  _Operator choice: robust callback fix._
+
+Open/optional: design elevation of the login surface (split brand panel etc.) —
+a future enhancement, not a defect.

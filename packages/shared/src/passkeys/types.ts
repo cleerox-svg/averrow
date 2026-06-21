@@ -25,6 +25,13 @@ export interface SignInOptions {
    *  email field's autofill dropdown rather than as a modal. */
   conditional?: boolean;
   returnTo?:    string;
+  /** Host-side hydration (preferred — login audit F3). When provided,
+   *  signIn does NOT hard-navigate (`window.location.assign`); it invokes
+   *  this with the issued access token so the host can set it in memory
+   *  (H5), refresh the auth context, and SPA-navigate. This avoids the
+   *  fragile hard-nav that could leave the login spinner hanging. When
+   *  omitted, the legacy hash hard-nav is used (back-compat). */
+  onSuccess?:   (accessToken: string, expiresIn: number, returnTo: string) => void | Promise<void>;
 }
 
 // ─── HTTP client adapter ─────────────────────────────────────
@@ -64,7 +71,7 @@ export interface PasskeyClientOptions {
 export interface PasskeyClient {
   isSupported():                                           boolean;
   isAutofillSupported():                                   Promise<boolean>;
-  startConditionalUI(returnTo?: string):                   Promise<void>;
+  startConditionalUI(returnTo?: string, onSuccess?: SignInOptions['onSuccess']): Promise<void>;
   signInWithPasskey(opts?: SignInOptions):                 Promise<boolean>;
   registerPasskey(deviceLabel?: string):                   Promise<void>;
   listPasskeys():                                          Promise<PasskeyDevice[]>;
