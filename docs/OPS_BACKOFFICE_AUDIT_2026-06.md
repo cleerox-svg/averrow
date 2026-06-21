@@ -553,3 +553,111 @@ additions).
   Signals stat grid: "Auto-triage cleared N of M dismissed signals (X%)".
 
 With this, **all of Batch 2's GQ1–GQ7 are addressed.**
+
+---
+
+## 6. Batch 3 — Automation (Agents · Approvals · Architect)
+
+How operators observe and control the AI agent mesh. Status: 🔄 in progress.
+
+### 6.1 Competitor benchmark — agent observability + orchestration control
+
+Reference set: **LangSmith**, **Langfuse**, **AgentOps**, **Arize/Phoenix**,
+**Braintrust**, **Datadog LLM Observability**, plus multi-agent orchestration /
+HITL guidance. Theme: a multi-agent system needs a **control plane** — not just
+a status list — that makes each agent observable (traces, cost, errors),
+controllable (pause/trigger/breaker), and gated where risk is high (human-in-the-
+loop approval).
+
+| # | Expected capability | Source / precedent |
+|---|---|---|
+| A1 | **Per-agent health dashboard** — run counts, success/failure + error rate, last run, avg/p95 latency, per-agent token usage. | Langfuse/LangSmith dashboards (uptime·latency·error·cost) |
+| A2 | **Run history + traces** — drill into a run: input → LLM calls → tool calls → output, with error messages; session/replay view. | LangSmith node-by-node traces, AgentOps session replay |
+| A3 | **Cost per agent / per successful task** — token × model pricing, cost visibility per agent and per outcome. | "cost per successful task" (DEV/Braintrust) |
+| A4 | **Health + stalled/anomaly detection** — stuck runs, agent-specific anomalies, alerting on failure spikes. | AgentOps anomaly detection; dashboards surface stalled |
+| A5 | **Lifecycle control plane** — pause/resume, manual trigger, retry/terminate from the UI (not just an internal endpoint). | orchestration lifecycle (start/fail/retry/terminate) |
+| A6 | **Circuit-breaker visibility + control** — breaker state (open/closed), failure threshold, toggle. | circuit-breaker pattern (N fails / M min) |
+| A7 | **Human-in-the-loop approval** — approve/reject/request-changes checkpoints, **discoverable**, triggered by confidence/risk. | HITL layered model (in-loop / on-loop) |
+| A8 | **Orchestration/lane visibility** — which agent dispatches which, dispatch source (cron vs event), event lanes. | multi-agent routing/context-flow |
+
+> Platform context to score against: Trust-Radar already has deep telemetry —
+> `agent_runs`, `agent_events`, `agent_outputs`, `agent_configs.enabled`
+> (circuit-breaker), and `/api/internal/platform-diagnostics` (per-agent
+> total_runs/success/failed/running/last_error/avg_duration_ms/dispatch_source,
+> `stalled[]`, `ai_spend_24h`). The audit question is **how much of this reaches
+> the operator-facing Agents UI vs. lives only in the internal diagnostics
+> endpoint** — and whether the breaker/manual-trigger are UI-controllable
+> (A5/A6) or internal-only. Also: Approvals/Review/Architect are **orphaned**
+> (not in nav — Batch-1 F-C), a direct A7 discoverability hit.
+
+### 6.2 Sources
+
+- [Latitude — best agent observability tools 2026](https://latitude.so/blog/best-ai-agent-observability-tools-2026-comparison) · [Confident AI — best AI agent observability 2026](https://www.confident-ai.com/knowledge-base/compare/best-ai-agent-observability-tools-2026) · [aimultiple — agentic monitoring](https://aimultiple.com/agentic-monitoring)
+- [LangSmith observability](https://www.langchain.com/langsmith/observability) · [Langfuse — agent observability](https://langfuse.com/blog/2024-07-ai-agent-observability-with-langfuse) · [Arize — best observability for autonomous agents 2026](https://arize.com/blog/best-ai-observability-tools-for-autonomous-agents-in-2026/)
+- [DEV — what is agent observability (traces, loop rate, cost per successful task)](https://dev.to/mostafa_ibrahim_774fe947b/what-is-agent-observability-traces-loop-rate-tool-errors-and-cost-per-successful-task-bl5) · [groundcover — AI agent observability guide](https://www.groundcover.com/learn/observability/ai-agent-observability)
+- [Elementum — human-in-the-loop agentic AI](https://www.elementum.ai/blog/human-in-the-loop-agentic-ai) · [MindStudio — agent orchestration](https://www.mindstudio.ai/blog/agent-orchestration-biggest-unsolved-problem-ai-stack)
+
+### 6.3 Inventory & gap analysis
+
+Recon of `features/agents/{Agents,AgentApprovals,AgentReview,ArchitectDetail,AgentConfig}.tsx`
++ handlers `agents.ts` / `agent-approvals.ts` / diagnostics.
+
+**Capability matrix vs A1–A8:**
+
+| # | Capability | State |
+|---|---|---|
+| A1 | per-agent health dashboard | **Strong** — 24h jobs/outputs/errors, hourly charts, recent_ticks, last-run, circuit_state, dispatch_source, network view |
+| A2 | run history + traces | **Partial** — detail shows recent outputs + last error; run-history endpoint exists; **no per-run trace/logs/tokens/model** |
+| A3 | cost per agent | **Weak** — token-usage + `ai_spend_24h` + budget-vs-cap all **exist as endpoints but aren't on the Agents UI** (ai_spend only in internal diagnostics; budget is super_admin-only) |
+| A4 | stalled / anomaly | **Partial** — circuit_state shown; **`stalled[]` only in `/platform-diagnostics`** (internal), not operator-facing |
+| A5 | lifecycle control plane | **Backend-only** — `trigger` / `toggle` / `reset-circuit` / `threshold` endpoints exist (requireAdmin) but **no buttons on the grid/detail** (trigger only on the orphaned AgentConfig page) |
+| A6 | circuit-breaker control | **Backend-only** — breaker state is *shown* but **can't be reset/paused from the UI** |
+| A7 | human-in-the-loop approval | **Exists but orphaned** — approve/reject/request-changes work; reached only via a banner on /agents or direct URL |
+| A8 | orchestration/lane visibility | **Partial** — TRIGGER_CHAIN is **hardcoded** in the component, not driven by live dispatch data |
+
+**Gap table (severity-ranked):**
+
+| # | Gap | Benchmark | Backend exists? | Severity |
+|---|---|---|---|---|
+| GA1 | **Control plane not wired to the UI** — operator sees a tripped breaker / failing agent but can't **trigger / pause-resume / reset-circuit** from the Agents detail. All endpoints exist (requireAdmin). | A5/A6 | ✅ `trigger`,`toggle`,`reset-circuit`,`threshold` | **Critical** |
+| GA2 | **Cost/budget invisible on the Agents UI** — per-agent tokens, 24h $ spend, and budget-vs-cap exist but aren't surfaced where operators look. | A3 | ✅ `token-usage`, `ai_spend_24h`, module-metadata | High |
+| GA3 | **Orphaned automation surfaces** — Architect + AgentConfig are URL-only; Approvals only via a conditional banner. | A7/F-C | ✅ routes exist | Medium-High |
+| GA4 | **Stalled runs not operator-visible** — only in the internal `/platform-diagnostics`. | A4 | ✅ diagnostics computes it | Medium |
+| GA5 | **No per-run trace/log/token drill-down** — detail stops at last-error + recent outputs. | A2 | ⚠️ per-run tokens in DB, not returned | Medium |
+
+**Headline:** like Batch 1/2, the top gap is **UI wiring on endpoints that already
+exist** — GA1 is the flagship: the entire admin control plane
+(trigger/pause/resume/reset-breaker) is built and tested server-side but has no
+buttons where an operator would use it.
+
+**Recommended slice order:**
+1. **Slice A — Wire the agent control plane (GA1).** Admin-gated **Trigger now ·
+   Pause/Resume · Reset circuit** controls in the agent detail panel, reusing the
+   existing `requireAdmin` endpoints. Highest leverage, lowest risk.
+2. **Slice B — Surface cost on the Agents UI (GA2).** Per-agent token usage / 24h
+   spend in the detail (and a cost signal on the card).
+3. **Slice C — Discoverability (GA3).** Nav entries (or an Agents-page tab) for
+   Approvals / Architect / Config so they're not URL-only.
+4. **Slice D — Stalled-runs surface (GA4).** Operator-facing stalled list.
+
+> Slice A is the clear first ship — it turns a read-only dashboard into an actual
+> control plane using machinery that already exists.
+
+### 6.4 Implementation note — Agent control plane wired to the UI (Slice A, GA1 shipped)
+
+The flagship gap: the admin control plane existed entirely server-side
+(`/api/agents/:name/{trigger,toggle,reset-circuit}`, all requireAdmin) but had
+no buttons where operators look — they could *see* a tripped breaker and not
+reset it.
+
+- **Frontend:** an admin-gated **Controls** bar in the agent detail panel —
+  **Trigger now**, **Pause/Resume** (shows Resume when `circuit_state ===
+  'manual_pause'`), and **Reset circuit** (only when `tripped`). Reuses the
+  existing `useTriggerAgent`/`useResetAgentCircuit` hooks; added the missing
+  `useToggleAgent`. Gated to admin (the endpoints are requireAdmin).
+- **Backend:** the three mutation handlers now **bust the `agents_list:v4` KV
+  cache** (it's cached 5 min) so the action reflects immediately instead of
+  looking like a no-op for minutes.
+
+Remaining Batch-3 slices: B (surface cost — GA2), C (discoverability of the
+orphaned Approvals/Architect/Config — GA3), D (operator stalled-runs — GA4).

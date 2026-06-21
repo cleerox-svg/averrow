@@ -331,6 +331,19 @@ export function useResetAgentCircuit() {
   });
 }
 
+export function useToggleAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ agentId, enabled }: { agentId: string; enabled: boolean }) => {
+      const res = await api.post(`/api/agents/${agentId}/toggle`, { enabled });
+      return res.data ?? null;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+    },
+  });
+}
+
 export function useUpdateAgentThreshold() {
   const queryClient = useQueryClient();
   return useMutation({

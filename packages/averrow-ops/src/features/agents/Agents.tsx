@@ -23,9 +23,13 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAgents, useAgentDetail, useAgentHealth } from '@/hooks/useAgents';
+import {
+  useAgents, useAgentDetail, useAgentHealth,
+  useTriggerAgent, useToggleAgent, useResetAgentCircuit,
+} from '@/hooks/useAgents';
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
+import { useAuth } from '@/lib/auth';
 import { Card, StatCard, StatGrid, PageHeader } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -630,13 +634,51 @@ function OutputRow({ output }: { output: AgentOutput }) {
   );
 }
 
+// Admin control plane (GA1) — the trigger/toggle/reset-circuit endpoints
+// already exist (requireAdmin); this surfaces them where operators look.
+function AgentControlBar({ agent }: { agent: Agent }) {
+  const trigger = useTriggerAgent();
+  const toggle = useToggleAgent();
+  const resetCircuit = useResetAgentCircuit();
+  const isPaused = agent.circuit_state === 'manual_pause';
+  const isTripped = agent.circuit_state === 'tripped';
+  const busy = trigger.isPending || toggle.isPending || resetCircuit.isPending;
+  const failed = trigger.isError || toggle.isError || resetCircuit.isError;
+
+  const btn = (label: string, color: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md transition-all disabled:opacity-40"
+      style={{ border: '1px solid var(--border-base)', background: 'transparent', color }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="mb-4 pb-4 border-b flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--border-base)' }}>
+      <span className="font-mono text-[9px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
+      {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--amber)', () => trigger.mutate(agent.name))}
+      {isPaused
+        ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
+        : btn(toggle.isPending ? 'Pausing…' : 'Pause', 'var(--text-secondary)', () => toggle.mutate({ agentId: agent.name, enabled: false }))}
+      {isTripped && btn(resetCircuit.isPending ? 'Resetting…' : 'Reset circuit', 'var(--sev-high)', () => resetCircuit.mutate(agent.name))}
+      {failed && <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>Action failed — retry</span>}
+    </div>
+  );
+}
+
 function AgentDetailPanelV3({ agent }: { agent: Agent }) {
   const { data: detail, isLoading } = useAgentDetail(agent.name);
   const recentOutputs = (detail?.outputs ?? []).slice(0, 5);
   const meta = AGENT_METADATA[agent.name as AgentId];
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   return (
     <Card variant="elevated" className="p-5 col-span-full">
+      {isAdmin && <AgentControlBar agent={agent} />}
       {meta?.subtitle && (
         <div className="mb-5 pb-4 border-b" style={{ borderColor: 'var(--border-base)' }}>
           <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>

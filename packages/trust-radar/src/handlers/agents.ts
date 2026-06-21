@@ -570,6 +570,9 @@ export async function handleTriggerAgent(
     const body = await request.json().catch(() => ({})) as { input?: Record<string, unknown> };
     const result = await executeAgent(env, mod, body.input ?? {}, userId, "manual");
 
+    // A manual run changes the 24h counts / last-run — reflect immediately.
+    await env.CACHE.delete('agents_list:v4');
+
     return success(result, origin);
   } catch (err) {
     console.error(`[triggerAgent] "${agentName}" threw:`, err);
@@ -923,6 +926,9 @@ export async function handleResetAgentCircuit(
       ).bind(agentId),
     ]);
 
+    // Reflect the cleared breaker immediately (list is KV-cached 5 min).
+    await env.CACHE.delete('agents_list:v4');
+
     return json({ success: true, data: { agent_id: agentId } }, 200, origin);
   } catch (err) {
     console.error(`[resetAgentCircuit] "${agentId}" threw:`, err);
@@ -982,6 +988,9 @@ export async function handleToggleAgent(
          updated_at = datetime('now')
        WHERE agent_id = ?`
     ).bind(enabled, pausedReason, enabled, enabled, enabled, agentId).run();
+
+    // Reflect the pause/resume immediately (list is KV-cached 5 min).
+    await env.CACHE.delete('agents_list:v4');
 
     return json({ success: true, data: { agent_id: agentId, enabled: !!enabled } }, 200, origin);
   } catch (err) {
