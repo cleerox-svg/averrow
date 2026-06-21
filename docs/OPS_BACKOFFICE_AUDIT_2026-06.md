@@ -780,3 +780,19 @@ centerpiece and *every* reference in it is currently a dead-end.
    can reach pricing (to sales/billing per the documented model); confirm intent
    before shipping.
 5. Lower: GM5 (webhook deliveries / incident fields), GM7 (push nav).
+
+### 7.4 Implementation note — Audit log pivots + resource filter (Slice A, GM1 shipped)
+
+The compliance centerpiece where every reference dead-ended. Pure frontend:
+
+- **`resource_type` filter** — the handler already accepted the param; added it to
+  the hook + a dropdown (options derived from the loaded page).
+- **Clickable resource** — `resource_type:resource_id` now links to the affected
+  entity for the types with a resolving route (brand → `/brands/:id`, incident →
+  `/admin/incidents/:id`, campaign, threat_actor/provider via `?focus`, org →
+  customers). Unknown types stay plain text; the link `stopPropagation`s so it
+  doesn't fight the row-expand.
+
+Remaining Batch-5: B (admin entity pivots — GM4), C (module-endpoint route guard
+— GM3, small backend), D (pricing RBAC alignment — GM2, **needs sign-off**),
+plus GM5/GM7.
