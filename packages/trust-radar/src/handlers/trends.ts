@@ -270,7 +270,8 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
   const origin = request.headers.get("Origin");
   try {
     const rows = await env.DB.prepare(`
-      SELECT COALESCE(hp.name, t.hosting_provider_id) AS provider,
+      SELECT t.hosting_provider_id AS provider_id,
+        COALESCE(hp.name, t.hosting_provider_id) AS provider,
         COUNT(CASE WHEN t.first_seen >= datetime('now', '-7 days') THEN 1 END) AS count
       FROM threats t
       LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
@@ -279,7 +280,7 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
       GROUP BY t.hosting_provider_id
       HAVING count > 0
       ORDER BY count DESC LIMIT 8
-    `).all<{ provider: string; count: number }>();
+    `).all<{ provider_id: string; provider: string; count: number }>();
 
     return json({ success: true, data: rows.results }, 200, origin);
   } catch (err) {

@@ -31,6 +31,7 @@ export interface VolumePoint {
 }
 
 export interface BrandMomentum {
+  target_brand_id: string | null;
   brand_name: string;
   this_week: number;
   last_week: number;
@@ -38,6 +39,7 @@ export interface BrandMomentum {
 }
 
 export interface ProviderMomentum {
+  provider_id: string | null;
   provider: string;
   count: number;
 }

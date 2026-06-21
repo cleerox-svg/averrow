@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap } from '@/hooks/useObservatory';
 import type { ArcData } from '@/hooks/useObservatory';
 import { ThreatMapV3 } from './components/ThreatMapV3';
@@ -37,6 +38,7 @@ const MAP_MODES: { id: MapMode; label: string }[] = [
 ];
 
 export function ObservatoryV3() {
+  const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const [period, setPeriod] = useState('7d');
   const [source] = useState('all');
@@ -288,6 +290,14 @@ export function ObservatoryV3() {
               </div>
             )}
           </div>
+          {/* GO4: pivot the map detail card into the campaign. */}
+          <button
+            onClick={() => navigate(`/campaigns/${clickedCluster.cluster.id}`)}
+            className="mt-2 font-mono text-[10px] font-semibold uppercase tracking-wide hover:underline"
+            style={{ color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            View campaign →
+          </button>
         </Card>
       )}
     </div>

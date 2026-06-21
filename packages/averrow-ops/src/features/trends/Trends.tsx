@@ -453,8 +453,12 @@ function BrandRiskMomentum() {
                   ? `${changePct > 0 ? '+' : ''}${Math.round(changePct)}%`
                   : 'NEW';
                 return (
-                  <tr key={b.brand_name} className="data-row border-t border-white/5">
-                    <td className="py-2" style={{ color: 'var(--text-primary)' }}>{b.brand_name}</td>
+                  <tr key={b.target_brand_id ?? b.brand_name} className="data-row border-t border-white/5">
+                    <td className="py-2" style={{ color: 'var(--text-primary)' }}>
+                      {b.target_brand_id
+                        ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--amber)] transition-colors">{b.brand_name}</Link>
+                        : b.brand_name}
+                    </td>
                     <td className="py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</td>
                     <td className="py-2 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{lastWeek.toLocaleString()}</td>
                     <td className="py-2 text-right font-mono font-semibold" style={changeGlow(isFinite(changePct) ? changePct : 0)}>
@@ -503,8 +507,12 @@ function ProviderMomentumPanel() {
               const pct = (count / maxCount) * 100;
               const color = barColor(count);
               return (
-                <div key={p.provider} className="flex items-center gap-3">
-                  <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>{p.provider}</div>
+                <div key={p.provider_id ?? p.provider} className="flex items-center gap-3">
+                  <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {p.provider_id
+                      ? <Link to={`/providers?focus=${encodeURIComponent(p.provider_id)}`} className="hover:text-[var(--amber)] transition-colors">{p.provider}</Link>
+                      : p.provider}
+                  </div>
                   <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all"

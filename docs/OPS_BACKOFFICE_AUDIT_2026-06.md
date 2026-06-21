@@ -939,3 +939,26 @@ info. Reworked `observatory-v3/components/SidePanel.tsx`:
 
 GO1 (v2 side-panel pivots) intentionally **not done** — operator scoped this to
 v3. v2 remains observe-only by choice.
+
+### 8.5 Implementation note — Batch-4 leftovers (GO4 + GO3)
+
+- **GO4 — map card pivot.** The v3 cluster detail card (click a cluster on the
+  globe) was a read-only dead-end; added a **"View campaign →"** action →
+  `/campaigns/:id`. (The arc card still can't link — its payload carries
+  `brand_name` but no `brand_id`.)
+- **GO3 — Trends momentum pivots.** Brand-momentum already returned
+  `target_brand_id` (frontend-only fix → link to `/brands/:id`); provider-momentum
+  now also selects `provider_id` (one-line backend add) → link to
+  `/providers?focus=:id`. The two dead-end momentum tables now pivot.
+
+**Not done (by judgment / pending intent):**
+- **GO6 — preserve period across navigation.** Skipped as a near-no-op: the
+  destinations (`/brands/:id`, `/providers`, `/campaigns/:id`) don't consume a
+  `period` param, so threading `?period` through would change nothing today.
+  Worth doing only alongside making those pages period-aware.
+- **GO5 — v3 dropped v2's source filter + legend.** Left as a **product call** —
+  could be an intentional v3 simplification; restoring needs operator intent.
+
+**Batch 4 substantively complete.** The full 5-batch audit has shipped its
+flagship + leftovers; remaining items are documented product calls (GO5) or
+cross-batch backlog.
