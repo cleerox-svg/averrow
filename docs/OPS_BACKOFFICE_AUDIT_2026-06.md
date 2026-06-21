@@ -439,3 +439,21 @@ Recon of `features/threats/Threats.tsx` (+ shared `threats-table`),
 
 > Slice A is the clear first ship. Slices D/E touch schema or platform intent
 > and should be confirmed before building.
+
+### 5.4 Implementation note — SLA / aging on the Alerts queue (Slice A, GQ1 shipped)
+
+The W8 gap: an open alert could sit indefinitely with no visual urgency. Added,
+pure client-side from `created_at` (no backend, no schema change):
+
+- **Per-severity SLA windows** — Crit 15m · High 1h · Med 4h · Low 24h — measured
+  while an alert is open (`new`/`acknowledged`); resolved/dismissed have no SLA.
+- **Per-row chip** — open alerts approaching their window show `Due {t}` (amber),
+  past it show `Overdue {t}` (red). Calm by default: nothing until ≥75% of the
+  window is spent.
+- **Breach banner** — counts open alerts past SLA (+ how many are approaching),
+  with a one-click "Show breached".
+- **SLA filter pill** — All / At risk / Breached, same client-side scope as the AI
+  verdict filter.
+
+Remaining Batch-2 slices: B (alert→threat pivot + triage transparency), C (saved
+views), D/E (assignment, operator threat triage — need backend/intent check).
