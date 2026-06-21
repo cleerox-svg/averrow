@@ -23,6 +23,43 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+// ── SLA / aging ─────────────────────────────────────────────────
+//
+// The single most-cited SOC queue capability absent from this surface
+// (audit Batch 2, W8): an open alert that sits past its triage window
+// gets no visual warning. Standard severity-based SLA windows
+// (Crit 15m · High 1h · Med 4h · Low 24h), measured from created_at
+// while the alert is still open (new/acknowledged). Resolved/dismissed
+// alerts have no SLA.
+const SLA_MINUTES: Record<Severity, number> = {
+  critical: 15,
+  high: 60,
+  medium: 240,
+  low: 1440,
+  info: 1440,
+};
+
+type SlaState = 'ok' | 'warn' | 'breach';
+interface SlaInfo { open: boolean; state: SlaState; remainingMs: number; overdueMs: number }
+
+function slaFor(alert: Alert): SlaInfo {
+  const open = alert.status === 'new' || alert.status === 'acknowledged';
+  if (!open) return { open: false, state: 'ok', remainingMs: 0, overdueMs: 0 };
+  const slaMs = SLA_MINUTES[severityToBadge(alert.severity)] * 60_000;
+  const ageMs = Date.now() - new Date(alert.created_at).getTime();
+  const pct = ageMs / slaMs;
+  const state: SlaState = pct >= 1 ? 'breach' : pct >= 0.75 ? 'warn' : 'ok';
+  return { open: true, state, remainingMs: slaMs - ageMs, overdueMs: ageMs - slaMs };
+}
+
+function fmtDuration(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 function extractScore(summary: string): number | null {
   const m = summary.match(/(\d+)%/);
   return m ? parseInt(m[1], 10) : null;
@@ -306,6 +343,26 @@ function BrandGroupCard({
                     label={alert.status === 'false_positive' ? 'dismissed' : alert.status}
                     size="sm"
                   />
+
+                  {/* SLA / aging — only flagged once an open alert is
+                      approaching (warn) or past (breach) its window. */}
+                  {(() => {
+                    const sla = slaFor(alert);
+                    if (!sla.open || sla.state === 'ok') return null;
+                    const breach = sla.state === 'breach';
+                    return (
+                      <span
+                        className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{
+                          background: breach ? 'rgba(239,68,68,0.12)' : 'rgba(251,191,36,0.12)',
+                          color: breach ? '#f87171' : '#fbbf24',
+                        }}
+                        title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
+                      >
+                        {breach ? `Overdue ${fmtDuration(sla.overdueMs)}` : `Due ${fmtDuration(sla.remainingMs)}`}
+                      </span>
+                    );
+                  })()}
 
                   {/* Time */}
                   <span className="font-mono text-[10px] text-white/50 tabular-nums w-14 text-right flex-shrink-0">
@@ -617,6 +674,7 @@ export function Alerts() {
   // now — operator usually filters by status+severity first which
   // already narrows hard.
   const [aiVerdictFilter, setAiVerdictFilter] = useState<'all' | AiVerdict | 'unjudged'>('all');
+  const [slaFilter, setSlaFilter] = useState<'all' | 'atrisk' | 'breached'>('all');
 
   const { data: statsData, isLoading: statsLoading } = useAlertStats();
   const { data: alertsData, isLoading: alertsLoading } = useAlerts({
@@ -630,12 +688,25 @@ export function Alerts() {
 
   const rawAlerts = Array.isArray(alertsData?.alerts) ? alertsData.alerts : [];
   const alerts = rawAlerts.filter(a => {
-    if (aiVerdictFilter === 'all') return true;
-    const v = parseAiAssessment(a.ai_assessment);
-    if (aiVerdictFilter === 'unjudged') return v === null;
-    return v?.verdict === aiVerdictFilter;
+    // AI verdict filter
+    if (aiVerdictFilter !== 'all') {
+      const v = parseAiAssessment(a.ai_assessment);
+      if (aiVerdictFilter === 'unjudged') { if (v !== null) return false; }
+      else if (v?.verdict !== aiVerdictFilter) return false;
+    }
+    // SLA filter
+    if (slaFilter !== 'all') {
+      const s = slaFor(a).state;
+      if (slaFilter === 'breached' && s !== 'breach') return false;
+      if (slaFilter === 'atrisk' && s === 'ok') return false; // warn or breach
+    }
+    return true;
   });
   const stats = statsData && typeof statsData.total === 'number' ? statsData : undefined;
+
+  // SLA breach/at-risk counts over the fetched queue (open alerts only).
+  const slaBreached = rawAlerts.filter(a => slaFor(a).state === 'breach').length;
+  const slaAtRisk = rawAlerts.filter(a => slaFor(a).state === 'warn').length;
 
   const groups = useMemo(() => groupByBrand(alerts), [alerts]);
 
@@ -677,6 +748,23 @@ export function Alerts() {
           <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
             {stats.new_count} unacknowledged {stats.high > 0 ? 'HIGH' : ''} severity alert{stats.new_count !== 1 ? 's' : ''} require review
           </span>
+        </Card>
+      )}
+
+      {/* SLA breach banner — open alerts past their severity window. */}
+      {slaBreached > 0 && (
+        <Card variant="critical" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <SeverityDot severity="critical" size={10} pulse />
+          <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {slaBreached} open alert{slaBreached !== 1 ? 's' : ''} past SLA
+            {slaAtRisk > 0 ? ` · ${slaAtRisk} approaching` : ''}
+          </span>
+          <button
+            onClick={() => setSlaFilter('breached')}
+            className="ml-auto font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all"
+          >
+            Show breached
+          </button>
         </Card>
       )}
 
@@ -756,6 +844,19 @@ export function Alerts() {
             ]}
             selected={aiVerdictFilter}
             onChange={v => setAiVerdictFilter(v as 'all' | AiVerdict | 'unjudged')}
+          />
+          {/* SLA — open alerts approaching (at-risk) or past (breached)
+              their severity triage window. Client-side over the fetched
+              set, same scope as the AI verdict filter. */}
+          <PillGroup
+            label="SLA"
+            options={[
+              { value: 'all',      label: 'All' },
+              { value: 'atrisk',   label: 'At risk' },
+              { value: 'breached', label: 'Breached' },
+            ]}
+            selected={slaFilter}
+            onChange={v => setSlaFilter(v as 'all' | 'atrisk' | 'breached')}
           />
         </div>
       </FilterBar>

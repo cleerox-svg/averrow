@@ -339,3 +339,121 @@ entrance fade, a breathing pulse on the campaign node, animated flow on
 highlighted edges, and **tap-to-select on touch** (first tap reveals the label +
 highlights, second tap pivots) so the IP/domain labels and the highlight are
 reachable without a mouse.
+
+---
+
+## 5. Batch 2 — Working queues (Threats · Alerts/Signals · Intelligence)
+
+The surfaces where SOC analysts spend the day. Status: 🔄 in progress.
+
+### 5.1 Competitor benchmark — what a triage queue is expected to do
+
+Reference set: **Microsoft Sentinel** (Incidents), **Splunk ES** (Notable
+Events), **Google Chronicle/SecOps** (Cases), **Expel**, **Swimlane**, **Torq**,
+plus the CTI vendors from §2. The recurring theme: a queue isn't a list — it's a
+**prioritized, ownable, enrichable workflow** that tells an analyst *what to work
+next* and lets them act in bulk.
+
+| # | Expected capability | Source / precedent |
+|---|---|---|
+| W1 | **Severity-then-age prioritization** — order by severity, then oldest-first within a severity; an explicit "work next" signal. | Sentinel/Splunk triage; SOC L1 guides |
+| W2 | **Status lifecycle + ownership** — assign-to-self → In Progress → Resolved; case management groups related alerts and tracks investigation status. | Sentinel Incidents, Chronicle Cases |
+| W3 | **Bulk actions** — select-all + bulk status / acknowledge / dismiss / suppress, so analysts clear noise in one gesture. | Splunk Notable Events, Chronicle |
+| W4 | **Dedup + grouping** — collapse identical/recurrent alerts in a time window; correlate incoming IOCs against active alerts. | Springer CTI dedup, Sentinel correlation |
+| W5 | **Risk scoring / "likely to matter"** — a real-time score that estimates whether an event matters, drives ordering. | Dropzone, Swimlane, StrangeBee |
+| W6 | **Saved views / smart filters** — save the Crit+High filter and return to it; tag-by-SLA/client to auto-route into queues. | Chronicle saved filters |
+| W7 | **Inline enrichment** — every alert pre-enriched with TI/asset/history so the analyst doesn't manually look up (saves 3–5 min/alert). | Torq, Expel lifecycle |
+| W8 | **SLA / aging indicators** — visible age + SLA-breach warning per severity (Crit 15m, High 1h, Med 4h, Low 24h). | SOC SLA standards |
+| W9 | **Assignment + notes/comments** — assign to an analyst, attach notes / a comment thread / evidence to a case. | Chronicle Cases, Sentinel |
+
+> Platform context to check against the UI: Trust-Radar already has rule-based
+> **alert auto-triage** (`lib/alert-triage.ts`), an **AI judge**
+> (`lib/alert-ai-judge.ts` — Haiku verdict + confidence), and backfill endpoints
+> (`POST /api/admin/alerts/backfill-triage`, `…/run-ai-judge`). The open question
+> is how much of this (triage reasons, AI assessment, auto-dismissed counts) the
+> Alerts UI actually surfaces vs. backend-only — directly relevant to W5/W7.
+
+### 5.2 Sources
+
+- [Strike48 — Alert Triage guide](https://www.strike48.com/post/alert-triage) · [CyberDefenders — Alert Triage Process](https://cyberdefenders.org/blog/alert-triage-process/) · [Expel — SOC alert lifecycle](https://expel.com/cyberspeak/what-does-the-soc-alert-lifecycle-look-like/)
+- [Google Chronicle/SecOps — Triage and respond to cases](https://docs.cloud.google.com/chronicle/docs/secops/respond-cases)
+- [Dropzone — Alert Triage guide](https://www.dropzone.ai/glossary/alert-triage-in-2025-the-complete-guide-to-90-faster-investigations) · [Swimlane — AI Alert Triage](https://swimlane.com/blog/ai-alert-triage/) · [StrangeBee — incident prioritization](https://strangebee.com/blog/security-incident-prioritization-proven-methods-to-improve-alert-triage/) · [Torq — alert fatigue](https://torq.io/blog/cybersecurity-alert-fatigue/)
+- [Springer — Reducing alert fatigue via CTI correlation & dedup](https://link.springer.com/chapter/10.1007/978-3-032-19540-1_2)
+
+### 5.3 Inventory & gap analysis
+
+Recon of `features/threats/Threats.tsx` (+ shared `threats-table`),
+`features/alerts/Alerts.tsx`, `features/trends/Trends.tsx` and their endpoints.
+
+**Capability matrix vs the W1–W9 benchmark:**
+
+| W | Capability | Threats | Alerts/Signals | Intelligence/Trends |
+|---|---|---|---|---|
+| W1 | severity + **age** ordering | severity sort ✓ · no age | severity sort ✓ · no age | n/a (briefing) |
+| W2 | status lifecycle + **ownership** | **no status action ✗** | new→ack→resolved/FP ✓ · no owner | n/a |
+| W3 | bulk actions | **none ✗** | ack-all + bulk-takedown ✓ | n/a |
+| W4 | dedup / grouping | flat list | brand-grouped ✓ | n/a |
+| W5 | risk scoring | confidence in detail only | AI verdict badges ✓ | n/a |
+| W6 | saved / smart views | **none** (URL state only) ✗ | **none ✗** | n/a |
+| W7 | inline enrichment | rich ✓✓ | partial (AI assessment) | n/a |
+| W8 | **SLA / aging** | **none ✗** | **none ✗** | n/a |
+| W9 | assignment + notes | **none ✗** | notes ✓ · no assignment | n/a |
+
+**Per-surface read:**
+- **Threats** is a **read-only catalog** with strong situational dashboards
+  (slice summary, hero tiles, surging signals, leaderboards) + rich per-row
+  enrichment + pivots to Brand/Actor — but **no triage mutation** (statuses
+  `active/down/remediated` exist and a `PATCH /api/threats/:id` reportedly
+  exists, yet nothing in the UI changes a threat's state).
+- **Alerts/Signals** is the real **triage queue**: per-alert
+  new→ack→resolved/false_positive, **bulk** acknowledge + create-takedown,
+  notes, and AI-judge verdict badges. Missing the queue-ergonomics layer.
+- **Intelligence/Trends** is a **read-only briefing dashboard**, not a queue —
+  appropriate for its purpose; the "Intelligence"→`/trends` label/route
+  mismatch (F-B) persists.
+
+**Gap table (severity-ranked):**
+
+| # | Gap | Benchmark | Backend exists? | Severity |
+|---|---|---|---|---|
+| GQ1 | **No SLA / aging anywhere** — an acknowledged alert can sit for weeks with no visual warning; no "work next by age". | W1/W8 | `created_at` present | **High** |
+| GQ2 | **Threats has no triage action** — can't mark down/remediated/false-positive from the UI. (NB: threat status is largely machine-managed — confirm intent before adding operator mutation.) | W2 | `PATCH /api/threats/:id` (verify) | High |
+| GQ3 | **No saved / smart views** — every session starts fresh; can't pin "new high-sev app-store impers". | W6 | — | Medium |
+| GQ4 | **Auto-triage is invisible in the queue** — backend computes rule/AI dismissals + reasons (`run-ai-judge`, `backfill-triage`) but the UI shows no summary ("N auto-dismissed by rule, M by AI"), and the AI-verdict filter is client-side over a 200-row cap. | W5/W7 | stats from admin endpoints | Medium |
+| GQ5 | **No assignment / ownership** — neither surface lets an analyst claim or route work. | W2/W9 | needs `assigned_to` column | Medium |
+| GQ6 | **Alert→source-threat dead-end** — when `source_type='threat'` the detail shows the threat's technique but won't pivot to the threat. | W4/E2 | join exists | Medium |
+| GQ7 | `Intelligence` nav label → `/trends` mismatch (carryover F-B). | — | — | Low |
+
+**Recommended slice order:**
+1. **Slice A — SLA/aging on the Alerts queue (GQ1).** Per-severity SLA (Crit 15m
+   · High 1h · Med 4h · Low 24h) from `created_at` while unresolved; an
+   age/SLA chip per row (within → approaching → breached) + a "breaching first"
+   sort/filter. Pure client-side, no backend. The single most-cited SOC queue
+   capability, currently absent. *Highest leverage, lowest risk.*
+2. **Slice B — Alert→threat pivot + triage transparency (GQ6/GQ4).** Link the
+   alert detail to its source threat; surface a small auto-triage summary line.
+3. **Slice C — Saved views (GQ3).** localStorage-backed named filter sets on
+   Alerts (and Threats), reusing the existing filter state.
+4. **(Bigger, needs backend) Slice D — assignment/ownership (GQ5)** and **Slice E
+   — operator threat triage (GQ2, pending intent check).**
+
+> Slice A is the clear first ship. Slices D/E touch schema or platform intent
+> and should be confirmed before building.
+
+### 5.4 Implementation note — SLA / aging on the Alerts queue (Slice A, GQ1 shipped)
+
+The W8 gap: an open alert could sit indefinitely with no visual urgency. Added,
+pure client-side from `created_at` (no backend, no schema change):
+
+- **Per-severity SLA windows** — Crit 15m · High 1h · Med 4h · Low 24h — measured
+  while an alert is open (`new`/`acknowledged`); resolved/dismissed have no SLA.
+- **Per-row chip** — open alerts approaching their window show `Due {t}` (amber),
+  past it show `Overdue {t}` (red). Calm by default: nothing until ≥75% of the
+  window is spent.
+- **Breach banner** — counts open alerts past SLA (+ how many are approaching),
+  with a one-click "Show breached".
+- **SLA filter pill** — All / At risk / Breached, same client-side scope as the AI
+  verdict filter.
+
+Remaining Batch-2 slices: B (alert→threat pivot + triage transparency), C (saved
+views), D/E (assignment, operator threat triage — need backend/intent check).
