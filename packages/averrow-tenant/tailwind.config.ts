@@ -10,7 +10,9 @@ import type { Config } from 'tailwindcss';
 // from src/index.css. Accents (amber, severity) stay constant across
 // themes — no var() wrapping needed.
 const config: Config = {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Include @averrow/shared source so utility classes used only in shared
+  // components (ProfilePage, LoginPage, …) aren't purged. See login audit.
+  content: ['./index.html', './src/**/*.{ts,tsx}', '../shared/src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
