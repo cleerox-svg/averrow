@@ -419,7 +419,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/alerts/stats` | Staff | Alert statistics |
 | GET | `/api/alerts/triage-summary` | Staff | Auto-triage rollup (dismissed/kept counts) for the alerts surface |
 | GET | `/api/alerts/:id` | Staff | Get alert detail |
-| PATCH | `/api/alerts/:id` | Staff | Update alert status |
+| PATCH | `/api/alerts/:id` | Staff | Triage a signal. Body: `status` and/or `assigned_to` (a users.id, or `null` to unassign — stamps `assigned_at`), `notes`. At least one of status/assigned_to required. List returns `assigned_to_name`/`assigned_to_email`. |
 | POST | `/api/alerts/bulk-acknowledge` | Staff | Bulk acknowledge alerts |
 | POST | `/api/alerts/bulk-takedown` | Staff | Bulk create takedown requests from alerts |
 | POST | `/api/admin/alerts/backfill-triage?limit=500&offset=0&threshold=0.5` | Admin | Auto-triage pass over `new` alerts. Dispatches by alert family: threat-sourced (VT/GSB/GreyNoise/SecLookup clean), social_impersonation (handle in official_handles or score < threshold), app_store_impersonation (developer in official_apps OR developer name normalizes to brand name OR score < threshold). Returns `{scanned, dismissed, kept, no_threat, by_type}`. **Use `offset` to advance through the queue across calls** — without it, batches with 0 dismissals will re-scan the same alerts forever. |
