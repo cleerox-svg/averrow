@@ -1,7 +1,12 @@
 import type { Config } from 'tailwindcss';
 
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Include the shared package source (@averrow/shared resolves to
+  // ../shared/src/* per its exports map). Without this, Tailwind purges
+  // any utility class used ONLY in shared components — e.g. `min-h-screen`
+  // in the shared LoginPage — so the login/profile layout collapses
+  // (the login <section> lost its full-height centering). See login audit.
+  content: ['./index.html', './src/**/*.{ts,tsx}', '../shared/src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
