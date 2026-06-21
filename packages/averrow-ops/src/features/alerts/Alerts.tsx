@@ -6,10 +6,12 @@ import { SeverityDot } from '@/components/ui/DataRow';
 import { Badge } from '@/components/ui/Badge';
 import type { Severity } from '@/components/ui/Badge';
 import {
-  useAlerts, useAlertStats, useUpdateAlert, useBulkAcknowledge, useBulkTakedown,
+  useAlerts, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
   type Alert, type AlertFilters,
 } from '@/hooks/useAlerts';
 import { useSavedViews, type SavedView } from '@/hooks/useSavedViews';
+import { useAuth } from '@/lib/auth';
+import { parseInitials } from '@/lib/avatar';
 import { Bell, Star, X } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -254,6 +256,7 @@ function groupByBrand(alerts: Alert[]): BrandGroup[] {
 interface BrandGroupCardProps {
   group: BrandGroup;
   selectedAlertId: string | null;
+  currentUserId: string | null;
   onSelectAlert: (a: Alert) => void;
   onAcknowledgeAll: () => void;
   onCreateTakedowns: () => void;
@@ -262,7 +265,7 @@ interface BrandGroupCardProps {
 }
 
 function BrandGroupCard({
-  group, selectedAlertId, onSelectAlert,
+  group, selectedAlertId, currentUserId, onSelectAlert,
   onAcknowledgeAll, onCreateTakedowns,
   isAcknowledging, isCreatingTakedowns,
 }: BrandGroupCardProps) {
@@ -403,6 +406,21 @@ function BrandGroupCard({
                     size="sm"
                   />
 
+                  {/* Owner — who has claimed this signal (W9). */}
+                  {alert.assigned_to && (
+                    <span
+                      className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+                      style={{ background: 'rgba(124,138,255,0.14)', color: '#9aa6ff' }}
+                      title={alert.assigned_to === currentUserId
+                        ? 'Assigned to you'
+                        : `Assigned to ${alert.assigned_to_name ?? alert.assigned_to_email ?? 'analyst'}`}
+                    >
+                      {alert.assigned_to === currentUserId
+                        ? 'You'
+                        : parseInitials(alert.assigned_to_name, alert.assigned_to_email)}
+                    </span>
+                  )}
+
                   {/* SLA / aging — only flagged once an open alert is
                       approaching (warn) or past (breach) its window. */}
                   {(() => {
@@ -481,12 +499,15 @@ function BrandGroupCard({
 
 interface AlertDetailProps {
   alert: Alert;
+  currentUserId: string | null;
   onClose: () => void;
   onUpdate: (status: string, notes?: string) => void;
+  onAssign: (assignedTo: string | null) => void;
   isUpdating: boolean;
+  isAssigning: boolean;
 }
 
-function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps) {
+function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpdating, isAssigning }: AlertDetailProps) {
   const [notes, setNotes] = useState(alert.resolution_notes ?? '');
   const score = extractScore(alert.summary);
   const handle = extractHandle(alert.title);
@@ -647,6 +668,35 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
         <div className="space-y-3 border-l border-white/[0.06] pl-5">
           <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
 
+          {/* Owner / assignment (W9) */}
+          <div className="flex items-center justify-between gap-2 pb-2 mb-1 border-b border-white/[0.06]">
+            <div className="min-w-0">
+              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide">Owner</div>
+              <div className="font-mono text-[11px] truncate" style={{ color: alert.assigned_to ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                {alert.assigned_to
+                  ? (alert.assigned_to === currentUserId ? 'You' : (alert.assigned_to_name || alert.assigned_to_email || 'Assigned'))
+                  : 'Unassigned'}
+              </div>
+            </div>
+            {alert.assigned_to === currentUserId ? (
+              <button
+                onClick={() => onAssign(null)}
+                disabled={isAssigning}
+                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
+              >
+                Unassign
+              </button>
+            ) : (
+              <button
+                onClick={() => currentUserId && onAssign(currentUserId)}
+                disabled={isAssigning || !currentUserId}
+                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all disabled:opacity-50 flex-shrink-0"
+              >
+                {alert.assigned_to ? 'Take over' : 'Assign to me'}
+              </button>
+            )}
+          </div>
+
           <div className="flex flex-col gap-2">
             {alert.status === 'new' && (
               <>
@@ -761,6 +811,9 @@ export function Alerts() {
   // already narrows hard.
   const [aiVerdictFilter, setAiVerdictFilter] = useState<'all' | AiVerdict | 'unjudged'>('all');
   const [slaFilter, setSlaFilter] = useState<'all' | 'atrisk' | 'breached'>('all');
+  const [mineOnly, setMineOnly] = useState(false);
+  const { user } = useAuth();
+  const currentUserId = user?.id ?? null;
 
   const { data: statsData, isLoading: statsLoading } = useAlertStats();
   const { data: alertsData, isLoading: alertsLoading } = useAlerts({
@@ -769,6 +822,7 @@ export function Alerts() {
   });
 
   const updateAlert = useUpdateAlert();
+  const assignAlert = useAssignAlert();
   const bulkAck = useBulkAcknowledge();
   const bulkTakedown = useBulkTakedown();
 
@@ -786,6 +840,8 @@ export function Alerts() {
       if (slaFilter === 'breached' && s !== 'breach') return false;
       if (slaFilter === 'atrisk' && s === 'ok') return false; // warn or breach
     }
+    // Mine — alerts this analyst owns
+    if (mineOnly && currentUserId && a.assigned_to !== currentUserId) return false;
     return true;
   });
   const stats = statsData && typeof statsData.total === 'number' ? statsData : undefined;
@@ -1009,6 +1065,20 @@ export function Alerts() {
             selected={slaFilter}
             onChange={v => setSlaFilter(v as 'all' | 'atrisk' | 'breached')}
           />
+          {/* Mine — signals this analyst has claimed (W9). */}
+          <button
+            onClick={() => setMineOnly(m => !m)}
+            disabled={!currentUserId}
+            className={cn(
+              'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
+              mineOnly
+                ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
+                : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
+            )}
+            title="Show only signals assigned to me"
+          >
+            Mine
+          </button>
         </div>
       </FilterBar>
 
@@ -1036,6 +1106,7 @@ export function Alerts() {
               <BrandGroupCard
                 group={group}
                 selectedAlertId={selectedAlert?.id ?? null}
+                currentUserId={currentUserId}
                 onSelectAlert={a => setSelectedAlert(prev => prev?.id === a.id ? null : a)}
                 onAcknowledgeAll={() => {
                   // Acknowledge only the alerts visible in this group
@@ -1058,6 +1129,7 @@ export function Alerts() {
               {selectedAlert && group.alerts.some(a => a.id === selectedAlert.id) && (
                 <AlertDetail
                   alert={selectedAlert}
+                  currentUserId={currentUserId}
                   onClose={() => setSelectedAlert(null)}
                   onUpdate={(status, notes) => {
                     updateAlert.mutate(
@@ -1065,7 +1137,19 @@ export function Alerts() {
                       { onSuccess: () => setSelectedAlert(null) },
                     );
                   }}
+                  onAssign={(assignedTo) => {
+                    // Keep the panel open and update in place so the operator
+                    // sees the owner change immediately.
+                    assignAlert.mutate({ id: selectedAlert.id, assigned_to: assignedTo });
+                    setSelectedAlert(prev => prev ? {
+                      ...prev,
+                      assigned_to: assignedTo,
+                      assigned_to_name: assignedTo === currentUserId ? (user?.name ?? null) : prev.assigned_to_name,
+                      assigned_to_email: assignedTo === currentUserId ? (user?.email ?? null) : prev.assigned_to_email,
+                    } : prev);
+                  }}
                   isUpdating={updateAlert.isPending}
+                  isAssigning={assignAlert.isPending}
                 />
               )}
             </div>

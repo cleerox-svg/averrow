@@ -83,6 +83,8 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
     try {
       rows = await env.DB.prepare(
         `SELECT a.*, b.name as brand_name, b.canonical_domain as brand_domain,
+                u.name  AS assigned_to_name,
+                u.email AS assigned_to_email,
                 st.id          AS saas_technique_id,
                 st.name        AS saas_technique_name,
                 st.phase       AS saas_technique_phase,
@@ -90,6 +92,7 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
                 st.severity    AS saas_technique_severity
          FROM alerts a
          LEFT JOIN brands b ON b.id = a.brand_id
+         LEFT JOIN users u ON u.id = a.assigned_to
          LEFT JOIN threats t
                 ON t.id = a.source_id
                AND a.source_type = 'threat'
@@ -105,6 +108,8 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
     } catch {
       rows = await env.DB.prepare(
         `SELECT a.*, b.name as brand_name, b.canonical_domain as brand_domain,
+                u.name  AS assigned_to_name,
+                u.email AS assigned_to_email,
                 NULL AS saas_technique_id,
                 NULL AS saas_technique_name,
                 NULL AS saas_technique_phase,
@@ -112,6 +117,7 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
                 NULL AS saas_technique_severity
          FROM alerts a
          LEFT JOIN brands b ON b.id = a.brand_id
+         LEFT JOIN users u ON u.id = a.assigned_to
          ${where}
          ORDER BY
            CASE a.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
@@ -183,15 +189,19 @@ export async function handleGetAlert(request: Request, env: Env, alertId: string
 export async function handleUpdateAlert(request: Request, env: Env, alertId: string, userId: string, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as { status?: AlertStatus; notes?: string };
+    const body = await request.json() as { status?: AlertStatus; notes?: string; assigned_to?: string | null };
+    const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assigned_to');
 
-    if (!body.status) {
-      return json({ success: false, error: "Missing required field: status" }, 400, origin);
+    // A request must change at least one of status or assignment.
+    if (!body.status && !hasAssignee) {
+      return json({ success: false, error: "Missing field: status or assigned_to" }, 400, origin);
     }
 
-    const validStatuses: AlertStatus[] = ['new', 'acknowledged', 'investigating', 'resolved', 'false_positive'];
-    if (!validStatuses.includes(body.status)) {
-      return json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, 400, origin);
+    if (body.status) {
+      const validStatuses: AlertStatus[] = ['new', 'acknowledged', 'investigating', 'resolved', 'false_positive'];
+      if (!validStatuses.includes(body.status)) {
+        return json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, 400, origin);
+      }
     }
 
     // H2: verify the caller owns the alert (same predicate as the list)
@@ -207,9 +217,20 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
       return json({ success: false, error: "Alert not found" }, 404, origin);
     }
 
-    const updated = await updateAlertStatus(env.DB, alertId, body.status, body.notes);
-    if (!updated) {
-      return json({ success: false, error: "Alert not found" }, 404, origin);
+    if (body.status) {
+      const updated = await updateAlertStatus(env.DB, alertId, body.status, body.notes);
+      if (!updated) {
+        return json({ success: false, error: "Alert not found" }, 404, origin);
+      }
+    }
+
+    // Assignment (W9 ownership). assigned_to is a users.id, or null to
+    // unassign; assigned_at stamps when a claim was made.
+    if (hasAssignee) {
+      const assignee = body.assigned_to ? String(body.assigned_to) : null;
+      await env.DB.prepare(
+        `UPDATE alerts SET assigned_to = ?, assigned_at = ${assignee ? "datetime('now')" : 'NULL'}, updated_at = datetime('now') WHERE id = ?`
+      ).bind(assignee, alertId).run();
     }
 
     return json({ success: true }, 200, origin);

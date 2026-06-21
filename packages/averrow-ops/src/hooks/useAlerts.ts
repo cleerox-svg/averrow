@@ -29,6 +29,10 @@ export interface Alert {
   saas_technique_phase: string | null;
   saas_technique_phase_label: string | null;
   saas_technique_severity: string | null;
+  assigned_to: string | null;
+  assigned_at: string | null;
+  assigned_to_name: string | null;
+  assigned_to_email: string | null;
 }
 
 export interface AlertStats {
@@ -122,6 +126,19 @@ export function useUpdateAlert() {
   return useMutation({
     mutationFn: async ({ id, status, notes }: { id: string; status: string; notes?: string }) => {
       return api.patch(`/api/alerts/${id}`, { status, notes });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['alerts'] });
+      qc.invalidateQueries({ queryKey: ['alert-stats'] });
+    },
+  });
+}
+
+export function useAssignAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, assigned_to }: { id: string; assigned_to: string | null }) => {
+      return api.patch(`/api/alerts/${id}`, { assigned_to });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });

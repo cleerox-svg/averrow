@@ -515,3 +515,25 @@ mutation does an **optimistic in-place status update** and reconciles on settle.
 
 Batch-2 remaining: D — assignment/ownership (GQ5, needs an additive
 `assigned_to` column).
+
+### 5.8 Implementation note — Alert assignment / ownership (Slice D, GQ5 shipped)
+
+W9 (assignment) — neither queue let an analyst claim work. Discovery: the
+`assigned_to`/`assigned_at` columns **already existed** (migration 0221, added
+for the *tenant* analyst queue) and the list already returned them via
+`SELECT a.*` — but the ops side had no write path or UI, and the tenant endpoint
+(`/api/orgs/:orgId/alerts/:alertId`) already supports assignment. So this brings
+the **ops** Signals queue to parity:
+
+- **Backend:** `PATCH /api/alerts/:id` now accepts `assigned_to` (a users.id, or
+  `null` to unassign; stamps `assigned_at`) in addition to / instead of `status`
+  (status no longer required). The list SELECTs join `users` for
+  `assigned_to_name`/`assigned_to_email`.
+- **Frontend:** an **Owner** row in the alert detail (Assign to me / Take over /
+  Unassign), an owner chip on each row (initials, or "You"), and a **Mine**
+  toggle to filter to signals you own. No migration (column pre-existed).
+
+**Batch 2 complete** — all of GQ1–GQ6 addressed (GQ7 is the cosmetic
+Intelligence-label carryover). Open follow-ups noted earlier: specific
+alert→threat link + queue-level auto-triage summary (both need small backend
+additions).
