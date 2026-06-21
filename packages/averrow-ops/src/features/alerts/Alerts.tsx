@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import { StatCard, Card, StatGrid, FilterBar, PageHeader, DataRow } from '@/components/ui';
 import { SeverityDot } from '@/components/ui/DataRow';
@@ -58,6 +59,20 @@ function fmtDuration(ms: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
+}
+
+// Humanize an alert_type slug ("app_store_impersonation" → "App Store
+// Impersonation"). The detail header used to hardcode "Social Impersonation"
+// for every alert, mislabeling app-store / phishing / BIMI alerts.
+function humanizeType(t: string | null): string {
+  if (!t) return 'Alert';
+  return t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Auto-triage stamps its reason into resolution_notes prefixed "auto:"
+// (rule-based) — distinguish operator decisions from automated ones.
+function isAutoTriaged(notes: string | null): boolean {
+  return !!notes && /^auto[:\- ]/i.test(notes.trim());
 }
 
 function extractScore(summary: string): number | null {
@@ -458,7 +473,10 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
           >
             {alert.status === 'false_positive' ? 'dismissed' : alert.status}
           </span>
-          <Badge status="running" label="Social Impersonation" size="xs" />
+          <Badge status="running" label={humanizeType(alert.alert_type)} size="xs" />
+          {isAutoTriaged(alert.resolution_notes) && (
+            <Badge status="inactive" label="Auto-triaged" size="xs" />
+          )}
         </div>
         <button onClick={onClose} className="text-white/50 hover:text-[var(--text-primary)] transition-colors p-1">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -472,15 +490,28 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
         <div className="space-y-3">
           <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Alert Details</div>
 
-          <div className="flex items-center gap-2">
+          <Link
+            to={`/brands/${alert.brand_id}`}
+            className="flex items-center gap-2 group"
+            title="Open brand"
+          >
             <img
               src={`https://www.google.com/s2/favicons?domain=${alert.brand_domain ?? 'example.com'}&sz=32`}
               alt=""
               className="w-4 h-4 rounded-sm"
             />
-            <span className="font-display text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
+            <span className="font-display text-sm font-bold group-hover:text-[var(--amber)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
             <span className="font-mono text-[10px] text-white/40">{alert.brand_domain ?? ''}</span>
-          </div>
+          </Link>
+
+          {/* Outbound pivots — the detail used to be a dead-end (no links
+              out). Brand detail + this brand's threat slice for context. */}
+          <Link
+            to={`/threats?brand_id=${encodeURIComponent(alert.brand_id)}`}
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
+          >
+            View brand's threats →
+          </Link>
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Platform</div>
@@ -520,7 +551,9 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Source</div>
-            <span className="font-mono text-[11px] text-[var(--text-tertiary)]">Social Monitor Agent</span>
+            <span className="font-mono text-[11px] text-[var(--text-tertiary)]">
+              {alert.source_type ? humanizeType(alert.source_type) : 'Social Monitor Agent'}
+            </span>
           </div>
         </div>
 
@@ -648,10 +681,19 @@ function AlertDetail({ alert, onClose, onUpdate, isUpdating }: AlertDetailProps)
             )}
           </div>
 
-          {/* Resolution notes */}
-          {alert.status === 'resolved' && alert.resolution_notes && (
+          {/* Resolution / dismissal reason — now shown for dismissed
+              (false_positive) alerts too, not just resolved. This is where
+              the auto-triage reason ("auto: matches brand official handle")
+              becomes visible, so an operator can see WHY an alert was
+              auto-dismissed instead of it silently vanishing. */}
+          {(alert.status === 'resolved' || alert.status === 'false_positive') && alert.resolution_notes && (
             <div className="pt-2">
-              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Resolution Notes</div>
+              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">
+                {alert.status === 'false_positive' ? 'Dismissal reason' : 'Resolution notes'}
+                {isAutoTriaged(alert.resolution_notes) && (
+                  <span className="ml-1.5 text-[var(--text-muted)] normal-case">· auto-triaged</span>
+                )}
+              </div>
               <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">{alert.resolution_notes}</p>
             </div>
           )}

@@ -457,3 +457,25 @@ pure client-side from `created_at` (no backend, no schema change):
 
 Remaining Batch-2 slices: B (alert→threat pivot + triage transparency), C (saved
 views), D/E (assignment, operator threat triage — need backend/intent check).
+
+### 5.5 Implementation note — Alert pivots + triage transparency (Slice B, GQ4/GQ6 shipped)
+
+Two of the recon's alert dead-ends, fixed pure-frontend:
+
+- **Detail had no outbound pivots** (GQ6). Added: the brand name/favicon now links
+  to `/brands/:id`, plus a "View brand's threats →" link to
+  `/threats?brand_id=:id`. (A link to the *specific* source threat still isn't
+  possible — there's no single-threat route and `?q=` searches domain/IP not id;
+  the brand-threat slice is the resolving pivot.)
+- **Auto-triage was invisible** (GQ4). The dismissal reason
+  (`resolution_notes`, e.g. "auto: matches brand official handle") was only shown
+  for *resolved* alerts — so auto-**dismissed** alerts vanished with no visible
+  reason. Now shown for dismissed too, with an **"Auto-triaged"** badge when the
+  reason is machine-stamped.
+- **Bug fix:** the detail header hardcoded a "Social Impersonation" badge on
+  *every* alert; now renders the real `alert_type` (App Store / Phishing / BIMI…)
+  and the actual `source_type`.
+
+GQ4's queue-level summary ("N auto-dismissed by rule vs AI") and GQ6's
+specific-threat link remain open (the latter needs a threat-focus/search-by-id,
+same constraint as Batch 1).
