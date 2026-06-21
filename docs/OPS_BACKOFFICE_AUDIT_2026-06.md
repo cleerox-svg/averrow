@@ -677,3 +677,19 @@ driver and the standard observability metric, so this is the honest staff-level
 view; a true cost-$ panel would need the pricing dimension wired in (follow-up).
 
 Remaining Batch-3: C (discoverability — GA3), D (stalled runs — GA4).
+
+### 6.6 Implementation note — Discoverability + stalled runs (Slices C+D, GA3/GA4 shipped)
+
+- **GA3 — orphaned surfaces.** Added **Approvals** (super_admin) and **Architect**
+  (admin) link buttons to the Agents page header, so the two routed orphans are
+  reachable without knowing the URL. (`AgentConfig.tsx` has **no route at all**
+  and its trigger/threshold function now overlaps the Slice-A control bar, so it
+  was intentionally not surfaced.)
+- **GA4 — stalled runs.** A **stalled-runs banner** on the Agents page: runs
+  stuck in `running` >15min, computed client-side from
+  `useAgentRuns({status:'running'})` (the same signal the internal diagnostics
+  computes, now operator-facing) — agent id + how long ago it started.
+
+**Batch 3 complete** — GA1 (control plane), GA2 (token usage), GA3
+(discoverability), GA4 (stalled runs). GA5 (per-run trace/token drill-down)
+remains as a deeper follow-up.

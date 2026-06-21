@@ -24,7 +24,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  useAgents, useAgentDetail, useAgentHealth, useAgentTokenUsage,
+  useAgents, useAgentDetail, useAgentHealth, useAgentTokenUsage, useAgentRuns,
   useTriggerAgent, useToggleAgent, useResetAgentCircuit,
 } from '@/hooks/useAgents';
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
@@ -892,6 +892,15 @@ function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: Vi
 
 export function Agents() {
   const { data: agents = [], isLoading } = useAgents();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const isSuperAdmin = user?.role === 'super_admin';
+  // Stalled runs (GA4) — stuck in 'running' >15min. The internal diagnostics
+  // computes this; surface it operator-side from the runs endpoint.
+  const { data: runningRuns } = useAgentRuns({ status: 'running', limit: 50 });
+  const stalled = (runningRuns?.data ?? []).filter(
+    r => Date.now() - new Date(r.started_at).getTime() > 15 * 60_000,
+  );
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [viewMode, setViewModeState] = useState<ViewMode>(readViewMode);
 
@@ -947,6 +956,25 @@ export function Agents() {
         subtitle={`${agents.length} agents · ${supervisors.length} supervisor`}
         actions={
           <div className="flex items-center gap-3">
+            {/* Discoverability (GA3) — Approvals + Architect were URL-only. */}
+            {isSuperAdmin && (
+              <Link
+                to="/agents/approvals"
+                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--border-base)', color: 'var(--text-secondary)' }}
+              >
+                Approvals
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                to="/agents/architect"
+                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--border-base)', color: 'var(--text-secondary)' }}
+              >
+                Architect
+              </Link>
+            )}
             <ViewModeToggle value={viewMode} onChange={setViewMode} />
             <LiveIndicator />
           </div>
@@ -954,6 +982,28 @@ export function Agents() {
       />
 
       <PendingApprovalsBanner />
+
+      {/* Stalled runs (GA4) — stuck >15min, was only in internal diagnostics. */}
+      {stalled.length > 0 && (
+        <Card variant="critical" style={{ padding: '12px 16px' }}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <AlertTriangle size={14} style={{ color: 'var(--sev-critical)' }} />
+            <span className="font-mono text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
+              {stalled.length} stalled run{stalled.length !== 1 ? 's' : ''} · stuck &gt;15m
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {stalled.slice(0, 8).map(r => (
+              <span key={r.id} className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                {r.agent_id} <span style={{ color: 'var(--text-muted)' }}>· started {relativeTime(r.started_at)}</span>
+              </span>
+            ))}
+            {stalled.length > 8 && (
+              <span className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>+{stalled.length - 8} more</span>
+            )}
+          </div>
+        </Card>
+      )}
 
       <StatGrid cols={4}>
         <StatCard label="Agents Operational" value={`${operational}/${agents.length}`} accentColor="var(--green)" />
