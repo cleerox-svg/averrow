@@ -835,3 +835,107 @@ gap). Remaining, shipped here:
 GM6 (incidents super_admin-only vs takedowns permission-gated) is left as a
 **design call** — it needs a new `view_incidents`/`manage_incidents` flag, not a
 clear bug. **Batch 5 done** (GM6 deferred by design).
+
+---
+
+## 8. Batch 4 — Big-picture (Observatory · Trends)
+
+Situational-awareness surfaces. Status: 🔄 in progress (final batch). **The
+WebGL globe/particle renderers are frozen per CLAUDE.md — this batch audits
+everything *around* the viz** (controls, legends, drill-downs, time, stats).
+
+### 8.1 Competitor benchmark — situational-awareness / threat map
+
+Reference set: **Kaspersky Cyberthreat Map**, **Check Point ThreatMap**,
+**Fortinet**, **Recorded Future**, SOC wall displays, geospatial-intel tooling.
+Theme: a threat map earns its screen space when it's an **interactive entry
+point** — filterable, time-aware, and clickable through to detail — not a
+decorative globe.
+
+| # | Expected capability | Source / precedent |
+|---|---|---|
+| S1 | **Drill-down from the map** — click a node / arc / country → region density or the underlying entity/threats; "zoom into a region for threat density." | Kaspersky, Check Point, BigGeo |
+| S2 | **Filtering / custom view** — by attack type, severity, geography; layer toggles; "customize their view… focus on specific attack types or areas." | Kaspersky controls, threat-map UX |
+| S3 | **Live feed / event ticker** — real-time incident feed beside the map (SOC wall: "live incident feeds"). | SOC wall displays |
+| S4 | **Stats / rankings panels** — source-country rankings, per-type breakdown, threat-level indicators, top entities. | SOC wall: "source-country rankings, per-protocol breakdowns" |
+| S5 | **Time control** — date-range / scrubber / playback for historical exploration ("filtering by date ranges… detailed exploration"). | threat-map drill-down UX |
+| S6 | **Connected to the investigation graph** — map + side panels pivot into entity/threat detail, aligning threats with impact, not observe-only. | "transforms disjointed data into a unified, risk-aware view" |
+
+> Platform context: Observatory has `/api/observatory/{nodes,arcs,stats,live,
+> operations}` + `/api/threats/heatmap`, fed by the OLAP cubes (incl.
+> `threat_cube_arcs`). The audit question is whether the **controls/legends/side
+> lists pivot into the entity graph** the earlier batches connected (S6), whether
+> there's **time control** (S5), and **v2↔v3 parity**. Trends (§5/§7 already
+> renamed it) is the historical-analytics companion — check overlap with
+> Observatory.
+
+### 8.2 Sources
+
+- [Kaspersky Cyberthreat Map](https://cybermap.kaspersky.com/) · [Check Point ThreatMap](https://threatmap.checkpoint.com/) · [CyberSecurityNews — cyber attack maps 2026](https://cybersecuritynews.com/cyber-attack-maps/) · [RedLegg — cyber threat maps](https://www.redlegg.com/blog/cyber-threat-maps)
+- [Help Net Security — open-source global threat map (2026)](https://www.helpnetsecurity.com/2026/02/04/global-threat-map-open-source-osint/) · [MeetCyber — data visualization cuts threat-analysis time](https://medium.com/meetcyber/accelerating-the-soc-how-data-visualization-cuts-threat-analysis-time-91ce92e1a9b1) · [ArmorPoint — threat mapping 101](https://armorpoint.com/2025/06/11/threat-mapping-101-how-to-visualize-and-prioritize-cyber-risk/)
+
+### 8.3 Inventory & gap analysis
+
+Recon of Observatory v2/v3 + Trends (around the frozen WebGL). The viz is rich
+and the filtering/live-feed/stats are strong; the gap is **S6 — connection to
+the investigation graph — and it's inconsistent across the three surfaces.**
+
+**Capability matrix vs S1–S6:**
+
+| # | Capability | State |
+|---|---|---|
+| S1 | map drill-down | **Weak** — arc/cluster clicks open *read-only* floating cards; no click-through |
+| S2 | filtering / custom view | **Strong (v2)** — mode/period/color/source/layers; **v3 regressed** (dropped source filter + legend) |
+| S3 | live feed / ticker | **Strong** — EventTicker + Live Threat Feed |
+| S4 | stats / rankings | **Good** — stats bar + side lists; `geo_coverage_pct`/`threats_total` computed but unsurfaced |
+| S5 | time control | **Partial** — fixed periods, no scrubber; period **lost on navigation** |
+| S6 | connected to graph | **Inconsistent** — **v2 panels dead-end**; **v3 panel navigates** (brands/ops) but its **Providers widget doesn't**; **Trends** chips navigate but its **momentum tables dead-end** |
+
+**Gap table (severity-ranked):**
+
+| # | Gap | Backend exists? | Severity |
+|---|---|---|---|
+| GO1 | **Observatory v2 side panels are dead-ends** — Top Brands / Providers / Active Operations read-only, while **v3 already navigates** from the equivalents. | ✅ ids + routes exist | **High** |
+| GO2 | **v3 Providers widget read-only** — Brands + Operations navigate, Providers doesn't. | ✅ | Medium |
+| GO3 | **Trends momentum tables dead-end** — endpoints return **names only (no ids)**, so a pivot needs the id added. | ⚠️ needs id | Medium |
+| GO4 | **Map detail cards don't navigate** — cluster card has an id (→ `/campaigns/:id`); arc card has `brand_name` but no `brand_id`. | ⚠️ partial | Medium |
+| GO5 | **v3 regressions** — dropped the source filter + legend (bug or intentional?). | — | Low-Med |
+| GO6 | **Unsurfaced stats + period-loss on nav.** | ✅ | Low |
+
+**Headline:** the same pivot-dead-end theme as Batch 1, but here it's an
+*internal inconsistency* — **v3 already proves the pattern**, so GO1/GO2 just
+bring v2 (and v3's Providers widget) to parity. Pure frontend, ids already in the
+payloads, entirely *around* the frozen viz.
+
+**Recommended slice order:**
+1. **Slice A — Observatory side-panel pivots (GO1+GO2).** v2 Top Brands →
+   `/brands/:id`, Providers → `/providers?focus=:id`, Active Operations →
+   `/campaigns/:id`; v3 Providers → `/providers?focus=:id`. Match v3's pattern.
+   Pure frontend, flagship.
+2. **Slice B — Trends momentum pivots (GO3).** Add ids to the momentum endpoints,
+   then link the rows. Small backend + frontend.
+3. Lower: GO4 (cluster card → campaign), GO5 (restore v3 source/legend — confirm
+   intent), GO6 (surface stats / preserve period on nav).
+
+### 8.4 Implementation note — v3 SidePanel rework (Slice A; v3-only per operator)
+
+Scope was narrowed to **v3 only** (operator direction — v2 left untouched). Beyond
+wiring pivots, the operator asked for the panel to show *pertinent + logical*
+info. Reworked `observatory-v3/components/SidePanel.tsx`:
+
+- **Period consistency (GO logic fix).** Section labels were hard-coded `7d`/`30d`
+  while only Top Brands respected the map's period selector. Now labels are
+  **dynamic to the selected period**, and every widget that can respect it does;
+  the structurally-fixed ones state their real window honestly (Providers = "7d
+  trend", Geo = "30d").
+- **Situational summary header** — threats mapped · countries · campaigns
+  (period-aware `useObservatoryStats`) + a **severity split bar** aggregated from
+  the geo nodes. Leads with "what am I looking at."
+- **Top Threat Origins** — countries by threat volume, aggregated from the same
+  geo nodes the globe draws (the "where is this coming from" ranking that was
+  missing). Period-aware.
+- **Denser + clickable** — brands 5→8, providers 2+2→3+3, ops 2→4; the Providers
+  widget now pivots to `/providers?focus=:id` (Brands/Ops/Geo already did).
+
+GO1 (v2 side-panel pivots) intentionally **not done** — operator scoped this to
+v3. v2 remains observe-only by choice.

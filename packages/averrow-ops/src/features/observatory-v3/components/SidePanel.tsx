@@ -1,15 +1,27 @@
 /**
- * Observatory v3 Side Panel — curated intelligence widgets.
+ * Observatory v3 Side Panel — situational intelligence for the current map view.
+ *
+ * Reworked (2026-06) so the panel is pertinent + logical:
+ *   - Everything that can respect the map's period does, and section labels are
+ *     dynamic to the selected period (no more hard-coded "7d" that lies).
+ *   - Leads with a situational SUMMARY (threats mapped · countries · campaigns +
+ *     severity split) so you know what you're looking at.
+ *   - Adds TOP THREAT ORIGINS (where attacks come from) — the key ranking a
+ *     threat map should have, derived from the same geo nodes the globe draws.
+ *   - Every entity row pivots into its detail page.
  *
  * Widgets:
- *   1. Top Targeted Brands (7d)
- *   2. Hosting Providers — Top 2 Worsening + Top 2 Improving (7d)
- *   3. Active Operations — Top 2 (7d)
- *   4. Geopolitical Campaigns (active, last 30d)
+ *   0. Summary (period)            — stats + severity bar
+ *   1. Top Threat Origins (period) — countries by threat volume
+ *   2. Top Targeted Brands (period)
+ *   3. Hosting Providers (7d trend — structurally fixed)
+ *   4. Active Operations
+ *   5. Geopolitical Campaigns (30d)
  */
 
 import { memo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useObservatoryThreats, useObservatoryStats } from '@/hooks/useObservatory';
 import { useBrands } from '@/hooks/useBrands';
 import { useDashboardProviders } from '@/hooks/useProviders';
 import type { DashboardProvider } from '@/hooks/useProviders';
@@ -18,7 +30,18 @@ import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
 import { Badge } from '@/components/ui/Badge';
 
-// ─── Section divider ────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────
+function fmtPeriod(p: string): string {
+  return (p || '7d').toUpperCase();
+}
+
+function countryFlag(code: string | null): string {
+  if (!code || code.length !== 2) return '🏳️';
+  return String.fromCodePoint(
+    ...code.toUpperCase().split('').map(c => 0x1F1E6 + c.charCodeAt(0) - 65),
+  );
+}
+
 function SectionDivider({ label }: { label: string }) {
   return (
     <div className="px-4 py-2 flex items-center gap-2">
@@ -35,14 +58,113 @@ function Divider() {
   return <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />;
 }
 
+// ─── Summary header ─────────────────────────────────────────
+const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }) {
+  const { data: stats } = useObservatoryStats({ period });
+  const { data: nodesData } = useObservatoryThreats({ period });
+  const nodes = nodesData ?? [];
+
+  const sev = nodes.reduce(
+    (a, n) => ({
+      critical: a.critical + (n.critical || 0),
+      high: a.high + (n.high || 0),
+      medium: a.medium + (n.medium || 0),
+      low: a.low + (n.low || 0),
+    }),
+    { critical: 0, high: 0, medium: 0, low: 0 },
+  );
+  const sevTotal = sev.critical + sev.high + sev.medium + sev.low;
+
+  const segs: Array<{ k: keyof typeof sev; color: string }> = [
+    { k: 'critical', color: 'var(--sev-critical)' },
+    { k: 'high', color: 'var(--sev-high)' },
+    { k: 'medium', color: 'var(--sev-medium)' },
+    { k: 'low', color: 'var(--sev-low)' },
+  ];
+
+  const Stat = ({ label, value }: { label: string; value: number | null | undefined }) => (
+    <div>
+      <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+        {value != null ? value.toLocaleString() : '—'}
+      </div>
+      <div className="text-[8px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div className="px-4 pt-3 pb-1">
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <Stat label="Threats" value={stats?.threats_mapped} />
+        <Stat label="Countries" value={stats?.countries} />
+        <Stat label="Campaigns" value={stats?.active_campaigns} />
+      </div>
+      {sevTotal > 0 && (
+        <>
+          <div className="flex h-1.5 rounded-full overflow-hidden mb-1">
+            {segs.map(s => sev[s.k] > 0 && (
+              <div key={s.k} style={{ width: `${(sev[s.k] / sevTotal) * 100}%`, background: s.color }} />
+            ))}
+          </div>
+          <div className="flex items-center gap-3 text-[8px] font-mono" style={{ color: 'var(--text-muted)' }}>
+            {segs.map(s => sev[s.k] > 0 && (
+              <span key={s.k} className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
+                {sev[s.k].toLocaleString()}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+});
+
+// ─── Top Threat Origins ─────────────────────────────────────
+const TopOriginsWidget = memo(function TopOriginsWidget({ period }: { period: string }) {
+  const { data: nodesData } = useObservatoryThreats({ period });
+  const nodes = nodesData ?? [];
+
+  const byCountry = new Map<string, number>();
+  for (const n of nodes) {
+    if (n.country_code) byCountry.set(n.country_code, (byCountry.get(n.country_code) ?? 0) + n.threat_count);
+  }
+  const top = [...byCountry.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const max = top[0]?.[1] ?? 1;
+
+  return (
+    <div className="px-4 pb-2">
+      {top.length === 0 ? (
+        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No geolocated threats in this period</div>
+      ) : (
+        top.map(([code, count]) => (
+          <div key={code} className="flex items-center gap-2.5 py-1">
+            <span className="text-sm shrink-0">{countryFlag(code)}</span>
+            <span className="text-xs font-mono shrink-0 w-6" style={{ color: 'var(--text-secondary)' }}>{code}</span>
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <div className="h-full rounded-full" style={{ width: `${(count / max) * 100}%`, background: 'var(--amber)' }} />
+            </div>
+            <span className="text-xs font-mono font-bold tabular-nums shrink-0" style={{ color: 'var(--text-primary)' }}>
+              {count.toLocaleString()}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+});
+
 // ─── Provider row ───────────────────────────────────────────
 function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worsening' | 'improving' }) {
+  const navigate = useNavigate();
   const trendPct = p.trend_7d_pct;
   const trendColor = direction === 'worsening' ? 'var(--sev-critical)' : 'var(--sev-info)';
   const arrow = direction === 'worsening' ? '↑' : '↓';
 
   return (
-    <div className="flex items-center justify-between py-1.5">
+    <div
+      className="flex items-center justify-between py-1.5 cursor-pointer hover:bg-white/[0.03] rounded -mx-1 px-1 transition-colors"
+      onClick={() => navigate(`/providers?focus=${encodeURIComponent(p.provider_id)}`)}
+    >
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
         {p.asn && (
@@ -66,7 +188,7 @@ function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worse
 // ─── Top Targeted Brands ────────────────────────────────────
 const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: string }) {
   const navigate = useNavigate();
-  const { data: brands = [] } = useBrands({ view: 'top', limit: 5, timeRange: period });
+  const { data: brands = [] } = useBrands({ view: 'top', limit: 8, timeRange: period });
 
   return (
     <div className="px-4 pb-2">
@@ -102,14 +224,13 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
   );
 });
 
-// ─── Providers Worsening / Improving ────────────────────────
+// ─── Providers Worsening / Improving (7d trend) ─────────────
 const ProvidersWidget = memo(function ProvidersWidget() {
-  const { data: worsening = [] } = useDashboardProviders('worst', 2);
-  const { data: improving = [] } = useDashboardProviders('improving', 2);
+  const { data: worsening = [] } = useDashboardProviders('worst', 3);
+  const { data: improving = [] } = useDashboardProviders('improving', 3);
 
   return (
     <div className="px-4 pb-2">
-      {/* Worsening */}
       <div className="mb-2">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-critical)' }} />
@@ -121,7 +242,6 @@ const ProvidersWidget = memo(function ProvidersWidget() {
           worsening.map((p) => <ProviderRow key={p.provider_id} p={p} direction="worsening" />)
         )}
       </div>
-      {/* Improving */}
       <div>
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-info)' }} />
@@ -140,7 +260,7 @@ const ProvidersWidget = memo(function ProvidersWidget() {
 // ─── Active Operations ──────────────────────────────────────
 const OperationsWidget = memo(function OperationsWidget() {
   const navigate = useNavigate();
-  const { data: operations = [] } = useOperations({ status: 'active', limit: 2 });
+  const { data: operations = [] } = useOperations({ status: 'active', limit: 4 });
 
   return (
     <div className="px-4 pb-2">
@@ -179,7 +299,6 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
   const navigate = useNavigate();
   const { data: campaigns = [] } = useGeopoliticalCampaigns('active');
 
-  // Filter to campaigns active in last 30 days
   const recent = campaigns.filter(c => {
     if (!c.start_date) return true;
     const start = new Date(c.start_date).getTime();
@@ -209,7 +328,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
               </div>
               <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 {adversary.length > 0 && <span>{adversary.join(', ')}</span>}
-                {targets.length > 0 && <span> {'\u2192'} {targets.slice(0, 2).join(', ')}</span>}
+                {targets.length > 0 && <span> {'→'} {targets.slice(0, 2).join(', ')}</span>}
               </div>
             </div>
           );
@@ -227,6 +346,7 @@ interface SidePanelProps {
 
 export function SidePanel({ period, visible }: SidePanelProps) {
   if (!visible) return null;
+  const P = fmtPeriod(period);
 
   return (
     <div
@@ -240,11 +360,19 @@ export function SidePanel({ period, visible }: SidePanelProps) {
       }}
     >
       <div className="flex-1 overflow-y-auto">
-        <SectionDivider label={"Top Targeted Brands \u00b7 7d"} />
+        <SectionDivider label={`Overview · ${P}`} />
+        <SummaryHeader period={period} />
+
+        <Divider />
+        <SectionDivider label={`Top Threat Origins · ${P}`} />
+        <TopOriginsWidget period={period} />
+
+        <Divider />
+        <SectionDivider label={`Top Targeted Brands · ${P}`} />
         <TopBrandsWidget period={period} />
 
         <Divider />
-        <SectionDivider label={"Hosting Providers \u00b7 7d"} />
+        <SectionDivider label={"Hosting Providers · 7d trend"} />
         <ProvidersWidget />
 
         <Divider />
@@ -252,7 +380,7 @@ export function SidePanel({ period, visible }: SidePanelProps) {
         <OperationsWidget />
 
         <Divider />
-        <SectionDivider label={"Geopolitical Campaigns \u00b7 30d"} />
+        <SectionDivider label={"Geopolitical Campaigns · 30d"} />
         <GeoCampaignsWidget />
       </div>
     </div>
