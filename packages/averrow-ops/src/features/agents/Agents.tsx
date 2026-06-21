@@ -24,7 +24,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  useAgents, useAgentDetail, useAgentHealth,
+  useAgents, useAgentDetail, useAgentHealth, useAgentTokenUsage,
   useTriggerAgent, useToggleAgent, useResetAgentCircuit,
 } from '@/hooks/useAgents';
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
@@ -669,12 +669,22 @@ function AgentControlBar({ agent }: { agent: Agent }) {
   );
 }
 
+// Compact token formatter: 980 · 12.3k · 1.2M.
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 function AgentDetailPanelV3({ agent }: { agent: Agent }) {
   const { data: detail, isLoading } = useAgentDetail(agent.name);
+  const { data: tokenUsage } = useAgentTokenUsage();
   const recentOutputs = (detail?.outputs ?? []).slice(0, 5);
   const meta = AGENT_METADATA[agent.name as AgentId];
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  // token-usage keys by agent_runs.agent_id (canonical id); match either field.
+  const tu = tokenUsage?.find(t => t.agent_id === agent.agent_id || t.agent_id === agent.name);
 
   return (
     <Card variant="elevated" className="p-5 col-span-full">
@@ -711,6 +721,31 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
                 <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
                 <div className="text-lg font-mono" style={{ color: detail.stats.failures > 0 ? 'var(--sev-high)' : 'var(--text-primary)' }}>
                   {detail.stats.failures}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Token usage (GA2) — the cost driver, surfaced where operators
+              look. All-time per-agent from agent_runs.tokens_used. */}
+          {tu && tu.total_tokens > 0 && (
+            <div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                Token usage · all-time
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
+                  <div className="text-lg font-mono" style={{ color: 'var(--amber)' }}>{fmtTokens(tu.total_tokens)}</div>
+                </div>
+                <div>
+                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
+                  <div className="text-sm font-mono pt-1" style={{ color: 'var(--text-secondary)' }}>
+                    {fmtTokens(tu.total_input_tokens)} · {fmtTokens(tu.total_output_tokens)}
+                  </div>
+                </div>
+                <div>
+                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Runs w/ AI</div>
+                  <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{tu.runs_with_tokens.toLocaleString()}</div>
                 </div>
               </div>
             </div>

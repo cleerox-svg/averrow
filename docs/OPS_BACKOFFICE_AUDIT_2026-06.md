@@ -661,3 +661,19 @@ reset it.
 
 Remaining Batch-3 slices: B (surface cost — GA2), C (discoverability of the
 orphaned Approvals/Architect/Config — GA3), D (operator stalled-runs — GA4).
+
+### 6.5 Implementation note — Token usage on the Agents UI (Slice B, GA2 partial)
+
+A2/A3 said cost should be visible per agent. The `/api/agents/token-usage`
+endpoint (all-time per-agent input/output/total tokens + runs-with-tokens)
+existed but wasn't surfaced on the Agents page. Added a **Token usage** block to
+the agent detail panel (Total · In·Out · Runs-with-AI), via the existing
+`useAgentTokenUsage` hook — pure frontend.
+
+Scope note: **$ cost** isn't shown — the only cost-in-dollars figures
+(`ai_spend_24h`, budget-vs-cap) live behind super_admin/internal endpoints, and
+deriving $ from tokens needs a per-model pricing dimension. Tokens are the cost
+driver and the standard observability metric, so this is the honest staff-level
+view; a true cost-$ panel would need the pricing dimension wired in (follow-up).
+
+Remaining Batch-3: C (discoverability — GA3), D (stalled runs — GA4).
