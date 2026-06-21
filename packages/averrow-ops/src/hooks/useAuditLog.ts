@@ -17,6 +17,7 @@ export interface AuditEntry {
 export interface AuditFilters {
   outcome?: string;
   action?: string;
+  resource_type?: string;
   window?: string;
   search?: string;
   limit?: number;
@@ -30,6 +31,7 @@ export function useAuditLog(filters?: AuditFilters) {
       const params = new URLSearchParams();
       if (filters?.outcome) params.set('outcome', filters.outcome);
       if (filters?.action) params.set('action', filters.action);
+      if (filters?.resource_type) params.set('resource_type', filters.resource_type);
       if (filters?.window) params.set('window', filters.window);
       if (filters?.search) params.set('search', filters.search);
       if (filters?.limit) params.set('limit', String(filters.limit));

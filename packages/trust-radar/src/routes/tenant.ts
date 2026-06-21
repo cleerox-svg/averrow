@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAuth, isAuthContext } from "../middleware/auth";
+import { requireAuth, requireSuperAdmin, isAuthContext } from "../middleware/auth";
 import {
   handleGetOwnOrg, handleListOrgMembers, handleOrgInvite,
   handleRemoveOrgMember, handleUpdateOrgMember,
@@ -291,7 +291,9 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   });
   // Super-admin activate / suspend — eventually called by Stripe webhook too
   router.post("/api/admin/orgs/:orgId/modules", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAuth(request, env);
+    // GM3: super_admin guard at the route layer (handler also checks) — these
+    // are /api/admin/* customer-module mutations, super_admin-only.
+    const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminModuleAction(request, env, request.params["orgId"] ?? "", ctx);
   });
@@ -299,7 +301,7 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // their current plan_id. Useful for enterprise / custom-billed
   // orgs that bypass the Stripe webhook path. Body optional.
   router.post("/api/admin/orgs/:orgId/sync-plan-modules", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireAuth(request, env);
+    const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminSyncPlanModules(request, env, request.params["orgId"] ?? "", ctx);
   });
@@ -307,7 +309,7 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // org with a plan_id and re-runs syncOrgModulesToPlan. Run once
   // after the migration ships; idempotent.
   router.post("/api/admin/orgs/sync-all-plan-modules", async (request: Request, env: Env) => {
-    const ctx = await requireAuth(request, env);
+    const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminBulkSyncPlanModules(request, env, ctx);
   });

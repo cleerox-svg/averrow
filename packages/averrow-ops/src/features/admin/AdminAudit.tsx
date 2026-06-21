@@ -1,6 +1,26 @@
 import { useState, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuditLog } from '@/hooks/useAuditLog';
 import type { AuditEntry } from '@/hooks/useAuditLog';
+
+// Map an audit resource to a destination so the compliance log can pivot to
+// what actually changed (GM1). Only returns a link for types with a resolving
+// route; unknown types stay plain text.
+function resourceHref(type: string | null, id: string | null): string | null {
+  if (!type || !id) return null;
+  switch (type) {
+    case 'brand':
+    case 'brand_profile': return `/brands/${id}`;
+    case 'incident':      return `/admin/incidents/${id}`;
+    case 'campaign':      return `/campaigns/${id}`;
+    case 'threat_actor':  return `/threat-actors?focus=${encodeURIComponent(id)}`;
+    case 'provider':
+    case 'hosting_provider': return `/providers?focus=${encodeURIComponent(id)}`;
+    case 'organization':
+    case 'org':           return '/admin/customers';
+    default:              return null;
+  }
+}
 import { Button, Input } from '@/design-system/components';
 import { formatDate } from '@/lib/time';
 import { api } from '@/lib/api';
@@ -186,6 +206,7 @@ export function AdminAudit() {
   // Filter state
   const [outcomeFilter, setOutcomeFilter] = useState('all');
   const [actionFilter, setActionFilter] = useState('all');
+  const [resourceTypeFilter, setResourceTypeFilter] = useState('all');
   const [windowFilter, setWindowFilter] = useState('7d');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -206,6 +227,7 @@ export function AdminAudit() {
   const { data, isLoading } = useAuditLog({
     outcome: outcomeFilter !== 'all' ? outcomeFilter : undefined,
     action: actionFilter !== 'all' ? actionFilter : undefined,
+    resource_type: resourceTypeFilter !== 'all' ? resourceTypeFilter : undefined,
     window: windowFilter,
     search: debouncedSearch || undefined,
     limit: PAGE_SIZE,
@@ -229,6 +251,11 @@ export function AdminAudit() {
   const failureDeniedCount = useMemo(() => {
     return entries.filter(e => e.outcome === 'failure' || e.outcome === 'denied').length;
   }, [entries]);
+
+  const resourceTypeOptions = useMemo(
+    () => Array.from(new Set(entries.map(e => e.resource_type).filter((t): t is string => !!t))).sort(),
+    [entries],
+  );
 
   const uniqueActions = useMemo(() => {
     return new Set(entries.map(e => e.action)).size;
@@ -342,6 +369,28 @@ export function AdminAudit() {
                 <option key={a} value={a}>{a}</option>
               ))}
             </select>
+
+            {/* Resource-type filter (GM1) — the handler supported the param;
+                it just wasn't exposed. Options derived from the loaded page. */}
+            {resourceTypeOptions.length > 0 && (
+              <select
+                value={resourceTypeFilter}
+                onChange={(e) => { setResourceTypeFilter(e.target.value); setPage(1); }}
+                className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-base)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  transition: 'var(--transition-fast)',
+                }}
+              >
+                <option value="all">All Resources</option>
+                {resourceTypeOptions.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            )}
 
             <span className="w-px h-5 bg-white/10 mx-1 flex-shrink-0" />
 
@@ -502,10 +551,23 @@ function AuditRow({ entry, expanded, onToggle }: {
           {entry.ip_address ? truncateMiddle(entry.ip_address, 15) : '—'}
         </td>
 
-        {/* Resource */}
+        {/* Resource — clickable when it maps to an entity route (GM1). */}
         <td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {entry.resource_type
-            ? `${entry.resource_type}${entry.resource_id ? `: ${truncateMiddle(entry.resource_id, 12)}` : ''}`
+            ? (() => {
+                const href = resourceHref(entry.resource_type, entry.resource_id);
+                const label = `${entry.resource_type}${entry.resource_id ? `: ${truncateMiddle(entry.resource_id, 12)}` : ''}`;
+                return href ? (
+                  <Link
+                    to={href}
+                    onClick={(e) => e.stopPropagation()}
+                    className="hover:underline"
+                    style={{ color: 'var(--blue)' }}
+                  >
+                    {label} ↗
+                  </Link>
+                ) : label;
+              })()
             : '—'}
         </td>
 

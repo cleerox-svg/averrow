@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import { api } from '@/lib/api';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
@@ -161,7 +162,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard, exact: true },
         { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
         ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),
-        ...(isSuperAdmin ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
+        ...(roleHasPermission(user?.role, 'view_billing') ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
         { label: 'Audit Log',    path: '/admin/audit',       icon: ClipboardList },
         { label: 'Attribution Backlog', path: '/admin/agents/attribution-backlog', icon: Target },
         // NX-push-uxr: Push Config removed from the primary nav — it's a

@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Badge } from '@/components/ui/Badge';
@@ -23,9 +24,14 @@ import {
 } from '@/hooks/useAdminPricing';
 
 export function PricingConfig() {
-  const { isSuperAdmin } = useAuth();
-  if (!isSuperAdmin) {
-    return <EmptyState message="Access Denied" description="Only super admins can edit pricing config." />;
+  // GM2: gate on the documented permission model (view_billing to read,
+  // edit_pricing to change) instead of super_admin — the endpoints already
+  // honor these flags, so sales/billing can use the page they're meant to.
+  const { user } = useAuth();
+  const canView = roleHasPermission(user?.role, 'view_billing');
+  const canEdit = roleHasPermission(user?.role, 'edit_pricing');
+  if (!canView) {
+    return <EmptyState message="Access Denied" description="You don't have billing access to pricing config." />;
   }
 
   return (
@@ -38,15 +44,15 @@ export function PricingConfig() {
         </p>
       </header>
 
-      <PlansSection />
-      <ModulesSection />
+      <PlansSection canEdit={canEdit} />
+      <ModulesSection canEdit={canEdit} />
     </div>
   );
 }
 
 // ─── Plans ───────────────────────────────────────────────────────
 
-function PlansSection() {
+function PlansSection({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading, error } = usePricingPlans();
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading plans…</div>;
   if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load plans: {error.message}</p></Card>;
@@ -56,13 +62,13 @@ function PlansSection() {
     <section>
       <SectionLabel className="mb-3">Tiers</SectionLabel>
       <div className="space-y-3">
-        {data.plans.map((p) => <PlanRow key={p.id} plan={p} />)}
+        {data.plans.map((p) => <PlanRow key={p.id} plan={p} canEdit={canEdit} />)}
       </div>
     </section>
   );
 }
 
-function PlanRow({ plan }: { plan: PricingPlan }) {
+function PlanRow({ plan, canEdit }: { plan: PricingPlan; canEdit: boolean }) {
   const update = useUpdatePricingPlan();
   const [editing, setEditing] = useState(false);
   const [priceDollars, setPriceDollars]     = useState((plan.monthly_price_cents / 100).toString());
@@ -122,7 +128,7 @@ function PlanRow({ plan }: { plan: PricingPlan }) {
               {formatCents(plan.monthly_price_cents)}
             </div>
             <div className="text-[10px] uppercase tracking-widest font-mono text-[color:var(--text-tertiary)]">/ month</div>
-            <Button variant="secondary" size="sm" onClick={() => setEditing(true)} className="mt-2">Edit</Button>
+            {canEdit && <Button variant="secondary" size="sm" onClick={() => setEditing(true)} className="mt-2">Edit</Button>}
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
@@ -194,7 +200,7 @@ function PlanRow({ plan }: { plan: PricingPlan }) {
 
 // ─── Modules ─────────────────────────────────────────────────────
 
-function ModulesSection() {
+function ModulesSection({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading, error } = useModulePrices();
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading module prices…</div>;
   if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load module prices: {error.message}</p></Card>;
@@ -204,13 +210,13 @@ function ModulesSection() {
     <section>
       <SectionLabel className="mb-3">Modules (à-la-carte)</SectionLabel>
       <div className="space-y-2">
-        {data.modules.map((m) => <ModuleRow key={m.module_key} module={m} />)}
+        {data.modules.map((m) => <ModuleRow key={m.module_key} module={m} canEdit={canEdit} />)}
       </div>
     </section>
   );
 }
 
-function ModuleRow({ module: m }: { module: ModulePrice }) {
+function ModuleRow({ module: m, canEdit }: { module: ModulePrice; canEdit: boolean }) {
   const update = useUpdateModulePrice();
   const [editing, setEditing] = useState(false);
   const [priceDollars,  setPriceDollars]  = useState((m.monthly_price_cents / 100).toString());
@@ -262,7 +268,7 @@ function ModuleRow({ module: m }: { module: ModulePrice }) {
             <div className="text-base font-bold tabular-nums text-[color:var(--text-primary)]">
               {formatCents(m.monthly_price_cents)}
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setEditing(true)} className="mt-1">Edit</Button>
+            {canEdit && <Button variant="secondary" size="sm" onClick={() => setEditing(true)} className="mt-1">Edit</Button>}
           </div>
         </div>
       </Card>
