@@ -479,3 +479,39 @@ Two of the recon's alert dead-ends, fixed pure-frontend:
 GQ4's queue-level summary ("N auto-dismissed by rule vs AI") and GQ6's
 specific-threat link remain open (the latter needs a threat-focus/search-by-id,
 same constraint as Batch 1).
+
+### 5.6 Implementation note — Saved views on the Alerts queue (Slice C, GQ3 shipped)
+
+W6 (saved/smart views) was absent — every session rebuilt filters from scratch.
+Added a localStorage-backed **Views** bar on the Alerts queue:
+
+- A generic `useSavedViews<T>(key)` hook (`hooks/useSavedViews.ts`) following the
+  codebase localStorage convention (SSR guard, try/catch, cross-tab sync).
+- A view captures the **full operator filter state** — severity, status, type,
+  search, AI verdict, and SLA.
+- **Built-in presets** (Breaching SLA · New·Critical · AI: Threat) cover common
+  triage entry points; **user views** persist per-device and are deletable.
+- The active view highlights when the current filters match it; "+ Save current"
+  is disabled until at least one filter is set.
+
+Reusable on the Threats queue later via the same hook. Remaining Batch-2:
+D/E (assignment, operator threat-triage) — schema/intent, pending confirmation.
+
+### 5.7 Implementation note — Operator threat-triage (Slice E, GQ2 shipped)
+
+Intent check first (the recon flagged threats as "machine-managed"): the
+`PATCH /api/threats/:id` handler exists, is **requireAdmin**-gated, accepts
+`status`, and manual status writes already happen elsewhere
+(`handlers/brands.ts` bulk-remediate, `agents/curator.ts` false-positive). So
+operator triage is **consistent with platform intent** — the catalog just never
+exposed it in the UI.
+
+**Shipped:** admin-gated triage buttons in the Threats detail slot
+(`renderExtraDetail`) — **Mark remediated · False positive · Re-open** — reusing
+the existing endpoint, no shared-table edit. Gated to admins because the
+endpoint is `requireAdmin` (analysts would 403; relaxing that is a separate
+permission decision). The list query carries a 5-min server cache, so the
+mutation does an **optimistic in-place status update** and reconciles on settle.
+
+Batch-2 remaining: D — assignment/ownership (GQ5, needs an additive
+`assigned_to` column).

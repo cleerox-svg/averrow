@@ -9,7 +9,8 @@ import {
   useAlerts, useAlertStats, useUpdateAlert, useBulkAcknowledge, useBulkTakedown,
   type Alert, type AlertFilters,
 } from '@/hooks/useAlerts';
-import { Bell } from 'lucide-react';
+import { useSavedViews, type SavedView } from '@/hooks/useSavedViews';
+import { Bell, Star, X } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -154,6 +155,49 @@ const AI_VERDICT_STYLE: Record<AiVerdict, { label: string; color: string; bg: st
   needs_human:   { label: 'AI: Review',      color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
   likely_safe:   { label: 'AI: Likely Safe', color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
 };
+
+// ── Saved views ─────────────────────────────────────────────────
+//
+// A view captures the full operator-facing filter state so an analyst can
+// pin a combination and return to it (audit Batch 2, W6). Built-in presets
+// cover the common triage entry points; user views persist to localStorage.
+interface AlertViewState {
+  severity?: string;
+  status?: string;
+  alert_type?: string;
+  search?: string;
+  ai?: 'all' | AiVerdict | 'unjudged';
+  sla?: 'all' | 'atrisk' | 'breached';
+}
+
+const PRESET_VIEWS: SavedView<AlertViewState>[] = [
+  { id: 'preset:breaching',    name: 'Breaching SLA', filters: { sla: 'breached' } },
+  { id: 'preset:new-critical', name: 'New · Critical', filters: { status: 'new', severity: 'critical' } },
+  { id: 'preset:ai-threat',    name: 'AI: Threat',     filters: { ai: 'active_threat' } },
+];
+
+function normView(v: AlertViewState): AlertViewState {
+  const clean = (s?: string) => (s && s !== 'all' && s !== '' ? s : undefined);
+  return {
+    severity: clean(v.severity),
+    status: clean(v.status),
+    alert_type: clean(v.alert_type),
+    search: clean(v.search),
+    ai: v.ai && v.ai !== 'all' ? v.ai : undefined,
+    sla: v.sla && v.sla !== 'all' ? v.sla : undefined,
+  };
+}
+
+function sameView(a: AlertViewState, b: AlertViewState): boolean {
+  const x = normView(a), y = normView(b);
+  return x.severity === y.severity && x.status === y.status && x.alert_type === y.alert_type
+    && x.search === y.search && x.ai === y.ai && x.sla === y.sla;
+}
+
+function viewIsEmpty(v: AlertViewState): boolean {
+  const n = normView(v);
+  return !n.severity && !n.status && !n.alert_type && !n.search && !n.ai && !n.sla;
+}
 
 // ── Filter Pills ────────────────────────────────────────────────
 
@@ -757,6 +801,29 @@ export function Alerts() {
     setSelectedAlert(null);
   };
 
+  // Saved views (W6) — capture/restore the full operator filter state.
+  const { views, saveView, removeView } = useSavedViews<AlertViewState>('alerts.saved_views');
+  const currentView: AlertViewState = {
+    severity: filters.severity,
+    status: filters.status,
+    alert_type: filters.alert_type,
+    search: search || undefined,
+    ai: aiVerdictFilter,
+    sla: slaFilter,
+  };
+  const applyView = (fv: AlertViewState) => {
+    setFilters(prev => ({ ...prev, severity: fv.severity, status: fv.status, alert_type: fv.alert_type }));
+    setSearch(fv.search ?? '');
+    setAiVerdictFilter(fv.ai ?? 'all');
+    setSlaFilter(fv.sla ?? 'all');
+    setSelectedAlert(null);
+  };
+  const onSaveView = () => {
+    const name = window.prompt('Name this view (e.g. "New app-store impers")');
+    if (name?.trim()) saveView(name.trim(), normView(currentView));
+  };
+  const allViews = [...PRESET_VIEWS, ...views];
+
   return (
     <div className="space-y-5">
       <PageHeader title="Signals" subtitle="Brand signals across all monitored brands — SOC triage view" />
@@ -809,6 +876,48 @@ export function Alerts() {
           </button>
         </Card>
       )}
+
+      {/* Saved views (W6) — presets + user-pinned filter sets */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-white/55 mr-0.5">
+          <Star size={11} /> Views
+        </span>
+        {allViews.map(v => {
+          const active = sameView(currentView, v.filters);
+          const isPreset = v.id.startsWith('preset:');
+          return (
+            <span
+              key={v.id}
+              className={cn(
+                'group inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
+                active
+                  ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
+                  : 'bg-white/[0.03] text-[var(--text-tertiary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-secondary)]',
+              )}
+              onClick={() => applyView(v.filters)}
+            >
+              {v.name}
+              {!isPreset && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); removeView(v.id); }}
+                  className="opacity-40 hover:opacity-100 transition-opacity"
+                  title="Delete view"
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </span>
+          );
+        })}
+        <button
+          onClick={onSaveView}
+          disabled={viewIsEmpty(currentView)}
+          className="font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-white/25 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          title={viewIsEmpty(currentView) ? 'Apply some filters first' : 'Save current filters as a view'}
+        >
+          + Save current
+        </button>
+      </div>
 
       <FilterBar
         search={{ value: search, onChange: setSearch, placeholder: 'Search alerts...' }}

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '@/lib/auth';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -60,6 +61,36 @@ function sinceLabelToIso(label: string): string | undefined {
 
 export function Threats() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // PATCH /api/threats/:id is requireAdmin-gated, so only surface the triage
+  // control to admins — analysts would hit a 403. (Relaxing the endpoint to
+  // requireStaff is a separate permission decision.)
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const qc = useQueryClient();
+  const updateThreat = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      api.patch(`/api/threats/${id}`, { status }),
+    // Optimistic — the list query carries a 5-min server KV cache, so a plain
+    // refetch could show stale status for minutes. Patch the row in-place, then
+    // reconcile on settle.
+    onMutate: async ({ id, status }) => {
+      await qc.cancelQueries({ queryKey: ['threats'] });
+      const prev = qc.getQueriesData<{ threats: ThreatRow[]; total: number }>({ queryKey: ['threats'] });
+      qc.setQueriesData<{ threats: ThreatRow[]; total: number }>({ queryKey: ['threats'] }, (old) =>
+        old?.threats
+          ? { ...old, threats: old.threats.map(t => (t.id === id ? { ...t, status } : t)) }
+          : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['threats'] });
+      qc.invalidateQueries({ queryKey: ['threat-aggregate'] });
+    },
+  });
   const [searchParams] = useSearchParams();
   const initialBrandId = searchParams.get('brand_id') ?? '';
   // `q` lets pivots deep-link a specific threat by its domain/URL/IP — e.g.
@@ -153,12 +184,44 @@ export function Threats() {
         sortKeys={{ type: 'type', target: 'target', brand: 'brand', severity: 'severity', status: 'status', last_seen: 'last_seen' }}
         renderExtraDetail={(r) => {
           const brandId = r.target_brand_id; const actorId = r.actor_id;
-          return (brandId || actorId) ? (
-            <div style={{ marginTop: 14, display: 'flex', gap: 16 }}>
+          const status = (r.status ?? '').toLowerCase();
+          // Operator triage (admin-gated). Statuses mirror existing writers:
+          // remediated (brand bulk-remediate), false_positive (curator), active.
+          const transitions = isAdmin
+            ? ([
+                status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated',     color: 'var(--green)' },
+                status !== 'false_positive' && { label: 'False positive',  to: 'false_positive', color: 'var(--text-tertiary)' },
+                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--amber)' },
+              ].filter(Boolean) as Array<{ label: string; to: string; color: string }>)
+            : [];
+          if (!brandId && !actorId && transitions.length === 0) return null;
+          return (
+            <div style={{ marginTop: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
               {brandId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
               {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/threat-actors/${actorId}`)}>↗ Threat actor</button>}
+              {transitions.length > 0 && (
+                <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Triage:</span>
+                  {transitions.map(t => (
+                    <button
+                      key={t.to}
+                      onClick={() => updateThreat.mutate({ id: r.id, status: t.to })}
+                      disabled={updateThreat.isPending}
+                      style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
+                        textTransform: 'uppercase', letterSpacing: '0.06em',
+                        padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                        border: '1px solid var(--border-base)', background: 'transparent',
+                        color: t.color, opacity: updateThreat.isPending ? 0.5 : 1,
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </span>
+              )}
             </div>
-          ) : null;
+          );
         }}
       />
     </div>
