@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -411,7 +412,12 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
               <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[color:var(--text-primary)]">{b.brand_name}</span>
+                    <Link
+                      to={`/brands/${b.brand_id}`}
+                      className="text-sm font-medium text-[color:var(--text-primary)] hover:text-[var(--amber)] transition-colors"
+                    >
+                      {b.brand_name} ↗
+                    </Link>
                     {b.is_primary === 1 && <Badge variant="info">Primary</Badge>}
                   </div>
                   <div className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-0.5">{b.canonical_domain}</div>

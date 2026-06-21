@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAdminTakedowns, useUpdateTakedown } from '@/hooks/useTakedowns';
 import type { Takedown } from '@/hooks/useTakedowns';
 import { useToast } from '@/components/ui/Toast';
@@ -205,14 +206,21 @@ function TakedownCard({
 
       {/* Card body: brand + target + description + priority */}
       <div style={{ padding: '12px 14px' }}>
-        {/* Brand name */}
+        {/* Brand name — pivots to the brand (GM4) */}
         {takedown.brand_name && (
           <div style={{
             fontSize: 10, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)', marginBottom: 4,
             letterSpacing: '0.10em', textTransform: 'uppercase',
           }}>
-            {takedown.brand_name}
+            <Link
+              to={`/brands/${takedown.brand_id}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: 'var(--text-muted)' }}
+              className="hover:text-[var(--amber)] transition-colors"
+            >
+              {takedown.brand_name} ↗
+            </Link>
           </div>
         )}
 
