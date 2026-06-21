@@ -553,3 +553,50 @@ additions).
   Signals stat grid: "Auto-triage cleared N of M dismissed signals (X%)".
 
 With this, **all of Batch 2's GQ1–GQ7 are addressed.**
+
+---
+
+## 6. Batch 3 — Automation (Agents · Approvals · Architect)
+
+How operators observe and control the AI agent mesh. Status: 🔄 in progress.
+
+### 6.1 Competitor benchmark — agent observability + orchestration control
+
+Reference set: **LangSmith**, **Langfuse**, **AgentOps**, **Arize/Phoenix**,
+**Braintrust**, **Datadog LLM Observability**, plus multi-agent orchestration /
+HITL guidance. Theme: a multi-agent system needs a **control plane** — not just
+a status list — that makes each agent observable (traces, cost, errors),
+controllable (pause/trigger/breaker), and gated where risk is high (human-in-the-
+loop approval).
+
+| # | Expected capability | Source / precedent |
+|---|---|---|
+| A1 | **Per-agent health dashboard** — run counts, success/failure + error rate, last run, avg/p95 latency, per-agent token usage. | Langfuse/LangSmith dashboards (uptime·latency·error·cost) |
+| A2 | **Run history + traces** — drill into a run: input → LLM calls → tool calls → output, with error messages; session/replay view. | LangSmith node-by-node traces, AgentOps session replay |
+| A3 | **Cost per agent / per successful task** — token × model pricing, cost visibility per agent and per outcome. | "cost per successful task" (DEV/Braintrust) |
+| A4 | **Health + stalled/anomaly detection** — stuck runs, agent-specific anomalies, alerting on failure spikes. | AgentOps anomaly detection; dashboards surface stalled |
+| A5 | **Lifecycle control plane** — pause/resume, manual trigger, retry/terminate from the UI (not just an internal endpoint). | orchestration lifecycle (start/fail/retry/terminate) |
+| A6 | **Circuit-breaker visibility + control** — breaker state (open/closed), failure threshold, toggle. | circuit-breaker pattern (N fails / M min) |
+| A7 | **Human-in-the-loop approval** — approve/reject/request-changes checkpoints, **discoverable**, triggered by confidence/risk. | HITL layered model (in-loop / on-loop) |
+| A8 | **Orchestration/lane visibility** — which agent dispatches which, dispatch source (cron vs event), event lanes. | multi-agent routing/context-flow |
+
+> Platform context to score against: Trust-Radar already has deep telemetry —
+> `agent_runs`, `agent_events`, `agent_outputs`, `agent_configs.enabled`
+> (circuit-breaker), and `/api/internal/platform-diagnostics` (per-agent
+> total_runs/success/failed/running/last_error/avg_duration_ms/dispatch_source,
+> `stalled[]`, `ai_spend_24h`). The audit question is **how much of this reaches
+> the operator-facing Agents UI vs. lives only in the internal diagnostics
+> endpoint** — and whether the breaker/manual-trigger are UI-controllable
+> (A5/A6) or internal-only. Also: Approvals/Review/Architect are **orphaned**
+> (not in nav — Batch-1 F-C), a direct A7 discoverability hit.
+
+### 6.2 Sources
+
+- [Latitude — best agent observability tools 2026](https://latitude.so/blog/best-ai-agent-observability-tools-2026-comparison) · [Confident AI — best AI agent observability 2026](https://www.confident-ai.com/knowledge-base/compare/best-ai-agent-observability-tools-2026) · [aimultiple — agentic monitoring](https://aimultiple.com/agentic-monitoring)
+- [LangSmith observability](https://www.langchain.com/langsmith/observability) · [Langfuse — agent observability](https://langfuse.com/blog/2024-07-ai-agent-observability-with-langfuse) · [Arize — best observability for autonomous agents 2026](https://arize.com/blog/best-ai-observability-tools-for-autonomous-agents-in-2026/)
+- [DEV — what is agent observability (traces, loop rate, cost per successful task)](https://dev.to/mostafa_ibrahim_774fe947b/what-is-agent-observability-traces-loop-rate-tool-errors-and-cost-per-successful-task-bl5) · [groundcover — AI agent observability guide](https://www.groundcover.com/learn/observability/ai-agent-observability)
+- [Elementum — human-in-the-loop agentic AI](https://www.elementum.ai/blog/human-in-the-loop-agentic-ai) · [MindStudio — agent orchestration](https://www.mindstudio.ai/blog/agent-orchestration-biggest-unsolved-problem-ai-stack)
+
+### 6.3 Inventory & gap analysis
+
+_Pending — populated from the in-flight automation recon._
