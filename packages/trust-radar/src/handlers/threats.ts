@@ -69,8 +69,11 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
       params.push(brandId);
     }
     if (search) {
-      conditions.push("(t.malicious_domain LIKE ? OR t.malicious_url LIKE ? OR t.ip_address LIKE ? OR t.ioc_value LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      // Exact id match in the OR so a pivot can deep-link a specific threat
+      // (e.g. Alert→source threat) via ?q=<threat_id>; the LIKEs keep the
+      // indicator search (domain/url/ip/ioc) intact.
+      conditions.push("(t.malicious_domain LIKE ? OR t.malicious_url LIKE ? OR t.ip_address LIKE ? OR t.ioc_value LIKE ? OR t.id = ?)");
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, search);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

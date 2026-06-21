@@ -138,7 +138,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         { label: 'Providers',    path: '/providers',     icon: Server },
         { label: 'Campaigns',    path: '/campaigns',     icon: Activity },
         { label: 'Threat Actors', path: '/threat-actors', icon: Crosshair },
-        { label: 'Intelligence', path: '/trends',        icon: TrendingUp },
+        { label: 'Trends',       path: '/trends',        icon: TrendingUp },
       ],
     },
     {

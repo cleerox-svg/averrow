@@ -537,3 +537,19 @@ the **ops** Signals queue to parity:
 Intelligence-label carryover). Open follow-ups noted earlier: specific
 alert→threat link + queue-level auto-triage summary (both need small backend
 additions).
+
+### 5.9 Carryover cleanups (GQ7 + the GQ4/GQ6 follow-ups closed)
+
+- **GQ7 / F-B — `Intelligence` label/route mismatch.** The nav item "Intelligence"
+  pointed to `/trends` and sat inside the section *also* named INTELLIGENCE, while
+  the page's own `<h1>` said "Intelligence". Renamed nav label **and** page title
+  to **Trends** (route-consistent; `/intelligence` alias kept for bookmarks).
+- **GQ6 — specific alert→threat link.** Extended `/api/threats` so `?q=` matches an
+  exact threat `id` (in addition to the indicator LIKEs), then added a **"View
+  source threat →"** link in the alert detail when `source_type='threat'`. The
+  earlier "no single-threat route" limitation is resolved via the filtered table.
+- **GQ4 — queue-level auto-triage summary.** Added `auto_dismissed` to
+  `/api/alerts/stats` (false_positive rows stamped `auto…`) and a caption under the
+  Signals stat grid: "Auto-triage cleared N of M dismissed signals (X%)".
+
+With this, **all of Batch 2's GQ1–GQ7 are addressed.**

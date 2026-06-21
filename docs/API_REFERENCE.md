@@ -163,7 +163,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/threats` | Staff | List threats (filterable) |
+| GET | `/api/threats` | Staff | List threats (filterable). `q` matches indicator (domain/url/ip/ioc, LIKE) **or** exact threat `id` — lets pivots deep-link a specific threat via `?q=<id>`. |
 | GET | `/api/threats/stats` | Staff | Threat statistics |
 | GET | `/api/threats/recent` | Staff | Recent threats |
 | GET | `/api/threats/correlations` | Staff | Threat correlations |
@@ -416,7 +416,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/alerts` | Staff | List alerts |
-| GET | `/api/alerts/stats` | Staff | Alert statistics |
+| GET | `/api/alerts/stats` | Staff | Alert statistics. Includes `auto_dismissed` (false_positive rows whose `resolution_notes` start with `auto`) for triage-transparency. |
 | GET | `/api/alerts/triage-summary` | Staff | Auto-triage rollup (dismissed/kept counts) for the alerts surface |
 | GET | `/api/alerts/:id` | Staff | Get alert detail |
 | PATCH | `/api/alerts/:id` | Staff | Triage a signal. Body: `status` and/or `assigned_to` (a users.id, or `null` to unassign — stamps `assigned_at`), `notes`. At least one of status/assigned_to required. List returns `assigned_to_name`/`assigned_to_email`. |

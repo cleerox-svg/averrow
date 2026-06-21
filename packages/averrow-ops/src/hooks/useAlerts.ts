@@ -41,6 +41,7 @@ export interface AlertStats {
   acknowledged: number;
   resolved: number;
   dismissed: number;
+  auto_dismissed: number;
   critical: number;
   high: number;
   medium: number;

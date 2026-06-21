@@ -257,6 +257,7 @@ export async function handleAlertStats(request: Request, env: Env, userId: strin
         SUM(CASE WHEN status='acknowledged' THEN 1 ELSE 0 END) as acknowledged,
         SUM(CASE WHEN status='resolved' THEN 1 ELSE 0 END) as resolved,
         SUM(CASE WHEN status='false_positive' THEN 1 ELSE 0 END) as dismissed,
+        SUM(CASE WHEN status='false_positive' AND resolution_notes LIKE 'auto%' THEN 1 ELSE 0 END) as auto_dismissed,
         SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) as critical,
         SUM(CASE WHEN severity='high' THEN 1 ELSE 0 END) as high,
         SUM(CASE WHEN severity='medium' THEN 1 ELSE 0 END) as medium,

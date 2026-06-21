@@ -570,13 +570,24 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           </Link>
 
           {/* Outbound pivots — the detail used to be a dead-end (no links
-              out). Brand detail + this brand's threat slice for context. */}
-          <Link
-            to={`/threats?brand_id=${encodeURIComponent(alert.brand_id)}`}
-            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
-          >
-            View brand's threats →
-          </Link>
+              out). Brand detail + this brand's threat slice for context, and
+              the exact source threat when this alert came from one. */}
+          <div className="flex flex-col gap-1">
+            {alert.source_type === 'threat' && alert.source_id && (
+              <Link
+                to={`/threats?q=${encodeURIComponent(alert.source_id)}`}
+                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
+              >
+                View source threat →
+              </Link>
+            )}
+            <Link
+              to={`/threats?brand_id=${encodeURIComponent(alert.brand_id)}`}
+              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
+            >
+              View brand's threats →
+            </Link>
+          </div>
 
           <div>
             <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Platform</div>
@@ -906,6 +917,15 @@ export function Alerts() {
           accentColor="var(--green)"
         />
       </StatGrid>
+
+      {/* Auto-triage transparency (W5/W7) — how much noise rule + AI triage
+          has cleared, so the auto-dismissals aren't a black box. */}
+      {stats && stats.dismissed > 0 && (
+        <div className="font-mono text-[10px] text-[var(--text-muted)] -mt-2">
+          Auto-triage cleared {stats.auto_dismissed} of {stats.dismissed} dismissed signals
+          {stats.dismissed > 0 ? ` (${Math.round((stats.auto_dismissed / stats.dismissed) * 100)}%)` : ''} — rule + AI judge
+        </div>
+      )}
 
       {stats && stats.new_count > 0 && (
         <Card variant="critical" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
