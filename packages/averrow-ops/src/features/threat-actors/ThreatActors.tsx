@@ -1,19 +1,16 @@
-import { Fragment, useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search } from 'lucide-react';
 import { ThreatActorDetail } from './ThreatActorDetail';
 import {
   Badge,
   Card,
-  FilterBar,
   PageHeader,
   SaasTechniqueBadge,
   StatCard,
   StatGrid,
 } from '@/components/ui';
+import { EntityListShell, type EntityListSort } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { useThreatActors, useThreatActorStats } from '@/hooks/useThreatActors';
 import type { ThreatActor } from '@/hooks/useThreatActors';
 import { useCardStyle } from '@/hooks/useCardStyle';
@@ -523,6 +520,13 @@ function ActorCardClassic({ actor, onClick }: { actor: ThreatActor; onClick: () 
 
 type CountryFilter = 'all' | 'IR' | 'RU' | 'CN' | 'KP';
 
+const ACTOR_SORTS: EntityListSort<ThreatActor>[] = [
+  { id: 'recent7d', label: 'RECENT 7D', compare: (a, b) => (b.attribution_count_7d ?? 0) - (a.attribution_count_7d ?? 0) },
+  { id: 'total',    label: 'ATTRIBUTIONS', compare: (a, b) => (b.attribution_count_total ?? 0) - (a.attribution_count_total ?? 0) },
+  { id: 'infra',    label: 'INFRA', compare: (a, b) => (b.infra_count ?? 0) - (a.infra_count ?? 0) },
+  { id: 'name',     label: 'NAME', compare: (a, b) => a.name.localeCompare(b.name) },
+];
+
 export function ThreatActors() {
   const [searchParams, setSearchParams] = useSearchParams();
   const focusId = searchParams.get('focus');
@@ -551,13 +555,24 @@ export function ThreatActors() {
     setSearchParams({}, { replace: true });
   }, [focusId, setSearchParams]);
 
+  // The shell may need a render to page to the focused actor, so poll a few
+  // frames for the expanded card before scrolling (then give up).
   useEffect(() => {
     if (!pendingScrollId) return;
-    const el = document.getElementById(`actor-detail-${pendingScrollId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setPendingScrollId(null);
-    }
+    let raf = 0;
+    let tries = 0;
+    const tick = () => {
+      const el = document.getElementById(`actor-detail-${pendingScrollId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setPendingScrollId(null);
+        return;
+      }
+      if (tries++ < 60) raf = requestAnimationFrame(tick);
+      else setPendingScrollId(null);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [pendingScrollId, actors]);
 
   // Fallback: compute attribution groups from actors list if stats.by_attribution is empty
@@ -679,54 +694,52 @@ export function ThreatActors() {
         </StatCard>
       </StatGrid>
 
-      {/* Filter bar */}
-      <FilterBar
+      {/* List — shared shell owns search / sort / pagination; country pills
+          (server-side refetch) pass through; cards + inline detail stay bespoke. */}
+      <EntityListShell<ThreatActor>
+        items={actors}
+        isLoading={isLoading}
+        getKey={(a) => a.id}
         filters={filterOptions}
-        active={filter}
-        onChange={(v) => { setFilter(v as CountryFilter); setBroaden(false); }}
+        activeFilter={filter}
+        onFilterChange={(v) => { setFilter(v as CountryFilter); setBroaden(false); }}
+        search={{
+          placeholder: 'Search actors, aliases, attribution…',
+          fields: (a) => [a.name, a.attribution, a.country, ...parseJsonArray(a.aliases)],
+        }}
+        sorts={ACTOR_SORTS}
+        defaultSortId="recent7d"
+        pageSize={12}
+        focusKey={pendingScrollId}
+        gridStyle={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 480px), 1fr))',
+          gap: 12,
+        }}
+        skeletonCount={6}
+        skeletonClassName="h-40 rounded-xl"
+        empty={{
+          title: `No ${filter !== 'all' ? filter + ' ' : ''}threat actors found`,
+          subtitle: 'Try a different country filter or check back as attribution data updates',
+          action: filter !== 'all'
+            ? { label: 'Show all actors', onClick: () => { setFilter('all'); setBroaden(false); } }
+            : undefined,
+        }}
+        renderItem={(actor) => (
+          <>
+            <ActorCard
+              actor={actor}
+              isSelected={selectedActorId === actor.id}
+              onClick={() => setSelectedActorId(prev => prev === actor.id ? null : actor.id)}
+            />
+            {selectedActorId === actor.id && (
+              <div style={{ gridColumn: '1 / -1' }} id={`actor-detail-${actor.id}`}>
+                <ThreatActorDetail actorId={actor.id} inline />
+              </div>
+            )}
+          </>
+        )}
       />
-
-      {/* Actor List — grid collapses to 1 col on narrow viewports via min(100%,…) */}
-      {isLoading ? (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 480px), 1fr))',
-          gap: 12,
-        }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-40 rounded-xl" />
-          ))}
-        </div>
-      ) : actors && actors.length > 0 ? (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 480px), 1fr))',
-          gap: 12,
-        }}>
-          {actors.map(actor => (
-            <Fragment key={actor.id}>
-              <ActorCard
-                actor={actor}
-                isSelected={selectedActorId === actor.id}
-                onClick={() => setSelectedActorId(prev => prev === actor.id ? null : actor.id)}
-              />
-              {selectedActorId === actor.id && (
-                <div style={{ gridColumn: '1 / -1' }} id={`actor-detail-${actor.id}`}>
-                  <ThreatActorDetail actorId={actor.id} inline />
-                </div>
-              )}
-            </Fragment>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          icon={<Search />}
-          title={`No ${filter !== 'all' ? filter + ' ' : ''}threat actors found`}
-          subtitle="Try a different country filter or check back as attribution data updates"
-          action={filter !== 'all' ? { label: 'Show all actors', onClick: () => setFilter('all') } : undefined}
-          variant="clean"
-        />
-      )}
     </div>
   );
 }

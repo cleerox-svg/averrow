@@ -53,6 +53,9 @@ export type { EntityCardProps } from '../../components/ui/EntityCard';
 export { MetricTile } from '../../components/ui/MetricTile';
 export type { MetricTileProps } from '../../components/ui/MetricTile';
 
+export { EntityListShell } from '../../components/ui/EntityListShell';
+export type { EntityListShellProps, EntityListSort } from '../../components/ui/EntityListShell';
+
 // ── Data display ───────────────────────────────────────────────────────────
 export { DataRow, SeverityDot } from '../../components/ui/DataRow';
 export type { DataRowProps, SeverityDotProps } from '../../components/ui/DataRow';

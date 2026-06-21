@@ -264,3 +264,31 @@ a different place than the recon reported:
 link *out* to those entities at all — needs a "providers/campaigns targeting this
 brand" read, G3/G7); interactive campaign graph (G4); shared `EntityList` shell
 (C1/G6); actor `motivation`/`active-since` (G5 remainder).
+
+### 4.7 Implementation note — shared `EntityListShell` (C1 / G6 shipped)
+
+Verifying the four lists in code corrected the control matrix the recon implied:
+
+| Control | Brands | Providers | Threat Actors | Campaigns |
+|---|---|---|---|---|
+| Search | ✓ | ✓ | **✗ → now ✓** | ✓ |
+| Sort | ✓ | ✓ | **✗ → now ✓** | ✓ |
+| Pagination | ✓ | ✗ | **✗ → now ✓** | **✗ → now ✓** |
+
+(Campaigns already had search+sort — only pagination was missing; Threat Actors
+had only a country filter.)
+
+**Shipped:** a shared `EntityListShell<T>` (`components/ui/EntityListShell.tsx`,
+exported from the design-system barrel) that owns the three inconsistent
+controls — client-side **search**, **sort**, **pagination** — plus result count,
+skeleton grid, and empty state, while each entity keeps its **bespoke card**
+(`renderItem`) and **server-side/segment filters** (passed through to the same
+`FilterBar`). It supports `focusKey` so deep-links still page to + expand the
+target card.
+
+**Migrated:** Threat Actors (gains search + sort + pagination; focus deep-link
+preserved via a frame-polled scroll) and the Campaigns "Active Campaigns" section
+(gains pagination; search/sort now shared). Providers and Brands already have
+richer server-side list flows and were left as-is — the shell is available for
+them to adopt in a later pass without a forced rewrite. No card renderer or
+frozen sparkline was touched.

@@ -6,9 +6,10 @@ import {
   Card,
   StatCard,
   StatGrid,
-  FilterBar,
   PageHeader,
   EmptyState,
+  EntityListShell,
+  type EntityListSort,
 } from '@/design-system/components';
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -23,7 +24,7 @@ import {
 import type { Operation } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import type { GeopoliticalCampaign } from '@/hooks/useGeopoliticalCampaign';
-import { Activity, ChevronDown, Search } from 'lucide-react';
+import { Activity, ChevronDown } from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -648,20 +649,18 @@ const ATTACK_FILTERS = [
   { id: 'c2', label: 'C2' },
 ] as const;
 
-const SORT_OPTIONS = [
-  { id: 'threats', label: 'THREAT COUNT' },
-  { id: 'brands', label: 'BRAND COUNT' },
-  { id: 'recent', label: 'MOST RECENT' },
-] as const;
+const CAMP_SORTS: EntityListSort<Campaign>[] = [
+  { id: 'threats', label: 'THREAT COUNT', compare: (a, b) => b.threat_count - a.threat_count },
+  { id: 'brands',  label: 'BRAND COUNT',  compare: (a, b) => b.brand_count - a.brand_count },
+  { id: 'recent',  label: 'MOST RECENT',  compare: (a, b) => new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime() },
+];
 
 // ─── Main Page ────────────────────────────────────────────────
 
 export function Campaigns() {
   const navigate = useNavigate();
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
-  const [campaignSearch, setCampaignSearch] = useState('');
   const [attackFilter, setAttackFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('threats');
 
   // Data fetching
   const { data: opsStats, isLoading: opsStatsLoading } = useOperationsStats();
@@ -673,32 +672,14 @@ export function Campaigns() {
   const allOperations = operations ?? [];
   const allCampaigns = (campaignsRes ?? []) as Campaign[];
 
-  // Filter & sort campaigns
-  const filteredCampaigns = useMemo(() => {
-    let result = [...allCampaigns];
-
-    if (campaignSearch) {
-      const q = campaignSearch.toLowerCase();
-      result = result.filter(c => c.name.toLowerCase().includes(q));
-    }
-
-    if (attackFilter !== 'all') {
-      result = result.filter(c => {
-        if (!c.attack_pattern) return false;
-        return c.attack_pattern.toLowerCase().includes(attackFilter);
-      });
-    }
-
-    if (sortBy === 'brands') {
-      result.sort((a, b) => b.brand_count - a.brand_count);
-    } else if (sortBy === 'recent') {
-      result.sort((a, b) => new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime());
-    } else {
-      result.sort((a, b) => b.threat_count - a.threat_count);
-    }
-
-    return result;
-  }, [allCampaigns, campaignSearch, attackFilter, sortBy]);
+  // Segment (attack-type) filtering stays here; search/sort/pagination are
+  // owned by the shared EntityListShell below.
+  const attackFilteredCampaigns = useMemo(() => {
+    if (attackFilter === 'all') return allCampaigns;
+    return allCampaigns.filter(c =>
+      c.attack_pattern ? c.attack_pattern.toLowerCase().includes(attackFilter) : false,
+    );
+  }, [allCampaigns, attackFilter]);
 
   if (opsLoading && campaignsLoading) return <CardGridLoader count={9} />;
 
@@ -842,67 +823,30 @@ export function Campaigns() {
           </div>
         </div>
 
-        {/* Filter Bar */}
-        <FilterBar
-          search={{
-            value: campaignSearch,
-            onChange: setCampaignSearch,
-            placeholder: 'Search campaigns...',
-          }}
+        <EntityListShell<Campaign>
+          items={attackFilteredCampaigns}
+          isLoading={campaignsLoading}
+          getKey={(c) => c.id}
           filters={ATTACK_FILTERS.map(f => ({ value: f.id, label: f.label }))}
-          active={attackFilter}
-          onChange={setAttackFilter}
-          actions={
-            <div className="flex items-center gap-1.5">
-              <span
-                className="font-mono text-[9px] uppercase"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                Sort:
-              </span>
-              {SORT_OPTIONS.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => setSortBy(s.id)}
-                  className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
-                  style={{
-                    background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
-                    color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    border: '1px solid var(--border-base)',
-                  }}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          }
+          activeFilter={attackFilter}
+          onFilterChange={setAttackFilter}
+          search={{ placeholder: 'Search campaigns…', fields: (c) => [c.name] }}
+          sorts={CAMP_SORTS}
+          defaultSortId="threats"
+          pageSize={12}
+          gridClassName="grid grid-cols-1 md:grid-cols-2 gap-4"
+          skeletonClassName="h-44 rounded-xl"
+          empty={{
+            title: 'No campaigns match current filters',
+            subtitle: 'Try adjusting your filters to see more results',
+          }}
+          renderItem={(campaign) => (
+            <CampaignCard
+              campaign={campaign}
+              onClick={() => navigate(`/campaigns/${campaign.id}`)}
+            />
+          )}
         />
-
-        {/* Campaign Cards Grid */}
-        {campaignsLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-44 rounded-xl" />
-            ))}
-          </div>
-        ) : filteredCampaigns.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredCampaigns.map(campaign => (
-              <CampaignCard
-                key={campaign.id}
-                campaign={campaign}
-                onClick={() => navigate(`/campaigns/${campaign.id}`)}
-              />
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            icon={<Search />}
-            title="No campaigns match current filters"
-            subtitle="Try adjusting your filters to see more results"
-            variant="clean"
-          />
-        )}
       </section>
     </div>
   );
