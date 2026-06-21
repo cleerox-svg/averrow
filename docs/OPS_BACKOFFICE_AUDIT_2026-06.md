@@ -333,3 +333,9 @@ built entirely from data the page already fetched — no backend change.
 
 **Batch 1 now complete** except the minor actor `motivation`/`active-since`
 fields (G5).
+
+_Follow-up:_ the graph was static (desktop hover-highlight only). Added a subtle
+entrance fade, a breathing pulse on the campaign node, animated flow on
+highlighted edges, and **tap-to-select on touch** (first tap reveals the label +
+highlights, second tap pivots) so the IP/domain labels and the highlight are
+reachable without a mouse.

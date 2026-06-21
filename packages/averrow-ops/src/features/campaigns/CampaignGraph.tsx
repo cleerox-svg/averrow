@@ -184,12 +184,12 @@ export function CampaignGraph({
   ];
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
         <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
           {infrastructure.providers.length} providers · {infrastructure.ips.length} IPs ·
           {' '}{infrastructure.domains.length} domains{brands.length ? ` · ${brands.length} brands` : ''}
-          {' '}— click a node to pivot
+          {' '}— tap a node to highlight, again to pivot
         </span>
         <div className="flex items-center gap-3">
           {LEGEND.map(([t, label]) => (
@@ -223,7 +223,18 @@ export function CampaignGraph({
                 stroke={active ? COLORS[b.type] : 'var(--border-base)'}
                 strokeWidth={active ? 1.6 : 1}
                 strokeOpacity={hovered == null ? 0.35 : active ? 0.9 : 0.08}
-              />
+                strokeDasharray={active ? '5 4' : undefined}
+              >
+                {active && (
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="9"
+                    to="0"
+                    dur="0.5s"
+                    repeatCount="indefinite"
+                  />
+                )}
+              </line>
             );
           })}
         </g>
@@ -242,9 +253,24 @@ export function CampaignGraph({
                 style={{ cursor: clickable ? 'pointer' : 'default', opacity: dimmed ? 0.25 : 1, transition: 'opacity 0.15s' }}
                 onMouseEnter={() => setHovered(n.id)}
                 onMouseLeave={() => setHovered(null)}
-                onClick={() => n.href && navigate(n.href)}
+                onClick={() => {
+                  if (!n.href) return;
+                  // Two-step so touch (no hover) can both reveal + pivot: a
+                  // first tap highlights/reveals the label, a second tap (or a
+                  // desktop click, where mouseenter already set `hovered`)
+                  // navigates.
+                  if (hovered === n.id) navigate(n.href);
+                  else setHovered(n.id);
+                }}
               >
                 {n.title && <title>{n.title}</title>}
+                {/* Breathing pulse on the focal campaign node. */}
+                {n.type === 'campaign' && (
+                  <circle r={n.r} fill="none" stroke={accent} strokeWidth={1.5}>
+                    <animate attributeName="r" values={`${n.r};${n.r + 22}`} dur="2.6s" repeatCount="indefinite" />
+                    <animate attributeName="stroke-opacity" values="0.5;0" dur="2.6s" repeatCount="indefinite" />
+                  </circle>
+                )}
                 <circle
                   r={n.r}
                   fill={n.type === 'campaign' ? accent : `${color}22`}
