@@ -567,7 +567,25 @@ function PushBootstrapCard() {
   const fullyConfigured = config.push_enabled
     && config.vapid_public_key.length > 0
     && config.vapid_private_key_configured;
-  if (fullyConfigured) return null;
+
+  // Discoverability (GM7): once configured, the bootstrap nudge used to vanish,
+  // leaving /admin/push (off-nav by design) unreachable. Keep a compact
+  // "configured" row with a Manage link so operators can still get back to it.
+  if (fullyConfigured) {
+    return (
+      <Card variant="elevated" padding="12px 16px">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <BellRing size={14} style={{ color: 'var(--green)', flexShrink: 0 }} />
+            <span style={{ ...mono, fontSize: 11, ...textTertiary }}>Push notifications · configured</span>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/push')}>
+            Manage
+          </Button>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card variant="elevated" padding="16px">

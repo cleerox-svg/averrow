@@ -817,3 +817,21 @@ plus GM5/GM7.
 **Batch 5 nearly complete** — GM1–GM4 + GM2 done. Remaining: GM5 (webhook
 deliveries UI / incident fields), GM6 (incident permission gate — design call),
 GM7 (push nav).
+
+### 7.6 Implementation note — Batch-5 leftovers (GM5 + GM7)
+
+Verifying in code trimmed this: **GM5a (webhook deliveries) was already done** —
+`WebhookConfig` already renders a "Recent Deliveries" list (recon over-stated the
+gap). Remaining, shipped here:
+
+- **GM5b — unused incident fields.** `description` / `root_cause` / `mitigation`
+  were stored (auto-create + postmortem) but never displayed; added a read-only
+  Details card on the incident detail, shown only when populated.
+- **GM7 — push discoverability.** The bootstrap nudge vanished once push was
+  configured, leaving `/admin/push` (off-nav by design) unreachable. The card now
+  persists in a compact "configured · Manage" state so operators can get back to
+  it without re-adding it to the primary nav.
+
+GM6 (incidents super_admin-only vs takedowns permission-gated) is left as a
+**design call** — it needs a new `view_incidents`/`manage_incidents` flag, not a
+clear bug. **Batch 5 done** (GM6 deferred by design).

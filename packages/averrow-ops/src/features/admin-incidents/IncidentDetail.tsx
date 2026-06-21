@@ -155,6 +155,28 @@ export function AdminIncidentDetail() {
         )}
       </div>
 
+      {/* Details — description / root cause / mitigation. These were stored
+          (auto-create + postmortem) but never displayed (audit GM5). Read-only;
+          shown only when populated. */}
+      {(incident.description || incident.root_cause || incident.mitigation) && (
+        <Card style={{ padding: 14 }}>
+          {([
+            ['Description', incident.description],
+            ['Root cause', incident.root_cause],
+            ['Mitigation', incident.mitigation],
+          ] as const).filter(([, v]) => !!v).map(([label, value], i) => (
+            <div key={label} style={{ marginTop: i === 0 ? 0 : 12 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                {label}
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>
+                {value}
+              </p>
+            </div>
+          ))}
+        </Card>
+      )}
+
       {/* Status transition row — quick one-click moves.
           R8 migration: replaced an inline map of buttons (with per-
           status color highlighting on the current state) with the
