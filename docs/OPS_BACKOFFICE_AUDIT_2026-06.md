@@ -8,6 +8,46 @@
 
 ---
 
+## 0. Executive summary
+
+A full UX + capability audit of the staff back-office (~49 routes), run in **five
+domain batches**, each: competitor benchmark → severity-ranked gap table → 1–2
+shipped slices behind draft PRs. **16 PRs merged.**
+
+| Batch | Domain | What shipped |
+|---|---|---|
+| **1** | Entity/pivot | Connected the four core entities end-to-end (pivot deep-links, `?focus` targets, Brand outbound links), a shared `EntityListShell`, and an **interactive campaign infrastructure graph**. PRs #1515–#1519. |
+| **2** | Working queues | Turned Alerts into a real triage queue: **SLA/aging**, alert→entity pivots + auto-triage transparency, **saved views**, **operator threat-triage**, **analyst assignment/ownership**. PRs #1520–#1524. |
+| **3** | Automation | Wired the **agent control plane** (trigger/pause/reset-breaker) into the UI, surfaced token usage, fixed orphan discoverability, added a stalled-runs banner. PRs #1525–#1526. |
+| **5** | Admin cluster | Clickable **audit-log pivots** + filter, org/takedown entity pivots, **two RBAC fixes** (pricing access aligned to the permission model; module-endpoint route-layer hardening), incident/push polish. PRs #1527–#1528. |
+| **4** | Big-picture | Reworked the **v3 Observatory side panel** (period-consistent, situational summary, Top Threat Origins) and wired map + momentum pivots. PRs #1529–#1530. |
+
+**The recurring finding:** the biggest "missing features" were almost always
+**UI wiring on backend machinery that already existed** — pivot links on data
+already in the payload, an entire admin agent control plane with no buttons, an
+assignment column (`0221`) the tenant side already used, audit-log references
+that were never clickable. **Reading the live code repeatedly corrected the
+recon's over-stated gaps** (webhook deliveries, campaign links, the threat-actor
+profile were all already done) — so every slice was grounded in the code, not
+the summary.
+
+**Genuine net-new fixes (not just wiring):** the agent control-plane UI (GA1);
+the **pricing RBAC** alignment where the UI was *stricter* than the documented
+model + backend (GM2); a **route-layer auth hardening** on the customer module
+endpoints (GM3); and a mislabel bug where every alert rendered "Social
+Impersonation".
+
+**Deliberately deferred** (documented, not forgotten): product calls — GO5
+(restore v3's source filter/legend), GM6 (a `view_incidents` permission so
+analysts can see incidents), and Observatory **v2** panels (scoped out by
+operator direction); plus a small cross-batch backlog needing minor backend
+adds — actor `motivation`/`active-since`, per-run agent trace drill-down, an
+agent cost-$ panel, and period-preservation on navigation (GO6).
+
+Per-batch benchmark, gap table, and implementation notes follow in §§2–8.
+
+---
+
 ## 1. Purpose & method
 
 Same proven method as the tenant audit: a **competitor benchmark**, a **gap
