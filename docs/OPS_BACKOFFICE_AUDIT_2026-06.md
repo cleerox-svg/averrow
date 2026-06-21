@@ -916,3 +916,26 @@ payloads, entirely *around* the frozen viz.
    then link the rows. Small backend + frontend.
 3. Lower: GO4 (cluster card → campaign), GO5 (restore v3 source/legend — confirm
    intent), GO6 (surface stats / preserve period on nav).
+
+### 8.4 Implementation note — v3 SidePanel rework (Slice A; v3-only per operator)
+
+Scope was narrowed to **v3 only** (operator direction — v2 left untouched). Beyond
+wiring pivots, the operator asked for the panel to show *pertinent + logical*
+info. Reworked `observatory-v3/components/SidePanel.tsx`:
+
+- **Period consistency (GO logic fix).** Section labels were hard-coded `7d`/`30d`
+  while only Top Brands respected the map's period selector. Now labels are
+  **dynamic to the selected period**, and every widget that can respect it does;
+  the structurally-fixed ones state their real window honestly (Providers = "7d
+  trend", Geo = "30d").
+- **Situational summary header** — threats mapped · countries · campaigns
+  (period-aware `useObservatoryStats`) + a **severity split bar** aggregated from
+  the geo nodes. Leads with "what am I looking at."
+- **Top Threat Origins** — countries by threat volume, aggregated from the same
+  geo nodes the globe draws (the "where is this coming from" ranking that was
+  missing). Period-aware.
+- **Denser + clickable** — brands 5→8, providers 2+2→3+3, ops 2→4; the Providers
+  widget now pivots to `/providers?focus=:id` (Brands/Ops/Geo already did).
+
+GO1 (v2 side-panel pivots) intentionally **not done** — operator scoped this to
+v3. v2 remains observe-only by choice.
