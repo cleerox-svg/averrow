@@ -496,3 +496,22 @@ Added a localStorage-backed **Views** bar on the Alerts queue:
 
 Reusable on the Threats queue later via the same hook. Remaining Batch-2:
 D/E (assignment, operator threat-triage) — schema/intent, pending confirmation.
+
+### 5.7 Implementation note — Operator threat-triage (Slice E, GQ2 shipped)
+
+Intent check first (the recon flagged threats as "machine-managed"): the
+`PATCH /api/threats/:id` handler exists, is **requireAdmin**-gated, accepts
+`status`, and manual status writes already happen elsewhere
+(`handlers/brands.ts` bulk-remediate, `agents/curator.ts` false-positive). So
+operator triage is **consistent with platform intent** — the catalog just never
+exposed it in the UI.
+
+**Shipped:** admin-gated triage buttons in the Threats detail slot
+(`renderExtraDetail`) — **Mark remediated · False positive · Re-open** — reusing
+the existing endpoint, no shared-table edit. Gated to admins because the
+endpoint is `requireAdmin` (analysts would 403; relaxing that is a separate
+permission decision). The list query carries a 5-min server cache, so the
+mutation does an **optimistic in-place status update** and reconciles on settle.
+
+Batch-2 remaining: D — assignment/ownership (GQ5, needs an additive
+`assigned_to` column).
