@@ -11,6 +11,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { api } from '@/lib/api';
+import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
 import { useObservatoryVersion, useTheme } from '@/design-system/hooks';
@@ -363,6 +364,14 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
             style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}
           >
             {user?.email}
+          </div>
+        )}
+        {!isRail && (
+          <div
+            title={`${VERSION_LABEL} · ${BUILD_SHA}`}
+            style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '0.08em', marginTop: 4 }}
+          >
+            {VERSION_LABEL} · {BUILD_SHA}
           </div>
         )}
         {isRail ? (
