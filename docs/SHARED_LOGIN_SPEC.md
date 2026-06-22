@@ -104,8 +104,9 @@ export function Login() {
 | Card background | `linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)` |
 | Card backdrop-filter | `blur(20px)` |
 | Card top rim | 1px gradient, transparent → `var(--amber-border)` 25%–75% → transparent |
-| Brand tile | 56×56, `border-radius: 14`, gradient `var(--amber)` → `var(--amber-dim)`, `box-shadow: 0 0 24px var(--amber-glow)` |
-| Brand tile letters | 2-character product abbreviation, `fontSize: 20`, `fontWeight: bold`, color `var(--text-on-amber)` |
+| Brand tile | 56×56. Default = gradient `var(--amber)` → `var(--amber-dim)`, `border-radius: 14`, `box-shadow: 0 0 24px var(--amber-glow)`, holding the letter monogram. When the product passes `brandMark`, that self-contained ~56×56 logo tile renders instead. |
+| Brand tile letters | Fallback glyph when no `brandMark`: 2-character product abbreviation, `fontSize: 20`, `fontWeight: bold`, color `var(--text-on-amber)` |
+| Brand tile mark (optional) | `branding.brandMark` — each product's own logo tile (Averrow: red-triangle `AverrowMark`; FarmTrack: its mark). Overrides the monogram. Keeps the shared component parity-identical while letting each product show its real logo. |
 | Product name | `fontSize: 28`, `fontWeight: bold`, `letterSpacing: -0.5`, color `var(--text-primary)` |
 | Tagline | mono uppercase, `fontSize: 9`, `letterSpacing: 0.24em`, `fontWeight: 700`, color `var(--amber)` |
 | Auth button order | passkey (green, conditional on support) → Google (amber) → divider → magic-link |
@@ -120,7 +121,14 @@ export function Login() {
 
 ### Per-product deltas (allowed)
 
-- **Brand tile letters:** Averrow uses `AV`, FarmTrack uses `FT`.
+- **Brand tile letters:** Averrow uses `AV`, FarmTrack uses `FT`. Used only as
+  the fallback glyph when `brandMark` is not supplied.
+- **Brand tile mark:** each product MAY pass `branding.brandMark` — its own
+  ~56×56 logo tile — to render the real logo instead of the letter monogram.
+  Averrow passes `<AverrowMark />` (the red-triangle logo, same mark as the
+  in-app Sidebar + email lockup). FarmTrack passes its own mark, or omits it to
+  keep the `FT` monogram. The mark is the ONLY brand-identity image allowed on
+  the login; everything else stays structurally identical.
 - **Product name:** "Averrow" / "FarmTrack".
 - **Tagline:** Averrow uses `AI-FIRST THREAT INTELLIGENCE`. FarmTrack uses `AN AVERROW PRODUCT` (parent-brand attribution since Averrow is the parent).
 - **Footer pillars:** Averrow uses `DETECT · ANALYZE · CORRELATE · RESPOND`. FarmTrack uses `PROJECTIONS · CAPTURE · TRANSPORT · QA`.

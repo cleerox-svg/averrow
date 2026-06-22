@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 // Unified Login types. Both averrow-ops and (future) FarmTrack
 // render the same LoginPage from @averrow/shared/login. Per-product
 // deltas flow through props (brand letters, tagline, return_to,
@@ -59,8 +61,15 @@ export interface LastSignInMethodAdapter {
 // across products and must be added to the spec first.
 
 export interface LoginBranding {
-  /** Two-character brand-tile abbreviation. e.g. "AV", "FT". */
+  /** Two-character brand-tile abbreviation. e.g. "AV", "FT".
+   *  Used as the brand-tile glyph ONLY when `brandMark` is not supplied. */
   brandLetters:   string;
+  /** Optional product logo mark rendered in the brand tile instead of the
+   *  `brandLetters` monogram. Each product passes its OWN mark (Averrow's
+   *  red-triangle logo, FarmTrack's mark, …) so the shared component stays
+   *  parity-identical — the monogram remains the fallback. Should be a
+   *  self-contained ~56×56 tile. See SHARED_LOGIN_SPEC.md §1. */
+  brandMark?:     ReactNode;
   /** Display name shown below the tile. e.g. "Averrow". */
   productName:    string;
   /** Tagline below product name. Mono uppercase, amber.

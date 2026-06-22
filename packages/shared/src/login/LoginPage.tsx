@@ -288,23 +288,27 @@ export function LoginPage(props: LoginPageProps) {
           }}
         />
 
-        {/* Brand tile */}
+        {/* Brand tile — product logo mark when supplied, else letter monogram */}
         <div className="flex flex-col items-center">
-          <div
-            className="flex items-center justify-center font-bold"
-            style={{
-              width: 56, height: 56,
-              background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
-              color: 'var(--text-on-amber, #0A0F1E)',
-              borderRadius: 14,
-              fontSize: 20,
-              fontFamily: 'var(--font-display, inherit)',
-              boxShadow: '0 0 24px var(--amber-glow, rgba(229,168,50,0.40))',
-              marginBottom: 16,
-            }}
-          >
-            {branding.brandLetters}
-          </div>
+          {branding.brandMark ? (
+            <div style={{ marginBottom: 16 }}>{branding.brandMark}</div>
+          ) : (
+            <div
+              className="flex items-center justify-center font-bold"
+              style={{
+                width: 56, height: 56,
+                background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
+                color: 'var(--text-on-amber, #0A0F1E)',
+                borderRadius: 14,
+                fontSize: 20,
+                fontFamily: 'var(--font-display, inherit)',
+                boxShadow: '0 0 24px var(--amber-glow, rgba(229,168,50,0.40))',
+                marginBottom: 16,
+              }}
+            >
+              {branding.brandLetters}
+            </div>
+          )}
           <span
             className="font-bold tracking-tight"
             style={{

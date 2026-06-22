@@ -24,6 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { isPasskeySupported, registerPasskey, signInWithPasskey } from '@/lib/passkeys';
+import { AverrowMark } from '@/components/brand/AverrowMark';
 
 export function PasskeyEnrollmentGate() {
   const { user, logout, refreshUser } = useAuth();
@@ -116,28 +117,22 @@ export function PasskeyEnrollmentGate() {
           boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
         }}
       >
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            margin: '0 auto 16px',
-            borderRadius: 14,
-            background: 'linear-gradient(135deg, var(--green), rgba(60,184,120,0.7))',
-            color: 'var(--text-on-amber, #0A0F1E)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 0 24px rgba(60,184,120,0.40)',
-          }}
-        >
-          <svg
-            width="28" height="28" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="2.4"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden
+        {/* Averrow brand lockup — real logo mark + wordmark, matching the
+            login + email branding (not a generic security glyph). */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 16 }}>
+          <AverrowMark size={56} />
+          <div
+            style={{
+              marginTop: 10,
+              fontFamily: 'var(--font-mono, monospace)',
+              fontSize: 10,
+              letterSpacing: '0.22em',
+              textTransform: 'uppercase',
+              color: 'var(--text-tertiary)',
+            }}
           >
-            <rect x="4" y="11" width="16" height="10" rx="2" />
-            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-          </svg>
+            Averrow · Threat Interceptor
+          </div>
         </div>
 
         <h2
@@ -177,9 +172,9 @@ export function PasskeyEnrollmentGate() {
               disabled={busy}
               className="font-mono uppercase"
               style={{
-                background: 'linear-gradient(135deg, var(--green), rgba(60,184,120,0.7))',
+                background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
                 color: 'var(--text-on-amber, #0A0F1E)',
-                border: '1px solid rgba(60,184,120,0.60)',
+                border: '1px solid var(--amber-border, rgba(229,168,50,0.55))',
                 padding: '12px 20px',
                 borderRadius: 10,
                 fontSize: 12,
@@ -187,7 +182,7 @@ export function PasskeyEnrollmentGate() {
                 letterSpacing: '0.10em',
                 minHeight: 44,
                 cursor: busy ? 'wait' : 'pointer',
-                boxShadow: '0 4px 16px rgba(60,184,120,0.30)',
+                boxShadow: '0 4px 16px rgba(229,168,50,0.30)',
               }}
             >
               {primaryLabel}
