@@ -145,3 +145,30 @@
 @media (prefers-reduced-motion: reduce) {
   .shell-v4 *, .v4-toggle, .v4-side { animation: none !important; transition: none !important; }
 }
+
+/* ── v4 cinematic token re-tone ───────────────────────────────────────────
+   The design-system components (Card/StatCard/Badge/…) are entirely
+   token-driven, so re-toning these CSS vars SCOPED to the v4 shell gives
+   EVERY page rendered inside it more depth + glow — with zero per-page
+   changes and zero impact on the classic shell (which uses :root defaults).
+   The depth/radius + accent-glow boosts are theme-agnostic (accents are
+   identical in light + dark). */
+.shell-v4 {
+  --card-shadow: 0 18px 50px rgba(0, 0, 0, 0.58), 0 1px 0 rgba(255, 255, 255, 0.04);
+  --card-radius: 18px;
+  --amber-glow: rgba(229, 168, 50, 0.34);
+  --red-glow:   rgba(200, 60, 60, 0.34);
+  --blue-glow:  rgba(10, 138, 181, 0.30);
+  --green-glow: rgba(60, 184, 120, 0.30);
+  --sev-critical-glow: rgba(239, 68, 68, 0.60);
+  --sev-high-glow:     rgba(249, 115, 22, 0.55);
+  --sev-medium-glow:   rgba(229, 168, 50, 0.55);
+}
+/* Deeper cards + a warm amber card rim — the cinematic signature. Dark-theme
+   only so light-theme v4 isn't broken. */
+:root:not([data-theme="light"]) .shell-v4 {
+  --bg-card:       rgba(20, 28, 48, 0.80);
+  --bg-card-deep:  rgba(10, 15, 28, 0.95);
+  --border-base:   rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(229, 168, 50, 0.20);
+}
