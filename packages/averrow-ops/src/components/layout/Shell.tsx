@@ -7,15 +7,27 @@ import { MobileSidebarDrawer } from '@/layouts/MobileSidebarDrawer';
 import { DeepBackground } from '@/components/ui/DeepBackground';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useBreakpoint }  from '@/design-system/hooks';
+import { useAuth }        from '@/lib/auth';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
 
 export function Shell() {
   const location     = useLocation();
+  const { user }     = useAuth();
   const { isMobile, isMobileVertical, isMobileHorizontal } = useBreakpoint();
   const isFullScreen = location.pathname.includes('/observatory');
   const isHome       = location.pathname === '/';
+  // H-3: a privileged user on an enrollment-scoped session (signed in
+  // without a passkey) must NOT mount the protected app surface. The routed
+  // view would fetch protected endpoints, get `passkey_enrollment_required`
+  // 403s, and crash its per-route ErrorBoundary — invisibly, underneath the
+  // blocking gate, until the gate hydrates the full session in place and
+  // reveals the dead view. Render nothing in the Outlet while locked;
+  // PasskeyEnrollmentGate overlays the screen. Once the passkey upgrade flips
+  // `passkey_required` false, the Outlet mounts FRESH with the full session
+  // and fetches cleanly — no reload needed.
+  const enrollmentLocked = !!user?.passkey_required;
   // Home renders its own header with bell + profile pill (HomeUnified),
   // so the global TopBar would just duplicate those affordances on
   // desktop and landscape phones. Mobile vertical is the exception —
@@ -73,7 +85,7 @@ export function Shell() {
               <PlatformAlertBanner />
             </div>
             <PageTransition>
-              <Outlet />
+              {enrollmentLocked ? null : <Outlet />}
             </PageTransition>
           </div>
         </main>

@@ -168,3 +168,28 @@ host-hydration — `api.setTokens(token)` → `refreshUser()`. The gate self-gat
 place. No navigation needed (already at `/v2/`), no reload, no hash. Both ops
 passkey call sites (LoginPage adapter + enrollment gate) now hydrate host-side;
 the legacy hard-nav remains only as back-compat for callers that omit `onSuccess`.
+
+### F3-ter — after the gate hydrates, the home view shows "SYSTEM ERROR"
+
+User-reported repro after F3-bis (screenshot): passkey login now works (no hang),
+but it lands on the app's **ErrorBoundary** ("SYSTEM ERROR — Something went wrong
+loading this view") at `/v2/`.
+
+**Root cause:** `Shell.tsx` renders the routed `<Outlet>` **unconditionally**,
+with `PasskeyEnrollmentGate` as an *overlay* on top (Shell root). So during the
+enrollment-scoped session, the home view **mounts underneath the gate**, fetches
+the protected surface, and gets `passkey_enrollment_required` **403s** — crashing
+its per-route `ErrorBoundary` (`App.tsx`) *invisibly*, behind the blur. The old
+hard-nav masked this (full reload → fresh mount with the full session → clean
+queries). F3-bis's in-place hydration unmounts the gate and **reveals the
+already-crashed view** — and an `ErrorBoundary` doesn't self-reset. The crash was
+latent before F3-bis; only the no-reload reveal made it visible.
+
+**Fix (shipped):** defense-in-depth — `Shell` no longer mounts the protected
+`<Outlet>` while the session is enrollment-locked (`user.passkey_required`). The
+blocking gate already covers the screen, and the protected surface has no business
+fetching under a 403-ing session. When the passkey upgrade flips `passkey_required`
+false in place, the `<Outlet>` mounts **fresh** with the full session (in-memory
+token from F3-bis) and fetches cleanly. No crash, no reload, SPA hydration
+preserved. Backend-confirmed: `handlers/auth.ts` rotation re-derives the
+enrollment scope from the session's `auth_method`, which is now `passkey`.
