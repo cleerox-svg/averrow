@@ -14,14 +14,28 @@ import { useSearchParams } from 'react-router-dom';
 import { Radar, Crosshair, Siren, Gavel } from 'lucide-react';
 import { Button, Card } from '@averrow/shared/ui';
 import { api } from '@/lib/api';
+import { ConsoleIncidents } from './views/ConsoleIncidents';
+import './console.css';
 
 type ConsoleTab = 'signals' | 'threats' | 'incidents' | 'takedowns';
 
-const TABS: { id: ConsoleTab; label: string; icon: typeof Radar }[] = [
-  { id: 'signals',   label: 'Signals',   icon: Radar },
-  { id: 'threats',   label: 'Threats',   icon: Crosshair },
-  { id: 'incidents', label: 'Incidents', icon: Siren },
-  { id: 'takedowns', label: 'Takedowns', icon: Gavel },
+const TABS: { id: ConsoleTab; label: string; icon: typeof Radar; def: string }[] = [
+  {
+    id: 'signals', label: 'Signals', icon: Radar,
+    def: 'Auto-triaged alerts that need a human look — suspected impersonations (social & app-store), phishing domains, and brand lookalikes surfaced from detections.',
+  },
+  {
+    id: 'threats', label: 'Threats', icon: Crosshair,
+    def: 'The full inventory of threats we’re tracking — malicious domains, URLs, and indicators mapped to your brands.',
+  },
+  {
+    id: 'incidents', label: 'Incidents', icon: Siren,
+    def: 'Platform & operational incidents — feed outages, provider surges, and infrastructure-health events the platform auto-opens.',
+  },
+  {
+    id: 'takedowns', label: 'Takedowns', icon: Gavel,
+    def: 'Takedown requests and where each one sits in its lifecycle — draft, submitted, resolved, or dismissed.',
+  },
 ];
 const TAB_VALUES: readonly string[] = TABS.map(t => t.id);
 function isTab(v: string | null): v is ConsoleTab {
@@ -31,7 +45,6 @@ function isTab(v: string | null): v is ConsoleTab {
 // Existing queue pages, mounted as tab bodies (no rewrites).
 const Alerts = lazy(() => import('@/features/alerts/Alerts').then(m => ({ default: m.Alerts })));
 const Threats = lazy(() => import('@/features/threats/Threats').then(m => ({ default: m.Threats })));
-const AdminIncidents = lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
 const Takedowns = lazy(() => import('@/features/takedowns/Takedowns').then(m => ({ default: m.Takedowns })));
 
 export function Console() {
@@ -55,7 +68,8 @@ export function Console() {
     setParams(p, { replace: true });
   }
 
-  const activeLabel = TABS.find(t => t.id === tab)?.label ?? '';
+  const active = TABS.find(t => t.id === tab);
+  const activeLabel = active?.label ?? '';
 
   return (
     <div style={{ padding: '20px 22px 40px' }}>
@@ -87,11 +101,18 @@ export function Console() {
         })}
       </div>
 
-      {/* active surface — existing page rendered as-is */}
+      {/* plain-language explainer for the active queue (fixes "what is this?") */}
+      {active?.def && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.55, maxWidth: 720, margin: '-2px 0 18px' }}>
+          {active.def}
+        </p>
+      )}
+
+      {/* active surface */}
       <Suspense fallback={<TabLoading />}>
         {tab === 'signals'   && <Alerts />}
         {tab === 'threats'   && <Threats />}
-        {tab === 'incidents' && <AdminIncidents />}
+        {tab === 'incidents' && <ConsoleIncidents />}
         {tab === 'takedowns' && <Takedowns />}
       </Suspense>
     </div>
