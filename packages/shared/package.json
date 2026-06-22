@@ -16,7 +16,8 @@
     "./theme": "./src/theme/index.ts",
     "./theme.css": "./src/theme/tokens.css",
     "./avatar": "./src/avatar/index.ts",
-    "./threats-table": "./src/threats-table/index.ts"
+    "./threats-table": "./src/threats-table/index.ts",
+    "./ui": "./src/ui/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -26,8 +27,12 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.3.0",
     "@simplewebauthn/browser": "^11.0.0",
-    "@simplewebauthn/types": "^11.0.0"
+    "@simplewebauthn/types": "^11.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.6.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
