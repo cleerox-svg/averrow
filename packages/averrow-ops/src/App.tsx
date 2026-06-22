@@ -1,7 +1,7 @@
 import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { Shell } from '@/components/layout/Shell';
+import { ShellSwitch } from '@/components/layout/ShellV4';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
@@ -144,7 +144,7 @@ export default function App() {
       } />
       <Route path="/" element={
         <ProtectedRoute>
-          <Shell />
+          <ShellSwitch />
         </ProtectedRoute>
       }>
         <Route index element={lazyRoute(<RoleAwareHome />)} />
