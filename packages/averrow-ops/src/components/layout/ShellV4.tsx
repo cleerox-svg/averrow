@@ -5,13 +5,17 @@
 // useShellVersion via <ShellSwitch/> — the current shell is untouched.
 // Page internals get re-skinned into the new design system in later waves;
 // W0 establishes the chrome + the coexistence gate end-to-end.
+//
+// Responsive: desktop = fixed rail; <=900px = off-canvas drawer + hamburger,
+// single-column. Mostly CSS-driven (shell-v4.css); JS only tracks the drawer.
 
+import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Radar, Crosshair, Siren, Gavel, Mail, Inbox,
   Globe, Shield, Users, Activity, Server, Smartphone, EyeOff, Award,
   TrendingUp, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
-  Search, Sparkles, RotateCcw,
+  Search, Sparkles, RotateCcw, Menu, X,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { parseInitials } from '@/lib/avatar';
@@ -70,10 +74,12 @@ function navClass({ isActive }: { isActive: boolean }) {
 
 export function ShellV4() {
   const { user } = useAuth();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
+  const closeDrawer = () => setDrawerOpen(false);
 
   return (
-    <div className="shell-v4">
+    <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>
       <aside className="v4-side">
         <div className="v4-brand">
           <svg width="34" height="34" viewBox="0 0 32 32" fill="none" style={{ flex: '0 0 auto', boxShadow: '0 0 22px rgba(200,60,60,.45)', borderRadius: 9 }}>
@@ -91,6 +97,9 @@ export function ShellV4() {
             <div className="name">AVERROW</div>
             <div className="sub">THREAT INTERCEPTOR</div>
           </div>
+          <button type="button" className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
+            <X size={18} strokeWidth={2} />
+          </button>
         </div>
 
         <nav className="v4-nav">
@@ -100,7 +109,7 @@ export function ShellV4() {
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
-                  <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass}>
+                  <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
                     <Icon strokeWidth={2} /> {item.label}
                   </NavLink>
                 );
@@ -121,11 +130,17 @@ export function ShellV4() {
         </div>
       </aside>
 
+      {/* mobile drawer backdrop (CSS shows it only when .drawer-open on small screens) */}
+      <div className="v4-backdrop" onClick={closeDrawer} aria-hidden />
+
       <section className="v4-main">
         <header className="v4-top">
+          <button type="button" className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu">
+            <Menu size={18} strokeWidth={2} />
+          </button>
           <div className="v4-cmdk" title="Command palette arrives with the v4 component library">
             <Search size={14} strokeWidth={2} />
-            Search threats, brands, actors…
+            <span className="v4-cmdk-label">Search threats, brands, actors…</span>
             <kbd>⌘K</kbd>
           </div>
           <div className="v4-live"><span className="dot" />LIVE</div>
