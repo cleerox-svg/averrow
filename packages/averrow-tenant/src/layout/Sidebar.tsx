@@ -11,6 +11,7 @@ import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useCanViewAudit } from '@/lib/auditLog';
 import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
+import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { AverrowLogo } from './AverrowLogo';
 
 const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
@@ -168,6 +169,12 @@ export function Sidebar() {
           </NavLink>
         </Section>
       </nav>
+      <div
+        className="px-3 py-2.5 border-t border-white/10 font-mono text-[10px] tracking-[0.08em] text-white/30"
+        title={`${VERSION_LABEL} · ${BUILD_SHA}`}
+      >
+        {VERSION_LABEL} · {BUILD_SHA}
+      </div>
     </aside>
   );
 }

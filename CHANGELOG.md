@@ -4,6 +4,38 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.0.0] — 2026-06-22
+
+The v4 platform redesign + auth hardening line. Internal/staff register
+(detailed; the public + tenant registers carry a generic, non-proprietary
+summary of the same release).
+
+### v4 redesign (coexisting; opt-in via the "Try v4" pill until cutover)
+- **Shell coexistence gate** — `useShellVersion` + `ShellSwitch` render `ShellV4`
+  (cinematic command-center chrome: dark canvas + vignette, glowing amber nav,
+  3-workspace IA — SOC Console / Intelligence / Platform) or the classic Shell,
+  both over the same route `<Outlet/>`. Classic untouched.
+- **`@averrow/shared/ui`** — new shared design system (Radix + cva, token-native
+  via brand CSS vars; responsive, ≥40px touch targets). Consumed by both apps.
+- **Responsive `ShellV4`** — off-canvas drawer + hamburger ≤900px, single column.
+- **SOC Console** (`/console`) — KPI hero + deep-linkable `?tab=` queues
+  (Signals/Threats/Incidents/Takedowns) hosting existing pages.
+- **Cinematic Incidents** interior + plain-language queue explainers.
+
+### Auth & login hardening
+- Fixed the Tailwind purge that broke the shared login/profile layout.
+- Login brand-locked to the dark theme regardless of OS preference.
+- Passkey sign-in host-hydration (LoginPage + enrollment gate) — fixes the
+  spinner hang that required a manual refresh.
+- Fixed the enrollment-gate → "SYSTEM ERROR" view crash (don't mount protected
+  surface under an enrollment-scoped session).
+- Real Averrow logo on the login + passkey gate; gate rebranded to brand colors.
+
+### Versioning
+- Real, auto-updating platform version (`v4.0.0 · <git sha>`) shown to every
+  logged-in user in both apps; single source `/platform-version.json` injected
+  at build. Public + staff changelogs brought current.
+
 ## [Unreleased] — 2026-04-01
 
 ### Visual Identity Overhaul (Sessions 1–4)

@@ -886,6 +886,34 @@ docs(claude): update standing instructions for restructure
 
 ---
 
+## 9b. Versioning & Changelogs
+
+Single **platform version** `MAJOR.MINOR.PATCH`, source of truth
+`/platform-version.json` (currently `4.0.0` — the v4 redesign line).
+
+- **MAJOR** — re-architectures / paradigm shifts (curated, e.g. v4).
+  **MINOR** — new user-facing features (`feat`).
+  **PATCH** — fixes / improvements (`fix`/`perf`/`refactor`).
+- Injected at build (Vite `define` → `__APP_VERSION__` + `__BUILD_SHA__`; see
+  each app's `vite.config.ts` + `src/lib/version.ts`) and shown to **every
+  logged-in user** in both apps' sidebars as `vX.Y.Z · <sha>`. The SHA
+  auto-updates every deploy.
+- **Three changelog registers, three audiences:**
+  1. **Public** — `packages/averrow-marketing/src/data/changelog-entries.ts`
+     (`/changelog`). **Generic, non-proprietary** — no internal codenames /
+     infra / architecture.
+  2. **Staff (internal)** — root `CHANGELOG.md`, detailed; may reference
+     internals.
+  3. **Tenant (in-app)** — customer register (same non-proprietary rule as
+     public) + a notification when a new version is applied. *(In-app tenant
+     changelog UI + applied-notification + the `platform_releases` contract
+     history table are the remaining versioning slices.)*
+- When shipping a user-facing release: bump `/platform-version.json`, add a
+  public + staff changelog entry (strip proprietary detail from the public
+  one), and tag `vX.Y.Z` on `master`.
+
+---
+
 ## 10. Platform Diagnostics (Live Health Checks)
 
 Claude Code can assess live platform health by calling the diagnostics endpoint.

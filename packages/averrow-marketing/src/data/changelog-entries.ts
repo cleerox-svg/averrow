@@ -19,6 +19,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.0.0",
+    publishedAt: "2026-06-22",
+    kind: "Feature",
+    title: "Averrow v4 — redesigned console",
+    description:
+      "A refreshed, more responsive interface: a unified security console, clearer navigation, and a mobile-ready layout.",
+  },
+  {
+    version: "v3.0.0",
+    publishedAt: "2026-06-21",
+    kind: "Improvement",
+    title: "Sign-in & login refresh",
+    description:
+      "Faster, more reliable passkey sign-in and a refreshed, on-brand login experience.",
+  },
+  {
     version: "v2.4.0",
     publishedAt: "2026-03-20",
     kind: "Feature",
