@@ -142,3 +142,29 @@ credential; offered to confirm with a WebAuthn **virtual authenticator** repro._
 
 Open/optional: design elevation of the login surface (split brand panel etc.) —
 a future enhancement, not a defect.
+
+### F3-bis — the spinner STILL hung after F3: the enrollment GATE, not LoginPage
+
+User-reported repro after F3 shipped (with screenshot): an admin signs in with
+**Google**, which yields an **enrollment-scoped** session (H-3,
+`AUTH_AUDIT_2026-06`). The app lands them **inside `/v2/`**, where the mandatory
+`PasskeyEnrollmentGate` blocks the app. They click "Sign in with your passkey",
+the ceremony succeeds — and it hangs on **"Waiting for passkey…"**, URL frozen at
+`averrow.com/v2/#token=eyJ…`, until a manual refresh.
+
+**Root cause:** `F3` only wired host-hydration into the **shared `LoginPage`**
+(via the passkey adapter). The `PasskeyEnrollmentGate` (ops-only, second passkey
+call site) still called `signInWithPasskey({ returnTo: '/v2/' })` **without**
+`onSuccess`, so it fell back to `window.location.assign('/v2/#token=…')`. But the
+gate **already lives at `/v2/`**, so that hard-nav is a **same-path hash change
+the browser never reloads** — the textbook no-reload case F3's `onSuccess` was
+built to eliminate. The screenshot's `/v2/#token=…` URL is the conclusive proof.
+This is the *most certain* instance of the F3 mechanism: the gate is always at
+`/v2/`, so the hard-nav is **always** a no-op.
+
+**Fix (shipped):** route the gate's `onSignIn` through the same `onSuccess`
+host-hydration — `api.setTokens(token)` → `refreshUser()`. The gate self-gates on
+`user.passkey_required`, so once `/me` returns the full session it unmounts in
+place. No navigation needed (already at `/v2/`), no reload, no hash. Both ops
+passkey call sites (LoginPage adapter + enrollment gate) now hydrate host-side;
+the legacy hard-nav remains only as back-compat for callers that omit `onSuccess`.

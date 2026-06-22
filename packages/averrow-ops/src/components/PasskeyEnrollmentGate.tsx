@@ -21,11 +21,12 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { isPasskeySupported, registerPasskey, signInWithPasskey } from '@/lib/passkeys';
 
 export function PasskeyEnrollmentGate() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const { showToast } = useToast();
   // If the user already has a passkey, skip straight to the sign-in step.
   const [registered, setRegistered] = useState((user?.passkey_count ?? 0) > 0);
@@ -56,9 +57,23 @@ export function PasskeyEnrollmentGate() {
   const onSignIn = async () => {
     setBusy(true);
     try {
-      // Mints a full session (method='passkey') and navigates to /v2/ on
-      // success, replacing this enrollment-scoped session.
-      const ok = await signInWithPasskey({ email: user.email, returnTo: '/v2/' });
+      // Mints a full session (method='passkey'), replacing this
+      // enrollment-scoped session. Host-side hydration (login audit F3):
+      // this gate already lives at /v2/, so the legacy hard-nav to
+      // /v2/#token=… is a SAME-PATH hash change that never reloads the
+      // document — the AuthProvider (which only reads the hash on mount)
+      // never consumes the token, so the button hangs on "Waiting for
+      // passkey…" until a manual refresh. Instead, set the new full-session
+      // token in memory and refresh the auth context in place; the gate
+      // self-unmounts the moment `passkey_required` flips false. No reload.
+      const ok = await signInWithPasskey({
+        email: user.email,
+        returnTo: '/v2/',
+        onSuccess: async (accessToken) => {
+          api.setTokens(accessToken, '');
+          await refreshUser();
+        },
+      });
       if (!ok) setBusy(false); // cancelled — stay on the gate
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Passkey sign-in failed", 'error');
