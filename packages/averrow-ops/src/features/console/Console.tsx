@@ -1,19 +1,17 @@
-// SOC Console — the v4 analyst daily-driver workspace (W1).
+// SOC Console — the v4 analyst daily-driver workspace.
 //
-// A cinematic header (KPI hero + deep-linkable tab bar) over the EXISTING
-// queue pages mounted as tab bodies — no page-logic rewrites. Reuses the
-// ?tab= URL pattern from features/leads/Leads.tsx so reload + share-links
-// land on the right tab. Built on @averrow/shared/ui (the v4 design system).
-//
-// Reachable at /console from the v4 sidebar; standalone routes (/alerts,
-// /threats, /admin/incidents, /admin/takedowns) stay intact for deep links
-// and detail navigation.
+// A BOLD cinematic header (big glowing count-up KPI hero + deep-linkable tab
+// bar) over the existing queue pages mounted as tab bodies. Built on
+// @averrow/shared/ui + live data — no page-logic rewrites. The hero is the
+// "this is clearly v4" surface (matches the approved prototype).
 
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import CountUp from 'react-countup';
 import { Radar, Crosshair, Siren, Gavel } from 'lucide-react';
-import { Button, Card } from '@averrow/shared/ui';
+import { Button } from '@averrow/shared/ui';
 import { api } from '@/lib/api';
+import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { ConsoleIncidents } from './views/ConsoleIncidents';
 import './console.css';
 
@@ -42,7 +40,6 @@ function isTab(v: string | null): v is ConsoleTab {
   return v != null && TAB_VALUES.includes(v);
 }
 
-// Existing queue pages, mounted as tab bodies (no rewrites).
 const Alerts = lazy(() => import('@/features/alerts/Alerts').then(m => ({ default: m.Alerts })));
 const Threats = lazy(() => import('@/features/threats/Threats').then(m => ({ default: m.Threats })));
 const Takedowns = lazy(() => import('@/features/takedowns/Takedowns').then(m => ({ default: m.Takedowns })));
@@ -53,8 +50,11 @@ export function Console() {
   const [tab, setTab] = useState<ConsoleTab>(initial);
   const [openSignals, setOpenSignals] = useState<number | null>(null);
 
+  const { data: incidents } = useIncidents({ onlyOpen: true });
+  const openIncidents = incidents?.length ?? null;
+  const criticalIncidents = incidents ? incidents.filter(i => i.severity === 'critical').length : null;
+
   useEffect(() => {
-    // Same lightweight count the sidebar uses — real metric, no new endpoint.
     api.get<unknown>('/api/alerts?status=open&limit=1')
       .then(d => setOpenSignals(d.total ?? 0))
       .catch(() => {});
@@ -63,52 +63,49 @@ export function Console() {
   function selectTab(next: ConsoleTab) {
     setTab(next);
     const p = new URLSearchParams(params);
-    if (next === 'signals') p.delete('tab'); // default — keep URLs clean
+    if (next === 'signals') p.delete('tab');
     else p.set('tab', next);
     setParams(p, { replace: true });
   }
 
   const active = TABS.find(t => t.id === tab);
-  const activeLabel = active?.label ?? '';
 
   return (
-    <div style={{ padding: '20px 22px 40px' }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, letterSpacing: '.18em', color: 'var(--text-muted)', marginBottom: 6 }}>
-        SOC CONSOLE
+    <div className="console-v4">
+      <div className="console-head">
+        <div>
+          <div className="console-crumb">SOC CONSOLE</div>
+          <h1 className="console-title">Console</h1>
+        </div>
+        <span className="console-live"><span className="dot" />LIVE</span>
       </div>
-      <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.3px', margin: 0 }}>Console</h1>
 
-      {/* KPI hero */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 14, margin: '18px 0' }}>
-        <GlowStat label="Open signals" value={openSignals} accent="var(--amber)" />
-        <GlowStat label="Now viewing" valueText={activeLabel} sub="active queue" accent="var(--blue)" />
+      {/* cinematic KPI hero — big glowing count-up numbers */}
+      <div className="kpi-grid">
+        <KpiTile tone="amber" label="Open signals"       value={openSignals}       sub="awaiting triage" />
+        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now" />
+        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops" />
       </div>
 
       {/* deep-linkable tab bar */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+      <div className="console-tabs">
         {TABS.map(t => {
           const Icon = t.icon;
           return (
             <Button
               key={t.id}
               variant={tab === t.id ? 'primary' : 'secondary'}
-              size="sm"
+              size="md"
               onClick={() => selectTab(t.id)}
             >
-              <Icon size={14} strokeWidth={2} /> {t.label}
+              <Icon size={15} strokeWidth={2} /> {t.label}
             </Button>
           );
         })}
       </div>
 
-      {/* plain-language explainer for the active queue (fixes "what is this?") */}
-      {active?.def && (
-        <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.55, maxWidth: 720, margin: '-2px 0 18px' }}>
-          {active.def}
-        </p>
-      )}
+      {active?.def && <p className="console-def">{active.def}</p>}
 
-      {/* active surface */}
       <Suspense fallback={<TabLoading />}>
         {tab === 'signals'   && <Alerts />}
         {tab === 'threats'   && <Threats />}
@@ -127,21 +124,15 @@ function TabLoading() {
   );
 }
 
-function GlowStat({
-  label, value, valueText, sub, accent,
-}: { label: string; value?: number | null; valueText?: string; sub?: string; accent: string }) {
-  const display = valueText ?? (value == null ? '—' : value.toLocaleString());
+function KpiTile({ tone, label, value, sub }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string }) {
   return (
-    <Card variant="glow" style={{ padding: '16px 18px' }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '.18em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>
-        {label}
+    <div className={`kpi-v4 ${tone}`}>
+      <div className="kpi-glow" aria-hidden />
+      <div className="kpi-lbl">{label}</div>
+      <div className="kpi-num">
+        {value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}
       </div>
-      <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-1px', marginTop: 8, textShadow: `0 0 24px ${accent}66` }}>
-        {display}
-      </div>
-      {sub && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-secondary)', marginTop: 6 }}>{sub}</div>
-      )}
-    </Card>
+      {sub && <div className="kpi-sub">{sub}</div>}
+    </div>
   );
 }
