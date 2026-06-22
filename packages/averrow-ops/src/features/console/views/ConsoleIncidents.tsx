@@ -10,7 +10,7 @@ import { relativeTime } from '@/lib/time';
 import {
   useIncidents, type Incident, type IncidentSeverity, type IncidentStatus,
 } from '@/features/admin-incidents/useIncidents';
-import './console.css';
+import '../console.css';
 
 const SEV_TO_BADGE: Record<IncidentSeverity, 'critical' | 'high' | 'medium' | 'low' | 'neutral'> = {
   critical: 'critical', high: 'high', medium: 'medium', low: 'low', info: 'neutral',
