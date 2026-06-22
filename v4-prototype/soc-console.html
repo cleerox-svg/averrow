@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Averrow v4 — SOC Console (cinematic prototype)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ---- Brand tokens (from packages/shared/src/theme/tokens.css) ---- */
+  :root{
+    --bg-page:#060A14; --bg-card:rgba(22,30,48,0.85); --bg-card-deep:rgba(14,20,34,0.92);
+    --bg-sidebar:rgba(10,16,30,0.96);
+    --amber:#E5A832; --amber-dim:#B8821F; --red:#C83C3C; --red-dim:#8B1A1A;
+    --blue:#0A8AB5; --blue-dim:#065A78; --green:#3CB878; --green-dim:#1A6B3C;
+    --text-primary:rgba(255,255,255,0.92); --text-secondary:rgba(255,255,255,0.60);
+    --text-tertiary:rgba(255,255,255,0.40); --text-muted:rgba(255,255,255,0.25);
+    --sev-critical:#f87171; --sev-high:#fb923c; --sev-medium:#fbbf24; --sev-low:#60a5fa;
+    --border-base:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.14);
+    --font-display:'Plus Jakarta Sans',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:var(--font-display); color:var(--text-primary); background:var(--bg-page);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  /* cinematic canvas: radial vignette + faint grid + aurora glows */
+  .stage{position:fixed;inset:0;overflow:hidden}
+  .stage::before{content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(1200px 700px at 78% -10%, rgba(200,60,60,0.16), transparent 60%),
+      radial-gradient(1100px 800px at 5% 110%, rgba(10,138,181,0.14), transparent 55%),
+      radial-gradient(900px 600px at 60% 120%, rgba(229,168,50,0.08), transparent 60%);
+    pointer-events:none}
+  .stage::after{content:"";position:absolute;inset:0;opacity:.35;pointer-events:none;
+    background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+    background-size:46px 46px; mask-image:radial-gradient(circle at 50% 40%,#000,transparent 85%)}
+
+  .app{position:relative;display:grid;grid-template-columns:248px 1fr;height:100vh;z-index:1}
+
+  /* ---------- Sidebar ---------- */
+  .side{background:var(--bg-sidebar);border-right:1px solid var(--border-base);
+    display:flex;flex-direction:column;backdrop-filter:blur(12px)}
+  .brand{display:flex;align-items:center;gap:11px;padding:18px 18px 16px;border-bottom:1px solid var(--border-base)}
+  .mark{width:34px;height:34px;border-radius:9px;flex:0 0 auto;box-shadow:0 0 22px rgba(200,60,60,.45)}
+  .brand .name{font-weight:800;letter-spacing:.14em;font-size:13px}
+  .brand .sub{font-family:var(--font-mono);font-size:7px;letter-spacing:.24em;color:var(--amber);margin-top:2px}
+  nav{padding:14px 12px;overflow:auto;flex:1}
+  .grp{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.2em;color:var(--text-muted);
+    padding:14px 10px 7px}
+  .item{display:flex;align-items:center;gap:11px;padding:8px 11px;border-radius:9px;cursor:pointer;
+    color:var(--text-secondary);font-size:13px;font-weight:500;position:relative;transition:all .16s ease}
+  .item svg{width:16px;height:16px;opacity:.8;flex:0 0 auto}
+  .item:hover{background:rgba(255,255,255,.04);color:var(--text-primary)}
+  .item.active{color:#fff;background:linear-gradient(90deg,rgba(229,168,50,.16),rgba(229,168,50,.03));
+    box-shadow:inset 0 0 0 1px rgba(229,168,50,.22)}
+  .item.active::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:3px;
+    background:var(--amber);box-shadow:0 0 12px var(--amber)}
+  .item .badge{margin-left:auto;font-family:var(--font-mono);font-size:10px;font-weight:600;
+    background:rgba(248,113,113,.16);color:var(--sev-critical);padding:1px 7px;border-radius:20px;
+    box-shadow:inset 0 0 0 1px rgba(248,113,113,.3)}
+  .side .foot{border-top:1px solid var(--border-base);padding:12px 16px;display:flex;align-items:center;gap:9px;
+    font-size:11px;color:var(--text-tertiary)}
+  .verchip{font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);
+    background:rgba(255,255,255,.04);padding:3px 8px;border-radius:6px;border:1px solid var(--border-base)}
+
+  /* ---------- Main ---------- */
+  .main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .top{display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--border-base)}
+  .cmdk{display:flex;align-items:center;gap:9px;background:var(--bg-card-deep);border:1px solid var(--border-base);
+    border-radius:10px;padding:8px 12px;color:var(--text-tertiary);font-size:13px;width:300px;cursor:text}
+  .cmdk kbd{margin-left:auto;font-family:var(--font-mono);font-size:10px;background:rgba(255,255,255,.06);
+    padding:2px 6px;border-radius:5px;border:1px solid var(--border-base);color:var(--text-secondary)}
+  .live{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;
+    color:var(--green);margin-left:auto}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);
+    animation:ping 1.8s ease-in-out infinite}
+  .avatar{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-weight:800;font-size:12px;
+    color:#0A0F1E;background:linear-gradient(135deg,var(--amber),var(--amber-dim));box-shadow:0 0 16px rgba(229,168,50,.4)}
+
+  .scroll{overflow:auto;padding:24px 26px 40px}
+  .h1{font-size:24px;font-weight:800;letter-spacing:-.3px}
+  .crumb{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.18em;color:var(--text-muted);margin-bottom:6px}
+  .tabs{display:flex;gap:6px;margin:18px 0 22px}
+  .tab{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;font-weight:600;text-transform:uppercase;
+    padding:9px 16px;border-radius:9px;cursor:pointer;color:var(--text-secondary);
+    border:1px solid var(--border-base);background:var(--bg-card-deep);transition:all .16s ease}
+  .tab:hover{color:var(--text-primary);border-color:var(--border-strong)}
+  .tab.on{color:#0A0F1E;background:linear-gradient(135deg,var(--amber),var(--amber-dim));border-color:transparent;
+    box-shadow:0 4px 18px rgba(229,168,50,.32)}
+
+  /* KPI hero */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+  .kpi{position:relative;border-radius:16px;padding:18px 18px 16px;overflow:hidden;
+    background:linear-gradient(160deg,var(--bg-card),var(--bg-card-deep));border:1px solid var(--border-base);
+    opacity:0;transform:translateY(10px);animation:rise .5s ease forwards}
+  .kpi::after{content:"";position:absolute;right:-30px;top:-30px;width:120px;height:120px;border-radius:50%;
+    filter:blur(34px);opacity:.5}
+  .kpi.a::after{background:var(--amber)} .kpi.r::after{background:var(--red)}
+  .kpi.b::after{background:var(--blue)} .kpi.g::after{background:var(--green)}
+  .kpi .lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;color:var(--text-tertiary);text-transform:uppercase}
+  .kpi .num{font-size:38px;font-weight:800;letter-spacing:-1px;line-height:1.05;margin-top:10px}
+  .kpi.a .num{text-shadow:0 0 26px rgba(229,168,50,.45)} .kpi.r .num{text-shadow:0 0 26px rgba(200,60,60,.5)}
+  .kpi.b .num{text-shadow:0 0 26px rgba(10,138,181,.5)} .kpi.g .num{text-shadow:0 0 26px rgba(60,184,120,.45)}
+  .kpi .trend{font-family:var(--font-mono);font-size:11px;margin-top:8px;color:var(--text-secondary)}
+  .kpi .trend .up{color:var(--green)} .kpi .trend .dn{color:var(--sev-critical)}
+
+  .row2{display:grid;grid-template-columns:1.15fr 1fr;gap:16px}
+  .panel{border-radius:16px;background:linear-gradient(160deg,var(--bg-card),var(--bg-card-deep));
+    border:1px solid var(--border-base);overflow:hidden;opacity:0;transform:translateY(10px);animation:rise .5s .12s ease forwards}
+  .panel .head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--border-base)}
+  .panel .head h3{font-size:13px;font-weight:700;letter-spacing:.02em}
+  .panel .head .meta{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);letter-spacing:.1em}
+
+  /* faux threat globe */
+  .globe{position:relative;height:286px;display:grid;place-items:center}
+  .globe svg{width:100%;height:100%}
+  .arc{stroke-dasharray:5 7;animation:dash 3s linear infinite}
+  .arc2{animation-duration:4.2s} .arc3{animation-duration:2.6s}
+  .ping{transform-origin:center;animation:pingdot 2.4s ease-out infinite}
+
+  /* table */
+  table{width:100%;border-collapse:collapse}
+  thead th{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--text-muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--border-base);font-weight:600}
+  tbody td{padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12.5px}
+  tbody tr{transition:background .14s ease;cursor:pointer}
+  tbody tr:hover{background:rgba(229,168,50,.05)}
+  .sev{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+  .sev i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .sev.crit i{background:var(--sev-critical);box-shadow:0 0 9px var(--sev-critical)}
+  .sev.high i{background:var(--sev-high);box-shadow:0 0 9px var(--sev-high)}
+  .sev.med i{background:var(--sev-medium);box-shadow:0 0 9px var(--sev-medium)}
+  .sev.low i{background:var(--sev-low);box-shadow:0 0 9px var(--sev-low)}
+  .mono{font-family:var(--font-mono);font-size:12px}
+  .pill{font-family:var(--font-mono);font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid var(--border-base);color:var(--text-secondary)}
+  .act{font-family:var(--font-mono);font-size:10px;color:var(--amber);border:1px solid rgba(229,168,50,.3);
+    padding:3px 9px;border-radius:7px;background:rgba(229,168,50,.06)}
+
+  /* ⌘K overlay */
+  .overlay{position:fixed;inset:0;background:rgba(4,9,18,.6);backdrop-filter:blur(6px);z-index:50;
+    display:none;align-items:flex-start;justify-content:center;padding-top:14vh}
+  .overlay.show{display:flex}
+  .palette{width:560px;max-width:92vw;background:linear-gradient(160deg,var(--bg-card),var(--bg-card-deep));
+    border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}
+  .palette input{width:100%;background:transparent;border:0;outline:0;color:var(--text-primary);font-size:15px;
+    padding:16px 18px;font-family:var(--font-display);border-bottom:1px solid var(--border-base)}
+  .palette .opt{display:flex;align-items:center;gap:11px;padding:11px 18px;font-size:13px;color:var(--text-secondary);cursor:pointer}
+  .palette .opt:first-of-type,.palette .opt:hover{background:rgba(229,168,50,.08);color:#fff}
+  .palette .opt .k{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary)}
+  .hint{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:40;font-size:11px;color:var(--text-tertiary);
+    background:var(--bg-card-deep);border:1px solid var(--border-base);padding:7px 14px;border-radius:20px}
+  .hint b{color:var(--amber)}
+
+  @keyframes ping{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes rise{to{opacity:1;transform:none}}
+  @keyframes dash{to{stroke-dashoffset:-120}}
+  @keyframes pingdot{0%{opacity:.9;transform:scale(.6)}70%{opacity:0;transform:scale(2.4)}100%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="stage">
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="side">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none"><defs><linearGradient id="m" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse"><stop stop-color="#6B1010"/><stop offset="1" stop-color="#C83C3C"/></linearGradient></defs><rect width="32" height="32" rx="6" fill="#0C1220"/><rect x=".5" y=".5" width="31" height="31" rx="5.5" fill="none" stroke="rgba(200,60,60,.25)"/><path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#m)"/><path d="M14.5 22H17.5L16 18Z" fill="#0C1220"/></svg>
+      <div><div class="name">AVERROW</div><div class="sub">THREAT INTERCEPTOR</div></div>
+    </div>
+    <nav>
+      <div class="grp">SOC CONSOLE</div>
+      <div class="item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Console</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>Signals<span class="badge">218</span></div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="5"/></svg>Threats</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 3 7v6c0 5 3.5 8 9 9 5.5-1 9-4 9-9V7z"/></svg>Incidents</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14 11 8-8M21 3l-3 9-4-4z"/><path d="M3 21l9-9"/></svg>Takedowns</div>
+      <div class="grp">INTELLIGENCE</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>Observatory</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>Brands</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Threat Actors</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg>Trends</div>
+      <div class="grp">PLATFORM</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>Agents</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/></svg>Feeds</div>
+      <div class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V9M12 21V3M19 21v-7"/></svg>Admin</div>
+    </nav>
+    <div class="foot"><div class="avatar" style="width:26px;height:26px;border-radius:7px;font-size:10px">CL</div><div>Claude Leroux<br><span style="color:var(--text-muted);font-size:10px">super_admin</span></div><span class="verchip" style="margin-left:auto">v4.0.0</span></div>
+  </aside>
+
+  <!-- Main -->
+  <section class="main">
+    <header class="top">
+      <div class="cmdk" onclick="openK()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Search threats, brands, actors…<kbd>⌘K</kbd></div>
+      <div class="live"><span class="dot"></span>LIVE · 1,284 SIGNALS</div>
+      <div class="avatar">CL</div>
+    </header>
+    <div class="scroll">
+      <div class="crumb">SOC CONSOLE / CONSOLE</div>
+      <div class="h1">Good morning, Claude — 9 incidents need eyes</div>
+      <div class="tabs">
+        <div class="tab on">Signals</div><div class="tab">Threats</div><div class="tab">Incidents</div><div class="tab">Takedowns</div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi a" style="animation-delay:.02s"><div class="lbl">Open signals</div><div class="num" data-to="1284">0</div><div class="trend"><span class="dn">▲ 12%</span> vs 24h</div></div>
+        <div class="kpi r" style="animation-delay:.08s"><div class="lbl">Critical now</div><div class="num" data-to="37">0</div><div class="trend"><span class="dn">▲ 5</span> last hour</div></div>
+        <div class="kpi b" style="animation-delay:.14s"><div class="lbl">Takedowns in flight</div><div class="num" data-to="37">0</div><div class="trend">median <b>52m</b></div></div>
+        <div class="kpi g" style="animation-delay:.2s"><div class="lbl">Auto-triaged</div><div class="num" data-to="91">0</div><div class="trend"><span class="up">▼ noise</span> 91% handled</div></div>
+      </div>
+
+      <div class="row2">
+        <div class="panel">
+          <div class="head"><h3>Live threat corridors</h3><span class="meta">DECK.GL · 24H</span></div>
+          <div class="globe">
+            <svg viewBox="0 0 400 280" fill="none">
+              <defs>
+                <radialGradient id="gl" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#0A8AB5" stop-opacity=".22"/><stop offset="70%" stop-color="#0A8AB5" stop-opacity=".04"/><stop offset="100%" stop-color="transparent"/></radialGradient>
+                <linearGradient id="ar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#E5A832"/><stop offset="1" stop-color="#C83C3C"/></linearGradient>
+              </defs>
+              <circle cx="200" cy="140" r="118" fill="url(#gl)"/>
+              <circle cx="200" cy="140" r="118" fill="none" stroke="rgba(255,255,255,.08)"/>
+              <ellipse cx="200" cy="140" rx="118" ry="44" fill="none" stroke="rgba(255,255,255,.06)"/>
+              <ellipse cx="200" cy="140" rx="70" ry="118" fill="none" stroke="rgba(255,255,255,.05)"/>
+              <ellipse cx="200" cy="140" rx="118" ry="90" fill="none" stroke="rgba(255,255,255,.05)"/>
+              <path class="arc" d="M120 175 Q200 40 290 120" stroke="url(#ar)" stroke-width="2"/>
+              <path class="arc arc2" d="M150 200 Q260 120 300 175" stroke="url(#ar)" stroke-width="1.6"/>
+              <path class="arc arc3" d="M110 120 Q190 200 280 185" stroke="#0A8AB5" stroke-width="1.6"/>
+              <circle class="ping" cx="290" cy="120" r="4" fill="#f87171"/>
+              <circle cx="290" cy="120" r="3" fill="#f87171"/>
+              <circle class="ping" cx="120" cy="175" r="4" fill="#E5A832"/>
+              <circle cx="120" cy="175" r="2.5" fill="#E5A832"/>
+              <circle cx="300" cy="175" r="2.5" fill="#0A8AB5"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="panel" style="animation-delay:.18s">
+          <div class="head"><h3>Priority signal queue</h3><span class="meta">AUTO-TRIAGED</span></div>
+          <table>
+            <thead><tr><th>Sev</th><th>Domain</th><th>Brand</th><th>Signal</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="sev crit"><i></i>Crit</span></td><td class="mono">paypa1-secure.co</td><td>PayPal</td><td><span class="pill">VT 4/89</span></td><td><span class="act">Take down</span></td></tr>
+              <tr><td><span class="sev crit"><i></i>Crit</span></td><td class="mono">acme-login.xyz</td><td>Acme</td><td><span class="pill">actor FIN-209</span></td><td><span class="act">Take down</span></td></tr>
+              <tr><td><span class="sev high"><i></i>High</span></td><td class="mono">login-ms365.app</td><td>Microsoft</td><td><span class="pill">new MX</span></td><td><span class="act">Enrich</span></td></tr>
+              <tr><td><span class="sev high"><i></i>High</span></td><td class="mono">dhl-track.help</td><td>DHL</td><td><span class="pill">kit match</span></td><td><span class="act">Enrich</span></td></tr>
+              <tr><td><span class="sev med"><i></i>Med</span></td><td class="mono">irs-refund.cc</td><td>IRS</td><td><span class="pill">parked</span></td><td><span class="act">Watch</span></td></tr>
+              <tr><td><span class="sev low"><i></i>Low</span></td><td class="mono">apple-id.support</td><td>Apple</td><td><span class="pill">benign?</span></td><td><span class="act">Dismiss</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+</div>
+
+<!-- ⌘K palette -->
+<div class="overlay" id="ov" onclick="if(event.target.id==='ov')closeK()">
+  <div class="palette">
+    <input placeholder="Jump to a brand, actor, threat, or run a command…" autofocus>
+    <div class="opt"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/></svg>Go to Signals queue<span class="k">↵</span></div>
+    <div class="opt"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m14 11 8-8M21 3l-3 9-4-4z"/></svg>Request takedown…<span class="k">T</span></div>
+    <div class="opt"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6"/></svg>Pivot to threat actor FIN-209</div>
+    <div class="opt"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v8M8 12h8"/></svg>Open help: “What is a Signal?”<span class="k">?</span></div>
+  </div>
+</div>
+<div class="hint">Press <b>⌘K</b> / <b>Ctrl+K</b> for the command palette · this is a static look-and-feel prototype</div>
+
+<script>
+  // count-up (purposeful motion)
+  document.querySelectorAll('.num').forEach(el=>{
+    const to=+el.dataset.to, t0=performance.now(), d=900;
+    (function f(t){let p=Math.min(1,(t-t0)/d);p=1-Math.pow(1-p,3);
+      el.textContent=Math.round(to*p).toLocaleString();if(p<1)requestAnimationFrame(f);})(t0);
+  });
+  function openK(){document.getElementById('ov').classList.add('show');}
+  function closeK(){document.getElementById('ov').classList.remove('show');}
+  addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openK();}if(e.key==='Escape')closeK();});
+  // tab visual toggle (prototype only)
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{document.querySelector('.tab.on').classList.remove('on');t.classList.add('on');});
+</script>
+</body>
+</html>
