@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { parseInitials } from '@/lib/avatar';
+import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { Shell } from './Shell';
 import { useShellVersion } from '@/design-system/hooks/useShellVersion';
 import './shell-v4.css';
@@ -127,7 +128,9 @@ export function ShellV4() {
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{user?.role}</div>
           </div>
-          <span className="v4-verchip" style={{ marginLeft: 'auto' }}>v4.0.0</span>
+          <span className="v4-verchip" style={{ marginLeft: 'auto' }} title={`${VERSION_LABEL} · ${BUILD_SHA}`}>
+            {VERSION_LABEL}<span style={{ opacity: 0.5 }}> · {BUILD_SHA}</span>
+          </span>
         </div>
       </aside>
 
