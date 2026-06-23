@@ -18,10 +18,25 @@
 import type { Env } from "../types";
 import type { ModuleKey } from "./entitlements";
 import { cachedValue } from "./cached-value";
+import { DEFAULT_SEMI_AUTO_RULES, type SemiAutoRules } from "./takedown-policy";
 
 export type AuthorizationStatus = "active" | "revoked" | "expired";
 
 export type EscalationMode = "auto_resubmit_on_pivot" | "manual_only";
+
+/**
+ * Canonical automation posture (the "level" the customer asked for):
+ *   off       — Averrow drafts takedowns, submits nothing automatically.
+ *   semi_auto — auto-submit only takedowns matching scope.semi_auto_rules;
+ *               everything else holds in 'draft' for human approval.
+ *   auto      — every in-scope takedown auto-submits.
+ *
+ * Replaces the old derive-from-boolean model where
+ * `high_risk_requires_per_takedown_approval` implied the posture. That
+ * boolean is retained for backward compatibility and kept in sync:
+ * mode==='semi_auto' ⇔ high_risk_requires_per_takedown_approval===true.
+ */
+export type AutomationMode = "off" | "semi_auto" | "auto";
 
 export interface AuthorizationScope {
   /** Modules covered. Empty array → no modules covered (effectively manual_only). */
@@ -33,6 +48,76 @@ export interface AuthorizationScope {
   auto_followup_breached_sla_hours: number | null;
   /** When true, takedowns flagged high-risk require a per-takedown approval click in averrow-tenant before submission. */
   high_risk_requires_per_takedown_approval: boolean;
+  /** Canonical automation posture. */
+  mode: AutomationMode;
+  /** Per-characteristic auto-submit criteria, applied only when mode==='semi_auto'. */
+  semi_auto_rules: SemiAutoRules;
+}
+
+/**
+ * Fill a partial / legacy scope object with the full canonical shape.
+ *
+ * Backward compatibility: authorizations signed before the mode/rules
+ * fields existed carry only the five legacy fields. We derive `mode` from
+ * `high_risk_requires_per_takedown_approval` (true → semi_auto, false →
+ * auto) so the stored intent is honored, and seed `semi_auto_rules` with
+ * the conservative default. New signings always write explicit fields.
+ *
+ * This is also the validation-time normalizer the handlers call after
+ * loose-validating an inbound body, so persisted scope_json always has the
+ * complete shape.
+ */
+export function normalizeScope(raw: unknown): AuthorizationScope {
+  const s = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+
+  const modules = Array.isArray(s.modules) ? (s.modules as ModuleKey[]) : [];
+  const max_takedowns_per_month =
+    typeof s.max_takedowns_per_month === "number" ? s.max_takedowns_per_month : null;
+  const escalation: EscalationMode =
+    s.escalation === "manual_only" ? "manual_only" : "auto_resubmit_on_pivot";
+  const auto_followup_breached_sla_hours =
+    typeof s.auto_followup_breached_sla_hours === "number"
+      ? s.auto_followup_breached_sla_hours
+      : null;
+  const high_risk =
+    typeof s.high_risk_requires_per_takedown_approval === "boolean"
+      ? s.high_risk_requires_per_takedown_approval
+      : true;
+
+  // mode: explicit when present, else derived from the legacy boolean.
+  let mode: AutomationMode;
+  if (s.mode === "off" || s.mode === "semi_auto" || s.mode === "auto") {
+    mode = s.mode;
+  } else {
+    mode = high_risk ? "semi_auto" : "auto";
+  }
+
+  const rawRules = (s.semi_auto_rules && typeof s.semi_auto_rules === "object"
+    ? s.semi_auto_rules
+    : {}) as Record<string, unknown>;
+  const semi_auto_rules: SemiAutoRules = {
+    auto_severities: Array.isArray(rawRules.auto_severities)
+      ? (rawRules.auto_severities as unknown[]).filter((v): v is string => typeof v === "string")
+      : DEFAULT_SEMI_AUTO_RULES.auto_severities,
+    auto_target_types: Array.isArray(rawRules.auto_target_types)
+      ? (rawRules.auto_target_types as unknown[]).filter((v): v is string => typeof v === "string")
+      : DEFAULT_SEMI_AUTO_RULES.auto_target_types,
+    auto_provider_types: Array.isArray(rawRules.auto_provider_types)
+      ? (rawRules.auto_provider_types as unknown[]).filter((v): v is string => typeof v === "string")
+      : DEFAULT_SEMI_AUTO_RULES.auto_provider_types,
+  };
+
+  return {
+    modules,
+    max_takedowns_per_month,
+    escalation,
+    auto_followup_breached_sla_hours,
+    // Keep the legacy boolean coherent with the canonical mode: only
+    // semi_auto has a per-takedown approval gate.
+    high_risk_requires_per_takedown_approval: mode === "semi_auto",
+    mode,
+    semi_auto_rules,
+  };
 }
 
 export interface TakedownAuthorization {
@@ -78,17 +163,20 @@ function cacheKey(orgId: number): string {
 function rowToAuthorization(row: RawRow): TakedownAuthorization {
   let scope: AuthorizationScope;
   try {
-    scope = JSON.parse(row.scope_json) as AuthorizationScope;
+    // normalizeScope backfills mode + semi_auto_rules for legacy rows and
+    // keeps the legacy high_risk boolean coherent with the canonical mode.
+    scope = normalizeScope(JSON.parse(row.scope_json));
   } catch {
     // Unparseable scope_json — treat as the most-restrictive shape.
     // Sparrow will refuse all auto-submits in this case.
-    scope = {
+    scope = normalizeScope({
       modules: [],
       max_takedowns_per_month: 0,
       escalation: "manual_only",
       auto_followup_breached_sla_hours: null,
       high_risk_requires_per_takedown_approval: true,
-    };
+      mode: "off",
+    });
   }
   return {
     id:                 row.id,
@@ -232,7 +320,9 @@ export async function recordSignedAuthorization(
   input: RecordAuthorizationInput,
 ): Promise<TakedownAuthorization> {
   const id = crypto.randomUUID();
-  const scopeJson = JSON.stringify(input.scope);
+  // Normalize so persisted scope_json always carries the full canonical
+  // shape (mode + semi_auto_rules), regardless of caller completeness.
+  const scopeJson = JSON.stringify(normalizeScope(input.scope));
   // Two-statement batch: expire the prior active, insert the new one.
   // Cloudflare D1 supports batch — keeps it transactional.
   const stmts = [

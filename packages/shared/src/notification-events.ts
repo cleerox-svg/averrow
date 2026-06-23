@@ -69,6 +69,8 @@ export type NotificationEventKey =
   | 'named_threat_identified'
   // ── S1 — takedown automation (IMPROVEMENT_PLAN_2026-06) ──
   | 'takedown_monthly_cap_reached'
+  // ── Semi-auto policy — a takedown is held for customer approval ──
+  | 'takedown_awaiting_approval'
   // ── Sales / CRM (staff-facing) ──
   | 'new_lead'
   // ── N6c — digest envelope (§12.3) ──
@@ -458,6 +460,20 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,
+  },
+
+  // Fires when the org's semi-automatic takedown policy holds a takedown
+  // for human approval (its severity/target/provider didn't match the
+  // signed auto-submit rules). The takedown stays in 'draft'; approving it
+  // from the Takedowns queue (status → 'requested') lets Sparrow submit it.
+  // Dedup is per-takedown via group_key (`takedown_awaiting_approval:<id>`).
+  {
+    key: 'takedown_awaiting_approval',
+    label: 'Takedown Awaiting Approval',
+    description: 'A takedown matched your semi-automatic policy\'s approval gate and is waiting for you to approve it',
+    dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: true,
   },
 
   // ─── Sales / CRM — staff-facing lead capture ────────────────────────

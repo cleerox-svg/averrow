@@ -16,13 +16,60 @@ export type AuthorizationStatus = 'active' | 'revoked' | 'expired';
 
 export type EscalationMode = 'auto_resubmit_on_pivot' | 'manual_only';
 
+/** Canonical takedown automation posture — mirrors backend AutomationMode. */
+export type AutomationMode = 'off' | 'semi_auto' | 'auto';
+
+/** Per-characteristic auto-submit criteria (applied only when mode==='semi_auto'). */
+export interface SemiAutoRules {
+  auto_severities: string[];
+  auto_target_types: string[];
+  auto_provider_types: string[];
+}
+
 export interface AuthorizationScope {
   modules: string[];
   max_takedowns_per_month: number | null;
   escalation: EscalationMode;
   auto_followup_breached_sla_hours: number | null;
   high_risk_requires_per_takedown_approval: boolean;
+  mode: AutomationMode;
+  semi_auto_rules: SemiAutoRules;
 }
+
+// ── Semi-auto rule domains (mirror backend lib/takedown-policy.ts) ──
+export const POLICY_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
+export const POLICY_TARGET_TYPES = ['domain', 'social_profile', 'url', 'email', 'mobile_app'] as const;
+export const POLICY_PROVIDER_TYPES = ['registrar', 'hosting', 'social_platform', 'cdn', 'email_provider', 'reporting'] as const;
+
+export const TARGET_TYPE_LABELS: Record<string, string> = {
+  domain: 'Domains',
+  social_profile: 'Social profiles',
+  url: 'URLs',
+  email: 'Email',
+  mobile_app: 'Mobile apps',
+};
+
+export const PROVIDER_TYPE_LABELS: Record<string, string> = {
+  registrar: 'Registrars',
+  hosting: 'Hosting',
+  social_platform: 'Social platforms',
+  cdn: 'CDNs',
+  email_provider: 'Email providers',
+  reporting: 'Blocklists / reporting',
+};
+
+export const DEFAULT_SEMI_AUTO_RULES: SemiAutoRules = {
+  auto_severities: ['LOW', 'MEDIUM'],
+  auto_target_types: [],
+  auto_provider_types: [],
+};
+
+/** Customer-facing labels for the three postures. */
+export const MODE_LABELS: Record<AutomationMode, string> = {
+  off: 'Off',
+  semi_auto: 'Semi-Auto',
+  auto: 'Auto',
+};
 
 export interface TakedownAuthorization {
   id:                 string;

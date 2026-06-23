@@ -772,6 +772,32 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | GET | `/api/orgs/:orgId/takedown-authorization` | Member | Read the org's active takedown authorization |
 | POST | `/api/orgs/:orgId/takedown-authorization` | Admin (org) | Sign a takedown authorization (org admin/owner or super_admin) |
 | DELETE | `/api/orgs/:orgId/takedown-authorization` | Admin (org) | Revoke the active takedown authorization |
+
+**Authorization `scope` shape** (`scope_json`, validated server-side, normalized on read/write):
+
+```jsonc
+{
+  "modules": ["domain", "social", "app_store", "trademark", "abuse_mailbox", "threat_actor"],
+  "max_takedowns_per_month": 500,            // or null = unlimited
+  "escalation": "auto_resubmit_on_pivot",    // | "manual_only"
+  "auto_followup_breached_sla_hours": 72,    // or null = off
+  "high_risk_requires_per_takedown_approval": true,  // legacy; kept in sync with mode
+  // ── automation level (Off / Semi-Auto / Auto) ──
+  "mode": "semi_auto",                        // "off" | "semi_auto" | "auto"
+  "semi_auto_rules": {                        // applied only when mode === "semi_auto"
+    "auto_severities": ["LOW", "MEDIUM"],     // severities that auto-submit
+    "auto_target_types": [],                  // [] = any (domain|social_profile|url|email|mobile_app)
+    "auto_provider_types": []                 // [] = any (registrar|hosting|social_platform|cdn|email_provider|reporting)
+  }
+}
+```
+
+`mode` is the canonical posture (Sparrow Phase G + `lib/takedown-policy.ts`):
+`off` never auto-submits, `auto` submits everything in scope, `semi_auto`
+auto-submits only takedowns matching `semi_auto_rules` and holds the rest in
+`draft` for human approval (which fires the `takedown_awaiting_approval`
+notification). Legacy rows without `mode`/`semi_auto_rules` are backfilled on
+read (`high_risk=true → semi_auto`, else `auto`).
 | GET | `/api/orgs/:orgId/billing` | Member | Tenant billing summary — same shape as `/api/admin/customers/:orgId/pricing` but scoped to the caller's org |
 | POST | `/api/orgs/:orgId/billing/checkout-session` | Member | Create a Stripe Checkout session for plan purchase |
 | POST | `/api/orgs/:orgId/billing/portal-session` | Member | Create a Stripe customer-portal session (requires an existing Stripe customer) |

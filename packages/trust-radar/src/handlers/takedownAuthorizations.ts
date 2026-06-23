@@ -24,9 +24,15 @@ import {
   getActiveAuthorization,
   recordSignedAuthorization,
   revokeAuthorization,
+  normalizeScope,
   type AuthorizationScope,
   type EscalationMode,
 } from "../lib/takedown-authorizations";
+import {
+  POLICY_SEVERITIES,
+  POLICY_TARGET_TYPES,
+  POLICY_PROVIDER_TYPES,
+} from "../lib/takedown-policy";
 
 // ─── Org-access guard ──────────────────────────────────────────
 function verifyOrgAccess(ctx: AuthContext, orgId: string): string | null {
@@ -85,7 +91,15 @@ function isModuleKey(k: unknown): k is ModuleKey {
   return typeof k === "string" && (MODULE_KEYS as readonly string[]).includes(k);
 }
 
-function validateScope(scope: unknown): scope is AuthorizationScope {
+function isSubsetOf(arr: unknown, allowed: readonly string[]): boolean {
+  return Array.isArray(arr) && arr.every((v) => typeof v === "string" && allowed.includes(v));
+}
+
+// Loose validation of an inbound scope body. The new mode + semi_auto_rules
+// fields are OPTIONAL here (legacy clients omit them) — normalizeScope()
+// backfills them deterministically before persistence. Only the legacy core
+// fields are strictly required so a malformed body is still rejected.
+function validateScope(scope: unknown): boolean {
   if (!scope || typeof scope !== "object") return false;
   const s = scope as Record<string, unknown>;
   if (!Array.isArray(s.modules) || !s.modules.every(isModuleKey)) return false;
@@ -93,6 +107,17 @@ function validateScope(scope: unknown): scope is AuthorizationScope {
   if (s.escalation !== "auto_resubmit_on_pivot" && s.escalation !== "manual_only") return false;
   if (s.auto_followup_breached_sla_hours !== null && typeof s.auto_followup_breached_sla_hours !== "number") return false;
   if (typeof s.high_risk_requires_per_takedown_approval !== "boolean") return false;
+  // Optional canonical posture.
+  if (s.mode !== undefined && s.mode !== "off" && s.mode !== "semi_auto" && s.mode !== "auto") return false;
+  // Optional semi-auto criteria — each list, if present, must be a subset of
+  // the canonical domain.
+  if (s.semi_auto_rules !== undefined) {
+    if (!s.semi_auto_rules || typeof s.semi_auto_rules !== "object") return false;
+    const r = s.semi_auto_rules as Record<string, unknown>;
+    if (r.auto_severities !== undefined && !isSubsetOf(r.auto_severities, POLICY_SEVERITIES)) return false;
+    if (r.auto_target_types !== undefined && !isSubsetOf(r.auto_target_types, POLICY_TARGET_TYPES)) return false;
+    if (r.auto_provider_types !== undefined && !isSubsetOf(r.auto_provider_types, POLICY_PROVIDER_TYPES)) return false;
+  }
   return true;
 }
 

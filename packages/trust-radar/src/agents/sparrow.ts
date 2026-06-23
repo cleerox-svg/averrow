@@ -810,17 +810,26 @@ async function resolveOwningOrgId(env: Env, brandId: string | null): Promise<num
 // ─── Phase G: Auto-Submit Authorized Drafts ─────────────────────────
 //
 // Picks up to PHASE_G_BATCH takedowns where:
-//   - status = 'draft'
+//   - status IN ('draft', 'requested')
 //   - module_key + provider_name resolved (Phase E filled these in)
 //   - org_id is set (SOC-initiated takedowns with no org are skipped here;
 //     ops handles those manually)
 //   - the org has signed an active takedown_authorizations covering the
 //     module_key
 //   - the matching takedown_providers row has auto_submit_enabled = 1
+//   - the org's signed automation policy (scope.mode + semi_auto_rules)
+//     resolves to 'auto' for the takedown — see lib/takedown-policy.ts:
+//       off       → skipped (manual)
+//       auto      → submitted
+//       semi_auto → submitted only when severity/target/provider match the
+//                   signed rules; otherwise held in 'draft' and the
+//                   customer is notified that it awaits approval. A
+//                   'requested' row is a human-approved takedown and
+//                   submits in any non-off posture.
 //
 // Each match is dispatched via lib/takedown-submitters/. On any
 // non-failed outcome the takedown's status flips to 'submitted'
-// and submitted_at is stamped. On 'failed' the status stays 'draft'
+// and submitted_at is stamped. On 'failed' the status stays put
 // so the next tick (or ops manually) can retry.
 
 const PHASE_G_BATCH = 10;
@@ -839,17 +848,20 @@ interface PhaseGRow {
   provider_abuse_contact: string | null;
   provider_method:        string | null;
   severity:               string;
+  status:                 string;
 }
 
 async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipped: number }> {
+  // status='draft'     → policy decides (auto / approval-hold / off)
+  // status='requested' → human has approved; auto-submits in any non-off posture
   const candidates = await env.DB.prepare(
     `SELECT tr.id, tr.org_id, tr.brand_id, tr.module_key,
             tr.target_type, tr.target_value, tr.target_url,
             tr.evidence_summary, tr.evidence_detail,
             tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
-            tr.severity
+            tr.severity, tr.status
      FROM takedown_requests tr
-     WHERE tr.status = 'draft'
+     WHERE tr.status IN ('draft', 'requested')
        AND tr.org_id IS NOT NULL
        AND tr.module_key IS NOT NULL
        AND tr.provider_name IS NOT NULL
@@ -860,10 +872,17 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
   let submitted = 0;
   let skipped   = 0;
 
-  const { isModuleAuthorized, isUnderMonthlyTakedownCap } = await import("../lib/takedown-authorizations");
+  const { isModuleAuthorized, isUnderMonthlyTakedownCap, getActiveAuthorization } = await import("../lib/takedown-authorizations");
   const { dispatchSubmission } = await import("../lib/takedown-submitters");
   const { isModuleEnabled }    = await import("../lib/entitlements");
+  const { evaluateTakedownPolicy } = await import("../lib/takedown-policy");
   type ModuleKey = Parameters<typeof isModuleAuthorized>[2];
+
+  // Resolve each org's active authorization once per run (cached in KV
+  // anyway). null → no signed scope → nothing to auto-submit.
+  const authByOrg = new Map<number, Awaited<ReturnType<typeof getActiveAuthorization>>>();
+  // De-dupe the "awaiting approval" notification to one per takedown per run.
+  const approvalNotified = new Set<string>();
 
   // S1 — per-org monthly cap (scope_json.max_takedowns_per_month).
   // Resolved once per org per run, then decremented locally so a single
@@ -934,6 +953,51 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
 
       if (!providerRow || providerRow.auto_submit_enabled !== 1) { skipped++; continue; }
 
+      // ── Policy gate (Semi-Auto control) ──────────────────────────────
+      // off       → never auto-submits (fully manual).
+      // auto      → always auto-submits.
+      // semi_auto → auto-submits only when the takedown's characteristics
+      //             match the signed rules; otherwise it's held in 'draft'
+      //             until a human approves it (status → 'requested').
+      // A 'requested' row is a human-approved takedown and submits in any
+      // non-off posture.
+      let auth = authByOrg.get(orgId);
+      if (auth === undefined) {
+        auth = await getActiveAuthorization(env, orgId);
+        authByOrg.set(orgId, auth);
+      }
+      if (!auth) { skipped++; continue; }
+
+      const decision = evaluateTakedownPolicy(auth.scope, {
+        severity:       row.severity,
+        target_type:    row.target_type,
+        provider_type:  providerRow.provider_type,
+        human_approved: row.status === "requested",
+      });
+
+      if (decision !== "auto") {
+        skipped++;
+        // Semi-auto hold: tell the customer a takedown is waiting on them.
+        if (decision === "approval" && !approvalNotified.has(row.id)) {
+          approvalNotified.add(row.id);
+          const { createNotification } = await import("../lib/notifications");
+          await createNotification(env, {
+            type:     "takedown_awaiting_approval",
+            severity: "medium",
+            title:    "Takedown awaiting your approval",
+            message:  `A ${row.severity} takedown for ${row.target_value} matched your semi-automatic policy's approval gate. Review and approve it from the Takedowns queue to submit, or adjust your Automation Policy.`,
+            audience: "tenant",
+            brandId:  row.brand_id,
+            orgId:    String(orgId),
+            groupKey: `takedown_awaiting_approval:${row.id}`,
+            metadata: { takedown_id: row.id, org_id: orgId, severity: row.severity, target_type: row.target_type },
+          }).catch((err) => {
+            console.error(`[Sparrow] approval notification failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+        continue;
+      }
+
       const { result } = await dispatchSubmission(
         env,
         {
@@ -964,7 +1028,7 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
          SET status = 'submitted',
              submitted_at = datetime('now'),
              updated_at   = datetime('now')
-         WHERE id = ? AND status = 'draft'`,
+         WHERE id = ? AND status IN ('draft', 'requested')`,
       ).bind(row.id).run();
       submitted++;
 
