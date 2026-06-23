@@ -136,7 +136,12 @@ describe("getActiveAuthorization", () => {
     const auth = await getActiveAuthorization(env, ORG_ID);
     expect(auth!.scope.modules).toEqual([]);
     expect(auth!.scope.escalation).toBe("manual_only");
-    expect(auth!.scope.high_risk_requires_per_takedown_approval).toBe(true);
+    // mode 'off' is the true most-restrictive posture: Sparrow Phase G
+    // refuses every auto-submit. (The legacy high_risk boolean is false
+    // under 'off' because the per-takedown approval gate only applies in
+    // semi_auto.)
+    expect(auth!.scope.mode).toBe("off");
+    expect(auth!.scope.high_risk_requires_per_takedown_approval).toBe(false);
   });
 });
 

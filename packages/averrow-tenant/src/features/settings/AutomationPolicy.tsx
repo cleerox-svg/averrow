@@ -15,37 +15,38 @@ import {
   useTakedownAuthorization,
   canSignAuthorization,
   ESCALATION_LABELS,
+  TARGET_TYPE_LABELS,
+  PROVIDER_TYPE_LABELS,
+  type AutomationMode,
   type TakedownAuthorization,
 } from '@/lib/takedownAuthorization';
 
-type Posture = 'manual' | 'supervised' | 'autonomous';
+const POSTURE_ORDER: AutomationMode[] = ['off', 'semi_auto', 'auto'];
 
-const POSTURE_ORDER: Posture[] = ['manual', 'supervised', 'autonomous'];
-
-const POSTURE_META: Record<Posture, { label: string; icon: LucideIcon; blurb: string; accent: string }> = {
-  manual: {
-    label: 'Manual',
+const POSTURE_META: Record<AutomationMode, { label: string; icon: LucideIcon; blurb: string; accent: string }> = {
+  off: {
+    label: 'Off',
     icon: Hand,
-    blurb: 'Averrow drafts takedowns and triages signals, but submits nothing to a provider without a human.',
+    blurb: 'Averrow drafts takedowns and triages signals, but submits nothing to a provider without a human. You select what goes out, manually.',
     accent: 'text-white/80',
   },
-  supervised: {
-    label: 'Supervised',
+  semi_auto: {
+    label: 'Semi-Auto',
     icon: UserCheck,
-    blurb: 'Routine takedowns auto-submit within scope; high-risk ones wait in your queue for approval.',
+    blurb: 'Takedowns matching your policy (severity, target type, provider type) auto-submit within scope; everything else waits in your queue for approval.',
     accent: 'text-amber',
   },
-  autonomous: {
-    label: 'Autonomous',
+  auto: {
+    label: 'Auto',
     icon: ShieldCheck,
-    blurb: 'Takedowns auto-submit within your signed scope. You supervise via the queue and can withdraw any request.',
+    blurb: 'Every takedown auto-submits within your signed scope. You supervise via the queue and can withdraw any request.',
     accent: 'text-green/90',
   },
 };
 
-function derivePosture(auth: TakedownAuthorization | null): Posture {
-  if (!auth || auth.status !== 'active') return 'manual';
-  return auth.scope.high_risk_requires_per_takedown_approval ? 'supervised' : 'autonomous';
+function derivePosture(auth: TakedownAuthorization | null): AutomationMode {
+  if (!auth || auth.status !== 'active') return 'off';
+  return auth.scope.mode;
 }
 
 export function AutomationPolicy() {
@@ -85,7 +86,7 @@ export function AutomationPolicy() {
   );
 }
 
-function PostureDial({ posture }: { posture: Posture }) {
+function PostureDial({ posture }: { posture: AutomationMode }) {
   const meta = POSTURE_META[posture];
   const Icon = meta.icon;
   return (
@@ -139,15 +140,46 @@ function TakedownPolicy({ auth }: { auth: TakedownAuthorization | null }) {
   }
 
   const s = auth.scope;
+  const r = s.semi_auto_rules;
+  const fmtList = (vals: readonly string[], labels: Record<string, string>, emptyAll: string) =>
+    vals.length === 0 ? emptyAll : vals.map((v) => labels[v] ?? v).join(' · ');
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <SectionTitle icon={ShieldCheck} title="Takedowns" subtitle="Your policy" />
       <div className="space-y-2.5">
         <PolicyRow
-          level={s.high_risk_requires_per_takedown_approval ? 'approval' : 'auto'}
-          label="High-risk takedowns"
-          value={s.high_risk_requires_per_takedown_approval ? 'Require your approval' : 'Auto-submit within scope'}
+          level={s.mode === 'off' ? 'guardrail' : s.mode === 'semi_auto' ? 'approval' : 'auto'}
+          label="Automation level"
+          value={
+            s.mode === 'off'
+              ? 'Off — manual selection only'
+              : s.mode === 'semi_auto'
+                ? 'Semi-Auto — policy-matched submit, rest wait for approval'
+                : 'Auto — all in-scope takedowns submit'
+          }
         />
+
+        {/* Semi-auto criteria — only meaningful when the policy is semi_auto */}
+        {s.mode === 'semi_auto' && (
+          <>
+            <PolicyRow
+              level="auto"
+              label="Auto-submit severities"
+              value={r.auto_severities.length === 0 ? 'None (everything waits for approval)' : r.auto_severities.join(' · ')}
+            />
+            <PolicyRow
+              level="auto"
+              label="Auto-submit targets"
+              value={fmtList(r.auto_target_types, TARGET_TYPE_LABELS, 'Any target type')}
+            />
+            <PolicyRow
+              level="auto"
+              label="Auto-submit providers"
+              value={fmtList(r.auto_provider_types, PROVIDER_TYPE_LABELS, 'Any provider type')}
+            />
+          </>
+        )}
+
         <PolicyRow
           level="auto"
           label="Covered modules"

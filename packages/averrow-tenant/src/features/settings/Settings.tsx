@@ -9,9 +9,17 @@ import {
   canRevokeAuthorization,
   canSignAuthorization,
   ESCALATION_LABELS,
+  MODE_LABELS,
+  TARGET_TYPE_LABELS,
+  PROVIDER_TYPE_LABELS,
+  POLICY_SEVERITIES,
+  POLICY_TARGET_TYPES,
+  POLICY_PROVIDER_TYPES,
+  DEFAULT_SEMI_AUTO_RULES,
   type TakedownAuthorization,
   type AuthorizationScope,
   type EscalationMode,
+  type AutomationMode,
 } from '@/lib/takedownAuthorization';
 import {
   AGREEMENT_VERSION,
@@ -197,6 +205,36 @@ function AuthorizationDetails({
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
         <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-3">Scope</h3>
         <dl className="space-y-3">
+          <Row label="Automation level">
+            <span className="text-[13px] text-white/85 font-semibold">
+              {MODE_LABELS[auth.scope.mode]}
+            </span>
+          </Row>
+          {auth.scope.mode === 'semi_auto' && (
+            <>
+              <Row label="Auto severities">
+                <span className="text-[12.5px] text-white/85">
+                  {auth.scope.semi_auto_rules.auto_severities.length === 0
+                    ? 'None'
+                    : auth.scope.semi_auto_rules.auto_severities.join(' · ')}
+                </span>
+              </Row>
+              <Row label="Auto targets">
+                <span className="text-[12.5px] text-white/85">
+                  {auth.scope.semi_auto_rules.auto_target_types.length === 0
+                    ? 'Any'
+                    : auth.scope.semi_auto_rules.auto_target_types.map((t) => TARGET_TYPE_LABELS[t] ?? t).join(' · ')}
+                </span>
+              </Row>
+              <Row label="Auto providers">
+                <span className="text-[12.5px] text-white/85">
+                  {auth.scope.semi_auto_rules.auto_provider_types.length === 0
+                    ? 'Any'
+                    : auth.scope.semi_auto_rules.auto_provider_types.map((p) => PROVIDER_TYPE_LABELS[p] ?? p).join(' · ')}
+                </span>
+              </Row>
+            </>
+          )}
           <Row label="Modules covered">
             {auth.scope.modules.length === 0 ? (
               <span className="text-[12px] text-white/45">None — contact support to expand coverage.</span>
@@ -230,13 +268,6 @@ function AuthorizationDetails({
               {auth.scope.auto_followup_breached_sla_hours === null
                 ? 'Off'
                 : `After ${auth.scope.auto_followup_breached_sla_hours}h SLA breach`}
-            </span>
-          </Row>
-          <Row label="High-risk approval">
-            <span className="text-[13px] text-white/85">
-              {auth.scope.high_risk_requires_per_takedown_approval
-                ? 'Per-takedown approval required'
-                : 'Auto-submit'}
             </span>
           </Row>
         </dl>
@@ -317,7 +348,12 @@ function SignAuthorizationForm() {
   const [cap, setCap] = useState<string>(''); // empty = unlimited
   const [escalation, setEscalation] = useState<EscalationMode>('auto_resubmit_on_pivot');
   const [autoFollowup, setAutoFollowup] = useState<string>('72');
-  const [highRiskApproval, setHighRiskApproval] = useState<boolean>(true);
+  const [mode, setMode] = useState<AutomationMode>('semi_auto');
+  const [autoSeverities, setAutoSeverities] = useState<Set<string>>(
+    () => new Set(DEFAULT_SEMI_AUTO_RULES.auto_severities),
+  );
+  const [autoTargetTypes, setAutoTargetTypes] = useState<Set<string>>(() => new Set());
+  const [autoProviderTypes, setAutoProviderTypes] = useState<Set<string>>(() => new Set());
   const [agreed, setAgreed] = useState<boolean>(false);
   const [expanded, setExpanded] = useState<boolean>(false);
 
@@ -327,6 +363,12 @@ function SignAuthorizationForm() {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+  };
+
+  const toggleIn = (set: Set<string>, setter: (s: Set<string>) => void, value: string) => {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    setter(next);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -343,7 +385,14 @@ function SignAuthorizationForm() {
       max_takedowns_per_month: capNum,
       escalation,
       auto_followup_breached_sla_hours: followupNum,
-      high_risk_requires_per_takedown_approval: highRiskApproval,
+      // Kept in sync with mode for backward compatibility.
+      high_risk_requires_per_takedown_approval: mode === 'semi_auto',
+      mode,
+      semi_auto_rules: {
+        auto_severities: Array.from(autoSeverities),
+        auto_target_types: Array.from(autoTargetTypes),
+        auto_provider_types: Array.from(autoProviderTypes),
+      },
     };
 
     sign.mutate({ agreement_version: AGREEMENT_VERSION, scope });
@@ -470,17 +519,73 @@ function SignAuthorizationForm() {
           </select>
         </div>
 
-        <label className="flex items-start gap-2.5 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={highRiskApproval}
-            onChange={(e) => setHighRiskApproval(e.target.checked)}
-            className="accent-amber mt-0.5"
-          />
-          <span className="text-[12px] text-white/75 leading-relaxed">
-            Require per-takedown approval for high-risk targets (recommended).
-          </span>
-        </label>
+        {/* Automation level — the Off / Semi-Auto / Auto dial */}
+        <div>
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
+            Automation level
+          </label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(['off', 'semi_auto', 'auto'] as AutomationMode[]).map((m) => {
+              const on = mode === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`rounded-lg border px-3 py-2 text-center transition-colors ${
+                    on
+                      ? 'border-amber/[0.45] bg-amber/[0.10] text-amber'
+                      : 'border-white/[0.08] bg-bg-page text-white/60 hover:border-white/[0.18]'
+                  }`}
+                >
+                  <span className="block text-[13px] font-semibold">{MODE_LABELS[m]}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
+            {mode === 'off'
+              ? 'Averrow drafts takedowns; you pick which ones to submit, manually.'
+              : mode === 'semi_auto'
+                ? 'Takedowns matching the rules below auto-submit; everything else waits in your queue for approval.'
+                : 'Every takedown in scope auto-submits. You can still withdraw any request from the queue.'}
+          </p>
+        </div>
+
+        {/* Semi-auto criteria — only when Semi-Auto is selected */}
+        {mode === 'semi_auto' && (
+          <div className="space-y-4 rounded-lg border border-amber/[0.18] bg-amber/[0.03] p-4">
+            <p className="text-[11px] text-white/55 leading-relaxed">
+              Choose what auto-submits without waiting for you. A takedown must match <strong className="text-white/80">all</strong> the
+              criteria you set below to go out automatically.
+            </p>
+
+            <ChipPicker
+              label="Auto-submit severities"
+              hint="Required — leave none selected and everything waits for approval."
+              options={POLICY_SEVERITIES}
+              labels={Object.fromEntries(POLICY_SEVERITIES.map((s) => [s, s]))}
+              selected={autoSeverities}
+              onToggle={(v) => toggleIn(autoSeverities, setAutoSeverities, v)}
+            />
+            <ChipPicker
+              label="Auto-submit target types"
+              hint="Leave all unselected to allow any target type."
+              options={POLICY_TARGET_TYPES}
+              labels={TARGET_TYPE_LABELS}
+              selected={autoTargetTypes}
+              onToggle={(v) => toggleIn(autoTargetTypes, setAutoTargetTypes, v)}
+            />
+            <ChipPicker
+              label="Auto-submit provider types"
+              hint="Leave all unselected to allow any provider type."
+              options={POLICY_PROVIDER_TYPES}
+              labels={PROVIDER_TYPE_LABELS}
+              selected={autoProviderTypes}
+              onToggle={(v) => toggleIn(autoProviderTypes, setAutoProviderTypes, v)}
+            />
+          </div>
+        )}
       </section>
 
       {/* Consent + submit */}
@@ -515,6 +620,50 @@ function SignAuthorizationForm() {
         )}
       </section>
     </form>
+  );
+}
+
+function ChipPicker({
+  label,
+  hint,
+  options,
+  labels,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  hint: string;
+  options: readonly string[];
+  labels: Record<string, string>;
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+        {label}
+      </label>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => {
+          const on = selected.has(o);
+          return (
+            <button
+              key={o}
+              type="button"
+              onClick={() => onToggle(o)}
+              className={`rounded-full border px-3 py-1 text-[12px] transition-colors ${
+                on
+                  ? 'border-amber/[0.45] bg-amber/[0.12] text-amber'
+                  : 'border-white/[0.10] bg-bg-page text-white/55 hover:border-white/[0.20]'
+              }`}
+            >
+              {labels[o] ?? o}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-white/40 mt-1">{hint}</p>
+    </div>
   );
 }
 
