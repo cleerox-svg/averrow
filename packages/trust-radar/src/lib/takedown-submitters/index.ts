@@ -22,6 +22,7 @@ import type { Env } from "../../types";
 import { emailDraftSubmitter } from "./email-draft";
 import { emailSendSubmitter } from "./email-send";
 import { followupDraftSubmitter } from "./followup-draft";
+import { webRiskSubmitter } from "./web-risk";
 import type {
   ProviderRecord,
   SubmissionResult,
@@ -34,13 +35,20 @@ import type {
  * fallback stays last so any provider-specific implementation
  * shadows it once landed.
  *
+ * Provider-specific API submitters (webRiskSubmitter, future
+ * cloudflare/registrar/etc.) sit ahead of the generic email channel. Each
+ * gates its own canHandle() on the live-send kill switch + its credential,
+ * so an unconfigured submitter transparently falls back to email rather
+ * than failing.
+ *
  * S1: emailSendSubmitter sits ahead of the draft fallback but its
  * canHandle() only matches when TAKEDOWN_SEND_MODE='live' — in draft
  * mode (the default) selection falls through to emailDraftSubmitter
  * and behavior is identical to pre-S1.
  */
 const SUBMITTERS: Submitter[] = [
-  // future: cloudflareSubmitter, godaddySubmitter, twitterSubmitter, …
+  webRiskSubmitter,      // Google Web Risk Submission API (blocklist)
+  // future: cloudflareSubmitter, godaddySubmitter, apwgSubmitter, …
   emailSendSubmitter,
   emailDraftSubmitter,
 ];

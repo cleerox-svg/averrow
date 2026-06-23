@@ -10,6 +10,22 @@ integrated takedown submission** — moving from today's email-only channel to
 true API/form integrations with the registrars, hosts, social platforms, and
 blocklists that accept structured abuse reports.
 
+> **Shipped (2026-06-23):** the scaffolding (P1) + the first true provider-API
+> submitter — **Google Web Risk** (`lib/takedown-submitters/web-risk.ts`,
+> kind `api_web_risk`) — are in. It submits malicious URLs to Google's Web
+> Risk Submission API (blocklist flagging in Chrome/Android), gated behind the
+> live-send kill switch + a Google service-account credential
+> (`GOOGLE_SERVICE_ACCOUNT_JSON`) + `provider.auto_submit_enabled`. Absent
+> credential → it declines and the dispatcher falls back to email. Token
+> minting lives in the reusable `lib/google-service-account.ts`. **Operator
+> prerequisite:** the GCP project must be allow-listed by Google for the Web
+> Risk Submission API (partner program) before flipping `auto_submit_enabled`.
+>
+> **Correction to earlier draft:** Cloudflare has **no public authenticated
+> abuse-submission REST API** — their intake is a web form. A Cloudflare
+> integration is therefore a form-POST submitter or a tuned email, not an API
+> client. Web Risk was chosen as the first real-API target instead.
+
 It is a companion to the **automation-levels** work (Off / Semi-Auto / Auto)
 already landed on this branch (`lib/takedown-policy.ts`,
 `takedown_authorizations.scope.mode` + `semi_auto_rules`). Levels decide
@@ -147,17 +163,19 @@ signed authorization) plus the new automation `mode`.
 - Provider config: add `abuse_api_auth` / credential-ref column to
   `takedown_providers` (migration) so the secret name is data, not code.
 
-### Phase P2 — Cloudflare abuse API (1 sprint) ⭐ first real integration
-- `cloudflareSubmitter` (`api_cloudflare`): POST to the Abuse Reports endpoint,
-  map category from `module_key`/`target_type`, capture case number → `ticket_id`.
-- Operator verification run (draft → live on a sample), then flip
-  `auto_submit_enabled=1` for the Cloudflare provider row.
-- Acceptance: a Cloudflare-hosted malicious domain auto-submits via API and the
-  `takedown_submissions` row carries a case number.
+### Phase P2 — Google Web Risk submission ✅ SHIPPED (first real integration)
+- `webRiskSubmitter` (`api_web_risk`): POST to
+  `…/projects/{projectId}/uris:submit`, capture the returned operation name →
+  `ticket_id`. Reusable OAuth token minting in `lib/google-service-account.ts`.
+- Gated on live-send + service-account secret + `auto_submit_enabled`; declines
+  → email fallback when unconfigured.
+- **Remaining operator step:** GCP project allow-listing for the Web Risk
+  Submission API, then a verification run (draft → live on a sample) before
+  flipping `auto_submit_enabled=1` on the 'Google Safe Browsing' provider row.
 
-### Phase P3 — Google Safe Browsing / blocklists (1 sprint) — pairs with S2
-- `gsbSubmitter` + `apwgSubmitter`. These are additive — a domain can be sent
-  to **both** its host (P2) and the blocklists. Extend Phase G to allow
+### Phase P3 — More blocklists / reporting (1 sprint) — pairs with S2
+- `apwgSubmitter`, `netcraftSubmitter`, abuse.ch/URLhaus. Additive — a domain
+  can be sent to **both** its host and the blocklists. Extend Phase G to allow
   **multiple submitters per takedown** (fan-out) rather than first-match-only,
   OR model blocklist submission as a separate Phase G2 pass. (Design decision —
   see §6.)
