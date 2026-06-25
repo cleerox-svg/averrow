@@ -32,6 +32,23 @@
 .console-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .console-def { color: var(--text-secondary); font-size: 13px; line-height: 1.55; max-width: 720px; margin: -2px 0 18px; }
 
+/* Overview quick-launch grid */
+.ql-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 4px; }
+.ql-card {
+  display: block; padding: 18px; border-radius: 16px; text-decoration: none; color: inherit;
+  background: linear-gradient(160deg, var(--bg-card), var(--bg-card-deep));
+  border: 1px solid var(--border-base);
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.ql-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--amber-border);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.4), 0 0 24px rgba(229,168,50,0.12);
+}
+.ql-icon { color: var(--amber); }
+.ql-title { font-size: 15px; font-weight: 700; margin-top: 12px; color: var(--text-primary); }
+.ql-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+
 @keyframes console-ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 .ci-row { transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease; }

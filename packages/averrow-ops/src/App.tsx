@@ -2,6 +2,7 @@ import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ShellSwitch } from '@/components/layout/ShellV4';
+import { useShellVersion } from '@/design-system/hooks/useShellVersion';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
@@ -48,6 +49,7 @@ const ThreatActors = React.lazy(() => import('@/features/threat-actors/ThreatAct
 const Leads = React.lazy(() => import('@/features/leads/Leads').then(m => ({ default: m.Leads })));
 const Console = React.lazy(() => import('@/features/console/Console').then(m => ({ default: m.Console })));
 const Home = React.lazy(() => import('@/pages/Home').then(m => ({ default: m.Home })));
+const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 })));
 const BrandAdminDashboard = React.lazy(() => import('@/features/admin/BrandAdminDashboard').then(m => ({ default: m.BrandAdminDashboard })));
 const Threats = React.lazy(() => import('@/features/threats/Threats').then(m => ({ default: m.Threats })));
 const Profile = React.lazy(() => import('@/features/settings/Profile').then(m => ({ default: m.Profile })));
@@ -129,10 +131,13 @@ function RedirectToActorFocus() {
 
 function RoleAwareHome() {
   const { isBrandAdmin } = useAuth();
+  const { isV4 } = useShellVersion();
   if (isBrandAdmin) {
     return <BrandAdminDashboard />;
   }
-  return <Home />;
+  // In the v4 shell, "/" is the cinematic command-center Overview; classic
+  // keeps the existing Home.
+  return isV4 ? <OverviewV4 /> : <Home />;
 }
 
 export default function App() {
