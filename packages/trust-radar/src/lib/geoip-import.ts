@@ -476,15 +476,26 @@ export async function runGeoipDiffImport(
   const processChunk = async () => {
     if (buffer.length === 0) return;
     const keys = buffer.map((r) => r.startIp);
-    const existing = await db
-      .prepare(
-        `SELECT start_ip_int, row_hash FROM geo_ip_ranges
-          WHERE start_ip_int IN (${keys.map(() => "?").join(",")})`,
-      )
-      .bind(...keys)
-      .all<{ start_ip_int: number; row_hash: string | null }>();
+    // The existence check is a SINGLE statement, so its `?` count is
+    // bound by D1's per-statement variable cap (100) — NOT the
+    // db.batch() statement-count cap that D1_BATCH_LIMIT (500) targets.
+    // Sub-chunk the IN(...) here independently: a 500-key buffer would
+    // otherwise emit `IN (?×500)` and fail with
+    // "too many SQL variables at offset 282: SQLITE_ERROR". Keep below
+    // 100 with headroom.
+    const SELECT_VAR_LIMIT = 90;
     const existingHash = new Map<number, string | null>();
-    for (const e of existing.results) existingHash.set(e.start_ip_int, e.row_hash);
+    for (let i = 0; i < keys.length; i += SELECT_VAR_LIMIT) {
+      const slice = keys.slice(i, i + SELECT_VAR_LIMIT);
+      const existing = await db
+        .prepare(
+          `SELECT start_ip_int, row_hash FROM geo_ip_ranges
+            WHERE start_ip_int IN (${slice.map(() => "?").join(",")})`,
+        )
+        .bind(...slice)
+        .all<{ start_ip_int: number; row_hash: string | null }>();
+      for (const e of existing.results) existingHash.set(e.start_ip_int, e.row_hash);
+    }
 
     const writes: D1PreparedStatement[] = [];
     for (const r of buffer) {
