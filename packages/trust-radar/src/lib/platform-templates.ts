@@ -652,6 +652,58 @@ export function renderPlatformResendBounces(v: PlatformResendBouncesVars): Rende
   };
 }
 
+// ─── Spam-trap silent-failure guards (2026-06) ───────────────────────
+// The auto-seeder reported success while planting 0 for ~5 weeks (signed-int
+// seed bug) and captures dried up unnoticed. These watch the OUTCOME —
+// seed-roster freshness + capture freshness — so the next silent stall is
+// caught in days, not weeks.
+
+export interface PlatformSpamTrapSeedingStalledVars {
+  days_since_seed: number;
+  threshold_days: number;
+}
+export function renderPlatformSpamTrapSeedingStalled(v: PlatformSpamTrapSeedingStalledVars): RenderedTemplate {
+  const days = Math.floor(v.days_since_seed);
+  return {
+    title: `Spam-trap seeding stalled — no new addresses in ${days}d`,
+    message:
+      `The auto-seeder ("Recon") hasn't planted a new honeypot address in ${days} days ` +
+      `(alert threshold ${v.threshold_days}d). Healthy it plants ~96/week; a stall means it's ` +
+      `running but creating nothing — the silent failure that dried up the spam trap for 5 weeks. ` +
+      `Fresh bait stops reaching harvesters and captures decay to zero.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action:
+      `Check agent_outputs WHERE agent_id='auto_seeder' for "planting failed" errors; ` +
+      `trigger a manual run via /agents and confirm itemsCreated > 0; verify seed_domains has active targets.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_spam_trap_seeding_stalled:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'high',
+  };
+}
+
+export interface PlatformSpamTrapCaptureStaleVars {
+  days_since_capture: number;
+  threshold_days: number;
+}
+export function renderPlatformSpamTrapCaptureStale(v: PlatformSpamTrapCaptureStaleVars): RenderedTemplate {
+  const days = Math.floor(v.days_since_capture);
+  return {
+    title: `Spam-trap captures stale — none in ${days}d`,
+    message:
+      `No spam-trap captures in ${days} days (alert threshold ${v.threshold_days}d). The honeypot ` +
+      `has gone quiet — either the trap roster is stale (check seeding) or inbound capture/ingestion broke.`,
+    reason_text: `Platform alert — operational only.`,
+    recommended_action:
+      `Confirm auto_seeder is planting (itemsCreated > 0); verify the honeypot pages still render mailto ` +
+      `links; check inbound email routing into spam_trap_captures.`,
+    link: PLATFORM_ADMIN_LINK,
+    group_key: `platform_spam_trap_capture_stale:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'medium',
+  };
+}
+
 // ─── Emit helper (mirrors emitIntelNotification) ─────────────────────
 
 export async function emitPlatformNotification<T extends NotificationType>(

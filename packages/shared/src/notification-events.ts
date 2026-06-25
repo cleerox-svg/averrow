@@ -57,6 +57,8 @@ export type NotificationEventKey =
   | 'platform_dns_queue_stalled'
   | 'platform_dns_queue_reaper_stalled'
   | 'platform_abuse_classifier_silent'
+  | 'platform_spam_trap_seeding_stalled'
+  | 'platform_spam_trap_capture_stale'
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
@@ -301,6 +303,22 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     label: 'GeoIP Refresh Stalled',
     description: 'GeoIP MaxMind refresh workflow stuck >60 min — Flight Control auto-recovered',
     dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_spam_trap_seeding_stalled',
+    label: 'Spam-Trap Seeding Stalled',
+    description: 'Auto-seeder has not planted a new honeypot address in >10 days — running but creating nothing',
+    dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_spam_trap_capture_stale',
+    label: 'Spam-Trap Captures Stale',
+    description: 'No spam-trap captures in >14 days — the honeypot has gone quiet',
+    dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,
   },
