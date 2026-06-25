@@ -94,6 +94,11 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   // Google Safe Browsing
   GOOGLE_SAFE_BROWSING_KEY?: string;
+  // Google service-account JSON (Web Risk Submission API + future GCP APIs)
+  GOOGLE_SERVICE_ACCOUNT_JSON?: string;
+  // NetBeacon (DNS Abuse Institute) registrar-routed abuse reporting
+  NETBEACON_API_KEY?: string;
+  NETBEACON_API_BASE?: string;
   // GreyNoise IP context
   GREYNOISE_API_KEY?: string;
   // SecLookup domain + IP intelligence
