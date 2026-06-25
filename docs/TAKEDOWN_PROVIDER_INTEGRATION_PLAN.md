@@ -191,12 +191,17 @@ signed authorization) plus the new automation `mode`.
   + `NETBEACON_API_KEY` secret + a live verification report, then flip
   `auto_submit_enabled=1`.
 
-  **Routing note:** the dispatcher selects a submitter by the takedown's
-  *provider* (`abuse_api_type`). For NetBeacon to fire on a domain takedown,
-  Sparrow Phase G must set that takedown's provider to the NetBeacon row (or a
-  future fan-out pass must add it). Wiring that provider-selection rule for
-  domain targets is the next Sparrow-side step — tracked under §6's
-  "multiple submitters per takedown" design decision.
+  **Routing (✅ wired 2026-06-25):** the dispatcher selects a submitter by the
+  takedown's *provider* (`abuse_api_type`). Sparrow Phase E now routes **domain**
+  takedowns to the NetBeacon provider row via
+  `preferredDomainReportingProvider()` — but only when NetBeacon is actually
+  dispatchable (live send mode + `NETBEACON_API_KEY` + the NetBeacon row's
+  `auto_submit_enabled=1`). Otherwise it keeps the resolved host/registrar
+  contact, so draft-mode / unconfigured behavior is unchanged and a domain is
+  never stranded on the NetBeacon row (which has no `abuse_email`). The gate
+  mirrors `netbeaconSubmitter.canHandle` exactly, so whenever Phase E routes to
+  NetBeacon, Phase G can dispatch it. Still single-channel (first match) —
+  registrar-**and**-blocklist fan-out remains the §6 design decision.
 
 ### Phase P4 — More blocklists / reporting (1 sprint) — pairs with S2
 - `godaddySubmitter` (real Abuse API, `api.godaddy.com`), `apwgSubmitter`,

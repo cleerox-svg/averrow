@@ -6,6 +6,7 @@
  */
 
 import type { Env, TakedownProvider } from "../types";
+import { isLiveSendMode } from "./takedown-submitters/email-send";
 
 export interface ProviderInfo {
   hosting_provider: string | null;
@@ -122,6 +123,37 @@ export async function resolveProvider(env: Env, domain: string): Promise<Provide
   }
 
   return result;
+}
+
+/**
+ * NetBeacon (registrar-routed, X-ARF) is the preferred channel for *domain*
+ * takedowns — one API fans the report out to the participating-registrar
+ * network. This returns the NetBeacon provider row to route a domain takedown
+ * to it, but only when NetBeacon is actually *dispatchable*:
+ *
+ *   - live send mode (TAKEDOWN_SEND_MODE='live'), AND
+ *   - a configured NETBEACON_API_KEY, AND
+ *   - the NetBeacon provider row flipped to auto_submit_enabled=1.
+ *
+ * Returns null otherwise, so the caller keeps the resolved host/registrar
+ * contact and today's email-draft behavior is unchanged. The live+enabled gate
+ * is a safety guarantee: the NetBeacon row has no abuse_email, so routing a
+ * domain to it in a posture where the dispatcher couldn't select the NetBeacon
+ * submitter (draft mode / no key) would strand the takedown with no deliverable
+ * channel. Gating here mirrors netbeaconSubmitter.canHandle exactly.
+ */
+export async function preferredDomainReportingProvider(
+  env: Env,
+): Promise<TakedownProvider | null> {
+  if (!isLiveSendMode(env)) return null;
+  const key = (env as unknown as Record<string, string | undefined>).NETBEACON_API_KEY;
+  if (!key) return null;
+  const row = await env.DB.prepare(
+    `SELECT * FROM takedown_providers
+     WHERE abuse_api_type = 'netbeacon' AND auto_submit_enabled = 1
+     LIMIT 1`,
+  ).first<TakedownProvider>();
+  return row ?? null;
 }
 
 /**

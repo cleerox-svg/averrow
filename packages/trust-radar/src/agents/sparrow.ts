@@ -212,23 +212,36 @@ export const sparrowAgent: AgentModule = {
 
     for (const td of noProviderTakedowns.results || []) {
       try {
-        const { resolveProvider, generateSubmissionDraft } = await import("../lib/provider-resolver");
+        const { resolveProvider, generateSubmissionDraft, preferredDomainReportingProvider } = await import("../lib/provider-resolver");
         const providerInfo = await resolveProvider(env, td.target_value as string);
+
+        // Domain takedowns route to NetBeacon (registrar fan-out) when it's
+        // dispatchable; otherwise keep the resolved host/registrar contact.
+        const netbeacon = (td.target_type as string) === "domain"
+          ? await preferredDomainReportingProvider(env)
+          : null;
+        const abuseContact = netbeacon ?? providerInfo.abuse_contact;
+        const providerName = netbeacon ? netbeacon.provider_name : providerInfo.hosting_provider;
 
         const updates: string[] = [];
         const values: unknown[] = [];
 
-        if (providerInfo.hosting_provider && !td.provider_name) {
+        // NetBeacon override (re)asserts the routing columns unconditionally;
+        // the host path keeps its original "only fill when empty" semantics.
+        if (netbeacon) {
           updates.push("provider_name = ?");
-          values.push(providerInfo.hosting_provider);
+          values.push(netbeacon.provider_name);
+        } else if (providerName && !td.provider_name) {
+          updates.push("provider_name = ?");
+          values.push(providerName);
         }
-        if (providerInfo.abuse_contact?.abuse_email || providerInfo.abuse_contact?.abuse_url) {
+        if (abuseContact?.abuse_email || abuseContact?.abuse_url) {
           updates.push("provider_abuse_contact = ?");
-          values.push(providerInfo.abuse_contact.abuse_email || providerInfo.abuse_contact.abuse_url);
+          values.push(abuseContact.abuse_email || abuseContact.abuse_url);
         }
-        if (providerInfo.abuse_contact?.abuse_api_type) {
+        if (abuseContact?.abuse_api_type) {
           updates.push("provider_method = ?");
-          values.push(providerInfo.abuse_contact.abuse_api_type);
+          values.push(abuseContact.abuse_api_type);
         }
 
         // Generate submission draft
@@ -241,7 +254,7 @@ export const sparrowAgent: AgentModule = {
             evidence_detail?: string | null;
             brand_name?: string;
           },
-          providerInfo.abuse_contact,
+          abuseContact,
           providerInfo,
         );
         updates.push("evidence_detail = COALESCE(evidence_detail, '') || ?");

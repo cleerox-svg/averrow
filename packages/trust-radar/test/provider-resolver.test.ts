@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { generateSubmissionDraft } from "../src/lib/provider-resolver";
+import { generateSubmissionDraft, preferredDomainReportingProvider } from "../src/lib/provider-resolver";
 import type { ProviderInfo } from "../src/lib/provider-resolver";
-import type { TakedownProvider } from "../src/types";
+import type { Env, TakedownProvider } from "../src/types";
 
 function makeProvider(overrides: Partial<TakedownProvider> = {}): TakedownProvider {
   return {
@@ -301,5 +301,49 @@ describe("generateSubmissionDraft — edge cases", () => {
     expect(draft.length).toBeGreaterThan(0);
     expect(draft).toContain("test.com");
     expect(draft).toContain("Malicious content detected.");
+  });
+});
+
+describe("preferredDomainReportingProvider — NetBeacon routing gate", () => {
+  const nbRow = makeProvider({
+    id: 99, provider_name: "NetBeacon", provider_type: "reporting",
+    abuse_email: null, abuse_url: "https://netbeacon.org/reporting/",
+    abuse_api_url: "https://api.netbeacon.org", abuse_api_type: "netbeacon",
+  });
+
+  // DB stub: returns nbRow only for the enabled-NetBeacon SELECT. `enabled`
+  // models the auto_submit_enabled=1 filter in the query.
+  function makeEnv(vars: Record<string, string>, enabled: boolean): Env {
+    return {
+      ...vars,
+      DB: {
+        prepare: (_sql: string) => ({
+          first: async <T>() => (enabled ? (nbRow as unknown as T) : null),
+          bind: () => ({ first: async <T>() => (enabled ? (nbRow as unknown as T) : null) }),
+        }),
+      },
+    } as unknown as Env;
+  }
+
+  it("returns the NetBeacon row when live + key + enabled", async () => {
+    const env = makeEnv({ TAKEDOWN_SEND_MODE: "live", NETBEACON_API_KEY: "nb_key" }, true);
+    const got = await preferredDomainReportingProvider(env);
+    expect(got?.provider_name).toBe("NetBeacon");
+    expect(got?.abuse_api_type).toBe("netbeacon");
+  });
+
+  it("returns null in draft mode (keeps host/registrar resolution)", async () => {
+    const env = makeEnv({ TAKEDOWN_SEND_MODE: "draft", NETBEACON_API_KEY: "nb_key" }, true);
+    expect(await preferredDomainReportingProvider(env)).toBeNull();
+  });
+
+  it("returns null when no API key is set", async () => {
+    const env = makeEnv({ TAKEDOWN_SEND_MODE: "live" }, true);
+    expect(await preferredDomainReportingProvider(env)).toBeNull();
+  });
+
+  it("returns null when the NetBeacon row is not auto_submit_enabled", async () => {
+    const env = makeEnv({ TAKEDOWN_SEND_MODE: "live", NETBEACON_API_KEY: "nb_key" }, false);
+    expect(await preferredDomainReportingProvider(env)).toBeNull();
   });
 });
