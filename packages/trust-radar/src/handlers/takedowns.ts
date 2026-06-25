@@ -444,6 +444,21 @@ export const handleAdminListTakedowns = handler(async (request, env, ctx) => {
   });
 });
 
+// ─── GET /api/admin/takedowns/integrations ───────────────────
+// Per-integration health rollup (NetBeacon / GoDaddy / Web Risk / email):
+// configured? live? submissions / success rate / last submission / last
+// error over a window. Powers the Ops "Integrations" view.
+
+export const handleAdminTakedownIntegrations = handler(async (request, env, ctx) => {
+  const url = new URL(request.url);
+  const hoursParam = parseInt(url.searchParams.get("hours") ?? "168", 10);
+  const windowHours = Number.isFinite(hoursParam) ? Math.min(Math.max(hoursParam, 1), 720) : 168;
+
+  const { getTakedownIntegrations } = await import("../lib/takedown-integrations");
+  const report = await getTakedownIntegrations(env, windowHours);
+  return success(report, ctx.origin);
+});
+
 // ─── PATCH /api/admin/takedowns/:id (superadmin) ─────────────
 
 export async function handleAdminUpdateTakedown(

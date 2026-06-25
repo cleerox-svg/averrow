@@ -28,7 +28,7 @@ import {
   handleSearchBrands,
 } from "../handlers/organizations";
 import {
-  handleAdminListTakedowns, handleAdminUpdateTakedown,
+  handleAdminListTakedowns, handleAdminUpdateTakedown, handleAdminTakedownIntegrations,
 } from "../handlers/takedowns";
 import {
   handleGenerateVapidKeys, handleGetPushConfig, handleUpdatePushConfig, handlePushTest,
@@ -553,6 +553,13 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminListTakedowns(request, env);
+  });
+  // Integration health rollup (NetBeacon / GoDaddy / Web Risk / email).
+  // Registered ahead of the :id PATCH; distinct GET path, no collision.
+  router.get("/api/admin/takedowns/integrations", async (request: Request, env: Env) => {
+    const ctx = await requirePermission("manage_takedowns")(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminTakedownIntegrations(request, env);
   });
   router.patch("/api/admin/takedowns/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requirePermission("manage_takedowns")(request, env);

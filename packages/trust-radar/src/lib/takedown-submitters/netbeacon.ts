@@ -76,6 +76,10 @@ export function deriveNetBeaconCategory(takedown: TakedownRecord): NetBeaconCate
 export const netbeaconSubmitter: Submitter = {
   kind: KIND,
 
+  isConfigured(env: Env): boolean {
+    return !!netbeaconKey(env);
+  },
+
   canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean {
     return (
       isLiveSendMode(env) &&

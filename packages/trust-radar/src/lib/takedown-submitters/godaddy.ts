@@ -73,6 +73,10 @@ export function deriveGoDaddyType(takedown: TakedownRecord): GoDaddyAbuseType {
 export const godaddySubmitter: Submitter = {
   kind: KIND,
 
+  isConfigured(env: Env): boolean {
+    return creds(env) !== null;
+  },
+
   canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean {
     return (
       isLiveSendMode(env) &&

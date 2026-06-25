@@ -106,6 +106,10 @@ export async function sendTakedownEmail(
 export const emailSendSubmitter: Submitter = {
   kind: KIND,
 
+  isConfigured(env: Env): boolean {
+    return Boolean(env.RESEND_API_KEY);
+  },
+
   canHandle(env: Env, _takedown: TakedownRecord, provider: ProviderRecord): boolean {
     return isLiveSendMode(env) && Boolean(provider.abuse_email);
   },
