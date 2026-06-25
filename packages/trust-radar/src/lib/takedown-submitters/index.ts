@@ -24,6 +24,7 @@ import { emailSendSubmitter } from "./email-send";
 import { followupDraftSubmitter } from "./followup-draft";
 import { webRiskSubmitter } from "./web-risk";
 import { netbeaconSubmitter } from "./netbeacon";
+import { godaddySubmitter } from "./godaddy";
 import type {
   ProviderRecord,
   SubmissionResult,
@@ -53,7 +54,8 @@ import type {
 const SUBMITTERS: Submitter[] = [
   webRiskSubmitter,      // Google Web Risk Submission API (URL blocklist)
   netbeaconSubmitter,    // NetBeacon — registrar-routed DNS-abuse reports
-  // future: godaddySubmitter, apwgSubmitter, netcraftSubmitter, …
+  godaddySubmitter,      // GoDaddy Abuse API — direct-to-registrar tickets
+  // future: apwgSubmitter, netcraftSubmitter, …
   emailSendSubmitter,
   emailDraftSubmitter,
 ];

@@ -203,11 +203,23 @@ signed authorization) plus the new automation `mode`.
   NetBeacon, Phase G can dispatch it. Still single-channel (first match) —
   registrar-**and**-blocklist fan-out remains the §6 design decision.
 
-### Phase P4 — More blocklists / reporting (1 sprint) — pairs with S2
-- `godaddySubmitter` (real Abuse API, `api.godaddy.com`), `apwgSubmitter`,
-  `netcraftSubmitter`, abuse.ch/URLhaus. Additive — a domain can be sent to
-  **both** its registrar (via NetBeacon) and the blocklists. Extend Phase G to
-  allow **multiple submitters per takedown** (fan-out) rather than
+### Phase P4 — GoDaddy Abuse API ✅ SHIPPED (2026-06-25) + more blocklists
+- `godaddySubmitter` (`api_godaddy`) ✅ — files an abuse ticket via GoDaddy's
+  Abuse API (`POST /v1/abuse/tickets`, `sso-key KEY:SECRET` auth, `type`
+  derived to GoDaddy's enum, `ticketId` captured). The one major registrar
+  with a real authenticated reporter API. migration 0225 flips the GoDaddy
+  provider row to `abuse_api_type='godaddy'` while keeping abuse@godaddy.com
+  as the email fallback. Gated on live + `GODADDY_API_KEY`/`GODADDY_API_SECRET`
+  + `auto_submit_enabled=1`; OTE sandbox via `GODADDY_API_BASE`.
+  - **Precedence note:** Phase E's NetBeacon override (when enabled) routes
+    *all* domains to NetBeacon, which would shadow the direct GoDaddy path for
+    GoDaddy-registered domains. That's acceptable today (NetBeacon reaches
+    GoDaddy via the participating-registrar network); sending to **both** is
+    the fan-out work below. When NetBeacon is off, GoDaddy-registered domains
+    resolve to the GoDaddy row and use the direct API.
+- Still TODO: `apwgSubmitter`, `netcraftSubmitter`, abuse.ch/URLhaus. Additive
+  — a domain can be sent to **both** its registrar and the blocklists. Extend
+  Phase G to allow **multiple submitters per takedown** (fan-out) rather than
   first-match-only, OR model blocklist submission as a separate Phase G2 pass.
   (Design decision — see §6.)
 

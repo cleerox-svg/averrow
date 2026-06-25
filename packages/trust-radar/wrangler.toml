@@ -324,6 +324,13 @@ TENANT_DIGEST_MODE = "off"
 # NETBEACON_API_BASE       — optional override for the NetBeacon API base URL
 #                            (defaults to https://api.netbeacon.org); set to the
 #                            exact onboarded endpoint.
+# GODADDY_API_KEY          — GoDaddy production API key for the Abuse API submitter
+# GODADDY_API_SECRET       — GoDaddy production API secret (paired with the key as
+#                            the `sso-key KEY:SECRET` Authorization header). Both
+#                            absent → submitter declines, falls back to GoDaddy's
+#                            abuse@godaddy.com email.
+# GODADDY_API_BASE         — optional override (defaults to https://api.godaddy.com);
+#                            set to https://api.ote-godaddy.com for sandbox testing.
 # AVERROW_INTERNAL_SECRET  — bearer token for /api/internal/* endpoints
 #                            (must match the value used by averrow-mcp +
 #                            scripts/platform-diagnostics.sh)
