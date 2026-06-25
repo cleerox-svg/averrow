@@ -22,6 +22,11 @@ interface LiveRow { row_hash: string | null }
 
 class FakeD1 {
   rows = new Map<number, LiveRow>();
+  /** Largest bound-variable count seen on any `start_ip_int IN (...)`
+   *  existence check — D1 caps a single statement at 100 variables, so
+   *  a regression that lets the IN(...) grow with D1_BATCH_LIMIT (500)
+   *  would surface here. */
+  maxInVars = 0;
   prepare(sql: string) { return new FakeStmt(this, sql); }
   async batch(stmts: FakeStmt[]) {
     const out = [];
@@ -44,6 +49,7 @@ class FakeStmt {
 
   async all<T>(): Promise<{ results: T[] }> {
     if (this.sql.includes("WHERE start_ip_int IN")) {
+      if (this.args.length > this.db.maxInVars) this.db.maxInVars = this.args.length;
       const results = (this.args as number[])
         .filter((k) => this.db.rows.has(k))
         .map((k) => ({ start_ip_int: k, row_hash: this.db.rows.get(k)!.row_hash }));
@@ -141,6 +147,28 @@ describe("runGeoipDiffImport", () => {
     // Final live set is {1,2,4}; 3 was deleted.
     const keys = [...db.rows.keys()].sort((a, b) => a - b);
     expect(keys).toEqual([16777216 /*1.0.0.0*/, 33554432 /*2.0.0.0*/, 67108864 /*4.0.0.0*/]);
+  });
+
+  it("keeps the existence-check IN(...) under D1's 100-variable cap across many rows", async () => {
+    // Regression for "too many SQL variables at offset 282: SQLITE_ERROR":
+    // the per-chunk existence SELECT must sub-chunk its IN(...) below D1's
+    // 100-param-per-statement limit, independent of D1_BATCH_LIMIT (500).
+    // 250 distinct rows forces multiple existence-check chunks and a
+    // mid-stream processChunk flush.
+    const db = new FakeD1();
+    const rows: string[] = [];
+    for (let i = 0; i < 250; i++) {
+      // Distinct /24 networks: 10.x.y.0/24 for i = x*256 + y.
+      const x = Math.floor(i / 256);
+      const y = i % 256;
+      rows.push(`10.${x}.${y}.0/24,1,1,,0,0,94043,37.4,-122.0,1000`);
+    }
+    const r = await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(rows)));
+
+    expect(r.rowsInserted).toBe(250);
+    expect(db.rows.size).toBe(250);
+    expect(db.maxInVars).toBeGreaterThan(0);          // the SELECT path ran
+    expect(db.maxInVars).toBeLessThanOrEqual(100);    // never exceeds D1's cap
   });
 });
 
