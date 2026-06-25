@@ -51,7 +51,7 @@ import type {
 // webRiskSubmitter and netbeaconSubmitter are mutually exclusive per
 // takedown — each canHandle()s only its own provider.abuse_api_type — so
 // their relative order is immaterial; both just sit ahead of email.
-const SUBMITTERS: Submitter[] = [
+export const SUBMITTERS: Submitter[] = [
   webRiskSubmitter,      // Google Web Risk Submission API (URL blocklist)
   netbeaconSubmitter,    // NetBeacon — registrar-routed DNS-abuse reports
   godaddySubmitter,      // GoDaddy Abuse API — direct-to-registrar tickets

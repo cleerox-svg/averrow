@@ -59,6 +59,10 @@ function resolveUri(takedown: TakedownRecord): string | null {
 export const webRiskSubmitter: Submitter = {
   kind: KIND,
 
+  isConfigured(env: Env): boolean {
+    return hasServiceAccount(env);
+  },
+
   canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean {
     return (
       isLiveSendMode(env) &&

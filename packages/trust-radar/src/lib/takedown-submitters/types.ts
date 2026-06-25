@@ -69,4 +69,12 @@ export interface Submitter {
   canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean;
   /** Perform the submission. Implementations must not throw — catch + return outcome='failed'. */
   submit(env: Env, takedown: TakedownRecord, provider: ProviderRecord): Promise<SubmissionResult>;
+  /**
+   * True when this submitter's credential(s)/transport are present in env,
+   * independent of send mode, provider match, or target. Powers the
+   * Integration Health surface ("configured" vs "not configured"). Submitters
+   * with no external credential (email drafts) omit it → treated as always
+   * configured.
+   */
+  isConfigured?(env: Env): boolean;
 }

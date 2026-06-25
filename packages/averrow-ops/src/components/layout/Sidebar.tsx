@@ -5,7 +5,7 @@ import {
   Gavel, Bell, Inbox, Mail, Target, Siren, Radar,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
   Smartphone, EyeOff, BellRing, BarChart3, DollarSign, Award,
-  Sun, Moon, Laptop, PanelLeftClose, PanelLeftOpen, LogOut,
+  Sun, Moon, Laptop, PanelLeftClose, PanelLeftOpen, LogOut, Plug,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -148,6 +148,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
       items: [
         { label: 'Incidents',    path: '/admin/incidents',  icon: Siren },
         { label: 'Takedowns',    path: '/admin/takedowns',  icon: Gavel },
+        { label: 'Integrations', path: '/admin/integrations', icon: Plug },
         { label: 'Signals',      path: '/alerts',           icon: Radar, badge: alertCount },
         { label: 'Spam Trap',    path: '/admin/spam-trap',  icon: Inbox },
         { label: 'Abuse Mailbox', path: '/admin/abuse-mailbox', icon: Mail },

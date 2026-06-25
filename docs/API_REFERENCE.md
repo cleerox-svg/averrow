@@ -680,6 +680,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/leads/:id` | Admin | Single `scan_leads` row + live customer intel snapshot for the drill-down. Threats aggregated by `target_brand_id` (indexed); email security (SPF/DMARC/MX) from latest `email_security_scans` by domain; plus `platform_history` — "have we seen this domain before?" (known brand id/name/sector/first_seen/all-time threat count for linking to `/brands/:id`, and the most recent public `assessments` grade/score). All indexed/precomputed reads, no AI, no full-table scans. Returns `{ lead, intel }`; `intel` is best-effort and may be `null` (lead has no domain, or an aggregation hiccup) — the lead itself always returns when it exists. |
 | PATCH | `/api/admin/leads/:id` | Admin | Update lead |
 | GET | `/api/admin/takedowns` | `manage_takedowns` (analyst, admin, super_admin) | List takedowns across orgs |
+| GET | `/api/admin/takedowns/integrations` | `manage_takedowns` (analyst, admin, super_admin) | Per-submitter integration health (NetBeacon/GoDaddy/Web Risk/email): configured?, live status, submissions / success rate / last error over `?hours=` window (default 168, max 720) |
 | PATCH | `/api/admin/takedowns/:id` | `manage_takedowns` (analyst, admin, super_admin) | Update takedown status |
 | GET | `/api/admin/pricing/plans` | `view_billing` (sales, billing, admin, super_admin) | List pricing plans |
 | GET | `/api/admin/pricing/modules` | `view_billing` (sales, billing, admin, super_admin) | List module prices |
