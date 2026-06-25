@@ -23,6 +23,7 @@ import { emailDraftSubmitter } from "./email-draft";
 import { emailSendSubmitter } from "./email-send";
 import { followupDraftSubmitter } from "./followup-draft";
 import { webRiskSubmitter } from "./web-risk";
+import { netbeaconSubmitter } from "./netbeacon";
 import type {
   ProviderRecord,
   SubmissionResult,
@@ -46,9 +47,13 @@ import type {
  * mode (the default) selection falls through to emailDraftSubmitter
  * and behavior is identical to pre-S1.
  */
+// webRiskSubmitter and netbeaconSubmitter are mutually exclusive per
+// takedown — each canHandle()s only its own provider.abuse_api_type — so
+// their relative order is immaterial; both just sit ahead of email.
 const SUBMITTERS: Submitter[] = [
-  webRiskSubmitter,      // Google Web Risk Submission API (blocklist)
-  // future: cloudflareSubmitter, godaddySubmitter, apwgSubmitter, …
+  webRiskSubmitter,      // Google Web Risk Submission API (URL blocklist)
+  netbeaconSubmitter,    // NetBeacon — registrar-routed DNS-abuse reports
+  // future: godaddySubmitter, apwgSubmitter, netcraftSubmitter, …
   emailSendSubmitter,
   emailDraftSubmitter,
 ];

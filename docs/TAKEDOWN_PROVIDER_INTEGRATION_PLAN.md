@@ -173,12 +173,38 @@ signed authorization) plus the new automation `mode`.
   Submission API, then a verification run (draft → live on a sample) before
   flipping `auto_submit_enabled=1` on the 'Google Safe Browsing' provider row.
 
-### Phase P3 — More blocklists / reporting (1 sprint) — pairs with S2
-- `apwgSubmitter`, `netcraftSubmitter`, abuse.ch/URLhaus. Additive — a domain
-  can be sent to **both** its host and the blocklists. Extend Phase G to allow
-  **multiple submitters per takedown** (fan-out) rather than first-match-only,
-  OR model blocklist submission as a separate Phase G2 pass. (Design decision —
-  see §6.)
+### Phase P3 — Registrar fan-out via NetBeacon ✅ SHIPPED (2026-06-23)
+- `netbeaconSubmitter` (`api_netbeacon`): reports domain abuse to the DNS
+  Abuse Institute's NetBeacon Reporter API, which normalizes to X-ARF,
+  enriches, and **routes to the correct participating registrar/registry**.
+  One integration → the whole participating-registrar network, vs. a client
+  per registrar. Highest-leverage API target for domain takedowns.
+- Category derivation (phishing/malware/botnet/spam) from module + evidence;
+  registrable-domain extraction from the target.
+- Gated on live-send + `NETBEACON_API_KEY` + `abuse_api_type='netbeacon'` +
+  a resolvable domain; declines → email fallback when unconfigured. Exact
+  host/path/auth provisioned at reporter onboarding — base overridable via
+  `NETBEACON_API_BASE` with no code change.
+- migration 0224 seeds the 'NetBeacon' provider row (provider_type
+  'reporting', auto_submit_enabled 0).
+- **Remaining operator step:** approved DNS Abuse Institute reporter account
+  + `NETBEACON_API_KEY` secret + a live verification report, then flip
+  `auto_submit_enabled=1`.
+
+  **Routing note:** the dispatcher selects a submitter by the takedown's
+  *provider* (`abuse_api_type`). For NetBeacon to fire on a domain takedown,
+  Sparrow Phase G must set that takedown's provider to the NetBeacon row (or a
+  future fan-out pass must add it). Wiring that provider-selection rule for
+  domain targets is the next Sparrow-side step — tracked under §6's
+  "multiple submitters per takedown" design decision.
+
+### Phase P4 — More blocklists / reporting (1 sprint) — pairs with S2
+- `godaddySubmitter` (real Abuse API, `api.godaddy.com`), `apwgSubmitter`,
+  `netcraftSubmitter`, abuse.ch/URLhaus. Additive — a domain can be sent to
+  **both** its registrar (via NetBeacon) and the blocklists. Extend Phase G to
+  allow **multiple submitters per takedown** (fan-out) rather than
+  first-match-only, OR model blocklist submission as a separate Phase G2 pass.
+  (Design decision — see §6.)
 
 ### Phase P4 — Registrar coverage via RDAP + top forms (1–2 sprints)
 - RDAP abuse-contact resolver for the long tail → tuned email submitter.
