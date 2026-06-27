@@ -1,0 +1,407 @@
+---
+/*
+ * Abuse Mailbox product page. Customer-branded report-fraud inbox with
+ * AI auto-triage and automated response. Self-contained: hero, how-it-
+ * works, #setup (forwarding guide — the tenant UI deep-links here), what
+ * you get, CTA.
+ *
+ * Copy is non-proprietary per CLAUDE.md §9b — no internal agent codenames,
+ * no infra detail.
+ */
+import Layout from "../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Abuse Mailbox — Averrow"
+  description="Give your customers and staff one address to report suspicious email. Averrow triages every report with AI in seconds, confirms real phishing, and emails back a verdict — turning your inbox into a live threat-detection feed."
+>
+  <section class="am-hero">
+    <div class="container">
+      <div class="am-eyebrow">Abuse Mailbox</div>
+      <h1>One address to report fraud.<br /><span class="hero-accent">Instant AI triage.</span></h1>
+      <p>
+        Give your customers and team a single inbox to forward suspicious
+        email. Every report is parsed, classified, and verified by AI in
+        seconds &mdash; real phishing is confirmed and escalated, noise is
+        filtered, and the reporter gets a clear verdict back. Your abuse
+        inbox becomes a live detection feed instead of an unread folder.
+      </p>
+      <div class="am-cta-row">
+        <a href={`${base}/scan`} class="btn btn-primary">Run Free Scan</a>
+        <a href="#how" class="btn btn-outline">See How It Works</a>
+      </div>
+
+      <div class="am-flow" aria-label="How a report moves through the mailbox">
+        <div class="am-flow-step">
+          <div class="am-flow-num">01</div>
+          <div class="am-flow-name">Forwarded</div>
+          <div class="am-flow-desc">Suspicious email lands at your alias</div>
+        </div>
+        <div class="am-flow-arrow" aria-hidden="true">&rarr;</div>
+        <div class="am-flow-step">
+          <div class="am-flow-num">02</div>
+          <div class="am-flow-name">Triaged</div>
+          <div class="am-flow-desc">AI classifies + extracts the threat</div>
+        </div>
+        <div class="am-flow-arrow" aria-hidden="true">&rarr;</div>
+        <div class="am-flow-step">
+          <div class="am-flow-num">03</div>
+          <div class="am-flow-name">Resolved</div>
+          <div class="am-flow-desc">Reporter gets a verdict; you get a threat</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="am-section" id="how">
+    <div class="am-row">
+      <div class="am-text">
+        <div class="section-label">How it works</div>
+        <h2>From forwarded email to confirmed threat</h2>
+        <p>
+          The mailbox doesn&rsquo;t just store reports &mdash; it reasons
+          about them. Each forwarded message is unpacked down to the
+          original suspicious email, then checked the way an analyst
+          would, only in seconds.
+        </p>
+        <ul class="am-features">
+          <li>Unpacks the original message from inside the forward</li>
+          <li>Extracts URLs, attachments, and sender authentication (SPF / DKIM / DMARC)</li>
+          <li>AI classification: phishing, malware, spam, or benign &mdash; with a confidence score</li>
+          <li>Confirmed phishing and malware promote straight into your threat feed</li>
+          <li>Matches the report against the brands you already monitor</li>
+          <li>Deep analysis on high-severity reports explains the verdict in plain language</li>
+        </ul>
+      </div>
+      <div class="am-visual">
+        <div class="am-eyebrow-sm">Live Determination</div>
+        <div class="am-msg">
+          <div class="am-msg-row"><span>From</span><span class="am-mono">billing@acme-secure-login.com</span></div>
+          <div class="am-msg-row"><span>Subject</span><span class="am-mono">Your account is on hold</span></div>
+          <div class="am-msg-row"><span>SPF</span><span class="am-fail">FAIL</span></div>
+          <div class="am-msg-row"><span>DKIM</span><span class="am-fail">FAIL</span></div>
+          <div class="am-msg-row am-msg-last"><span>URLs</span><span class="am-mono">2 extracted</span></div>
+        </div>
+        <div class="am-verdict">
+          <div class="am-verdict-head"><span class="am-verdict-dot"></span> Verdict &mdash; Phishing</div>
+          Spoofed billing notice impersonating your brand, with a credential-harvesting
+          link on a 3-day-old lookalike domain. Promoted to your threat feed and
+          escalated for takedown. Confidence 96%.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="am-section am-alt">
+    <div class="container am-grid-wrap">
+      <div class="section-label" style="text-align:center;">What you get</div>
+      <h2 class="am-center-h2">An abuse inbox that works for you</h2>
+      <div class="am-grid">
+        <div class="am-card">
+          <div class="am-card-title">Your own branded alias</div>
+          <div class="am-card-desc">A dedicated report address for your customers and staff &mdash; reports route straight into your tenant.</div>
+        </div>
+        <div class="am-card">
+          <div class="am-card-title">Auto-acknowledgement</div>
+          <div class="am-card-desc">Every reporter gets an instant confirmation, then a determination once their report is triaged.</div>
+        </div>
+        <div class="am-card">
+          <div class="am-card-title">Unified inbox</div>
+          <div class="am-card-desc">Status workflow, classification filters, and search across every report &mdash; with full message drill-down.</div>
+        </div>
+        <div class="am-card">
+          <div class="am-card-title">Threat promotion</div>
+          <div class="am-card-desc">Confirmed phishing becomes a tracked threat automatically &mdash; correlated with the brands you monitor.</div>
+        </div>
+        <div class="am-card">
+          <div class="am-card-title">Noise control</div>
+          <div class="am-card-desc">Per-sender throttling and confidence scoring keep the inbox signal, not spam.</div>
+        </div>
+        <div class="am-card">
+          <div class="am-card-title">Intel rollup</div>
+          <div class="am-card-desc">See the campaigns, providers, and takedowns your customers&rsquo; reports are surfacing.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="am-section" id="setup">
+    <div class="am-row reversed">
+      <div class="am-text">
+        <div class="section-label">Setup</div>
+        <h2>Live in three steps</h2>
+        <p>
+          Once your alias is provisioned, getting protected is as simple as
+          forwarding mail. No software to install, no inbox migration.
+        </p>
+        <ol class="am-steps">
+          <li><strong>Get your alias.</strong> We provision a dedicated report address for your brand (for example, <span class="am-mono">report@yourbrand</span>) inside your tenant.</li>
+          <li><strong>Share it.</strong> Publish it where customers report fraud, and set staff to forward anything suspicious.</li>
+          <li><strong>Forward suspicious mail.</strong> Each report is acknowledged instantly; verdicts and escalations appear in your inbox &mdash; usually within minutes, determinations within a day.</li>
+        </ol>
+        <div class="am-callout">Already a customer? Your alias and forwarding instructions live in the Abuse Mailbox module inside your dashboard.</div>
+      </div>
+      <div class="am-visual">
+        <div class="am-eyebrow-sm">Setup Checklist</div>
+        <div class="am-check"><span class="am-check-mark">&#10003;</span> Branded report alias provisioned</div>
+        <div class="am-check"><span class="am-check-mark">&#10003;</span> Forwarding instructions in-app</div>
+        <div class="am-check"><span class="am-check-mark">&#10003;</span> Instant auto-acknowledgement</div>
+        <div class="am-check"><span class="am-check-mark">&#10003;</span> AI triage on every report</div>
+        <div class="am-check am-check-last"><span class="am-check-mark">&#10003;</span> Verdicts + threat promotion</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="am-cta">
+    <div class="container">
+      <h2>Turn your abuse inbox into a detection feed.</h2>
+      <p>Start with a free exposure scan, or talk to us about adding the Abuse Mailbox to your plan.</p>
+      <div class="am-cta-row" style="justify-content:center;">
+        <a href={`${base}/scan`} class="btn btn-primary">Launch Free Scan</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Pricing</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .am-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+  .am-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(34px, 5vw, 60px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.06;
+  }
+  .hero-accent { color: var(--amber); }
+  .am-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto 2rem;
+    line-height: 1.6;
+  }
+  .am-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .am-cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+  /* Flow strip */
+  .am-flow {
+    max-width: 760px;
+    margin: 2.75rem auto 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .am-flow-step {
+    flex: 1;
+    min-width: 180px;
+    padding: 1.1rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--glass-card-bg, rgba(22,30,48,0.55));
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    text-align: left;
+  }
+  .am-flow-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 0.1em;
+  }
+  .am-flow-name {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    margin: 6px 0 4px;
+  }
+  .am-flow-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+  .am-flow-arrow { display: flex; align-items: center; color: var(--text-tertiary); font-size: 20px; }
+  @media (max-width: 640px) { .am-flow-arrow { display: none; } }
+
+  /* Sections */
+  .am-section { padding: 3.25rem 0; position: relative; }
+  .am-section.am-alt { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
+  .am-row {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .am-row.reversed { direction: rtl; }
+  .am-row.reversed > * { direction: ltr; }
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent, var(--amber));
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+  .am-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .am-text p { font-size: 16px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 1.5rem; }
+  .am-features { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  .am-features li { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 15px; color: var(--text-secondary); line-height: 1.5; }
+  .am-features li::before { content: "\2713"; color: var(--green); font-weight: 700; flex-shrink: 0; }
+  .am-steps { padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.85rem; }
+  .am-steps li { font-size: 15px; color: var(--text-secondary); line-height: 1.6; }
+  .am-steps strong { color: var(--text-primary); }
+  .am-callout {
+    background: var(--accent-bg, rgba(229,168,50,0.08));
+    border: 1px solid rgba(229,168,50,0.18);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: 1.5rem;
+  }
+
+  .am-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .am-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .am-eyebrow-sm {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .am-mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-secondary); }
+  .am-msg-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.82rem;
+  }
+  .am-msg-row > span:first-child { color: var(--text-tertiary); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .am-msg-last { border-bottom: none; }
+  .am-fail { font-family: var(--font-mono); font-size: 0.75rem; color: var(--red); font-weight: 600; }
+  .am-verdict {
+    margin-top: 1rem;
+    border-left: 3px solid var(--red);
+    padding: 1rem 1.25rem;
+    background: rgba(200,60,60,0.05);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .am-verdict-head {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .am-verdict-dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; }
+  .am-check {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.86rem;
+    color: var(--text-secondary);
+  }
+  .am-check-last { border-bottom: none; }
+  .am-check-mark { color: var(--green); font-weight: 700; }
+
+  /* What you get grid */
+  .am-grid-wrap { max-width: 1240px; }
+  .am-center-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .am-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  .am-card {
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.25rem;
+    transition: all 0.25s;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  :global([data-theme="light"]) .am-card {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .am-card:hover {
+    border-color: rgba(229,168,50,0.4);
+    transform: translateY(-4px);
+    box-shadow: 0 0 24px rgba(229,168,50,0.1), 0 8px 24px rgba(0,0,0,0.2);
+  }
+  .am-card-title { font-size: 15px; font-weight: 700; margin-bottom: 0.4rem; }
+  .am-card-desc { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+
+  /* CTA */
+  .am-cta { padding: 3.25rem 0; text-align: center; }
+  .am-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(26px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .am-cta p { color: var(--text-secondary); max-width: 520px; margin: 0 auto 2rem; }
+
+  @media (max-width: 768px) {
+    .am-row, .am-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+    .am-grid { grid-template-columns: 1fr; }
+  }
+</style>

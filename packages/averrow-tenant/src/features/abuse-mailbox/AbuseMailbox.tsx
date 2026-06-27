@@ -1213,7 +1213,7 @@ function EmptyMessages() {
         Forward suspicious mail to your alias above. Determinations and escalations land here.
       </p>
       <a
-        href="https://docs.averrow.com/abuse-mailbox/setup"
+        href="https://averrow.com/abuse-mailbox#setup"
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1 text-amber hover:underline text-xs mt-3"
