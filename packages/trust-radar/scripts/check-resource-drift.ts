@@ -86,6 +86,7 @@ function diff(declared: ResourceDecl[], extracted: ResourceDecl[]): {
 // Map agentModules registry name (snake_case) to manifest entry name
 // (kebab/camel — extractor uses filename basename).
 const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
+  abuse_mailbox_classifier: "abuseMailboxClassifier",
   admin_classify: "admin-classify",
   app_store_monitor: "appStoreMonitor",
   auto_seeder: "auto-seeder",

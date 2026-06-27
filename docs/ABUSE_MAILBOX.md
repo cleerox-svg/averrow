@@ -68,17 +68,22 @@ bounce).
 
 ### Classifier dispatch & status
 
-The classifier runs as a **backfill helper**, not a registered
-`AgentModule` (agent id `abuse_mailbox_classifier`). It is dispatched from
-the orchestrator hourly cron (`src/cron/orchestrator.ts`) when the pending
-count > 0, and on demand via `POST /api/admin/abuse-mailbox/run-classifier`.
+The classifier is a registered first-class `AgentModule` —
+**`abuse_mailbox_classifier`** (display name **Sifter**),
+`src/agents/abuseMailboxClassifier.ts`. It wraps the batch
+`runAbuseClassifierBackfill` and is dispatched via `executeAgent` from the
+dedicated `17 * * * *` cron (`src/cron/orchestrator.ts`, only when pending
+> 0), so every run writes `agent_runs` + emits `agent_events` and surfaces
+in Flight Control, platform-diagnostics, and the `/v2/agents` mesh. It can
+also be triggered manually via `/api/internal/agents/abuse_mailbox_classifier/run`.
 
-> **Note (CLAUDE.md §6):** because it isn't a registered AgentModule, the
-> classifier does **not** write `agent_runs` / `agent_events` rows, so it
-> does not appear in the `/v2/agents` mesh or platform diagnostics.
-> Promoting it to a first-class agent (for run history + diagnostics
-> visibility) is the natural next hardening step if this becomes a
-> headline paid product. Cost is ~$0.001/message via Haiku.
+The standalone `POST /api/admin/abuse-mailbox/run-classifier` drain
+endpoint still calls `runAbuseClassifierBackfill` directly (bypassing the
+runner) — it's an operator tool for ad-hoc backlog draining and
+intentionally does not create an `agent_runs` row.
+
+Cost is ~$0.001/message via Haiku; declared `monthlyTokenCap` is 10M
+(`costGuard: 'enforced'`).
 
 Poison-pill protection: a per-message retry cap of 3 auto-graduates a
 message to `ambiguous` rather than looping (`classification_attempts`,
