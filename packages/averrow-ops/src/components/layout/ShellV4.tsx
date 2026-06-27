@@ -13,10 +13,9 @@ import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
-  Globe, Shield, Users, Activity, Server, Smartphone, EyeOff, Award,
-  TrendingUp, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
+  Globe, Users, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
   Search, Sparkles, RotateCcw, Menu, X,
-  Plug, Building2, DollarSign, ListChecks,
+  Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -75,15 +74,14 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
     {
       label: 'INTELLIGENCE',
       items: [
-        { label: 'Observatory',   to: '/observatory-v3', icon: Globe },
-        { label: 'Brands',        to: '/brands',         icon: Shield },
-        { label: 'Threat Actors', to: '/threat-actors',  icon: Users },
-        { label: 'Campaigns',     to: '/campaigns',      icon: Activity },
-        { label: 'Providers',     to: '/providers',      icon: Server },
-        { label: 'Apps',          to: '/apps',           icon: Smartphone },
-        { label: 'Dark Web',      to: '/dark-web',       icon: EyeOff },
-        { label: 'Trademarks',    to: '/trademarks',     icon: Award },
-        { label: 'Trends',        to: '/trends',         icon: TrendingUp },
+        // Observatory stays standalone (the WebGL map). The nine entity +
+        // detection-surface pages are consolidated into two tabbed
+        // workspaces: Explorer (Brands / Threat Actors / Campaigns /
+        // Providers) and Coverage (Apps / Dark Web / Trademarks / Trends).
+        // Their standalone routes remain live for deep links / pivots.
+        { label: 'Observatory', to: '/observatory-v3', icon: Globe },
+        { label: 'Explorer',    to: '/explore',        icon: Compass },
+        { label: 'Coverage',    to: '/coverage',       icon: Layers },
       ],
     },
     {

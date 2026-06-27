@@ -49,6 +49,8 @@ const Trends = React.lazy(() => import('@/features/trends/Trends').then(m => ({ 
 const ThreatActors = React.lazy(() => import('@/features/threat-actors/ThreatActors').then(m => ({ default: m.ThreatActors })));
 const Leads = React.lazy(() => import('@/features/leads/Leads').then(m => ({ default: m.Leads })));
 const Console = React.lazy(() => import('@/features/console/Console').then(m => ({ default: m.Console })));
+const ExploreWorkspace = React.lazy(() => import('@/features/explore/ExploreWorkspace').then(m => ({ default: m.ExploreWorkspace })));
+const CoverageWorkspace = React.lazy(() => import('@/features/coverage/CoverageWorkspace').then(m => ({ default: m.CoverageWorkspace })));
 const Home = React.lazy(() => import('@/pages/Home').then(m => ({ default: m.Home })));
 const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 })));
 const BrandAdminDashboard = React.lazy(() => import('@/features/admin/BrandAdminDashboard').then(m => ({ default: m.BrandAdminDashboard })));
@@ -158,6 +160,12 @@ export default function App() {
         {/* v4 SOC Console workspace (hosts Signals/Threats/Incidents/Takedowns
             as ?tab= panes). Reachable in both shells; the v4 sidebar links it. */}
         <Route path="console" element={lazyRoute(<Console />)} />
+        {/* v4 consolidated Intelligence workspaces — Explorer (Brands /
+            Threat Actors / Campaigns / Providers) and Coverage (Apps /
+            Dark Web / Trademarks / Trends) as ?tab= panes. The standalone
+            routes below stay live for deep links / pivots. */}
+        <Route path="explore" element={lazyRoute(<ExploreWorkspace />)} />
+        <Route path="coverage" element={lazyRoute(<CoverageWorkspace />)} />
         <Route path="observatory" element={lazyRoute(<Observatory />, <ObservatoryLoader />)} />
         <Route path="observatory-v3" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
         <Route path="brands" element={lazyRoute(<Brands />)} />
