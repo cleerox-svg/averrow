@@ -213,6 +213,17 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <circle cx="22" cy="26" r="1.5" fill="currentColor" opacity="0.7"/>
     </svg>
   ),
+  // Sifter — Abuse Mailbox Classifier. An envelope feeding a funnel that
+  // sorts forwarded reports into a verdict.
+  abuse_mailbox_classifier: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      {/* envelope */}
+      <rect x="7" y="7" width="22" height="14" rx="2" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M7.5 8.5L18 16L28.5 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* funnel / sieve below — the triage */}
+      <path d="M12 24H24L19.5 29V31.5L16.5 30V29L12 24Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" fill="currentColor" fillOpacity="0.18"/>
+    </svg>
+  ),
   // Herald — Trademark Monitor. Registered-mark seal guarding the wordmark.
   trademark_monitor: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">

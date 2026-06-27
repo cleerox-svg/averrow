@@ -47,7 +47,8 @@ export type AgentId =
   | 'social_ai_assessor'
   | 'geo_campaign_assessment'
   | 'evidence_assembler'
-  | 'campaign_hunter';
+  | 'campaign_hunter'
+  | 'abuse_mailbox_classifier';
 
 export interface AgentMetadata {
   id: AgentId;
@@ -149,6 +150,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#4ADE80',
     category: 'response',
     pipelinePosition: 7,
+  },
+  abuse_mailbox_classifier: {
+    id: 'abuse_mailbox_classifier',
+    displayName: 'Sifter',
+    codename: null,
+    subtitle: 'Abuse-report triage — classifies forwarded phishing/malware and promotes confirmed threats',
+    color: '#0A8AB5',
+    category: 'response',
+    pipelinePosition: 41,
   },
   strategist: {
     id: 'strategist',

@@ -254,14 +254,25 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
         `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
       ).first<{ n: number }>();
       if ((pendingCount?.n ?? 0) > 0) {
-        const { runAbuseClassifierBackfill } = await import('../lib/abuse-mailbox-classifier');
-        const result = await runAbuseClassifierBackfill(env, { limit: 50, offset: 0 });
+        // First-class dispatch: route through executeAgent so the run lands
+        // in agent_runs + agent_events and surfaces in Flight Control /
+        // platform-diagnostics / the Agents UI. (Previously called
+        // runAbuseClassifierBackfill directly, which left the classifier
+        // invisible to the agent mesh — the gap this promotion closes.)
+        const { executeAgent } = await import('../lib/agentRunner');
+        const { abuseMailboxClassifierAgent } = await import('../agents/abuseMailboxClassifier');
+        const exec = await executeAgent(
+          env,
+          abuseMailboxClassifierAgent,
+          { limit: 50, offset: 0 },
+          'cron:17',
+          'scheduled',
+        );
         logger.info('abuse_mailbox_classifier_tick', {
           pending_before: pendingCount?.n ?? 0,
-          scanned: result.scanned,
-          classified: result.classified,
-          failed: result.failed,
-          by_classification: result.by_classification,
+          run_id: exec.runId,
+          status: exec.status,
+          result: exec.result?.output ?? null,
         });
       }
     } catch (err) {

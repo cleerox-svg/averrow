@@ -46,6 +46,7 @@ When grepping, use the file name; when querying D1, use the agent_id.
 | geoip_refresh | geoip-refresh.ts | GeoIP Refresh | — |
 | campaign_hunter | campaign-hunter.ts | Campaign Hunter | — |
 | evidence_assembler | evidence-assembler.ts | Evidence Assembler | — |
+| abuse_mailbox_classifier | abuseMailboxClassifier.ts | **Sifter** | abuse_mailbox_classifier |
 | brand_enricher | brand-enricher.ts | Brand Enricher | — |
 | lookalike_scanner | lookalike-scanner.ts | Lookalike Scanner | — |
 | trustbot | trustbot.ts | TrustBot | — |
@@ -466,6 +467,7 @@ These cron-driven scanners feed the threat mesh. Each delegates to a scanner mod
 | **Recon** (`auto_seeder`) | Weekly (Sun 05:07 UTC) | Plants spam-trap addresses into harvester channels and tracks per-location yield |
 | **Lookalike Scanner** (`lookalike_scanner`) | Hourly | Cron-driven scanner — DNS / HTTP / MX checks + Haiku assessment of newly-registered typosquat candidates |
 | **Enricher** (`enricher`) | Hourly | Domain geo, brand logo / HQ, brand sector / RDAP enrichment — runs every hourly tick |
+| **Sifter** (`abuse_mailbox_classifier`) | Hourly (`17 * * * *`, only when pending > 0) | Triages forwarded abuse-report emails — Haiku-classifies phishing / malware / spam / benign, computes severity, promotes confirmed threats, runs Sonnet deep analysis + emails reporters a determination on HIGH/CRITICAL. Delegates to `lib/abuse-mailbox-classifier.runAbuseClassifierBackfill`. Dispatched via `executeAgent` so runs land in `agent_runs` + `agent_events`. See docs/ABUSE_MAILBOX.md. |
 | **GeoIP Refresh** (`geoip_refresh`) | Weekly (Sun 02:00 UTC) | Polls MaxMind for new GeoLite2-City releases and re-imports only when the `.sha256` fingerprint differs from the last loaded version. Most polls are no-ops; on a new release the `GeoipRefreshWorkflow` streams the ZIP via HTTP Range, decompresses + chunk-inserts to `GEOIP_DB`, and atomically swaps in the new data. Zero R2/CLI dependency — fully in-Worker. Cartographer Phase 0.5 falls through to ip-api/ipinfo when the table isn't yet populated. **Self-healing:** four layers per AGENT_STANDARD §15 — (A) workflow's `try/catch` around step orchestration marks `geo_ip_refresh_log` failed if any step throws; (B) agent's pre-dispatch idempotency check force-fails stuck rows >60min and refuses dispatch when a young workflow is in flight (unless `forceReload`); (C) Flight Control supervisor catches anything that escapes A+B, emits `platform_geoip_refresh_stalled` notification with the standard dedup pattern; (D) MaxMind 429 cooldown stamps a 24h KV key on quota exhaustion so subsequent dispatches don't burn additional download budget. |
 
 ---
