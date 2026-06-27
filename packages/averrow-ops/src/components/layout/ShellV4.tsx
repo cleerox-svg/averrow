@@ -13,12 +13,13 @@ import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
-  Globe, Shield, Users, Activity, Server, Smartphone, EyeOff, Award,
-  TrendingUp, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
+  Globe, Users, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
   Search, Sparkles, RotateCcw, Menu, X,
+  Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import { parseInitials } from '@/lib/avatar';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { Shell } from './Shell';
@@ -28,58 +29,78 @@ import './shell-v4.css';
 interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; }
 interface NavGroup { label: string; items: NavItem[]; }
 
-const V4_NAV: NavGroup[] = [
-  {
-    label: 'SOC CONSOLE',
-    items: [
-      // Console consolidates Signals / Threats / Incidents / Takedowns as
-      // tabs — so those don't appear as separate menu items in v4 (their
-      // routes stay live for deep links). Abuse Mailbox + Spam Trap are NOT
-      // Console tabs, so they remain standalone here.
-      { label: 'Console',       to: '/console',              icon: SquareTerminal },
-      { label: 'Overview',      to: '/',                     icon: LayoutDashboard, end: true },
-      { label: 'Abuse Mailbox', to: '/admin/abuse-mailbox',  icon: Mail },
-      { label: 'Spam Trap',     to: '/admin/spam-trap',      icon: Inbox },
-    ],
-  },
-  {
-    label: 'INTELLIGENCE',
-    items: [
-      { label: 'Observatory',   to: '/observatory-v3', icon: Globe },
-      { label: 'Brands',        to: '/brands',         icon: Shield },
-      { label: 'Threat Actors', to: '/threat-actors',  icon: Users },
-      { label: 'Campaigns',     to: '/campaigns',      icon: Activity },
-      { label: 'Providers',     to: '/providers',      icon: Server },
-      { label: 'Apps',          to: '/apps',           icon: Smartphone },
-      { label: 'Dark Web',      to: '/dark-web',       icon: EyeOff },
-      { label: 'Trademarks',    to: '/trademarks',     icon: Award },
-      { label: 'Trends',        to: '/trends',         icon: TrendingUp },
-    ],
-  },
-  {
-    label: 'PLATFORM',
-    items: [
-      { label: 'Dashboard',     to: '/admin',          icon: LayoutDashboard, end: true },
-      { label: 'Agents',        to: '/agents',         icon: Cpu },
-      { label: 'Feeds',         to: '/feeds',          icon: Rss },
-      { label: 'Metrics',       to: '/admin/metrics',  icon: BarChart3 },
-      { label: 'Team',          to: '/admin/users',    icon: Users },
-      { label: 'Audit Log',     to: '/admin/audit',    icon: ClipboardList },
-      { label: 'Notifications', to: '/admin/notifications', icon: Bell },
-      { label: 'Sales Leads',   to: '/leads',          icon: Target },
-    ],
-  },
-];
+// Nav is built per-render so it can role-gate sensitive PLATFORM items
+// (Customers → super_admin, Pricing → view_billing), matching the classic
+// Sidebar. Anything not gated is visible to every staff role.
+function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefined }): NavGroup[] {
+  const { isSuperAdmin, role } = opts;
+
+  // PLATFORM — restores the four admin routes that were dropped from the
+  // v4 nav (Integrations, Customers, Pricing, Attribution Backlog), with
+  // the same gating the classic Sidebar applies.
+  const platformItems: NavItem[] = [
+    { label: 'Dashboard',     to: '/admin',          icon: LayoutDashboard, end: true },
+    { label: 'Agents',        to: '/agents',         icon: Cpu },
+    { label: 'Feeds',         to: '/feeds',          icon: Rss },
+    { label: 'Metrics',       to: '/admin/metrics',  icon: BarChart3 },
+    { label: 'Integrations',  to: '/admin/integrations', icon: Plug },
+    { label: 'Team',          to: '/admin/users',    icon: Users },
+    ...(isSuperAdmin
+      ? [{ label: 'Customers', to: '/admin/customers', icon: Building2 } as NavItem]
+      : []),
+    ...(roleHasPermission(role, 'view_billing')
+      ? [{ label: 'Pricing', to: '/admin/pricing', icon: DollarSign } as NavItem]
+      : []),
+    { label: 'Audit Log',     to: '/admin/audit',    icon: ClipboardList },
+    { label: 'Attribution Backlog', to: '/admin/agents/attribution-backlog', icon: ListChecks },
+    { label: 'Notifications', to: '/admin/notifications', icon: Bell },
+    { label: 'Sales Leads',   to: '/leads',          icon: Target },
+  ];
+
+  return [
+    {
+      label: 'SOC CONSOLE',
+      items: [
+        // Console consolidates Signals / Threats / Incidents / Takedowns as
+        // tabs — so those don't appear as separate menu items in v4 (their
+        // routes stay live for deep links). Abuse Mailbox + Spam Trap are NOT
+        // Console tabs, so they remain standalone here.
+        { label: 'Console',       to: '/console',              icon: SquareTerminal },
+        { label: 'Overview',      to: '/',                     icon: LayoutDashboard, end: true },
+        { label: 'Abuse Mailbox', to: '/admin/abuse-mailbox',  icon: Mail },
+        { label: 'Spam Trap',     to: '/admin/spam-trap',      icon: Inbox },
+      ],
+    },
+    {
+      label: 'INTELLIGENCE',
+      items: [
+        // Observatory stays standalone (the WebGL map). The nine entity +
+        // detection-surface pages are consolidated into two tabbed
+        // workspaces: Explorer (Brands / Threat Actors / Campaigns /
+        // Providers) and Coverage (Apps / Dark Web / Trademarks / Trends).
+        // Their standalone routes remain live for deep links / pivots.
+        { label: 'Observatory', to: '/observatory-v3', icon: Globe },
+        { label: 'Explorer',    to: '/explore',        icon: Compass },
+        { label: 'Coverage',    to: '/coverage',       icon: Layers },
+      ],
+    },
+    {
+      label: 'PLATFORM',
+      items: platformItems,
+    },
+  ];
+}
 
 function navClass({ isActive }: { isActive: boolean }) {
   return 'v4-item' + (isActive ? ' active' : '');
 }
 
 export function ShellV4() {
-  const { user } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const closeDrawer = () => setDrawerOpen(false);
+  const nav = buildV4Nav({ isSuperAdmin, role: user?.role });
 
   return (
     <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>
@@ -106,7 +127,7 @@ export function ShellV4() {
         </div>
 
         <nav className="v4-nav">
-          {V4_NAV.map(group => (
+          {nav.map(group => (
             <div key={group.label}>
               <div className="v4-grp">{group.label}</div>
               {group.items.map(item => {
