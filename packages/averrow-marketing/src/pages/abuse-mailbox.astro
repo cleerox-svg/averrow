@@ -9,8 +9,6 @@
  * no infra detail.
  */
 import Layout from "../layouts/Layout.astro";
-
-const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
 <Layout
@@ -150,14 +148,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <section class="am-cta">
+  <section class="am-cta" id="contact">
     <div class="container">
       <h2>Turn your abuse inbox into a detection feed.</h2>
-      <p>Start with a free exposure scan, or talk to us about adding the Abuse Mailbox to your plan.</p>
-      <div class="am-cta-row" style="justify-content:center;">
-        <a href={`${base}/scan`} class="btn btn-primary">Launch Free Scan</a>
-        <a href={`${base}/pricing`} class="btn btn-outline">See Pricing</a>
-      </div>
+      <p>Want it for your brand? Leave your details and the Averrow team will reach out about the Abuse Mailbox &mdash; a quick call or a written reply, whichever you prefer.</p>
+      <form id="amLeadForm" class="am-lead-form" novalidate>
+        <input type="text" id="amName" name="name" placeholder="Your name" autocomplete="name" aria-label="Your name" required />
+        <input type="email" id="amEmail" name="email" placeholder="Work email" autocomplete="email" aria-label="Work email" required />
+        <button type="submit" class="btn btn-primary" id="amLeadBtn">Request a callback</button>
+      </form>
+      <div class="am-lead-msg" id="amLeadMsg" role="status" aria-live="polite"></div>
     </div>
   </section>
 </Layout>
@@ -396,8 +396,109 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .am-cta p { color: var(--text-secondary); max-width: 520px; margin: 0 auto 2rem; }
 
+  /* Lead-gen form */
+  .am-lead-form {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .am-lead-form input {
+    flex: 1 1 200px;
+    min-width: 0;
+    padding: 0.75rem 1rem;
+    font-family: var(--font-body);
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .am-lead-form input::placeholder { color: var(--text-tertiary); }
+  .am-lead-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  .am-lead-form .btn { flex: 0 0 auto; }
+  .am-lead-msg {
+    margin: 1rem auto 0;
+    max-width: 520px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    min-height: 1.2em;
+  }
+  .am-lead-msg.success { color: var(--green); }
+  .am-lead-msg.error { color: var(--red); }
+
   @media (max-width: 768px) {
     .am-row, .am-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
     .am-grid { grid-template-columns: 1fr; }
+    .am-lead-form { flex-direction: column; }
+    .am-lead-form .btn { width: 100%; justify-content: center; }
   }
 </style>
+
+<script>
+  // Abuse Mailbox lead capture. Reuses the existing /api/contact endpoint
+  // (same as the Contact page) — tagged interest='abuse-mailbox' with an
+  // auto-filled message so the visitor only provides name + work email.
+  const form = document.getElementById("amLeadForm") as HTMLFormElement | null;
+  const btn = document.getElementById("amLeadBtn") as HTMLButtonElement | null;
+  const msg = document.getElementById("amLeadMsg") as HTMLElement | null;
+
+  if (form && btn && msg) {
+    const defaultLabel = btn.textContent ?? "Request a callback";
+    form.addEventListener("submit", async (e: Event) => {
+      e.preventDefault();
+      msg.className = "am-lead-msg";
+
+      const name = (form.elements.namedItem("name") as HTMLInputElement)?.value.trim() ?? "";
+      const email = (form.elements.namedItem("email") as HTMLInputElement)?.value.trim() ?? "";
+
+      if (!name || !email) {
+        msg.textContent = "Please enter your name and work email.";
+        msg.classList.add("error");
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        msg.textContent = "Please enter a valid email address.";
+        msg.classList.add("error");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      try {
+        const res = await fetch("/api/contact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            email,
+            interest: "abuse-mailbox",
+            message: "Requested a callback about the Abuse Mailbox from the /abuse-mailbox page.",
+          }),
+        });
+        if (res.ok) {
+          msg.textContent = "Thanks — we'll be in touch within one business day.";
+          msg.classList.add("success");
+          form.reset();
+        } else {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          msg.textContent = data.error ?? "Something went wrong. Please try again.";
+          msg.classList.add("error");
+        }
+      } catch {
+        msg.textContent = "Network error. Please check your connection and try again.";
+        msg.classList.add("error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = defaultLabel;
+      }
+    });
+  }
+</script>
