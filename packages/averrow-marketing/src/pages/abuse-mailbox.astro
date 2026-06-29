@@ -70,19 +70,38 @@ import Layout from "../layouts/Layout.astro";
         </ul>
       </div>
       <div class="am-visual">
-        <div class="am-eyebrow-sm">Live Determination</div>
-        <div class="am-msg">
-          <div class="am-msg-row"><span>From</span><span class="am-mono">billing@acme-secure-login.com</span></div>
-          <div class="am-msg-row"><span>Subject</span><span class="am-mono">Your account is on hold</span></div>
-          <div class="am-msg-row"><span>SPF</span><span class="am-fail">FAIL</span></div>
-          <div class="am-msg-row"><span>DKIM</span><span class="am-fail">FAIL</span></div>
-          <div class="am-msg-row am-msg-last"><span>URLs</span><span class="am-mono">2 extracted</span></div>
-        </div>
-        <div class="am-verdict">
-          <div class="am-verdict-head"><span class="am-verdict-dot"></span> Verdict &mdash; Phishing</div>
-          Spoofed billing notice impersonating your brand, with a credential-harvesting
-          link on a 3-day-old lookalike domain. Promoted to your threat feed and
-          escalated for takedown. Confidence 96%.
+        <div class="am-eyebrow-sm">The determination email</div>
+        <div class="am-email">
+          <div class="am-email-meta">
+            <div class="am-email-meta-row"><span>From</span><span class="am-mono">Averrow Abuse Triage</span></div>
+            <div class="am-email-meta-row"><span>Subject</span><span class="am-mono">Averrow &middot; Phishing confirmed (Ref: 3F9A2C1B)</span></div>
+          </div>
+          <div class="am-email-body">
+            <div class="am-email-brand">
+              <span class="am-email-mark" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+                  <rect width="32" height="32" rx="6" fill="#0C1220" />
+                  <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="#C83C3C" />
+                  <path d="M14.5 22H17.5L16 18Z" fill="#0C1220" />
+                </svg>
+              </span>
+              <span class="am-email-brandname">Averrow Abuse Triage</span>
+            </div>
+            <div class="am-email-verdict">Phishing &mdash; confirmed</div>
+            <p class="am-email-lead">The message you reported is a credential-phishing attempt impersonating your brand. Here&rsquo;s what we found.</p>
+            <div class="am-email-section-label">What we found</div>
+            <ul class="am-email-list">
+              <li>Sender authentication failed (SPF and DKIM)</li>
+              <li>2 credential-harvesting links on a 3-day-old lookalike domain</li>
+              <li>Matches a brand you monitor</li>
+            </ul>
+            <div class="am-email-section-label">Recommended next steps</div>
+            <ul class="am-email-list">
+              <li>Don&rsquo;t interact with the links; warn recipients who may have</li>
+              <li>We&rsquo;ve added it to your threat feed and flagged it for takedown</li>
+            </ul>
+            <div class="am-email-foot">Ref 3F9A2C1B &middot; averrow.com &middot; Unsubscribe</div>
+          </div>
         </div>
       </div>
     </div>
@@ -304,41 +323,85 @@ import Layout from "../layouts/Layout.astro";
     letter-spacing: 0.1em;
   }
   .am-mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-secondary); }
-  .am-msg-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.6rem 0;
+  /* Determination email mockup (Averrow-branded — the real artifact) */
+  .am-email {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg-tertiary);
+  }
+  .am-email-meta {
+    padding: 0.7rem 1rem;
     border-bottom: 1px solid var(--border);
-    font-size: 0.82rem;
+    background: rgba(255,255,255,0.02);
   }
-  .am-msg-row > span:first-child { color: var(--text-tertiary); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
-  .am-msg-last { border-bottom: none; }
-  .am-fail { font-family: var(--font-mono); font-size: 0.75rem; color: var(--red); font-weight: 600; }
-  .am-verdict {
-    margin-top: 1rem;
-    border-left: 3px solid var(--red);
-    padding: 1rem 1.25rem;
-    background: rgba(200,60,60,0.05);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-  }
-  .am-verdict-head {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--red);
-    margin-bottom: 0.5rem;
+  :global([data-theme="light"]) .am-email-meta { background: rgba(0,0,0,0.02); }
+  .am-email-meta-row {
     display: flex;
-    align-items: center;
-    gap: 0.35rem;
+    gap: 0.6rem;
+    font-size: 0.76rem;
+    padding: 0.12rem 0;
+  }
+  .am-email-meta-row > span:first-child {
+    color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+    font-size: 0.66rem;
+    min-width: 3.4rem;
+    padding-top: 1px;
   }
-  .am-verdict-dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; }
+  .am-email-body { padding: 1.1rem 1.25rem 1rem; }
+  .am-email-brand { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.9rem; }
+  .am-email-mark { display: inline-flex; box-shadow: 0 0 16px rgba(200,60,60,0.35); border-radius: 6px; }
+  .am-email-brandname {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    color: var(--text-primary);
+  }
+  .am-email-verdict {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--red);
+    background: rgba(200,60,60,0.08);
+    border: 1px solid rgba(200,60,60,0.25);
+    border-radius: 100px;
+    padding: 0.25rem 0.7rem;
+    margin-bottom: 0.75rem;
+  }
+  .am-email-lead { font-size: 0.86rem; color: var(--text-secondary); line-height: 1.55; margin-bottom: 1rem; }
+  .am-email-section-label {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    margin: 0.75rem 0 0.4rem;
+  }
+  .am-email-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+  .am-email-list li {
+    position: relative;
+    padding-left: 1.1rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+  .am-email-list li::before { content: "\2022"; position: absolute; left: 0.2rem; color: var(--red); }
+  .am-email-foot {
+    margin-top: 1.1rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.03em;
+  }
   .am-check {
     display: flex;
     align-items: center;
