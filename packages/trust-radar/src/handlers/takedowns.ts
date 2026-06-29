@@ -2,7 +2,7 @@
 
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
-import { deliverWebhook } from "../lib/webhooks";
+import { emitOrgEvent } from "../lib/org-events";
 import { computePriorityScore } from "../lib/scoring-utils";
 import {
   orgHandler, handler, checkOrgAccess,
@@ -356,7 +356,7 @@ export async function handleUpdateTakedown(
     });
 
     if (typeof body.status === "string" && body.status !== takedown.status) {
-      deliverWebhook(env, Number(orgId), "takedown.status_changed", {
+      emitOrgEvent(env, Number(orgId), "takedown.status_changed", {
         takedown_id: takedownId,
         previous_status: takedown.status,
         new_status: body.status,
@@ -547,7 +547,7 @@ export async function handleAdminUpdateTakedown(
         "SELECT org_id FROM takedown_requests WHERE id = ?",
       ).bind(takedownId).first<{ org_id: number | null }>();
       if (tdOrg?.org_id) {
-        deliverWebhook(env, tdOrg.org_id, "takedown.status_changed", {
+        emitOrgEvent(env, tdOrg.org_id, "takedown.status_changed", {
           takedown_id: takedownId,
           previous_status: takedown.status,
           new_status: body.status,

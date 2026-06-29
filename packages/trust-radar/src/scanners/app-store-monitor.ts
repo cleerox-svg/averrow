@@ -11,7 +11,7 @@
 import { nameSimilarity } from "./impersonation-scorer";
 import { searchITunesApps, type ITunesApp } from "../feeds/itunes";
 import { createAlert } from "../lib/alerts";
-import { deliverWebhook } from "../lib/webhooks";
+import { emitOrgEvent } from "../lib/org-events";
 import { logger } from "../lib/logger";
 import { checkCostGuard } from "../lib/haiku";
 import { callAnthropicText, AnthropicError } from "../lib/anthropic";
@@ -414,7 +414,7 @@ export async function runAppStoreMonitorForBrand(
         });
 
         if (orgRow?.org_id) {
-          deliverWebhook(env, orgRow.org_id, "alert.created", {
+          emitOrgEvent(env, orgRow.org_id, "alert.created", {
             alert_id: alertId,
             brand_name: brand.name,
             brand_domain: brand.domain,
