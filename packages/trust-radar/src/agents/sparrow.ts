@@ -26,6 +26,7 @@ export const sparrowAgent: AgentModule = {
   // split that into a separate sync agent with its own budget).
   budget: { monthlyTokenCap: 5_000_000 },
   reads: [
+    { kind: "d1_table", name: "abuse_inbox_messages" },
     { kind: "d1_table", name: "app_store_listings" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "dark_web_mentions" },
@@ -34,6 +35,7 @@ export const sparrowAgent: AgentModule = {
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "social_profiles" },
     { kind: "d1_table", name: "takedown_authorizations" },
+    { kind: "d1_table", name: "threats" },
     { kind: "d1_table", name: "takedown_evidence" },
     { kind: "d1_table", name: "takedown_providers" },
     { kind: "d1_table", name: "takedown_requests" },
@@ -41,6 +43,7 @@ export const sparrowAgent: AgentModule = {
     { kind: "d1_table", name: "url_scan_results" },
   ],
   writes: [
+    { kind: "d1_table", name: "abuse_inbox_messages" },
     { kind: "d1_table", name: "lookalike_domains" },
     { kind: "d1_table", name: "takedown_evidence" },
     { kind: "d1_table", name: "takedown_requests" },
@@ -91,11 +94,15 @@ export const sparrowAgent: AgentModule = {
     const lookalikeTakedowns = await createTakedownsFromLookalikes(env);
     itemsCreated += lookalikeTakedowns;
 
-    if (urlTakedowns > 0 || socialTakedowns > 0 || appStoreTakedowns > 0 || darkWebTakedowns > 0 || lookalikeTakedowns > 0) {
-      const totalNew = urlTakedowns + socialTakedowns + appStoreTakedowns + darkWebTakedowns + lookalikeTakedowns;
+    // ── Phase B3: Auto-create takedowns from abuse-mailbox-confirmed phishing ──
+    const abuseTakedowns = await createTakedownsFromAbuseReports(env);
+    itemsCreated += abuseTakedowns;
+
+    if (urlTakedowns > 0 || socialTakedowns > 0 || appStoreTakedowns > 0 || darkWebTakedowns > 0 || lookalikeTakedowns > 0 || abuseTakedowns > 0) {
+      const totalNew = urlTakedowns + socialTakedowns + appStoreTakedowns + darkWebTakedowns + lookalikeTakedowns + abuseTakedowns;
       outputs.push({
         type: "insight",
-        summary: `Created ${totalNew} takedown drafts (${urlTakedowns} URL, ${socialTakedowns} social, ${appStoreTakedowns} app-store, ${darkWebTakedowns} dark-web, ${lookalikeTakedowns} lookalike)`,
+        summary: `Created ${totalNew} takedown drafts (${urlTakedowns} URL, ${socialTakedowns} social, ${appStoreTakedowns} app-store, ${darkWebTakedowns} dark-web, ${lookalikeTakedowns} lookalike, ${abuseTakedowns} abuse-report)`,
         severity: totalNew > 5 ? "high" : "medium",
         details: {
           url_takedowns: urlTakedowns,
@@ -103,6 +110,7 @@ export const sparrowAgent: AgentModule = {
           app_store_takedowns: appStoreTakedowns,
           dark_web_takedowns: darkWebTakedowns,
           lookalike_takedowns: lookalikeTakedowns,
+          abuse_report_takedowns: abuseTakedowns,
         },
       });
     }
@@ -609,6 +617,120 @@ async function createTakedownsFromLookalikes(env: Env): Promise<number> {
     ).run();
 
     created++;
+  }
+
+  return created;
+}
+
+// ─── Phase B3: Abuse-Mailbox Confirmed Phishing → Takedown ─────────
+//
+// Close the loop, part 2. When a phish is reported to the Abuse Mailbox and
+// the classifier confirms it (HIGH/CRITICAL phishing|malware), the malicious
+// URLs are promoted to `threats` (promoted_threat_ids) — but were never
+// connected to takedown, so a reported+confirmed phish wasn't actually
+// actioned. This drafts a takedown for each promoted malicious URL.
+//
+// Same safety model as every source: drafts (module_key='domain') flow
+// through Phase E (provider resolve) → Phase G (auth/policy/cap-gated
+// submit). The abuse message already carries org_id (alias→org), so we use
+// it directly. Each message is processed once (takedown_drafted_at stamp),
+// and we skip domains the org already has an active takedown for (avoids
+// double-actioning a domain Phase B/B2 drafted).
+async function createTakedownsFromAbuseReports(env: Env): Promise<number> {
+  const messages = await env.DB.prepare(`
+    SELECT id, org_id, brand_id, classification, severity, promoted_threat_ids
+    FROM abuse_inbox_messages
+    WHERE classification IN ('phishing', 'malware')
+      AND severity IN ('HIGH', 'CRITICAL')
+      AND org_id IS NOT NULL
+      AND promoted_threat_ids IS NOT NULL
+      AND takedown_drafted_at IS NULL
+    ORDER BY received_at DESC
+    LIMIT 10
+  `).all<{
+    id: string; org_id: number; brand_id: string | null;
+    classification: string; severity: string; promoted_threat_ids: string | null;
+  }>();
+
+  let created = 0;
+
+  for (const msg of messages.results) {
+    let threatIds: string[] = [];
+    try {
+      const parsed = JSON.parse(msg.promoted_threat_ids || "[]");
+      if (Array.isArray(parsed)) threatIds = parsed.filter((x): x is string => typeof x === "string");
+    } catch { threatIds = []; }
+
+    if (threatIds.length > 0) {
+      const placeholders = threatIds.map(() => "?").join(",");
+      const promoted = await env.DB.prepare(
+        `SELECT id, malicious_url, malicious_domain FROM threats WHERE id IN (${placeholders})`,
+      ).bind(...threatIds).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
+
+      const severity = msg.severity === "CRITICAL" ? "CRITICAL" : "HIGH";
+
+      for (const t of promoted.results) {
+        const domain = t.malicious_domain;
+        if (!domain) continue;
+        const url = t.malicious_url;
+
+        // Don't double-action a domain the org already has an open takedown
+        // for (Phase B/B2 may have drafted it, or a prior abuse report).
+        const existing = await env.DB.prepare(
+          `SELECT 1 FROM takedown_requests
+           WHERE org_id = ? AND target_value = ?
+             AND status NOT IN ('failed', 'expired', 'withdrawn')
+           LIMIT 1`,
+        ).bind(msg.org_id, domain).first();
+        if (existing) continue;
+
+        const takedownId = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO takedown_requests (
+            id, org_id, brand_id, module_key, target_type, target_value, target_url,
+            source_type, source_id, evidence_summary, evidence_detail,
+            provider_name, provider_abuse_contact, provider_method,
+            status, severity, priority_score, requested_by, created_at, updated_at
+          ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'abuse_report', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
+        `).bind(
+          takedownId,
+          msg.org_id,
+          msg.brand_id,
+          domain,
+          url,
+          msg.id,
+          `Confirmed ${msg.classification} reported to the Abuse Mailbox: ${url ?? domain}.`,
+          `Domain: ${domain}\nURL: ${url ?? "—"}\nClassification: ${msg.classification}\nSeverity: ${msg.severity}\nSource: customer abuse report (ref ${msg.id})`,
+          severity,
+          severity === "CRITICAL" ? 85 : 70,
+        ).run();
+
+        await env.DB.prepare(`
+          INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+          VALUES (?, ?, 'abuse_report', 'Abuse Mailbox Report', ?, ?, datetime('now'))
+        `).bind(
+          crypto.randomUUID(),
+          takedownId,
+          `Reported to the Abuse Mailbox and AI-confirmed as ${msg.classification} (${msg.severity}).\nDomain: ${domain}\nURL: ${url ?? "—"}`,
+          JSON.stringify({
+            abuse_message_id: msg.id,
+            threat_id: t.id,
+            classification: msg.classification,
+            severity: msg.severity,
+            domain,
+            url,
+          }),
+        ).run();
+
+        created++;
+      }
+    }
+
+    // Mark processed regardless of how many drafts resulted, so the message
+    // isn't re-scanned every run.
+    await env.DB.prepare(
+      `UPDATE abuse_inbox_messages SET takedown_drafted_at = datetime('now') WHERE id = ?`,
+    ).bind(msg.id).run();
   }
 
   return created;
