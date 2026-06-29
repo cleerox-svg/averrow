@@ -3,7 +3,7 @@
 
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
-import { deliverWebhook } from "../lib/webhooks";
+import { emitOrgEvent } from "../lib/org-events";
 import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
@@ -651,7 +651,7 @@ export async function handleTenantUpdateAlert(
 
     // Fire webhook only when the status actually changed.
     if (hasStatus) {
-      deliverWebhook(env, Number(orgId), "alert.status_changed", {
+      emitOrgEvent(env, Number(orgId), "alert.status_changed", {
         alert_id: alertId,
         previous_status: alert.current_status,
         new_status: body.status,

@@ -1496,8 +1496,30 @@ export async function handleTestIntegration(
     return json({ success: false, error: "Integration not found" }, 404, origin);
   }
 
-  // TODO: Implement actual connection tests per integration type (Splunk HEC, Jira API, etc.)
-  // For now, mark as connected if config exists
+  // Connector-backed types (Splunk HEC, …) get a real connection test —
+  // a live POST of a synthetic event. Other types keep the legacy
+  // "config present → connected" behavior until they get a connector.
+  const { testIntegrationConnection, DELIVERABLE_INTEGRATION_TYPES } = await import("../lib/integration-delivery");
+  const intType = integration.type as string;
+
+  if (DELIVERABLE_INTEGRATION_TYPES.has(intType)) {
+    const result = await testIntegrationConnection(
+      env, intType, integration.config_encrypted as string | null,
+    );
+    if (result.ok) {
+      await env.DB.prepare(
+        "UPDATE org_integrations SET status = 'connected', last_sync_at = datetime('now'), last_error = NULL, updated_at = datetime('now') WHERE id = ?",
+      ).bind(integrationId).run();
+      return json({ success: true, data: { status: "connected", message: "Connection test successful" } }, 200, origin);
+    }
+    const err = (result.error ?? "Connection test failed").slice(0, 500);
+    await env.DB.prepare(
+      "UPDATE org_integrations SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE id = ?",
+    ).bind(err, integrationId).run();
+    return json({ success: false, data: { status: "error", message: err } }, 400, origin);
+  }
+
+  // Legacy fallback for types without a connector yet.
   if (integration.config_encrypted) {
     await env.DB.prepare(
       "UPDATE org_integrations SET status = 'connected', last_sync_at = datetime('now'), last_error = NULL, updated_at = datetime('now') WHERE id = ?",

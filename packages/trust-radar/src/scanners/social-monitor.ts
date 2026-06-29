@@ -13,7 +13,7 @@ import { checkSocialHandles, type SocialCheckResult } from '../lib/social-check'
 import { generateHandlePermutations } from '../lib/handle-permutations';
 import { scoreImpersonation, nameSimilarity, type ImpersonationSignals } from './impersonation-scorer';
 import { createAlert } from '../lib/alerts';
-import { deliverWebhook } from '../lib/webhooks';
+import { emitOrgEvent } from '../lib/org-events';
 import { logger } from '../lib/logger';
 import { discoverSocialProfiles } from '../lib/social-discovery';
 import { runSyncAgent } from '../lib/agentRunner';
@@ -480,7 +480,7 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
                 "SELECT ob.org_id, b.name AS brand_name, b.canonical_domain FROM org_brands ob JOIN brands b ON b.id = ob.brand_id WHERE ob.brand_id = ? LIMIT 1",
               ).bind(brand.id).first<{ org_id: number; brand_name: string; canonical_domain: string }>();
               if (orgBrand) {
-                deliverWebhook(env, orgBrand.org_id, 'alert.created', {
+                emitOrgEvent(env, orgBrand.org_id, 'alert.created', {
                   alert_id: alertId,
                   brand_name: orgBrand.brand_name,
                   brand_domain: orgBrand.canonical_domain,
