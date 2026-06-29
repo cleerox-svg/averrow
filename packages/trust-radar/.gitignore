@@ -6,6 +6,7 @@ public/tenant/
 # the build into public/. Everything below is generated, not authored.
 public/_astro/
 public/index.html
+public/abuse-mailbox/
 public/about/
 public/blog/
 public/changelog/
