@@ -66,9 +66,16 @@
   background: rgba(248,113,113,.16); color: var(--sev-critical); padding: 1px 7px; border-radius: 20px;
   box-shadow: inset 0 0 0 1px rgba(248,113,113,.3);
 }
-.v4-foot { border-top: 1px solid var(--border-base); padding: 12px 14px; display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--text-tertiary); }
+.v4-foot { border-top: 1px solid var(--border-base); padding: 10px 10px 4px; display: flex; align-items: center; gap: 7px; }
 .v4-avatar { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-weight: 800; font-size: 11px; color: #0A0F1E; background: linear-gradient(135deg, var(--amber), var(--amber-dim)); box-shadow: 0 0 16px rgba(229,168,50,.4); flex: 0 0 auto; }
-.v4-verchip { font-family: var(--font-mono, ui-monospace); font-size: 10px; color: var(--text-secondary); background: rgba(255,255,255,.04); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border-base); }
+.v4-foot-id { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; text-decoration: none; padding: 4px; border-radius: 8px; transition: background .14s ease; }
+.v4-foot-id:hover { background: rgba(255,255,255,.05); }
+.v4-foot-meta { min-width: 0; overflow: hidden; }
+.v4-foot-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--text-secondary); }
+.v4-foot-role { font-size: 10px; color: var(--text-muted); text-transform: capitalize; }
+.v4-foot-btn { flex: 0 0 auto; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border-base); background: transparent; color: var(--text-tertiary); cursor: pointer; transition: color .14s, border-color .14s, background .14s; }
+.v4-foot-btn:hover { color: var(--text-primary); border-color: var(--border-strong); background: rgba(255,255,255,.05); }
+.v4-verline { padding: 2px 16px 12px; font-family: var(--font-mono, ui-monospace); font-size: 10px; color: var(--text-muted); }
 
 /* main column */
 .v4-main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }

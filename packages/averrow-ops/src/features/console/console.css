@@ -61,3 +61,48 @@
 @media (prefers-reduced-motion: reduce) {
   .ci-row, .ci-filter, .console-live .dot { transition: none !important; animation: none !important; }
 }
+
+/* Clickable KPI tiles — each jumps to its queue, so the hero is navigation,
+   not decoration. Resets <button>/<a> styling and adds a hover affordance. */
+.kpi-clickable {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-decoration: none;
+  display: block;
+  transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+}
+.kpi-clickable:hover {
+  transform: translateY(-2px);
+  border-color: var(--amber-border);
+  box-shadow: 0 16px 44px rgba(0,0,0,0.55), 0 0 22px rgba(229,168,50,0.14);
+}
+.kpi-go {
+  position: absolute;
+  right: 16px;
+  bottom: 13px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity .14s ease;
+}
+.kpi-clickable:hover .kpi-go { opacity: 1; }
+
+/* Compact on phones — the KPI hero shouldn't fill the whole first screen. */
+@media (max-width: 640px) {
+  .kpi-grid { grid-template-columns: 1fr; gap: 8px; margin: 12px 0 14px; }
+  .kpi-v4 { padding: 10px 14px; border-radius: 12px; }
+  .kpi-lbl { font-size: 9.5px; }
+  .kpi-num { font-size: 26px; margin-top: 2px; letter-spacing: -1px; }
+  .kpi-sub { display: none; }
+  .kpi-go { display: none; }
+  .kpi-glow { width: 70px; height: 70px; filter: blur(24px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-clickable { transition: none !important; }
+}

@@ -9,6 +9,7 @@
 // classic Home is unaffected.
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import CountUp from 'react-countup';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -34,15 +35,20 @@ const SHELL_STYLE: React.CSSProperties = {
   paddingBottom: 24,
 };
 
-function KpiTile({ tone, label, value, sub }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string }) {
-  return (
-    <div className={`kpi-v4 ${tone}`}>
+function KpiTile({ tone, label, value, sub, to }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; to?: string }) {
+  const inner = (
+    <>
       <div className="kpi-glow" aria-hidden />
       <div className="kpi-lbl">{label}</div>
       <div className="kpi-num">{value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
-    </div>
+      {to && <span className="kpi-go" aria-hidden>View →</span>}
+    </>
   );
+  if (to) {
+    return <Link to={to} className={`kpi-v4 ${tone} kpi-clickable`}>{inner}</Link>;
+  }
+  return <div className={`kpi-v4 ${tone}`}>{inner}</div>;
 }
 
 function V4Hero() {
@@ -72,9 +78,9 @@ function V4Hero() {
         <span className="console-live"><span className="dot" />LIVE</span>
       </div>
       <div className="kpi-grid">
-        <KpiTile tone="amber" label="Open signals"       value={openSignals}       sub="awaiting triage" />
-        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now" />
-        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops" />
+        <KpiTile tone="amber" label="Open signals"       value={openSignals}       sub="awaiting triage" to="/alerts" />
+        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    to="/admin/incidents" />
+        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   to="/admin/incidents" />
       </div>
     </div>
   );

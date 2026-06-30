@@ -16,6 +16,7 @@ import {
   Globe, Users, Cpu, Rss, BarChart3, ClipboardList, Bell, Target,
   Search, Sparkles, RotateCcw, Menu, X,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
+  LogOut, UserCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -96,7 +97,7 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 export function ShellV4() {
-  const { user, isSuperAdmin } = useAuth();
+  const { user, isSuperAdmin, logout } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const closeDrawer = () => setDrawerOpen(false);
@@ -143,16 +144,24 @@ export function ShellV4() {
         </nav>
 
         <div className="v4-foot">
-          <div className="v4-avatar">{initials}</div>
-          <div style={{ minWidth: 0, overflow: 'hidden' }}>
-            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-secondary)' }}>
-              {user?.display_name ?? user?.name ?? user?.email ?? 'Signed in'}
+          <NavLink to="/profile" className="v4-foot-id" onClick={closeDrawer} title="Your profile">
+            <div className="v4-avatar">{initials}</div>
+            <div className="v4-foot-meta">
+              <div className="v4-foot-name">
+                {user?.display_name ?? user?.name ?? user?.email ?? 'Signed in'}
+              </div>
+              <div className="v4-foot-role">{user?.role}</div>
             </div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{user?.role}</div>
-          </div>
-          <span className="v4-verchip" style={{ marginLeft: 'auto' }} title={`${VERSION_LABEL} · ${BUILD_SHA}`}>
-            {VERSION_LABEL}<span style={{ opacity: 0.5 }}> · {BUILD_SHA}</span>
-          </span>
+          </NavLink>
+          <NavLink to="/profile" className="v4-foot-btn" onClick={closeDrawer} aria-label="Profile" title="Profile">
+            <UserCircle size={17} strokeWidth={2} />
+          </NavLink>
+          <button type="button" className="v4-foot-btn" onClick={() => logout()} aria-label="Sign out" title="Sign out">
+            <LogOut size={17} strokeWidth={2} />
+          </button>
+        </div>
+        <div className="v4-verline" title={`${VERSION_LABEL} · ${BUILD_SHA}`}>
+          {VERSION_LABEL}<span style={{ opacity: 0.5 }}> · {BUILD_SHA}</span>
         </div>
       </aside>
 

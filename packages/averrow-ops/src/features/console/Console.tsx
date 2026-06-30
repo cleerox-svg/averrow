@@ -80,11 +80,11 @@ export function Console() {
         <span className="console-live"><span className="dot" />LIVE</span>
       </div>
 
-      {/* cinematic KPI hero — big glowing count-up numbers */}
+      {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
       <div className="kpi-grid">
-        <KpiTile tone="amber" label="Open signals"       value={openSignals}       sub="awaiting triage" />
-        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now" />
-        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops" />
+        <KpiTile tone="amber" label="Open signals"       value={openSignals}       sub="awaiting triage" onClick={() => selectTab('signals')} />
+        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} />
+        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} />
       </div>
 
       {/* deep-linkable tab bar */}
@@ -124,15 +124,24 @@ function TabLoading() {
   );
 }
 
-function KpiTile({ tone, label, value, sub }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string }) {
-  return (
-    <div className={`kpi-v4 ${tone}`}>
+function KpiTile({ tone, label, value, sub, onClick }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; onClick?: () => void }) {
+  const inner = (
+    <>
       <div className="kpi-glow" aria-hidden />
       <div className="kpi-lbl">{label}</div>
       <div className="kpi-num">
         {value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}
       </div>
       {sub && <div className="kpi-sub">{sub}</div>}
-    </div>
+      {onClick && <span className="kpi-go" aria-hidden>View →</span>}
+    </>
   );
+  if (onClick) {
+    return (
+      <button type="button" className={`kpi-v4 ${tone} kpi-clickable`} onClick={onClick}>
+        {inner}
+      </button>
+    );
+  }
+  return <div className={`kpi-v4 ${tone}`}>{inner}</div>;
 }
