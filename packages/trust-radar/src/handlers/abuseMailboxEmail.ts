@@ -84,6 +84,12 @@ export async function handleAbuseMailboxEmail(
     return;
   }
 
+  // Tier 3: resolve per-org responder branding once. Drives the ack
+  // From/subject/branding AND the follow-up detection regex below
+  // (the reply subject carries the org's branded prefix, not "Averrow").
+  const { loadAbuseBranding } = await import("../lib/abuse-mailbox-branding");
+  const branding = await loadAbuseBranding(env, aliasRow.org_id);
+
   // 3. Parse headers from the OUTER envelope (this is the forward,
   // not the original suspicious email).
   const outerHeaders = extractHeaders(rawText);
@@ -292,7 +298,13 @@ export async function handleAbuseMailboxEmail(
   const isFollowUp = (() => {
     const s = (original.subject ?? "").trim();
     if (!s) return false;
-    return /^re\s*:\s*averrow\s*·/i.test(s);
+    // Match a reply to one of OUR outbound emails: "Re: <prefix> · …".
+    // The prefix is the org's branded subject prefix (Tier 3), falling
+    // back to "Averrow". Escape it so a prefix with regex metachars is
+    // matched literally.
+    const escaped = branding.subjectPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const followUpRe = new RegExp(`^re\\s*:\\s*${escaped}\\s*\\u00B7`, "i");
+    return followUpRe.test(s);
   })();
   const initialClassification = isFollowUp ? "follow_up" : "pending";
   const initialSeverity = "LOW";
@@ -360,7 +372,7 @@ export async function handleAbuseMailboxEmail(
         messageId,
         originalSubject: original.subject,
         inboundAlias: aliasRow.alias,
-      });
+      }, branding);
       if (ackResult.ok) {
         await env.DB.prepare(
           `UPDATE abuse_inbox_messages SET ack_sent_at = datetime('now') WHERE id = ?`,

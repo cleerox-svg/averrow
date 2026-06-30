@@ -114,7 +114,17 @@ Supporting tables:
 - **`org_abuse_aliases`** (PK `org_id`, UNIQUE `alias`,
   `forwarding_instructions`) — maps an inbound alias to the owning org.
   Averrow's own platform org + production aliases are seeded by
-  `0180_averrow_self_abuse_mailbox.sql` (+ `0182`, `0183`).
+  `0180_averrow_self_abuse_mailbox.sql` (+ `0182`, `0183`). Per-tenant
+  `verify-<slug>@averrow.com` aliases are auto-minted on org create and
+  re-provisionable via `lib/abuse-alias-provision.ts` (Tier 3).
+- **`org_abuse_branding`** (PK `org_id`, `0231`) — per-org responder
+  branding (Tier 3): display name, product name, tagline, logo, accent /
+  header colours, subject prefix, footer links. Resolved (validated +
+  defaults-merged) by `lib/abuse-mailbox-branding.ts` and threaded through
+  the ack + determination emails; a null/disabled/invalid value falls back
+  to the Averrow default so behaviour is unchanged for orgs that haven't
+  opted in. The envelope **From stays on `abuse-noreply@averrow.com`** (an
+  authenticated domain) — only the display name + look are branded.
 - **`org_modules`** — the `abuse_mailbox` entitlement key is registered in
   `migrations/0145_org_modules.sql`. The tenant UI is gated on this.
 

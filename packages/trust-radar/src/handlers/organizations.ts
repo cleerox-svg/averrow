@@ -152,6 +152,14 @@ export async function handleCreateOrg(
     }
   }
 
+  // Tier 3: reserve the per-tenant verify-<slug>@averrow.com abuse alias.
+  // Idempotent + non-fatal — the org is usable even if this hiccups, and
+  // an operator can re-run it via POST /abuse-alias.
+  try {
+    const { provisionAbuseAlias } = await import("../lib/abuse-alias-provision");
+    await provisionAbuseAlias(env, Number(orgId), slug);
+  } catch { /* non-fatal */ }
+
   // ─── Invite first admin ──────────────────────────────────
   let inviteData: Record<string, unknown> | null = null;
   if (body.admin_email) {
@@ -1637,4 +1645,126 @@ export async function handleBulkRewrapIntegrations(
       errors,
     },
   }, 200, origin);
+}
+
+// ─── Tier 3: abuse-mailbox responder branding + alias provisioning ───
+
+interface AbuseBrandingInput {
+  enabled?: unknown;
+  from_name?: unknown;
+  product_name?: unknown;
+  tagline?: unknown;
+  accent_color?: unknown;
+  header_bg_color?: unknown;
+  logo_url?: unknown;
+  logo_alt?: unknown;
+  subject_prefix?: unknown;
+  website_url?: unknown;
+  website_label?: unknown;
+  report_url?: unknown;
+  report_label?: unknown;
+  footer_note?: unknown;
+}
+
+/**
+ * GET the stored branding row for an org plus the RESOLVED branding the
+ * responder would actually use (defaults merged + validated). Lets the
+ * operator preview exactly what a reporter would receive.
+ */
+export async function handleGetAbuseBranding(
+  request: Request,
+  env: Env,
+  orgId: string,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const id = Number(orgId);
+  if (!Number.isInteger(id)) return json({ success: false, error: "Invalid org id" }, 400, origin);
+
+  const { loadAbuseBranding } = await import("../lib/abuse-mailbox-branding");
+  const row = await env.DB.prepare(
+    `SELECT enabled, from_name, product_name, tagline, accent_color, header_bg_color,
+            logo_url, logo_alt, subject_prefix, website_url, website_label,
+            report_url, report_label, footer_note, updated_at
+     FROM org_abuse_branding WHERE org_id = ?`,
+  ).bind(id).first();
+  const resolved = await loadAbuseBranding(env, id);
+
+  const alias = await env.DB.prepare(
+    "SELECT alias FROM org_abuse_aliases WHERE org_id = ? ORDER BY alias LIMIT 1",
+  ).bind(id).first<{ alias: string }>().catch(() => null);
+
+  return json({ success: true, data: { stored: row ?? null, resolved, alias: alias?.alias ?? null } }, 200, origin);
+}
+
+/**
+ * Upsert the branding row. Stores raw values; validation/sanitization
+ * happens at render time in lib/abuse-mailbox-branding so a bad value
+ * degrades to the Averrow default for that field rather than 500-ing a
+ * reporter's email.
+ */
+export async function handlePutAbuseBranding(
+  request: Request,
+  env: Env,
+  orgId: string,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const id = Number(orgId);
+  if (!Number.isInteger(id)) return json({ success: false, error: "Invalid org id" }, 400, origin);
+
+  const org = await env.DB.prepare("SELECT id FROM organizations WHERE id = ?").bind(id).first();
+  if (!org) return json({ success: false, error: "Organization not found" }, 404, origin);
+
+  const body = await request.json().catch(() => null) as AbuseBrandingInput | null;
+  if (!body) return json({ success: false, error: "Invalid body" }, 400, origin);
+
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, 400) : null;
+  const enabled = body.enabled === false || body.enabled === 0 ? 0 : 1;
+
+  await env.DB.prepare(
+    `INSERT INTO org_abuse_branding
+       (org_id, enabled, from_name, product_name, tagline, accent_color, header_bg_color,
+        logo_url, logo_alt, subject_prefix, website_url, website_label, report_url,
+        report_label, footer_note, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(org_id) DO UPDATE SET
+       enabled=excluded.enabled, from_name=excluded.from_name, product_name=excluded.product_name,
+       tagline=excluded.tagline, accent_color=excluded.accent_color, header_bg_color=excluded.header_bg_color,
+       logo_url=excluded.logo_url, logo_alt=excluded.logo_alt, subject_prefix=excluded.subject_prefix,
+       website_url=excluded.website_url, website_label=excluded.website_label, report_url=excluded.report_url,
+       report_label=excluded.report_label, footer_note=excluded.footer_note, updated_at=datetime('now')`,
+  ).bind(
+    id, enabled, str(body.from_name), str(body.product_name), str(body.tagline),
+    str(body.accent_color), str(body.header_bg_color), str(body.logo_url), str(body.logo_alt),
+    str(body.subject_prefix), str(body.website_url), str(body.website_label), str(body.report_url),
+    str(body.report_label), str(body.footer_note),
+  ).run();
+
+  const { loadAbuseBranding } = await import("../lib/abuse-mailbox-branding");
+  const resolved = await loadAbuseBranding(env, id);
+  return json({ success: true, data: { resolved } }, 200, origin);
+}
+
+/**
+ * Provision the per-tenant verify-<slug>@averrow.com inbound alias for an
+ * org. Idempotent; reports a collision rather than hijacking an alias.
+ */
+export async function handleProvisionAbuseAlias(
+  request: Request,
+  env: Env,
+  orgId: string,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const id = Number(orgId);
+  if (!Number.isInteger(id)) return json({ success: false, error: "Invalid org id" }, 400, origin);
+
+  const body = await request.json().catch(() => null) as { slug?: unknown } | null;
+  const slugHint = body && typeof body.slug === "string" ? body.slug : null;
+
+  const { provisionAbuseAlias } = await import("../lib/abuse-alias-provision");
+  const result = await provisionAbuseAlias(env, id, slugHint);
+  if (!result.ok) {
+    return json({ success: false, error: result.reason ?? "provision-failed", alias: result.alias }, 400, origin);
+  }
+  return json({ success: true, data: result }, 200, origin);
 }

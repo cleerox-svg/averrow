@@ -26,6 +26,7 @@ import { handleCreateInvite, handleListInvites, handleRevokeInvite } from "../ha
 import {
   handleCreateOrg, handleListOrgs, handleGetOrg, handleUpdateOrg,
   handleSearchBrands,
+  handleGetAbuseBranding, handlePutAbuseBranding, handleProvisionAbuseAlias,
 } from "../handlers/organizations";
 import {
   handleAdminListTakedowns, handleAdminUpdateTakedown, handleAdminTakedownIntegrations,
@@ -486,6 +487,25 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateOrg(request, env, request.params["orgId"] ?? "");
+  });
+
+  // Tier 3 — abuse-mailbox responder branding + per-tenant alias.
+  // Read gated on read_customers (sales/support can preview); mutations
+  // stay super_admin (branding + alias affect outbound customer-facing mail).
+  router.get("/api/admin/organizations/:orgId/abuse-branding", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requirePermission("read_customers")(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetAbuseBranding(request, env, request.params["orgId"] ?? "");
+  });
+  router.put("/api/admin/organizations/:orgId/abuse-branding", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handlePutAbuseBranding(request, env, request.params["orgId"] ?? "");
+  });
+  router.post("/api/admin/organizations/:orgId/abuse-alias", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleProvisionAbuseAlias(request, env, request.params["orgId"] ?? "");
   });
 
   // ─── Customers (Stripe + pricing surface) ─────────────────────
