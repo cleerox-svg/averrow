@@ -691,6 +691,8 @@ export async function runAbuseClassifierBackfill(
     if (!m.determination_sent_at && m.forwarded_by_email) {
       try {
         const { sendDetermination } = await import("./abuse-mailbox-responder");
+        const { loadAbuseBranding } = await import("./abuse-mailbox-branding");
+        const branding = await loadAbuseBranding(env, m.org_id);
         const detResult = await sendDetermination(env, m.forwarded_by_email, {
           messageId:       m.id,
           inboundAlias:    m.inbound_alias,
@@ -705,7 +707,7 @@ export async function runAbuseClassifierBackfill(
           correlatedCount: correlatedIds.length,
           promotedCount:   promotedIds.length,
           deepAnalysisExternal,
-        });
+        }, branding);
         if (detResult.ok) {
           await env.DB.prepare(
             `UPDATE abuse_inbox_messages SET determination_sent_at = datetime('now') WHERE id = ?`,

@@ -98,8 +98,8 @@ The user's Atlassian idea maps to a real buyer requirement.
 | **Report → takedown (close the loop)** | ❌ **Gap** | Abuse classifier promotes confirmed phishing to `threats`, but Sparrow auto-takedown reads `url_scan_results`, **not** `threats`. A reported+confirmed phish is **not** auto-taken-down. The headline loop is open. |
 | **Send signal to SIEM / TIP** | 🟡 **Partial** | Webhooks + STIX download real; **no** Splunk/Sentinel/QRadar delivery code (marketing "Coming Soon"). No outbound TAXII server (the "STIX/TAXII — Live" card half-overclaims). |
 | **Atlassian/Jira (+ServiceNow) ticketing for compliance record** | ❌ **Gap** | `org_integrations` stores encrypted Jira/ServiceNow creds but the "test" is a stub and **nothing reads it to deliver**. No ticket create/close, no compliance export. |
-| **Branded alias domains** (customer subdomain or Averrow-branded) | ❌ **Gap** | Only Averrow-owned platform mailboxes exist. Per-tenant `verify-<tenant>@averrow.com` is documented but **never minted** (no provisioning code). No custom-domain/verification schema. Replies are hardcoded Averrow branding. |
-| **Auto-responses for other things** | ❌ **Gap** | Only ack + determination, both hardcoded Averrow. No per-org templating/branding; no closure/escalation/human-handoff emails. |
+| **Branded alias domains** (customer subdomain or Averrow-branded) | 🟡 **Partial (Tier 3)** | Per-tenant `verify-<slug>@averrow.com` is now **auto-minted on org create** + re-provisionable via `POST /abuse-alias` (`lib/abuse-alias-provision.ts`). Responder replies are **per-org branded** (display name/logo/colours/links/copy) via `org_abuse_branding`. Still gap: customer **custom domains** (`report.theirbrand.com`) — needs DNS/MX delegation (item 8). |
+| **Auto-responses for other things** | 🟡 **Partial (Tier 3)** | Ack + determination are now **per-org branded** (`lib/abuse-mailbox-branding.ts`, threaded through the responder). Still gap: new auto-response *types* (closure/escalation/human-handoff emails). |
 
 ---
 
@@ -130,12 +130,20 @@ board.*
    customers can poll Averrow as a collection.
 
 ### Tier 3 — Branding & config
-6. **Per-tenant alias provisioning** (mint `verify-<tenant>@averrow.com`)
-   — the cheap branded option, schema is ready.
-7. **Parameterize the responder** (per-org From/logo/footer + templated
-   copy) — needed for branded replies and any new auto-response types.
+6. ✅ **Per-tenant alias provisioning** (mint `verify-<slug>@averrow.com`)
+   — auto-minted on org create + `POST /api/admin/organizations/:orgId/abuse-alias`
+   (`lib/abuse-alias-provision.ts`). Idempotent, collision-safe.
+7. ✅ **Parameterize the responder** (per-org name/logo/colours/footer +
+   copy) — `org_abuse_branding` table + `lib/abuse-mailbox-branding.ts`
+   resolves branding (validated, defaults-merged) and the responder threads
+   it through ack + determination. Settable via
+   `PUT /api/admin/organizations/:orgId/abuse-branding`. Envelope From stays
+   on Averrow's authenticated domain (display name branded, not the sending
+   domain) — so SPF/DKIM/DMARC deliverability is preserved.
 8. **Customer custom domains** (`report.theirbrand.com`) — needs domain
-   verification + MX delegation + new schema. Biggest lift; do last.
+   verification + MX/email-auth delegation + new schema. Biggest lift; the
+   remaining Tier 3 item. This is what unlocks an actual customer-domain
+   From address (item 7 deliberately keeps sending on averrow.com).
 
 ---
 

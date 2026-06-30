@@ -27,8 +27,11 @@
  */
 import type { Env } from "../types";
 import { logger } from "./logger";
-
-const FROM_ADDRESS = "Averrow Abuse Triage <abuse-noreply@averrow.com>";
+import {
+  type AbuseBranding,
+  DEFAULT_ABUSE_BRANDING,
+  fromAddressFor,
+} from "./abuse-mailbox-branding";
 
 const SELF_DOMAINS = new Set([
   "averrow.com", "www.averrow.com",
@@ -70,6 +73,7 @@ interface ResendBody {
 
 async function sendViaResend(
   apiKey: string,
+  fromAddress: string,
   to: string,
   subject: string,
   html: string,
@@ -85,7 +89,7 @@ async function sendViaResend(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const body: Record<string, unknown> = {
-      from: FROM_ADDRESS,
+      from: fromAddress,
       to: [to],
       subject,
       html,
@@ -168,7 +172,7 @@ const FONT_MONO = `'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,Consolas,
 
 
 interface BrandLayoutOptions {
-  /** Hex colour for the 4px accent stripe under the header. Default amber. */
+  /** Hex colour for the 4px accent stripe under the header. Defaults to the brand accent. */
   accent?: string;
   /** Tag printed above the headline (e.g. "Report received" or "Determination"). */
   preheaderTag: string;
@@ -176,10 +180,13 @@ interface BrandLayoutOptions {
   headline: string;
   /** Inner HTML for the main body. Assume well-formed inline-styled blocks. */
   bodyHtml: string;
+  /** Per-org branding (header name/logo/colours/footer links). */
+  branding: AbuseBranding;
 }
 
 function brandLayout(opts: BrandLayoutOptions): string {
-  const accent = opts.accent ?? "#E5A832";
+  const b = opts.branding;
+  const accent = opts.accent ?? b.accent;
   // Logo: hosted PNG of the platform favicon, mark-only.
   //
   // PR-BF (2026-05-18): reverted PR-BB's `data:image/png;base64,...`
@@ -208,7 +215,7 @@ function brandLayout(opts: BrandLayoutOptions): string {
   // Source asset: public/favicon-mark.svg + scripts/generate-logo-assets.py
   // → public/logo-email-mark.png (served at the URL below with the
   //   PR-BF long-cache header from _headers).
-  const logoCell = `<img class="av-brand-logo" src="https://averrow.com/logo-email-mark.png" width="38" height="38" alt="Averrow" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
+  const logoCell = `<img class="av-brand-logo" src="${escapeAttr(b.logoUrl)}" width="38" height="38" alt="${escapeAttr(b.logoAlt)}" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
@@ -235,11 +242,11 @@ function brandLayout(opts: BrandLayoutOptions): string {
           Android inverted its color (amber → violet for the
           common case). Re-asserting it here with !important + the
           per-verdict dynamic accent. */
-  .av-brand-header { background:#0F1828 !important; }
+  .av-brand-header { background:${b.headerBg} !important; }
   .av-brand-logo   { background:transparent !important; }
   .av-accent-line  { background:${accent} !important; }
   @media (prefers-color-scheme: dark) {
-    .av-brand-header { background:#0F1828 !important; }
+    .av-brand-header { background:${b.headerBg} !important; }
     .av-brand-logo   { background:transparent !important; }
     .av-accent-line  { background:${accent} !important; }
   }
@@ -264,20 +271,20 @@ function brandLayout(opts: BrandLayoutOptions): string {
     filter: invert(1) hue-rotate(180deg) !important;
   }
 </style>
-<title>${escapeHtml(opts.headline)} — Averrow</title>
+<title>${escapeHtml(opts.headline)} — ${escapeHtml(b.productName)}</title>
 </head>
 <body style="margin:0;padding:0;background:#F3F4F6;font-family:${FONT_BODY};color:#1A2536;-webkit-font-smoothing:antialiased;">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(opts.preheaderTag)} — Averrow Abuse Triage</div>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(opts.preheaderTag)} — ${escapeHtml(b.fromName)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3F4F6;padding:32px 16px;font-family:${FONT_BODY};">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0 4px 20px rgba(15,24,40,0.08);overflow:hidden;">
-        <tr><td class="av-brand-header" style="background:#0F1828;padding:20px 24px;">
+        <tr><td class="av-brand-header" style="background:${b.headerBg};padding:20px 24px;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td style="vertical-align:middle;">${logoCell}</td>
               <td style="vertical-align:middle;padding-left:12px;">
-                <div style="font-family:${FONT_BODY};font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;line-height:1.1;">Averrow</div>
-                <div style="font-family:${FONT_BODY};font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#E5A832;font-weight:700;margin-top:3px;line-height:1;">Abuse Triage</div>
+                <div style="font-family:${FONT_BODY};font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;line-height:1.1;">${escapeHtml(b.productName)}</div>
+                <div style="font-family:${FONT_BODY};font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:${accent};font-weight:700;margin-top:3px;line-height:1;">${escapeHtml(b.tagline)}</div>
               </td>
             </tr>
           </table>
@@ -292,14 +299,14 @@ function brandLayout(opts: BrandLayoutOptions): string {
         </td></tr>
         <tr><td style="padding:20px 32px 22px;border-top:1px solid #E5E8EE;background:#FAFBFC;font-family:${FONT_BODY};">
           <p style="margin:0 0 10px;font-size:13px;color:#1A2536;line-height:1.5;font-weight:600;">
-            <a href="https://averrow.com" style="color:#0F1828;text-decoration:none;font-weight:700;">averrow.com</a>
-            <span style="color:#8895AA;font-weight:400;"> · threat intelligence + brand protection</span>
+            <a href="${escapeAttr(b.websiteUrl)}" style="color:#0F1828;text-decoration:none;font-weight:700;">${escapeHtml(b.websiteLabel)}</a>
+            <span style="color:#8895AA;font-weight:400;"> · ${escapeHtml(b.footerNote)}</span>
           </p>
           <p style="margin:0 0 6px;font-size:11px;color:#8895AA;line-height:1.5;">
-            Report another threat → <a href="https://averrow.com/report-abuse" style="color:#E5A832;text-decoration:underline;font-weight:600;">averrow.com/report-abuse</a>
+            Report another threat → <a href="${escapeAttr(b.reportUrl)}" style="color:${accent};text-decoration:underline;font-weight:600;">${escapeHtml(b.reportLabel)}</a>
           </p>
           <p style="margin:0;font-size:11px;color:#8895AA;line-height:1.5;">
-            You received this because your address sent or forwarded a message to one of Averrow's public abuse mailboxes. Not yours? Ignore this email — no action needed.
+            You received this because your address sent or forwarded a message to one of ${escapeHtml(b.productName)}'s public abuse mailboxes. Not yours? Ignore this email — no action needed.
           </p>
         </td></tr>
       </table>
@@ -321,7 +328,7 @@ interface AckContext {
   inboundAlias: string;
 }
 
-function ackHtml(ctx: AckContext): string {
+function ackHtml(ctx: AckContext, b: AbuseBranding): string {
   // PR-AN: brand-aligned ack copy. Honest about automation per the
   // marketing page promise — submission goes through automated AI
   // triage, determination email follows within ~1 hour, not 24h or
@@ -332,7 +339,7 @@ function ackHtml(ctx: AckContext): string {
     : "";
   const body = `
     <p style="margin:0 0 14px;">Thanks for the report. Your submission is in our system and queued for automated inspection.</p>
-    <p style="margin:0 0 14px;color:#4A5868;">The Averrow platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.</p>
+    <p style="margin:0 0 14px;color:#4A5868;">The ${escapeHtml(b.productName)} platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.</p>
     ${echoSubject}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
       <tr>
@@ -349,20 +356,21 @@ function ackHtml(ctx: AckContext): string {
     preheaderTag: "Report received",
     headline: "Thanks — your report is in",
     bodyHtml: body,
+    branding: b,
   });
 }
 
-function ackText(ctx: AckContext): string {
+function ackText(ctx: AckContext, b: AbuseBranding): string {
   const echo = ctx.originalSubject ? `\n\nSubject we received:\n  ${ctx.originalSubject}` : "";
   return `Thanks — your report is in.
 
-Your submission is queued for automated inspection. The Averrow platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.${echo}
+Your submission is queued for automated inspection. The ${b.productName} platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.${echo}
 
 Reference: ${ctx.messageId}
 Inbox: ${ctx.inboundAlias}
 
-— Averrow Abuse Triage
-https://averrow.com/report-abuse
+— ${b.fromName}
+${b.reportUrl}
 `;
 }
 
@@ -376,6 +384,7 @@ export async function sendAck(
   env: Env,
   toAddress: string | null | undefined,
   ctx: AckContext,
+  branding: AbuseBranding = DEFAULT_ABUSE_BRANDING,
 ): Promise<{ ok: boolean; reason: string }> {
   const decision = shouldRespond(toAddress);
   if (!decision.send) return { ok: false, reason: decision.reason };
@@ -398,9 +407,9 @@ export async function sendAck(
   // body under "Subject we received". The 8-char prefix of the
   // message UUID gives a stable Ref for support-side correlation.
   const ref = ctx.messageId.slice(0, 8);
-  const subject = `Averrow · Report received (Ref: ${ref})`;
-  const html = ackHtml(ctx);
-  const text = ackText(ctx);
+  const subject = `${branding.subjectPrefix} · Report received (Ref: ${ref})`;
+  const html = ackHtml(ctx, branding);
+  const text = ackText(ctx, branding);
 
   // List-Unsubscribe + one-click POST (RFC 8058). Gives Gmail a
   // recipient-controlled exit ramp — required to keep deliverability
@@ -415,7 +424,7 @@ export async function sendAck(
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   } : undefined;
 
-  const res = await sendViaResend(env.RESEND_API_KEY, cleanedTo, subject, html, text, extraHeaders, ctx.inboundAlias);
+  const res = await sendViaResend(env.RESEND_API_KEY, fromAddressFor(branding), cleanedTo, subject, html, text, extraHeaders, ctx.inboundAlias);
   if (!res.ok) {
     logger.warn("abuse_mailbox_ack_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });
     return { ok: false, reason: res.error ?? "send-failed" };
@@ -678,7 +687,7 @@ export function buildFindings(ctx: DeterminationContext): string[] {
   return out;
 }
 
-function determinationHtml(ctx: DeterminationContext): string {
+function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we triaged</div>
@@ -744,10 +753,11 @@ function determinationHtml(ctx: DeterminationContext): string {
     preheaderTag: "Determination",
     headline: v.label,
     bodyHtml: body,
+    branding: b,
   });
 }
 
-function determinationText(ctx: DeterminationContext): string {
+function determinationText(ctx: DeterminationContext, b: AbuseBranding): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${ctx.originalSubject}` : "";
 
@@ -774,8 +784,8 @@ Action taken: ${ctx.action}
 
 Reference: ${ctx.messageId}
 
-— Averrow Abuse Triage
-https://averrow.com/report-abuse
+— ${b.fromName}
+${b.reportUrl}
 `;
 }
 
@@ -788,6 +798,7 @@ export async function sendDetermination(
   env: Env,
   toAddress: string | null | undefined,
   ctx: DeterminationContext,
+  branding: AbuseBranding = DEFAULT_ABUSE_BRANDING,
 ): Promise<{ ok: boolean; reason: string }> {
   const decision = shouldRespond(toAddress);
   if (!decision.send) return { ok: false, reason: decision.reason };
@@ -804,7 +815,7 @@ export async function sendDetermination(
   // forwarded original subject moves into the body's "Subject we
   // triaged" block (unchanged).
   const ref = ctx.messageId.slice(0, 8);
-  const subject = `Averrow · ${v.label} (Ref: ${ref})`;
+  const subject = `${branding.subjectPrefix} · ${v.label} (Ref: ${ref})`;
 
   const { unsubscribeUrl } = await import("../handlers/abuseMailboxUnsubscribe");
   // L5: unsubscribeUrl returns null when ABUSE_UNSUBSCRIBE_SECRET is
@@ -817,10 +828,11 @@ export async function sendDetermination(
 
   const res = await sendViaResend(
     env.RESEND_API_KEY,
+    fromAddressFor(branding),
     cleanedTo,
     subject,
-    determinationHtml(ctx),
-    determinationText(ctx),
+    determinationHtml(ctx, branding),
+    determinationText(ctx, branding),
     extraHeaders,
     ctx.inboundAlias,
   );
@@ -840,4 +852,10 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Escape a value destined for an href/src attribute. URLs are already
+ *  https-validated at load time; this is defense-in-depth on the quoting. */
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
