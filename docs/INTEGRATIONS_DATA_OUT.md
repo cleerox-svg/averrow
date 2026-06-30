@@ -29,18 +29,50 @@ destination never blocks the other or the producer.
 
 ## Connectors
 
-| `org_integrations.type` | Status | File |
-|---|---|---|
-| `splunk` (HEC) | ✅ live | `src/lib/integrations/splunk.ts` |
-| `sentinel` | planned | — |
-| `qradar` | planned | — |
-| `jira` / `servicenow` (ticketing, compliance) | planned | — |
+There are two delivery modes:
+- **push** — fire every event at the destination (SIEM).
+- **ticketing** — open a ticket on detection, close it on resolution (SOAR /
+  compliance record), keyed on the underlying object.
 
-`DELIVERABLE_INTEGRATION_TYPES` in `lib/integration-delivery.ts` is the source
-of truth for which `type`s have a connector. The test-connection endpoint
+| `org_integrations.type` | Mode | Status | File |
+|---|---|---|---|
+| `splunk` (HEC) | push | ✅ live | `src/lib/integrations/splunk.ts` |
+| `jira` | ticketing | ✅ live | `src/lib/integrations/jira.ts` |
+| `servicenow` | ticketing | ✅ live | `src/lib/integrations/servicenow.ts` |
+| `sentinel` | push | planned | — |
+| `qradar` | push | planned | — |
+
+`DELIVERABLE_INTEGRATION_TYPES` (push), `TICKETING_INTEGRATION_TYPES`, and
+their union `CONNECTOR_INTEGRATION_TYPES` in `lib/integration-delivery.ts` are
+the source of truth. The test-connection endpoint
 (`POST /api/orgs/:orgId/integrations/:id/test`) does a **real** live check for
-connector-backed types (a synthetic event POST) and falls back to the legacy
-"config present → connected" for types without a connector yet.
+every connector-backed type (push: synthetic event POST; ticketing: an auth
+probe — Jira `GET /myself`, ServiceNow `GET /table?limit=1`) and falls back to
+the legacy "config present → connected" for types without a connector yet.
+
+### Ticketing — Jira / ServiceNow (compliance record)
+Ticketing connectors open-on-detection / close-on-resolution, keyed on a
+**takedown** (v1 scope). Flow: a `takedown.status_changed` event arrives →
+the engine reads the takedown's state → if active and no ticket exists, it
+**opens** one (Jira issue / ServiceNow incident) and links it in
+`integration_tickets`; when the takedown reaches a terminal state
+(`taken_down`/`failed`/`expired`/`withdrawn`) it **closes** the linked ticket.
+This gives an auditable, externally-visible record of every action in the
+customer's own system of record.
+
+Because Sparrow's auto-submit (Phase G) flips status directly in SQL, it now
+also emits `takedown.status_changed` so the **auto** takedown path creates
+tickets too (not just manual/tenant transitions).
+
+- **Jira** config: `base_url` (`https://co.atlassian.net`), `email`,
+  `api_token`, `project_key`, optional `issue_type` (default `Task`),
+  optional `done_transition_id`. Uses the v2 REST API; close picks a
+  `Done`/`Closed`/`Resolved` transition (or the configured id).
+- **ServiceNow** config: `instance_url`, `username`, `password`, optional
+  `table` (default `incident`). Close resolves the incident (state 6).
+- Link table `integration_tickets` (migration `0230`):
+  `(integration_id, source_type, source_id)` UNIQUE → `external_key`,
+  `external_url`, `status` (`open`|`closed`).
 
 ### Splunk HEC
 Config (encrypted on the `org_integrations` row): `hec_url` (full collector
@@ -67,8 +99,10 @@ stamped per attempt.
 4. Add a `parse<Type>Config` unit test.
 
 ## Known gaps (next PRs)
-- More connectors: Sentinel, QRadar, then Jira/ServiceNow ticket
-  create-on-detection + close-on-resolution (the compliance-record use case).
+- More push connectors: Sentinel, QRadar (same pattern as Splunk).
+- Ticketing v1 covers takedowns; extend to alerts if customers want
+  alert-level tickets. Jira close depends on a `Done`/`Closed`/`Resolved`
+  transition existing (or `done_transition_id` set).
 - Webhook + integration **delivery durability**: retry/backoff + DLQ (the
   `attempts` column + `integration_deliveries` are the foundation).
 - A deliveries-read endpoint + UI panel (surface the compliance trail).

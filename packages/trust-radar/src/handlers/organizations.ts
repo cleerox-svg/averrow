@@ -1499,10 +1499,10 @@ export async function handleTestIntegration(
   // Connector-backed types (Splunk HEC, …) get a real connection test —
   // a live POST of a synthetic event. Other types keep the legacy
   // "config present → connected" behavior until they get a connector.
-  const { testIntegrationConnection, DELIVERABLE_INTEGRATION_TYPES } = await import("../lib/integration-delivery");
+  const { testIntegrationConnection, CONNECTOR_INTEGRATION_TYPES } = await import("../lib/integration-delivery");
   const intType = integration.type as string;
 
-  if (DELIVERABLE_INTEGRATION_TYPES.has(intType)) {
+  if (CONNECTOR_INTEGRATION_TYPES.has(intType)) {
     const result = await testIntegrationConnection(
       env, intType, integration.config_encrypted as string | null,
     );

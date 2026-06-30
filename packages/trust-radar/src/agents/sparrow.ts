@@ -1275,6 +1275,24 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
       ).bind(row.id).run();
       submitted++;
 
+      // Notify the org's data-out destinations (webhook + SIEM + ticketing)
+      // that the takedown was submitted. Auto-submissions previously emitted
+      // no event — only the manual/tenant handler paths did — so customer
+      // systems and compliance tickets missed the auto path entirely.
+      if (row.org_id != null) {
+        try {
+          const { emitOrgEvent } = await import("../lib/org-events");
+          await emitOrgEvent(env, row.org_id, "takedown.status_changed", {
+            takedown_id: row.id,
+            status: "submitted",
+            target: row.target_value,
+            severity: row.severity,
+          });
+        } catch {
+          /* best-effort — never fail the submit on a notification error */
+        }
+      }
+
       // In-run cap accounting: only live sends (outcome='submitted')
       // consume cap — queued drafts don't (they're not outbound).
       if (result.outcome === "submitted" && capStatus.cap !== null) {
