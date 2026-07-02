@@ -339,7 +339,16 @@ function MembersTab({ members, invites, onInvite }: {
                   <td className="py-3 pr-4">
                     <Select
                       value={m.role}
-                      onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
+                      onChange={(e) => {
+                        // Role changes are immediate and have no undo —
+                        // confirm before a mis-click demotes an owner.
+                        const next = e.target.value;
+                        if (window.confirm(`Change ${m.user_name}'s role from ${m.role} to ${next}?`)) {
+                          updateRole.mutate({ userId: m.user_id, role: next });
+                        } else {
+                          e.target.value = m.role;
+                        }
+                      }}
                       className="px-2 py-1 text-[11px]"
                       options={[
                         { value: 'owner',   label: 'Owner' },
@@ -357,7 +366,11 @@ function MembersTab({ members, invites, onInvite }: {
                       variant="ghost"
                       size="sm"
                       className="text-accent/60"
-                      onClick={() => removeMember.mutate(m.user_id)}
+                      onClick={() => {
+                        if (window.confirm(`Remove ${m.user_name} (${m.email}) from the organization?`)) {
+                          removeMember.mutate(m.user_id);
+                        }
+                      }}
                       disabled={removeMember.isPending}
                     >
                       Remove

@@ -1,5 +1,5 @@
-import { Fragment, useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Fragment, useEffect, useState, useMemo } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   Badge,
@@ -659,12 +659,27 @@ const CAMP_SORTS: EntityListSort<Campaign>[] = [
 
 export function Campaigns() {
   const navigate = useNavigate();
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null);
+  // ?focus=<cluster id> pre-expands an operation card — the pivot target
+  // for Attribution Backlog rows (same pattern as /providers?focus=).
+  const [searchParams] = useSearchParams();
+  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(
+    () => searchParams.get('focus'),
+  );
   const [attackFilter, setAttackFilter] = useState('all');
 
-  // Data fetching
+  // Data fetching. A ?focus= pivot may target a cluster outside the default
+  // top-12, so widen to the API max when focusing and scroll the card in.
+  const focusId = searchParams.get('focus');
   const { data: opsStats, isLoading: opsStatsLoading } = useOperationsStats();
-  const { data: operations, isLoading: opsLoading } = useOperations({ limit: 12 });
+  const { data: operations, isLoading: opsLoading } = useOperations({ limit: focusId ? 100 : 12 });
+
+  useEffect(() => {
+    if (!focusId || !operations?.length) return;
+    // The wrapper is display:contents (keeps the grid layout intact), so
+    // scroll its first real child — the card element.
+    const anchor = document.getElementById(`op-${focusId}`);
+    (anchor?.firstElementChild ?? anchor)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [focusId, operations]);
   const { data: campaignsRes, isLoading: campaignsLoading } = useCampaigns({ status: 'active', limit: 50 });
   const { data: campStats } = useCampaignStats();
   const { data: geoCampaigns, isLoading: geoLoading } = useGeopoliticalCampaigns();
@@ -745,11 +760,13 @@ export function Campaigns() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {allOperations.map(op => (
                 <Fragment key={op.id}>
-                  <OperationCard
-                    operation={op}
-                    isSelected={selectedOperationId === op.id}
-                    onSelect={id => setSelectedOperationId(selectedOperationId === id ? null : id)}
-                  />
+                  <div id={`op-${op.id}`} className="contents">
+                    <OperationCard
+                      operation={op}
+                      isSelected={selectedOperationId === op.id}
+                      onSelect={id => setSelectedOperationId(selectedOperationId === id ? null : id)}
+                    />
+                  </div>
                   {selectedOperationId === op.id && (
                     <div className="col-span-full">
                       <OperationDetailPanel

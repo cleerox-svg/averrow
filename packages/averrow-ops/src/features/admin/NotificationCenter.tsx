@@ -246,6 +246,21 @@ function ActivityTable({
   loading: boolean;
 }) {
   const mutedTypes = new Set(mutes.map((m) => m.type));
+  const create = useCreateNotificationMute();
+  const { showToast } = useToast();
+
+  // Quick in-place mute — no more reading the type name off a row and
+  // re-typing it into the form above. 1h default matches the form; use
+  // the form for longer windows.
+  function quickMute(type: string) {
+    create.mutate(
+      { type, hours: 1, reason: 'quick mute from activity table' },
+      {
+        onSuccess: () => showToast(`Muted ${type} for 1h`, 'success'),
+        onError: () => showToast('Failed to create mute', 'error'),
+      },
+    );
+  }
 
   return (
     <Card hover={false} className="p-0 overflow-hidden">
@@ -295,7 +310,11 @@ function ActivityTable({
                 <Td>
                   {mutedTypes.has(r.type)
                     ? <Badge variant="critical">MUTED</Badge>
-                    : <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>—</span>}
+                    : (
+                      <Button variant="ghost" size="sm" onClick={() => quickMute(r.type)} disabled={create.isPending}>
+                        Mute 1h
+                      </Button>
+                    )}
                 </Td>
               </tr>
             ))}
