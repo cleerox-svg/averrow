@@ -91,6 +91,27 @@ export function useIncident(id: string | undefined) {
   });
 }
 
+/** Manual incident creation — POST /api/admin/incidents. Title required;
+ *  severity defaults to high, status to investigating (server-side). */
+export function useCreateIncident() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      title: string;
+      description?: string;
+      severity?: IncidentSeverity;
+      affected_components?: string[];
+    }) => {
+      const res = await api.post<Incident>('/api/admin/incidents', input);
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Create failed');
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incidents'] });
+    },
+  });
+}
+
 export function useAppendIncidentUpdate(id: string) {
   const qc = useQueryClient();
   return useMutation({

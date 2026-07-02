@@ -3,13 +3,17 @@
 // to /admin/incidents/:id for the detail / timeline / actions view.
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Card, PageHeader, Badge, FilterBar } from '@/components/ui';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CheckCircle } from 'lucide-react';
 import { relativeTime } from '@/lib/time';
-import { useIncidents, type Incident, type IncidentStatus, type IncidentSeverity } from './useIncidents';
+import { useIncidents, useCreateIncident, type Incident, type IncidentStatus, type IncidentSeverity } from './useIncidents';
 
 type Filter = 'all' | 'open';
 
@@ -37,6 +41,7 @@ const SEVERITY_TO_BADGE: Record<IncidentSeverity, IncidentSeverity> = {
 
 export function AdminIncidents() {
   const [filter, setFilter] = useState<Filter>('open');
+  const [showCreate, setShowCreate] = useState(false);
   const { data, isLoading } = useIncidents({ onlyOpen: filter === 'open' });
 
   return (
@@ -44,7 +49,14 @@ export function AdminIncidents() {
       <PageHeader
         title="Incidents"
         subtitle={data ? `${data.length} ${filter === 'open' ? 'open' : 'total'}` : undefined}
+        actions={
+          <Button onClick={() => setShowCreate(s => !s)}>
+            {showCreate ? 'Close' : 'New incident'}
+          </Button>
+        }
       />
+
+      {showCreate && <CreateIncidentPanel onDone={() => setShowCreate(false)} />}
 
       <FilterBar
         filters={[
@@ -126,5 +138,114 @@ export function AdminIncidents() {
         </Card>
       )}
     </div>
+  );
+}
+
+// ─── Manual incident creation ─────────────────────────────────────
+// The POST endpoint existed since migration 0132 with no UI entry —
+// the empty-state copy even promised "Manual incidents land here too".
+// Creates as internal visibility; promote to /status from the detail
+// page's visibility controls after creation.
+
+function CreateIncidentPanel({ onDone }: { onDone: () => void }) {
+  const navigate = useNavigate();
+  const create = useCreateIncident();
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState<IncidentSeverity>('high');
+  const [components, setComponents] = useState('');
+
+  function submit() {
+    if (!title.trim() || create.isPending) return;
+    const affected = components
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .slice(0, 20);
+    create.mutate(
+      {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        severity,
+        affected_components: affected.length > 0 ? affected : undefined,
+      },
+      {
+        onSuccess: (incident) => {
+          onDone();
+          // Land on the new incident's timeline so the operator can
+          // append the first real update immediately.
+          navigate(`/admin/incidents/${incident.id}`);
+        },
+      },
+    );
+  }
+
+  return (
+    <Card>
+      <SectionLabel className="mb-3">New incident</SectionLabel>
+      <div className="space-y-3">
+        <div>
+          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+            Title
+          </label>
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Feed ingestion degraded — upstream provider outage"
+            maxLength={500}
+          />
+        </div>
+        <div>
+          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+            Description (optional)
+          </label>
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What's happening, impact, current hypothesis"
+            maxLength={4000}
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-[max-content_1fr_max-content] gap-3 items-end">
+          <div>
+            <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              Severity
+            </label>
+            <Select
+              value={severity}
+              onChange={(e) => setSeverity(e.target.value as IncidentSeverity)}
+              options={[
+                { value: 'critical', label: 'Critical' },
+                { value: 'high',     label: 'High' },
+                { value: 'medium',   label: 'Medium' },
+                { value: 'low',      label: 'Low' },
+                { value: 'info',     label: 'Info' },
+              ]}
+            />
+          </div>
+          <div>
+            <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              Affected components (comma-separated, optional)
+            </label>
+            <Input
+              value={components}
+              onChange={(e) => setComponents(e.target.value)}
+              placeholder="feeds, enrichment, api"
+            />
+          </div>
+          <Button onClick={submit} disabled={create.isPending || !title.trim()}>
+            {create.isPending ? 'Creating…' : 'Create'}
+          </Button>
+        </div>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          Created as internal (never on /status) with status "investigating". Promote visibility from the incident's detail page.
+        </p>
+        {create.isError && (
+          <p className="text-[11px]" style={{ color: 'var(--sev-critical)' }}>
+            {(create.error as Error).message}
+          </p>
+        )}
+      </div>
+    </Card>
   );
 }
