@@ -10,6 +10,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import {
+  useAbuseBranding, useUpdateAbuseBranding, useProvisionAbuseAlias,
+  type AbuseBrandingStored, type AbuseBrandingResolved,
+} from '@/hooks/useAbuseBranding';
+import {
   useAdminOrgs, useAdminOrgDetail, useCreateOrg,
   useAdminUpdateOrg, useAdminOrgInvite, useAdminRemoveOrgMember,
   useAdminAssignBrand, useAdminRemoveBrand,
@@ -183,6 +187,7 @@ const DETAIL_TABS = [
   { id: 'brands', label: 'Brands' },
   { id: 'modules', label: 'Modules' },
   { id: 'pricing', label: 'Pricing' },
+  { id: 'abuse', label: 'Abuse Mailbox' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -235,6 +240,7 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
       {activeTab === 'brands' && <DetailBrandsTab orgId={orgId} brands={org.brands ?? []} maxBrands={org.max_brands} />}
       {activeTab === 'modules' && <DetailModulesTab orgId={orgId} />}
       {activeTab === 'pricing' && <DetailPricingTab orgId={orgId} />}
+      {activeTab === 'abuse' && <DetailAbuseMailboxTab orgId={orgId} />}
       {activeTab === 'settings' && <DetailSettingsTab orgId={orgId} org={org} />}
     </div>
   );
@@ -441,6 +447,188 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
 }
 
 // ─── Settings Tab ───────────────────────────────────────────
+
+// ─── Abuse Mailbox Tab (Tier 3 branding + alias) ────────────
+
+const BRANDING_TEXT_FIELDS: Array<{ key: keyof AbuseBrandingStored; label: string; placeholder: string; hint?: string }> = [
+  { key: 'from_name',      label: 'From display name', placeholder: 'Acme Trust & Safety', hint: 'Shown as the sender name; the address stays abuse-noreply@averrow.com.' },
+  { key: 'product_name',   label: 'Product name',      placeholder: 'Acme', hint: 'Email header + "one of X\'s public mailboxes".' },
+  { key: 'tagline',        label: 'Tagline',           placeholder: 'Abuse Triage' },
+  { key: 'subject_prefix', label: 'Subject prefix',    placeholder: 'Acme', hint: 'Subject reads "<prefix> · Phishing confirmed (Ref: …)".' },
+  { key: 'logo_url',       label: 'Logo URL (https)',  placeholder: 'https://cdn.acme.com/logo.png' },
+  { key: 'logo_alt',       label: 'Logo alt text',     placeholder: 'Acme' },
+  { key: 'website_url',    label: 'Footer site URL',   placeholder: 'https://acme.com' },
+  { key: 'website_label',  label: 'Footer site label', placeholder: 'acme.com' },
+  { key: 'report_url',     label: 'Report link URL',   placeholder: 'https://acme.com/report' },
+  { key: 'report_label',   label: 'Report link label', placeholder: 'acme.com/report' },
+  { key: 'footer_note',    label: 'Footer note',       placeholder: 'threat intelligence + brand protection' },
+];
+
+function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
+  const { data, isLoading, error } = useAbuseBranding(orgId);
+  const save = useUpdateAbuseBranding(orgId);
+  const provision = useProvisionAbuseAlias(orgId);
+
+  // Local form state, seeded from the stored row once loaded.
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [enabled, setEnabled] = useState(true);
+  const [seeded, setSeeded] = useState(false);
+
+  if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading branding…</div>;
+  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load branding: {error.message}</p></Card>;
+  if (!data)     return null;
+
+  if (!seeded) {
+    const s = data.stored ?? {};
+    const next: Record<string, string> = {};
+    for (const f of BRANDING_TEXT_FIELDS) next[f.key] = (s[f.key] as string | null | undefined) ?? '';
+    next.accent_color = s.accent_color ?? '';
+    next.header_bg_color = s.header_bg_color ?? '';
+    setForm(next);
+    setEnabled(s.enabled === undefined || s.enabled === null ? true : !!s.enabled);
+    setSeeded(true);
+  }
+
+  const r: AbuseBrandingResolved = data.resolved;
+  // Live preview value: the typed override, else the resolved (defaults-merged) value.
+  const pv = (key: string, fallback: string) => (form[key]?.trim() ? form[key].trim() : fallback);
+  const set = (key: string, val: string) => setForm((f) => ({ ...f, [key]: val }));
+
+  const previewAccent  = pv('accent_color', r.accent);
+  const previewHeader  = pv('header_bg_color', r.headerBg);
+  const previewProduct = pv('product_name', r.productName);
+  const previewTagline = pv('tagline', r.tagline);
+  const previewLogo    = pv('logo_url', r.logoUrl);
+  const previewPrefix  = pv('subject_prefix', r.subjectPrefix);
+  const previewFrom    = pv('from_name', r.fromName);
+
+  const handleSave = () => {
+    const payload: AbuseBrandingStored = { enabled: enabled ? 1 : 0 };
+    for (const f of BRANDING_TEXT_FIELDS) {
+      (payload as Record<string, unknown>)[f.key] = form[f.key]?.trim() ? form[f.key].trim() : null;
+    }
+    payload.accent_color = form.accent_color?.trim() || null;
+    payload.header_bg_color = form.header_bg_color?.trim() || null;
+    save.mutate(payload);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Inbound alias */}
+      <Card hover={false}>
+        <SectionLabel className="mb-3">Inbound alias</SectionLabel>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            {data.alias ? (
+              <code className="text-sm text-[color:var(--text-primary)] font-mono">{data.alias}</code>
+            ) : (
+              <span className="text-sm text-[color:var(--text-tertiary)] font-mono">No alias provisioned yet</span>
+            )}
+            <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1 leading-snug max-w-lg">
+              The address reporters forward suspicious mail to. Auto-minted on org create as verify-&lt;slug&gt;@averrow.com; re-provision if the slug changed.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => provision.mutate(undefined)}
+            disabled={provision.isPending}
+          >
+            {provision.isPending ? 'Provisioning…' : data.alias ? 'Re-provision' : 'Provision alias'}
+          </Button>
+        </div>
+        {provision.isError && (
+          <p className="text-[11px] text-accent font-mono mt-2">{(provision.error as Error).message}</p>
+        )}
+        {provision.isSuccess && provision.data?.alias && (
+          <p className="text-[11px] text-[color:var(--green)] font-mono mt-2">
+            {provision.data.created ? 'Provisioned' : 'Already provisioned'}: {provision.data.alias}
+          </p>
+        )}
+      </Card>
+
+      {/* Live preview */}
+      <Card hover={false}>
+        <SectionLabel className="mb-3">Preview</SectionLabel>
+        <div className="rounded-xl overflow-hidden border border-white/10 max-w-md">
+          <div style={{ background: previewHeader }} className="px-4 py-3 flex items-center gap-3">
+            <img src={previewLogo} width={30} height={30} alt="" style={{ display: 'block', width: 30, height: 30, borderRadius: 6 }} />
+            <div>
+              <div className="text-white font-bold text-[15px] leading-tight">{previewProduct}</div>
+              <div className="text-[9px] font-bold uppercase tracking-[0.18em] leading-none mt-0.5" style={{ color: previewAccent }}>{previewTagline}</div>
+            </div>
+          </div>
+          <div style={{ background: previewAccent }} className="h-1" />
+          <div className="bg-white px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Determination</div>
+            <div className="text-[15px] font-extrabold text-slate-900 leading-tight">Phishing confirmed</div>
+          </div>
+        </div>
+        <div className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-3 space-y-0.5">
+          <div><span className="text-[color:var(--text-secondary)]">From:</span> {previewFrom} &lt;abuse-noreply@averrow.com&gt;</div>
+          <div><span className="text-[color:var(--text-secondary)]">Subject:</span> {previewPrefix} · Phishing confirmed (Ref: 1a2b3c4d)</div>
+        </div>
+      </Card>
+
+      {/* Editor */}
+      <Card hover={false}>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionLabel className="mb-0">Responder branding</SectionLabel>
+          <label className="flex items-center gap-2 text-[12px] text-[color:var(--text-secondary)] cursor-pointer">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Enabled
+          </label>
+        </div>
+        <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mb-4 leading-snug max-w-2xl">
+          Any field left blank uses the Averrow default. When disabled, the responder sends fully Averrow-branded. The sending address always stays abuse-noreply@averrow.com for deliverability — only the look is branded.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {BRANDING_TEXT_FIELDS.map((f) => (
+            <div key={f.key}>
+              <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">{f.label}</label>
+              <Input
+                value={form[f.key] ?? ''}
+                onChange={(e) => set(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                className="w-full"
+              />
+              {f.hint && <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1 leading-snug">{f.hint}</p>}
+            </div>
+          ))}
+
+          {(['accent_color', 'header_bg_color'] as const).map((key) => (
+            <div key={key}>
+              <label className="block text-[11px] text-[color:var(--text-secondary)] font-mono uppercase tracking-wide mb-1">
+                {key === 'accent_color' ? 'Accent color' : 'Header background'}
+              </label>
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-8 h-8 rounded-md border border-white/15 shrink-0"
+                  style={{ background: key === 'accent_color' ? previewAccent : previewHeader }}
+                />
+                <Input
+                  value={form[key] ?? ''}
+                  onChange={(e) => set(key, e.target.value)}
+                  placeholder="#E5A832"
+                  className="w-full font-mono"
+                />
+              </div>
+              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">Hex like #E5A832; blank = default.</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 mt-5">
+          <Button onClick={handleSave} disabled={save.isPending}>
+            {save.isPending ? 'Saving…' : 'Save branding'}
+          </Button>
+          {save.isSuccess && <span className="text-[11px] text-[color:var(--green)] font-mono">Saved.</span>}
+          {save.isError && <span className="text-[11px] text-accent font-mono">{(save.error as Error).message}</span>}
+        </div>
+      </Card>
+    </div>
+  );
+}
 
 function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
   const [name, setName] = useState(org.name);
