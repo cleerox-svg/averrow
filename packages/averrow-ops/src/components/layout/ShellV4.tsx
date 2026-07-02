@@ -17,7 +17,7 @@ import {
   Search, Sparkles, RotateCcw, Menu, X,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   LogOut, UserCircle, ShieldAlert, Bug, Network, Megaphone, Server,
-  Smartphone, EyeOff, Scale, TrendingUp, UserCog,
+  Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -38,26 +38,26 @@ interface NavGroup { label: string; items: NavItem[]; }
 function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefined }): NavGroup[] {
   const { isSuperAdmin, role } = opts;
 
-  // PLATFORM — restores the four admin routes that were dropped from the
-  // v4 nav (Integrations, Customers, Pricing, Attribution Backlog), with
-  // the same gating the classic Sidebar applies.
+  // PLATFORM — consolidated to 7 rows (admin-console redesign). The four
+  // flat ops pages (Agents / Feeds / Takedown Integrations / Attribution
+  // Backlog) live inside the Operations workspace; the compliance trio
+  // (Audit / Pricing / Platform Notifications) inside Governance. Metrics,
+  // Team and Customers keep their own rows because each already has its own
+  // internal tab bar (nesting them would create tab-inside-tab). All
+  // standalone routes stay live for deep links and the ⌘K palette.
   const platformItems: NavItem[] = [
-    { label: 'Dashboard',     to: '/admin',          icon: LayoutDashboard, end: true },
-    { label: 'Agents',        to: '/agents',         icon: Cpu },
-    { label: 'Feeds',         to: '/feeds',          icon: Rss },
-    { label: 'Metrics',       to: '/admin/metrics',  icon: BarChart3 },
-    { label: 'Integrations',  to: '/admin/integrations', icon: Plug },
-    { label: 'Team',          to: '/admin/users',    icon: Users },
+    { label: 'Dashboard',   to: '/admin',            icon: LayoutDashboard, end: true },
+    { label: 'Operations',  to: '/admin/operations', icon: Wrench },
+    { label: 'Metrics',     to: '/admin/metrics',    icon: BarChart3 },
+    // Governance is visible to all staff — its Audit Log tab is all-staff;
+    // the Pricing / Platform Notifications tabs gate themselves inside the
+    // workspace (view_billing / super_admin).
+    { label: 'Governance',  to: '/admin/governance', icon: ClipboardList },
+    { label: 'Team',        to: '/admin/users',      icon: Users },
     ...(isSuperAdmin
       ? [{ label: 'Customers', to: '/admin/customers', icon: Building2 } as NavItem]
       : []),
-    ...(roleHasPermission(role, 'view_billing')
-      ? [{ label: 'Pricing', to: '/admin/pricing', icon: DollarSign } as NavItem]
-      : []),
-    { label: 'Audit Log',     to: '/admin/audit',    icon: ClipboardList },
-    { label: 'Attribution Backlog', to: '/admin/agents/attribution-backlog', icon: ListChecks },
-    { label: 'Notifications', to: '/admin/notifications', icon: Bell },
-    { label: 'Sales Leads',   to: '/leads',          icon: Target },
+    { label: 'Sales Leads', to: '/leads',            icon: Target },
   ];
 
   return [
@@ -67,11 +67,16 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
         // Console consolidates Signals / Threats / Incidents / Takedowns as
         // tabs — so those don't appear as separate menu items in v4 (their
         // routes stay live for deep links). Abuse Mailbox + Spam Trap are NOT
-        // Console tabs, so they remain standalone here.
+        // Console tabs, so they remain standalone here — but both pages
+        // hard-bounce non-super-admins, so their rows are gated to match.
         { label: 'Console',       to: '/console',              icon: SquareTerminal },
         { label: 'Overview',      to: '/',                     icon: LayoutDashboard, end: true },
-        { label: 'Abuse Mailbox', to: '/admin/abuse-mailbox',  icon: Mail },
-        { label: 'Spam Trap',     to: '/admin/spam-trap',      icon: Inbox },
+        ...(isSuperAdmin
+          ? [
+              { label: 'Abuse Mailbox', to: '/admin/abuse-mailbox', icon: Mail } as NavItem,
+              { label: 'Spam Trap',     to: '/admin/spam-trap',     icon: Inbox } as NavItem,
+            ]
+          : []),
       ],
     },
     {
@@ -103,7 +108,11 @@ function navClass({ isActive }: { isActive: boolean }) {
 // tabs and the entity pages that don't get their own sidebar row, so ⌘K can
 // still jump straight to any page. Keywords cover synonyms an analyst might
 // type (e.g. "alerts" for Signals, "typosquat" for Trademarks).
-function buildPaletteCommands(nav: NavGroup[]): PaletteCommand[] {
+function buildPaletteCommands(
+  nav: NavGroup[],
+  opts: { isSuperAdmin: boolean; role: string | null | undefined },
+): PaletteCommand[] {
+  const { isSuperAdmin, role } = opts;
   const fromNav: PaletteCommand[] = nav.flatMap(group =>
     group.items.map(item => ({
       label: item.label,
@@ -114,6 +123,19 @@ function buildPaletteCommands(nav: NavGroup[]): PaletteCommand[] {
   );
 
   const extras: PaletteCommand[] = [
+    // Platform-ops pages consolidated under the Operations / Governance
+    // workspaces (standalone routes stay live; gating mirrors the pages)
+    { label: 'Agents',                to: '/agents',            group: 'PLATFORM', icon: Cpu, keywords: 'fleet runs mesh' },
+    { label: 'Feeds',                 to: '/feeds',             group: 'PLATFORM', icon: Rss, keywords: 'ingestion sources pulls' },
+    { label: 'Takedown Integrations', to: '/admin/integrations', group: 'PLATFORM', icon: Plug, keywords: 'submitters providers registrars' },
+    { label: 'Attribution Backlog',   to: '/admin/agents/attribution-backlog', group: 'PLATFORM', icon: ListChecks, keywords: 'clusters unattributed' },
+    { label: 'Audit Log',             to: '/admin/audit',       group: 'PLATFORM', icon: ClipboardList, keywords: 'compliance history actions' },
+    ...(roleHasPermission(role, 'view_billing')
+      ? [{ label: 'Pricing', to: '/admin/pricing', group: 'PLATFORM', icon: DollarSign, keywords: 'plans billing modules' } as PaletteCommand]
+      : []),
+    ...(isSuperAdmin
+      ? [{ label: 'Platform Notifications', to: '/admin/notifications', group: 'PLATFORM', icon: Bell, keywords: 'mutes system alerts volume' } as PaletteCommand]
+      : []),
     // Console tabs (deep-linked routes that don't have their own nav row)
     { label: 'Signals',   to: '/alerts',           group: 'SOC CONSOLE', icon: ShieldAlert, keywords: 'alerts queue triage' },
     { label: 'Threats',   to: '/threats',          group: 'SOC CONSOLE', icon: Bug, keywords: 'iocs indicators' },
@@ -145,7 +167,7 @@ export function ShellV4() {
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const closeDrawer = () => setDrawerOpen(false);
   const nav = buildV4Nav({ isSuperAdmin, role: user?.role });
-  const commands = buildPaletteCommands(nav);
+  const commands = buildPaletteCommands(nav, { isSuperAdmin, role: user?.role });
 
   // global ⌘K / Ctrl-K to toggle the palette (and "/" when not already typing)
   useEffect(() => {

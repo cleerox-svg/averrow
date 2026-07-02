@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
 
 // Same humanizer used by /feeds — keep them in sync if the v2 list
@@ -598,11 +599,34 @@ export function Feeds() {
   const { data: feeds = [], isLoading } = useFeeds();
   const { data: stats } = useFeedStats();
   const [selected, setSelected] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const failureCount = useMemo(
     () => feeds.filter(f => failurePatternFor(f) !== null).length,
     [feeds]
   );
+  const pausedCount = useMemo(() => feeds.filter(f => !f.enabled).length, [feeds]);
+
+  // Search + status filter over the 40+ cards. Failing feeds sort first
+  // within the filtered set so the triage targets are always on top.
+  const visibleFeeds = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return feeds
+      .filter(f => {
+        if (statusFilter === 'failing' && failurePatternFor(f) === null) return false;
+        if (statusFilter === 'paused' && f.enabled) return false;
+        if (statusFilter === 'active' && (!f.enabled || failurePatternFor(f) !== null)) return false;
+        if (!q) return true;
+        return (
+          f.feed_name.toLowerCase().includes(q) ||
+          f.display_name.toLowerCase().includes(q) ||
+          (f.description ?? '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) =>
+        Number(failurePatternFor(b) !== null) - Number(failurePatternFor(a) !== null));
+  }, [feeds, search, statusFilter]);
 
   if (isLoading) return <CardGridLoader count={6} />;
 
@@ -625,6 +649,18 @@ export function Feeds() {
         />
       </StatGrid>
 
+      <FilterBar
+        filters={[
+          { value: 'all',     label: 'All',     count: feeds.length },
+          { value: 'failing', label: 'Failing', count: failureCount },
+          { value: 'paused',  label: 'Paused',  count: pausedCount },
+          { value: 'active',  label: 'Healthy' },
+        ]}
+        active={statusFilter}
+        onChange={setStatusFilter}
+        search={{ value: search, onChange: setSearch, placeholder: 'Search feeds…' }}
+      />
+
       {feeds.length === 0 ? (
         <EmptyState
           icon={<Rss />}
@@ -632,9 +668,15 @@ export function Feeds() {
           subtitle="Threat-intel feed sources haven't been wired yet."
           variant="error"
         />
+      ) : visibleFeeds.length === 0 ? (
+        <EmptyState
+          icon={<Rss />}
+          title="No feeds match"
+          subtitle="Adjust the search or status filter."
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {feeds.map(feed => (
+          {visibleFeeds.map(feed => (
             <Fragment key={feed.feed_name}>
               <FeedCardV3
                 feed={feed}

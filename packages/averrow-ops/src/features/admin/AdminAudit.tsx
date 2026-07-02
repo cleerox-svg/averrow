@@ -279,17 +279,28 @@ export function AdminAudit() {
   const showFrom = total > 0 ? (page - 1) * PAGE_SIZE + 1 : 0;
   const showTo = Math.min(page * PAGE_SIZE, total);
 
-  const handleExport = useCallback(() => {
-    // H5: the access token is memory-only now — read it from the api
-    // client instead of localStorage (which no longer carries tokens).
+  const handleExport = useCallback(async () => {
+    // Stream the CSV through an authenticated fetch and Blob-download it.
+    // The previous approach put the bearer token in the URL query string
+    // (?token=...), which leaks it into browser history, proxy logs, and
+    // Referer headers — defeating the memory-only token design.
     const token = api.getToken();
-    const url = `/api/admin/audit/export`;
-    // Open in new tab with auth
-    const a = document.createElement('a');
-    a.href = token ? `${url}?token=${encodeURIComponent(token)}` : url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.click();
+    try {
+      const res = await fetch('/api/admin/audit/export', {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`Export failed (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('[audit] export failed:', err);
+      window.alert('Audit export failed — check your session and try again.');
+    }
   }, []);
 
   return (

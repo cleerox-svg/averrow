@@ -68,6 +68,9 @@ export function useFeeds() {
       return res.data ?? [];
     },
     placeholderData: keepPreviousData,
+    // The page shows a LIVE indicator — keep the data actually live
+    // (matches the 60s cadence of the Metrics Feed Failures tab).
+    refetchInterval: 60_000,
   });
 }
 
@@ -79,6 +82,7 @@ export function useFeedStats() {
       return res.data ?? { active: 0, disabled: 0, total_ingested: 0 };
     },
     placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
   });
 }
 

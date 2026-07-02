@@ -254,7 +254,11 @@ export function AttributionBacklog() {
                 <ClusterRow
                   key={c.id}
                   cluster={c}
-                  onSelect={() => navigate(`/operations/${encodeURIComponent(c.id)}`)}
+                  // Pivot to this cluster's operation card on the Campaigns
+                  // page (?focus= pre-expands + scrolls to it). The previous
+                  // target, /operations/:id, was never a route — every click
+                  // landed on NotFound.
+                  onSelect={() => navigate(`/campaigns?focus=${encodeURIComponent(c.id)}`)}
                 />
               ))}
             </tbody>

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Card } from '@/components/ui/Card';
@@ -97,6 +98,24 @@ function OrgListView({ onSelect, onCreate }: {
   onCreate: () => void;
 }) {
   const { data: orgs, isLoading } = useAdminOrgs();
+  const [search, setSearch] = useState('');
+  const [segment, setSegment] = useState('all');
+
+  // Client-side search (name/slug) + plan/status segment — the list is
+  // already fully loaded, so filtering here is free and keeps the page
+  // usable as the customer count grows.
+  const visibleOrgs = useMemo(() => {
+    const list = orgs ?? [];
+    const q = search.trim().toLowerCase();
+    return list.filter((org) => {
+      if (segment === 'suspended' && org.status !== 'suspended') return false;
+      if (segment !== 'all' && segment !== 'suspended' && org.plan !== segment) return false;
+      if (!q) return true;
+      return org.name.toLowerCase().includes(q) || org.slug.toLowerCase().includes(q);
+    });
+  }, [orgs, search, segment]);
+
+  const planCount = (plan: string) => (orgs ?? []).filter(o => o.plan === plan).length;
 
   return (
     <div className="space-y-6">
@@ -113,6 +132,20 @@ function OrgListView({ onSelect, onCreate }: {
         </Button>
       </div>
 
+      <FilterBar
+        filters={[
+          { value: 'all',          label: 'All', count: (orgs ?? []).length },
+          { value: 'enterprise',   label: 'Enterprise', count: planCount('enterprise') },
+          { value: 'business',     label: 'Business', count: planCount('business') },
+          { value: 'professional', label: 'Professional', count: planCount('professional') },
+          { value: 'free',         label: 'Free', count: planCount('free') },
+          { value: 'suspended',    label: 'Suspended', count: (orgs ?? []).filter(o => o.status === 'suspended').length },
+        ]}
+        active={segment}
+        onChange={setSegment}
+        search={{ value: search, onChange: setSearch, placeholder: 'Search by name or slug…' }}
+      />
+
       {/* List */}
       {isLoading ? (
         <div className="text-sm text-white/55 font-mono py-16 text-center">Loading organizations...</div>
@@ -122,9 +155,11 @@ function OrgListView({ onSelect, onCreate }: {
           description="Create your first organization to get started."
           action={{ label: 'Create Organization', onClick: onCreate }}
         />
+      ) : visibleOrgs.length === 0 ? (
+        <EmptyState message="No organizations match" description="Adjust the search or filter." />
       ) : (
         <div className="space-y-3">
-          {orgs.map((org) => (
+          {visibleOrgs.map((org) => (
             <OrgListRow key={org.id} org={org} onClick={() => onSelect(String(org.id))} />
           ))}
         </div>
