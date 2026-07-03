@@ -21,20 +21,9 @@ function resourceHref(type: string | null, id: string | null): string | null {
     default:              return null;
   }
 }
-import { Button, Input } from '@/design-system/components';
-import { formatDate } from '@/lib/time';
+import { Button, Card, Input } from '@/design-system/components';
+import { relativeTime, parseUtc } from '@/lib/time';
 import { api } from '@/lib/api';
-
-/* ─── Glass styles ────────────────────────────────────────────────── */
-
-const GLASS_CARD: React.CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid var(--border-base)',
-  borderRadius: '0.75rem',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
-};
 
 /* ─── Constants ───────────────────────────────────────────────────── */
 
@@ -63,20 +52,11 @@ const ACTION_OPTIONS = [
 
 /* ─── Helpers ─────────────────────────────────────────────────────── */
 
-function relativeTime(ts: string): string {
-  const now = Date.now();
-  const then = new Date(ts + (ts.endsWith('Z') ? '' : 'Z')).getTime();
-  const diff = now - then;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return formatDate(then, 'short');
-}
+// relativeTime comes from lib/time (which now normalizes D1's bare UTC
+// timestamps itself — no more per-page "+ 'Z'" fixups).
 
 function formatTimestamp(ts: string): string {
-  const d = new Date(ts + (ts.endsWith('Z') ? '' : 'Z'));
-  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  return parseUtc(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
 function outcomeColor(outcome: string): string {
@@ -128,12 +108,12 @@ function StatCard({ title, value, glowClass }: {
   glowClass?: string;
 }) {
   return (
-    <div className="p-4" style={GLASS_CARD}>
+    <Card hover={false} padding={16}>
       <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-secondary)' }}>{title}</div>
       <div className={`font-mono text-[28px] font-bold leading-none ${glowClass ?? ''}`} style={glowClass ? undefined : { color: 'var(--text-primary)' }}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -153,7 +133,7 @@ function RowDetail({ entry }: { entry: AuditEntry }) {
   return (
     <tr>
       <td colSpan={7} className="px-3 py-0">
-        <div className="p-4 mb-3 mt-1 space-y-3" style={GLASS_CARD}>
+        <Card hover={false} padding={16} className="mb-3 mt-1 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Full Timestamp</span>
@@ -194,7 +174,7 @@ function RowDetail({ entry }: { entry: AuditEntry }) {
               {formatJson(entry.details)}
             </pre>
           </div>
-        </div>
+        </Card>
       </td>
     </tr>
   );
@@ -238,28 +218,14 @@ export function AdminAudit() {
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  // Stats computed from current query metadata
-  const todayCount = useMemo(() => {
-    // Only meaningful from the full dataset - show from entries if window is small
-    return entries.filter(e => {
-      const d = new Date(e.timestamp + (e.timestamp.endsWith('Z') ? '' : 'Z'));
-      const now = new Date();
-      return d.toDateString() === now.toDateString();
-    }).length;
-  }, [entries]);
-
-  const failureDeniedCount = useMemo(() => {
-    return entries.filter(e => e.outcome === 'failure' || e.outcome === 'denied').length;
-  }, [entries]);
-
-  const resourceTypeOptions = useMemo(
-    () => Array.from(new Set(entries.map(e => e.resource_type).filter((t): t is string => !!t))).sort(),
-    [entries],
-  );
-
-  const uniqueActions = useMemo(() => {
-    return new Set(entries.map(e => e.action)).size;
-  }, [entries]);
+  // Server-side aggregates over the FULL filtered set. The previous
+  // client-side versions counted only the visible 50-row page, so the
+  // cards under-reported and changed as the operator paginated — and
+  // the resource-type dropdown silently missed values not on the page.
+  const todayCount = data?.stats?.today ?? 0;
+  const failureDeniedCount = (data?.stats?.failures ?? 0) + (data?.stats?.denied ?? 0);
+  const uniqueActions = data?.stats?.unique_actions ?? 0;
+  const resourceTypeOptions = data?.resourceTypes ?? [];
 
   // Pagination
   const pageNumbers = useMemo(() => {
@@ -334,7 +300,7 @@ export function AdminAudit() {
       </div>
 
       {/* Filter Bar */}
-      <div className="p-3" style={GLASS_CARD}>
+      <Card hover={false} padding={12}>
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           {/* Search */}
           <div className="w-full lg:w-64">
@@ -381,8 +347,8 @@ export function AdminAudit() {
               ))}
             </select>
 
-            {/* Resource-type filter (GM1) — the handler supported the param;
-                it just wasn't exposed. Options derived from the loaded page. */}
+            {/* Resource-type filter (GM1). Options come from the server's
+                DISTINCT over the full filtered set — not the visible page. */}
             {resourceTypeOptions.length > 0 && (
               <select
                 value={resourceTypeFilter}
@@ -418,20 +384,20 @@ export function AdminAudit() {
             ))}
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Loading */}
       {isLoading && (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="p-4 animate-pulse h-12" style={GLASS_CARD} />
+            <Card key={i} hover={false} padding={16} className="animate-pulse h-12">{null}</Card>
           ))}
         </div>
       )}
 
       {/* Audit Table */}
       {!isLoading && entries.length > 0 && (
-        <div className="overflow-hidden" style={GLASS_CARD}>
+        <Card hover={false} padding={0} className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[600px]">
               <thead>
@@ -459,14 +425,14 @@ export function AdminAudit() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Empty state */}
       {!isLoading && entries.length === 0 && (
-        <div className="p-12 text-center" style={GLASS_CARD}>
+        <Card hover={false} padding={48} className="text-center">
           <p className="font-mono text-[11px] text-white/40">No audit entries match the current filters</p>
-        </div>
+        </Card>
       )}
 
       {/* Pagination */}

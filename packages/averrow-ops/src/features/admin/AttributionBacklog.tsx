@@ -18,18 +18,11 @@ import {
 } from '@/hooks/useAttributionBacklog';
 import type { BacklogCluster, ActorOption } from '@/hooks/useAttributionBacklog';
 import { useNavigate } from 'react-router-dom';
+import { Card } from '@/design-system/components';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-
-const GLASS_CARD: React.CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid var(--border-base)',
-  borderRadius: '0.75rem',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
-};
+import { timeAgo } from '@/lib/time';
 
 function StatCard({ title, value, subtext }: {
   title: string;
@@ -37,7 +30,7 @@ function StatCard({ title, value, subtext }: {
   subtext?: string;
 }) {
   return (
-    <div className="p-4" style={GLASS_CARD}>
+    <Card hover={false} padding={16}>
       <div
         className="font-mono text-[9px] uppercase tracking-widest mb-2"
         style={{ color: 'var(--text-secondary)' }}
@@ -58,19 +51,12 @@ function StatCard({ title, value, subtext }: {
           {subtext}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
-function relTime(iso: string | null): string {
-  if (!iso) return '—';
-  const t = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
-  const diffMs = Date.now() - new Date(t).getTime();
-  const days = Math.floor(diffMs / 86_400_000);
-  if (days < 1) return 'today';
-  if (days < 30) return `${days}d ago`;
-  return `${Math.floor(days / 30)}mo ago`;
-}
+// timeAgo from lib/time (normalizes D1's bare UTC timestamps itself).
+const relTime = (iso: string | null): string => timeAgo(iso) ?? '—';
 
 function ClusterRow({
   cluster,
@@ -331,7 +317,7 @@ export function AttributionBacklog() {
         search={{ value: search, onChange: submitSearch, placeholder: 'Search name, ASN, or country…' }}
       />
 
-      <div style={GLASS_CARD} className="overflow-hidden">
+      <Card hover={false} padding={0} className="overflow-hidden">
         <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
           <div
             className="font-mono text-[10px] uppercase tracking-widest"
@@ -444,7 +430,7 @@ export function AttributionBacklog() {
             </div>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

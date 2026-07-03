@@ -1,6 +1,23 @@
+// D1's datetime('now') emits "YYYY-MM-DD HH:MM:SS" — UTC, but with no
+// timezone marker, so `new Date(...)` parses it as LOCAL time and every
+// relative/absolute render drifts by the viewer's UTC offset. Normalize
+// that bare shape to an explicit UTC ISO string; timestamps that already
+// carry a zone (Z or ±hh:mm) pass through untouched. Exported so pages
+// never need to hand-roll their own "+ 'Z'" fixups again.
+const BARE_SQLITE_TS = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+export function parseUtc(date: string | Date | number): Date {
+  if (typeof date !== 'string') return new Date(date);
+  const trimmed = date.trim();
+  if (BARE_SQLITE_TS.test(trimmed)) {
+    return new Date(trimmed.replace(' ', 'T') + 'Z');
+  }
+  return new Date(trimmed);
+}
+
 export function relativeTime(date: string | null): string {
   if (!date) return 'Never';
-  const ms = Date.now() - new Date(date).getTime();
+  const ms = Date.now() - parseUtc(date).getTime();
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);
@@ -17,7 +34,7 @@ export function relativeTime(date: string | null): string {
 
 export function timeAgo(dateStr: string | null): string | null {
   if (!dateStr) return null;
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const diff = Date.now() - parseUtc(dateStr).getTime();
   if (diff < 0) return 'today';
   const days = Math.floor(diff / 86400000);
   if (days < 1) return 'today';
@@ -50,7 +67,7 @@ export function formatDate(
   format: DateFormat = 'medium',
 ): string {
   if (date === null || date === undefined) return '—';
-  const d = typeof date === 'string' || typeof date === 'number' ? new Date(date) : date;
+  const d = typeof date === 'string' || typeof date === 'number' ? parseUtc(date) : date;
   if (Number.isNaN(d.getTime())) return '—';
   switch (format) {
     case 'long':
@@ -70,7 +87,7 @@ export function formatDate(
 
 export function formatDateTime(date: Date | string | number | null | undefined): string {
   if (date === null || date === undefined) return '—';
-  const d = typeof date === 'string' || typeof date === 'number' ? new Date(date) : date;
+  const d = typeof date === 'string' || typeof date === 'number' ? parseUtc(date) : date;
   if (Number.isNaN(d.getTime())) return '—';
   const datePart = d.toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',

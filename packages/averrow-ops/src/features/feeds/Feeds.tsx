@@ -26,6 +26,7 @@ import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { relativeTime } from '@/lib/time';
 import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
 
 // Same humanizer used by /feeds — keep them in sync if the v2 list
@@ -46,17 +47,6 @@ const CRON_LABEL: Record<string, string> = {
 };
 function humanCron(cron: string): string {
   return CRON_LABEL[cron] ?? cron;
-}
-
-function timeAgo(ts: string | null): string {
-  if (!ts) return 'Never';
-  const diff = Date.now() - new Date(ts).getTime();
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
 }
 
 // Failure-pattern detection — derived from existing fields, no new
@@ -318,7 +308,7 @@ function FeedCardV3({
           </div>
           <div className="flex items-center gap-2 font-mono text-[10px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
             <Clock size={10} />
-            {humanCron(feed.schedule_cron)} · last {timeAgo(feed.last_completed)}
+            {humanCron(feed.schedule_cron)} · last {relativeTime(feed.last_completed)}
           </div>
         </div>
         <ChevronDown

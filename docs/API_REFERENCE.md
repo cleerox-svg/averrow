@@ -624,7 +624,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | List invites |
 | POST | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | Create invite. Handler-level check: only super_admin may invite `admin` / `super_admin` roles. |
 | DELETE | `/api/admin/invites/:id` | `manage_invites` (sales, admin, super_admin) | Revoke invite |
-| GET | `/api/admin/audit` | Admin | Audit log |
+| GET | `/api/admin/audit` | Admin | Audit log (filters: `outcome`, `action`, `resource_type`, `window`, `search`, `since`/`until`, `limit`/`offset`). Response includes `stats` (today / failures / denied / unique_actions) and `resource_types`, computed over the FULL filtered set — the UI stat cards and resource-type filter no longer derive from the visible page |
 | GET | `/api/admin/audit/export` | Admin | Export audit log |
 | GET | `/api/admin/brands` | Admin | List all brands (admin) |
 | POST | `/api/admin/brands/bulk-monitor` | Admin | Bulk add brands |

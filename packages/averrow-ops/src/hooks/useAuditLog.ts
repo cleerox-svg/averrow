@@ -24,6 +24,14 @@ export interface AuditFilters {
   offset?: number;
 }
 
+/** Aggregates over the FULL filtered set (not the returned page). */
+export interface AuditStats {
+  today: number;
+  failures: number;
+  denied: number;
+  unique_actions: number;
+}
+
 export function useAuditLog(filters?: AuditFilters) {
   return useQuery({
     queryKey: ['audit-log', filters],
@@ -40,11 +48,18 @@ export function useAuditLog(filters?: AuditFilters) {
       const res = await api.get<{ data: AuditEntry[]; total: number }>(
         `/api/admin/audit${qs ? `?${qs}` : ''}`
       );
-      const body = res as unknown as { data: AuditEntry[]; total: number };
+      const body = res as unknown as {
+        data: AuditEntry[];
+        total: number;
+        stats?: AuditStats;
+        resource_types?: string[];
+      };
       const rawEntries = body.data;
       return {
         entries: Array.isArray(rawEntries) ? rawEntries : [],
         total: typeof body.total === 'number' ? body.total : 0,
+        stats: body.stats ?? null,
+        resourceTypes: Array.isArray(body.resource_types) ? body.resource_types : [],
       };
     },
     refetchInterval: 60_000,

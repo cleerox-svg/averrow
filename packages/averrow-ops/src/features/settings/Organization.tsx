@@ -26,6 +26,7 @@ import {
   useUpdateOrg,
 } from '@/hooks/useOrganization';
 import type { Integration } from '@/hooks/useOrganization';
+import { relativeTime } from '@/lib/time';
 
 // ─── Integration catalog ────────────────────────────────────
 
@@ -191,15 +192,6 @@ function OverviewTab({ brandCount, maxBrands, memberCount, maxMembers, integrati
           <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-positive" /> Priority support</li>
         </ul>
         <div className="mt-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-white/40"
-            disabled
-            title="Self-serve billing isn't wired yet — contact support to make plan changes."
-          >
-            Manage Billing
-          </Button>
           <p className="mt-1.5 text-[10px] font-mono text-white/40">
             Self-serve billing coming soon. Email{' '}
             <a href="mailto:billing@averrow.com" style={{ color: 'var(--amber)' }}>
@@ -245,14 +237,6 @@ function BrandsTab({ brands, maxBrands }: {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-white/40 font-mono">{brands.length} / {maxBrands} brands</div>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled
-          title="Member self-serve brand assignment isn't wired yet — contact support to add a brand."
-        >
-          Add Brand
-        </Button>
       </div>
       <p className="text-[10px] font-mono text-white/40 -mt-2">
         Member-side brand add lands in v3. Today: super-admins assign brands via{' '}
@@ -460,18 +444,6 @@ function IntegrationsTab({ integrations, onConnect }: {
   );
 }
 
-function activityTimeAgo(iso: string | null): string {
-  if (!iso) return '';
-  const then = new Date(iso.replace(' ', 'T') + (iso.endsWith('Z') ? '' : 'Z')).getTime();
-  if (Number.isNaN(then)) return iso;
-  const mins = Math.floor((Date.now() - then) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
 // Data-out proof: what got delivered to the org's SIEM and which compliance
 // tickets were opened/closed. Hidden until there's activity to show.
 function IntegrationActivityPanel() {
@@ -496,7 +468,7 @@ function IntegrationActivityPanel() {
                   <span className="text-white/75">{d.integration_name}</span>
                   <span className="text-white/40 font-mono">{d.event_type}</span>
                   {d.error && <span className="text-white/40 truncate" title={d.error}>· {d.error}</span>}
-                  <span className="ml-auto text-white/30 shrink-0">{activityTimeAgo(d.created_at)}</span>
+                  <span className="ml-auto text-white/30 shrink-0">{relativeTime(d.created_at)}</span>
                 </div>
               ))}
             </div>
@@ -626,7 +598,6 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
   // were demo-mode artifacts; removed so non-org-1 tenants don't see other
   // tenants' names. If a field is empty the input is just empty.
   const [name, setName] = useState(orgName ?? '');
-  const [email, setEmail] = useState('');
   const updateOrg = useUpdateOrg();
 
   return (
@@ -660,25 +631,9 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
             <label className="block text-[11px] text-white/55 font-mono uppercase tracking-wide mb-1">
               Billing Email
             </label>
-            <div className="flex gap-2">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="billing@yourcompany.com"
-                className="flex-1"
-              />
-              <Button
-                variant="secondary"
-                size="md"
-                disabled
-                title="Self-serve billing email isn't wired yet — contact support."
-              >
-                Save
-              </Button>
-            </div>
             <p className="mt-1 text-[10px] font-mono text-white/40">
-              Self-serve billing email arrives with v3 (Phase D / Stripe wiring).
+              Self-serve billing email arrives with v3 (Phase D / Stripe wiring). Until then, email{' '}
+              <a href="mailto:billing@averrow.com" style={{ color: 'var(--amber)' }}>billing@averrow.com</a>.
             </p>
           </div>
 
@@ -707,15 +662,6 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
             <span className="text-white/55 font-mono">Status</span>
             <span className="text-white/55">Not configured</span>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="mt-2"
-            disabled
-            title="SCIM lands in v3 Phase 5 alongside SSO server-side flow."
-          >
-            Enable SCIM
-          </Button>
           <p className="mt-1 text-[10px] font-mono text-white/40">
             Auto-provisioning + de-provisioning via SCIM lands in v3 Phase 5.
           </p>
@@ -725,14 +671,6 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
       {/* Danger Zone */}
       <Card hover={false} className="border-accent/20">
         <SectionLabel className="mb-3 text-accent">Danger Zone</SectionLabel>
-        <Button
-          variant="danger"
-          size="sm"
-          disabled
-          title="Self-serve org deletion isn't wired — email support@averrow.com to delete."
-        >
-          Delete Organization
-        </Button>
         <p className="mt-2 text-[10px] font-mono text-white/50">
           Self-serve deletion isn't wired yet. Email{' '}
           <a href="mailto:support@averrow.com" style={{ color: 'var(--amber)' }}>
