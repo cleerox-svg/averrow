@@ -320,6 +320,21 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleAttributionBacklog(request, env);
   });
+  // Manual attribution actions — assign an actor to a cluster (fans the
+  // attribution out to the cluster's threats, source='manual'), or
+  // dismiss the cluster as unattributable (drops it from the backlog).
+  router.post("/api/admin/clusters/:id/attribution", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleAttributeCluster } = await import("../handlers/admin");
+    return handleAttributeCluster(request, env, request.params["id"] ?? "", ctx.userId);
+  });
+  router.post("/api/admin/clusters/:id/attribution/dismiss", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleDismissClusterAttribution } = await import("../handlers/admin");
+    return handleDismissClusterAttribution(request, env, request.params["id"] ?? "", ctx.userId);
+  });
 
   // ─── Agent deployment approval (AGENT_STANDARD §12.1) ──────────
   // Phase 5.4a — endpoints only. Phase 5.4b will integrate the runner

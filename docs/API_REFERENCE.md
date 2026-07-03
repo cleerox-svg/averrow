@@ -216,7 +216,9 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/agents/approvals/:id/resolve` | Admin | Resolve approval |
 | GET | `/api/admin/agents/api-usage` | Admin | AI API usage stats |
 | GET | `/api/admin/agents/config` | Admin | Agent configuration |
-| GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor, top-N by threat count. Powers the Admin "Attribution Backlog" queue. KV cached 5 min. PR-B from 2026-05-16 audit. |
+| GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor (dismissed rows excluded), sorted by threat count. `?q=` searches name/ASNs/countries; `limit`/`offset` paginate; totals include a `dismissed` count. KV cached 60s. Powers the Admin "Attribution Backlog" queue. |
+| POST | `/api/admin/clusters/:id/attribution` | Admin | Manually attribute a cluster: `{ actor_id }` sets `infrastructure_clusters.actor_id` and fans `threat_attributions` rows (source=`manual`, confidence=`confirmed`) out to every threat in the cluster. Audit-logged. |
+| POST | `/api/admin/clusters/:id/attribution/dismiss` | Admin | Mark an unattributed cluster as humanly unattributable (`attribution_dismissed_at`) — it leaves the backlog queue; the cluster row is otherwise untouched. Audit-logged. |
 | GET | `/api/admin/agents/approvals/pending` | Super Admin | List pending agent deployment approvals (AGENT_STANDARD §12.1, Phase 5.4a) |
 | GET | `/api/admin/agents/approvals/:id` | Super Admin | Get an approval record |
 | GET | `/api/admin/agents/approvals/:id/review-bundle` | Super Admin | Full review bundle for an approval |
