@@ -16,10 +16,13 @@ export async function handleListSalesLeads(request: Request, env: Env): Promise<
     const url = new URL(request.url);
     const status = url.searchParams.get("status");
     const pitchAngle = url.searchParams.get("pitch_angle");
+    const identifiedBy = url.searchParams.get("identified_by");
     const minScore = url.searchParams.get("min_score");
     const maxScore = url.searchParams.get("max_score");
     const sort = url.searchParams.get("sort") || "score";
-    const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
+    // Cap raised 100 → 500: the Leads UI loads the full pipeline once and
+    // filters client-side; sales_leads stays small (low hundreds of rows).
+    const limit = Math.min(500, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
     const conditions: string[] = [];
@@ -27,6 +30,7 @@ export async function handleListSalesLeads(request: Request, env: Env): Promise<
 
     if (status) { conditions.push("status = ?"); params.push(status); }
     if (pitchAngle) { conditions.push("pitch_angle = ?"); params.push(pitchAngle); }
+    if (identifiedBy) { conditions.push("identified_by = ?"); params.push(identifiedBy); }
     if (minScore) { conditions.push("prospect_score >= ?"); params.push(parseFloat(minScore)); }
     if (maxScore) { conditions.push("prospect_score <= ?"); params.push(parseFloat(maxScore)); }
 

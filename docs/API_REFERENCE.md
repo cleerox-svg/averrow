@@ -629,7 +629,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/brands` | Admin | List all brands (admin) |
 | POST | `/api/admin/brands/bulk-monitor` | Admin | Bulk add brands |
 | POST | `/api/admin/brands/bulk-delete` | Admin | Bulk delete brands |
-| GET | `/api/admin/sales-leads` | Sales+ | List sales leads |
+| GET | `/api/admin/sales-leads` | Sales+ | List sales leads (filters: `status`, `pitch_angle`, `identified_by`, `min_score`, `max_score`, `sort`, `limit` (max 500), `offset`) |
 | GET | `/api/admin/sales-leads/stats` | Sales+ | Lead statistics |
 | GET | `/api/admin/sales-leads/:id` | Sales+ | Get lead detail |
 | PATCH | `/api/admin/sales-leads/:id` | Sales+ | Update lead |

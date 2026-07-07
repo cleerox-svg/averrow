@@ -190,11 +190,15 @@ function PipelineView({ leads, stats, onSelect }: { leads: SalesLead[]; stats: L
   // in the last 180 days. 'ciso' = lead has a CISO LinkedIn URL. These are
   // top-of-funnel-quality filters for picking the best outreach targets.
   const [signalFilter, setSignalFilter] = useState('');
+  // Lead source (identified_by) — separates Pathfinder-generated leads
+  // from manually researched batches (e.g. swo_prospect_research).
+  const [sourceFilter, setSourceFilter] = useState('');
   const [search, setSearch] = useState('');
 
   const filtered = leads.filter(l => {
     if (statusFilter && l.status !== statusFilter) return false;
     if (pitchFilter && l.pitch_angle !== pitchFilter) return false;
+    if (sourceFilter && l.identified_by !== sourceFilter) return false;
     if (revenueFilter && l.revenue_band !== revenueFilter) return false;
     if (publicFilter === 'public'  && l.is_public !== 1) return false;
     if (publicFilter === 'private' && l.is_public !== 0) return false;
@@ -213,6 +217,7 @@ function PipelineView({ leads, stats, onSelect }: { leads: SalesLead[]; stats: L
 
   const pitchAngles = [...new Set(leads.map(l => l.pitch_angle).filter(Boolean))] as string[];
   const revenueBands = [...new Set(leads.map(l => l.revenue_band).filter(Boolean))] as string[];
+  const sources = [...new Set(leads.map(l => l.identified_by).filter(Boolean))] as string[];
 
   return (
     <div className="space-y-6">
@@ -298,6 +303,16 @@ function PipelineView({ leads, stats, onSelect }: { leads: SalesLead[]; stats: L
               { value: '10k',    label: '10-K cyber (5+ mentions)' },
             ]}
           />
+          {sources.length > 1 && (
+            <Select
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              options={[
+                { value: '', label: 'All Sources' },
+                ...sources.map(s => ({ value: s, label: s.replace(/_/g, ' ') })),
+              ]}
+            />
+          )}
         </div>
       </FilterBar>
 

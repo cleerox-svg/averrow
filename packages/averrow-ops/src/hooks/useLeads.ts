@@ -61,6 +61,7 @@ interface SalesLead {
   ai_enriched_at: string | null;
 
   // Meta
+  identified_by: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -93,14 +94,16 @@ interface LeadStats {
 
 export type { SalesLead, LeadStats };
 
-export function useLeads(options?: { status?: string; pitch_angle?: string }) {
-  const { status, pitch_angle } = options || {};
+export function useLeads(options?: { status?: string; pitch_angle?: string; identified_by?: string }) {
+  const { status, pitch_angle, identified_by } = options || {};
   return useQuery({
-    queryKey: ['leads', status, pitch_angle],
+    queryKey: ['leads', status, pitch_angle, identified_by],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (pitch_angle) params.set('pitch_angle', pitch_angle);
+      if (identified_by) params.set('identified_by', identified_by);
+      params.set('limit', '500'); // full pipeline in one page; views filter client-side
       const res = await api.get<{ leads: SalesLead[]; total: number; stats: Record<string, number> }>(`/api/admin/sales-leads?${params}`);
       const data = res.data;
       return { data: data?.leads || [], total: data?.total || 0 };
