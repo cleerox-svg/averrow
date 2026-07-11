@@ -91,6 +91,81 @@ function makeSession(log: QueryLog[]) {
   };
 }
 
+/** Like makeSession, but with the threats total/today/week counts
+ *  parameterized so tests can force the split-cache staleness the
+ *  Math.min monotonicity guard (admin.ts:372-373) exists to correct —
+ *  e.g. a freshly-recomputed `today` (300s TTL) outrunning a still-stale
+ *  `week` (300s TTL) or `total` (3600s TTL). */
+function makeSessionWithCounts(
+  log: QueryLog[],
+  counts: { total: number; today: number; week: number },
+) {
+  return {
+    prepare(sql: string) {
+      log.push({ sql });
+      return {
+        async first<T>(): Promise<T> {
+          if (sql.includes("-7 days")) {
+            return { n: counts.week } as unknown as T;
+          }
+          if (sql.includes("-1 day") && sql.includes("FROM threats")) {
+            return { n: counts.today } as unknown as T;
+          }
+          if (sql.includes("FROM threats")) {
+            return { n: counts.total } as unknown as T;
+          }
+          if (sql.includes("FROM agent_runs")) {
+            return { total: 229, successes: 220, errors: 9 } as unknown as T;
+          }
+          if (sql.includes("FROM feed_pull_history")) {
+            return { pulls: 266, ingested: 6245 } as unknown as T;
+          }
+          if (sql.includes("FROM sessions")) {
+            return { count: 94 } as unknown as T;
+          }
+          if (sql.includes("FROM d1_migrations")) {
+            return {
+              total: 45,
+              last_run: "2026-03-27T00:00:00Z",
+              last_name: "0047_agent_activity_log.sql",
+            } as unknown as T;
+          }
+          throw new Error(`makeSessionWithCounts: unexpected .first() query: ${sql}`);
+        },
+        async all<T>(): Promise<{ results: T[] }> {
+          if (sql.includes("GROUP BY date(created_at)")) {
+            return {
+              results: [
+                { day: "2026-06-27", count: 100 },
+                { day: "2026-06-28", count: 150 },
+              ] as unknown as T[],
+            };
+          }
+          throw new Error(`makeSessionWithCounts: unexpected .all() query: ${sql}`);
+        },
+      };
+    },
+  };
+}
+
+function makeEnvWithCounts(
+  kv: MockKV,
+  log: QueryLog[],
+  counts: { total: number; today: number; week: number },
+): Env {
+  const session = makeSessionWithCounts(log, counts);
+  return {
+    DB: { withSession: () => session },
+    CACHE: kv,
+    AUDIT_DB: {
+      prepare(sql: string) {
+        log.push({ sql });
+        return { async first() { return { count: 283 }; } };
+      },
+    },
+  } as unknown as Env;
+}
+
 function makeEnv(kv: MockKV, log: QueryLog[]): Env {
   const session = makeSession(log);
   return {
@@ -219,5 +294,51 @@ describe("handleSystemHealth — cached read path preserves the frozen response 
     // total, today, week — three separate SELECT COUNT(*) statements
     // (distinct from the 14-day trend's GROUP BY date(created_at) query).
     expect(threatCountQueries.length).toBe(3);
+  });
+});
+
+describe("handleSystemHealth — threats.{today,week} monotonicity clamp (admin.ts:372-373)", () => {
+  it("clamps today down to week when a fresher today outruns a stale week (today > week, week <= total)", async () => {
+    const kv = new MockKV();
+    const log: QueryLog[] = [];
+    // today's 300s cachedCount entry recomputed after week's 300s entry
+    // is still serving a stale (lower) value — today ends up above week
+    // even though both are below total.
+    const env = makeEnvWithCounts(kv, log, { total: 600, today: 1000, week: 500 });
+
+    const res = await handleSystemHealth(req(), env);
+    const body = await bodyOf(res);
+
+    expect(body.data.threats).toEqual({ total: 600, today: 500, week: 500 });
+    expect(body.data.threats.today).toBeLessThanOrEqual(body.data.threats.week);
+    expect(body.data.threats.week).toBeLessThanOrEqual(body.data.threats.total);
+  });
+
+  it("clamps week down to total when week's 300s cache outruns total's 3600s cache (week > total)", async () => {
+    const kv = new MockKV();
+    const log: QueryLog[] = [];
+    // week's short TTL refreshed to a value above total's long-lived
+    // (and therefore stale) cache entry.
+    const env = makeEnvWithCounts(kv, log, { total: 600, today: 40, week: 1000 });
+
+    const res = await handleSystemHealth(req(), env);
+    const body = await bodyOf(res);
+
+    expect(body.data.threats).toEqual({ total: 600, today: 40, week: 600 });
+    expect(body.data.threats.today).toBeLessThanOrEqual(body.data.threats.week);
+    expect(body.data.threats.week).toBeLessThanOrEqual(body.data.threats.total);
+  });
+
+  it("clamps both today and week down to total when both stale caches exceed it", async () => {
+    const kv = new MockKV();
+    const log: QueryLog[] = [];
+    const env = makeEnvWithCounts(kv, log, { total: 600, today: 1000, week: 1000 });
+
+    const res = await handleSystemHealth(req(), env);
+    const body = await bodyOf(res);
+
+    expect(body.data.threats).toEqual({ total: 600, today: 600, week: 600 });
+    expect(body.data.threats.today).toBeLessThanOrEqual(body.data.threats.week);
+    expect(body.data.threats.week).toBeLessThanOrEqual(body.data.threats.total);
   });
 });
