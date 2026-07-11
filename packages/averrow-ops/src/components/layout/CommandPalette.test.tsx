@@ -200,4 +200,22 @@ describe('CommandPalette — data search routing', () => {
     renderWithProviders(<CommandPalette open={false} onClose={vi.fn()} commands={[]} />);
     expect(screen.queryByPlaceholderText(SEARCH_INPUT_PLACEHOLDER)).not.toBeInTheDocument();
   });
+
+  it('renders the "search everything" escalation row once q reaches 2 characters, trailing the per-group "view all" rows', async () => {
+    renderWithProviders(<CommandPalette open onClose={vi.fn()} commands={[]} />);
+    await typeQuery('ac');
+
+    expect(screen.getByText('Search everything for “ac” →')).toBeInTheDocument();
+  });
+
+  it('selecting the escalation row navigates to the persistent /search page with the query encoded', async () => {
+    const onClose = vi.fn();
+    renderWithProviders(<CommandPalette open onClose={onClose} commands={[]} />);
+    await typeQuery('a&b');
+
+    await userEvent.click(screen.getByText('Search everything for “a&b” →'));
+
+    expect(mocks.navigate).toHaveBeenCalledWith('/search?q=a%26b');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
 });
