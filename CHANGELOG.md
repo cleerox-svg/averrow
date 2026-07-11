@@ -4,6 +4,39 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-11
+
+### Threat intelligence
+- **Cluster-level threat-actor attribution inheritance** — new
+  `lib/cluster-attribution-inherit.ts` (`inheritOtxActorsToClusters`),
+  called from the Attributor agent's post-pass. When every OTX-sourced
+  (`threat_attributions.source = 'otx'`) member of an infrastructure
+  cluster names the SAME actor, that actor now propagates to the
+  cluster's un-attributed sibling threats and, when the cluster has no
+  `actor_id` yet, to `infrastructure_clusters.actor_id` itself. Pure SQL
+  correlation — no AI tokens spent. Conservative by design: clusters
+  with zero or ≥2 distinct OTX actors among members are skipped (no
+  guess), and inherited rows are stamped `confidence: 'low'` (never
+  higher than the source 'medium'), a stable `tat_otxinherit_` id
+  prefix, and `metadata.inherited = true` for auditability. Idempotent
+  and bounded (`MAX_MEMBER_WRITES_PER_RUN = 5000`) so re-runs and large
+  first-run backlogs are cheap. Migrations 0135/0136 (`threat_attributions`,
+  `cluster_actor_attribution`) already provided the schema; this ships
+  the propagation logic. Net effect: more detected infrastructure
+  resolves to a named threat actor instead of showing "unknown".
+
+### Staff ops UI
+- **Fixed "agents online" count divergence on Home** — `ModuleHub.tsx`
+  was still using an older, stricter `healthy | running | active`
+  filter while `StatGrid.tsx` and the Agents page used `status !==
+  'error'` (per audit C4, 2026-05-06), so the Home page showed two
+  different agent-online numbers for the same `agents` array
+  (design-review finding, 2026-07-11). Added `lib/agent-status.ts` as
+  the single canonical `isAgentOnline` / `countAgentsOnline`
+  predicate; `Agents.tsx`, `StatGrid.tsx`, and `ModuleHub.tsx` now all
+  import from it instead of re-deriving the filter inline. Internal
+  staff back-office fix only — no customer-facing surface affected.
+
 ## [v4.0.0] — 2026-06-22
 
 The v4 platform redesign + auth hardening line. Internal/staff register

@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.1.0",
+    publishedAt: "2026-07-11",
+    kind: "Improvement",
+    title: "Sharper threat-actor attribution",
+    description:
+      "Improved threat-actor attribution — more detected infrastructure is now automatically linked to known, named actors instead of showing as unattributed.",
+  },
+  {
     version: "v4.0.0",
     publishedAt: "2026-06-22",
     kind: "Feature",
