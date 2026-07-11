@@ -254,13 +254,17 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     // Step 1b: /24 subnet lane (2026-07 threat-intel spec) — runs
     // BEFORE the ASN pass so the coarse ASN lane only mops up threats
     // no more-specific lane already claimed (cluster_id IS NULL guard).
-    // Kept in lockstep with agents/nexus.ts Lane A. CDN guard uses an
-    // ASN denylist literal set (hosting_providers has no is_cdn column):
-    // Cloudflare AS13335, Fastly AS54113, CloudFront AS16509, Akamai
-    // AS20940, Google AS15169. Pure SQL GROUP BY + bounded upserts, no AI.
+    // Kept in lockstep with agents/nexus.ts Lane A. The /24 key lives on
+    // the ip_subnet24 generated column (migration 0235) — index-backed via
+    // idx_threats_subnet24 — so the grouping scan and the per-cluster stamp
+    // seek no longer wrap the column in rtrim() and no longer full-scan the
+    // threats table. CDN guard uses an ASN denylist literal set
+    // (hosting_providers has no is_cdn column): Cloudflare AS13335, Fastly
+    // AS54113, CloudFront AS16509, Akamai AS20940, Google AS15169. Pure SQL
+    // grouping + bounded upserts, no AI.
     const subnetLane = await step.do('subnet24-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
       const subnetClusters = await this.env.DB.prepare(`
-        SELECT rtrim(ip_address,'0123456789')     AS subnet24,
+        SELECT ip_subnet24                         AS subnet24,
                COUNT(*)                            AS threat_count,
                COUNT(DISTINCT ip_address)          AS distinct_ips,
                COUNT(DISTINCT target_brand_id)     AS brand_count,
@@ -272,12 +276,10 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
                MAX(first_seen)                     AS last_seen
           FROM threats
          WHERE status = 'active'
-           AND ip_address IS NOT NULL
-           AND ip_address NOT IN ('', '0.0.0.0')
-           AND ip_address NOT LIKE '%:%'
+           AND ip_subnet24 IS NOT NULL
            AND target_brand_id IS NOT NULL
            AND (asn IS NULL OR asn NOT IN ('AS13335','AS54113','AS16509','AS20940','AS15169'))
-         GROUP BY subnet24
+         GROUP BY ip_subnet24
         HAVING distinct_ips >= 2 AND brand_count >= 3 AND threat_count >= 8 AND brand_count <= 150
          ORDER BY brand_count DESC, threat_count DESC
          LIMIT 50
@@ -350,9 +352,10 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
           clustersWritten++;
 
           // MANDATORY stamp — only claims threats not already owned.
+          // Keys on ip_subnet24 (index equality seek, migration 0235).
           await this.env.DB.prepare(
             `UPDATE threats SET cluster_id = ?
-              WHERE rtrim(ip_address,'0123456789') = ? AND status = 'active'
+              WHERE ip_subnet24 = ? AND status = 'active'
                 AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
           ).bind(clusterId, row.subnet24).run();
         } catch { continue; }
