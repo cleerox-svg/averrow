@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export type SearchResultType = 'brand' | 'threat_actor' | 'provider' | 'campaign';
+export type SearchResultType = 'brand' | 'threat_actor' | 'provider' | 'campaign' | 'app_store';
 
 export interface SearchResult {
   type: SearchResultType;
@@ -21,6 +21,10 @@ export interface GlobalSearchResponse {
   threat_actors: SearchResult[];
   providers: SearchResult[];
   campaigns: SearchResult[];
+  // Tier-2: app-store impersonation listings (no dedicated detail page —
+  // see CommandPalette.tsx's app_store DATA_GROUPS entry for the routing
+  // decision).
+  app_store: SearchResult[];
 }
 
 const EMPTY_RESPONSE: GlobalSearchResponse = {
@@ -28,6 +32,7 @@ const EMPTY_RESPONSE: GlobalSearchResponse = {
   threat_actors: [],
   providers: [],
   campaigns: [],
+  app_store: [],
 };
 
 // Local debounce helper — mirrors the pattern already used in
@@ -74,6 +79,7 @@ export function useGlobalSearch(q: string) {
     threatActors: data.threat_actors,
     providers: data.providers,
     campaigns: data.campaigns,
+    appStore: data.app_store,
     // Only meaningful once the term clears the 2-char gate — a shorter
     // term never fires a request, so it's never "loading".
     isLoading: enabled && query.isFetching,

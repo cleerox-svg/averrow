@@ -530,19 +530,26 @@ const ACTOR_SORTS: EntityListSort<ThreatActor>[] = [
 export function ThreatActors() {
   const [searchParams, setSearchParams] = useSearchParams();
   const focusId = searchParams.get('focus');
+  // ?q= lets the command palette's "view all" pivot land here pre-filtered
+  // (Tier-2) — mirrors Threats.tsx's `searchParams.get('q')` seed pattern.
+  // Read once as the initial value; EntityListShell is handed this as a
+  // controlled search box so further typing re-queries the API too.
+  const initialQuery = searchParams.get('q') ?? '';
 
   const [filter, setFilter] = useState<CountryFilter>('all');
   const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
-  // Set when deep-linked via ?focus — drops the active-only filter so a
-  // dormant/disrupted target actor still appears. Stays on (independent of the
-  // now-stripped URL param) until the operator picks a country filter.
-  const [broaden, setBroaden] = useState(false);
+  // Set when deep-linked via ?focus or ?q — drops the active-only filter so
+  // a dormant/disrupted target actor still appears. Stays on (independent
+  // of the now-stripped URL param) until the operator picks a country filter.
+  const [broaden, setBroaden] = useState(!!initialQuery);
+  const [search, setSearch] = useState(initialQuery);
   const country = filter === 'all' ? undefined : filter;
 
   const { data: actors, isLoading } = useThreatActors({
     country,
     status: broaden ? undefined : 'active',
+    search: search || undefined,
   });
   const { data: stats } = useThreatActorStats();
 
@@ -705,7 +712,14 @@ export function ThreatActors() {
         onFilterChange={(v) => { setFilter(v as CountryFilter); setBroaden(false); }}
         search={{
           placeholder: 'Search actors, aliases, attribution…',
-          fields: (a) => [a.name, a.attribution, a.country, ...parseJsonArray(a.aliases)],
+          // Mirrors handleListThreatActors' server-side match columns
+          // (name/aliases/description) so a ?q= deep-link's API-side
+          // narrowing and this client-side safety-net filter agree —
+          // an actor that only matched on `description` shouldn't get
+          // filtered back out here.
+          fields: (a) => [a.name, a.attribution, a.country, a.description, ...parseJsonArray(a.aliases)],
+          value: search,
+          onChange: setSearch,
         }}
         sorts={ACTOR_SORTS}
         defaultSortId="recent7d"

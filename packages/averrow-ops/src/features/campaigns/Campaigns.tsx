@@ -666,6 +666,11 @@ export function Campaigns() {
     () => searchParams.get('focus'),
   );
   const [attackFilter, setAttackFilter] = useState('all');
+  // ?q= lets the command palette's "view all" pivot land here pre-filtered
+  // (Tier-2) — same seed pattern as Threats.tsx / ThreatActors.tsx.
+  // EntityListShell gets this as a controlled search box; each keystroke
+  // re-queries handleListCampaignsV2's name-prefix match too.
+  const [campaignSearch, setCampaignSearch] = useState(() => searchParams.get('q') ?? '');
 
   // Data fetching. A ?focus= pivot may target a cluster outside the default
   // top-12, so widen to the API max when focusing and scroll the card in.
@@ -680,7 +685,11 @@ export function Campaigns() {
     const anchor = document.getElementById(`op-${focusId}`);
     (anchor?.firstElementChild ?? anchor)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [focusId, operations]);
-  const { data: campaignsRes, isLoading: campaignsLoading } = useCampaigns({ status: 'active', limit: 50 });
+  const { data: campaignsRes, isLoading: campaignsLoading } = useCampaigns({
+    status: 'active',
+    limit: 50,
+    search: campaignSearch || undefined,
+  });
   const { data: campStats } = useCampaignStats();
   const { data: geoCampaigns, isLoading: geoLoading } = useGeopoliticalCampaigns();
 
@@ -847,7 +856,12 @@ export function Campaigns() {
           filters={ATTACK_FILTERS.map(f => ({ value: f.id, label: f.label }))}
           activeFilter={attackFilter}
           onFilterChange={setAttackFilter}
-          search={{ placeholder: 'Search campaigns…', fields: (c) => [c.name] }}
+          search={{
+            placeholder: 'Search campaigns…',
+            fields: (c) => [c.name],
+            value: campaignSearch,
+            onChange: setCampaignSearch,
+          }}
           sorts={CAMP_SORTS}
           defaultSortId="threats"
           pageSize={12}

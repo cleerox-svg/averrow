@@ -105,7 +105,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/search` | Staff | Unified type-ahead search across brands, threat_actors, hosting_providers, and campaigns (global scope — not org-filtered). `?q=` (min 2 chars; shorter returns empty groups), `?limit=` (default 8; hard-capped at 5 per group). Every match is a prefix lookup (`name`/`canonical_domain LIKE 'q%'`, backed by the additive name indexes from migration 0236) — never a leading wildcard, never scans the 691K-row `threats` table; brand counts come from the pre-computed `brands.threat_count` column. Returns `{ success: true, data: { brands, threat_actors, providers, campaigns } }`, each item shaped `{ type, id, label, sublabel }`. Whole grouped result cached ~90s in KV. Supersedes `/api/admin/brands/search` for palette/type-ahead use (see note below). |
+| GET | `/api/search` | Staff | Unified type-ahead search across five groups — brands, threat_actors, hosting_providers, campaigns, and app_store (global scope — not org-filtered). `?q=` (min 2 chars; shorter returns empty groups), `?limit=` (default 8; hard-capped at 5 per group). Every match is a prefix lookup (`name`/`canonical_domain LIKE 'q%'`, backed by the additive name indexes from migration 0236) — never a leading wildcard, never scans the 691K-row `threats` table; brand counts come from the pre-computed `brands.threat_count` column. Returns `{ success: true, data: { brands, threat_actors, providers, campaigns, app_store } }`, each item shaped `{ type, id, label, sublabel }`. The `app_store` group (Tier-2, migration 0237) prefix-matches `app_store_listings.app_name` (a NOT NULL app title, backed by the NOCASE `idx_app_store_listings_app_name` index); `type='app_store'`, `label`=app name, `sublabel`=developer name (falls back to store), `id`=the **owning brand_id** (reserved for a future brand-apps deep-link) — there's no per-listing detail view and BrandDetail has no `apps` tab yet, so a palette hit currently routes to the `/apps` overview. The Tier-2 no-page entities `dark_web` (no clean prefix title — only opaque source identifiers / a JSON matched-terms blob) and `trademark` (brand-organized surface, no stable mark-text column) are intentionally excluded, as are `alerts` (events, not named entities). Whole grouped result cached ~90s in KV. Supersedes `/api/admin/brands/search` for palette/type-ahead use (see note below). |
 
 ## Brands
 
@@ -265,7 +265,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/campaigns` | Staff | List campaign clusters |
+| GET | `/api/campaigns` | Staff | List campaign clusters. Optional `?status=`, `?limit=` (max 100), `?offset=`, and `?q=` (prefix-anchored campaign-name search, min 2 chars, `LIKE 'q%'` backed by NOCASE `idx_campaigns_name` — powers unified-search "view all"). |
 | GET | `/api/campaigns/stats` | Staff | Campaign statistics |
 | GET | `/api/campaigns/:id` | Staff | Get campaign detail |
 | GET | `/api/campaigns/:id/threats` | Staff | Campaign threats |

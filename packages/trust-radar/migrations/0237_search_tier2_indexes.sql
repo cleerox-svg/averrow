@@ -1,0 +1,40 @@
+-- 0237_search_tier2_indexes.sql
+--
+-- Tier-2 unified search (GET /api/search) backing index.
+--
+-- Tier-1 (migration 0236) added COLLATE NOCASE prefix indexes for the four
+-- named-entity tables (brands, threat_actors, hosting_providers, campaigns).
+-- Tier-2 extends the same endpoint to the one "no-page" entity that has a
+-- genuinely sensible, prefix-searchable title column: app-store listings.
+--
+-- app_store_listings.app_name is NOT NULL and is a real app title, so it is
+-- the search column. The endpoint runs `app_name LIKE 'q%'` case-insensitively;
+-- SQLite only turns that into a bounded index range scan when the index's
+-- collation matches the case-insensitive LIKE, so the index must be declared
+-- COLLATE NOCASE (a plain BINARY index — none exists on app_name anyway — would
+-- be ignored and the query would fall back to a full-table scan).
+--
+-- Additive only: CREATE INDEX IF NOT EXISTS, no DROP, no ALTER. developer_name
+-- is returned as a sublabel but is NOT in any WHERE clause, so it needs no index.
+--
+-- Deliberately NOT indexed / NOT added to search:
+--   * dark_web_mentions — has no clean prefix-searchable title. Its only
+--     textual columns are source_channel (documented as "channel name, paste
+--     id, forum name" — polymorphic, includes opaque paste IDs), source_author
+--     (nullable poster username), and content_snippet / matched_terms (a JSON
+--     blob). The DarkWeb page itself falls back to a `%q%` SUBSTRING search
+--     over (content_snippet, source_channel, brand name) precisely because
+--     there is no anchorable title. The named entity behind a mention (the
+--     brand / executive / actor alias) is already reachable via Tier-1.
+--   * trademark_assets / trademark_findings — the surface is brand-organized
+--     (the list handler and the Trademarks page enumerate BRANDS and deep-link
+--     to /brands/:id; there is no per-asset/per-finding detail route). The only
+--     mark-text-like column, trademark_assets.asset_name, is a nullable freeform
+--     customer label, not a stable identifier; trademark_findings has no mark
+--     text at all. The searchable entity (the brand) is already in Tier-1.
+--   * alerts — events, not named entities; no title column to anchor on.
+--
+-- No index is added on the threats table — the search endpoint never reads it.
+
+CREATE INDEX IF NOT EXISTS idx_app_store_listings_app_name
+  ON app_store_listings (app_name COLLATE NOCASE);

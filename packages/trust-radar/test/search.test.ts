@@ -36,6 +36,7 @@ interface TableRows {
   threat_actors?: Array<Record<string, unknown>>;
   hosting_providers?: Array<Record<string, unknown>>;
   campaigns?: Array<Record<string, unknown>>;
+  app_store_listings?: Array<Record<string, unknown>>;
 }
 
 function tableFor(sql: string): keyof TableRows {
@@ -43,6 +44,7 @@ function tableFor(sql: string): keyof TableRows {
   if (/FROM threat_actors/.test(sql)) return "threat_actors";
   if (/FROM hosting_providers/.test(sql)) return "hosting_providers";
   if (/FROM campaigns/.test(sql)) return "campaigns";
+  if (/FROM app_store_listings/.test(sql)) return "app_store_listings";
   throw new Error(`unexpected SQL (no known table): ${sql}`);
 }
 
@@ -102,7 +104,7 @@ async function bodyOf(res: Response) {
 // ─── Tests ─────────────────────────────────────────────────────────
 
 describe("handleUnifiedSearch — short-circuit on q.length < 2", () => {
-  const EMPTY = { brands: [], threat_actors: [], providers: [], campaigns: [] };
+  const EMPTY = { brands: [], threat_actors: [], providers: [], campaigns: [], app_store: [] };
 
   it("never touches the DB for a missing q param", async () => {
     // withSession throws if called at all — proves the short-circuit
@@ -142,7 +144,7 @@ describe("handleUnifiedSearch — prefix binding and bind arity", () => {
     const env = makeEnv({ calls });
     await handleUnifiedSearch(req("?q=ac"), env);
 
-    expect(calls.length).toBe(4); // brands, threat_actors, hosting_providers, campaigns
+    expect(calls.length).toBe(5); // brands, threat_actors, hosting_providers, campaigns, app_store_listings
     for (const { binds } of calls) {
       const prefixBinds = binds.filter((b) => typeof b === "string");
       expect(prefixBinds.length).toBeGreaterThan(0);
@@ -158,7 +160,7 @@ describe("handleUnifiedSearch — prefix binding and bind arity", () => {
     const env = makeEnv({ calls });
     await handleUnifiedSearch(req("?q=ac"), env);
 
-    expect(calls.length).toBe(4);
+    expect(calls.length).toBe(5);
     for (const { sql, binds } of calls) {
       const placeholderCount = (sql.match(/\?/g) ?? []).length;
       expect(binds.length, `bind arity mismatch for: ${sql}`).toBe(placeholderCount);
@@ -171,6 +173,14 @@ describe("handleUnifiedSearch — prefix binding and bind arity", () => {
     await handleUnifiedSearch(req("?q=ac"), env);
     const brandsCall = calls.find((c) => /FROM brands/.test(c.sql))!;
     expect(brandsCall.binds).toEqual(["ac%", "ac%", 5]);
+  });
+
+  it("the app_store statement binds a single anchored prefix (app_name only) plus the limit", async () => {
+    const calls: Captured[] = [];
+    const env = makeEnv({ calls });
+    await handleUnifiedSearch(req("?q=ac"), env);
+    const appStoreCall = calls.find((c) => /FROM app_store_listings/.test(c.sql))!;
+    expect(appStoreCall.binds).toEqual(["ac%", 5]);
   });
 });
 
@@ -197,8 +207,8 @@ describe("handleUnifiedSearch — per-group limit clamp", () => {
     const env = makeEnv({ calls });
     await handleUnifiedSearch(req("?q=ac&limit=2"), env);
     await handleUnifiedSearch(req("?q=ac"), env); // default -> perGroup 5, different key
-    // Each distinct cache key computes fresh: 4 statements x 2 requests.
-    expect(calls.length).toBe(8);
+    // Each distinct cache key computes fresh: 5 statements x 2 requests.
+    expect(calls.length).toBe(10);
   });
 });
 
@@ -265,6 +275,50 @@ describe("handleUnifiedSearch — row -> SearchResult mapping", () => {
     expect(body.data.threat_actors).toEqual([{ type: "threat_actor", id: "t1", label: "APT-Acme", sublabel: "CN" }]);
     expect(body.data.campaigns).toEqual([{ type: "campaign", id: "c1", label: "Op Acme", sublabel: "active" }]);
   });
+
+  it("app_store id is the OWNING BRAND id (not the listing PK) — pins the /brands/:id?tab=apps deep-link contract", async () => {
+    const env = makeEnv({
+      rows: {
+        // Note: no listing-id column is even selected by the handler — the
+        // fake row only carries the columns the SQL actually projects
+        // (brand_id, app_name, developer_name, store). If a future refactor
+        // swapped `id` back to a listing PK, this assertion would catch it
+        // because there is no listing id anywhere in this row to fall back to.
+        app_store_listings: [
+          { brand_id: "b42", app_name: "Acme Wallet", developer_name: "Acme Inc.", store: "ios" },
+        ],
+      },
+    });
+    const res = await handleUnifiedSearch(req("?q=ac"), env);
+    const body = (await bodyOf(res)) as { data: { app_store: Array<Record<string, unknown>> } };
+    expect(body.data.app_store).toEqual([
+      { type: "app_store", id: "b42", label: "Acme Wallet", sublabel: "Acme Inc." },
+    ]);
+  });
+
+  it("app_store sublabel falls back to store when developer_name is null, then to null when both are null", async () => {
+    const envStoreFallback = makeEnv({
+      rows: {
+        app_store_listings: [
+          { brand_id: "b42", app_name: "Acme Wallet", developer_name: null, store: "android" },
+        ],
+      },
+    });
+    const res1 = await handleUnifiedSearch(req("?q=ac"), envStoreFallback);
+    const body1 = (await bodyOf(res1)) as { data: { app_store: Array<Record<string, unknown>> } };
+    expect(body1.data.app_store[0].sublabel).toBe("android");
+
+    const envNullBoth = makeEnv({
+      rows: {
+        app_store_listings: [
+          { brand_id: "b42", app_name: "Acme Wallet", developer_name: null, store: null },
+        ],
+      },
+    });
+    const res2 = await handleUnifiedSearch(req("?q=ac"), envNullBoth);
+    const body2 = (await bodyOf(res2)) as { data: { app_store: Array<Record<string, unknown>> } };
+    expect(body2.data.app_store[0].sublabel).toBeNull();
+  });
 });
 
 describe("handleUnifiedSearch — cache-key normalization", () => {
@@ -278,7 +332,7 @@ describe("handleUnifiedSearch — cache-key normalization", () => {
     });
 
     await handleUnifiedSearch(req("?q=AC"), env);
-    expect(calls.length).toBe(4);
+    expect(calls.length).toBe(5);
 
     calls.length = 0;
     const res2 = await handleUnifiedSearch(req("?q=ac"), env); // same term, different case
@@ -292,7 +346,7 @@ describe("handleUnifiedSearch — cache-key normalization", () => {
     const env = makeEnv({ calls });
     await handleUnifiedSearch(req("?q=ac"), env);
     await handleUnifiedSearch(req("?q=xy"), env);
-    expect(calls.length).toBe(8); // both terms hit the DB independently
+    expect(calls.length).toBe(10); // both terms hit the DB independently
   });
 });
 

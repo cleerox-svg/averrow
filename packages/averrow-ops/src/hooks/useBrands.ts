@@ -77,18 +77,23 @@ interface SocialProfile {
 
 export type { Brand, BrandDetail, BrandStats, SocialProfile, BrandSocialProfile };
 
-export function useBrands(options?: { view?: string; limit?: number; offset?: number; timeRange?: string }) {
+export function useBrands(options?: { view?: string; limit?: number; offset?: number; timeRange?: string; search?: string }) {
   // Default to 500 — the backend caps at 500 anyway, and 100 was
   // leaving the All Brands tab paginating across "Showing 51-100 of
   // 100" while the actual catalog is ~78K rows. Callers that want a
   // smaller slice (Home tiles, Observatory sidebar) pass an explicit
   // limit; this default only affects the brand-list surfaces that
   // previously got 100 by accident.
-  const { view = 'top', limit = 500, offset = 0, timeRange = '7d' } = options || {};
+  const { view = 'top', limit = 500, offset = 0, timeRange = '7d', search } = options || {};
   return useQuery({
-    queryKey: ['brands', view, limit, offset, timeRange],
+    queryKey: ['brands', view, limit, offset, timeRange, search],
     queryFn: async () => {
       const params = new URLSearchParams({ view, limit: String(limit), offset: String(offset), range: timeRange });
+      // Server-side prefix/substring match on name + canonical_domain
+      // (handleListBrands reads `q`) — lets BrandsGrid filter on arrival
+      // for a ?q= deep-link (e.g. from the command palette's "view all")
+      // instead of only ever matching within the locally-fetched page.
+      if (search) params.set('q', search);
       const res = await api.get<Brand[]>(`/api/brands?${params}`);
       return res.data ?? [];
     },

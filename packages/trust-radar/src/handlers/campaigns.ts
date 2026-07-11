@@ -2,6 +2,7 @@
 // Averrow — Campaign API Endpoints
 
 import { json } from "../lib/cors";
+import { clampQuery, buildPrefix } from "../lib/search-prefix";
 import type { Campaign, Env } from "../types";
 
 // GET /api/campaigns (with status filter)
@@ -12,11 +13,17 @@ export async function handleListCampaignsV2(request: Request, env: Env): Promise
     const status = url.searchParams.get("status");
     const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+    // Optional prefix search over campaign name — powers the unified-search
+    // palette's "view all" for a campaign term. Same prefix-anchored,
+    // NOCASE-index-backed discipline as GET /api/search (idx_campaigns_name,
+    // migration 0236); never a leading wildcard.
+    const q = clampQuery(url.searchParams.get("q") ?? "");
 
     const conditions: string[] = [];
     const params: unknown[] = [];
 
     if (status) { conditions.push("c.status = ?"); params.push(status); }
+    if (q.length >= 2) { conditions.push("c.name LIKE ? ESCAPE '\\'"); params.push(buildPrefix(q)); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     params.push(limit, offset);
 

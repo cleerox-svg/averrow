@@ -32,10 +32,24 @@ export interface EntityListShellProps<T> {
   getKey: (item: T) => string;
   renderItem: (item: T) => ReactNode;
 
-  /** Client-side free-text search. `fields` returns the strings to match. */
+  /**
+   * Free-text search box. `fields` returns the strings the box matches
+   * client-side against `items` — this always runs, even in controlled
+   * mode, as a safety net on top of whatever the caller already fetched.
+   *
+   * Uncontrolled (default): the shell owns the query text itself.
+   *
+   * Controlled (`value` + `onChange` both set): the caller owns the query
+   * text instead — e.g. seeded from a `?q=` deep-link and threaded into
+   * the page's data-fetching hook so the list is filtered server-side on
+   * arrival, with every further keystroke re-querying too (mirrors
+   * Threats.tsx's `?q=` pattern). The box always reflects `value`.
+   */
   search?: {
     placeholder?: string;
     fields: (item: T) => Array<string | null | undefined>;
+    value?: string;
+    onChange?: (value: string) => void;
   };
 
   /** Sort options rendered as a button group. First is the default. */
@@ -122,7 +136,14 @@ export function EntityListShell<T>({
   empty,
   headerActions,
 }: EntityListShellProps<T>) {
-  const [query, setQuery] = useState('');
+  // Controlled mode (value + onChange both supplied): the caller owns the
+  // query text — see the `search` prop doc above. `internalQuery` still
+  // exists (and is kept in sync) so the shell behaves identically to
+  // before for the uncontrolled callers.
+  const isControlledSearch = search?.value !== undefined && !!search?.onChange;
+  const [internalQuery, setInternalQuery] = useState(search?.value ?? '');
+  const query = isControlledSearch ? (search?.value ?? '') : internalQuery;
+  const setQuery = isControlledSearch ? (search?.onChange as (v: string) => void) : setInternalQuery;
   const [sortId, setSortId] = useState(defaultSortId ?? sorts?.[0]?.id ?? '');
   const [page, setPage] = useState(0);
 

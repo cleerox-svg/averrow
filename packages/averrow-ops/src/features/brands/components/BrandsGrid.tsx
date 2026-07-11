@@ -682,23 +682,26 @@ function BrandCard({
 // has no page-level chrome (title, version toggle, hero stats) —
 // the v3 list shell owns those.
 
-export function BrandsGrid() {
+export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
   const navigate = useNavigate();
-  const { data: brands = [], isLoading } = useBrands({ view: 'all', timeRange: '7d' });
+
+  /* ─── Shared filter state ─── */
+  // Seeded from the v3 list's ?q= deep-link (command palette "view all" /
+  // Tier-2) — see Brands.tsx. Debounced the same way manual typing is.
+  const [search, setSearch] = useState(initialQuery);
+  const [sector, setSector] = useState('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'monitored' | 'targeted'>('all');
+  const [page, setPage] = useState(1);
+  const [modalOpen, setModalOpen] = useState(false);
+  const debouncedSearch = useDebounce(search, 300);
+
+  const { data: brands = [], isLoading } = useBrands({ view: 'all', timeRange: '7d', search: debouncedSearch });
   // useBrandStats hits `/api/brands/stats` (KV-cached 5 min on the
   // backend) so the catalog-wide total renders "for free" — it
   // gives users the honest "Showing X of Y in catalog" framing
   // even though the list itself is capped at 500 per request.
   const { data: brandStats } = useBrandStats();
   const toggleMonitor = useToggleMonitor();
-
-  /* ─── Shared filter state ─── */
-  const [search, setSearch] = useState('');
-  const [sector, setSector] = useState('all');
-  const [activeTab, setActiveTab] = useState<'all' | 'monitored' | 'targeted'>('all');
-  const [page, setPage] = useState(1);
-  const [modalOpen, setModalOpen] = useState(false);
-  const debouncedSearch = useDebounce(search, 300);
 
   const filteredBrands = useMemo(() => {
     return (brands ?? []).filter(b => {

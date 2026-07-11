@@ -30,12 +30,15 @@ interface CampaignDetail extends Campaign {
   provider_breakdown: Array<{ provider_id: string | null; provider_name: string | null; count: number }>;
 }
 
-export function useCampaigns(options?: { status?: string; limit?: number; offset?: number }) {
-  const { status = 'active', limit = 50, offset = 0 } = options || {};
+export function useCampaigns(options?: { status?: string; limit?: number; offset?: number; search?: string }) {
+  const { status = 'active', limit = 50, offset = 0, search } = options || {};
   return useQuery({
-    queryKey: ['campaigns', status, limit, offset],
+    queryKey: ['campaigns', status, limit, offset, search],
     queryFn: async () => {
       const params = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
+      // handleListCampaignsV2 does a prefix match on name (?q=) — lets
+      // Campaigns.tsx filter on arrival for a ?q= deep-link.
+      if (search) params.set('q', search);
       const res = await api.get<Campaign[]>(`/api/campaigns?${params}`);
       return res.data ?? [];
     },

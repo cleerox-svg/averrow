@@ -34,11 +34,12 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession } from "../lib/db";
 import { cachedValue } from "../lib/cached-value";
+import { clampQuery, buildPrefix } from "../lib/search-prefix";
 import type { Env } from "../types";
 
 /** One unified search hit across any entity type. */
 interface SearchResult {
-  type: "brand" | "threat_actor" | "provider" | "campaign";
+  type: "brand" | "threat_actor" | "provider" | "campaign" | "app_store";
   id: string;
   label: string;
   sublabel: string | null;
@@ -49,6 +50,13 @@ interface SearchGroups {
   threat_actors: SearchResult[];
   providers: SearchResult[];
   campaigns: SearchResult[];
+  // Tier-2 "no-page" entity: app-store impersonation listings. Prefix on
+  // app_name (NOT NULL genuine title); `id` is the OWNING brand_id, reserved
+  // for a future brand-apps deep-link (there's no per-listing view today and
+  // BrandDetail has no 'apps' tab yet, so the palette routes to the /apps
+  // overview). dark_web and trademark are deliberately NOT here — neither has
+  // a clean prefix-searchable title column (see 0237 migration notes).
+  app_store: SearchResult[];
 }
 
 const EMPTY_GROUPS: SearchGroups = {
@@ -56,6 +64,7 @@ const EMPTY_GROUPS: SearchGroups = {
   threat_actors: [],
   providers: [],
   campaigns: [],
+  app_store: [],
 };
 
 // GET /api/search — staff-scoped unified type-ahead search.
@@ -67,7 +76,7 @@ export async function handleUnifiedSearch(request: Request, env: Env): Promise<R
     // Clamp to 64 chars after trim, before the prefix and cache key are
     // built: keeps the KV key under its 512-byte limit so an oversized
     // term can't overflow it and silently bypass the cache.
-    const q = rawQ.trim().slice(0, 64);
+    const q = clampQuery(rawQ);
 
     // Short-circuit: no DB round-trip for 0- or 1-char queries.
     if (q.length < 2) {
@@ -85,8 +94,7 @@ export async function handleUnifiedSearch(request: Request, env: Env): Promise<R
     // clause carries `ESCAPE '\'` to honor the escape char. Escaping a
     // metachar-free term is a no-op, so the anchored `q + '%'` shape is
     // preserved for ordinary queries.
-    const escaped = q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-    const prefix = escaped + "%";
+    const prefix = buildPrefix(q);
     // Normalized cache key: trim + lowercase, plus the effective
     // per-group cap so a smaller `limit` can't poison the default slice.
     const normalizedQ = q.toLowerCase();
@@ -96,7 +104,7 @@ export async function handleUnifiedSearch(request: Request, env: Env): Promise<R
     const session = getReadSession(env, ctx);
 
     const groups = await cachedValue<SearchGroups>(env, cacheKey, 90, async () => {
-      const [brandRows, actorRows, providerRows, campaignRows] = await Promise.all([
+      const [brandRows, actorRows, providerRows, campaignRows, appStoreRows] = await Promise.all([
         // Brands — prefix on name OR canonical_domain. threat_count is the
         // pre-computed column; no threats read, no JOIN.
         session.prepare(
@@ -142,6 +150,22 @@ export async function handleUnifiedSearch(request: Request, env: Env): Promise<R
         ).bind(prefix, perGroup).all<{
           id: string; name: string; status: string | null;
         }>().catch(() => ({ results: [] as Array<{ id: string; name: string; status: string | null }> })),
+
+        // App-store listings — prefix on app_name (NOT NULL genuine title),
+        // backed by the NOCASE index from migration 0237. developer_name is
+        // the disambiguating sublabel (falls back to the store). Ordered by
+        // impersonation_score so the most-suspicious listing surfaces first.
+        // No status filter — a staff user searching an app name wants it
+        // whether it's official or an impersonation. Never touches threats.
+        session.prepare(
+          `SELECT brand_id, app_name, developer_name, store
+             FROM app_store_listings
+            WHERE app_name LIKE ? ESCAPE '\\'
+            ORDER BY impersonation_score DESC
+            LIMIT ?`,
+        ).bind(prefix, perGroup).all<{
+          brand_id: string; app_name: string; developer_name: string | null; store: string | null;
+        }>().catch(() => ({ results: [] as Array<{ brand_id: string; app_name: string; developer_name: string | null; store: string | null }> })),
       ]);
 
       return {
@@ -168,6 +192,16 @@ export async function handleUnifiedSearch(request: Request, env: Env): Promise<R
           id: r.id,
           label: r.name,
           sublabel: r.status ?? null,
+        })),
+        // id is the OWNING brand_id (not the listing PK): reserved for a
+        // future brand-apps deep-link. No per-listing view + no 'apps' tab on
+        // BrandDetail today, so the palette routes app hits to /apps. label
+        // stays the app name.
+        app_store: appStoreRows.results.map((r) => ({
+          type: "app_store" as const,
+          id: r.brand_id,
+          label: r.app_name,
+          sublabel: r.developer_name ?? r.store ?? null,
         })),
       };
     });

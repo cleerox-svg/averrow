@@ -13,7 +13,7 @@
 // PR3's scoring populates and PR5's candidates accumulate.
 
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip } from 'recharts';
 import { useAuth } from '@/lib/auth';
 import { useBrandStats } from '@/hooks/useBrands';
@@ -56,11 +56,17 @@ type V3Tab = typeof V3_TABS[number]['id'];
 export function BrandsV3() {
   const { user } = useAuth();
   const isStaff = !!user && STAFF_ROLES.has(user.role);
+  const [searchParams] = useSearchParams();
+  // ?q= lets the command palette's "view all" pivot land here pre-filtered
+  // (Tier-2) — jump straight to the searchable "All Brands" tab instead of
+  // the default Intel tab, and seed BrandsGrid's search box + query.
+  const initialQuery = searchParams.get('q') ?? '';
 
   // Default Option A: Intel for everyone (per design decision in
-  // earlier conversation). Tenants see catalog-level intel filtered
-  // to their org_brands binding via the underlying handler scope.
-  const [activeTab, setActiveTab] = useState<V3Tab>('intel');
+  // earlier conversation), unless a ?q= deep-link wants the searchable
+  // grid instead. Tenants see catalog-level intel filtered to their
+  // org_brands binding via the underlying handler scope.
+  const [activeTab, setActiveTab] = useState<V3Tab>(initialQuery ? 'all' : 'intel');
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -94,7 +100,7 @@ export function BrandsV3() {
       </div>
 
       {activeTab === 'intel' && <IntelTab isStaff={isStaff} />}
-      {activeTab === 'all' && <BrandsGrid />}
+      {activeTab === 'all' && <BrandsGrid initialQuery={initialQuery} />}
       {activeTab === 'prospects' && isStaff && <ProspectsTab />}
     </div>
   );

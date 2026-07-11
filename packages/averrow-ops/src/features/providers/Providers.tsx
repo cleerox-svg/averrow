@@ -788,7 +788,10 @@ export function Providers() {
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('active_threats');
-  const [search, setSearch] = useState('');
+  // ?q= lets the command palette's "view all" pivot land here pre-filtered
+  // (Tier-2) — useProviders already sends `search` through as `q`, so this
+  // only needed a seed; read once as the initial value.
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);

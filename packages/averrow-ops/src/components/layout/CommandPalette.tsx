@@ -6,8 +6,8 @@
 //   1. Static nav commands (unchanged, instant, client-side filtered) — a
 //      flat list of navigation destinations supplied by ShellV4.
 //   2. Live data search (T3/T4) — brands / threat actors / providers /
-//      campaigns from GET /api/search, rendered below the nav matches once
-//      the query is >=2 chars, via useGlobalSearch.
+//      campaigns / app-store listings from GET /api/search, rendered below
+//      the nav matches once the query is >=2 chars, via useGlobalSearch.
 //
 // Fully keyboard driven: ↑/↓ to move across BOTH sources, Enter to go
 // (or jump to "View all results" for a data group), Esc to close.
@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, CornerDownLeft, Loader2, Building2, Network, Server, Megaphone, ArrowRight } from 'lucide-react';
+import { Search, CornerDownLeft, Loader2, Building2, Network, Server, Megaphone, Smartphone, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useGlobalSearch, type SearchResultType } from '@/hooks/useGlobalSearch';
 
@@ -45,26 +45,33 @@ function scoreMatch(cmd: PaletteCommand, q: string): boolean {
 }
 
 // Data-group display config, in the fixed render order BRANDS → THREAT
-// ACTORS → PROVIDERS → CAMPAIGNS. `routeFor` is the destination for
-// selecting an individual row; `viewAllTo` is the "view all" row target.
+// ACTORS → PROVIDERS → CAMPAIGNS → APPS. `routeFor` is the destination for
+// selecting an individual row; `viewAllTo` builds the "view all" row target
+// from the current query.
 //
-// NONE of /brands, /threat-actors, /providers, /campaigns currently read a
-// `?q=` search param (verified against Brands.tsx / ThreatActors.tsx /
-// Providers.tsx / Campaigns.tsx — only `?focus=` is wired, for
-// deep-linking a single entity). "View all" therefore routes to the bare
-// list rather than a `?q=` that would silently do nothing. Wiring those
-// list pages to read `?q=` is later-tier work.
+// /brands, /threat-actors, /providers, /campaigns all read `?q=` now (Tier-2
+// — see Brands.tsx/BrandsGrid.tsx, ThreatActors.tsx, Providers.tsx,
+// Campaigns.tsx) and seed their list/search state from it, so "view all"
+// carries the query through instead of landing on the bare list.
+//
+// app_store has no working per-brand/per-listing destination yet: there is no
+// per-listing view, and BrandDetail's V3_TABS has no 'apps' tab (so
+// /brands/:id?tab=apps silently falls back to Surface). Until a real apps
+// destination exists, both routeFor and viewAllTo go to the cross-brand
+// /apps overview — the honest, working landing. The /api/search result's
+// `id` is the owning brand_id (reserved for a future brand-apps deep-link).
 const DATA_GROUPS: Array<{
   type: SearchResultType;
   heading: string;
   icon: LucideIcon;
   routeFor: (id: string) => string;
-  viewAllTo: string;
+  viewAllTo: (q: string) => string;
 }> = [
-  { type: 'brand', heading: 'BRANDS', icon: Building2, routeFor: id => `/brands/${id}`, viewAllTo: '/brands' },
-  { type: 'threat_actor', heading: 'THREAT ACTORS', icon: Network, routeFor: id => `/threat-actors?focus=${id}`, viewAllTo: '/threat-actors' },
-  { type: 'provider', heading: 'PROVIDERS', icon: Server, routeFor: id => `/providers?focus=${id}`, viewAllTo: '/providers' },
-  { type: 'campaign', heading: 'CAMPAIGNS', icon: Megaphone, routeFor: id => `/campaigns/${id}`, viewAllTo: '/campaigns' },
+  { type: 'brand', heading: 'BRANDS', icon: Building2, routeFor: id => `/brands/${id}`, viewAllTo: q => `/brands?q=${encodeURIComponent(q)}` },
+  { type: 'threat_actor', heading: 'THREAT ACTORS', icon: Network, routeFor: id => `/threat-actors?focus=${id}`, viewAllTo: q => `/threat-actors?q=${encodeURIComponent(q)}` },
+  { type: 'provider', heading: 'PROVIDERS', icon: Server, routeFor: id => `/providers?focus=${id}`, viewAllTo: q => `/providers?q=${encodeURIComponent(q)}` },
+  { type: 'campaign', heading: 'CAMPAIGNS', icon: Megaphone, routeFor: id => `/campaigns/${id}`, viewAllTo: q => `/campaigns?q=${encodeURIComponent(q)}` },
+  { type: 'app_store', heading: 'APPS', icon: Smartphone, routeFor: () => '/apps', viewAllTo: () => '/apps' },
 ];
 
 const MAX_ROWS_PER_GROUP = 5;
@@ -90,7 +97,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const { brands, threatActors, providers, campaigns, isLoading } = useGlobalSearch(query);
+  const { brands, threatActors, providers, campaigns, appStore, isLoading } = useGlobalSearch(query);
 
   // reset state each time the palette opens
   useEffect(() => {
@@ -111,11 +118,12 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
     threat_actor: threatActors,
     provider: providers,
     campaign: campaigns,
+    app_store: appStore,
   };
   // The single combined, ordered list that keyboard nav + rendering both
   // walk: nav matches first (unchanged mechanism), then each data group's
   // rows + trailing "view all" row, in BRANDS / THREAT ACTORS / PROVIDERS /
-  // CAMPAIGNS order.
+  // CAMPAIGNS / APPS order.
   const flat: FlatEntry[] = useMemo(() => {
     const navFiltered = commands.filter(c => scoreMatch(c, trimmedQuery.toLowerCase()));
     const entries: FlatEntry[] = navFiltered.map(cmd => ({
@@ -144,13 +152,13 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
         heading: group.heading,
         icon: ArrowRight,
         label: `View all results for “${trimmedQuery}”`,
-        to: group.viewAllTo,
+        to: group.viewAllTo(trimmedQuery),
         viewAll: true,
       });
     }
     return entries;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commands, trimmedQuery, dataSectionActive, brands, threatActors, providers, campaigns]);
+  }, [commands, trimmedQuery, dataSectionActive, brands, threatActors, providers, campaigns, appStore]);
 
   // keep the active index in range: reset to top on every new query, then
   // clamp down (never up) as the data-driven tail streams in/out.

@@ -82,15 +82,18 @@ interface ThreatActorDetail extends ThreatActor {
   news_mentions: NewsMention[];
 }
 
-export function useThreatActors(options?: { country?: string; status?: string; affiliation?: string }) {
-  const { country, status, affiliation } = options || {};
+export function useThreatActors(options?: { country?: string; status?: string; affiliation?: string; search?: string }) {
+  const { country, status, affiliation, search } = options || {};
   return useQuery({
-    queryKey: ['threat-actors', country, status, affiliation],
+    queryKey: ['threat-actors', country, status, affiliation, search],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (country) params.set('country', country);
       if (status) params.set('status', status);
       if (affiliation) params.set('affiliation', affiliation);
+      // handleListThreatActors matches name/aliases/description — lets
+      // ThreatActors.tsx filter on arrival for a ?q= deep-link.
+      if (search) params.set('q', search);
       const qs = params.toString();
       const res = await api.get<ThreatActor[]>(`/api/threat-actors${qs ? `?${qs}` : ''}`);
       return res.data ?? [];
