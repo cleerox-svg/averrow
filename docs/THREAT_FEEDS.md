@@ -1,6 +1,6 @@
 # Threat Feed Integrations
 
-Trust Radar ingests threat intelligence from ~38 external feeds split across three categories: **ingest feeds** (25) that create new threat records, **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
+Trust Radar ingests threat intelligence from ~48 external feeds split across three categories: **ingest feeds** (35) that create new threat records (two of these — CISA KEV and NVD CVE — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
 
 ## Source Files
 
@@ -79,7 +79,9 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one of three maps: `feedModules` (ingest), `socialModules`, or `enrichmentModules`. The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 35 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+
+**Cadence:** every ingest/social feed and 7 of the 9 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is gated by its own `feed_configs.interval_minutes` row in D1, not by a static per-feed cron. Two enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h) and **SecLookup** (`21 * * * *`, hourly) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts:164`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) — see `CLAUDE.md §6` for the full rationale and cron table.
 
 ### Ingest Feeds — Phishing
 
@@ -88,8 +90,11 @@ All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one o
 | **PhishTank** | `phishtank.ts` | Community-sourced | Verified phishing URLs via CIRCL API |
 | **OpenPhish** | `openphish.ts` | Automated detection | Machine-detected phishing URLs |
 | **PhishDestroy** | `phishdestroy.ts` | Takedown service | Active phishing sites |
+| **PhishStats** | `phishstats.ts` | Community-sourced | Public phishing URL feed, score 0-10 mapped to severity |
+| **urlscan.io** | `urlscanio.ts` | Public URL scanner | Recently-flagged-malicious public submissions (no auth, ~1/hr) |
+| **CryptoScamDB** | `cryptoscamdb.ts` | Community-maintained | Crypto/web3 phishing + fake-exchange scam URLs |
 
-> **Removed 2026-03:** PhishStats (upstream dead — 522/404). Do not re-add.
+> **PhishStats history:** removed 2026-03 (upstream dead — 522/404), then re-added as part of the Tier-A OSINT-expansion volume adds (`feeds/index.ts:56,119`) once the endpoint came back up. Currently registered and active — do not treat the old removal note as current.
 
 ### Ingest Feeds — Malware
 
@@ -113,22 +118,27 @@ All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one o
 | **Spamhaus DROP** | `spamhausDrop.ts` | Spamhaus | Bulk hijacked / criminal netblocks |
 | **Tor Exit Nodes** | `torExitNodes.ts` | Tor Project | Current exit node list (tagged, not inherently malicious) |
 | **Emerging Threats** | `emergingThreats.ts` | Proofpoint ET | Compromised IPs rule set |
+| **DataPlane** | `dataplane.ts` | dataplane.org | First-party honeypot mesh; rotates 1 of 6 attack-category lists per hourly tick (`hour % 6`) |
+| **Talos IPs** | `talos_ips.ts` | Cisco Talos | Snort community IP blocklist (daily-refreshed, plain-text) |
 
 ### Ingest Feeds — Vulnerability / Campaign Intelligence
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **CISA KEV** | `cisa_kev.ts` | US CISA | Known exploited vulnerabilities |
+| **CISA KEV** | `cisa_kev.ts` | US CISA | Known exploited vulnerabilities — writes an insight digest to `agent_outputs`, not `threats` |
+| **NVD CVE** | `nvd_cve.ts` | NIST NVD | Full CVE 2.0 catalog, sliding 24h window of newly-published CVEs — also writes an insight digest to `agent_outputs`, not `threats` (a CVE isn't an IP/URL/domain IOC) |
 | **CISA Iran IOCs** | `cisa_iran_iocs.ts` | US CISA | Iran-related campaign IOCs |
 
 ### Ingest Feeds — Domains / Certificates
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **CertStream** | `certstream.ts` | Certificate Transparency | Real-time CT log monitoring (Durable Object) |
+| **CertStream** (`ct_logs`) | `certstream.ts` | crt.sh REST API | Polls crt.sh for recently-issued certs matching one rotating brand/phishing keyword per 15-minute window (`certstream.ts:53`) — **not** a WebSocket/Durable Object despite the name |
 | **NRD Hagezi** | `nrd_hagezi.ts` | Hagezi | Newly registered domains |
 | **Typosquat Scanner** | `typosquat_scanner.ts` | Internal | Per-brand lookalike domain generator + registration check |
 | **Disposable Email** | `disposableEmail.ts` | disposable-email-domains | Disposable / throwaway email domain list |
+
+> **Not the same component as `/api/certstream/*`:** a genuinely separate, DO-backed real-time monitor also exists — `CertStreamMonitor` (`durableObjects/CertStreamMonitor.ts`), bound as `CERTSTREAM_MONITOR`, holding a persistent WebSocket to `certstream.calidog.io` and flushing matches to `threats` (`source_feed='certstream'`) every 30s via alarm. It is health-checked every orchestrator tick (`agents/flightControl.ts:1573`, restarts on disconnect) and exposed at `GET /api/certstream/stats` / `POST /api/certstream/reload-brands` (see `docs/API_REFERENCE.md`). It runs independently of `feed_configs`/`feedModules` — it is not part of this registry table, has its own `feed_status` row (`feed_name='certstream'`), and is a distinct feed from the `ct_logs` row above.
 
 ### Ingest Feeds — Cloudflare
 
@@ -141,7 +151,18 @@ All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one o
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **OTX AlienVault** | `otx_alienvault.ts` | AlienVault | Open Threat Exchange pulses |
+| **OTX AlienVault** | `otx_alienvault.ts` | AlienVault | Open Threat Exchange pulses via direct REST; also persists pulse-level `threat_actors` / `threat_attributions` |
+| **TAXII: OTX** (`taxii_otx`) | `taxii.ts` | AlienVault (via TAXII 2.1) | Generic STIX/TAXII 2.1 collection consumer, currently subscribed to one OTX collection; multi-page draining with per-page cursor commits. Distinct transport from `otx_alienvault` above — same upstream, different pull path (`lib/taxii-client.ts` + `lib/stix-parser.ts`) |
+| **DigitalSide OSINT** | `digitalside_osint.ts` | DigitalSide.it | Three plain-text IOC lists (URLs, IPs, domains) fanned out from one module |
+| **TweetFeed** | `tweetfeed.ts` | tweetfeed.live | Researcher-curated IOCs aggregated from 90+ infosec accounts on X, refreshed every 15 min upstream |
+
+### Ingest Feeds — Advisory / Named-Threat Catalog
+
+This feed does not write to `threats` at all — it populates a different catalog entirely.
+
+| Feed | File | Source | Description |
+|------|------|--------|-------------|
+| **Advisories** | `advisories.ts` | US CISA (+ CISA/FBI joint) advisories RSS/Atom | Extracts NAMED threats (PhaaS kits, malware families, campaigns) into the `named_threats` catalog (migration 0204) via a keyword pre-filter + capped Haiku extraction, so incoming indicators can later be identified by name (`lib/named-threat-matcher.ts`) |
 
 ### Social Feeds
 
