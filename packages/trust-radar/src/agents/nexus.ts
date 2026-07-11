@@ -8,7 +8,8 @@
  * SQL does correlation. AI does narrative. Never pay AI to do what GROUP BY can do.
  *
  * Lane run-order precedence (MOST-SPECIFIC FIRST — first lane to claim a
- * threat wins, because every stamping UPDATE carries `cluster_id IS NULL`):
+ * threat wins, because every stamping write carries a `cluster_id IS NULL`
+ * guard):
  *   per-IP fan-out → /24 subnet → registrar cohort → ASN (mops up leftovers).
  * The ASN pass therefore executes LAST in this function even though it is
  * the oldest lane. Do not move it back above the specific lanes.
