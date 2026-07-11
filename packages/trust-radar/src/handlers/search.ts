@@ -28,8 +28,10 @@
 //   - Reads go through a read-replica session (getReadSession).
 //   - The whole grouped result is memoized in KV for ~90s per query.
 //
-// This supersedes the super_admin-only /api/admin/brands/search,
-// which JOINed threats for a count already available as a column.
+// This supersedes the super_admin-only /api/admin/brands/search for
+// type-ahead/palette use; that endpoint remains live as the legacy
+// org-assignment picker and now also reads brands.threat_count directly
+// (no threats JOIN).
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession } from "../lib/db";

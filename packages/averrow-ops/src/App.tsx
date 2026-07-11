@@ -63,6 +63,7 @@ const Notifications = React.lazy(() => import('@/features/settings/Notifications
 const NotificationPreferences = React.lazy(() => import('@/features/settings/NotificationPreferences').then(m => ({ default: m.NotificationPreferences })));
 const Observatory = React.lazy(() => import('@/features/observatory/Observatory').then(m => ({ default: m.Observatory })));
 const ObservatoryV3 = React.lazy(() => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 })));
+const SearchResults = React.lazy(() => import('@/features/search/SearchResults').then(m => ({ default: m.SearchResults })));
 
 function RouteLoader() {
   return (
@@ -169,6 +170,11 @@ export default function App() {
             routes below stay live for deep links / pivots. */}
         <Route path="explore" element={lazyRoute(<ExploreWorkspace />)} />
         <Route path="coverage" element={lazyRoute(<CoverageWorkspace />)} />
+        {/* Persistent, shareable cross-entity search results (?q=) — the
+            ⌘K command palette's "Search everything for…" escalation row
+            lands here. See features/search/searchRouting.ts for the
+            shared per-type routing table. */}
+        <Route path="search" element={lazyRoute(<SearchResults />)} />
         <Route path="admin/operations" element={lazyRoute(<OperationsWorkspace />)} />
         <Route path="admin/governance" element={lazyRoute(<GovernanceWorkspace />)} />
         <Route path="admin/platform-users" element={lazyRoute(<PlatformUsers />)} />

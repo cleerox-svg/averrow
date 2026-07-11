@@ -66,6 +66,15 @@ export function useGlobalSearch(q: string) {
       const res = await api.get<GlobalSearchResponse>(
         `/api/search?q=${encodeURIComponent(debouncedQ)}&limit=8`,
       );
+      // A `success:false` envelope (backend caught an internal error) is
+      // otherwise indistinguishable from "no matches" once it collapses to
+      // EMPTY_RESPONSE below — throw so TanStack Query's isError actually
+      // reflects it. A missing `data` field on a success:true envelope is
+      // NOT an error (nothing to search yet / genuinely empty groups) and
+      // still falls back to EMPTY_RESPONSE.
+      if (!res.success) {
+        throw new Error(res.error ?? 'Search failed');
+      }
       return res.data ?? EMPTY_RESPONSE;
     },
     enabled,
@@ -83,5 +92,9 @@ export function useGlobalSearch(q: string) {
     // Only meaningful once the term clears the 2-char gate — a shorter
     // term never fires a request, so it's never "loading".
     isLoading: enabled && query.isFetching,
+    // Genuine fetch/backend failure (network error or success:false),
+    // distinct from "no matches yet". Consumers that don't care (the
+    // palette) can keep ignoring it — data still degrades to empty groups.
+    isError: enabled && query.isError,
   };
 }

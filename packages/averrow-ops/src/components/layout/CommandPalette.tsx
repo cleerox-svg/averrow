@@ -17,9 +17,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, CornerDownLeft, Loader2, Building2, Network, Server, Megaphone, Smartphone, ArrowRight } from 'lucide-react';
+import { Search, CornerDownLeft, Loader2, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useGlobalSearch, type SearchResultType } from '@/hooks/useGlobalSearch';
+import { SEARCH_GROUPS, searchPageUrl } from '@/features/search/searchRouting';
 
 export interface PaletteCommand {
   label: string;
@@ -47,32 +48,9 @@ function scoreMatch(cmd: PaletteCommand, q: string): boolean {
 // Data-group display config, in the fixed render order BRANDS → THREAT
 // ACTORS → PROVIDERS → CAMPAIGNS → APPS. `routeFor` is the destination for
 // selecting an individual row; `viewAllTo` builds the "view all" row target
-// from the current query.
-//
-// /brands, /threat-actors, /providers, /campaigns all read `?q=` now (Tier-2
-// — see Brands.tsx/BrandsGrid.tsx, ThreatActors.tsx, Providers.tsx,
-// Campaigns.tsx) and seed their list/search state from it, so "view all"
-// carries the query through instead of landing on the bare list.
-//
-// app_store has no working per-brand/per-listing destination yet: there is no
-// per-listing view, and BrandDetail's V3_TABS has no 'apps' tab (so
-// /brands/:id?tab=apps silently falls back to Surface). Until a real apps
-// destination exists, both routeFor and viewAllTo go to the cross-brand
-// /apps overview — the honest, working landing. The /api/search result's
-// `id` is the owning brand_id (reserved for a future brand-apps deep-link).
-const DATA_GROUPS: Array<{
-  type: SearchResultType;
-  heading: string;
-  icon: LucideIcon;
-  routeFor: (id: string) => string;
-  viewAllTo: (q: string) => string;
-}> = [
-  { type: 'brand', heading: 'BRANDS', icon: Building2, routeFor: id => `/brands/${id}`, viewAllTo: q => `/brands?q=${encodeURIComponent(q)}` },
-  { type: 'threat_actor', heading: 'THREAT ACTORS', icon: Network, routeFor: id => `/threat-actors?focus=${id}`, viewAllTo: q => `/threat-actors?q=${encodeURIComponent(q)}` },
-  { type: 'provider', heading: 'PROVIDERS', icon: Server, routeFor: id => `/providers?focus=${id}`, viewAllTo: q => `/providers?q=${encodeURIComponent(q)}` },
-  { type: 'campaign', heading: 'CAMPAIGNS', icon: Megaphone, routeFor: id => `/campaigns/${id}`, viewAllTo: q => `/campaigns?q=${encodeURIComponent(q)}` },
-  { type: 'app_store', heading: 'APPS', icon: Smartphone, routeFor: () => '/apps', viewAllTo: () => '/apps' },
-];
+// from the current query. Shared with the persistent /search results page
+// via features/search/searchRouting.ts so the two surfaces can't diverge.
+const DATA_GROUPS = SEARCH_GROUPS;
 
 const MAX_ROWS_PER_GROUP = 5;
 
@@ -156,6 +134,17 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
         viewAll: true,
       });
     }
+    // Escalation row — pivots off the ephemeral overlay (capped at 5/group)
+    // onto the persistent, shareable /search results page for the same
+    // query. Always trails the per-group "view all" rows.
+    entries.push({
+      key: 'search-everything',
+      heading: 'ALL RESULTS',
+      icon: ArrowRight,
+      label: `Search everything for “${trimmedQuery}” →`,
+      to: searchPageUrl(trimmedQuery),
+      viewAll: true,
+    });
     return entries;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commands, trimmedQuery, dataSectionActive, brands, threatActors, providers, campaigns, appStore]);
