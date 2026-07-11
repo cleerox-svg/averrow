@@ -74,8 +74,9 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
         registrar, status, confidence_score, campaign_id, ioc_value, severity,
         is_private_ip, technique, named_threat_id,
+        ssl_cert_serial, ssl_cert_issuer, ssl_san_hash,
         first_seen, last_seen, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              datetime('now'), datetime('now'), datetime('now'))`
   ).bind(
     threat.id,
@@ -97,6 +98,9 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
     isPrivateIp,
     threat.technique ?? null,
     threat.named_threat_id ?? null,
+    threat.ssl_cert_serial ?? null,
+    threat.ssl_cert_issuer ?? null,
+    threat.ssl_san_hash ?? null,
   ).run();
   return (result.meta?.changes ?? 0) > 0;
 }

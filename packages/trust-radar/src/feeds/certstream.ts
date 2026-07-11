@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId, extractDomain } from "./types";
 import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { computeSanHash } from "../lib/ssl-cert-identity";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { createNotification } from "../lib/notifications";
 import { isKnownBrandDomain, calculateSuspicionScore } from "../lib/threatScoring";
@@ -129,6 +130,15 @@ export const certstream: FeedModule = {
         const domain = cert.common_name ?? cert.name_value?.split("\n")[0];
         if (!domain) continue;
 
+        // Cert identity retention (NEXUS Lane C). crt.sh returns the SAN
+        // set as a newline-joined string in name_value; hash it with the
+        // same shared helper the calidog source uses so a cert seen via
+        // either path keys identically. serial + issuer stored as-is.
+        const sanList = cert.name_value ? cert.name_value.split("\n") : [];
+        const sslSanHash = await computeSanHash(sanList);
+        const sslCertSerial = cert.serial_number ?? null;
+        const sslCertIssuer = cert.issuer_name ?? null;
+
         // Skip domains in the safe/owned allowlist
         if (isSafeDomain(domain, safeSet)) continue;
 
@@ -161,6 +171,9 @@ export const certstream: FeedModule = {
             ioc_value: domain,
             severity: confidence >= 60 ? "high" : "medium",
             confidence_score: confidence,
+            ssl_cert_serial: sslCertSerial,
+            ssl_cert_issuer: sslCertIssuer,
+            ssl_san_hash: sslSanHash,
           });
           await markSeen(ctx.env, "domain", domain);
           itemsNew++;
@@ -190,6 +203,9 @@ export const certstream: FeedModule = {
           ioc_value: domain,
           severity: "medium",
           confidence_score: 65,
+          ssl_cert_serial: sslCertSerial,
+          ssl_cert_issuer: sslCertIssuer,
+          ssl_san_hash: sslSanHash,
         });
         await markSeen(ctx.env, "domain", domain);
         itemsNew++;

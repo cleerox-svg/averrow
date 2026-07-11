@@ -8,6 +8,7 @@
  */
 
 import type { Env } from '../types';
+import { computeSanHash } from '../lib/ssl-cert-identity';
 
 interface CertStreamMessage {
   message_type: 'certificate_update' | 'heartbeat';
@@ -33,6 +34,8 @@ interface CertStreamMessage {
 interface PendingMatch {
   domain: string;
   allDomains: string;
+  sanDomains: string[];
+  serialNumber: string;
   issuer: string;
   fingerprint: string;
   source: string;
@@ -192,6 +195,10 @@ export class CertStreamMonitor {
           this.pendingMatches.push({
             domain: lowerDomain,
             allDomains: domains.join(', '),
+            // Raw SAN set for the Lane C hash — keep the array so
+            // computeSanHash() derives identically to the crt.sh source.
+            sanDomains: domains,
+            serialNumber: msg.data.leaf_cert.serial_number || '',
             issuer: msg.data.leaf_cert.issuer?.O || msg.data.leaf_cert.issuer?.CN || 'unknown',
             fingerprint: msg.data.leaf_cert.fingerprint,
             source: msg.data.source?.name || 'unknown',
@@ -335,12 +342,20 @@ export class CertStreamMonitor {
 
     try {
       const db = this.env.DB;
-      const stmts = matches.map((m) =>
+      // Pre-compute Lane C SAN hashes (async Web Crypto) before building
+      // the statement batch, index-aligned with `matches`. Same shared
+      // helper the crt.sh source uses so a cert seen via either path
+      // hashes identically.
+      const sanHashes = await Promise.all(
+        matches.map((m) => computeSanHash(m.sanDomains)),
+      );
+      const stmts = matches.map((m, i) =>
         db.prepare(`
           INSERT OR IGNORE INTO threats (
             id, malicious_domain, malicious_url, threat_type, severity,
-            confidence_score, source_feed, first_seen, title, tags
-          ) VALUES (?, ?, ?, ?, ?, ?, 'certstream', datetime('now'), ?, ?)
+            confidence_score, source_feed, first_seen, title, tags,
+            ssl_cert_serial, ssl_cert_issuer, ssl_san_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, 'certstream', datetime('now'), ?, ?, ?, ?, ?)
         `).bind(
           `cs_${crypto.randomUUID().slice(0, 12)}`,
           m.domain,
@@ -359,7 +374,10 @@ export class CertStreamMonitor {
             brand_match: m.brandMatch,
             phish_score: m.phishScore,
             all_domains: m.allDomains,
-          })
+          }),
+          m.serialNumber || null,
+          m.issuer || null,
+          sanHashes[i] ?? null,
         )
       );
 
