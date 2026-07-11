@@ -43,6 +43,11 @@ export interface ThreatRow {
   severity?: "critical" | "high" | "medium" | "low" | "info" | null;
   technique?: string | null;        // finer-grained TTP, e.g. 'device_code_phishing' (migration 0205)
   named_threat_id?: string | null;  // link to named_threats catalog (migration 0204)
+  // SSL certificate identity (migration 0234, NEXUS Lane C). Populated
+  // by the two CT sources; NULL for every non-cert feed.
+  ssl_cert_serial?: string | null;  // cert serial number as reported by the source
+  ssl_cert_issuer?: string | null;  // issuer O/CN (or fingerprint from calidog)
+  ssl_san_hash?: string | null;     // sha256 hex of the normalized SAN set — computeSanHash()
 }
 
 /** Helper to generate a deterministic ID from source + IOC to prevent duplicates */

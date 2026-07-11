@@ -10,9 +10,11 @@
  * Lane run-order precedence (MOST-SPECIFIC FIRST — first lane to claim a
  * threat wins, because every stamping write carries a `cluster_id IS NULL`
  * guard):
- *   per-IP fan-out → /24 subnet → registrar cohort → ASN (mops up leftovers).
- * The ASN pass therefore executes LAST in this function even though it is
- * the oldest lane. Do not move it back above the specific lanes.
+ *   cert-serial → cert-SAN → per-IP fan-out → /24 subnet →
+ *   registrar cohort → ASN (mops up leftovers).
+ * The cert lanes are the most specific (shared certificate identity is
+ * near-conclusive same-operator evidence) so they run FIRST; the ASN pass
+ * executes LAST even though it is the oldest lane. Do not reorder.
  *
  * Outputs:
  * - infrastructure_clusters table rows
@@ -303,11 +305,253 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   }
 
   // ══ Threats-table lanes, most-specific first ══════════════════════
-  // The four passes below all stamp threats.cluster_id with the
+  // The six passes below all stamp threats.cluster_id with the
   // `cluster_id IS NULL` guard, so RUN ORDER is precedence: whichever
   // lane claims a threat first owns it. Order is deliberately:
-  //   per-IP fan-out → /24 subnet → registrar cohort → ASN (last).
-  // Keep it that way.
+  //   cert-serial → cert-SAN → per-IP fan-out → /24 subnet →
+  //   registrar cohort → ASN (last).
+  // Keep it that way. The cert lanes are the MOST specific (a shared
+  // certificate identity is near-conclusive same-operator evidence), so
+  // they run FIRST and the coarser lanes only mop up what's left.
+
+  // --- Lane C1: SSL cert-serial clustering (2026-07 threat-intel spec) ---
+  //
+  // One certificate serial reused across >= 2 impersonation domains is
+  // among the strongest same-operator signals there is — a serial is
+  // minted per issuance, so reuse means the same requester. Cluster on
+  // the serial ALONE (never on issuer: Let's Encrypt issues to every
+  // phishing domain on earth — that is the ASN over-merge trap reborn).
+  //
+  // Filter mirrors lanes A/B: active + non-null/non-empty key +
+  // target_brand_id NOT NULL (so threat_count parity + brand fan-out are
+  // consistent). HAVING floor is >= 2 distinct malicious_domain. No
+  // upper over-merge cap — a serial genuinely reused across 500 domains
+  // IS one operator, so we keep every qualifying group. Pure SQL, no AI.
+  // Runs FIRST so the stamp claims these before any coarser lane.
+  try {
+    const certSerialClusters = await db.prepare(`
+      SELECT ssl_cert_serial,
+             COUNT(*)                               AS threat_count,
+             COUNT(DISTINCT malicious_domain)       AS domain_count,
+             COUNT(DISTINCT target_brand_id)        AS brand_count,
+             GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+             GROUP_CONCAT(DISTINCT asn)             AS asns,
+             GROUP_CONCAT(DISTINCT country_code)    AS countries,
+             GROUP_CONCAT(DISTINCT threat_type)     AS attack_types,
+             MAX(ssl_cert_issuer)                   AS issuer,
+             MIN(first_seen)                        AS first_seen,
+             MAX(first_seen)                        AS last_seen
+        FROM threats
+       WHERE status = 'active'
+         AND ssl_cert_serial IS NOT NULL
+         AND ssl_cert_serial != ''
+         AND target_brand_id IS NOT NULL
+       GROUP BY ssl_cert_serial
+      HAVING COUNT(DISTINCT malicious_domain) >= 2
+       ORDER BY brand_count DESC, threat_count DESC
+       LIMIT 50
+    `).all<{
+      ssl_cert_serial: string;
+      threat_count: number;
+      domain_count: number;
+      brand_count: number;
+      brand_ids: string | null;
+      asns: string | null;
+      countries: string | null;
+      attack_types: string | null;
+      issuer: string | null;
+      first_seen: string;
+      last_seen: string;
+    }>();
+
+    for (const row of certSerialClusters.results) {
+      const clusterId = `cluster_cert_${slugifyKey(row.ssl_cert_serial)}`;
+      const clusterName =
+        `SSL cert ${row.ssl_cert_serial.slice(0, 24)} reuse (${row.brand_count} brands, ${row.domain_count} domains)`;
+      const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+      const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+      const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+      const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+      // HIGH confidence: serial reuse is a top-tier infra signal. 80 base
+      // + brand fan-out bonus, capped 100. No upper cap on group size.
+      const confidence = Math.min(100,
+        80 + (row.brand_count >= 10 ? 20 : row.brand_count >= 5 ? 10 : 5),
+      );
+
+      try {
+        await db.prepare(`
+          INSERT INTO infrastructure_clusters (
+            id, cluster_name, asns, countries, attack_types, brand_ids,
+            campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+            first_detected, last_seen, status, agent_notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            asns = excluded.asns,
+            countries = excluded.countries,
+            attack_types = excluded.attack_types,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
+        `).bind(
+          clusterId,
+          clusterName,
+          JSON.stringify(asns),
+          JSON.stringify(countries),
+          JSON.stringify(attackTypes),
+          JSON.stringify(brandIds),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          row.threat_count,
+          confidence,
+          row.first_seen,
+          row.last_seen,
+          JSON.stringify({
+            cluster_type: 'ssl_cert_serial',
+            ssl_cert_serial: row.ssl_cert_serial,
+            ssl_cert_issuer: row.issuer,
+            brands_targeted: row.brand_count,
+            domains_count: row.domain_count,
+            threats_count: row.threat_count,
+          }),
+        ).run();
+        clustersWritten++;
+
+        // MANDATORY member stamp — predicate MIRRORS the SELECT filter
+        // exactly (the parity bug caught in lanes A/B). cluster_id IS NULL
+        // means coarser lanes only claim what this lane leaves behind.
+        await db.prepare(
+          `UPDATE threats SET cluster_id = ?
+            WHERE ssl_cert_serial = ? AND status = 'active'
+              AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+        ).bind(clusterId, row.ssl_cert_serial).run();
+      } catch (err) {
+        console.warn(
+          `[nexus] cert-serial cluster upsert failed for ${row.ssl_cert_serial}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[nexus] cert-serial pass skipped:', err instanceof Error ? err.message : String(err));
+  }
+
+  // --- Lane C2: SSL SAN-set clustering (2026-07 threat-intel spec) ---
+  //
+  // One SAN set (hashed cross-source-consistently at ingest into
+  // ssl_san_hash) reused across >= 2 impersonation domains means the same
+  // cert template was minted for multiple domains — same operator. Runs
+  // AFTER the serial pass so a serial-identified cluster keeps its tighter
+  // grouping; this lane mops up SAN-set matches the serial pass didn't
+  // claim (cluster_id IS NULL stamp guard). Same filters, floor, and HIGH
+  // confidence as C1. Pure SQL, no AI.
+  try {
+    const certSanClusters = await db.prepare(`
+      SELECT ssl_san_hash,
+             COUNT(*)                               AS threat_count,
+             COUNT(DISTINCT malicious_domain)       AS domain_count,
+             COUNT(DISTINCT target_brand_id)        AS brand_count,
+             GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+             GROUP_CONCAT(DISTINCT asn)             AS asns,
+             GROUP_CONCAT(DISTINCT country_code)    AS countries,
+             GROUP_CONCAT(DISTINCT threat_type)     AS attack_types,
+             MAX(ssl_cert_issuer)                   AS issuer,
+             MIN(first_seen)                        AS first_seen,
+             MAX(first_seen)                        AS last_seen
+        FROM threats
+       WHERE status = 'active'
+         AND ssl_san_hash IS NOT NULL
+         AND ssl_san_hash != ''
+         AND target_brand_id IS NOT NULL
+       GROUP BY ssl_san_hash
+      HAVING COUNT(DISTINCT malicious_domain) >= 2
+       ORDER BY brand_count DESC, threat_count DESC
+       LIMIT 50
+    `).all<{
+      ssl_san_hash: string;
+      threat_count: number;
+      domain_count: number;
+      brand_count: number;
+      brand_ids: string | null;
+      asns: string | null;
+      countries: string | null;
+      attack_types: string | null;
+      issuer: string | null;
+      first_seen: string;
+      last_seen: string;
+    }>();
+
+    for (const row of certSanClusters.results) {
+      const clusterId = `cluster_cert_${slugifyKey(row.ssl_san_hash)}`;
+      const clusterName =
+        `SSL SAN-set ${row.ssl_san_hash.slice(0, 12)} reuse (${row.brand_count} brands, ${row.domain_count} domains)`;
+      const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+      const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+      const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+      const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+      const confidence = Math.min(100,
+        80 + (row.brand_count >= 10 ? 20 : row.brand_count >= 5 ? 10 : 5),
+      );
+
+      try {
+        await db.prepare(`
+          INSERT INTO infrastructure_clusters (
+            id, cluster_name, asns, countries, attack_types, brand_ids,
+            campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+            first_detected, last_seen, status, agent_notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            asns = excluded.asns,
+            countries = excluded.countries,
+            attack_types = excluded.attack_types,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
+        `).bind(
+          clusterId,
+          clusterName,
+          JSON.stringify(asns),
+          JSON.stringify(countries),
+          JSON.stringify(attackTypes),
+          JSON.stringify(brandIds),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          row.threat_count,
+          confidence,
+          row.first_seen,
+          row.last_seen,
+          JSON.stringify({
+            cluster_type: 'ssl_san_hash',
+            ssl_san_hash: row.ssl_san_hash,
+            ssl_cert_issuer: row.issuer,
+            brands_targeted: row.brand_count,
+            domains_count: row.domain_count,
+            threats_count: row.threat_count,
+          }),
+        ).run();
+        clustersWritten++;
+
+        // MANDATORY member stamp — predicate MIRRORS the SELECT filter.
+        await db.prepare(
+          `UPDATE threats SET cluster_id = ?
+            WHERE ssl_san_hash = ? AND status = 'active'
+              AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+        ).bind(clusterId, row.ssl_san_hash).run();
+      } catch (err) {
+        console.warn(
+          `[nexus] cert-SAN cluster upsert failed for ${row.ssl_san_hash}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[nexus] cert-SAN pass skipped:', err instanceof Error ? err.message : String(err));
+  }
 
   // --- Lane: Per-IP fan-out clustering (PR-D from 2026-05-16 audit) ---
   //

@@ -42,6 +42,215 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       ).run();
     });
 
+    // Step 1a-i: SSL cert-serial lane (2026-07 threat-intel spec) — the
+    // MOST-specific lane, so it runs FIRST of the threats-stamping lanes.
+    // One certificate serial reused across >= 2 impersonation domains is
+    // near-conclusive same-operator evidence. Cluster on the serial ALONE
+    // (never issuer — Let's Encrypt = every phishing domain, the ASN
+    // over-merge trap). Kept in lockstep with agents/nexus.ts Lane C1.
+    // Retry-idempotent: deterministic id + ON CONFLICT DO UPDATE + the
+    // cluster_id IS NULL stamp. Pure SQL, no AI.
+    const certSerialLane = await step.do('cert-serial-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      const serialClusters = await this.env.DB.prepare(`
+        SELECT ssl_cert_serial,
+               COUNT(*)                               AS threat_count,
+               COUNT(DISTINCT malicious_domain)       AS domain_count,
+               COUNT(DISTINCT target_brand_id)        AS brand_count,
+               GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+               GROUP_CONCAT(DISTINCT asn)             AS asns,
+               GROUP_CONCAT(DISTINCT country_code)    AS countries,
+               GROUP_CONCAT(DISTINCT threat_type)     AS attack_types,
+               MAX(ssl_cert_issuer)                   AS issuer,
+               MIN(first_seen)                        AS first_seen,
+               MAX(first_seen)                        AS last_seen
+          FROM threats
+         WHERE status = 'active'
+           AND ssl_cert_serial IS NOT NULL
+           AND ssl_cert_serial != ''
+           AND target_brand_id IS NOT NULL
+         GROUP BY ssl_cert_serial
+        HAVING COUNT(DISTINCT malicious_domain) >= 2
+         ORDER BY brand_count DESC, threat_count DESC
+         LIMIT 50
+      `).all<{
+        ssl_cert_serial: string;
+        threat_count: number;
+        domain_count: number;
+        brand_count: number;
+        brand_ids: string | null;
+        asns: string | null;
+        countries: string | null;
+        attack_types: string | null;
+        issuer: string | null;
+        first_seen: string;
+        last_seen: string;
+      }>();
+
+      let clustersWritten = 0;
+      for (const row of serialClusters.results) {
+        const clusterId = `cluster_cert_${slugifyKey(row.ssl_cert_serial)}`;
+        const clusterName =
+          `SSL cert ${row.ssl_cert_serial.slice(0, 24)} reuse (${row.brand_count} brands, ${row.domain_count} domains)`;
+        const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+        const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+        const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+        const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+        const confidence = Math.min(100,
+          80 + (row.brand_count >= 10 ? 20 : row.brand_count >= 5 ? 10 : 5),
+        );
+
+        try {
+          await this.env.DB.prepare(`
+            INSERT INTO infrastructure_clusters (
+              id, cluster_name, asns, countries, attack_types, brand_ids,
+              campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+              first_detected, last_seen, status, agent_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              asns = excluded.asns,
+              countries = excluded.countries,
+              attack_types = excluded.attack_types,
+              brand_ids = excluded.brand_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              agent_notes = excluded.agent_notes
+          `).bind(
+            clusterId, clusterName,
+            JSON.stringify(asns),
+            JSON.stringify(countries),
+            JSON.stringify(attackTypes),
+            JSON.stringify(brandIds),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            row.threat_count, confidence,
+            row.first_seen, row.last_seen,
+            JSON.stringify({
+              cluster_type: 'ssl_cert_serial',
+              ssl_cert_serial: row.ssl_cert_serial,
+              ssl_cert_issuer: row.issuer,
+              brands_targeted: row.brand_count,
+              domains_count: row.domain_count,
+              threats_count: row.threat_count,
+            }),
+          ).run();
+          clustersWritten++;
+
+          // MANDATORY stamp — predicate mirrors the SELECT filter exactly.
+          await this.env.DB.prepare(
+            `UPDATE threats SET cluster_id = ?
+              WHERE ssl_cert_serial = ? AND status = 'active'
+                AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+          ).bind(clusterId, row.ssl_cert_serial).run();
+        } catch { continue; }
+      }
+      return { clustersWritten, serialsAnalyzed: serialClusters.results.length };
+    });
+
+    // Step 1a-ii: SSL SAN-set lane — runs after the serial lane so a
+    // serial-identified cluster keeps its tighter grouping; this lane
+    // mops up SAN-set matches (cross-source-consistent ssl_san_hash) the
+    // serial lane didn't claim. Kept in lockstep with agents/nexus.ts
+    // Lane C2. Same filters, floor, HIGH confidence. Pure SQL, no AI.
+    const certSanLane = await step.do('cert-san-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      const sanClusters = await this.env.DB.prepare(`
+        SELECT ssl_san_hash,
+               COUNT(*)                               AS threat_count,
+               COUNT(DISTINCT malicious_domain)       AS domain_count,
+               COUNT(DISTINCT target_brand_id)        AS brand_count,
+               GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+               GROUP_CONCAT(DISTINCT asn)             AS asns,
+               GROUP_CONCAT(DISTINCT country_code)    AS countries,
+               GROUP_CONCAT(DISTINCT threat_type)     AS attack_types,
+               MAX(ssl_cert_issuer)                   AS issuer,
+               MIN(first_seen)                        AS first_seen,
+               MAX(first_seen)                        AS last_seen
+          FROM threats
+         WHERE status = 'active'
+           AND ssl_san_hash IS NOT NULL
+           AND ssl_san_hash != ''
+           AND target_brand_id IS NOT NULL
+         GROUP BY ssl_san_hash
+        HAVING COUNT(DISTINCT malicious_domain) >= 2
+         ORDER BY brand_count DESC, threat_count DESC
+         LIMIT 50
+      `).all<{
+        ssl_san_hash: string;
+        threat_count: number;
+        domain_count: number;
+        brand_count: number;
+        brand_ids: string | null;
+        asns: string | null;
+        countries: string | null;
+        attack_types: string | null;
+        issuer: string | null;
+        first_seen: string;
+        last_seen: string;
+      }>();
+
+      let clustersWritten = 0;
+      for (const row of sanClusters.results) {
+        const clusterId = `cluster_cert_${slugifyKey(row.ssl_san_hash)}`;
+        const clusterName =
+          `SSL SAN-set ${row.ssl_san_hash.slice(0, 12)} reuse (${row.brand_count} brands, ${row.domain_count} domains)`;
+        const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+        const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+        const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+        const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+        const confidence = Math.min(100,
+          80 + (row.brand_count >= 10 ? 20 : row.brand_count >= 5 ? 10 : 5),
+        );
+
+        try {
+          await this.env.DB.prepare(`
+            INSERT INTO infrastructure_clusters (
+              id, cluster_name, asns, countries, attack_types, brand_ids,
+              campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+              first_detected, last_seen, status, agent_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              asns = excluded.asns,
+              countries = excluded.countries,
+              attack_types = excluded.attack_types,
+              brand_ids = excluded.brand_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              agent_notes = excluded.agent_notes
+          `).bind(
+            clusterId, clusterName,
+            JSON.stringify(asns),
+            JSON.stringify(countries),
+            JSON.stringify(attackTypes),
+            JSON.stringify(brandIds),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            row.threat_count, confidence,
+            row.first_seen, row.last_seen,
+            JSON.stringify({
+              cluster_type: 'ssl_san_hash',
+              ssl_san_hash: row.ssl_san_hash,
+              ssl_cert_issuer: row.issuer,
+              brands_targeted: row.brand_count,
+              domains_count: row.domain_count,
+              threats_count: row.threat_count,
+            }),
+          ).run();
+          clustersWritten++;
+
+          // MANDATORY stamp — predicate mirrors the SELECT filter exactly.
+          await this.env.DB.prepare(
+            `UPDATE threats SET cluster_id = ?
+              WHERE ssl_san_hash = ? AND status = 'active'
+                AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+          ).bind(clusterId, row.ssl_san_hash).run();
+        } catch { continue; }
+      }
+      return { clustersWritten, sanSetsAnalyzed: sanClusters.results.length };
+    });
+
     // Step 1b: /24 subnet lane (2026-07 threat-intel spec) — runs
     // BEFORE the ASN pass so the coarse ASN lane only mops up threats
     // no more-specific lane already claimed (cluster_id IS NULL guard).
@@ -394,13 +603,19 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
 
     // Aggregate cluster counts across all lanes for the completion log.
     const laneMeta = {
+      cert_serial_clusters: certSerialLane.clustersWritten,
+      serials_analyzed: certSerialLane.serialsAnalyzed,
+      cert_san_clusters: certSanLane.clustersWritten,
+      san_sets_analyzed: certSanLane.sanSetsAnalyzed,
       subnet24_clusters: subnetLane.clustersWritten,
       subnets_analyzed: subnetLane.subnetsAnalyzed,
       registrar_clusters: registrarLane.clustersWritten,
       registrars_analyzed: registrarLane.registrarsAnalyzed,
     };
     const totalClustersWritten =
-      correlation.clustersWritten + subnetLane.clustersWritten + registrarLane.clustersWritten;
+      correlation.clustersWritten + certSerialLane.clustersWritten +
+      certSanLane.clustersWritten + subnetLane.clustersWritten +
+      registrarLane.clustersWritten;
 
     // Step 4: Log completion
     await step.do('log-complete', async () => {
@@ -409,7 +624,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${totalClustersWritten} clusters written (${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
+        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 
