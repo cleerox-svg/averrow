@@ -200,6 +200,18 @@
 .cmdk-item.active .cmdk-item-icon { color: var(--amber); }
 .cmdk-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdk-item-enter { flex: 0 0 auto; color: var(--amber); opacity: .8; }
+.cmdk-loading { flex: 0 0 auto; color: var(--text-tertiary); }
+
+/* data-search rows: label + sublabel stacked, both truncating independently */
+.cmdk-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cmdk-item-text .cmdk-item-label { display: block; }
+.cmdk-item-sublabel { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-item.active .cmdk-item-sublabel { color: var(--text-secondary); }
+
+/* "View all results for …" trailer row per data group */
+.cmdk-viewall { color: var(--amber); }
+.cmdk-viewall .cmdk-item-icon { color: var(--amber); opacity: .8; }
+.cmdk-viewall .cmdk-item-label { font-weight: 500; }
 
 @media (prefers-reduced-motion: reduce) {
   .cmdk-overlay, .cmdk-panel { animation: none; }

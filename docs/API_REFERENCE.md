@@ -101,6 +101,12 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/trend` | User | Threat trend data |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
 
+## Search
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/search` | Staff | Unified type-ahead search across brands, threat_actors, hosting_providers, and campaigns (global scope — not org-filtered). `?q=` (min 2 chars; shorter returns empty groups), `?limit=` (default 8; hard-capped at 5 per group). Every match is a prefix lookup (`name`/`canonical_domain LIKE 'q%'`, backed by the additive name indexes from migration 0236) — never a leading wildcard, never scans the 691K-row `threats` table; brand counts come from the pre-computed `brands.threat_count` column. Returns `{ success: true, data: { brands, threat_actors, providers, campaigns } }`, each item shaped `{ type, id, label, sublabel }`. Whole grouped result cached ~90s in KV. Supersedes `/api/admin/brands/search` for palette/type-ahead use (see note below). |
+
 ## Brands
 
 | Method | Path | Auth | Description |
@@ -681,7 +687,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/organizations/:orgId/abuse-branding` | `read_customers` (analyst, sales, support, admin, super_admin) | Tier 3: abuse-mailbox responder branding for the org — returns `{ stored, resolved, alias }` (stored row, defaults-merged/validated branding the responder would use, and the org's primary inbound alias) |
 | PUT | `/api/admin/organizations/:orgId/abuse-branding` | Super Admin | Tier 3: upsert per-org responder branding (from_name / product_name / tagline / accent_color / header_bg_color / logo_url / logo_alt / subject_prefix / website_url / website_label / report_url / report_label / footer_note / enabled). Envelope From stays on Averrow's authenticated domain; only display name + look are branded. Invalid fields degrade to the Averrow default at render time |
 | POST | `/api/admin/organizations/:orgId/abuse-alias` | Super Admin | Tier 3: provision (idempotent) the per-tenant `verify-<slug>@averrow.com` inbound abuse alias. Optional `{ slug }` override; reports a collision rather than hijacking an existing alias |
-| GET | `/api/admin/brands/search` | Super Admin | Search brands for org assignment |
+| GET | `/api/admin/brands/search` | Super Admin | Search brands for org assignment. Superseded for type-ahead/palette use by `/api/search` (see Search section above) — flagged for retirement; this handler still does a `LEFT JOIN threats ... GROUP BY` to compute a per-brand count that already exists as `brands.threat_count`. Still live for org-assignment call sites; not yet removed. |
 | GET | `/api/admin/leads` | Admin | List leads |
 | GET | `/api/admin/leads/:id` | Admin | Single `scan_leads` row + live customer intel snapshot for the drill-down. Threats aggregated by `target_brand_id` (indexed); email security (SPF/DMARC/MX) from latest `email_security_scans` by domain; plus `platform_history` — "have we seen this domain before?" (known brand id/name/sector/first_seen/all-time threat count for linking to `/brands/:id`, and the most recent public `assessments` grade/score). All indexed/precomputed reads, no AI, no full-table scans. Returns `{ lead, intel }`; `intel` is best-effort and may be `null` (lead has no domain, or an aggregation hiccup) — the lead itself always returns when it exists. |
 | PATCH | `/api/admin/leads/:id` | Admin | Update lead |
