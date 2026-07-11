@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Card, CardHeader, CardBody } from './Card';
 
 describe('Card', () => {
@@ -29,6 +30,66 @@ describe('Card', () => {
   it('accepts custom className', () => {
     const { container } = render(<Card className="cursor-pointer">Content</Card>);
     expect(container.firstChild).toHaveClass('cursor-pointer');
+  });
+
+  // ─── Additive a11y pass-through props (2026-07 admin-dashboard a11y pass) ──
+  // These props are opt-in — every existing call site that omits them keeps
+  // its current (undefined) rendered output. FeedRiskCard
+  // (features/admin/metrics/FeedFailures.tsx) is the first real consumer.
+  describe('a11y pass-through props', () => {
+    it('omits role/tabIndex/aria-* entirely when not passed (no regression for existing call sites)', () => {
+      const { container } = render(<Card>Content</Card>);
+      const el = container.firstChild as HTMLElement;
+      expect(el).not.toHaveAttribute('role');
+      expect(el).not.toHaveAttribute('tabindex');
+      expect(el).not.toHaveAttribute('aria-label');
+      expect(el).not.toHaveAttribute('aria-expanded');
+    });
+
+    it('forwards role, tabIndex, aria-label, and aria-expanded onto the root element', () => {
+      render(
+        <Card role="button" tabIndex={0} aria-label="Expand details" aria-expanded={false}>
+          Content
+        </Card>,
+      );
+      const el = screen.getByRole('button', { name: 'Expand details' });
+      expect(el).toHaveAttribute('tabindex', '0');
+      expect(el).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('reflects aria-expanded=true when passed true', () => {
+      render(
+        <Card role="button" tabIndex={0} aria-label="Collapse details" aria-expanded>
+          Content
+        </Card>,
+      );
+      expect(screen.getByRole('button', { name: 'Collapse details' })).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('invokes onKeyDown when a key is pressed on the card', async () => {
+      const onKeyDown = vi.fn();
+      render(
+        <Card role="button" tabIndex={0} aria-label="Row" onKeyDown={onKeyDown}>
+          Content
+        </Card>,
+      );
+      const el = screen.getByRole('button', { name: 'Row' });
+      el.focus();
+      await userEvent.keyboard('{Enter}');
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+      expect(onKeyDown.mock.calls[0][0]).toMatchObject({ key: 'Enter' });
+    });
+
+    it('still fires onClick alongside the new a11y props (click path unaffected)', async () => {
+      const onClick = vi.fn();
+      render(
+        <Card role="button" tabIndex={0} aria-label="Row" onClick={onClick}>
+          Content
+        </Card>,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Row' }));
+      expect(onClick).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
