@@ -546,6 +546,14 @@ export async function handleAdminDashboard(
   // Synthetic request for the sub-handlers — they only read query params
   // and route replica context off the URL, never auth (this endpoint is
   // already requireAdmin-gated at the route layer).
+  //
+  // SECURITY INVARIANT: every handler composed here MUST be a global,
+  // unscoped platform aggregate — it must NOT read auth or per-user/org
+  // scope off the request (no getOrgScope, no brand/org filtering). The
+  // synthetic request carries no identity, so composing an org-scoped
+  // handler would surface unscoped global data. Gate role-sensitive slices
+  // explicitly (see threat_health / super_admin below), never by relying on
+  // a sub-handler's own request-derived scoping.
   const syntheticReq = () => new Request("https://averrow.com/api/admin/dashboard");
 
   // Lazy-load the cross-file handlers (budget + email-security live in
