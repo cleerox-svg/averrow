@@ -251,6 +251,115 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       return { clustersWritten, sanSetsAnalyzed: sanClusters.results.length };
     });
 
+    // Step 1a-iii: Per-IP fan-out lane (PR-D from 2026-05-16 audit) —
+    // runs AFTER the two cert lanes (a cert-identified cluster keeps its
+    // tighter grouping) and BEFORE the /24 subnet lane. This is the slot
+    // that was MISSING from the workflow: single hot IPs (one IP hitting
+    // many brands) have distinct_ips == 1, so they fall through the /24
+    // lane's distinct_ips >= 2 guard and would otherwise land in the coarse
+    // ASN mop-up, losing the IP-pivot signal. Ported byte-for-byte from
+    // agents/nexus.ts so the workflow upserts the same rows as the
+    // manual-fallback agent path.
+    //
+    // Rule: same active IP across >= 5 active threats AND >= 3 distinct
+    // brands ⇒ stable id `cluster_ip_<ip>`. Top 30 by threat_count per
+    // cycle bounds the write budget. Confidence scales with brand fan-out
+    // (diversity is the signal, not raw volume). Note the agent_notes here
+    // is a plain human string (not the JSON blob the cert/subnet lanes
+    // write) and the threats stamp intentionally omits the
+    // target_brand_id predicate — both match the agent path exactly.
+    // Retry-idempotent: deterministic id + ON CONFLICT DO UPDATE + the
+    // cluster_id IS NULL stamp. Pure SQL, no AI.
+    const perIpLane = await step.do('per-ip-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      const ipFanout = await this.env.DB.prepare(`
+        SELECT ip_address,
+               COUNT(*)                          AS threat_count,
+               COUNT(DISTINCT target_brand_id)   AS brand_count,
+               GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+               GROUP_CONCAT(DISTINCT asn)        AS asns,
+               GROUP_CONCAT(DISTINCT country_code) AS countries,
+               GROUP_CONCAT(DISTINCT threat_type) AS attack_types,
+               MIN(first_seen)                   AS first_seen,
+               MAX(first_seen)                   AS last_seen
+          FROM threats
+         WHERE status = 'active'
+           AND ip_address IS NOT NULL
+           AND ip_address NOT IN ('', '0.0.0.0')
+           AND target_brand_id IS NOT NULL
+         GROUP BY ip_address
+        HAVING brand_count >= 3 AND threat_count >= 5
+         ORDER BY brand_count DESC, threat_count DESC
+         LIMIT 30
+      `).all<{
+        ip_address: string;
+        threat_count: number;
+        brand_count: number;
+        brand_ids: string | null;
+        asns: string | null;
+        countries: string | null;
+        attack_types: string | null;
+        first_seen: string;
+        last_seen: string;
+      }>();
+
+      let clustersWritten = 0;
+      for (const row of ipFanout.results) {
+        const ipSafe = row.ip_address.replace(/[^0-9a-f.:]/gi, '');
+        const clusterId = `cluster_ip_${ipSafe}`;
+        const clusterName =
+          `IP ${row.ip_address} mass-impersonation (${row.brand_count} brands, ${row.threat_count} threats)`;
+        const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+        const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+        const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+        const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+        // Confidence scales with brand fan-out — diversity is the
+        // signal here, not raw threat volume.
+        const confidence = Math.min(100,
+          (row.brand_count >= 100 ? 90 : row.brand_count >= 25 ? 75 : row.brand_count >= 10 ? 60 : 40),
+        );
+
+        try {
+          await this.env.DB.prepare(`
+            INSERT INTO infrastructure_clusters (
+              id, cluster_name, asns, countries, attack_types, brand_ids,
+              campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+              first_detected, last_seen, status, agent_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              asns = excluded.asns,
+              countries = excluded.countries,
+              attack_types = excluded.attack_types,
+              brand_ids = excluded.brand_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              agent_notes = excluded.agent_notes
+          `).bind(
+            clusterId, clusterName,
+            JSON.stringify(asns),
+            JSON.stringify(countries),
+            JSON.stringify(attackTypes),
+            JSON.stringify(brandIds),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            row.threat_count, confidence,
+            row.first_seen, row.last_seen,
+            `Per-IP fan-out: ${row.ip_address} hosts threats against ${row.brand_count} brands across ${asns.length} ASNs. Mass-impersonation infrastructure.`,
+          ).run();
+          clustersWritten++;
+
+          // MANDATORY stamp — mirrors the agent-path predicate exactly
+          // (no target_brand_id filter here, unlike the cert/subnet lanes).
+          await this.env.DB.prepare(
+            `UPDATE threats SET cluster_id = ?
+              WHERE ip_address = ? AND status = 'active' AND cluster_id IS NULL`,
+          ).bind(clusterId, row.ip_address).run();
+        } catch { continue; }
+      }
+      return { clustersWritten, ipsAnalyzed: ipFanout.results.length };
+    });
+
     // Step 1b: /24 subnet lane (2026-07 threat-intel spec) — runs
     // BEFORE the ASN pass so the coarse ASN lane only mops up threats
     // no more-specific lane already claimed (cluster_id IS NULL guard).
@@ -610,6 +719,8 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       serials_analyzed: certSerialLane.serialsAnalyzed,
       cert_san_clusters: certSanLane.clustersWritten,
       san_sets_analyzed: certSanLane.sanSetsAnalyzed,
+      per_ip_clusters: perIpLane.clustersWritten,
+      ips_analyzed: perIpLane.ipsAnalyzed,
       subnet24_clusters: subnetLane.clustersWritten,
       subnets_analyzed: subnetLane.subnetsAnalyzed,
       registrar_clusters: registrarLane.clustersWritten,
@@ -617,8 +728,8 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     };
     const totalClustersWritten =
       correlation.clustersWritten + certSerialLane.clustersWritten +
-      certSanLane.clustersWritten + subnetLane.clustersWritten +
-      registrarLane.clustersWritten;
+      certSanLane.clustersWritten + perIpLane.clustersWritten +
+      subnetLane.clustersWritten + registrarLane.clustersWritten;
 
     // Step 4: Log completion
     await step.do('log-complete', async () => {
@@ -627,7 +738,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
+        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 
