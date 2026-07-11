@@ -26,6 +26,7 @@ const STAFF_ONLY_FILES = [
   "email-security.ts",
   "export.ts",
   "spam-trap.ts",
+  "search.ts",
 ];
 
 const REQUIRE_AUTH_CALL_RE = /\brequireAuth\s*\(\s*request\s*,\s*env\s*\)/g;
