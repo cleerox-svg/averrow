@@ -21,6 +21,7 @@ import { useOperationsStats } from '@/hooks/useOperations';
 import { useBrandStats, useBrands } from '@/hooks/useBrands';
 import { useAgents } from '@/hooks/useAgents';
 import { useFeedStats } from '@/hooks/useFeeds';
+import { countAgentsOnline } from '@/lib/agent-status';
 
 export function StatGrid() {
   const navigate = useNavigate();
@@ -38,12 +39,10 @@ export function StatGrid() {
   useBrands({ view: 'top', limit: 1 });
 
   const agents       = Array.isArray(agentData) ? agentData : [];
-  // Match the Agents page's "operational" definition (status !== 'error')
-  // so the Home tile and /v2/agents agree on the same number. The
-  // earlier "actively running" filter (healthy/running/active only)
-  // produced a smaller count that disagreed with the Agents page header
-  // — audit C4 (2026-05-06).
-  const agentsOnline = agents.filter(a => a.status !== 'error').length;
+  // Canonical "online" predicate lives in @/lib/agent-status so the
+  // Home tile and /v2/agents agree on the same number — audit C4
+  // (2026-05-06), consolidated 2026-07-11 to prevent re-divergence.
+  const agentsOnline = countAgentsOnline(agents);
 
   const criticalCount = alertStats?.critical ?? 0;
   const feedActive    = feedStats?.active ?? 0;

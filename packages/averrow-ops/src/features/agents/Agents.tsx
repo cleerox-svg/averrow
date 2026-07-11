@@ -38,6 +38,7 @@ import { AgentIcon } from '@/components/brand/AgentIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { RunStatusBlocks } from '@/components/ui/RunStatusBlocks';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
+import { countAgentsOnline } from '@/lib/agent-status';
 import { relativeTime } from '@/lib/time';
 import { Bot, AlertTriangle, ChevronDown, GitBranch, Shield } from 'lucide-react';
 import {
@@ -939,7 +940,7 @@ export function Agents() {
   const GROUP_ORDER = ['intelligence', 'response', 'ops', 'sync', 'meta'];
 
   // Top-level stats
-  const operational       = agents.filter(a => a.status !== 'error').length;
+  const operational       = countAgentsOnline(agents);
   const totalJobs         = agents.reduce((sum, a) => sum + a.jobs_24h, 0);
   const totalOutputs      = agents.reduce((sum, a) => sum + a.outputs_24h, 0);
   const decommissionCount = agents.filter(isDecommissionCandidate).length;

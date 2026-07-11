@@ -29,6 +29,7 @@ import { useThreatActorStats } from '@/hooks/useThreatActors';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { useAuth } from '@/lib/auth';
 import { useObservatoryVersion } from '@/design-system/hooks';
+import { countAgentsOnline } from '@/lib/agent-status';
 
 interface ModuleCardProps {
   icon:        LucideIcon;
@@ -76,9 +77,10 @@ export function ModuleHub() {
   const { data: incidentList } = useIncidents({ enabled: isSuperAdmin });
 
   const agents       = Array.isArray(agentData) ? agentData : [];
-  const agentsOnline = agents.filter(
-    a => a.status === 'healthy' || a.status === 'running' || a.status === 'active',
-  ).length;
+  // Canonical "online" predicate — see @/lib/agent-status. Was
+  // previously a stricter healthy/running/active-only filter that
+  // disagreed with StatGrid's count for the same `agents` array.
+  const agentsOnline = countAgentsOnline(agents);
   const incidents    = Array.isArray(incidentList) ? incidentList : [];
   const openIncidents = incidents.filter(i => i.status !== 'resolved').length;
 
