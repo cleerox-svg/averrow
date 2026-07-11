@@ -13,6 +13,8 @@ import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { fuzzyMatchBrand } from "../lib/brandDetect";
 import { cachedCount } from "../lib/cached-count";
+import { cachedValue } from "../lib/cached-value";
+import { getReadSession, getDbContext } from "../lib/db";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { BudgetManager } from "../lib/budgetManager";
 import {
@@ -263,8 +265,24 @@ export async function handleAdminHealth(request: Request, env: Env): Promise<Res
 export async function handleSystemHealth(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
 
+  // Outer KV wrap. /admin polls this every 60s from two mounted
+  // components, per open tab, so the whole payload was recomputing every
+  // minute per tab. A short outer cache makes repeat polls within the
+  // window free — same pattern as handleAdminStats. 120s TTL guarantees
+  // the second component's poll (and every other open tab) is a cache
+  // hit while keeping health data fresh enough for a status dashboard.
+  const cacheKey = "system_health";
+  const cached = await env.CACHE.get(cacheKey);
+  if (cached) return json(JSON.parse(cached), 200, origin);
+
+  // Read replica for all env.DB reads — this handler is read-only (no
+  // writes), so it must not sit on the primary. §8.
+  const session = getReadSession(env, getDbContext(request));
+
   const [
-    threatStats,
+    threatsTotal,
+    threatsToday,
+    threatsWeek,
     agentStats,
     feedStats,
     sessionCount,
@@ -272,56 +290,89 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
     auditCount,
     threatTrend,
   ] = await Promise.all([
-    env.DB.prepare(`
-      SELECT COUNT(*) as total,
-        SUM(CASE WHEN created_at >= datetime('now','-1 day') THEN 1 ELSE 0 END) as today,
-        SUM(CASE WHEN created_at >= datetime('now','-7 days') THEN 1 ELSE 0 END) as week
-      FROM threats
-    `).first<{ total: number; today: number; week: number }>(),
-    env.DB.prepare(`
+    // total/today/week previously came from ONE bare COUNT/SUM(CASE…)
+    // over ~694K raw threats on every uncached call. Split into three
+    // cachedCount reads so the full-table scan isn't re-run per poll.
+    // count.threats.total reuses the canonical key + 3600s TTL shared by
+    // handleAdminStats / dashboard / cartographer — a shorter TTL here
+    // would reject their warmed entry and force a full-table recompute
+    // (the exact regression flagged in handleAdminStats' PR-V comment).
+    cachedCount(env, "count.threats.total", 3600, async () => {
+      const r = await session.prepare("SELECT COUNT(*) AS n FROM threats").first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, "count.threats.today", 300, async () => {
+      const r = await session
+        .prepare("SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now','-1 day')")
+        .first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    cachedCount(env, "count.threats.week", 300, async () => {
+      const r = await session
+        .prepare("SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now','-7 days')")
+        .first<{ n: number }>();
+      return r?.n ?? 0;
+    }),
+    session.prepare(`
       SELECT COUNT(*) as total,
         SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as successes,
         SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors
       FROM agent_runs
       WHERE started_at >= datetime('now','-1 day')
     `).first<{ total: number; successes: number; errors: number }>(),
-    env.DB.prepare(`
+    session.prepare(`
       SELECT COUNT(*) as pulls,
         COALESCE(SUM(records_ingested),0) as ingested
       FROM feed_pull_history
       WHERE started_at >= datetime('now','-1 day')
     `).first<{ pulls: number; ingested: number }>(),
-    env.DB.prepare(`
+    session.prepare(`
       SELECT COUNT(*) as count FROM sessions
       WHERE expires_at > datetime('now') AND revoked_at IS NULL
     `).first<{ count: number }>(),
-    env.DB.prepare(`
+    session.prepare(`
       SELECT COUNT(*) as total, MAX(applied_at) as last_run,
         (SELECT name FROM d1_migrations ORDER BY applied_at DESC LIMIT 1) as last_name
       FROM d1_migrations
     `).first<{ total: number; last_run: string | null; last_name: string | null }>(),
+    // Audit DB is a separate binding (no read-replica session helper);
+    // keep it on its own connection. Read-only.
     env.AUDIT_DB.prepare(
       `SELECT COUNT(*) as count FROM audit_log`
     ).first<{ count: number }>(),
-    env.DB.prepare(`
-      SELECT date(created_at) as day, COUNT(*) as count
-      FROM threats
-      WHERE created_at >= datetime('now','-14 days')
-      GROUP BY date(created_at)
-      ORDER BY day ASC
-    `).all<{ day: string; count: number }>(),
+    // 14-day daily trend. Kept as the EXACT original GROUP BY over raw
+    // threats but wrapped in cachedValue (300s) instead of sourced from
+    // threat_cube_status. The cube is hour-bucketed, so it cannot
+    // reproduce the rolling `datetime('now','-14 days')` sub-hour window
+    // edge: summing per-hour cube rows for the boundary day would either
+    // over- or under-count the earliest partial day vs the raw series.
+    // The response is a frozen contract requiring byte-identical values,
+    // so cachedValue (exact SQL, exact window + timezone semantics, zero
+    // per-poll recompute) is the correct swap here — not the cube.
+    cachedValue<Array<{ day: string; count: number }>>(env, "threats.trend_14d", 300, async () => {
+      const r = await session.prepare(`
+        SELECT date(created_at) as day, COUNT(*) as count
+        FROM threats
+        WHERE created_at >= datetime('now','-14 days')
+        GROUP BY date(created_at)
+        ORDER BY day ASC
+      `).all<{ day: string; count: number }>();
+      return r.results;
+    }),
   ]);
 
-  return json({
+  // Frozen response contract: threats.{total,today,week} reconstructed to
+  // the exact shape the single-row query produced before the split.
+  const data = {
     success: true,
     data: {
-      threats: threatStats,
+      threats: { total: threatsTotal, today: threatsToday, week: threatsWeek },
       agents: agentStats,
       feeds: feedStats,
       sessions: sessionCount,
       migrations: migrationInfo,
       audit: auditCount,
-      trend: threatTrend.results,
+      trend: threatTrend,
       infrastructure: {
         mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
         auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
@@ -333,7 +384,10 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
         ],
       },
     },
-  }, 200, origin);
+  };
+
+  await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 120 });
+  return json(data, 200, origin);
 }
 
 const UpdateUserSchema = z.object({
