@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { DASHBOARD_SNAPSHOT_QUERY_KEY } from '@/hooks/useDashboardSnapshot';
 
 export interface BudgetConfig {
   monthly_limit_usd: number;
@@ -58,6 +59,11 @@ export function useBudgetConfigMutation() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['budget-status'] });
+      // AdminDashboard's BudgetPanel now reads budget off the dashboard
+      // snapshot (Tier 2a) rather than useBudgetStatus directly — without
+      // this, a config edit wouldn't be visible there until the snapshot's
+      // own 75s refetch interval caught up.
+      qc.invalidateQueries({ queryKey: DASHBOARD_SNAPSHOT_QUERY_KEY });
     },
   });
 }

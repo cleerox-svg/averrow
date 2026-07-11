@@ -106,9 +106,11 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 // ─── At-risk grid ────────────────────────────────────────────────
-// Exported so VerdictBand (features/admin/components/VerdictBand.tsx) can
-// reuse the exact same risk tiering for its "feeds" contributor instead of
-// re-deriving a second copy of this logic.
+// Exported for this page's own AtRiskGrid/FeedRiskCard tiering.
+// (Tier 2a: VerdictBand's "feeds" contributor no longer imports this —
+// it reads the dashboard snapshot's pre-filtered `at_risk` list instead,
+// whose backend verdict labels ('AT RISK' / 'CRITICAL') mirror this same
+// critical/high split — see VerdictBand.tsx's feedsSeverity() comment.)
 export type Tone = 'critical' | 'high' | 'green' | 'muted';
 export function feedRiskTier(row: FeedFailureRow): Tone {
   if (row.paused_reason === 'auto:consecutive_failures') return 'critical';

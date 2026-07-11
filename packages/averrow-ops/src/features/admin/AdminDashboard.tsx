@@ -11,8 +11,9 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 import { useSystemHealth } from '@/hooks/useSystemHealth';
-import { useBudgetStatus, useBudgetBreakdown, useBudgetConfigMutation } from '@/hooks/useBudget';
+import { useBudgetConfigMutation } from '@/hooks/useBudget';
 import type { BudgetStatus } from '@/hooks/useBudget';
+import { useDashboardSnapshot } from '@/hooks/useDashboardSnapshot';
 import { useAdminAction } from '@/hooks/useAdminAction';
 import { usePushConfig } from '@/hooks/usePushAdmin';
 import { api } from '@/lib/api';
@@ -105,18 +106,28 @@ function ThrottleBadge({ level }: { level: BudgetStatus['throttle_level'] }) {
 }
 
 function BudgetPanel() {
-  const { data: budget } = useBudgetStatus();
-  const { data: breakdown } = useBudgetBreakdown();
+  // Tier 2a: reads the `budget` slice off the shared dashboard snapshot
+  // instead of its own useBudgetStatus/useBudgetBreakdown fetches. Those
+  // hooks stay available (see useBudget.ts) for any other consumer — this
+  // is only a data-source swap for AdminDashboard's panel. Because
+  // useDashboardSnapshot shares one TanStack Query cache entry with
+  // VerdictBand (and AdminDashboard itself), mounting all three together
+  // still costs a single network request, not three.
+  const { data: snapshot } = useDashboardSnapshot();
+  const budgetSlice = snapshot?.budget;
   const mutation = useBudgetConfigMutation();
   const [editing, setEditing] = useState(false);
   const [limitInput, setLimitInput] = useState('');
   const [showAll, setShowAll] = useState(false);
 
-  if (!budget) return null;
+  if (!budgetSlice) return null;
+  const budget = budgetSlice.status;
 
   const barPct = Math.min(budget.pct_used, 100);
   const accent = throttleColorVar(budget.throttle_level);
-  const breakdownItems = breakdown ?? [];
+  // Server-capped to the top 8 spenders (handleAdminDashboard) — the
+  // showAll/top-5 toggle below still makes sense at that size.
+  const breakdownItems = budgetSlice.top_agents ?? [];
   const visibleItems = showAll ? breakdownItems : breakdownItems.slice(0, 5);
 
   return (
@@ -632,8 +643,25 @@ export function AdminDashboard() {
   // PushBootstrapCard, DailyBriefingWidget, BudgetPanel,
   // EmailSecuritySection, MaintenanceSection) mounts immediately and
   // null-guards its own data via its own hook.
-  const { data, isLoading, isError } = useSystemHealth();
-  const healthReady = !isLoading && !isError && !!data;
+  //
+  // Tier 2a: the top StatGrid + 14d Activity row now read off the
+  // dashboard snapshot's `threat_health` slice instead of a dedicated
+  // useSystemHealth() call — one fewer independent fetch, shared with
+  // VerdictBand/BudgetPanel via the same query cache entry.
+  // `threat_health` is null for plain admins (RBAC — see
+  // handleAdminDashboard) and for any whole-snapshot fetch failure; both
+  // read as "unavailable" below, never as fake zeros.
+  const { data: snapshot, isLoading: snapshotLoading, isError: snapshotError } = useDashboardSnapshot();
+  const threatHealth = snapshot?.threat_health ?? null;
+  const healthReady = !snapshotLoading && !snapshotError && !!threatHealth;
+
+  // Migrations / audit / infrastructure are NOT part of the snapshot
+  // contract (DashboardThreatHealthSlice only carries threats/agents_24h/
+  // feeds_24h/active_sessions/trend_14d — see useDashboardSnapshot.ts), so
+  // Compliance & Sessions and Infrastructure below stay on the full
+  // system-health endpoint, independently gated.
+  const { data: systemHealth, isLoading: systemHealthLoading, isError: systemHealthError } = useSystemHealth();
+  const systemHealthReady = !systemHealthLoading && !systemHealthError && !!systemHealth;
 
   const [classifying, setClassifying] = useState(false);
   const [classifyResult, setClassifyResult] = useState<string | null>(null);
@@ -677,14 +705,21 @@ export function AdminDashboard() {
     }
   }
 
-  const threats = data?.threats ?? { total: 0, today: 0, week: 0 };
-  const agents = data?.agents ?? { total: 0, successes: 0, errors: 0 };
-  const feeds = data?.feeds ?? { pulls: 0, ingested: 0 };
-  const sessions = data?.sessions ?? { count: 0 };
-  const migrations = data?.migrations ?? { total: 0, last_run: null, last_name: null };
-  const audit = data?.audit ?? { count: 0 };
-  const trend = Array.isArray(data?.trend) ? data.trend : [];
-  const infra = data?.infrastructure ?? {
+  // threat_health-derived — drives the top StatGrid + 14d Activity row,
+  // gated by `healthReady` above.
+  const threats = threatHealth?.threats ?? { total: 0, today: 0, week: 0 };
+  const agents = threatHealth?.agents_24h ?? { total: 0, successes: 0, errors: 0 };
+  const feeds = threatHealth?.feeds_24h ?? { pulls: 0, ingested: 0 };
+  const activeSessions = threatHealth?.active_sessions ?? 0;
+  const trend = Array.isArray(threatHealth?.trend_14d) ? threatHealth.trend_14d : [];
+
+  // Full system-health-derived — drives Compliance & Sessions and
+  // Infrastructure, gated by `systemHealthReady` above (not covered by the
+  // snapshot contract).
+  const migrations = systemHealth?.migrations ?? { total: 0, last_run: null, last_name: null };
+  const audit = systemHealth?.audit ?? { count: 0 };
+  const sessions = systemHealth?.sessions ?? { count: 0 };
+  const infra = systemHealth?.infrastructure ?? {
     mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
     auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
     worker: { name: 'trust-radar', platform: 'Cloudflare Workers' },
@@ -711,14 +746,14 @@ export function AdminDashboard() {
 
       <PushBootstrapCard />
 
-      {/* TOP STAT ROW — needs system-health `data`, so it's the one piece
-          still gated on that hook (everything below it isn't). */}
+      {/* TOP STAT ROW — needs the snapshot's `threat_health` slice, so it's
+          gated on `healthReady` (dashboard-snapshot-derived). */}
       {healthReady ? (
         <StatGrid cols={4}>
           <StatCard label="Threats Today" value={fmt(threats.today)} accentColor="var(--red)" sublabel={`${fmt(threats.total)} total`} />
           <StatCard label="Feed Ingestion" value={fmt(feeds.ingested)} accentColor="var(--amber)" sublabel="records (24h)" />
           <StatCard label="Agent Runs" value={fmt(agents.total)} accentColor="var(--blue)" sublabel={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
-          <StatCard label="Active Sessions" value={fmt(sessions.count)} accentColor="var(--green)" sublabel="authenticated" />
+          <StatCard label="Active Sessions" value={fmt(activeSessions)} accentColor="var(--green)" sublabel="authenticated" />
         </StatGrid>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -733,7 +768,8 @@ export function AdminDashboard() {
       </section>
 
       {/* ACTIVITY ROW — chart spans 2/3, agent perf 1/3. Both derive from
-          system-health `data`, so both stay gated together. */}
+          the snapshot's `threat_health` slice, so both stay gated together
+          on `healthReady`. */}
       <section>
         <SectionLabel label="Activity (14d)" />
         {healthReady ? (
@@ -836,9 +872,11 @@ export function AdminDashboard() {
         )}
       </section>
 
-      {/* SECURITY ROW — Budget + Compliance. BudgetPanel owns its own hook
-          and mounts immediately; Compliance & Sessions reads system-health
-          `data`, so only that half is gated. */}
+      {/* SECURITY ROW — Budget + Compliance. BudgetPanel owns its own
+          snapshot read and mounts immediately; Compliance & Sessions needs
+          migrations/audit/sessions from the full system-health endpoint
+          (not in the snapshot contract), so it's gated on
+          `systemHealthReady` instead. */}
       <section>
         <SectionLabel label="Security &amp; Spend" />
         <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
@@ -846,7 +884,7 @@ export function AdminDashboard() {
             <BudgetPanel />
           </div>
           <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-7">
-            {healthReady ? (
+            {systemHealthReady ? (
             <Card padding="20px" style={{ height: '100%' }}>
               <CardEyebrow
                 icon={Shield}
@@ -897,10 +935,12 @@ export function AdminDashboard() {
         </div>
       </section>
 
-      {/* INFRASTRUCTURE — single compact row instead of an endless column */}
+      {/* INFRASTRUCTURE — single compact row instead of an endless column.
+          Reads `infra`/`migrations` off the full system-health endpoint
+          (not in the snapshot contract) — gated on `systemHealthReady`. */}
       <section>
         <SectionLabel label="Infrastructure" />
-        {healthReady ? (
+        {systemHealthReady ? (
         <Card padding="20px">
           <div
             style={{
