@@ -173,12 +173,16 @@ export function VerdictBand() {
     summary = badContributors.map(c => c.detail).join(' · ');
   }
 
+  // `accent` is only honored by Card when variant === 'active' (see
+  // design-system Card.tsx), and cardVariant maps 'ok' to 'base' — so a
+  // green accent here would be silently discarded, not rendered as a
+  // healthy glow. Intended/correct behavior is a neutral card when
+  // healthy (Badge alone stays green), so there's no 'ok' branch below.
   const cardVariant = overall === 'critical' ? 'critical' : isBadSeverity(overall) ? 'active' : 'base';
   const accent =
     overall === 'high'   ? 'var(--sev-high)' :
     overall === 'medium' ? 'var(--sev-medium)' :
     overall === 'low'    ? 'var(--sev-low)' :
-    overall === 'ok'     ? 'var(--green)' :
                             undefined;
 
   return (

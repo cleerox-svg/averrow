@@ -361,12 +361,23 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
     }),
   ]);
 
+  // Monotonicity guard for the three independently-cached counts. Each
+  // cachedCount entry (total 3600s, today/week 300s) is sampled at a
+  // different time and expires independently. Since threats only grow, a
+  // freshly-recomputed `today` can transiently exceed a still-stale `week`
+  // (the newest ~300s of threats counted in today but not yet in the
+  // staler week) — the single-pass scan this split replaced guaranteed
+  // today <= week <= total. Clamp in that order to restore it; no-op in
+  // the consistent case, and it changes neither the reads nor the shape.
+  const week = Math.min(threatsWeek, threatsTotal);
+  const today = Math.min(threatsToday, week);
+
   // Frozen response contract: threats.{total,today,week} reconstructed to
   // the exact shape the single-row query produced before the split.
   const data = {
     success: true,
     data: {
-      threats: { total: threatsTotal, today: threatsToday, week: threatsWeek },
+      threats: { total: threatsTotal, today, week },
       agents: agentStats,
       feeds: feedStats,
       sessions: sessionCount,

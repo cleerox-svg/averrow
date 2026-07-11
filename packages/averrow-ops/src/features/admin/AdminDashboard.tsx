@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -640,13 +640,19 @@ export function AdminDashboard() {
 
   // VerdictBand's "AI budget" contributor deep-links to #budget-panel.
   // React Router's <Link> intercepts the click and pushState()s instead of
-  // letting the browser do its native hash-scroll, so handle the common
-  // case (arriving at /admin fresh from another page) explicitly.
+  // letting the browser do its native hash-scroll. VerdictBand renders at
+  // the top of THIS SAME page, so the common case is a same-page click —
+  // the route doesn't remount, only the hash changes — which a mount-only
+  // effect ([]) would miss entirely. Depend on `location.hash` (from
+  // react-router, which re-renders on every hash-only navigation, unlike
+  // the native `hashchange` event which pushState() doesn't fire) so this
+  // re-runs on both fresh arrival AND same-page clicks.
+  const location = useLocation();
   useEffect(() => {
-    if (window.location.hash === '#budget-panel') {
+    if (location.hash === '#budget-panel') {
       document.getElementById('budget-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, []);
+  }, [location.hash]);
 
   async function handleClassifySaasTechniques() {
     setClassifying(true);

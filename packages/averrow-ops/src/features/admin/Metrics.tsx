@@ -125,6 +125,7 @@ export function Metrics() {
         activeTab={activeTab}
         onChange={onChange}
         variant="pills"
+        linkedPanels
       />
 
       <div

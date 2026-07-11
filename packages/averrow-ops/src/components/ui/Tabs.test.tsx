@@ -117,11 +117,38 @@ describe('Tabs', () => {
       expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'false');
     });
 
-    it('each tab button carries aria-controls pointing at its own tabpanel id', () => {
+    // ─── linkedPanels opt-in (regression: aria-controls must not dangle) ──
+    // aria-controls is only valid ARIA when the consumer actually renders
+    // the matching tabpanel. Most Tabs consumers (Observatory, SuperAdminOrgs,
+    // settings/Organization) render no tabpanel at all, so by default Tabs
+    // must NOT emit id/aria-controls. Only the one consumer that renders a
+    // matching `role="tabpanel"` (Metrics.tsx) opts in via `linkedPanels`.
+    it('by default, does NOT emit id or aria-controls (no matching tabpanel exists)', () => {
       render(<Tabs tabs={tabs} activeTab="all" onChange={() => {}} />);
+      const activeButton = screen.getByRole('tab', { name: /Active/ });
+      expect(activeButton).not.toHaveAttribute('id');
+      expect(activeButton).not.toHaveAttribute('aria-controls');
+    });
+
+    it('with linkedPanels, emits id + aria-controls pointing at its own tabpanel id', () => {
+      render(<Tabs tabs={tabs} activeTab="all" onChange={() => {}} linkedPanels />);
       const activeButton = screen.getByRole('tab', { name: /Active/ });
       expect(activeButton).toHaveAttribute('id', 'tab-active');
       expect(activeButton).toHaveAttribute('aria-controls', 'tabpanel-active');
+    });
+
+    it('with linkedPanels, bar variant also emits id + aria-controls', () => {
+      render(<Tabs tabs={tabs} activeTab="active" onChange={() => {}} variant="bar" linkedPanels />);
+      const activeButton = screen.getByRole('tab', { name: 'Active' });
+      expect(activeButton).toHaveAttribute('id', 'tab-active');
+      expect(activeButton).toHaveAttribute('aria-controls', 'tabpanel-active');
+    });
+
+    it('with linkedPanels, underline variant also emits id + aria-controls', () => {
+      render(<Tabs tabs={tabs} activeTab="draft" onChange={() => {}} variant="underline" linkedPanels />);
+      const activeButton = screen.getByRole('tab', { name: /Draft/ });
+      expect(activeButton).toHaveAttribute('id', 'tab-draft');
+      expect(activeButton).toHaveAttribute('aria-controls', 'tabpanel-draft');
     });
   });
 });
