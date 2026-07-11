@@ -25,6 +25,8 @@ their own context and only the tools their charter grants.
 |---|---|---|---|---|
 | `backend-engineer` | Software dev | Workers, D1, internal agents, feeds, cron (`trust-radar`, `imprsn8`, `averrow-mcp`) | opus | ✅ |
 | `frontend-engineer` | Software dev | React SPAs (`averrow-ops`, `averrow-tenant`, `shared`, marketing islands) | sonnet | ✅ |
+| `test-engineer` | Testing | Writes/maintains vitest unit + integration tests (backend + React) | sonnet | Tests only |
+| `qa-verifier` | Testing | Runs the gate + drives changes end-to-end to catch runtime bugs | sonnet | Verify only |
 | `design-reviewer` | UI/UX | Visual/UX/a11y review vs the design system | sonnet | Review + small fixes |
 | `threat-intel-analyst` | Threat intel | Detection, enrichment, correlation, triage/AI-judge logic | opus | Logic design |
 | `appsec-reviewer` | Cyber (internal) | RBAC, auth, secrets, injection, security review | opus | Review only |
@@ -51,6 +53,27 @@ marketing islands. **Key guardrails:** import from `@/design-system/components`;
 CSS custom properties, never old tokens; never refactor frozen components; never
 touch `public/` / `app.js` / `styles.css`; user avatars = initials only; light +
 dark theme; login/profile parity spec; `tsc --noEmit` clean.
+
+### `test-engineer` — automated test coverage
+Writes and maintains vitest tests: backend logic in `packages/trust-radar/test/`
+and React components/hooks in `averrow-ops` / `averrow-tenant` (`src/test/`
+scaffolding). **Key guardrails:** test behavior not implementation; pure decision
+functions get table-driven coverage (the `decide…Triage` model); cover the
+runtime failure classes `tsc` misses (SQL arity, stamp/SELECT parity, threshold
+boundaries); authors tests only — a test that reveals a product bug is handed to
+the owning engineer, never papered over by changing source. Runs the suite and
+pastes real results.
+
+### `qa-verifier` — runtime verification
+The last gate before a change ships. Reproduces CI locally (`pnpm typecheck`,
+`pnpm build:manifest && pnpm check:resource-drift`, `pnpm test`) **and drives the
+actual change end-to-end** — the `verify`/`run` skills, `wrangler dev` + local D1
+for worker changes, Playwright/chrome-devtools for UI. **Key guardrails:**
+report-with-evidence, never claim a check passed without running it; report-don't-fix
+(hands failures to the owning engineer); explicitly names what it could NOT verify.
+Specifically probes the failure class this platform's typecheck waves through:
+D1 column/placeholder/bind arity, stamp/SELECT divergence, SQL errors, migration
+typos.
 
 ### `design-reviewer` — UI/UX & accessibility
 Reviews rendered UI vs `AVERROW_UI_STANDARD.md`: token adherence, light/dark
@@ -100,10 +123,16 @@ files). Plans only — never edits source.
 2. **Build task** → the matching engineer (`backend-` / `frontend-engineer`),
    with domain input from `threat-intel-analyst` where detection logic is
    involved.
-3. **Before merge** → `appsec-reviewer` (if the diff touches auth/RBAC/data
+3. **On every non-trivial code change** → `test-engineer` adds/updates coverage
+   for the new logic, and `qa-verifier` runs the gate (`typecheck` +
+   `check:resource-drift` + `test`) and drives the change end-to-end. This is
+   the standing test gate — invoke it whenever code changes, not just when asked.
+   `qa-verifier` catches the runtime failure class `tsc` misses (SQL arity,
+   stamp/SELECT parity) that has bitten this platform before.
+4. **Before merge** → `appsec-reviewer` (if the diff touches auth/RBAC/data
    exposure) and/or `design-reviewer` (if UI). Use the `/code-review` and
    `/security-review` skills as the mechanical layer.
-4. **After ship** → `content-strategist` for user-facing releases (changelog +
+5. **After ship** → `content-strategist` for user-facing releases (changelog +
    version), `docs-maintainer` for any doc drift, `platform-sre` to confirm
    health.
 
@@ -114,6 +143,9 @@ files). Plans only — never edits source.
   component logic; `delivery-lead` never edits anything.
 - Detection *logic* is `threat-intel-analyst`; Worker *plumbing* is
   `backend-engineer`.
+- `test-engineer` edits only test files; `qa-verifier` edits nothing (runs +
+  reports). A failing test/verification is handed back to the owning engineer —
+  neither agent changes product source to make a check pass.
 
 ## Extending the roster
 Add a new `.claude/agents/<name>.md` with `name`, `description`, `tools` (omit to

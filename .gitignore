@@ -57,4 +57,6 @@ logs/
 .railway/
 
 # Claude Code local state (plans, scratch notes)
-.claude/
+.claude/*
+# ...but the shared sub-agent roster IS a tracked team asset
+!.claude/agents/
