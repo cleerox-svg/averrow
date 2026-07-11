@@ -3,9 +3,16 @@
  *
  * Runs every 4 hours (Flight Control will trigger more often later).
  * Finds patterns humans can't see — clustering threats by ASN, subnet,
- * temporal window, and cross-brand targeting.
+ * registrar, temporal window, and cross-brand targeting.
  *
  * SQL does correlation. AI does narrative. Never pay AI to do what GROUP BY can do.
+ *
+ * Lane run-order precedence (MOST-SPECIFIC FIRST — first lane to claim a
+ * threat wins, because every stamping write carries a `cluster_id IS NULL`
+ * guard):
+ *   per-IP fan-out → /24 subnet → registrar cohort → ASN (mops up leftovers).
+ * The ASN pass therefore executes LAST in this function even though it is
+ * the oldest lane. Do not move it back above the specific lanes.
  *
  * Outputs:
  * - infrastructure_clusters table rows
@@ -32,190 +39,6 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   const outputs: AgentOutputEntry[] = [];
   let clustersWritten = 0;
   let pivotsDetected = 0;
-
-  // --- Correlation 1: ASN + threat_type clustering ---
-  const asnClusters = await db.prepare(`
-    SELECT
-      asn,
-      threat_type,
-      COUNT(DISTINCT campaign_id) as campaigns,
-      COUNT(DISTINCT target_brand_id) as brands,
-      COUNT(*) as threats,
-      GROUP_CONCAT(DISTINCT country_code) as countries,
-      GROUP_CONCAT(DISTINCT target_brand_id) as brand_ids,
-      GROUP_CONCAT(DISTINCT hosting_provider_id) as provider_ids,
-      MIN(first_seen) as first_seen,
-      MAX(first_seen) as last_seen,
-      -- Pivot detection: activity in last 7d vs previous 7d
-      SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7d,
-      SUM(CASE WHEN first_seen < datetime('now', '-7 days') AND first_seen >= datetime('now', '-14 days') THEN 1 ELSE 0 END) as prev_7d
-    FROM threats
-    WHERE asn IS NOT NULL
-    GROUP BY asn, threat_type
-    HAVING threats >= 10
-    ORDER BY threats DESC
-    LIMIT 100
-  `).all<{
-    asn: string;
-    threat_type: string;
-    campaigns: number;
-    brands: number;
-    threats: number;
-    countries: string | null;
-    brand_ids: string | null;
-    provider_ids: string | null;
-    first_seen: string | null;
-    last_seen: string | null;
-    last_7d: number;
-    prev_7d: number;
-  }>();
-
-  // --- Write clusters ---
-  for (const cluster of asnClusters.results) {
-    const isPivoting = cluster.prev_7d > 10 && cluster.last_7d < cluster.prev_7d * 0.2;
-    const isAccelerating = cluster.last_7d > cluster.prev_7d * 1.5;
-
-    // Confidence: more campaigns + brands + types = higher confidence
-    const confidence = Math.min(100,
-      (cluster.campaigns * 10) +
-      (cluster.brands * 5) +
-      (cluster.threats > 100 ? 20 : cluster.threats > 50 ? 10 : 5)
-    );
-
-    // Deterministic id derived from the cluster's natural key
-    // (asn + threat_type, the GROUP BY of the SELECT above). Earlier
-    // versions used `crypto.randomUUID()` which produced a fresh row
-    // on every NEXUS run — audit C3 (2026-05-06) found 6 near-identical
-    // "CA AS13335 malware distribution cluster" rows surfacing in the
-    // Campaigns view as a result.
-    const clusterId = `cluster_asn_${slugifyKey(cluster.asn)}_${slugifyKey(cluster.threat_type)}`;
-    const clusterName = generateClusterName(cluster);
-
-    try {
-      await db.prepare(`
-        INSERT INTO infrastructure_clusters (
-          id, cluster_name, asns, countries, attack_types, brand_ids,
-          campaign_ids, hosting_provider_ids, threat_count, confidence_score,
-          first_detected, last_seen, status, agent_notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          cluster_name = excluded.cluster_name,
-          countries = excluded.countries,
-          brand_ids = excluded.brand_ids,
-          hosting_provider_ids = excluded.hosting_provider_ids,
-          threat_count = excluded.threat_count,
-          confidence_score = excluded.confidence_score,
-          last_seen = excluded.last_seen,
-          status = excluded.status,
-          agent_notes = excluded.agent_notes
-      `).bind(
-        clusterId,
-        clusterName,
-        JSON.stringify([cluster.asn]),
-        JSON.stringify((cluster.countries ?? '').split(',').filter(Boolean)),
-        JSON.stringify([cluster.threat_type]),
-        JSON.stringify((cluster.brand_ids ?? '').split(',').filter(Boolean)),
-        JSON.stringify([]), // campaign_ids not aggregated with GROUP_CONCAT here
-        JSON.stringify((cluster.provider_ids ?? '').split(',').filter(Boolean)),
-        cluster.threats,
-        confidence,
-        cluster.first_seen,
-        cluster.last_seen,
-        isPivoting ? 'dormant' : 'active',
-        isPivoting ? 'PIVOT DETECTED: activity dropped >80% in last 7 days'
-          : isAccelerating ? 'ACCELERATING: activity up >50% vs prior week'
-          : null
-      ).run();
-      clustersWritten++;
-    } catch (err) {
-      console.error(`[nexus] cluster write error for ${clusterName}:`, err);
-      continue;
-    }
-
-    // Update threats with cluster_id
-    try {
-      await db.prepare(`
-        UPDATE threats SET cluster_id = ?
-        WHERE asn = ? AND threat_type = ? AND cluster_id IS NULL
-      `).bind(clusterId, cluster.asn, cluster.threat_type).run();
-    } catch (err) {
-      console.error(`[nexus] cluster_id update error:`, err);
-    }
-
-    // Emit pivot alert to Observer
-    if (isPivoting && confidence > 40) {
-      pivotsDetected++;
-      try {
-        await db.prepare(`
-          INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
-          VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
-        `).bind(
-          crypto.randomUUID(),
-          JSON.stringify({ cluster_id: clusterId, asn: cluster.asn, cluster_name: clusterName })
-        ).run();
-      } catch (err) {
-        console.error('[nexus] pivot event emit error:', err);
-      }
-
-      outputs.push({
-        type: "correlation",
-        summary: `PIVOT DETECTED: ${clusterName} — activity dropped >80% in 7 days (was ${cluster.prev_7d}, now ${cluster.last_7d})`,
-        severity: "high",
-        details: {
-          cluster_id: clusterId,
-          asn: cluster.asn,
-          prev_7d: cluster.prev_7d,
-          last_7d: cluster.last_7d,
-          confidence,
-        },
-      });
-    }
-
-    // Report accelerating clusters
-    if (isAccelerating && cluster.last_7d > 20) {
-      outputs.push({
-        type: "correlation",
-        summary: `ACCELERATING: ${clusterName} — ${cluster.last_7d} threats in 7d (up from ${cluster.prev_7d})`,
-        severity: cluster.last_7d > 50 ? "high" : "medium",
-        details: {
-          cluster_id: clusterId,
-          asn: cluster.asn,
-          last_7d: cluster.last_7d,
-          prev_7d: cluster.prev_7d,
-          confidence,
-        },
-      });
-
-      // B2 — intel_predictive: a high-confidence accelerating cluster
-      // with identified brands is the canonical predictive signal.
-      // Fire one intel_predictive per affected brand; routing in
-      // createNotification fans this only to subscribers per N3.
-      // group_key=intel_predictive:<brand_id> ensures one fire per
-      // brand per registry dedup window (12h).
-      if (confidence >= 70 && cluster.brand_ids) {
-        const brandIds = cluster.brand_ids.split(',').filter(Boolean);
-        const lookalikeCount = cluster.threats;
-        const predictedWindow = `next 7 days (cluster accelerating ${cluster.last_7d}/${cluster.prev_7d})`;
-        for (const bid of brandIds) {
-          try {
-            const row = await db.prepare(
-              'SELECT name FROM brands WHERE id = ?'
-            ).bind(bid).first<{ name: string }>();
-            await emitIntelNotification(env, 'intel_predictive',
-              renderIntelPredictive({
-                brand_id: bid,
-                brand_name: row?.name ?? bid,
-                asn: String(cluster.asn),
-                lookalike_count: lookalikeCount,
-                cluster_id: clusterId,
-                predicted_window: predictedWindow,
-              })
-            );
-          } catch { /* notification failures never break NEXUS */ }
-        }
-      }
-    }
-  }
 
   // --- Correlation 2: Update hosting_providers trend data ---
   //
@@ -479,7 +302,14 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     console.warn('[nexus] dark-web cluster pass skipped:', err instanceof Error ? err.message : String(err));
   }
 
-  // --- Per-IP fan-out clustering (PR-D from 2026-05-16 audit) ---
+  // ══ Threats-table lanes, most-specific first ══════════════════════
+  // The four passes below all stamp threats.cluster_id with the
+  // `cluster_id IS NULL` guard, so RUN ORDER is precedence: whichever
+  // lane claims a threat first owns it. Order is deliberately:
+  //   per-IP fan-out → /24 subnet → registrar cohort → ASN (last).
+  // Keep it that way.
+
+  // --- Lane: Per-IP fan-out clustering (PR-D from 2026-05-16 audit) ---
   //
   // Audit finding: 244,563 active threats (70%) have no campaign,
   // including IPs like 76.223.54.146 (900 brands hit) that are pure
@@ -593,6 +423,473 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     }
   } catch (err) {
     console.warn('[nexus] per-IP fan-out pass skipped:', err instanceof Error ? err.message : String(err));
+  }
+
+  // --- Lane A: /24 subnet clustering (2026-07 threat-intel spec) ---
+  //
+  // Groups active threats by their IPv4 /24 prefix, derived in SQL via
+  // rtrim(ip_address,'0123456789') → e.g. "76.223.54.146" → "76.223.54."
+  // Catches actors who spread mass-impersonation across a contiguous
+  // block of IPs in one subnet — a signal the per-IP lane (single IP)
+  // and the ASN lane (whole provider) both miss. Runs AFTER per-IP so a
+  // single hot IP keeps its own tighter cluster; this lane mops up the
+  // rest of the /24 via the `cluster_id IS NULL` stamping guard.
+  //
+  // rtrim() is a function on the column, so the ip index isn't usable —
+  // this is a table scan, co-located right after the per-IP scan.
+  //
+  // CDN guard: hosting_providers has NO is_cdn column, so we exclude the
+  // well-known CDN/cloud ASNs by literal (Cloudflare AS13335, Fastly
+  // AS54113, CloudFront AS16509, Akamai AS20940, Google AS15169) — a /24
+  // on a shared CDN is co-tenancy noise, not one operator's campaign.
+  //
+  // Guards: distinct_ips >= 2 distinguishes this from the per-IP lane;
+  // brand_count <= 150 is the over-merge guard — a group that big is
+  // skipped entirely rather than emitted as a low-confidence blob (that
+  // just re-pollutes the Attributor queue — the ASN-coarseness lesson).
+  // Bounded: one GROUP BY scan + <=50 upserts. No AI.
+  try {
+    const subnetClusters = await db.prepare(`
+      SELECT rtrim(ip_address,'0123456789')     AS subnet24,
+             COUNT(*)                            AS threat_count,
+             COUNT(DISTINCT ip_address)          AS distinct_ips,
+             COUNT(DISTINCT target_brand_id)     AS brand_count,
+             GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+             GROUP_CONCAT(DISTINCT asn)          AS asns,
+             GROUP_CONCAT(DISTINCT country_code) AS countries,
+             GROUP_CONCAT(DISTINCT threat_type)  AS attack_types,
+             MIN(first_seen)                     AS first_seen,
+             MAX(first_seen)                     AS last_seen
+        FROM threats
+       WHERE status = 'active'
+         AND ip_address IS NOT NULL
+         AND ip_address NOT IN ('', '0.0.0.0')
+         AND ip_address NOT LIKE '%:%'
+         AND target_brand_id IS NOT NULL
+         AND (asn IS NULL OR asn NOT IN ('AS13335','AS54113','AS16509','AS20940','AS15169'))
+       GROUP BY subnet24
+      HAVING distinct_ips >= 2 AND brand_count >= 3 AND threat_count >= 8 AND brand_count <= 150
+       ORDER BY brand_count DESC, threat_count DESC
+       LIMIT 50
+    `).all<{
+      subnet24: string;
+      threat_count: number;
+      distinct_ips: number;
+      brand_count: number;
+      brand_ids: string | null;
+      asns: string | null;
+      countries: string | null;
+      attack_types: string | null;
+      first_seen: string;
+      last_seen: string;
+    }>();
+
+    for (const row of subnetClusters.results) {
+      // Global over-merge guard: skip mega-groups outright (HAVING
+      // already caps at 150; belt-and-braces for clarity).
+      if (row.brand_count > 150) continue;
+
+      const clusterId = `cluster_subnet_${slugifyKey(row.subnet24)}`;
+      const clusterName =
+        `Subnet ${row.subnet24}0/24 (${row.brand_count} brands, ${row.distinct_ips} IPs, ${row.threat_count} threats)`;
+      const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+      const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+      const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+      const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+      // Confidence scales on brand fan-out like the per-IP lane but one
+      // notch lower — a /24 is looser evidence than a single shared IP.
+      const confidence = Math.min(100,
+        (row.brand_count >= 100 ? 75 : row.brand_count >= 25 ? 60 : row.brand_count >= 10 ? 45 : 30),
+      );
+
+      try {
+        await db.prepare(`
+          INSERT INTO infrastructure_clusters (
+            id, cluster_name, asns, countries, attack_types, brand_ids,
+            campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+            first_detected, last_seen, status, agent_notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            asns = excluded.asns,
+            countries = excluded.countries,
+            attack_types = excluded.attack_types,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
+        `).bind(
+          clusterId,
+          clusterName,
+          JSON.stringify(asns),
+          JSON.stringify(countries),
+          JSON.stringify(attackTypes),
+          JSON.stringify(brandIds),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          row.threat_count,
+          confidence,
+          row.first_seen,
+          row.last_seen,
+          JSON.stringify({
+            cluster_type: 'subnet_24',
+            subnet24: row.subnet24,
+            distinct_ips: row.distinct_ips,
+            brands_targeted: row.brand_count,
+            threats_count: row.threat_count,
+            asn_count: asns.length,
+          }),
+        ).run();
+        clustersWritten++;
+
+        // MANDATORY: stamp members so the Attributor produces
+        // attributions. Only claims threats not already owned by the
+        // per-IP lane (cluster_id IS NULL). Same rtrim() derivation so
+        // the stamp key matches the GROUP BY key exactly.
+        await db.prepare(
+          `UPDATE threats SET cluster_id = ?
+            WHERE rtrim(ip_address,'0123456789') = ? AND status = 'active'
+              AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+        ).bind(clusterId, row.subnet24).run();
+      } catch (err) {
+        console.warn(
+          `[nexus] /24 subnet cluster upsert failed for ${row.subnet24}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[nexus] /24 subnet pass skipped:', err instanceof Error ? err.message : String(err));
+  }
+
+  // --- Lane B: registrar temporal-cohort clustering (2026-07 spec) ---
+  //
+  // HIGHEST over-merge risk — registrar ALONE must NEVER be a cluster
+  // key (it's the ASN-coarseness trap reborn: "GoDaddy" is not a
+  // campaign). Guards are mandatory, not optional:
+  //   (1) 14-day temporal cohort — only cluster domains registered in
+  //       the same burst;
+  //   (2) mega-registrar denylist — the commodity registrars everyone
+  //       uses carry no signal;
+  //   (3) brand_count cap of 60 (over-merge guard — skip, don't emit);
+  //   (4) concentration check — a cohort smeared across many /24s is
+  //       noise, so skip when distinct_subnets > 5.
+  //
+  // Attributor-cost guard: a registrar cohort spanning >=3 ASNs would
+  // trip the Attributor's asns.length>=3 auto-Haiku gate
+  // (agents/attributor.ts:92). We TRUNCATE the written asns array to its
+  // single top entry so a loose registrar cluster never spends a Haiku
+  // call. Confidence is capped low (<=50) — corroborating evidence, not
+  // a primary signal. Bounded: one GROUP BY scan + <=25 upserts. No AI.
+  try {
+    const registrarClusters = await db.prepare(`
+      SELECT registrar,
+             COUNT(*)                            AS threat_count,
+             COUNT(DISTINCT target_brand_id)     AS brand_count,
+             COUNT(DISTINCT rtrim(ip_address,'0123456789')) AS distinct_subnets,
+             GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+             GROUP_CONCAT(DISTINCT asn)          AS asns,
+             GROUP_CONCAT(DISTINCT country_code) AS countries,
+             GROUP_CONCAT(DISTINCT threat_type)  AS attack_types,
+             MIN(first_seen)                     AS first_seen,
+             MAX(first_seen)                     AS last_seen
+        FROM threats
+       WHERE status = 'active'
+         AND registrar IS NOT NULL
+         AND target_brand_id IS NOT NULL
+         AND first_seen >= datetime('now','-14 days')
+         AND lower(registrar) NOT IN ('godaddy.com, llc','namecheap, inc.','tucows domains inc.','google llc',
+             'cloudflare, inc.','network solutions, llc','name.com, inc.','gname.com pte. ltd.','publicdomainregistry.com')
+       GROUP BY registrar
+      HAVING threat_count >= 8 AND brand_count >= 3 AND brand_count <= 60
+       ORDER BY brand_count DESC, threat_count DESC
+       LIMIT 25
+    `).all<{
+      registrar: string;
+      threat_count: number;
+      brand_count: number;
+      distinct_subnets: number;
+      brand_ids: string | null;
+      asns: string | null;
+      countries: string | null;
+      attack_types: string | null;
+      first_seen: string;
+      last_seen: string;
+    }>();
+
+    for (const row of registrarClusters.results) {
+      // Global over-merge guard (HAVING already caps brand_count at 60)
+      // + concentration check: a cohort spread across many subnets is
+      // noise, not one operation — skip entirely.
+      if (row.brand_count > 60) continue;
+      if (row.distinct_subnets > 5) continue;
+
+      const clusterId = `cluster_registrar_${slugifyKey(row.registrar)}`;
+      const clusterName =
+        `Registrar cohort "${row.registrar}" (${row.brand_count} brands, ${row.threat_count} threats, 14d)`;
+      const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+      const asnsAll     = (row.asns       ?? '').split(',').filter(Boolean);
+      const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+      const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+      // Attributor-cost guard: truncate WRITTEN ASNs to the top entry so
+      // this lane can never trip the asns.length>=3 auto-Haiku gate.
+      const asnsWritten = asnsAll.slice(0, 1);
+      // Confidence capped low — corroborating evidence, not primary.
+      const confidence = Math.min(50,
+        (row.brand_count >= 25 ? 45 : row.brand_count >= 10 ? 35 : 25),
+      );
+
+      try {
+        await db.prepare(`
+          INSERT INTO infrastructure_clusters (
+            id, cluster_name, asns, countries, attack_types, brand_ids,
+            campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+            first_detected, last_seen, status, agent_notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+          ON CONFLICT(id) DO UPDATE SET
+            cluster_name = excluded.cluster_name,
+            asns = excluded.asns,
+            countries = excluded.countries,
+            attack_types = excluded.attack_types,
+            brand_ids = excluded.brand_ids,
+            threat_count = excluded.threat_count,
+            confidence_score = excluded.confidence_score,
+            last_seen = excluded.last_seen,
+            agent_notes = excluded.agent_notes
+        `).bind(
+          clusterId,
+          clusterName,
+          JSON.stringify(asnsWritten),
+          JSON.stringify(countries),
+          JSON.stringify(attackTypes),
+          JSON.stringify(brandIds),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          row.threat_count,
+          confidence,
+          row.first_seen,
+          row.last_seen,
+          JSON.stringify({
+            cluster_type: 'registrar_cohort',
+            registrar: row.registrar,
+            brands_targeted: row.brand_count,
+            threats_count: row.threat_count,
+            distinct_subnets: row.distinct_subnets,
+            asn_count_observed: asnsAll.length,
+            window_days: 14,
+          }),
+        ).run();
+        clustersWritten++;
+
+        // MANDATORY: stamp members within the same 14-day window so the
+        // Attributor produces attributions. cluster_id IS NULL means it
+        // only claims threats not already owned by a more-specific lane.
+        await db.prepare(
+          `UPDATE threats SET cluster_id = ?
+            WHERE registrar = ? AND status = 'active'
+              AND target_brand_id IS NOT NULL
+              AND first_seen >= datetime('now','-14 days') AND cluster_id IS NULL`,
+        ).bind(clusterId, row.registrar).run();
+      } catch (err) {
+        console.warn(
+          `[nexus] registrar cluster upsert failed for ${row.registrar}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[nexus] registrar pass skipped:', err instanceof Error ? err.message : String(err));
+  }
+
+  // --- Lane: ASN + threat_type clustering (RUNS LAST — mops up) ---
+  //
+  // The oldest lane, deliberately executed AFTER the per-IP, /24, and
+  // registrar lanes. Its stamping keeps `AND cluster_id IS NULL`, so it
+  // only claims threats no more-specific lane already owns. This is the
+  // coarsest key (whole provider), hence lowest precedence.
+  const asnClusters = await db.prepare(`
+    SELECT
+      asn,
+      threat_type,
+      COUNT(DISTINCT campaign_id) as campaigns,
+      COUNT(DISTINCT target_brand_id) as brands,
+      COUNT(*) as threats,
+      GROUP_CONCAT(DISTINCT country_code) as countries,
+      GROUP_CONCAT(DISTINCT target_brand_id) as brand_ids,
+      GROUP_CONCAT(DISTINCT hosting_provider_id) as provider_ids,
+      MIN(first_seen) as first_seen,
+      MAX(first_seen) as last_seen,
+      -- Pivot detection: activity in last 7d vs previous 7d
+      SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7d,
+      SUM(CASE WHEN first_seen < datetime('now', '-7 days') AND first_seen >= datetime('now', '-14 days') THEN 1 ELSE 0 END) as prev_7d
+    FROM threats
+    WHERE asn IS NOT NULL
+    GROUP BY asn, threat_type
+    HAVING threats >= 10
+    ORDER BY threats DESC
+    LIMIT 100
+  `).all<{
+    asn: string;
+    threat_type: string;
+    campaigns: number;
+    brands: number;
+    threats: number;
+    countries: string | null;
+    brand_ids: string | null;
+    provider_ids: string | null;
+    first_seen: string | null;
+    last_seen: string | null;
+    last_7d: number;
+    prev_7d: number;
+  }>();
+
+  // --- Write clusters ---
+  for (const cluster of asnClusters.results) {
+    const isPivoting = cluster.prev_7d > 10 && cluster.last_7d < cluster.prev_7d * 0.2;
+    const isAccelerating = cluster.last_7d > cluster.prev_7d * 1.5;
+
+    // Confidence: more campaigns + brands + types = higher confidence
+    const confidence = Math.min(100,
+      (cluster.campaigns * 10) +
+      (cluster.brands * 5) +
+      (cluster.threats > 100 ? 20 : cluster.threats > 50 ? 10 : 5)
+    );
+
+    // Deterministic id derived from the cluster's natural key
+    // (asn + threat_type, the GROUP BY of the SELECT above). Earlier
+    // versions used `crypto.randomUUID()` which produced a fresh row
+    // on every NEXUS run — audit C3 (2026-05-06) found 6 near-identical
+    // "CA AS13335 malware distribution cluster" rows surfacing in the
+    // Campaigns view as a result.
+    const clusterId = `cluster_asn_${slugifyKey(cluster.asn)}_${slugifyKey(cluster.threat_type)}`;
+    const clusterName = generateClusterName(cluster);
+
+    try {
+      await db.prepare(`
+        INSERT INTO infrastructure_clusters (
+          id, cluster_name, asns, countries, attack_types, brand_ids,
+          campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+          first_detected, last_seen, status, agent_notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          cluster_name = excluded.cluster_name,
+          countries = excluded.countries,
+          brand_ids = excluded.brand_ids,
+          hosting_provider_ids = excluded.hosting_provider_ids,
+          threat_count = excluded.threat_count,
+          confidence_score = excluded.confidence_score,
+          last_seen = excluded.last_seen,
+          status = excluded.status,
+          agent_notes = excluded.agent_notes
+      `).bind(
+        clusterId,
+        clusterName,
+        JSON.stringify([cluster.asn]),
+        JSON.stringify((cluster.countries ?? '').split(',').filter(Boolean)),
+        JSON.stringify([cluster.threat_type]),
+        JSON.stringify((cluster.brand_ids ?? '').split(',').filter(Boolean)),
+        JSON.stringify([]), // campaign_ids not aggregated with GROUP_CONCAT here
+        JSON.stringify((cluster.provider_ids ?? '').split(',').filter(Boolean)),
+        cluster.threats,
+        confidence,
+        cluster.first_seen,
+        cluster.last_seen,
+        isPivoting ? 'dormant' : 'active',
+        isPivoting ? 'PIVOT DETECTED: activity dropped >80% in last 7 days'
+          : isAccelerating ? 'ACCELERATING: activity up >50% vs prior week'
+          : null
+      ).run();
+      clustersWritten++;
+    } catch (err) {
+      console.error(`[nexus] cluster write error for ${clusterName}:`, err);
+      continue;
+    }
+
+    // Update threats with cluster_id — mops up only threats not already
+    // claimed by the more-specific per-IP / /24 / registrar lanes.
+    try {
+      await db.prepare(`
+        UPDATE threats SET cluster_id = ?
+        WHERE asn = ? AND threat_type = ? AND cluster_id IS NULL
+      `).bind(clusterId, cluster.asn, cluster.threat_type).run();
+    } catch (err) {
+      console.error(`[nexus] cluster_id update error:`, err);
+    }
+
+    // Emit pivot alert to Observer
+    if (isPivoting && confidence > 40) {
+      pivotsDetected++;
+      try {
+        await db.prepare(`
+          INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
+          VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
+        `).bind(
+          crypto.randomUUID(),
+          JSON.stringify({ cluster_id: clusterId, asn: cluster.asn, cluster_name: clusterName })
+        ).run();
+      } catch (err) {
+        console.error('[nexus] pivot event emit error:', err);
+      }
+
+      outputs.push({
+        type: "correlation",
+        summary: `PIVOT DETECTED: ${clusterName} — activity dropped >80% in 7 days (was ${cluster.prev_7d}, now ${cluster.last_7d})`,
+        severity: "high",
+        details: {
+          cluster_id: clusterId,
+          asn: cluster.asn,
+          prev_7d: cluster.prev_7d,
+          last_7d: cluster.last_7d,
+          confidence,
+        },
+      });
+    }
+
+    // Report accelerating clusters
+    if (isAccelerating && cluster.last_7d > 20) {
+      outputs.push({
+        type: "correlation",
+        summary: `ACCELERATING: ${clusterName} — ${cluster.last_7d} threats in 7d (up from ${cluster.prev_7d})`,
+        severity: cluster.last_7d > 50 ? "high" : "medium",
+        details: {
+          cluster_id: clusterId,
+          asn: cluster.asn,
+          last_7d: cluster.last_7d,
+          prev_7d: cluster.prev_7d,
+          confidence,
+        },
+      });
+
+      // B2 — intel_predictive: a high-confidence accelerating cluster
+      // with identified brands is the canonical predictive signal.
+      // Fire one intel_predictive per affected brand; routing in
+      // createNotification fans this only to subscribers per N3.
+      // group_key=intel_predictive:<brand_id> ensures one fire per
+      // brand per registry dedup window (12h).
+      if (confidence >= 70 && cluster.brand_ids) {
+        const brandIds = cluster.brand_ids.split(',').filter(Boolean);
+        const lookalikeCount = cluster.threats;
+        const predictedWindow = `next 7 days (cluster accelerating ${cluster.last_7d}/${cluster.prev_7d})`;
+        for (const bid of brandIds) {
+          try {
+            const row = await db.prepare(
+              'SELECT name FROM brands WHERE id = ?'
+            ).bind(bid).first<{ name: string }>();
+            await emitIntelNotification(env, 'intel_predictive',
+              renderIntelPredictive({
+                brand_id: bid,
+                brand_name: row?.name ?? bid,
+                asn: String(cluster.asn),
+                lookalike_count: lookalikeCount,
+                cluster_id: clusterId,
+                predicted_window: predictedWindow,
+              })
+            );
+          } catch { /* notification failures never break NEXUS */ }
+        }
+      }
+    }
   }
 
   // --- Emit completion event ---
