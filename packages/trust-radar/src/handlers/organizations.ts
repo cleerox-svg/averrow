@@ -2,6 +2,7 @@
 // Averrow — Organization CRUD, Member Management, Brand Assignment, API Keys, Integrations
 
 import { json } from "../lib/cors";
+import { getDbContext, getReadSession } from "../lib/db";
 import { audit } from "../lib/audit";
 import { generateInviteToken, hashToken } from "../lib/hash";
 import { sendInviteEmail } from "../lib/invite-email";
@@ -231,14 +232,15 @@ export async function handleSearchBrands(
     return json({ success: true, data: [] }, 200, origin);
   }
 
-  const { results } = await env.DB.prepare(`
-    SELECT b.id, b.name, b.canonical_domain, b.sector,
-           COUNT(t.id) AS threat_count
+  // threat_count reads the pre-computed brands.threat_count column
+  // (maintained by cube_healer / brand-count-reconciler) — the threats
+  // table (691K rows) is never touched here. See CLAUDE.md §8.
+  const session = getReadSession(env, getDbContext(request));
+  const { results } = await session.prepare(`
+    SELECT b.id, b.name, b.canonical_domain, b.sector, b.threat_count
     FROM brands b
-    LEFT JOIN threats t ON t.target_brand_id = b.id
     WHERE b.name LIKE ? OR b.canonical_domain LIKE ?
-    GROUP BY b.id
-    ORDER BY threat_count DESC
+    ORDER BY b.threat_count DESC
     LIMIT ?
   `).bind(`%${query}%`, `%${query}%`, limit).all();
 
