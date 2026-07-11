@@ -30,6 +30,56 @@ grep -rn "TODO\|FIXME\|HACK" packages/averrow-ops/src/ --include="*.tsx" | head 
 
 ---
 
+## 1A. Default Build Workflow — Orchestrate Through the Sub-Agent Roster
+
+**This is the standing operating mode, not an option.** Every
+non-trivial build runs through the Claude Code sub-agent roster
+(`docs/CLAUDE_SUBAGENTS.md`, definitions in `.claude/agents/*.md`).
+The main session is the **orchestrator**: it delegates scoped work to
+the specialist whose charter fits and keeps the conclusion. Do not
+hand-write a feature end-to-end in the main session when a roster agent
+owns that surface.
+
+**The default pipeline for any change that touches product source:**
+
+1. **Plan** — `delivery-lead` decomposes the request into ordered,
+   owner-assigned tasks and surfaces dependencies/risks. Skip only for
+   a single obvious task.
+2. **Build** — the matching engineer (`backend-engineer` /
+   `frontend-engineer`), with `threat-intel-analyst` for detection
+   logic, `content-strategist` for copy.
+3. **Test** — `test-engineer` adds/updates coverage for the new logic.
+   Not optional, not "when asked."
+4. **Verify** — `qa-verifier` runs the full gate (`typecheck` +
+   `check:resource-drift` + `test`) **and drives the change
+   end-to-end**. This is the gate that has repeatedly caught the
+   runtime failure class `tsc` waves through (dead `LIKE` indexes,
+   broken tab routes, SQL/bind arity, stamp/SELECT divergence). Never
+   ship a non-trivial change without it.
+5. **Review** — `appsec-reviewer` when the diff touches
+   auth/RBAC/data-exposure; `design-reviewer` when it touches UI. The
+   `/code-review` and `/security-review` skills are the mechanical
+   layer beneath them.
+6. **Ship** — commit as logical units, push to the feature branch, open
+   a draft PR. Then `content-strategist` (changelog + version for
+   user-facing releases), `docs-maintainer` (any doc drift),
+   `platform-sre` (confirm health) as applicable.
+
+**When you may skip the pipeline:** trivial mechanical edits (a typo, a
+one-line copy tweak, a comment), pure doc/changelog edits (still route
+to `docs-maintainer` / `content-strategist`), and conversational/read-only
+questions. When unsure whether a change is "trivial," it isn't — run the
+pipeline.
+
+**Parallelism:** independent audits, reviews, and disjoint-file builds
+fan out concurrently (launch the agents in a single message). Work that
+shares files or has a dependency chain runs as a pipeline. Reviewers and
+`platform-sre` never ship feature code — they report and hand off; a
+failing test/verification goes back to the owning engineer, never
+papered over by editing product source to pass a check.
+
+---
+
 ## 2. Repository Structure
 
 ```

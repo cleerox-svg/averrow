@@ -119,6 +119,11 @@ files). Plans only — never edits source.
 
 ## How the orchestrator delegates
 
+**This is the default operating mode for every non-trivial build, not an
+optional recipe** — see CLAUDE.md §1A. The main session orchestrates;
+specialists do the scoped work. Only trivial mechanical edits and
+read-only questions bypass it.
+
 1. **Ambiguous or multi-step request** → `delivery-lead` first for a plan.
 2. **Build task** → the matching engineer (`backend-` / `frontend-engineer`),
    with domain input from `threat-intel-analyst` where detection logic is
