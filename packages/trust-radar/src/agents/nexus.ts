@@ -671,16 +671,21 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 
   // --- Lane A: /24 subnet clustering (2026-07 threat-intel spec) ---
   //
-  // Groups active threats by their IPv4 /24 prefix, derived in SQL via
-  // rtrim(ip_address,'0123456789') → e.g. "76.223.54.146" → "76.223.54."
-  // Catches actors who spread mass-impersonation across a contiguous
-  // block of IPs in one subnet — a signal the per-IP lane (single IP)
-  // and the ASN lane (whole provider) both miss. Runs AFTER per-IP so a
-  // single hot IP keeps its own tighter cluster; this lane mops up the
-  // rest of the /24 via the `cluster_id IS NULL` stamping guard.
+  // Groups active threats by their IPv4 /24 prefix. The prefix key lives
+  // on the ip_subnet24 generated column (migration 0235), which reproduces
+  // the historical rtrim(ip_address,'0123456789') derivation for qualifying
+  // IPv4 rows — e.g. "76.223.54.146" → "76.223.54." — and is NULL for
+  // NULL / IPv6 / '' / '0.0.0.0'. Catches actors who spread mass-
+  // impersonation across a contiguous block of IPs in one subnet — a
+  // signal the per-IP lane (single IP) and the ASN lane (whole provider)
+  // both miss. Runs AFTER per-IP so a single hot IP keeps its own tighter
+  // cluster; this lane mops up the rest of the /24 via the
+  // `cluster_id IS NULL` stamping guard.
   //
-  // rtrim() is a function on the column, so the ip index isn't usable —
-  // this is a table scan, co-located right after the per-IP scan.
+  // ip_subnet24 is index-backed (idx_threats_subnet24, partial on
+  // IS NOT NULL). The grouping scan rides the index and the per-cluster
+  // stamp below is an equality seek instead of the former full-table
+  // scan — the perf point of migration 0235.
   //
   // CDN guard: hosting_providers has NO is_cdn column, so we exclude the
   // well-known CDN/cloud ASNs by literal (Cloudflare AS13335, Fastly
@@ -694,7 +699,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   // Bounded: one GROUP BY scan + <=50 upserts. No AI.
   try {
     const subnetClusters = await db.prepare(`
-      SELECT rtrim(ip_address,'0123456789')     AS subnet24,
+      SELECT ip_subnet24                         AS subnet24,
              COUNT(*)                            AS threat_count,
              COUNT(DISTINCT ip_address)          AS distinct_ips,
              COUNT(DISTINCT target_brand_id)     AS brand_count,
@@ -706,12 +711,10 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
              MAX(first_seen)                     AS last_seen
         FROM threats
        WHERE status = 'active'
-         AND ip_address IS NOT NULL
-         AND ip_address NOT IN ('', '0.0.0.0')
-         AND ip_address NOT LIKE '%:%'
+         AND ip_subnet24 IS NOT NULL
          AND target_brand_id IS NOT NULL
          AND (asn IS NULL OR asn NOT IN ('AS13335','AS54113','AS16509','AS20940','AS15169'))
-       GROUP BY subnet24
+       GROUP BY ip_subnet24
       HAVING distinct_ips >= 2 AND brand_count >= 3 AND threat_count >= 8 AND brand_count <= 150
        ORDER BY brand_count DESC, threat_count DESC
        LIMIT 50
@@ -789,11 +792,13 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 
         // MANDATORY: stamp members so the Attributor produces
         // attributions. Only claims threats not already owned by the
-        // per-IP lane (cluster_id IS NULL). Same rtrim() derivation so
-        // the stamp key matches the GROUP BY key exactly.
+        // per-IP lane (cluster_id IS NULL). Keys on the same ip_subnet24
+        // generated column the grouping used, so the stamp key matches the
+        // group key exactly — but now as an index equality seek instead of
+        // a full-table scan (migration 0235).
         await db.prepare(
           `UPDATE threats SET cluster_id = ?
-            WHERE rtrim(ip_address,'0123456789') = ? AND status = 'active'
+            WHERE ip_subnet24 = ? AND status = 'active'
               AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
         ).bind(clusterId, row.subnet24).run();
       } catch (err) {
