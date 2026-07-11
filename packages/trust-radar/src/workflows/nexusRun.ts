@@ -6,6 +6,21 @@ type NexusWorkflowParams = {
   forceRefresh?: boolean;
 };
 
+// Sanitize a natural-key part for use inside a deterministic cluster id.
+// Kept in lockstep with the identical helper in agents/nexus.ts so the
+// /24 + registrar lanes here upsert the same rows as the manual-fallback
+// agent path. Keeps lowercase alphanumerics + dashes; collapses the rest
+// to underscores; bounds length.
+function slugifyKey(value: string | null | undefined): string {
+  if (!value) return 'unknown';
+  return value
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'unknown';
+}
+
 export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> {
   async run(event: WorkflowEvent<NexusWorkflowParams>, step: WorkflowStep) {
     // Step 1: Count clusters before run
@@ -27,7 +42,232 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       ).run();
     });
 
-    // Step 2: Run ASN correlation — the core NEXUS query
+    // Step 1b: /24 subnet lane (2026-07 threat-intel spec) — runs
+    // BEFORE the ASN pass so the coarse ASN lane only mops up threats
+    // no more-specific lane already claimed (cluster_id IS NULL guard).
+    // Kept in lockstep with agents/nexus.ts Lane A. CDN guard uses an
+    // ASN denylist literal set (hosting_providers has no is_cdn column):
+    // Cloudflare AS13335, Fastly AS54113, CloudFront AS16509, Akamai
+    // AS20940, Google AS15169. Pure SQL GROUP BY + bounded upserts, no AI.
+    const subnetLane = await step.do('subnet24-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      const subnetClusters = await this.env.DB.prepare(`
+        SELECT rtrim(ip_address,'0123456789')     AS subnet24,
+               COUNT(*)                            AS threat_count,
+               COUNT(DISTINCT ip_address)          AS distinct_ips,
+               COUNT(DISTINCT target_brand_id)     AS brand_count,
+               GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+               GROUP_CONCAT(DISTINCT asn)          AS asns,
+               GROUP_CONCAT(DISTINCT country_code) AS countries,
+               GROUP_CONCAT(DISTINCT threat_type)  AS attack_types,
+               MIN(first_seen)                     AS first_seen,
+               MAX(first_seen)                     AS last_seen
+          FROM threats
+         WHERE status = 'active'
+           AND ip_address IS NOT NULL
+           AND ip_address NOT IN ('', '0.0.0.0')
+           AND ip_address NOT LIKE '%:%'
+           AND target_brand_id IS NOT NULL
+           AND (asn IS NULL OR asn NOT IN ('AS13335','AS54113','AS16509','AS20940','AS15169'))
+         GROUP BY subnet24
+        HAVING distinct_ips >= 2 AND brand_count >= 3 AND threat_count >= 8 AND brand_count <= 150
+         ORDER BY brand_count DESC, threat_count DESC
+         LIMIT 50
+      `).all<{
+        subnet24: string;
+        threat_count: number;
+        distinct_ips: number;
+        brand_count: number;
+        brand_ids: string | null;
+        asns: string | null;
+        countries: string | null;
+        attack_types: string | null;
+        first_seen: string;
+        last_seen: string;
+      }>();
+
+      let clustersWritten = 0;
+      for (const row of subnetClusters.results) {
+        // Over-merge guard: skip mega-groups outright rather than emit a
+        // low-confidence blob (HAVING already caps at 150).
+        if (row.brand_count > 150) continue;
+
+        const clusterId = `cluster_subnet_${slugifyKey(row.subnet24)}`;
+        const clusterName =
+          `Subnet ${row.subnet24}0/24 (${row.brand_count} brands, ${row.distinct_ips} IPs, ${row.threat_count} threats)`;
+        const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+        const asns        = (row.asns       ?? '').split(',').filter(Boolean);
+        const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+        const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+        const confidence = Math.min(100,
+          (row.brand_count >= 100 ? 75 : row.brand_count >= 25 ? 60 : row.brand_count >= 10 ? 45 : 30),
+        );
+
+        try {
+          await this.env.DB.prepare(`
+            INSERT INTO infrastructure_clusters (
+              id, cluster_name, asns, countries, attack_types, brand_ids,
+              campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+              first_detected, last_seen, status, agent_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              asns = excluded.asns,
+              countries = excluded.countries,
+              attack_types = excluded.attack_types,
+              brand_ids = excluded.brand_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              agent_notes = excluded.agent_notes
+          `).bind(
+            clusterId, clusterName,
+            JSON.stringify(asns),
+            JSON.stringify(countries),
+            JSON.stringify(attackTypes),
+            JSON.stringify(brandIds),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            row.threat_count, confidence,
+            row.first_seen, row.last_seen,
+            JSON.stringify({
+              cluster_type: 'subnet_24',
+              subnet24: row.subnet24,
+              distinct_ips: row.distinct_ips,
+              brands_targeted: row.brand_count,
+              threats_count: row.threat_count,
+              asn_count: asns.length,
+            }),
+          ).run();
+          clustersWritten++;
+
+          // MANDATORY stamp — only claims threats not already owned.
+          await this.env.DB.prepare(
+            `UPDATE threats SET cluster_id = ?
+              WHERE rtrim(ip_address,'0123456789') = ? AND status = 'active'
+                AND target_brand_id IS NOT NULL AND cluster_id IS NULL`,
+          ).bind(clusterId, row.subnet24).run();
+        } catch { continue; }
+      }
+      return { clustersWritten, subnetsAnalyzed: subnetClusters.results.length };
+    });
+
+    // Step 1c: registrar temporal-cohort lane (2026-07 spec) — HIGHEST
+    // over-merge risk, so guards are mandatory: 14-day cohort +
+    // mega-registrar denylist + brand_count cap + concentration check.
+    // Written ASNs are truncated to the top entry so a loose cohort
+    // never trips the Attributor's asns.length>=3 auto-Haiku gate.
+    // Runs before the ASN pass. Kept in lockstep with agents/nexus.ts
+    // Lane B. Pure SQL, no AI.
+    const registrarLane = await step.do('registrar-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      const registrarClusters = await this.env.DB.prepare(`
+        SELECT registrar,
+               COUNT(*)                            AS threat_count,
+               COUNT(DISTINCT target_brand_id)     AS brand_count,
+               COUNT(DISTINCT rtrim(ip_address,'0123456789')) AS distinct_subnets,
+               GROUP_CONCAT(DISTINCT target_brand_id) AS brand_ids,
+               GROUP_CONCAT(DISTINCT asn)          AS asns,
+               GROUP_CONCAT(DISTINCT country_code) AS countries,
+               GROUP_CONCAT(DISTINCT threat_type)  AS attack_types,
+               MIN(first_seen)                     AS first_seen,
+               MAX(first_seen)                     AS last_seen
+          FROM threats
+         WHERE status = 'active'
+           AND registrar IS NOT NULL
+           AND target_brand_id IS NOT NULL
+           AND first_seen >= datetime('now','-14 days')
+           AND lower(registrar) NOT IN ('godaddy.com, llc','namecheap, inc.','tucows domains inc.','google llc',
+               'cloudflare, inc.','network solutions, llc','name.com, inc.','gname.com pte. ltd.','publicdomainregistry.com')
+         GROUP BY registrar
+        HAVING threat_count >= 8 AND brand_count >= 3 AND brand_count <= 60
+         ORDER BY brand_count DESC, threat_count DESC
+         LIMIT 25
+      `).all<{
+        registrar: string;
+        threat_count: number;
+        brand_count: number;
+        distinct_subnets: number;
+        brand_ids: string | null;
+        asns: string | null;
+        countries: string | null;
+        attack_types: string | null;
+        first_seen: string;
+        last_seen: string;
+      }>();
+
+      let clustersWritten = 0;
+      for (const row of registrarClusters.results) {
+        // Over-merge + concentration guards: skip mega-cohorts and
+        // cohorts smeared across many subnets.
+        if (row.brand_count > 60) continue;
+        if (row.distinct_subnets > 5) continue;
+
+        const clusterId = `cluster_registrar_${slugifyKey(row.registrar)}`;
+        const clusterName =
+          `Registrar cohort "${row.registrar}" (${row.brand_count} brands, ${row.threat_count} threats, 14d)`;
+        const brandIds    = (row.brand_ids  ?? '').split(',').filter(Boolean);
+        const asnsAll     = (row.asns       ?? '').split(',').filter(Boolean);
+        const countries   = (row.countries  ?? '').split(',').filter(Boolean);
+        const attackTypes = (row.attack_types ?? '').split(',').filter(Boolean);
+        // Attributor-cost guard: truncate written ASNs to the top entry.
+        const asnsWritten = asnsAll.slice(0, 1);
+        const confidence = Math.min(50,
+          (row.brand_count >= 25 ? 45 : row.brand_count >= 10 ? 35 : 25),
+        );
+
+        try {
+          await this.env.DB.prepare(`
+            INSERT INTO infrastructure_clusters (
+              id, cluster_name, asns, countries, attack_types, brand_ids,
+              campaign_ids, hosting_provider_ids, threat_count, confidence_score,
+              first_detected, last_seen, status, agent_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              asns = excluded.asns,
+              countries = excluded.countries,
+              attack_types = excluded.attack_types,
+              brand_ids = excluded.brand_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              agent_notes = excluded.agent_notes
+          `).bind(
+            clusterId, clusterName,
+            JSON.stringify(asnsWritten),
+            JSON.stringify(countries),
+            JSON.stringify(attackTypes),
+            JSON.stringify(brandIds),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            row.threat_count, confidence,
+            row.first_seen, row.last_seen,
+            JSON.stringify({
+              cluster_type: 'registrar_cohort',
+              registrar: row.registrar,
+              brands_targeted: row.brand_count,
+              threats_count: row.threat_count,
+              distinct_subnets: row.distinct_subnets,
+              asn_count_observed: asnsAll.length,
+              window_days: 14,
+            }),
+          ).run();
+          clustersWritten++;
+
+          // MANDATORY stamp within the same 14-day window.
+          await this.env.DB.prepare(
+            `UPDATE threats SET cluster_id = ?
+              WHERE registrar = ? AND status = 'active'
+                AND target_brand_id IS NOT NULL
+                AND first_seen >= datetime('now','-14 days') AND cluster_id IS NULL`,
+          ).bind(clusterId, row.registrar).run();
+        } catch { continue; }
+      }
+      return { clustersWritten, registrarsAnalyzed: registrarClusters.results.length };
+    });
+
+    // Step 2: Run ASN correlation — the core NEXUS query (RUNS LAST of
+    // the threats-stamping lanes; keeps `cluster_id IS NULL` so it only
+    // mops up threats the /24 + registrar lanes above didn't claim).
     const correlation = await step.do('asn-correlation', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
       const asnClusters = await this.env.DB.prepare(`
         SELECT
@@ -152,6 +392,16 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       return { providers_updated: result.providers_updated };
     });
 
+    // Aggregate cluster counts across all lanes for the completion log.
+    const laneMeta = {
+      subnet24_clusters: subnetLane.clustersWritten,
+      subnets_analyzed: subnetLane.subnetsAnalyzed,
+      registrar_clusters: registrarLane.clustersWritten,
+      registrars_analyzed: registrarLane.registrarsAnalyzed,
+    };
+    const totalClustersWritten =
+      correlation.clustersWritten + subnetLane.clustersWritten + registrarLane.clustersWritten;
+
     // Step 4: Log completion
     await step.do('log-complete', async () => {
       await this.env.DB.prepare(`
@@ -159,8 +409,8 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${correlation.clustersWritten} clusters written, ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
-        JSON.stringify({ ...correlation, ...providers })
+        `NEXUS complete — ${totalClustersWritten} clusters written (${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
+        JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 
       await this.env.DB.prepare(`
@@ -168,10 +418,10 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus_complete', 'nexus', ?, 2, 'pending')
       `).bind(
         crypto.randomUUID(),
-        JSON.stringify({ ...correlation, ...providers })
+        JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
     });
 
-    return { ...correlation, ...providers };
+    return { ...correlation, ...laneMeta, ...providers };
   }
 }
