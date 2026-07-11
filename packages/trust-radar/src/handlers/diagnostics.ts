@@ -689,7 +689,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         MAX(CASE WHEN fph.status = 'failed' THEN fph.started_at END) AS last_failure_at
       FROM feed_pull_history fph
       LEFT JOIN feed_configs fc ON fc.feed_name = fph.feed_name
-      WHERE fph.started_at >= datetime('now', '-' || ? || ' hours')
+      WHERE datetime(fph.started_at) >= datetime('now', '-' || ? || ' hours')
       GROUP BY fph.feed_name
       ORDER BY failed DESC, fph.feed_name ASC
     `).bind(hoursBack).all<{
@@ -731,7 +731,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       SELECT feed_name, started_at, error_message
       FROM feed_pull_history
       WHERE status = 'failed' AND error_message IS NOT NULL
-        AND started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
       ORDER BY started_at DESC
       LIMIT 20
     `).bind(hoursBack).all<{
@@ -769,7 +769,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         -- execution time.
         AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
-      WHERE started_at >= datetime('now', '-' || ? || ' hours')
+      WHERE datetime(started_at) >= datetime('now', '-' || ? || ' hours')
       GROUP BY agent_id
       ORDER BY agent_id ASC
     `).bind(hoursBack).all<{
@@ -829,7 +829,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              ROUND((julianday('now') - julianday(started_at)) * 24 * 60, 1) AS minutes_stalled
       FROM agent_runs
       WHERE status = 'running'
-        AND started_at < datetime('now', '-15 minutes')
+        AND datetime(started_at) < datetime('now', '-15 minutes')
       ORDER BY started_at ASC
       LIMIT 10
     `).all<{
@@ -888,7 +888,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
       WHERE agent_id IN ('navigator', 'fast_tick', 'flight_control', 'orchestrator')
-        AND started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
       GROUP BY agent_id
     `).bind(hoursBack).all<{
       agent_id: string;
