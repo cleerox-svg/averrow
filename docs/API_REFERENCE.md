@@ -586,7 +586,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | GET | `/api/admin/pipeline-status` | Admin | Pipeline backlog counts with trend direction, owning agent, last run time. Reads from pre-computed backlog_history + agent_runs — no COUNT queries on threats. 5-min KV cache. |
 | GET | `/api/admin/pipeline-status/:id` | Admin | Per-pipeline drill-down detail |
 | GET | `/api/admin/metrics/d1-budget` | Admin | `/admin` Cost & Budget tab — D1 read/write budget section |
-| GET | `/api/admin/metrics/ai-spend` | Admin | `/admin` Cost & Budget tab — AI spend breakdown |
+| GET | `/api/admin/metrics/ai-spend` | Admin | `/admin` Cost & Budget tab — AI spend breakdown. Returns `windows` (24h/7d/30d totals), `by_agent_30d` (legacy top-20-by-cost rows), `by_agent` (per-agent rows for ALL three windows, each with `out_in_ratio` = output/input), `daily_30d` (all-agent daily series), and `cartographer_daily_30d` (cartographer-only daily series). Superset that absorbs the cost-optimization per-agent/out:in/cartographer view. 4 `budget_ledger` scans, 5-min KV cache. |
 | GET | `/api/admin/metrics/geo-coverage` | Admin | `/admin` Geo Coverage tab |
 | GET | `/api/admin/metrics/feed-failures` | Admin | `/admin` Feeds tab — feed failure rates |
 | GET | `/api/admin/health` | Admin | System health |
