@@ -582,6 +582,7 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/admin/stats` | Admin | Platform statistics |
+| GET | `/api/admin/dashboard` | Admin | Tier 2a landing snapshot — ONE KV-cached composite (`admin:dashboard_snapshot:v1`, ~75s TTL) the `/admin` landing reads instead of fanning out to ~6 endpoints. Composes reused, already-cached slices (system-health, budget status+breakdown, feed at-risk, pipeline verdict, email-security). Each slice is independently nullable: a partial source failure degrades that slice to `null` (frontend treats null as "unknown", never "healthy"), never a 500. Additive — underlying endpoints unchanged. Warmed by Navigator Phase B. |
 | GET | `/api/admin/pipeline-status` | Admin | Pipeline backlog counts with trend direction, owning agent, last run time. Reads from pre-computed backlog_history + agent_runs — no COUNT queries on threats. 5-min KV cache. |
 | GET | `/api/admin/pipeline-status/:id` | Admin | Per-pipeline drill-down detail |
 | GET | `/api/admin/metrics/d1-budget` | Admin | Metrics page — D1 read/write budget section |

@@ -5,6 +5,7 @@ import { requireAdmin, requireSuperAdmin, requireSales, requirePermission, isAut
 import { json } from "../lib/cors";
 import {
   handleAdminStats, handleAdminListUsers, handleAdminUpdateUser, handleAdminHealth, handleSystemHealth,
+  handleAdminDashboard,
   handleBackfillClassifications, handleBackfillGeo, handleBackfillDomainGeo, handleBackfillBrandMatch,
   handleBackfillBrandEnrichment, handleBackfillBrandSector,
   handleBackfillSafeDomains, handleImportTranco, handleAdminListBrands,
@@ -78,6 +79,14 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handlePipelineStatus(request, env);
+  });
+  // Tier 2a P5 — single KV-cached composite the /admin landing reads
+  // instead of fanning out to ~6 endpoints. Slices are independently
+  // nullable (partial failure → missing slice, never a 500).
+  router.get("/api/admin/dashboard", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminDashboard(request, env, ctx);
   });
   // Pipeline drill-down detail — must be defined after the bare
   // /api/admin/pipeline-status above so itty-router doesn't

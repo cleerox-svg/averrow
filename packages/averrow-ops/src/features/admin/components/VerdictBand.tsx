@@ -5,30 +5,51 @@
 // showed "OPERATIONAL" even while feeds were failing or the AI budget was
 // in emergency throttle.
 //
-// Computes a worst-of severity CLIENT-SIDE from data already fetched by
-// existing hooks (no new endpoint):
-//   - useSystemHealth()  -> agents.errors > 0
-//   - useBudgetStatus()  -> throttle level (emergency/hard/soft)
-//   - useFeedFailures()  -> feeds at/near auto-pause (reuses the exact
-//                           tiering FeedFailures.tsx uses, via feedRiskTier)
-//   - usePipelineStatus() -> any pipeline verdict GROWING/STALE
+// Tier 2a: computes a worst-of severity CLIENT-SIDE from the ONE dashboard
+// snapshot (useDashboardSnapshot, GET /api/admin/dashboard) instead of 4
+// separate hooks:
+//   - snapshot.threat_health -> agents_24h.errors > 0
+//   - snapshot.budget        -> throttle level (emergency/hard/soft)
+//   - snapshot.feeds         -> at_risk_count (+ per-row `severity`, stamped
+//                               by the backend directly — see feedsSeverity())
+//   - snapshot.pipeline      -> worst_tone (genuine-problem signal only;
+//                               benign states like an unconfigured GeoIP
+//                               binding are excluded server-side)
+//
+// Tier 2a fix pass (2026-07): the VerdictBand rewire had a regression where
+// an auto-paused-from-failures feed could read OPERATIONAL, because the
+// original client-side mapping matched on `verdict.label` text rather than
+// a real severity field. The backend now stamps `severity` on each at_risk
+// row directly (feedsSeverity() below reads it, no re-derivation).
 //
 // Guardrail (do not rebuild the bug this replaces): a signal whose data is
 // missing/unfetched/errored counts as 'unknown', never 'ok'. The rank order
 // below is critical > high > medium > low > unknown > ok, so:
-//   - a genuinely bad signal is never masked just because an unrelated
-//     hook hasn't resolved yet (unknown can't outrank a real severity), and
+//   - a genuinely bad signal is never masked just because the snapshot (or
+//     one of its slices) hasn't resolved yet (unknown can't outrank a real
+//     severity), and
 //   - the band can never read green while any signal is still unresolved
 //     (unknown outranks ok, so it can't be silently dropped to "healthy").
+//
+// Two distinct "unknown" sources now exist, both handled the same way:
+//   1. The whole snapshot is loading/errored/absent — every contributor is
+//      unknown (was previously possible per-hook; now it's all-or-nothing
+//      since there's one request).
+//   2. The snapshot loaded fine but a given SLICE is null — e.g.
+//      `threat_health` is null for a plain admin (RBAC — see
+//      handleAdminDashboard) even though budget/feeds/pipeline are
+//      populated. Exactly this shape is what previously happened when the
+//      super-admin-only system-health hook 401'd for a plain admin —
+//      behavior preserved.
 
 import { Link } from 'react-router-dom';
 import { Card, Badge } from '@/design-system/components';
 import type { Severity } from '@/design-system/components';
-import { useSystemHealth } from '@/hooks/useSystemHealth';
-import { useBudgetStatus } from '@/hooks/useBudget';
-import { useFeedFailures } from '@/hooks/useMetrics';
-import { usePipelineStatus } from '@/hooks/useAgents';
-import { feedRiskTier } from '../metrics/FeedFailures';
+import {
+  useDashboardSnapshot,
+  type DashboardFeedsSlice,
+  type DashboardPipelineSlice,
+} from '@/hooks/useDashboardSnapshot';
 
 type BandSeverity = 'critical' | 'high' | 'medium' | 'low' | 'unknown' | 'ok';
 
@@ -74,19 +95,67 @@ function ContributorBadge({ c }: { c: Contributor }) {
   return <Badge status="inactive" label={text} size="xs" />;
 }
 
+// Feeds: the backend now stamps a per-row `severity` directly on each
+// `at_risk` entry (handleAdminDashboard) — 'critical' covers both
+// auto-paused-from-failures feeds AND >=80% to auto-pause / high failure
+// rate; 'high' covers 60-79% / failing. This is the fix for the regression
+// the VerdictBand rewire introduced: an auto-paused feed used to fall out
+// of the OLD label-matching logic (`verdict.label === 'AT RISK'`) because
+// its verdict label didn't say "AT RISK", so the band read OPERATIONAL
+// while a feed was dead. Reading `severity` directly closes that gap.
+function feedsSeverity(feeds: DashboardFeedsSlice): { severity: BandSeverity; detail: string } {
+  if (feeds.at_risk_count === 0) {
+    return { severity: 'ok', detail: 'healthy' };
+  }
+  const visibleCritical = feeds.at_risk.some(f => f.severity === 'critical');
+  // `at_risk` is capped to the first 20 rows server-side (see
+  // handleAdminDashboard) — if the true count exceeds what we can see,
+  // don't risk under-reporting: treat the hidden remainder as critical.
+  const hasHiddenRows = feeds.at_risk_count > feeds.at_risk.length;
+  const severity: BandSeverity = visibleCritical || hasHiddenRows ? 'critical' : 'high';
+  const detail = severity === 'critical'
+    ? `${feeds.at_risk_count} feed${feeds.at_risk_count === 1 ? '' : 's'} at/near auto-pause`
+    : `${feeds.at_risk_count} feed${feeds.at_risk_count === 1 ? '' : 's'} near auto-pause`;
+  return { severity, detail };
+}
+
+// Pipelines: the snapshot pre-aggregates a worst_tone across all pipeline
+// verdicts server-side (handlePipelineStatus's GROWING/STALE/etc, rolled up
+// in handleAdminDashboard, with benign states like an unconfigured GeoIP
+// binding already excluded — so worst_tone only ever reflects a genuine
+// problem). Calibrated to match the severities the old per-pipeline
+// client-side filter used: worst_tone 'critical' -> 'high' here, 'warning'
+// -> 'medium'. worst_tone === 'unknown' means the pipeline list itself was
+// empty (nothing to assess) — treated as unresolved, not healthy.
+function pipelineSeverity(pipeline: DashboardPipelineSlice): { severity: BandSeverity; detail: string } {
+  if (pipeline.worst_tone === 'unknown') {
+    return { severity: 'unknown', detail: 'no pipelines reported' };
+  }
+  const severity: BandSeverity =
+    pipeline.worst_tone === 'critical' ? 'high' :
+    pipeline.worst_tone === 'warning'  ? 'medium' :
+                                          'ok';
+  // Neutral copy — a critical row may be an EMPTY reference dataset, not a
+  // growing backlog, so don't hardcode "growing"/"stale" wording onto it.
+  const detail = severity === 'ok'
+    ? 'healthy'
+    : `${pipeline.needs_attention_count} pipeline${pipeline.needs_attention_count === 1 ? '' : 's'} need attention`;
+  return { severity, detail };
+}
+
 export function VerdictBand() {
-  const { data: health, isLoading: healthLoading, isError: healthError } = useSystemHealth();
-  const { data: budget, isLoading: budgetLoading, isError: budgetError } = useBudgetStatus();
-  const { data: feeds, isLoading: feedsLoading, isError: feedsError } = useFeedFailures();
-  const { data: pipelines, isLoading: pipelinesLoading, isError: pipelinesError } = usePipelineStatus();
+  const { data: snapshot, isLoading, isError } = useDashboardSnapshot();
+  const snapshotUnavailable = isLoading || isError || !snapshot;
 
   const contributors: Contributor[] = [];
 
-  // 1 — Agent errors (system health)
-  if (healthLoading || healthError || !health) {
+  // 1 — Agent errors (threat_health slice; null for non-super_admin, and
+  // for any whole-snapshot failure).
+  const threatHealth = snapshot?.threat_health;
+  if (snapshotUnavailable || !threatHealth) {
     contributors.push({ key: 'agents', label: 'Agents', severity: 'unknown', detail: 'status pending', to: '/agents' });
   } else {
-    const errors = health.agents.errors;
+    const errors = threatHealth.agents_24h.errors;
     contributors.push({
       key:      'agents',
       label:    'Agents',
@@ -97,10 +166,11 @@ export function VerdictBand() {
   }
 
   // 2 — AI budget throttle
-  if (budgetLoading || budgetError || !budget) {
+  const budget = snapshot?.budget;
+  if (snapshotUnavailable || !budget) {
     contributors.push({ key: 'budget', label: 'AI budget', severity: 'unknown', detail: 'status pending', to: '/admin#budget-panel' });
   } else {
-    const level = budget.throttle_level;
+    const level = budget.status.throttle_level;
     const severity: BandSeverity =
       level === 'emergency' ? 'critical' :
       level === 'hard'      ? 'high' :
@@ -111,46 +181,28 @@ export function VerdictBand() {
       label:    'AI budget',
       severity,
       detail:   level === 'none'
-        ? `${budget.pct_used.toFixed(0)}% of monthly limit`
-        : `${budget.pct_used.toFixed(0)}% budget · ${level} throttle`,
+        ? `${budget.status.pct_used.toFixed(0)}% of monthly limit`
+        : `${budget.status.pct_used.toFixed(0)}% budget · ${level} throttle`,
       to: '/admin#budget-panel',
     });
   }
 
-  // 3 — Feeds at/near auto-pause (same tiering as FeedFailures.tsx)
-  if (feedsLoading || feedsError || !feeds) {
+  // 3 — Feeds at/near auto-pause (same tiering as FeedFailures.tsx's
+  // feedRiskTier, re-derived from the snapshot's pre-filtered at_risk list)
+  const feeds = snapshot?.feeds;
+  if (snapshotUnavailable || !feeds) {
     contributors.push({ key: 'feeds', label: 'Feeds', severity: 'unknown', detail: 'status pending', to: '/admin/metrics?tab=feed-failures' });
   } else {
-    const rows = feeds.per_feed;
-    const criticalCount = rows.filter(r => feedRiskTier(r) === 'critical').length;
-    const highCount     = rows.filter(r => feedRiskTier(r) === 'high').length;
-    let severity: BandSeverity = 'ok';
-    let detail = 'healthy';
-    if (criticalCount > 0) {
-      severity = 'critical';
-      detail = `${criticalCount} feed${criticalCount === 1 ? '' : 's'} at/near auto-pause`;
-    } else if (highCount > 0) {
-      severity = 'high';
-      detail = `${highCount} feed${highCount === 1 ? '' : 's'} near auto-pause`;
-    }
+    const { severity, detail } = feedsSeverity(feeds);
     contributors.push({ key: 'feeds', label: 'Feeds', severity, detail, to: '/admin/metrics?tab=feed-failures' });
   }
 
   // 4 — Pipeline backlog verdicts (GROWING falling behind, STALE unmeasured)
-  if (pipelinesLoading || pipelinesError || !pipelines) {
+  const pipeline = snapshot?.pipeline;
+  if (snapshotUnavailable || !pipeline) {
     contributors.push({ key: 'pipelines', label: 'Pipelines', severity: 'unknown', detail: 'status pending', to: '/admin/metrics?tab=pipelines' });
   } else {
-    const growing = pipelines.filter(p => p.verdict?.label?.toUpperCase() === 'GROWING');
-    const stale   = pipelines.filter(p => p.verdict?.label?.toUpperCase() === 'STALE');
-    let severity: BandSeverity = 'ok';
-    let detail = 'healthy';
-    if (growing.length > 0) {
-      severity = 'high';
-      detail = `${growing.length} pipeline${growing.length === 1 ? '' : 's'} growing`;
-    } else if (stale.length > 0) {
-      severity = 'medium';
-      detail = `${stale.length} pipeline${stale.length === 1 ? '' : 's'} stale`;
-    }
+    const { severity, detail } = pipelineSeverity(pipeline);
     contributors.push({ key: 'pipelines', label: 'Pipelines', severity, detail, to: '/admin/metrics?tab=pipelines' });
   }
 

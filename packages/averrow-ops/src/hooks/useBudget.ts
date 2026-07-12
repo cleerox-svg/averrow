@@ -1,5 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { DASHBOARD_SNAPSHOT_QUERY_KEY } from '@/hooks/useDashboardSnapshot';
 
 export interface BudgetConfig {
   monthly_limit_usd: number;
@@ -21,34 +22,6 @@ export interface BudgetStatus {
   anthropic_reported: number;
 }
 
-export interface AgentSpend {
-  agent_id: string;
-  cost_usd: number;
-  calls: number;
-}
-
-export function useBudgetStatus() {
-  return useQuery({
-    queryKey: ['budget-status'],
-    queryFn: async () => {
-      const res = await api.get<BudgetStatus>('/api/admin/budget/status');
-      return res.data ?? null;
-    },
-    refetchInterval: 60_000,
-  });
-}
-
-export function useBudgetBreakdown() {
-  return useQuery({
-    queryKey: ['budget-breakdown'],
-    queryFn: async () => {
-      const res = await api.get<AgentSpend[]>('/api/admin/budget/breakdown');
-      return res.data ?? [];
-    },
-    refetchInterval: 60_000,
-  });
-}
-
 export function useBudgetConfigMutation() {
   const qc = useQueryClient();
   return useMutation({
@@ -57,7 +30,13 @@ export function useBudgetConfigMutation() {
       return res.data ?? null;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['budget-status'] });
+      // AdminDashboard's BudgetPanel reads budget off the dashboard snapshot
+      // (Tier 2a) — without this, a config edit wouldn't be visible there
+      // until the snapshot's own 75s refetch interval caught up.
+      // (useBudgetStatus/useBudgetBreakdown, the standalone budget hooks
+      // this used to also invalidate, were removed as dead code — no
+      // remaining consumer outside this file; see fix-pass note.)
+      qc.invalidateQueries({ queryKey: DASHBOARD_SNAPSHOT_QUERY_KEY });
     },
   });
 }

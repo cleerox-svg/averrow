@@ -19,6 +19,8 @@
  *   EMERGENCY (99%+) — ALL AI paused, only sentinel + nexus run
  */
 
+import type { Env } from "../types";
+
 // ─── Cost Model ─────────────────────────────────────────────────
 
 export const COST_PER_MILLION: Record<string, { input: number; output: number }> = {
@@ -331,8 +333,45 @@ export class BudgetManager {
 
 // ─── Anthropic Usage Report API (optional verification) ─────────
 
-export async function fetchAnthropicUsageReport(anthropicAdminKey: string | undefined): Promise<number> {
+/** KV cache key + TTL for the live Anthropic usage-report cost total.
+ *  Deliberately NOT under the `count.` namespace — this is an outbound
+ *  upstream-fetch result, not a D1 counter. */
+const ANTHROPIC_USAGE_CACHE_KEY = 'budget:anthropic_usage:v1';
+const ANTHROPIC_USAGE_CACHE_TTL = 300;
+
+/**
+ * Fetch the org's month-to-date reported spend from Anthropic's Usage
+ * Report API and price it through our cost table (verification-only —
+ * never blocks primary ledger accounting).
+ *
+ * P6: the outbound `fetch()` to api.anthropic.com is now KV-cached
+ * (300s) when an `env` with a CACHE binding is supplied. `/admin` polls
+ * `/api/admin/budget/status` every 60s per open tab, and each poll
+ * previously made an uncached upstream call. We cache ONLY a successful
+ * result — any failure returns 0 uncached so the next poll retries
+ * immediately (fail-soft behavior preserved: fetch errors still swallow
+ * to 0). `env` is optional so the legacy no-env call sites keep working
+ * unchanged; they simply skip the cache.
+ */
+export async function fetchAnthropicUsageReport(
+  anthropicAdminKey: string | undefined,
+  env?: Env,
+): Promise<number> {
   if (!anthropicAdminKey) return 0;
+
+  // Serve a fresh cached total if present. KV read is free vs. the D1
+  // budget and skips the upstream round-trip entirely.
+  if (env?.CACHE) {
+    try {
+      const cached = await env.CACHE.get(ANTHROPIC_USAGE_CACHE_KEY);
+      if (cached !== null) {
+        const n = Number(cached);
+        if (Number.isFinite(n)) return n;
+      }
+    } catch {
+      // KV transient — fall through to the live fetch.
+    }
+  }
 
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
@@ -370,6 +409,19 @@ export async function fetchAnthropicUsageReport(anthropicAdminKey: string | unde
         }
       }
     }
+
+    // Cache the successful total only. A transient upstream failure
+    // returns 0 above WITHOUT caching, so recovery is immediate.
+    if (env?.CACHE) {
+      try {
+        await env.CACHE.put(ANTHROPIC_USAGE_CACHE_KEY, String(totalCost), {
+          expirationTtl: ANTHROPIC_USAGE_CACHE_TTL,
+        });
+      } catch {
+        // Non-fatal — next call just refetches.
+      }
+    }
+
     return totalCost;
   } catch {
     return 0;

@@ -38,6 +38,8 @@ import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryOperations } from '../handlers/observatory';
 import { handleDashboardOverview, handleDashboardTopBrands } from '../handlers/dashboard';
 import { handleListAgents } from '../handlers/agents';
+import { handleAdminDashboard } from '../handlers/admin';
+import type { AuthContext } from '../middleware/auth';
 import { handleListOperations, handleOperationsStats } from '../handlers/operations';
 import { handleListBrands, handleBrandStats } from '../handlers/brands';
 import { handleListThreatActors, handleThreatActorStats } from '../handlers/threatActors';
@@ -504,6 +506,19 @@ async function runNavigatorImpl(
   if (!isOverCap() && status !== 'failed') {
     const warmStart = Date.now();
     const fakeReq = (path: string) => new Request(`https://averrow.com${path}`);
+    // Synthetic super_admin context for warming the admin dashboard snapshot
+    // (handleAdminDashboard gates its threat_health slice on role). Warming
+    // is a trusted internal cron path — this ctx never authorizes a request,
+    // it only selects which role-scoped cache variant to populate.
+    const DASHBOARD_WARM_CTX: AuthContext = {
+      userId: 'navigator',
+      email: 'navigator@averrow.internal',
+      role: 'super_admin',
+      orgId: null,
+      orgRole: null,
+      embeddedScope: undefined,
+      enrollOnly: false,
+    };
     try {
       // Phase A: Observatory endpoints (highest impact — 10-15s cold load)
       // Run the 5 Observatory queries in parallel for maximum throughput.
@@ -534,6 +549,12 @@ async function runNavigatorImpl(
       }
 
       // Phase B: Dashboard + agents + operations — every 15 min
+      // Includes the Tier 2a admin dashboard snapshot (P7). Navigator's
+      // 5-min cadence keeps it warm-ish; with a ~75s snapshot TTL the
+      // 15-min warm won't cover every TTL gap, but real /admin visits
+      // still hit warm most of the time (and a cold visit just repopulates
+      // it — the composite's own miss path is cheap since its sub-slices
+      // are independently cached).
       if (runPhaseB && !isOverCap() && !skipNonEssential) {
         const pageResults = await Promise.allSettled([
           handleDashboardOverview(fakeReq('/api/dashboard/overview'), env),
@@ -541,6 +562,11 @@ async function runNavigatorImpl(
           handleListAgents(fakeReq('/api/agents'), env),
           handleListOperations(fakeReq('/api/v1/operations'), env),
           handleOperationsStats(fakeReq('/api/v1/operations/stats'), env),
+          // Warm the super_admin variant — it's the fuller snapshot (its
+          // threat_health slice is the more expensive one to compute) and a
+          // super_admin visit hits it warm. A plain admin reads a separate
+          // role-scoped key and just repopulates cheaply on a cold visit.
+          handleAdminDashboard(fakeReq('/api/admin/dashboard'), env, DASHBOARD_WARM_CTX),
         ]);
         cacheWarmed += pageResults.filter(r => r.status === 'fulfilled').length;
       }

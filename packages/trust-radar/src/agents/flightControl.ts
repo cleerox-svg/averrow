@@ -307,7 +307,7 @@ export const flightControlAgent: AgentModule = {
     if (anthropicAdminKey) {
       const lastCheck = await env.CACHE.get('budget:anthropic_last_check');
       if (!lastCheck) {
-        anthropicReported = await fetchAnthropicUsageReport(anthropicAdminKey);
+        anthropicReported = await fetchAnthropicUsageReport(anthropicAdminKey, env);
         await env.CACHE.put('budget:anthropic_last_check', String(Date.now()), { expirationTtl: 3600 });
       }
     }
