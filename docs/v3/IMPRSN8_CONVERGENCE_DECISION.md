@@ -4,6 +4,11 @@
 **Date:** 2026-05-07
 **Related:** `.claude/plans/v3.md` §2.6 (imprsn8 reference), §4 (v3 architecture), `CLAUDE.md` repo structure note
 
+> **Superseded — imprsn8 decommissioned 2026-07-12.** The question this
+> doc answers (standalone vs. converge) is moot now that `packages/imprsn8`
+> no longer exists. Left as-is for historical record of the Phase 0
+> reasoning; do not treat anything below as current state.
+
 ---
 
 ## 1. The question

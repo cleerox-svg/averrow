@@ -33,10 +33,6 @@ trust-radar/
 │   │   ├── migrations/             → D1 SQL migrations (0001–0035+)
 │   │   ├── public/                 → Static SPA assets (built frontend)
 │   │   └── wrangler.toml           → Worker configuration
-│   ├── imprsn8/            → Social brand protection Worker
-│   │   ├── src/                    → imprsn8 Worker source
-│   │   ├── migrations/             → imprsn8 D1 migrations
-│   │   └── wrangler.toml
 ├── prototypes/             → UI design specifications (HTML mockups)
 ├── docs/                   → Platform documentation
 ├── .github/workflows/      → CI/CD pipelines

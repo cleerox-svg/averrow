@@ -4,6 +4,15 @@
 **Last updated: March 2026**
 **Purpose:** Prevent feature drift between products. Before adding any feature to either platform, consult this document.
 
+> **DECOMMISSIONED (2026-07-12):** `imprsn8` has been removed from this
+> monorepo — package, Worker, and Cloudflare resources torn down. This
+> document is retained for historical context on the two-product boundary
+> that shaped Trust Radar's social-monitoring scope, but every reference
+> to `imprsn8` below describes a product that no longer exists. Trust
+> Radar's own social monitoring (see "Trust Radar Social Monitoring" below
+> and `docs/AI_AGENTS.md`) has since shipped independently of the imprsn8
+> split described here.
+
 ---
 
 ## The One-Line Test

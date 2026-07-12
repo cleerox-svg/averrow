@@ -23,7 +23,7 @@ their own context and only the tools their charter grants.
 
 | Agent | Category | Owns | Model | Writes code? |
 |---|---|---|---|---|
-| `backend-engineer` | Software dev | Workers, D1, internal agents, feeds, cron (`trust-radar`, `imprsn8`, `averrow-mcp`) | opus | ✅ |
+| `backend-engineer` | Software dev | Workers, D1, internal agents, feeds, cron (`trust-radar`, `averrow-mcp`) | opus | ✅ |
 | `frontend-engineer` | Software dev | React SPAs (`averrow-ops`, `averrow-tenant`, `shared`, marketing islands) | sonnet | ✅ |
 | `test-engineer` | Testing | Writes/maintains vitest unit + integration tests (backend + React) | sonnet | Tests only |
 | `qa-verifier` | Testing | Runs the gate + drives changes end-to-end to catch runtime bugs | sonnet | Verify only |

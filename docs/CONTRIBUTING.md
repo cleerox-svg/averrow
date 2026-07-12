@@ -74,7 +74,6 @@ packages/
 │   │   ├── templates/    → HTML page templates
 │   │   └── middleware/   → Auth, rate limiting, CORS, security
 │   └── migrations/       → D1 SQL migrations
-├── imprsn8/              → Social brand protection Worker
 ```
 
 ## Adding New Features

@@ -112,13 +112,9 @@ papered over by editing product source to pass a check.
 │   │   │   ├── hooks/            ← TanStack Query hooks
 │   │   │   └── lib/              ← api.ts, auth.tsx, time.ts, cn.ts
 │   │   └── tailwind.config.ts
-│   ├── averrow-mcp/              ← MCP server exposing platform diagnostics to Claude Code
-│   │   ├── src/index.ts          ← Wraps `/api/internal/*` with MCP tool schemas
-│   │   └── wrangler.toml         ← Requires AVERROW_INTERNAL_SECRET + MCP_AUTH_TOKEN
-│   └── imprsn8/                  ← Separate Worker for imprsn8.com (digital-impression scoring)
-│       ├── src/                  ← handlers/, lib/, middleware/, templates/
-│       ├── migrations/           ← D1 migrations (imprsn8-db)
-│       └── wrangler.toml
+│   └── averrow-mcp/              ← MCP server exposing platform diagnostics to Claude Code
+│       ├── src/index.ts          ← Wraps `/api/internal/*` with MCP tool schemas
+│       └── wrangler.toml         ← Requires AVERROW_INTERNAL_SECRET + MCP_AUTH_TOKEN
 ├── docs/
 │   ├── API_REFERENCE.md          ← All API routes — update when adding endpoints
 │   ├── ARCHITECTURE.md           ← System architecture

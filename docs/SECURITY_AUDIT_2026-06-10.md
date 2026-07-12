@@ -1,5 +1,12 @@
 # Platform Security Audit — 2026-06-10
 
+> **Update (2026-07-12):** `packages/imprsn8` has been decommissioned —
+> package, Worker, and Cloudflare resources removed. Every finding below
+> scoped to imprsn8 (C1, C3, C4, H7, M5, M6) is moot: the vulnerable code
+> no longer exists to exploit. Findings scoped to `trust-radar`,
+> `averrow-ops`/`averrow-tenant`, and `averrow-mcp` are unaffected and this
+> record is left otherwise unchanged as the point-in-time audit result.
+
 Full-platform security review covering `packages/trust-radar` (backend Worker),
 `packages/averrow-ops` and `packages/averrow-tenant` (SPAs), `packages/imprsn8`,
 `packages/averrow-mcp`, and `packages/shared`. Read-only code audit — no behavior

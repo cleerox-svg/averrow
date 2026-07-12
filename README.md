@@ -26,15 +26,12 @@ trust-radar/                         ← repo name kept for git history
 │   ├── trust-radar/                 ← Averrow Worker (backend) — internal name
 │   ├── averrow-ops/                 ← Staff back-office React SPA (rebadged from averrow-ui; serves /v2/*)
 │   ├── averrow-tenant/              ← Customer-facing React SPA (serves /tenant/*)
-│   ├── averrow-mcp/                 ← MCP server exposing platform diagnostics to Claude Code
-│   └── imprsn8/                     ← Sibling product (pending extraction to its own repo)
+│   └── averrow-mcp/                 ← MCP server exposing platform diagnostics to Claude Code
 ├── docs/                            ← Platform documentation
 ├── migrations/                      ← Legacy (per-package migrations live inside packages/)
 ├── prototypes/                      ← HTML design prototypes
 └── scripts/                         ← Diagnostics + operational scripts
 ```
-
-> **Note on `imprsn8`:** `imprsn8.com` is a separate product that currently lives in this monorepo for historical reasons. It will be extracted to its own repo, Worker, and D1 database — treat it as a sibling, not an Averrow component.
 
 ## Architecture
 
@@ -109,7 +106,6 @@ pnpm --filter averrow-ops build
 
 # Deploy manually (normally auto-deploys on push to master)
 pnpm deploy:radar
-pnpm deploy:imprsn8
 ```
 
 ### Migrations

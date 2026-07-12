@@ -1,10 +1,12 @@
 # Averrow Platform Assessment — June 2026
 
 **Scope:** Full code-level assessment of the Averrow platform (trust-radar Worker,
-averrow-ops, averrow-tenant, averrow-marketing, shared, imprsn8) against the stated
-vision: *ingest intel feeds broadly → identify targeted brands → surface mid-market
-North American prospects → onboard them as brand-protection customers → deepen signal
-via their email-security stack — all operated at minimal cost.*
+averrow-ops, averrow-tenant, averrow-marketing, shared, imprsn8 — imprsn8 was
+decommissioned 2026-07-12, after this assessment was written; see note under
+§2.5) against the stated vision: *ingest intel feeds broadly → identify
+targeted brands → surface mid-market North American prospects → onboard them
+as brand-protection customers → deepen signal via their email-security stack
+— all operated at minimal cost.*
 
 **Method:** Ten parallel code-level audits (feeds, agent mesh, brand-protection
 capabilities, email stack, lead-gen, multi-tenancy, cost architecture, documentation,
@@ -156,7 +158,10 @@ splitting and likely Workflow-ification of Analyst.
   - **Pathfinder is manual-only** (demoted 2026-04-29) — no cron refreshes the pipeline.
   - **Brand discovery is attacker-driven**, not ICP-driven — the 9.6K-brand catalog is
     whoever got attacked, with no proactive mid-market seeding loop.
-  - imprsn8 is a separate product with zero linkage to `sales_leads`.
+  - imprsn8 was a separate product with zero linkage to `sales_leads`
+    (as of this June 2026 assessment). It was decommissioned 2026-07-12 —
+    package, Worker, and Cloudflare resources removed — so this line item
+    is moot going forward.
 
 ### 2.6 Multi-tenancy & customer readiness
 
