@@ -14,7 +14,8 @@ the security of the code we ship, not external threat feeds.
 
 ## Reference
 `CLAUDE.md` §7 (RBAC), `src/middleware/auth.ts`, `lib/role-permissions.ts`,
-`docs/SECURITY_AUDIT_2026-06-10.md`, `docs/SHARED_LOGIN_SPEC.md`,
+`docs/SECURITY_AUDIT_2026-07-12.md` (current posture; supersedes the archived
+`docs/archive/SECURITY_AUDIT_2026-06-10.md`), `docs/SHARED_LOGIN_SPEC.md`,
 `docs/LOGIN_AUDIT_2026-06.md`.
 
 ## What you review

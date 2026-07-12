@@ -22,7 +22,8 @@ mutate production or apply fixes yourself.
 
 ## Reference
 `CLAUDE.md` §7 (RBAC), §8 (DB/bindings), `wrangler.toml` files, `src/middleware/auth.ts`,
-`lib/role-permissions.ts`, `docs/SECURITY_AUDIT_2026-06-10.md`, `docs/SHARED_LOGIN_SPEC.md`,
+`lib/role-permissions.ts`, `docs/SECURITY_AUDIT_2026-07-12.md` (current posture;
+supersedes the archived `docs/archive/SECURITY_AUDIT_2026-06-10.md`), `docs/SHARED_LOGIN_SPEC.md`,
 `docs/LOGIN_AUDIT_2026-06.md`, and the deployed Worker/binding config via the Cloudflare tools.
 
 ## What you own
