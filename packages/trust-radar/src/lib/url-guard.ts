@@ -16,7 +16,8 @@
  * `redirect: "manual"` on the delivery fetch so a public endpoint cannot
  * bounce the request to an internal address.
  *
- * Audit finding M1 (docs/SECURITY_AUDIT_2026-06-10.md).
+ * Audit finding M1 (docs/SECURITY_AUDIT_2026-07-12.md reconciliation table;
+ * originally raised in docs/archive/SECURITY_AUDIT_2026-06-10.md).
  */
 
 export type UrlGuardResult = { ok: true } | { ok: false; reason: string };

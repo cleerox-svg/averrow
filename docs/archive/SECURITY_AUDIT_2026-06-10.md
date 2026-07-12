@@ -1,5 +1,13 @@
 # Platform Security Audit — 2026-06-10
 
+> **SUPERSEDED (2026-07-12) — archived point-in-time record.** The current
+> security posture lives in `docs/SECURITY_AUDIT_2026-07-12.md`, which
+> re-verifies every non-imprsn8 finding below against current code (all Highs
+> and non-imprsn8 Criticals are now FIXED; the residual open items are tracked
+> there as O1–O7). This file is retained unchanged as the original audit; the
+> finding IDs referenced in source comments (e.g. `H5`, `H6`, `M1`) map into
+> the 2026-07-12 reconciliation table.
+
 > **Update (2026-07-12):** `packages/imprsn8` has been decommissioned —
 > package, Worker, and Cloudflare resources removed. Every finding below
 > scoped to imprsn8 (C1, C3, C4, H7, M5, M6) is moot: the vulnerable code
