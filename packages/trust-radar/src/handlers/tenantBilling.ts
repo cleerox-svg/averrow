@@ -13,6 +13,7 @@
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
+import { requireOrgAdmin } from "./organizations";
 import { getOrgPricingSummary, getPricingPlan } from "../lib/pricing";
 import {
   createCheckoutSession,
@@ -64,8 +65,11 @@ export async function handleCreateCheckoutSession(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const accessError = verifyOrgAccess(ctx, orgId);
-  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  // Billing management (checkout) is org-admin only — a viewer must not be
+  // able to start a subscription change. requireOrgAdmin also enforces the
+  // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
+  const denied = requireOrgAdmin(ctx, orgId, origin);
+  if (denied) return denied;
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {
@@ -171,8 +175,11 @@ export async function handleCreatePortalSession(
   ctx:     AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const accessError = verifyOrgAccess(ctx, orgId);
-  if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  // Portal access lets the customer cancel / change plan / view invoices —
+  // org-admin only, not any viewer. requireOrgAdmin also enforces the
+  // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
+  const denied = requireOrgAdmin(ctx, orgId, origin);
+  if (denied) return denied;
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {

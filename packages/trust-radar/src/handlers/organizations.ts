@@ -1209,7 +1209,7 @@ export async function handleGetWebhookConfig(
 // API KEYS
 // ═══════════════════════════════════════════════════════════════
 
-function requireOrgAdmin(ctx: AuthContext, orgId: string, origin: string | null): Response | null {
+export function requireOrgAdmin(ctx: AuthContext, orgId: string, origin: string | null): Response | null {
   if (ctx.role !== "super_admin") {
     if (ctx.orgId !== orgId) return json({ success: false, error: "Not a member of this organization" }, 403, origin);
     const level = ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0;

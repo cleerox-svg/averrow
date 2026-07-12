@@ -366,8 +366,27 @@ export function buildBrandFilter(
 }
 
 /**
- * Verify authenticated user belongs to a specific org.
- * Superadmins bypass the check.
+ * Route-layer org-membership backstop for `/api/orgs/:orgId/*` tenant
+ * routes. Runs `requireAuth` first, then confirms the caller belongs to
+ * the org named in the route param before the handler runs.
+ *
+ * This is defense-in-depth: the per-handler `verifyOrgAccess` /
+ * `requireOrgAdmin` checks stay in place as the inner net. This guard is
+ * the enforced outer net so a handler that forgets its own check can't
+ * leak cross-org data.
+ *
+ * Membership source: the JWT-derived `ctx.orgId` session scope — the
+ * SAME authoritative source every downstream handler compares against
+ * (`verifyOrgAccess`/`requireOrgAdmin` both test `ctx.orgId !== orgId`
+ * as strings). Keeping the same source guarantees the guard never
+ * disagrees with the handler on the common path.
+ *
+ * Global-read roles (super_admin, auditor — `hasGlobalReadScope`) bypass
+ * the membership check; they are cross-tenant seats by design. Note the
+ * handlers' own `verifyOrgAccess` only exempts `super_admin`, so an
+ * `auditor` that passes this guard is still gated at the handler — the
+ * guard is deliberately no stricter than the inner check for real
+ * members, and no looser for the global seats it recognizes.
  */
 export async function requireOrgMember(
   request: Request & { params?: Record<string, string> },
@@ -377,14 +396,16 @@ export async function requireOrgMember(
   const ctx = await requireAuth(request, env);
   if (!isAuthContext(ctx)) return ctx;
 
-  // Superadmins can access any org
-  if (ctx.role === "super_admin") return ctx;
+  // Global-scope roles (super_admin, auditor) reach any org by design.
+  if (hasGlobalReadScope(ctx.role)) return ctx;
 
   const orgId = request.params?.[orgIdParam];
   if (!orgId) {
     return json({ success: false, error: "Missing organization ID" }, 400, request.headers.get("Origin"));
   }
 
+  // ctx.orgId is the caller's single active-org scope from the JWT.
+  // A user with no org (orgId === null) never matches and is rejected.
   if (ctx.orgId !== orgId) {
     return json({ success: false, error: "Not a member of this organization" }, 403, request.headers.get("Origin"));
   }

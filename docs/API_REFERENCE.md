@@ -814,8 +814,8 @@ auto-submits only takedowns matching `semi_auto_rules` and holds the rest in
 notification). Legacy rows without `mode`/`semi_auto_rules` are backfilled on
 read (`high_risk=true → semi_auto`, else `auto`).
 | GET | `/api/orgs/:orgId/billing` | Member | Tenant billing summary — same shape as `/api/admin/customers/:orgId/pricing` but scoped to the caller's org |
-| POST | `/api/orgs/:orgId/billing/checkout-session` | Member | Create a Stripe Checkout session for plan purchase |
-| POST | `/api/orgs/:orgId/billing/portal-session` | Member | Create a Stripe customer-portal session (requires an existing Stripe customer) |
+| POST | `/api/orgs/:orgId/billing/checkout-session` | Org admin | Create a Stripe Checkout session for plan purchase (org-admin+; viewers cannot start a subscription change) |
+| POST | `/api/orgs/:orgId/billing/portal-session` | Org admin | Create a Stripe customer-portal session (org-admin+; portal can cancel/change plan/view invoices, so it is not viewer-accessible; requires an existing Stripe customer) |
 
 ### Tenant Modules (v3 Phase A)
 
