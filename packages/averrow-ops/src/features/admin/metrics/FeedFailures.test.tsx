@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
-import { FeedFailures } from './FeedFailures';
+import { FeedFailures, feedRiskTier } from './FeedFailures';
 import type { FeedFailurePayload, FeedFailureRow } from '@/hooks/useMetrics';
 
 vi.mock('@/hooks/useMetrics', () => ({ useFeedFailures: vi.fn() }));
@@ -28,6 +28,9 @@ function makeRow(overrides: Partial<FeedFailureRow> = {}): FeedFailureRow {
     // >= 80 -> feedRiskTier 'critical' -> included in the default
     // at-risk-only grid without needing the "Show all" toggle.
     pct_to_auto_pause: 85,
+    // Backend-computed tier (computeFeedSeverity) — feedRiskTier reads
+    // this directly now rather than re-deriving it from pct_to_auto_pause.
+    severity: 'critical',
     verdict: { tone: 'failed', label: 'FAILED' },
     ...overrides,
   };
@@ -121,5 +124,38 @@ describe('FeedFailures — FeedRiskCard keyboard access', () => {
     await userEvent.keyboard('{ArrowDown}');
     expect(card).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('24h pulls')).not.toBeInTheDocument();
+  });
+});
+
+// ─── Tier 4: feedRiskTier is a thin reader of the backend `severity` ────
+// field (lib/feed-severity.ts computeFeedSeverity on the trust-radar
+// side) instead of re-deriving critical/high from
+// pct_to_auto_pause/failure_rate_pct here. `muted` is still resolved
+// locally from enabled/paused_reason since severity is null for both
+// "healthy" and "operator paused it" rows.
+describe('feedRiskTier — thin reader of row.severity', () => {
+  it('maps severity="critical" straight through, regardless of the raw thresholds', () => {
+    const row = makeRow({ severity: 'critical', pct_to_auto_pause: 0, failure_rate_pct: 0 });
+    expect(feedRiskTier(row)).toBe('critical');
+  });
+
+  it('maps severity="high" straight through, regardless of the raw thresholds', () => {
+    const row = makeRow({ severity: 'high', pct_to_auto_pause: 0, failure_rate_pct: 0 });
+    expect(feedRiskTier(row)).toBe('high');
+  });
+
+  it('falls back to muted for a disabled feed even when severity is null', () => {
+    const row = makeRow({ severity: null, enabled: false, paused_reason: null, pct_to_auto_pause: 90 });
+    expect(feedRiskTier(row)).toBe('muted');
+  });
+
+  it('falls back to muted for a manually-paused feed even when severity is null', () => {
+    const row = makeRow({ severity: null, enabled: true, paused_reason: 'manual', failure_rate_pct: 80, pulls: 20 });
+    expect(feedRiskTier(row)).toBe('muted');
+  });
+
+  it('falls back to green when severity is null and the feed is enabled + unpaused', () => {
+    const row = makeRow({ severity: null, enabled: true, paused_reason: null, pct_to_auto_pause: 10, failure_rate_pct: 0 });
+    expect(feedRiskTier(row)).toBe('green');
   });
 });

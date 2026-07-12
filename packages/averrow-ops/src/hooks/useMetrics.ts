@@ -137,6 +137,12 @@ export interface AiSpendByAgent {
   cost_usd: number;
 }
 
+/** Per-window per-agent row — adds the server-computed output:input
+ *  token ratio (the cost-optimization efficiency indicator). */
+export interface AiSpendByAgentWindowed extends AiSpendByAgent {
+  out_in_ratio: number;
+}
+
 export interface AiSpendDaily {
   day: string;
   calls: number;
@@ -151,8 +157,20 @@ export interface AiSpendPayload {
     '7d':  AiSpendWindowTotals;
     '30d': AiSpendWindowTotals;
   };
+  /** Legacy top-20-by-30d-cost rows (no per-window breakdown). Kept for
+   *  back-compat; the per-agent grid now reads `by_agent[window]`. */
   by_agent_30d: AiSpendByAgent[];
+  /** Top-20 agents by 30d cost, each windowed row carrying `out_in_ratio`.
+   *  Superset that absorbed the retired-from-the-frontend
+   *  ai-cost-optimization per-agent view (Tier 4 merge). */
+  by_agent: {
+    '24h': AiSpendByAgentWindowed[];
+    '7d':  AiSpendByAgentWindowed[];
+    '30d': AiSpendByAgentWindowed[];
+  };
   daily_30d:    AiSpendDaily[];
+  /** Cartographer-only daily series — the cost-optimization trend line. */
+  cartographer_daily_30d: AiSpendDaily[];
   generated_at: string;
 }
 
@@ -166,61 +184,6 @@ export function useAiSpend() {
     placeholderData: keepPreviousData,
     // Backend caches at 5 min — AI spend trend is stable, no
     // need to poll faster.
-    refetchInterval: 300_000,
-    staleTime: 300_000,
-  });
-}
-
-// ─── AI Cost Optimization Tracker ────────────────────────────────
-
-export interface AiCostOptAgentMetrics {
-  calls:         number;
-  input_tokens:  number;
-  output_tokens: number;
-  cost_usd:      number;
-}
-
-export interface AiCostOptCartographerDaily {
-  day:           string;
-  calls:         number;
-  input_tokens:  number;
-  output_tokens: number;
-  cost_usd:      number;
-}
-
-export type LeverStatus = 'planned' | 'in_progress' | 'deployed';
-
-export interface AiCostOptLever {
-  id:                              string;
-  title:                           string;
-  target_agent:                    string;
-  status:                          LeverStatus;
-  estimated_savings_usd_per_year:  number;
-  deployed_at:                     string | null;
-  indicator:                       string;
-}
-
-export interface AiCostOptPayload {
-  focus_agents: string[];
-  windows: {
-    '24h': Record<string, AiCostOptAgentMetrics>;
-    '7d':  Record<string, AiCostOptAgentMetrics>;
-    '30d': Record<string, AiCostOptAgentMetrics>;
-  };
-  cartographer_daily_30d: AiCostOptCartographerDaily[];
-  levers:                 AiCostOptLever[];
-  generated_at:           string;
-}
-
-export function useAiCostOptimization() {
-  return useQuery({
-    queryKey: ['metrics-ai-cost-optimization'],
-    queryFn: async () => {
-      const res = await api.get<AiCostOptPayload>('/api/admin/metrics/ai-cost-optimization');
-      return res.data ?? null;
-    },
-    placeholderData: keepPreviousData,
-    // Backend caches at 5 min — match cadence.
     refetchInterval: 300_000,
     staleTime: 300_000,
   });
@@ -298,6 +261,11 @@ export interface FeedFailureRow {
   consecutive_failures: number;
   threshold: number;
   pct_to_auto_pause: number;
+  /** Server-computed risk tier (lib/feed-severity.ts computeFeedSeverity) —
+   *  single source of truth shared with the admin dashboard's at-risk band.
+   *  `null` for paused/disabled/orphaned feeds (operator intent, not a
+   *  signal) and for feeds that aren't at risk. */
+  severity: 'critical' | 'high' | null;
   verdict: FeedFailureVerdict;
 }
 

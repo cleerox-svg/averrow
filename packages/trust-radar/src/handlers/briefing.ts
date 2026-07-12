@@ -194,6 +194,7 @@ export interface ComprehensiveBriefing {
     humanVisits: number;
     visits12h: number;
     pageBreakdown: Array<{ page: string; visits: number; bots: number }>;
+    pageBreakdownTotal: number;
     recentBots: Array<{
       page: string;
       bot_name: string;
@@ -250,7 +251,7 @@ async function safeFirst<T>(
 
 // ─── Fetch comprehensive briefing data ──────────────────────────
 
-async function fetchComprehensiveBriefing(
+export async function fetchComprehensiveBriefing(
   env: Env,
 ): Promise<ComprehensiveBriefing> {
   const db = env.DB;
@@ -285,6 +286,7 @@ async function fetchComprehensiveBriefing(
     honeypotTotals,
     honeypotVisits12h,
     honeypotPages,
+    honeypotPageCount,
     honeypotBots,
     honeypotHumans,
     // J) New Threats
@@ -498,8 +500,13 @@ async function fetchComprehensiveBriefing(
     safeQuery<Array<{ page: string; visits: number; bots: number }>>(
       db,
       `SELECT page, COUNT(*) as visits, SUM(is_bot) as bots
-       FROM honeypot_visits GROUP BY page ORDER BY visits DESC`,
+       FROM honeypot_visits GROUP BY page ORDER BY visits DESC LIMIT 20`,
       [],
+    ),
+    safeFirst(
+      db,
+      `SELECT COUNT(DISTINCT page) AS distinct_pages FROM honeypot_visits`,
+      { distinct_pages: 0 },
     ),
     safeQuery<
       Array<{
@@ -732,6 +739,7 @@ async function fetchComprehensiveBriefing(
       humanVisits: Number(honeypotTotals.human_visits) || 0,
       visits12h: Number(honeypotVisits12h.visits_12h) || 0,
       pageBreakdown: honeypotPages,
+      pageBreakdownTotal: Number(honeypotPageCount.distinct_pages) || 0,
       recentBots: honeypotBots,
       suspiciousHumans: honeypotHumans,
     },

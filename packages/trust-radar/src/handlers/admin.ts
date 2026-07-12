@@ -15,6 +15,7 @@ import { fuzzyMatchBrand } from "../lib/brandDetect";
 import { cachedCount } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import { getReadSession, getDbContext } from "../lib/db";
+import { computeFeedSeverity } from "../lib/feed-severity";
 import type { AuthContext } from "../middleware/auth";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../lib/budgetManager";
@@ -682,16 +683,8 @@ export async function handleAdminDashboard(
         // but must escalate to critical — this is the "OPERATIONAL while a
         // feed is dead" guard. A MANUALLY paused/disabled feed (any other
         // paused_reason, or an orphan) is operator intent → not a signal.
-        const feedSeverity = (f: FeedFailuresRaw["per_feed"][number]): "critical" | "high" | null => {
-          if (f.paused_reason === "auto:consecutive_failures") return "critical";
-          if (!f.enabled || f.paused_reason) return null;
-          if (f.pct_to_auto_pause >= 80) return "critical";
-          if (f.pct_to_auto_pause >= 60) return "high";
-          if (f.failure_rate_pct >= 30 && f.pulls >= 10) return "high";
-          return null;
-        };
         const scored = ff.per_feed
-          .map((f) => ({ f, severity: feedSeverity(f) }))
+          .map((f) => ({ f, severity: computeFeedSeverity(f) }))
           .filter((x): x is { f: FeedFailuresRaw["per_feed"][number]; severity: "critical" | "high" } => x.severity !== null)
           // Critical first, then closest-to-auto-pause, so the 20-cap keeps
           // the worst rows even if the source ordering buried a PAUSED row.
@@ -3472,68 +3465,82 @@ export async function handleD1Budget(request: Request, env: Env): Promise<Respon
 //
 // Returns:
 //   windows:      { '24h' | '7d' | '30d' → totals }
-//   by_agent_30d: top 20 agents by cost in the last 30d
-//   daily_30d:    30 daily buckets, oldest → newest
+//   by_agent_30d: top 20 agents by cost in the last 30d (legacy field,
+//                 kept for the AiSpend bar-chart consumer)
+//   by_agent:     { '24h' | '7d' | '30d' → per-agent rows } — top 20
+//                 agents by 30d cost, each row carrying the window's
+//                 calls/tokens/cost + `out_in_ratio` (output/input).
+//                 This is the superset that absorbed the retired
+//                 ai-cost-optimization endpoint's per-agent view.
+//   daily_30d:    30 daily buckets (all agents), oldest → newest
+//   cartographer_daily_30d: 30 daily buckets for the cartographer agent
+//                 only — the cost-optimization trend line. NOT derivable
+//                 from daily_30d (which is not per-agent).
+//
+// Scan budget: 4 sequential-but-parallel scans of budget_ledger, all
+// bounded by created_at (indexed): one conditional-aggregation scan for
+// the three windowed totals, one conditional-aggregation GROUP BY
+// agent_id scan for all three per-agent windows at once, one all-agent
+// daily series, one cartographer-only daily series. (The pre-merge shape
+// used 5 scans for a strict subset of this; the retired cost-opt endpoint
+// added 4 more for overlapping data — this collapses both to 4.)
 export async function handleMetricsAiSpend(
   request: Request,
   env: Env,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_ai_spend:v1";
+  // v2 — merged the ai-cost-optimization per-agent/out:in/cartographer
+  // slices into this endpoint; bumped so the widened shape shows up
+  // immediately post-deploy instead of serving a stale v1 body.
+  const cacheKey = "metrics_ai_spend:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
-  // Three windowed totals + per-agent breakdown (30d) + daily
-  // series (30d). All run in parallel against the same indexed
-  // table; each bounded by created_at.
-  const [w24h, w7d, w30d, byAgent30d, daily30d] = await Promise.all([
-    env.DB.prepare(`
-      SELECT COUNT(*) AS calls,
-             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)      AS cost_usd
-        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-1 day')
-    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
+  // Conditional-aggregation window slices. `-1 day` and `-7 days` are
+  // computed as CASE branches of a single `-30 days`-bounded scan so the
+  // three windowed totals cost ONE scan instead of three. Likewise the
+  // per-agent breakdown yields all three windows from one GROUP BY scan.
+  const WINDOW_TOTALS_SQL = `
+      SELECT
+        COUNT(CASE WHEN created_at >= datetime('now', '-1 day')  THEN 1 END) AS calls_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN input_tokens  END), 0) AS input_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN output_tokens END), 0) AS output_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN cost_usd      END), 0) AS cost_24h,
+        COUNT(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 END) AS calls_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN input_tokens  END), 0) AS input_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN output_tokens END), 0) AS output_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN cost_usd      END), 0) AS cost_7d,
+        COUNT(*) AS calls_30d,
+        COALESCE(SUM(input_tokens),  0) AS input_30d,
+        COALESCE(SUM(output_tokens), 0) AS output_30d,
+        COALESCE(SUM(cost_usd),      0) AS cost_30d
+      FROM budget_ledger
+     WHERE created_at >= datetime('now', '-30 days')`;
 
-    env.DB.prepare(`
-      SELECT COUNT(*) AS calls,
-             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)      AS cost_usd
-        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-7 days')
-    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
-
-    env.DB.prepare(`
-      SELECT COUNT(*) AS calls,
-             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)      AS cost_usd
-        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-30 days')
-    `).first<{ calls: number; input_tokens: number; output_tokens: number; cost_usd: number }>(),
-
-    env.DB.prepare(`
+  const PER_AGENT_SQL = `
       SELECT agent_id,
-             COUNT(*) AS calls,
-             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)      AS cost_usd
-        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-30 days')
-       GROUP BY agent_id
-       ORDER BY cost_usd DESC
-       LIMIT 20
-    `).all<{
-      agent_id: string;
-      calls: number;
-      input_tokens: number;
-      output_tokens: number;
-      cost_usd: number;
-    }>(),
+        COUNT(CASE WHEN created_at >= datetime('now', '-1 day')  THEN 1 END) AS calls_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN input_tokens  END), 0) AS input_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN output_tokens END), 0) AS output_24h,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-1 day')  THEN cost_usd      END), 0) AS cost_24h,
+        COUNT(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 END) AS calls_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN input_tokens  END), 0) AS input_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN output_tokens END), 0) AS output_7d,
+        COALESCE(SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN cost_usd      END), 0) AS cost_7d,
+        COUNT(*) AS calls_30d,
+        COALESCE(SUM(input_tokens),  0) AS input_30d,
+        COALESCE(SUM(output_tokens), 0) AS output_30d,
+        COALESCE(SUM(cost_usd),      0) AS cost_30d
+      FROM budget_ledger
+     WHERE created_at >= datetime('now', '-30 days')
+     GROUP BY agent_id
+     ORDER BY cost_30d DESC
+     LIMIT 20`;
 
+  const [totalsRow, perAgentRows, daily30d, cartDaily30d] = await Promise.all([
+    env.DB.prepare(WINDOW_TOTALS_SQL).first<AiSpendWindowedTotalsRow>(),
+    env.DB.prepare(PER_AGENT_SQL).all<AiSpendWindowedAgentRow>(),
     env.DB.prepare(`
       SELECT date(created_at) AS day,
              COUNT(*) AS calls,
@@ -3544,29 +3551,112 @@ export async function handleMetricsAiSpend(
        WHERE created_at >= datetime('now', '-30 days')
        GROUP BY day
        ORDER BY day ASC
-    `).all<{
-      day: string;
-      calls: number;
-      input_tokens: number;
-      output_tokens: number;
-      cost_usd: number;
-    }>(),
+    `).all<AiSpendDailyRow>(),
+    env.DB.prepare(`
+      SELECT date(created_at) AS day,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-30 days')
+         AND agent_id = 'cartographer'
+       GROUP BY day
+       ORDER BY day ASC
+    `).all<AiSpendDailyRow>(),
   ]);
+
+  const t = totalsRow ?? {
+    calls_24h: 0, input_24h: 0, output_24h: 0, cost_24h: 0,
+    calls_7d: 0,  input_7d: 0,  output_7d: 0,  cost_7d: 0,
+    calls_30d: 0, input_30d: 0, output_30d: 0, cost_30d: 0,
+  };
+
+  // out:in token ratio — the cost-optimization efficiency indicator.
+  // 0 when there's no input volume (avoids divide-by-zero); rounded to
+  // 4 places to keep the payload small.
+  const ratio = (output: number, input: number): number =>
+    input > 0 ? Math.round((output / input) * 10000) / 10000 : 0;
+
+  const perWindowAgents = (
+    which: "24h" | "7d" | "30d",
+  ): AiSpendByAgentWithRatio[] =>
+    perAgentRows.results
+      .map((r) => {
+        const input  = which === "24h" ? r.input_24h  : which === "7d" ? r.input_7d  : r.input_30d;
+        const output = which === "24h" ? r.output_24h : which === "7d" ? r.output_7d : r.output_30d;
+        return {
+          agent_id: r.agent_id,
+          calls:    which === "24h" ? r.calls_24h : which === "7d" ? r.calls_7d : r.calls_30d,
+          input_tokens:  input,
+          output_tokens: output,
+          cost_usd: which === "24h" ? r.cost_24h : which === "7d" ? r.cost_7d : r.cost_30d,
+          out_in_ratio: ratio(output, input),
+        };
+      })
+      .sort((a, b) => b.cost_usd - a.cost_usd);
+
+  // Legacy field: same top-20-by-30d-cost rows the pre-merge consumer
+  // read, minus the ratio. Derived from the 30d slice of the single
+  // per-agent scan (already ordered by cost_30d DESC).
+  const byAgent30d: AiSpendByAgent[] = perAgentRows.results.map((r) => ({
+    agent_id: r.agent_id,
+    calls: r.calls_30d,
+    input_tokens: r.input_30d,
+    output_tokens: r.output_30d,
+    cost_usd: r.cost_30d,
+  }));
 
   const data = {
     windows: {
-      "24h": w24h ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-      "7d":  w7d  ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
-      "30d": w30d ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+      "24h": { calls: t.calls_24h, input_tokens: t.input_24h, output_tokens: t.output_24h, cost_usd: t.cost_24h },
+      "7d":  { calls: t.calls_7d,  input_tokens: t.input_7d,  output_tokens: t.output_7d,  cost_usd: t.cost_7d },
+      "30d": { calls: t.calls_30d, input_tokens: t.input_30d, output_tokens: t.output_30d, cost_usd: t.cost_30d },
     },
-    by_agent_30d: byAgent30d.results,
-    daily_30d:    daily30d.results,
+    by_agent_30d: byAgent30d,
+    by_agent: {
+      "24h": perWindowAgents("24h"),
+      "7d":  perWindowAgents("7d"),
+      "30d": perWindowAgents("30d"),
+    },
+    daily_30d: daily30d.results,
+    cartographer_daily_30d: cartDaily30d.results,
     generated_at: new Date().toISOString(),
   };
 
   const body = { success: true, data };
   await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 300 });
   return json(body, 200, origin);
+}
+
+interface AiSpendWindowedTotalsRow {
+  calls_24h: number; input_24h: number; output_24h: number; cost_24h: number;
+  calls_7d: number;  input_7d: number;  output_7d: number;  cost_7d: number;
+  calls_30d: number; input_30d: number; output_30d: number; cost_30d: number;
+}
+
+interface AiSpendWindowedAgentRow extends AiSpendWindowedTotalsRow {
+  agent_id: string;
+}
+
+interface AiSpendDailyRow {
+  day: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+interface AiSpendByAgent {
+  agent_id: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+interface AiSpendByAgentWithRatio extends AiSpendByAgent {
+  out_in_ratio: number;
 }
 
 // ─── AI Cost Optimization (Metrics page section 6) ──────────────
@@ -3922,7 +4012,10 @@ export async function handleMetricsFeedFailures(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_feed_failures:v1";
+  // v2 — added the `severity` field to each per_feed row; bumped so a
+  // stale v1 body (lacking severity) can't be served after deploy and
+  // leave the Feeds-tab feedRiskTier reading `undefined`.
+  const cacheKey = "metrics_feed_failures:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -4020,6 +4113,13 @@ export async function handleMetricsFeedFailures(
       consecutive_failures: consec,
       threshold: cfg.threshold,
       pct_to_auto_pause: pctToAutoPause,
+      severity: computeFeedSeverity({
+        enabled: cfg.enabled === 1,
+        paused_reason: cfg.paused_reason,
+        pct_to_auto_pause: pctToAutoPause,
+        failure_rate_pct: failureRatePct,
+        pulls: total,
+      }),
       verdict: computeFeedVerdict({
         enabled: cfg.enabled === 1,
         pulls: total,
@@ -4049,6 +4149,13 @@ export async function handleMetricsFeedFailures(
       consecutive_failures: 0,
       threshold: 0,
       pct_to_auto_pause: 0,
+      severity: computeFeedSeverity({
+        enabled: false,
+        paused_reason: 'orphan: no feed_configs row',
+        pct_to_auto_pause: 0,
+        failure_rate_pct: failureRatePct,
+        pulls: p.pulls,
+      }),
       verdict: { tone: 'inactive' as const, label: 'ORPHAN' },
     });
   }

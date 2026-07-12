@@ -205,7 +205,7 @@ describe("handleAdminDashboard — independent nullability: warm slices populate
     );
 
     kv.store.set(
-      "metrics_feed_failures:v1",
+      "metrics_feed_failures:v2",
       JSON.stringify({
         success: true,
         data: {
@@ -402,7 +402,7 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
       }),
     );
     kv.store.set(
-      "metrics_feed_failures:v1",
+      "metrics_feed_failures:v2",
       JSON.stringify({
         success: true,
         data: {

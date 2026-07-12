@@ -19,13 +19,13 @@ import { useAgents } from '@/hooks/useAgents';
 import { api } from '@/lib/api';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
 import { Badge, Button, Card, PageHeader, StatGrid, StatCard, Tabs } from '@/design-system/components';
 import { DailyBriefingWidget } from '@/components/DailyBriefingWidget';
 import { VerdictBand } from './components/VerdictBand';
 import { Pipelines }        from './metrics/Pipelines';
 import { D1Budget }         from './metrics/D1Budget';
 import { AiSpend }          from './metrics/AiSpend';
-import { CostOptimization } from './metrics/CostOptimization';
 import { GeoCoverage }      from './metrics/GeoCoverage';
 import { FeedFailures }     from './metrics/FeedFailures';
 
@@ -606,62 +606,6 @@ function MaintenanceSection() {
   );
 }
 
-/* ─── Generic collapsible section — same pattern as MaintenanceSection ──
-   above (header button + chevron, localStorage-persisted expand state),
-   generalized so the Cost & Budget tab's heavier panels (D1 Budget, AI
-   Spend, Cost Optimization) can default to collapsed instead of stacking
-   three full pages under BudgetPanel. */
-
-function CollapsibleSection({
-  storageKey, icon: Icon, label, defaultExpanded, children,
-}: {
-  storageKey: string;
-  icon: LucideIcon;
-  label: string;
-  defaultExpanded: boolean;
-  children: React.ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(() => {
-    try {
-      const stored = localStorage.getItem(storageKey);
-      return stored === null ? defaultExpanded : stored === 'true';
-    } catch { return defaultExpanded; }
-  });
-
-  useEffect(() => {
-    try { localStorage.setItem(storageKey, String(expanded)); }
-    catch { /* noop */ }
-  }, [storageKey, expanded]);
-
-  return (
-    <Card padding={0}>
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        aria-expanded={expanded}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '16px 20px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon size={14} style={{ color: 'var(--amber)' }} />
-          <div style={sectionEyebrow}>{label}</div>
-        </div>
-        {expanded
-          ? <ChevronUp size={16} style={{ color: 'var(--text-secondary)' }} />
-          : <ChevronDown size={16} style={{ color: 'var(--text-secondary)' }} />}
-      </button>
-
-      {expanded && (
-        <div style={{ padding: '0 20px 20px' }}>
-          {children}
-        </div>
-      )}
-    </Card>
-  );
-}
-
 /* ─── Pipelines tab — thin wrapper so useAgents() only fires when this ──
    tab is actually mounted, instead of unconditionally at the AdminDashboard
    top level (the only consumer is Pipelines). */
@@ -1047,11 +991,14 @@ export function AdminDashboard() {
 
       {/* COST & BUDGET — BudgetPanel stays open by default (VerdictBand's
           AI-budget contributor deep-links to `#budget-panel`); D1 Budget /
-          AI Spend / Cost Optimization were each a full standalone page
-          before Tier 3, so they default to COLLAPSED (CollapsibleSection,
-          same localStorage-persisted pattern as MaintenanceSection) instead
-          of stacking three full pages under Budget every time this tab
-          opens. */}
+          AI Spend were each a full standalone page before Tier 3, so they
+          default to COLLAPSED (CollapsibleSection, same localStorage-
+          persisted pattern as MaintenanceSection) instead of stacking full
+          pages under Budget every time this tab opens. AI Spend absorbed
+          the standalone Cost Optimization tab in Tier 4 (same three
+          dominant agents' cost, two window toggles = visible duplication)
+          — its own "Cost-reduction levers" sub-section is collapsed by
+          default inside AiSpend. */}
       <div
         role="tabpanel"
         id="tabpanel-cost"
@@ -1073,11 +1020,6 @@ export function AdminDashboard() {
             <section>
               <CollapsibleSection storageKey="dashboard-cost-aispend" icon={DollarSign} label="AI Spend" defaultExpanded={false}>
                 <AiSpend />
-              </CollapsibleSection>
-            </section>
-            <section>
-              <CollapsibleSection storageKey="dashboard-cost-costopt" icon={Zap} label="Cost Optimization" defaultExpanded={false}>
-                <CostOptimization />
               </CollapsibleSection>
             </section>
           </>
