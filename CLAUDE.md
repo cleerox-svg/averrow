@@ -665,6 +665,21 @@ in `lib/role-permissions.ts` and is the single source of truth.
   support's job (customer reads + alerts) is covered by
   `read_customers` + the `requireStaff`-gated `/api/alerts/*`
   surface, and billing's by `view_billing` / `edit_pricing`.
+- `requireOrgMember` — route-layer org-isolation backstop, wired onto
+  all ~77 `/api/orgs/:orgId/*` tenant routes (`routes/tenant.ts`).
+  Runs `requireAuth`, then confirms the caller's JWT-derived
+  `ctx.orgId` session scope matches the route's `:orgId` param before
+  the handler runs; global-read roles (`super_admin`, `auditor` —
+  `hasGlobalReadScope`) bypass by design. This is the enforced outer
+  net — per-handler `verifyOrgAccess` / `requireOrgAdmin` checks stay
+  in place as the inner net (same `ctx.orgId !== orgId` comparison),
+  so a handler that forgets its own check can't leak cross-org data.
+  Note the asymmetry: handlers' own `verifyOrgAccess` only exempts
+  `super_admin`, not `auditor`, so an `auditor` that passes this
+  guard can still be blocked at the handler — the outer guard is
+  deliberately no looser than the inner check for real members.
+  `requireOrgAdmin` (`handlers/organizations.ts`) is the org-admin+
+  variant used by mutation endpoints (e.g. billing checkout/portal).
 
 **Org-level roles** (`org_members.role`) are a SEPARATE namespace:
 `viewer < analyst < admin < owner`. The string `analyst` exists in
