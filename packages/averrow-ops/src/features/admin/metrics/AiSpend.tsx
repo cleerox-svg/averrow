@@ -11,13 +11,19 @@
 //     per-agent grid (now sourced from `by_agent[window]`, the
 //     per-window top-20 the backend added alongside the legacy
 //     `by_agent_30d`).
-//   - Each agent's expand/detail panel adds `out_in_ratio`
-//     (output/input tokens, pre-computed server-side) — the
-//     efficiency indicator the old Cost Optimization view tracked
-//     per focus-agent.
+//   - A compact, always-visible FocusAgentRatioStrip surfaces
+//     `out_in_ratio` (output/input tokens, pre-computed server-side)
+//     for the three focus agents, labeled with its "< 0.50" target —
+//     the most load-bearing cost signal from the old Cost
+//     Optimization view, restored to be visible without a click
+//     (design-review fix) but WITHOUT a second window toggle or a
+//     second grid. Each agent's expand/detail panel also carries the
+//     ratio for reference.
 //   - A collapsed-by-default "Cost-reduction levers" sub-section
 //     holds the cartographer 30d trend + the static lever roster —
-//     detail operators want occasionally, not on every visit.
+//     detail operators want occasionally, not on every visit. Uses
+//     the shared `CollapsibleSection` (design-review fix) so its
+//     chrome + localStorage persistence match D1 Budget / AI Spend.
 //
 // Same hook (useAiSpend) → same data → same backend cost. Backend:
 // handleMetricsAiSpend now returns the superset that absorbed the
@@ -30,12 +36,19 @@ import {
   CartesianGrid, ResponsiveContainer,
 } from 'recharts';
 import { Card } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { Badge, type BadgeStatus } from '@/components/ui/Badge';
+import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
+import { ChevronDown, TrendingDown } from 'lucide-react';
 import { useAiSpend } from '@/hooks/useMetrics';
 import type { AiSpendPayload, AiSpendByAgentWindowed } from '@/hooks/useMetrics';
 import { AgentIcon } from '@/components/brand/AgentIcon';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
+
+// The three focus agents account for ~97% of platform AI spend — same
+// roster the retired-from-the-frontend ai-cost-optimization endpoint
+// used (FOCUS_AGENTS in packages/trust-radar/src/handlers/admin.ts).
+// Always present in the by_agent top-20.
+const FOCUS_AGENTS: readonly AgentId[] = ['cartographer', 'analyst', 'sentinel'];
 
 type Window = '24h' | '7d' | '30d';
 const WINDOWS: Window[] = ['24h', '7d', '30d'];
@@ -68,6 +81,7 @@ export function AiSpend() {
       <Header windowSel={windowSel} onWindowChange={setWindowSel} />
       <Totals data={data} window={windowSel} />
       <DailyChart data={data} />
+      <FocusAgentRatioStrip data={data} window={windowSel} />
       <PerAgentGrid data={data} window={windowSel} />
       <CostReductionLevers data={data} />
     </div>
@@ -213,6 +227,105 @@ function DailyChart({ data }: { data: AiSpendPayload }) {
   );
 }
 
+// ─── Output:input ratio — shared tiering (target < 0.50 per Lever #1) ──
+type RatioTier = 'critical' | 'high' | 'green';
+function outInTier(ratio: number): RatioTier {
+  if (ratio >= 0.9) return 'critical';
+  if (ratio >= 0.5) return 'high';
+  return 'green';
+}
+function outInTierColor(tier: RatioTier): string {
+  if (tier === 'critical') return 'var(--sev-critical)';
+  if (tier === 'high')     return 'var(--sev-high)';
+  return 'var(--green)';
+}
+
+// ─── Focus-agent out:in ratio strip — always visible, above the grid ──
+//
+// out:in ratio is the most load-bearing cost-efficiency signal (the key
+// indicator for Lever #1's output-schema tightening) — it needs to be
+// visible and labeled without a click, not buried in a per-agent expand
+// panel. The three focus agents get a compact always-visible strip
+// instead of reintroducing a second grid/window toggle (that duplication
+// is exactly what the Cost Optimization merge removed).
+function FocusAgentRatioStrip({ data, window }: { data: AiSpendPayload; window: Window }) {
+  const rows = data.by_agent[window];
+  const focusRows = FOCUS_AGENTS
+    .map((id) => rows.find((r) => r.agent_id === id))
+    .filter((r): r is AiSpendByAgentWindowed => !!r);
+
+  if (focusRows.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <SectionHeader title={`Out:in ratio · focus agents · ${window}`} />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {focusRows.map((agent) => (
+          <FocusAgentRatioTile key={agent.agent_id} agent={agent} />
+        ))}
+      </div>
+      <p
+        className="font-mono text-[9px]"
+        style={{ color: 'var(--text-muted)' }}
+        title="Output tokens ÷ input tokens. Lower is more cost-efficient — Lever #1 (output-schema tightening) targets under 0.50."
+      >
+        Out:in ratio = output ÷ input tokens · lower is more efficient · target &lt; 0.50
+      </p>
+    </div>
+  );
+}
+
+function FocusAgentRatioTile({ agent }: { agent: AiSpendByAgentWindowed }) {
+  const tier = outInTier(agent.out_in_ratio);
+  const color = outInTierColor(tier);
+  const meta = AGENT_METADATA[agent.agent_id as AgentId];
+  const tint = meta?.color ?? 'var(--blue)';
+  const statusLabel = tier === 'critical' ? 'over target' : tier === 'high' ? 'near target' : 'on target';
+
+  return (
+    <Card variant="elevated" className="p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ color: tint }} className="flex-shrink-0">
+          <AgentIcon agent={agent.agent_id} size={16} />
+        </span>
+        <span
+          className="font-mono text-[11px] font-bold uppercase tracking-wide truncate flex-1"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          {meta?.displayName ?? agent.agent_id}
+        </span>
+        <span className="font-mono text-[8px] font-bold uppercase tracking-wide" style={{ color }}>
+          {statusLabel}
+        </span>
+      </div>
+      <div className="flex items-end justify-between gap-2 mb-1.5">
+        <span className="font-display text-lg font-bold" style={{ color, lineHeight: 1 }}>
+          {agent.out_in_ratio.toFixed(2)}
+        </span>
+        <span
+          className="font-mono text-[9px]"
+          style={{ color: 'var(--text-muted)' }}
+          title="Output ÷ input tokens — Lever #1 target"
+        >
+          target &lt; 0.50
+        </span>
+      </div>
+      <div
+        className="rounded-full overflow-hidden"
+        style={{ height: 3, background: 'var(--border-base)' }}
+      >
+        <div
+          style={{
+            height: '100%',
+            width: `${Math.min(100, agent.out_in_ratio * 100)}%`,
+            background: color,
+          }}
+        />
+      </div>
+    </Card>
+  );
+}
+
 // ─── Per-agent grid — driven by the selected window ──────────────
 function PerAgentGrid({ data, window }: { data: AiSpendPayload; window: Window }) {
   const agents = data.by_agent[window];
@@ -232,7 +345,12 @@ function PerAgentGrid({ data, window }: { data: AiSpendPayload; window: Window }
 
   return (
     <div className="space-y-3">
-      <SectionHeader title={`Per agent · ${window} cost`} count={agents.length} />
+      <div>
+        <SectionHeader title={`Per agent · ${window} cost`} count={agents.length} />
+        <p className="font-mono text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>
+          Top 20 by 30-day cost, shown for the selected window.
+        </p>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {agents.map((a, i) => {
           const pct = total > 0 ? (a.cost_usd / total) * 100 : 0;
@@ -372,15 +490,9 @@ function AgentSpendDetail({ agent, pctOfTotal }: { agent: AiSpendByAgentWindowed
   const costPerCall = agent.calls > 0 ? agent.cost_usd / agent.calls : 0;
   const tokensPerCall = agent.calls > 0 ? (agent.input_tokens + agent.output_tokens) / agent.calls : 0;
   // Output:input token ratio, pre-computed server-side (out_in_ratio).
-  // Near/above 1.0 means output tokens dominate cost — the indicator
-  // the old Cost Optimization tab tracked per focus-agent (Lever #1
-  // targets < 0.5 on cartographer).
-  const ratioTier = agent.out_in_ratio >= 0.9 ? 'critical'
-                   : agent.out_in_ratio >= 0.5 ? 'high'
-                   : 'green';
-  const ratioColor = ratioTier === 'critical' ? 'var(--sev-critical)'
-                    : ratioTier === 'high'     ? 'var(--sev-high)'
-                    : 'var(--green)';
+  // Near/above 1.0 means output tokens dominate cost — same tiering
+  // as the always-visible FocusAgentRatioStrip above the grid.
+  const ratioColor = outInTierColor(outInTier(agent.out_in_ratio));
 
   return (
     <Card variant="elevated" className="p-4 col-span-full">
@@ -413,42 +525,29 @@ function AgentSpendDetail({ agent, pctOfTotal }: { agent: AiSpendByAgentWindowed
 // Sub-section that absorbed the standalone Cost Optimization tab:
 // the cartographer 30d trend + the (static, completed-plan) lever
 // roster. Collapsed by default since this is detail operators want
-// occasionally, not on every visit to Cost & Budget.
+// occasionally, not on every visit to Cost & Budget. Uses the shared
+// CollapsibleSection (same chrome + localStorage persistence as the
+// D1 Budget / AI Spend sections on the parent Cost & Budget tab)
+// instead of a one-off toggle.
 function CostReductionLevers({ data }: { data: AiSpendPayload }) {
-  const [expanded, setExpanded] = useState(false);
-
   return (
-    <Card padding={0}>
-      <button
-        type="button"
-        onClick={() => setExpanded(prev => !prev)}
-        aria-expanded={expanded}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3"
-        style={{ background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-      >
-        <span
-          className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          Cost-reduction levers
-        </span>
-        {expanded
-          ? <ChevronUp size={14} style={{ color: 'var(--text-secondary)' }} />
-          : <ChevronDown size={14} style={{ color: 'var(--text-secondary)' }} />}
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-4 space-y-6">
-          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            Tracks the completed AI cost-reduction plan for the three focus agents
-            (cartographer, analyst, sentinel) that account for ~97% of platform AI spend —
-            watch <strong>out:in ratio</strong> and <strong>cost/call</strong> in the grid above.
-          </p>
-          <CartographerTrend data={data} />
-          <LeverRoster levers={AI_COST_OPTIMIZATION_LEVERS} />
-        </div>
-      )}
-    </Card>
+    <CollapsibleSection
+      storageKey="dashboard-cost-aispend-levers"
+      icon={TrendingDown}
+      label="Cost-reduction levers"
+      defaultExpanded={false}
+    >
+      <div className="space-y-6 pt-1">
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          Tracks the completed AI cost-reduction plan for the three focus agents
+          (cartographer, analyst, sentinel) that account for ~97% of platform AI spend —
+          watch <strong>out:in ratio</strong> in the strip above and <strong>cost/call</strong>
+          in the grid below.
+        </p>
+        <CartographerTrend data={data} />
+        <LeverRoster levers={AI_COST_OPTIMIZATION_LEVERS} />
+      </div>
+    </CollapsibleSection>
   );
 }
 
@@ -562,13 +661,18 @@ interface CostLever {
   indicator: string;
 }
 
+// Copied verbatim from the backend `levers[]` array in
+// handleMetricsAiCostOptimization (packages/trust-radar/src/handlers/
+// admin.ts) — that copy is authoritative (it also feeds the internal
+// CLI, scripts/ai-cost-optimization.sh). If the backend roster changes,
+// update this list to match; don't let the two drift.
 const AI_COST_OPTIMIZATION_LEVERS: CostLever[] = [
   { id: "lever_1",  title: "Cartographer scoreProvider output-schema tightening", target_agent: "cartographer", status: "deployed", estimated_savings_usd_per_year: 850, deployed_at: "2026-05-23", indicator: "out:in ratio drops below 0.5 on cartographer" },
   { id: "lever_1b", title: "Cartographer in-prompt batching (N providers/call)", target_agent: "cartographer", status: "deployed", estimated_savings_usd_per_year: 200, deployed_at: "2026-05-23", indicator: "calls/day on cartographer drop without record volume changing" },
   { id: "lever_2",  title: "Analyst keyword pre-match expansion", target_agent: "analyst", status: "deployed", estimated_savings_usd_per_year: 250, deployed_at: "2026-05-23", indicator: "calls/day on analyst drop" },
   { id: "lever_3",  title: "Sentinel sibling-domain deduplication + tighter response JSON", target_agent: "sentinel", status: "deployed", estimated_savings_usd_per_year: 125, deployed_at: "2026-05-23", indicator: "calls/day on sentinel drop; out:in ratio drops" },
-  { id: "lever_4",  title: "Add cache_control plumbing to lib/anthropic.ts", target_agent: "(infra)", status: "deployed", estimated_savings_usd_per_year: 0, deployed_at: "2026-05-23", indicator: "infra-only — enables future levers" },
-  { id: "lever_6",  title: "Cartographer Message Batches API (50% async discount)", target_agent: "cartographer", status: "deployed", estimated_savings_usd_per_year: 675, deployed_at: "2026-05-23", indicator: "cost/call on cartographer drops ~50% post-cutover" },
+  { id: "lever_4",  title: "Add cache_control plumbing to lib/anthropic.ts", target_agent: "(infra)", status: "deployed", estimated_savings_usd_per_year: 0, deployed_at: "2026-05-23", indicator: "infra-only — no immediate cost change; enables future levers" },
+  { id: "lever_6",  title: "Cartographer Message Batches API (50% async discount)", target_agent: "cartographer", status: "deployed", estimated_savings_usd_per_year: 675, deployed_at: "2026-05-23", indicator: "cost/call on cartographer drops ~50% post-cutover (effective once first batch ingests, ~24h after deploy)" },
 ];
 
 function LeverRoster({ levers }: { levers: CostLever[] }) {
@@ -600,14 +704,18 @@ function LeverRoster({ levers }: { levers: CostLever[] }) {
   );
 }
 
-function LeverCard({ lever }: { lever: CostLever }) {
-  const statusColor = lever.status === 'deployed'    ? 'var(--green)'
-                    : lever.status === 'in_progress' ? 'var(--amber)'
-                    :                                  'var(--text-muted)';
-  const statusBg    = lever.status === 'deployed'    ? 'var(--sev-low-bg)'
-                    : lever.status === 'in_progress' ? 'var(--sev-medium-bg)'
-                    :                                  'var(--bg-input)';
+// Map the lever's plan status onto the shared Badge vocabulary — avoids
+// the severity-vocab violation of hand-picking bg/text colors that don't
+// belong to the same pairing (the old span paired a blue-tinted bg with
+// green text). 'deployed' is a genuine success state; 'planned' reads as
+// neutral/draft; 'in_progress' as pending.
+function leverBadgeStatus(status: LeverStatus): BadgeStatus {
+  if (status === 'deployed')    return 'success';
+  if (status === 'in_progress') return 'pending';
+  return 'draft';
+}
 
+function LeverCard({ lever }: { lever: CostLever }) {
   return (
     <Card variant="elevated" className="p-3">
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -617,12 +725,7 @@ function LeverCard({ lever }: { lever: CostLever }) {
         >
           {lever.id.replace('_', ' ')} · {lever.title}
         </span>
-        <span
-          className="font-mono text-[9px] tracking-[0.15em] uppercase px-1.5 py-0.5 rounded flex-shrink-0"
-          style={{ color: statusColor, background: statusBg }}
-        >
-          {lever.status.replace('_', ' ')}
-        </span>
+        <Badge status={leverBadgeStatus(lever.status)} label={lever.status.replace('_', ' ')} size="xs" />
       </div>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <Stat label="Target agent" value={lever.target_agent} />

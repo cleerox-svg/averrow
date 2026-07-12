@@ -4012,7 +4012,10 @@ export async function handleMetricsFeedFailures(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_feed_failures:v1";
+  // v2 — added the `severity` field to each per_feed row; bumped so a
+  // stale v1 body (lacking severity) can't be served after deploy and
+  // leave the Feeds-tab feedRiskTier reading `undefined`.
+  const cacheKey = "metrics_feed_failures:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
