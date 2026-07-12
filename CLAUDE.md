@@ -392,9 +392,12 @@ Active edges (event-driven):
   Nexus → [pivot_detected]   → Observer    (target_agent='observer')
 
 Telemetry only (target_agent=NULL):
-  Sentinel      → [feed_pulled]       — operator sees "new items found"
-  Cartographer  → [threats_enriched]  — operator sees enrichment progress
-  Nexus         → [nexus_complete]    — operator sees workflow completion
+  Sentinel        → [feed_pulled]         — operator sees "new items found"
+  Cartographer    → [threats_enriched]    — operator sees enrichment progress
+  Nexus           → [nexus_complete]      — operator sees workflow completion
+  daily_briefing  → [briefing_generated]  — operator sees the daily platform
+                     ops briefing ran (handler-dispatched writer, not an
+                     AgentModule — see below)
 
 Cron-driven dispatch (no event needed):
   Cartographer  every hour via dedicated `9 * * * *` cron (PR-F)
@@ -463,6 +466,20 @@ brand_scores: 16 0 * * *   (daily at 00:16 UTC — computeBrandScoresBatch over 
                              brand_score_snapshots sat at 0 rows and the Brands
                              page Improving/Declining cards were permanently
                              empty. Dedicated cron PR-T — same pattern as PR-E/F/Q.)
+daily_briefing: 13 13 * * * (once daily at 13:13 UTC — generates the 12-section
+                             Platform Operations Briefing (`fetchComprehensiveBriefing`
+                             + `sendBriefingEmail`, pure SQL, no AI call) and writes
+                             `threat_briefings`. Was previously gated at hour===13 inside
+                             the hourly orchestrator tick, but the ~40 parallel queries
+                             exhausted the tick's budget before the INSERT could land —
+                             zero `cron:daily` rows for days. Dedicated cron gives it a
+                             fresh budget; hour===13 inside the orchestrator now only runs
+                             the lighter notification_narrator digest. Handler:
+                             `handlers/briefing.ts` `generateAndEmailBriefing`, wrapped by
+                             `withBriefingRun` — writes `agent_runs` (agent_id
+                             'daily_briefing') + a telemetry `agent_events` row
+                             (`briefing_generated`, target_agent=NULL). Handler-dispatched,
+                             not a registered AgentModule.)
 auto-seeder:  (no dedicated cron — gated inside the hourly orchestrator
                on Sundays at hour===5, runs at 05:07 UTC. CF rejects
                the 5-field cron `23 5 * * 0` with code 10100, so this
@@ -505,7 +522,10 @@ Pathfinder:           hour === 3 (inline await, KV throttle ensures once per 7 d
 GeoIP Refresh:        Sunday hour === 2 (ctx.waitUntil, polls MaxMind sha256 — no-op when current; FC supervises stuck workflows hourly per §15)
 Observer briefing:    hour === 6 (inline await — also runs Seed Strategist)
 Narrator:             hour === 6 (executeAgent, after Observer briefing)
-Briefing email:       hour === 13 (inline await, dedup against today's cron briefings)
+Notification digest:  hour === 13 (executeAgent, agent 'notification_narrator' — per-user digest
+                       envelopes; the daily platform-ops briefing itself moved OFF this hourly
+                       gate to its own dedicated `13 13 * * *` cron, see schedule above, because
+                       fetchComprehensiveBriefing's ~40 parallel queries exhausted the tick budget)
 CT monitor:           every tick (inline await, in handleScheduled)
 Lookalike check:      every tick (inline await, in handleScheduled)
 Trademark scan:       every tick (runJob, agent 'trademark_monitor' — Phase 1 internal correlation, no external cost; see docs/TRADEMARK_MONITORING.md)
@@ -991,7 +1011,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `feeds.per_feed[]` | Per-feed: `pulls`, `success`, `partial`, `failed`, `failure_rate_pct`, `records_ingested`, `last_success_at`, `last_failure_at`, `enabled`, `paused_reason` |
 | `feeds.at_risk[]` | Feeds approaching auto-pause threshold (>=60% of consecutive failure limit). Shows `pct_to_auto_pause`. |
 | `feeds.recent_errors[]` | Last 20 failed pull error messages with timestamps |
-| `agent_mesh.per_agent[]` | Per-agent: `total_runs`, `success`, `partial`, `failed`, `running`, `last_completed_at`, `last_error`, `total_records_processed`, `avg_duration_ms`, `dispatch_source` (`agent_runs` or `workflow`), `cooldown_skipped` (workflow-only), `legacy_inline` (only when an agent has BOTH workflow runs AND historical `agent_runs` rows — e.g. nexus pre-PR-D inline-recovery rows). Workflow-dispatched agents (currently just nexus) read from `agent_activity_log` event types `workflow_dispatched` / `batch_complete` / `workflow_dispatch_failed` / `workflow_cooldown_skip` rather than `agent_runs`. |
+| `agent_mesh.per_agent[]` | Per-agent: `total_runs`, `success`, `partial`, `failed`, `running`, `last_completed_at`, `last_error`, `total_records_processed`, `avg_duration_ms`, `dispatch_source` (`agent_runs` or `workflow`), `cooldown_skipped` (workflow-only), `legacy_inline` (only when an agent has BOTH workflow runs AND historical `agent_runs` rows — e.g. nexus pre-PR-D inline-recovery rows). Workflow-dispatched agents (currently just nexus) read from `agent_activity_log` event types `workflow_dispatched` / `batch_complete` / `workflow_dispatch_failed` / `workflow_cooldown_skip` rather than `agent_runs`. The query is a bare `GROUP BY agent_id` over `agent_runs` with no registry allowlist, so handler-dispatched writers that aren't a registered `AgentModule` (e.g. `daily_briefing`, see `docs/AI_AGENTS.md`) surface here too. |
 | `agent_mesh.stalled[]` | Runs stuck in 'running' state >15 minutes |
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |

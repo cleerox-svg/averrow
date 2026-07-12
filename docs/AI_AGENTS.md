@@ -378,13 +378,49 @@ Narrator correlates threats, email security posture, social impersonation, looka
 | Property | Value |
 |----------|-------|
 | **File** | `packages/trust-radar/src/agents/notification_narrator.ts` |
-| **Trigger** | Scheduled — daily at 13:00 UTC (via `executeAgent`, alongside the legacy briefing email cron) |
+| **Trigger** | Scheduled — daily at 13:00 UTC (via `executeAgent`, inside the hourly orchestrator's `hour === 13` gate) |
 | **Purpose** | Per-user daily digest envelope builder (Q5b backlog) |
 
 Notification Narrator queries each active user's last-24h notifications above their `digest_severity_floor`, then emits a single `notification_digest` envelope row to the user's inbox. The envelope's `metadata.notification_ids[]` lists the underlying rows so the UI can deep-link. When the AI cost guard allows, Haiku writes a 1–3 sentence narrative summary; otherwise the agent falls back to a static count line.
 
 **Inputs:** `notification_preferences_v2`, `notifications` (last 24h), `users`
 **Outputs:** `notifications` rows of type `notification_digest` (via `createNotification` helper)
+
+Note: the daily platform-ops *briefing* (below) no longer shares this
+`hour === 13` gate — it moved to its own dedicated cron. The two are
+unrelated beyond firing in the same hour.
+
+---
+
+### Daily Briefing (`daily_briefing`) — handler, not an `AgentModule`
+
+| Property | Value |
+|----------|-------|
+| **File** | `packages/trust-radar/src/handlers/briefing.ts` |
+| **Trigger** | Scheduled — dedicated cron `13 13 * * *` (`generateAndEmailBriefing`, `cron/orchestrator.ts`), plus on-demand via `POST /api/briefings/generate` (`handleGenerateBriefing`) and `POST /api/internal/briefing/send` |
+| **Purpose** | 12-section Platform Operations Briefing (feed health, enrichment pipeline, agent activity, new threats, spam trap, honeypot, brand coverage, geopolitical campaigns) |
+
+Not registered as an `AgentModule` (no entry in `src/agents/*.ts` or
+the name map above) — it's a handler dispatched from a dedicated cron
+branch and two HTTP routes, not from the agent mesh. As of the Tier 2b
+instrumentation pass, it participates in the agent-run contract via a
+`withBriefingRun` wrapper shared by all three call sites: an
+`agent_runs` row (`agent_id='daily_briefing'`, running → success/failed,
+`error_message` on failure) plus a telemetry `agent_events` row
+(`briefing_generated`, `target_agent=NULL` — no downstream dispatch,
+operator traceability only). `fetchComprehensiveBriefing` is pure
+SQL — no AI call in the briefing path. See `CLAUDE.md §6` for the
+cron-relocation history (previously gated at `hour === 13` inside the
+hourly mesh; moved to its own invocation after that budget was
+exhausted before the `threat_briefings` INSERT could land).
+
+**Inputs:** `threats`, `feed_status`/`feed_pull_history`, `agent_runs`,
+`agent_outputs` (flight_control diagnostic), `social_mentions`,
+`app_store_listings`, `dark_web_mentions`, `seed_addresses`/
+`spam_trap_captures`, `honeypot_visits`, `brands`/`monitored_brands`,
+`geopolitical_campaigns`/`geopolitical_campaign_links`
+**Outputs:** `threat_briefings` row; `agent_runs` + `agent_events`
+(`briefing_generated`) instrumentation; briefing email via Resend
 
 ---
 

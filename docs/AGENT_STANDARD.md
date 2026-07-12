@@ -67,7 +67,8 @@ comply with §8 (AI guardrails) regardless of how it is triggered.
 
 | Pattern | Where it lives | Why it's not an agent |
 |---|---|---|
-| **Cron job** | `cron/orchestrator.ts` `runJob()` wrappers (e.g. `briefing_email`, `ct_monitor`) | Inline procedural step. Logs to `cron_runs`, not `agent_runs`. No FC supervision needed — runs trip the cron-level circuit. |
+| **Cron job** | `cron/orchestrator.ts` `runJob()` wrappers (e.g. `ct_monitor`, `trademark_scan`) | Inline procedural step. No FC supervision needed — runs trip the cron-level circuit. |
+| **Handler-dispatched writer** | `handlers/briefing.ts` `generateAndEmailBriefing` / `handleGenerateBriefing` (`daily_briefing`, dedicated cron `13 13 * * *` + on-demand) | Fails criterion 5 only — no registered `AgentModule`, so no FC supervision or cost-guard budget. Does satisfy criterion 4: wrapped in `withBriefingRun`, which logs a real `agent_runs` row (start/success/failed) and a telemetry `agent_events` row (`briefing_generated`, `target_agent=NULL`). Pure SQL — no AI call. See `docs/AI_AGENTS.md`. |
 | **AI utility helper** | `lib/haiku.ts`, `lib/anthropic.ts` | These are the *transport* agents call through. They never run on their own. |
 | **Workflow** | `workflows/cartographerBackfill.ts`, `workflows/nexusRun.ts` | Cloudflare Workflow dispatched **by** an agent (cartographer, nexus). Owned by that agent. |
 | **Durable Object** | `durableObjects/CertStreamMonitor.ts`, `durableObjects/ThreatPushHub.ts` | Stateful long-lived entity. Different lifecycle (no per-tick run, no cost guard). Connected to agents via events. |
