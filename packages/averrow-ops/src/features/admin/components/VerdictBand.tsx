@@ -168,7 +168,7 @@ export function VerdictBand() {
   // 2 — AI budget throttle
   const budget = snapshot?.budget;
   if (snapshotUnavailable || !budget) {
-    contributors.push({ key: 'budget', label: 'AI budget', severity: 'unknown', detail: 'status pending', to: '/admin#budget-panel' });
+    contributors.push({ key: 'budget', label: 'AI budget', severity: 'unknown', detail: 'status pending', to: '/admin?tab=cost#budget-panel' });
   } else {
     const level = budget.status.throttle_level;
     const severity: BandSeverity =
@@ -183,7 +183,7 @@ export function VerdictBand() {
       detail:   level === 'none'
         ? `${budget.status.pct_used.toFixed(0)}% of monthly limit`
         : `${budget.status.pct_used.toFixed(0)}% budget · ${level} throttle`,
-      to: '/admin#budget-panel',
+      to: '/admin?tab=cost#budget-panel',
     });
   }
 
@@ -191,19 +191,19 @@ export function VerdictBand() {
   // feedRiskTier, re-derived from the snapshot's pre-filtered at_risk list)
   const feeds = snapshot?.feeds;
   if (snapshotUnavailable || !feeds) {
-    contributors.push({ key: 'feeds', label: 'Feeds', severity: 'unknown', detail: 'status pending', to: '/admin/metrics?tab=feed-failures' });
+    contributors.push({ key: 'feeds', label: 'Feeds', severity: 'unknown', detail: 'status pending', to: '/admin?tab=feeds' });
   } else {
     const { severity, detail } = feedsSeverity(feeds);
-    contributors.push({ key: 'feeds', label: 'Feeds', severity, detail, to: '/admin/metrics?tab=feed-failures' });
+    contributors.push({ key: 'feeds', label: 'Feeds', severity, detail, to: '/admin?tab=feeds' });
   }
 
   // 4 — Pipeline backlog verdicts (GROWING falling behind, STALE unmeasured)
   const pipeline = snapshot?.pipeline;
   if (snapshotUnavailable || !pipeline) {
-    contributors.push({ key: 'pipelines', label: 'Pipelines', severity: 'unknown', detail: 'status pending', to: '/admin/metrics?tab=pipelines' });
+    contributors.push({ key: 'pipelines', label: 'Pipelines', severity: 'unknown', detail: 'status pending', to: '/admin?tab=pipelines' });
   } else {
     const { severity, detail } = pipelineSeverity(pipeline);
-    contributors.push({ key: 'pipelines', label: 'Pipelines', severity, detail, to: '/admin/metrics?tab=pipelines' });
+    contributors.push({ key: 'pipelines', label: 'Pipelines', severity, detail, to: '/admin?tab=pipelines' });
   }
 
   const overall = contributors.reduce<BandSeverity>(

@@ -267,28 +267,33 @@ describe('VerdictBand', () => {
       expect(hrefForContributor('Agents')).toBe('/agents');
     });
 
-    it('links the AI budget contributor to /admin#budget-panel', () => {
+    // Tier 3: /admin/metrics was merged into /admin as additional tabs
+    // (AdminDashboard.tsx), so these deep-links now point straight at
+    // /admin?tab=<id> instead of the old standalone /admin/metrics route
+    // (which still resolves via its redirect shim — see Metrics.tsx — but
+    // internal links should target the merged surface directly).
+    it('links the AI budget contributor to /admin?tab=cost#budget-panel', () => {
       mockSnapshot();
       renderWithProviders(<VerdictBand />);
-      expect(hrefForContributor('AI budget')).toBe('/admin#budget-panel');
+      expect(hrefForContributor('AI budget')).toBe('/admin?tab=cost#budget-panel');
     });
 
-    it('links the Feeds contributor to /admin/metrics?tab=feed-failures', () => {
+    it('links the Feeds contributor to /admin?tab=feeds', () => {
       mockSnapshot();
       renderWithProviders(<VerdictBand />);
-      expect(hrefForContributor('Feeds')).toBe('/admin/metrics?tab=feed-failures');
+      expect(hrefForContributor('Feeds')).toBe('/admin?tab=feeds');
     });
 
-    it('links the Pipelines contributor to /admin/metrics?tab=pipelines', () => {
+    it('links the Pipelines contributor to /admin?tab=pipelines', () => {
       mockSnapshot();
       renderWithProviders(<VerdictBand />);
-      expect(hrefForContributor('Pipelines')).toBe('/admin/metrics?tab=pipelines');
+      expect(hrefForContributor('Pipelines')).toBe('/admin?tab=pipelines');
     });
 
     it('keeps the same deep-link targets even when threat_health is null', () => {
       mockSnapshot({ data: { threat_health: null } });
       renderWithProviders(<VerdictBand />);
-      expect(hrefForContributor('Feeds')).toBe('/admin/metrics?tab=feed-failures');
+      expect(hrefForContributor('Feeds')).toBe('/admin?tab=feeds');
       expect(hrefForContributor('Agents')).toBe('/agents');
     });
   });

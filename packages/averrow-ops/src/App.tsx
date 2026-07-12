@@ -213,6 +213,9 @@ export default function App() {
         <Route path="leads" element={lazyRoute(<Leads />)} />
         <Route path="feeds" element={lazyRoute(<Feeds />)} />
         <Route path="admin" element={lazyRoute(<AdminDashboard />)} />
+        {/* Tier 3: /admin/metrics was merged into /admin as additional tabs.
+            Metrics.tsx is now a redirect shim mapping legacy ?tab= ids onto
+            the new /admin?tab= ids so old bookmarks/links keep resolving. */}
         <Route path="admin/metrics" element={lazyRoute(<Metrics />)} />
         <Route path="admin/scan-leads" element={<Navigate to="/leads?view=scan" replace />} />
         <Route path="admin/takedowns" element={lazyRoute(<Takedowns />)} />

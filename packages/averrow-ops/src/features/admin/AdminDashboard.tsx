@@ -1,5 +1,5 @@
 import { useState, useEffect, type CSSProperties } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -15,12 +15,52 @@ import type { BudgetStatus } from '@/hooks/useBudget';
 import { useDashboardSnapshot } from '@/hooks/useDashboardSnapshot';
 import { useAdminAction } from '@/hooks/useAdminAction';
 import { usePushConfig } from '@/hooks/usePushAdmin';
+import { useAgents } from '@/hooks/useAgents';
 import { api } from '@/lib/api';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Badge, Button, Card, PageHeader, StatGrid, StatCard } from '@/design-system/components';
+import { Badge, Button, Card, PageHeader, StatGrid, StatCard, Tabs } from '@/design-system/components';
 import { DailyBriefingWidget } from '@/components/DailyBriefingWidget';
 import { VerdictBand } from './components/VerdictBand';
+import { Pipelines }        from './metrics/Pipelines';
+import { D1Budget }         from './metrics/D1Budget';
+import { AiSpend }          from './metrics/AiSpend';
+import { CostOptimization } from './metrics/CostOptimization';
+import { GeoCoverage }      from './metrics/GeoCoverage';
+import { FeedFailures }     from './metrics/FeedFailures';
+
+/* ─── Tabs (Tier 3 — /admin + /admin/metrics merge) ────────────────────── */
+// Single tabbed surface. VerdictBand renders above the tabs and never
+// unmounts; everything else is lazy-mounted (only the active tab's body is
+// in the DOM) so heavy deep-dives (Briefing, the four cost/spend panels)
+// don't fetch until selected. `/admin/metrics` stays alive as a redirect
+// shim (see Metrics.tsx) mapping its old tab ids onto these new ones.
+type AdminTabId =
+  | 'overview'
+  | 'pipelines'
+  | 'feeds'
+  | 'cost'
+  | 'geo'
+  | 'email'
+  | 'operations'
+  | 'briefing';
+
+const ADMIN_TABS: ReadonlyArray<{ id: AdminTabId; label: string }> = [
+  { id: 'overview',   label: 'Overview' },
+  { id: 'pipelines',  label: 'Pipelines' },
+  { id: 'feeds',      label: 'Feeds' },
+  { id: 'cost',       label: 'Cost & Budget' },
+  { id: 'geo',        label: 'Geo Coverage' },
+  { id: 'email',      label: 'Email Security' },
+  { id: 'operations', label: 'Operations' },
+  { id: 'briefing',   label: 'Briefing' },
+];
+
+const DEFAULT_ADMIN_TAB: AdminTabId = 'overview';
+
+function isValidAdminTabId(s: string | null): s is AdminTabId {
+  return !!s && ADMIN_TABS.some((t) => t.id === s);
+}
 
 /* ─── Style tokens (resolved once, reused below) ───────────────────────── */
 
@@ -653,24 +693,53 @@ export function AdminDashboard() {
   const { data: systemHealth, isLoading: systemHealthLoading, isError: systemHealthError } = useSystemHealth();
   const systemHealthReady = !systemHealthLoading && !systemHealthError && !!systemHealth;
 
+  // Renamed to avoid colliding with `agents` below (the threat_health
+  // snapshot's agents_24h roll-up used by the top StatGrid / Activity row).
+  const { data: agentsList = [] } = useAgents();
+
   const [classifying, setClassifying] = useState(false);
   const [classifyResult, setClassifyResult] = useState<string | null>(null);
 
-  // VerdictBand's "AI budget" contributor deep-links to #budget-panel.
+  // Tier 3: the tab selection is URL-synced via `?tab=`, mirroring the old
+  // Metrics.tsx pattern (see the redirect shim in Metrics.tsx for the
+  // legacy `/admin/metrics?tab=*` -> `/admin?tab=*` id map). Unknown or
+  // missing tab params normalize to `overview`.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab: AdminTabId = isValidAdminTabId(tabParam) ? tabParam : DEFAULT_ADMIN_TAB;
+
+  useEffect(() => {
+    if (tabParam !== activeTab) {
+      const next = new URLSearchParams(searchParams);
+      next.set('tab', activeTab);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabParam]);
+
+  const onTabChange = (id: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', id);
+    setSearchParams(next);
+  };
+
+  // VerdictBand's "AI budget" contributor deep-links to /admin?tab=cost#budget-panel.
   // React Router's <Link> intercepts the click and pushState()s instead of
   // letting the browser do its native hash-scroll. VerdictBand renders at
   // the top of THIS SAME page, so the common case is a same-page click —
-  // the route doesn't remount, only the hash changes — which a mount-only
-  // effect ([]) would miss entirely. Depend on `location.hash` (from
-  // react-router, which re-renders on every hash-only navigation, unlike
-  // the native `hashchange` event which pushState() doesn't fire) so this
-  // re-runs on both fresh arrival AND same-page clicks.
+  // the route doesn't remount, only the tab/hash change — which a
+  // mount-only effect ([]) would miss entirely. BudgetPanel now lives on
+  // the lazy-mounted `cost` tab, so the scroll target only exists once
+  // `activeTab === 'cost'` — depend on both `location.hash` (react-router
+  // re-renders on hash-only navigation, unlike the native `hashchange`
+  // event which pushState() doesn't fire) and `activeTab` so this re-runs
+  // once the tab has actually switched and the element has mounted.
   const location = useLocation();
   useEffect(() => {
-    if (location.hash === '#budget-panel') {
+    if (location.hash === '#budget-panel' && activeTab === 'cost') {
       document.getElementById('budget-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [location.hash]);
+  }, [location.hash, activeTab]);
 
   async function handleClassifySaasTechniques() {
     setClassifying(true);
@@ -731,274 +800,326 @@ export function AdminDashboard() {
       />
 
       {/* Single honest health verdict — worst-of across agents, AI budget,
-          feeds, and pipelines. Replaces the old agents-errors-only pill. */}
+          feeds, and pipelines. Replaces the old agents-errors-only pill.
+          Always visible above the tabs — never unmounts. */}
       <VerdictBand />
 
-      <PushBootstrapCard />
+      <Tabs
+        tabs={ADMIN_TABS.map((t) => ({ id: t.id, label: t.label }))}
+        activeTab={activeTab}
+        onChange={onTabChange}
+        variant="pills"
+        linkedPanels
+      />
 
-      {/* TOP STAT ROW — needs the snapshot's `threat_health` slice, so it's
-          gated on `healthReady` (dashboard-snapshot-derived). */}
-      {healthReady ? (
-        <StatGrid cols={4}>
-          <StatCard label="Threats Today" value={fmt(threats.today)} accentColor="var(--red)" sublabel={`${fmt(threats.total)} total`} />
-          <StatCard label="Feed Ingestion" value={fmt(feeds.ingested)} accentColor="var(--amber)" sublabel="records (24h)" />
-          <StatCard label="Agent Runs" value={fmt(agents.total)} accentColor="var(--blue)" sublabel={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
-          <StatCard label="Active Sessions" value={fmt(activeSessions)} accentColor="var(--green)" sublabel="authenticated" />
-        </StatGrid>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
-        </div>
-      )}
+      {/* Lazy-mount: only the active tab's body is in the DOM, so the four
+          cost/spend panels and the (heavy) Briefing widget don't fetch
+          until selected. TanStack Query keeps a visited tab's data warm. */}
+      <div
+        role="tabpanel"
+        id={`tabpanel-${activeTab}`}
+        aria-labelledby={`tab-${activeTab}`}
+        style={{ display: 'flex', flexDirection: 'column', gap: 28 }}
+      >
+        {activeTab === 'overview' && (
+          <>
+            {/* TOP STAT ROW — needs the snapshot's `threat_health` slice,
+                so it's gated on `healthReady` (dashboard-snapshot-derived). */}
+            {healthReady ? (
+              <StatGrid cols={4}>
+                <StatCard label="Threats Today" value={fmt(threats.today)} accentColor="var(--red)" sublabel={`${fmt(threats.total)} total`} />
+                <StatCard label="Feed Ingestion" value={fmt(feeds.ingested)} accentColor="var(--amber)" sublabel="records (24h)" />
+                <StatCard label="Agent Runs" value={fmt(agents.total)} accentColor="var(--blue)" sublabel={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
+                <StatCard label="Active Sessions" value={fmt(activeSessions)} accentColor="var(--green)" sublabel="authenticated" />
+              </StatGrid>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
+              </div>
+            )}
 
-      {/* DAILY BRIEFING — its own hook, mounts immediately */}
-      <section>
-        <SectionLabel label="Daily Briefing" attribution="Generated by the briefing agent" />
-        <DailyBriefingWidget />
-      </section>
+            {/* ACTIVITY ROW — chart spans 2/3, agent perf 1/3. Both derive
+                from the snapshot's `threat_health` slice, so both stay
+                gated together on `healthReady`. */}
+            <section>
+              <SectionLabel label="Activity (14d)" />
+              {healthReady ? (
+              <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
+                <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">
+                  <Card padding="20px" style={{ height: '100%' }}>
+                    <CardEyebrow
+                      icon={Activity}
+                      label="Threat Ingestion · 14 Days"
+                      right={
+                        <span style={{ ...mono, fontSize: 11, ...textSecondary }}>
+                          Total <strong style={textPrimary}>{fmt(trendTotal)}</strong>
+                          {' · '}Avg <strong style={textPrimary}>{fmt(trendAvg)}</strong>/day
+                          {trendPeak.day && <>{' · '}Peak <strong style={textPrimary}>{shortDate(trendPeak.day)}</strong></>}
+                        </span>
+                      }
+                    />
+                    <div style={{ height: 220 }}>
+                      {chartData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
+                            <defs>
+                              <linearGradient id="amberGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="var(--amber)" stopOpacity={0.35} />
+                                <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.02} />
+                              </linearGradient>
+                            </defs>
+                            <XAxis
+                              dataKey="date"
+                              tick={{ fill: 'rgba(255,255,255,0.45)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis
+                              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              axisLine={false}
+                              tickLine={false}
+                              tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+                            />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Area
+                              type="monotone"
+                              dataKey="threats"
+                              stroke="var(--amber)"
+                              strokeWidth={2}
+                              fill="url(#amberGradient)"
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', ...mono, fontSize: 12, ...textTertiary }}>
+                          No trend data
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                </div>
 
-      {/* ACTIVITY ROW — chart spans 2/3, agent perf 1/3. Both derive from
-          the snapshot's `threat_health` slice, so both stay gated together
-          on `healthReady`. */}
-      <section>
-        <SectionLabel label="Activity (14d)" />
-        {healthReady ? (
-        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">
-            <Card padding="20px" style={{ height: '100%' }}>
-              <CardEyebrow
-                icon={Activity}
-                label="Threat Ingestion · 14 Days"
-                right={
-                  <span style={{ ...mono, fontSize: 11, ...textSecondary }}>
-                    Total <strong style={textPrimary}>{fmt(trendTotal)}</strong>
-                    {' · '}Avg <strong style={textPrimary}>{fmt(trendAvg)}</strong>/day
-                    {trendPeak.day && <>{' · '}Peak <strong style={textPrimary}>{shortDate(trendPeak.day)}</strong></>}
-                  </span>
-                }
-              />
-              <div style={{ height: 220 }}>
-                {chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
-                      <defs>
-                        <linearGradient id="amberGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="var(--amber)" stopOpacity={0.35} />
-                          <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fill: 'rgba(255,255,255,0.45)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
-                        axisLine={false}
-                        tickLine={false}
+                <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-4">
+                  <Card padding="20px" style={{ height: '100%' }}>
+                    <CardEyebrow icon={Cpu} label="Agent Performance · 24h" />
+                    <div style={{ display: 'flex', gap: 18, marginBottom: 14 }}>
+                      <BigStat value={fmt(agents.total)} label="Runs" />
+                      <BigStat value={fmt(agents.successes)} label="Success" tone="green" />
+                      <BigStat value={String(agents.errors)} label="Errors" tone={agents.errors > 0 ? 'red' : undefined} />
+                    </div>
+                    <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden', marginBottom: 6 }}>
+                      <div
+                        style={{
+                          height: '100%', width: `${successRate}%`,
+                          background: successRate >= 90
+                            ? 'linear-gradient(90deg, var(--green-dim), var(--green))'
+                            : successRate >= 50
+                              ? 'linear-gradient(90deg, var(--amber-dim), var(--amber))'
+                              : 'linear-gradient(90deg, var(--red-dim), var(--red))',
+                          transition: 'width 300ms',
+                        }}
                       />
-                      <YAxis
-                        tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
-                      />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area
-                        type="monotone"
-                        dataKey="threats"
-                        stroke="var(--amber)"
-                        strokeWidth={2}
-                        fill="url(#amberGradient)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', ...mono, fontSize: 12, ...textTertiary }}>
-                    No trend data
+                    </div>
+                    <div style={{ ...mono, fontSize: 11, ...textSecondary, marginBottom: 14 }}>
+                      {successRate}% success rate
+                    </div>
+                    <hr style={dividerLine} />
+                    <div style={{ ...mono, fontSize: 11, ...textTertiary, lineHeight: 1.7 }}>
+                      <div><strong style={textPrimary}>{fmt(feeds.pulls)}</strong> feed pulls</div>
+                      <div><strong style={textPrimary}>{fmt(feeds.ingested)}</strong> records ingested</div>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
+                  <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">
+                    <Skeleton className="h-64 rounded-xl" />
                   </div>
-                )}
-              </div>
-            </Card>
-          </div>
+                  <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-4">
+                    <Skeleton className="h-64 rounded-xl" />
+                  </div>
+                </div>
+              )}
+            </section>
+          </>
+        )}
 
-          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-4">
-            <Card padding="20px" style={{ height: '100%' }}>
-              <CardEyebrow icon={Cpu} label="Agent Performance · 24h" />
-              <div style={{ display: 'flex', gap: 18, marginBottom: 14 }}>
-                <BigStat value={fmt(agents.total)} label="Runs" />
-                <BigStat value={fmt(agents.successes)} label="Success" tone="green" />
-                <BigStat value={String(agents.errors)} label="Errors" tone={agents.errors > 0 ? 'red' : undefined} />
-              </div>
-              <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden', marginBottom: 6 }}>
+        {activeTab === 'pipelines' && <Pipelines agents={agentsList} />}
+
+        {activeTab === 'feeds' && <FeedFailures />}
+
+        {/* COST & BUDGET — the four money/quota panels stacked with their
+            own section labels. BudgetPanel keeps the `#budget-panel` anchor
+            id VerdictBand's AI-budget contributor deep-links to. */}
+        {activeTab === 'cost' && (
+          <>
+            <section id="budget-panel">
+              <SectionLabel label="AI Budget" />
+              <BudgetPanel />
+            </section>
+            <section>
+              <SectionLabel label="D1 Budget" />
+              <D1Budget />
+            </section>
+            <section>
+              <SectionLabel label="AI Spend" />
+              <AiSpend />
+            </section>
+            <section>
+              <SectionLabel label="Cost Optimization" />
+              <CostOptimization />
+            </section>
+          </>
+        )}
+
+        {activeTab === 'geo' && <GeoCoverage />}
+
+        {activeTab === 'email' && <EmailSecuritySection />}
+
+        {/* OPERATIONS — static/rarely-changing + action content, off the
+            glance path: push bootstrap nudge, maintenance triggers,
+            infrastructure tiles, compliance & sessions. */}
+        {activeTab === 'operations' && (
+          <>
+            <PushBootstrapCard />
+
+            <MaintenanceSection />
+
+            {/* INFRASTRUCTURE — single compact row instead of an endless
+                column. Reads `infra`/`migrations` off the full
+                system-health endpoint (not in the snapshot contract) —
+                gated on `systemHealthReady`. */}
+            <section>
+              <SectionLabel label="Infrastructure" />
+              {systemHealthReady ? (
+              <Card padding="20px">
                 <div
                   style={{
-                    height: '100%', width: `${successRate}%`,
-                    background: successRate >= 90
-                      ? 'linear-gradient(90deg, var(--green-dim), var(--green))'
-                      : successRate >= 50
-                        ? 'linear-gradient(90deg, var(--amber-dim), var(--amber))'
-                        : 'linear-gradient(90deg, var(--red-dim), var(--red))',
-                    transition: 'width 300ms',
+                    display: 'grid', gap: 20,
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                   }}
-                />
-              </div>
-              <div style={{ ...mono, fontSize: 11, ...textSecondary, marginBottom: 14 }}>
-                {successRate}% success rate
-              </div>
-              <hr style={dividerLine} />
-              <div style={{ ...mono, fontSize: 11, ...textTertiary, lineHeight: 1.7 }}>
-                <div><strong style={textPrimary}>{fmt(feeds.pulls)}</strong> feed pulls</div>
-                <div><strong style={textPrimary}>{fmt(feeds.ingested)}</strong> records ingested</div>
-              </div>
-            </Card>
-          </div>
-        </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-            <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">
-              <Skeleton className="h-64 rounded-xl" />
-            </div>
-            <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-4">
-              <Skeleton className="h-64 rounded-xl" />
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* SECURITY ROW — Budget + Compliance. BudgetPanel owns its own
-          snapshot read and mounts immediately; Compliance & Sessions needs
-          migrations/audit/sessions from the full system-health endpoint
-          (not in the snapshot contract), so it's gated on
-          `systemHealthReady` instead. */}
-      <section>
-        <SectionLabel label="Security &amp; Spend" />
-        <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-          <div id="budget-panel" style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-5">
-            <BudgetPanel />
-          </div>
-          <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-7">
-            {systemHealthReady ? (
-            <Card padding="20px" style={{ height: '100%' }}>
-              <CardEyebrow
-                icon={Shield}
-                label="Compliance & Sessions"
-                right={
-                  <Link
-                    to="/admin/audit"
-                    style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber)', textDecoration: 'none' }}
-                  >
-                    Audit Log →
-                  </Link>
-                }
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                <ComplianceItem ok label="Data residency: ENAM" />
-                <ComplianceItem ok label="Audit logging: Active" sub={`${fmt(audit.count)} events recorded`} />
-                <ComplianceItem ok label="Encryption at rest: D1 managed" />
-                <ComplianceItem ok label="TLS: Cloudflare managed" />
-                <ComplianceItem ok label="Auth: Google OAuth" />
-                <ComplianceItem ok label={`${fmt(sessions.count)} active sessions`} sub="1 total user · revoke from profile" />
-              </div>
-              <hr style={dividerLine} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleClassifySaasTechniques}
-                  disabled={classifying}
-                  loading={classifying}
                 >
-                  {classifying ? 'Classifying…' : 'Classify SaaS Techniques'}
-                </Button>
-                {classifyResult && (
-                  <span style={{ ...mono, fontSize: 11, color: 'var(--green)' }}>✓ {classifyResult}</span>
-                )}
-                <Link
-                  to="/profile"
-                  style={{ ...mono, fontSize: 11, color: 'var(--amber)', textDecoration: 'none' }}
-                >
-                  Revoke all sessions →
-                </Link>
-              </div>
-            </Card>
-            ) : (
-              <Skeleton className="h-64 rounded-xl" />
-            )}
-          </div>
-        </div>
-      </section>
+                  <InfraTile
+                    icon={Database}
+                    title={infra.mainDb.name}
+                    badge={<Badge status="active" label="PRIMARY" size="xs" />}
+                    progress={dbSizePercent}
+                    progressColor="var(--blue)"
+                    lines={[
+                      `${infra.mainDb.sizeMb} MB · ${infra.mainDb.tables} tables`,
+                      `${migrations.total} migrations · ${infra.mainDb.region}`,
+                      migrations.last_run
+                        ? `Last migration: ${shortDate(migrations.last_run)}`
+                        : 'Never migrated',
+                    ]}
+                  />
+                  <InfraTile
+                    icon={Database}
+                    title={infra.auditDb.name}
+                    badge={<Badge status="inactive" label="AUDIT" size="xs" />}
+                    lines={[
+                      `${infra.auditDb.sizeKb} KB · ${infra.auditDb.tables} tables`,
+                      `Region: ${infra.auditDb.region}`,
+                    ]}
+                  />
+                  <InfraTile
+                    icon={Cpu}
+                    title={infra.worker.name}
+                    badge={<Badge status="active" label="ACTIVE" size="xs" />}
+                    lines={[infra.worker.platform, 'Region: ENAM']}
+                    pulseColor="var(--green)"
+                  />
+                  <InfraTile
+                    icon={Activity}
+                    title={`KV · ${infra.kvNamespaces.length} namespaces`}
+                    badge={<Badge status="active" label="ACTIVE" size="xs" />}
+                    lines={[
+                      infra.kvNamespaces.map(k => k.name).join(', '),
+                      `${fmt(sessions.count)} active sessions`,
+                    ]}
+                  />
+                  <InfraTile
+                    icon={Shield}
+                    title="Migrations"
+                    badge={<Badge status="active" label="UP TO DATE" size="xs" />}
+                    lines={[
+                      `${migrations.total} migrations run`,
+                      migrations.last_run ? `Last: ${shortDate(migrations.last_run)}` : 'No prior runs',
+                      migrations.last_name ?? '—',
+                    ]}
+                  />
+                </div>
+              </Card>
+              ) : (
+                <Skeleton className="h-40 rounded-xl" />
+              )}
+            </section>
 
-      {/* INFRASTRUCTURE — single compact row instead of an endless column.
-          Reads `infra`/`migrations` off the full system-health endpoint
-          (not in the snapshot contract) — gated on `systemHealthReady`. */}
-      <section>
-        <SectionLabel label="Infrastructure" />
-        {systemHealthReady ? (
-        <Card padding="20px">
-          <div
-            style={{
-              display: 'grid', gap: 20,
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            }}
-          >
-            <InfraTile
-              icon={Database}
-              title={infra.mainDb.name}
-              badge={<Badge status="active" label="PRIMARY" size="xs" />}
-              progress={dbSizePercent}
-              progressColor="var(--blue)"
-              lines={[
-                `${infra.mainDb.sizeMb} MB · ${infra.mainDb.tables} tables`,
-                `${migrations.total} migrations · ${infra.mainDb.region}`,
-                migrations.last_run
-                  ? `Last migration: ${shortDate(migrations.last_run)}`
-                  : 'Never migrated',
-              ]}
-            />
-            <InfraTile
-              icon={Database}
-              title={infra.auditDb.name}
-              badge={<Badge status="inactive" label="AUDIT" size="xs" />}
-              lines={[
-                `${infra.auditDb.sizeKb} KB · ${infra.auditDb.tables} tables`,
-                `Region: ${infra.auditDb.region}`,
-              ]}
-            />
-            <InfraTile
-              icon={Cpu}
-              title={infra.worker.name}
-              badge={<Badge status="active" label="ACTIVE" size="xs" />}
-              lines={[infra.worker.platform, 'Region: ENAM']}
-              pulseColor="var(--green)"
-            />
-            <InfraTile
-              icon={Activity}
-              title={`KV · ${infra.kvNamespaces.length} namespaces`}
-              badge={<Badge status="active" label="ACTIVE" size="xs" />}
-              lines={[
-                infra.kvNamespaces.map(k => k.name).join(', '),
-                `${fmt(sessions.count)} active sessions`,
-              ]}
-            />
-            <InfraTile
-              icon={Shield}
-              title="Migrations"
-              badge={<Badge status="active" label="UP TO DATE" size="xs" />}
-              lines={[
-                `${migrations.total} migrations run`,
-                migrations.last_run ? `Last: ${shortDate(migrations.last_run)}` : 'No prior runs',
-                migrations.last_name ?? '—',
-              ]}
-            />
-          </div>
-        </Card>
-        ) : (
-          <Skeleton className="h-40 rounded-xl" />
+            {/* COMPLIANCE & SESSIONS — needs migrations/audit/sessions from
+                the full system-health endpoint (not in the snapshot
+                contract), so it's gated on `systemHealthReady`. */}
+            <section>
+              <SectionLabel label="Compliance & Sessions" />
+              {systemHealthReady ? (
+                <Card padding="20px">
+                  <CardEyebrow
+                    icon={Shield}
+                    label="Compliance & Sessions"
+                    right={
+                      <Link
+                        to="/admin/audit"
+                        style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber)', textDecoration: 'none' }}
+                      >
+                        Audit Log →
+                      </Link>
+                    }
+                  />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <ComplianceItem ok label="Data residency: ENAM" />
+                    <ComplianceItem ok label="Audit logging: Active" sub={`${fmt(audit.count)} events recorded`} />
+                    <ComplianceItem ok label="Encryption at rest: D1 managed" />
+                    <ComplianceItem ok label="TLS: Cloudflare managed" />
+                    <ComplianceItem ok label="Auth: Google OAuth" />
+                    <ComplianceItem ok label={`${fmt(sessions.count)} active sessions`} sub="1 total user · revoke from profile" />
+                  </div>
+                  <hr style={dividerLine} />
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleClassifySaasTechniques}
+                      disabled={classifying}
+                      loading={classifying}
+                    >
+                      {classifying ? 'Classifying…' : 'Classify SaaS Techniques'}
+                    </Button>
+                    {classifyResult && (
+                      <span style={{ ...mono, fontSize: 11, color: 'var(--green)' }}>✓ {classifyResult}</span>
+                    )}
+                    <Link
+                      to="/profile"
+                      style={{ ...mono, fontSize: 11, color: 'var(--amber)', textDecoration: 'none' }}
+                    >
+                      Revoke all sessions →
+                    </Link>
+                  </div>
+                </Card>
+              ) : (
+                <Skeleton className="h-64 rounded-xl" />
+              )}
+            </section>
+          </>
         )}
-      </section>
 
-      {/* EMAIL SECURITY */}
-      <EmailSecuritySection />
-
-      {/* MAINTENANCE — collapsible */}
-      <MaintenanceSection />
+        {/* BRIEFING — heavy (12-section dump), lazy on its own tab. */}
+        {activeTab === 'briefing' && (
+          <section>
+            <SectionLabel label="Daily Briefing" attribution="Generated by the briefing agent" />
+            <DailyBriefingWidget />
+          </section>
+        )}
+      </div>
     </div>
   );
 }
