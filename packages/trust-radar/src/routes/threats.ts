@@ -79,7 +79,7 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       return new Response(cached, {
-        headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+        headers: { "Content-Type": "application/json", ...corsHeaders(origin, env) },
       });
     }
 
@@ -99,7 +99,7 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const body = JSON.stringify({ data: rows.results });
     await env.CACHE.put(cacheKey, body, { expirationTtl: 300 });
     const resp = new Response(body, {
-      headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+      headers: { "Content-Type": "application/json", ...corsHeaders(origin, env) },
     });
     return attachBookmark(resp, session);
   });

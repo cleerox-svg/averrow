@@ -194,7 +194,7 @@ export async function handleServeTrademarkAssetImage(
   headers.set("Cache-Control", "private, max-age=300");
   // Audit L4: never echo arbitrary Origins — use the central allow-list
   // (falls back to https://averrow.com for non-allowed origins).
-  for (const [k, v] of Object.entries(corsHeaders(origin))) headers.set(k, v);
+  for (const [k, v] of Object.entries(corsHeaders(origin, env))) headers.set(k, v);
   return new Response(obj.body, { status: 200, headers });
 }
 
