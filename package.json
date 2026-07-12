@@ -12,12 +12,23 @@
     "deploy:radar": "turbo run deploy --filter=trust-radar"
   },
   "devDependencies": {
-    "turbo": "^2.3.0",
+    "turbo": "^2.10.4",
     "typescript": "^5.7.2"
   },
   "packageManager": "pnpm@10.29.3",
+  "overridesNotes": {
+    "_": "Rationale for each pnpm.overrides entry (D3 dep-hygiene). pnpm forbids comment keys inside overrides, so notes live here. Drop a pin once the upstream dep resolves the fix within our semver range.",
+    "protocol-buffers-schema": "moderate (prototype pollution, <3.6.1). Browser-shipped in the averrow-ops SPA bundle via deck.gl>@deck.gl/carto>pbf>resolve-protobuf-schema. No non-major direct-dep bump exposes the fix, so pin the transitive to the patched patch release."
+  },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp", "workerd"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "workerd"
+    ],
+    "overrides": {
+      "protocol-buffers-schema": ">=3.6.1"
+    }
   },
   "engines": {
     "node": ">=20.0.0",
