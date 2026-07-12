@@ -1,7 +1,77 @@
 // Comprehensive Platform Operations Briefing — 12-section intelligence report
 import { json } from "../lib/cors";
 import { sendBriefingEmail } from "../lib/briefing-email";
+import { createAgentRun, completeAgentRun, failAgentRun } from "../db/agent-runs";
+import { logger } from "../lib/logger";
 import type { Env } from "../types";
+
+// ─── Agent-run contract wrapper ─────────────────────────────────
+// The daily briefing is dispatched by the orchestrator's dedicated
+// 13:13 UTC trigger (cron path: generateAndEmailBriefing) and on demand
+// by handleGenerateBriefing. It is a handler, not an AgentModule, but it
+// still participates in the agent-run contract (CLAUDE.md §6) so operators
+// can see whether the daily assessment actually ran via agent_mesh /
+// platform-diagnostics. agent_id 'daily_briefing' is a handler-dispatched
+// writer (like campaign_hunter's workflow row) — it is intentionally NOT
+// registered in agents/*.ts, so it does not appear in the architect
+// manifest and does not affect the resource-drift gate.
+const BRIEFING_AGENT_ID = "daily_briefing";
+
+/**
+ * Wraps briefing generation + persistence in the standard agent-run
+ * contract: an `agent_runs` row at start (status running), completion
+ * with `completed_at` + `records_processed`, a telemetry `agent_events`
+ * row after completion (target_agent = NULL — the briefing dispatches
+ * nothing downstream), and `error_message` capture on failure.
+ *
+ * `fn` performs the actual generation/persist and returns the briefing
+ * row id; the wrapper is pure instrumentation and re-throws so the
+ * caller's existing error handling (cron logger / handler 500) is
+ * preserved unchanged. Callers invoke this ONLY on paths that genuinely
+ * generate a briefing — never on the cron dedup-skip or cached-return
+ * paths — so a run row maps 1:1 to an actual assessment.
+ */
+async function withBriefingRun<T>(
+  env: Env,
+  trigger: string,
+  fn: () => Promise<{ result: T; briefingId: number }>,
+): Promise<T> {
+  const runId = await createAgentRun(env, BRIEFING_AGENT_ID);
+  try {
+    const { result, briefingId } = await fn();
+    await completeAgentRun(env, runId, {
+      records_processed: 1,
+      outputs_generated: 1,
+      status: "success",
+    });
+    // Telemetry-only completion event: target_agent = NULL means the
+    // orchestrator's agent_events consumer records it for operator
+    // traceability and marks it done without dispatching anything.
+    try {
+      await env.DB.prepare(
+        `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
+         VALUES (?, 'briefing_generated', ?, NULL, ?, 3, 'pending')`,
+      )
+        .bind(
+          crypto.randomUUID(),
+          BRIEFING_AGENT_ID,
+          JSON.stringify({ briefing_id: briefingId, trigger }),
+        )
+        .run();
+    } catch (err) {
+      logger.error("briefing_event_write_error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await failAgentRun(env, runId, message).catch(() => {
+      /* run-tracking failure must not mask the original error */
+    });
+    throw err;
+  }
+}
 
 // ─── Briefing Data Structure ────────────────────────────────────
 
@@ -667,52 +737,59 @@ export async function handleGenerateBriefing(
       }
     }
 
-    const briefing = await fetchComprehensiveBriefing(env);
+    const { stored, emailResult } = await withBriefingRun(
+      env,
+      `user:${userId}`,
+      async () => {
+        const briefing = await fetchComprehensiveBriefing(env);
 
-    const title = `Platform Operations Briefing — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-    const reportDate = new Date().toISOString().slice(0, 10);
+        const title = `Platform Operations Briefing — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+        const reportDate = new Date().toISOString().slice(0, 10);
 
-    const insertResult = await env.DB.prepare(
-      `INSERT INTO threat_briefings (type, report_date, report_data, generated_at, trigger, emailed)
-      VALUES ('daily', ?, ?, datetime('now'), ?, 0)`,
-    )
-      .bind(reportDate, JSON.stringify(briefing), `user:${userId}`)
-      .run();
-    const briefingId = insertResult.meta.last_row_id;
+        const insertResult = await env.DB.prepare(
+          `INSERT INTO threat_briefings (type, report_date, report_data, generated_at, trigger, emailed)
+          VALUES ('daily', ?, ?, datetime('now'), ?, 0)`,
+        )
+          .bind(reportDate, JSON.stringify(briefing), `user:${userId}`)
+          .run();
+        const briefingId = insertResult.meta.last_row_id;
 
-    // Send briefing email (non-blocking)
-    const sendEmail = url.searchParams.get("sendEmail") !== "false";
-    let emailResult: { sent: boolean; id?: string; error?: string; recipient?: string } | undefined;
-    if (sendEmail) {
-      emailResult = await sendBriefingEmail(env, briefing, title).catch(
-        (err) => ({ sent: false, error: "An internal error occurred", recipient: '' }),
-      );
-      if (emailResult.sent) {
-        await env.DB.prepare(
-          "UPDATE threat_briefings SET emailed = 1 WHERE id = ?",
+        // Send briefing email (non-blocking)
+        const sendEmail = url.searchParams.get("sendEmail") !== "false";
+        let emailResult: { sent: boolean; id?: string; error?: string; recipient?: string } | undefined;
+        if (sendEmail) {
+          emailResult = await sendBriefingEmail(env, briefing, title).catch(
+            (err) => ({ sent: false, error: "An internal error occurred", recipient: '' }),
+          );
+          if (emailResult.sent) {
+            await env.DB.prepare(
+              "UPDATE threat_briefings SET emailed = 1 WHERE id = ?",
+            )
+              .bind(briefingId)
+              .run();
+          } else {
+            // Persist Resend error for diagnostics surface.
+            try {
+              const updated = JSON.stringify({
+                ...briefing,
+                email_error: emailResult.error ?? 'unknown',
+                email_recipient: emailResult.recipient ?? null,
+              });
+              await env.DB.prepare(
+                "UPDATE threat_briefings SET report_data = ? WHERE id = ?",
+              ).bind(updated, briefingId).run();
+            } catch { /* non-fatal */ }
+          }
+        }
+
+        const stored = await env.DB.prepare(
+          "SELECT id, type, report_date, report_data, generated_at, trigger, emailed FROM threat_briefings WHERE id = ?",
         )
           .bind(briefingId)
-          .run();
-      } else {
-        // Persist Resend error for diagnostics surface.
-        try {
-          const updated = JSON.stringify({
-            ...briefing,
-            email_error: emailResult.error ?? 'unknown',
-            email_recipient: emailResult.recipient ?? null,
-          });
-          await env.DB.prepare(
-            "UPDATE threat_briefings SET report_data = ? WHERE id = ?",
-          ).bind(updated, briefingId).run();
-        } catch { /* non-fatal */ }
-      }
-    }
-
-    const stored = await env.DB.prepare(
-      "SELECT id, type, report_date, report_data, generated_at, trigger, emailed FROM threat_briefings WHERE id = ?",
-    )
-      .bind(briefingId)
-      .first();
+          .first();
+        return { result: { stored, emailResult }, briefingId: Number(briefingId) };
+      },
+    );
     return json(
       { success: true, data: stored, cached: false, email: emailResult },
       201,
@@ -779,45 +856,50 @@ export async function generateAndEmailBriefing(
   env: Env,
   trigger: string = 'cron:daily',
 ): Promise<{ briefingId: number; emailSent: boolean; error?: string }> {
-  const briefing = await fetchComprehensiveBriefing(env);
+  return withBriefingRun(env, trigger, async () => {
+    const briefing = await fetchComprehensiveBriefing(env);
 
-  const title = `Platform Operations Briefing — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-  const reportDate = new Date().toISOString().slice(0, 10);
+    const title = `Platform Operations Briefing — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    const reportDate = new Date().toISOString().slice(0, 10);
 
-  const insertResult = await env.DB.prepare(
-    `INSERT INTO threat_briefings (type, report_date, report_data, generated_at, trigger, emailed)
-    VALUES ('daily', ?, ?, datetime('now'), ?, 0)`,
-  )
-    .bind(reportDate, JSON.stringify(briefing), trigger)
-    .run();
-  const briefingId = insertResult.meta.last_row_id;
-
-  const emailResult = await sendBriefingEmail(env, briefing, title).catch(
-    (err) => ({ sent: false as const, error: "An internal error occurred", recipient: '' }),
-  );
-
-  if (emailResult.sent) {
-    await env.DB.prepare(
-      "UPDATE threat_briefings SET emailed = 1 WHERE id = ?",
+    const insertResult = await env.DB.prepare(
+      `INSERT INTO threat_briefings (type, report_date, report_data, generated_at, trigger, emailed)
+      VALUES ('daily', ?, ?, datetime('now'), ?, 0)`,
     )
-      .bind(briefingId)
+      .bind(reportDate, JSON.stringify(briefing), trigger)
       .run();
-  } else {
-    // Persist the Resend error into report_data.email_error so the
-    // briefing_status diagnostics tell the operator WHY it failed.
-    // Adding a column would need a migration; report_data is JSON
-    // so we can patch it in place.
-    try {
-      const updated = JSON.stringify({
-        ...briefing,
-        email_error: emailResult.error ?? 'unknown',
-        email_recipient: 'recipient' in emailResult ? emailResult.recipient : null,
-      });
-      await env.DB.prepare(
-        "UPDATE threat_briefings SET report_data = ? WHERE id = ?",
-      ).bind(updated, briefingId).run();
-    } catch { /* non-fatal */ }
-  }
+    const briefingId = Number(insertResult.meta.last_row_id);
 
-  return { briefingId, emailSent: emailResult.sent, error: emailResult.error };
+    const emailResult = await sendBriefingEmail(env, briefing, title).catch(
+      (err) => ({ sent: false as const, error: "An internal error occurred", recipient: '' }),
+    );
+
+    if (emailResult.sent) {
+      await env.DB.prepare(
+        "UPDATE threat_briefings SET emailed = 1 WHERE id = ?",
+      )
+        .bind(briefingId)
+        .run();
+    } else {
+      // Persist the Resend error into report_data.email_error so the
+      // briefing_status diagnostics tell the operator WHY it failed.
+      // Adding a column would need a migration; report_data is JSON
+      // so we can patch it in place.
+      try {
+        const updated = JSON.stringify({
+          ...briefing,
+          email_error: emailResult.error ?? 'unknown',
+          email_recipient: 'recipient' in emailResult ? emailResult.recipient : null,
+        });
+        await env.DB.prepare(
+          "UPDATE threat_briefings SET report_data = ? WHERE id = ?",
+        ).bind(updated, briefingId).run();
+      } catch { /* non-fatal */ }
+    }
+
+    return {
+      result: { briefingId, emailSent: emailResult.sent, error: emailResult.error },
+      briefingId,
+    };
+  });
 }
