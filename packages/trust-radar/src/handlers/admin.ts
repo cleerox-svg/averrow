@@ -436,16 +436,37 @@ export interface DashboardBudgetSlice {
   top_agents: Array<{ agent_id: string; cost_usd: number; calls: number }>;
 }
 
-/** Feeds needing attention (CRITICAL / AT RISK). Source: handleMetricsFeedFailures. */
+/** Feeds needing attention. Source: handleMetricsFeedFailures.
+ *
+ * `at_risk` mirrors the `feedRiskTier` split that the Tier-1 VerdictBand
+ * computed client-side (metrics/FeedFailures.tsx), so the band's feeds
+ * contributor reads the same signal it always did:
+ *   - a feed AUTO-paused from consecutive failures
+ *     (`paused_reason === 'auto:consecutive_failures'`) → `critical`,
+ *     EVEN THOUGH `enabled === 0`. This is the core "OPERATIONAL while a
+ *     feed is dead" guard — a dead feed must escalate, not be dropped.
+ *   - `>= 80%` to auto-pause / high failure rate → `critical`
+ *   - `60-79%` to auto-pause / failing → `high`
+ * MANUALLY paused/disabled feeds (any other `paused_reason`, or an orphan
+ * with no config row) are operator intent, NOT a health signal — they are
+ * excluded so the band stays OPERATIONAL for a deliberately-disabled feed.
+ */
 export interface DashboardFeedsSlice {
   at_risk_count: number;
   at_risk: Array<{
     feed_name: string;
     display_name: string;
+    /** Pre-computed tier so the frontend maps directly (no re-derivation
+     *  from verdict labels). 'critical' = auto-paused-from-failures or
+     *  >=80% to auto-pause / high failure rate; 'high' = 60-79% or failing. */
+    severity: 'critical' | 'high';
     verdict: { tone: string; label: string };
     failure_rate_pct: number;
     pct_to_auto_pause: number;
     enabled: boolean;
+    /** `feed_configs.paused_reason`; 'auto:consecutive_failures' marks a
+     *  feed that died from failures (distinct from an operator pause). */
+    paused_reason: string | null;
   }>;
   totals_24h: {
     total_pulls: number;
@@ -455,14 +476,27 @@ export interface DashboardFeedsSlice {
   };
 }
 
-/** Backlog verdict / GROWING-STALE signal. Source: handlePipelineStatus. */
+/** Pipeline health signal. Source: handlePipelineStatus.
+ *
+ * `worst_tone` reflects ONLY genuine pipeline problems: a real backlog that
+ * is GROWING (tone 'failed' → 'critical') or STALE/unmeasured (tone
+ * 'pending' → 'warning'), or a reference dataset that is genuinely
+ * EMPTY/FAILED (tone 'failed' → 'critical'). The GeoIP reference dataset's
+ * BENIGN states — SETUP (an OPTIONAL binding that may be permanently
+ * unconfigured), REFRESHING, and STALE 7-14d (all tone 'pending') — do NOT
+ * degrade the band, so an env where GeoIP is a non-problem still reads
+ * green. `needs_attention_count` counts exactly the pipelines that drive
+ * `worst_tone`, and each `concerning` row carries a `severity` so the
+ * frontend renders a neutral "N pipelines need attention" without forcing
+ * "growing/stale" wording onto a non-backlog dataset. */
 export interface DashboardPipelineSlice {
   worst_tone: "critical" | "warning" | "ok" | "unknown";
-  growing_or_stale_count: number;
+  needs_attention_count: number;
   total_pipelines: number;
   concerning: Array<{
     id: string;
     label: string;
+    severity: "critical" | "warning";
     verdict: { tone: string; label: string };
     trend_direction: string;
     count: number;
@@ -487,7 +521,18 @@ export interface DashboardSnapshot {
   generated_at: string;
 }
 
-const DASHBOARD_SNAPSHOT_CACHE_KEY = "admin:dashboard_snapshot:v1";
+/** Base key for the two role-scoped dashboard-snapshot KV entries
+ *  (`:sa` for super_admin, `:admin` for plain admin). Exported so
+ *  mutation handlers that invalidate the snapshot (e.g. budget config
+ *  patch in handlers/budget.ts) reference the SAME string instead of
+ *  re-typing it. See `dashboardSnapshotCacheKeys()`. */
+export const DASHBOARD_SNAPSHOT_CACHE_KEY = "admin:dashboard_snapshot:v1";
+
+/** Both role-scoped snapshot cache keys — the complete set a writer must
+ *  bust to fully invalidate the composite for every audience. */
+export function dashboardSnapshotCacheKeys(): [string, string] {
+  return [`${DASHBOARD_SNAPSHOT_CACHE_KEY}:sa`, `${DASHBOARD_SNAPSHOT_CACHE_KEY}:admin`];
+}
 const DASHBOARD_SNAPSHOT_TTL = 75; // ~60-90s window per spec
 
 /** Parse a sub-handler's `{ success?, data }` body into its `data`,
@@ -575,6 +620,12 @@ export async function handleAdminDashboard(
       feed_name: string;
       display_name: string;
       enabled: boolean;
+      // `pulls` + `paused_reason` are needed to replicate FeedFailures.tsx's
+      // feedRiskTier: pulls gates the failure-rate tier, and paused_reason
+      // distinguishes an auto-pause-from-failures (a signal) from an
+      // operator pause/disable (not a signal).
+      pulls: number;
+      paused_reason: string | null;
       failure_rate_pct: number;
       pct_to_auto_pause: number;
       verdict: { tone: string; label: string };
@@ -625,18 +676,41 @@ export async function handleAdminDashboard(
     snapshotSlice<FeedFailuresRaw, DashboardFeedsSlice>(
       () => handleMetricsFeedFailures(syntheticReq(), env),
       (ff) => {
-        const atRisk = ff.per_feed.filter(
-          (f) => f.verdict.label === "AT RISK" || f.verdict.label === "CRITICAL",
-        );
+        // Replicate FeedFailures.tsx's feedRiskTier so the band's feeds
+        // contributor reads the SAME signal it did pre-Tier-2a. An
+        // AUTO-paused feed (died from consecutive failures) is `enabled=0`
+        // but must escalate to critical — this is the "OPERATIONAL while a
+        // feed is dead" guard. A MANUALLY paused/disabled feed (any other
+        // paused_reason, or an orphan) is operator intent → not a signal.
+        const feedSeverity = (f: FeedFailuresRaw["per_feed"][number]): "critical" | "high" | null => {
+          if (f.paused_reason === "auto:consecutive_failures") return "critical";
+          if (!f.enabled || f.paused_reason) return null;
+          if (f.pct_to_auto_pause >= 80) return "critical";
+          if (f.pct_to_auto_pause >= 60) return "high";
+          if (f.failure_rate_pct >= 30 && f.pulls >= 10) return "high";
+          return null;
+        };
+        const scored = ff.per_feed
+          .map((f) => ({ f, severity: feedSeverity(f) }))
+          .filter((x): x is { f: FeedFailuresRaw["per_feed"][number]; severity: "critical" | "high" } => x.severity !== null)
+          // Critical first, then closest-to-auto-pause, so the 20-cap keeps
+          // the worst rows even if the source ordering buried a PAUSED row.
+          .sort((a, b) => {
+            if (a.severity !== b.severity) return a.severity === "critical" ? -1 : 1;
+            if (b.f.pct_to_auto_pause !== a.f.pct_to_auto_pause) return b.f.pct_to_auto_pause - a.f.pct_to_auto_pause;
+            return b.f.failure_rate_pct - a.f.failure_rate_pct;
+          });
         return {
-          at_risk_count: atRisk.length,
-          at_risk: atRisk.slice(0, 20).map((f) => ({
+          at_risk_count: scored.length,
+          at_risk: scored.slice(0, 20).map(({ f, severity }) => ({
             feed_name: f.feed_name,
             display_name: f.display_name,
+            severity,
             verdict: f.verdict,
             failure_rate_pct: f.failure_rate_pct,
             pct_to_auto_pause: f.pct_to_auto_pause,
             enabled: f.enabled,
+            paused_reason: f.paused_reason,
           })),
           totals_24h: {
             total_pulls: ff.totals_24h.total_pulls,
@@ -650,25 +724,43 @@ export async function handleAdminDashboard(
     snapshotSlice<PipelineRaw, DashboardPipelineSlice>(
       () => handlePipelineStatus(syntheticReq(), env),
       (pipes) => {
-        const concerning = pipes.filter(
-          (p) => p.verdict.tone === "failed" || p.verdict.label === "GROWING" || p.verdict.label === "STALE",
-        );
-        const tones = new Set(pipes.map((p) => p.verdict.tone));
+        // The GeoIP row is a synthetic REFERENCE dataset (not a draining
+        // backlog). Its benign states — SETUP (an OPTIONAL binding, so it
+        // can be permanently unconfigured), REFRESHING, STALE 7-14d — all
+        // carry tone 'pending' and must NOT degrade the band. Only a
+        // genuinely broken reference dataset (EMPTY / FAILED / STALE>14d,
+        // all tone 'failed') is a real problem. Real backlogs escalate on
+        // tone 'failed' (GROWING → critical) and tone 'pending' (STALE /
+        // unmeasured → warning). Everything else is not a signal.
+        const REFERENCE_PIPELINE_IDS = new Set(["geoip"]);
+        const problemSeverity = (p: PipelineRaw[number]): "critical" | "warning" | null => {
+          const tone = p.verdict.tone;
+          if (REFERENCE_PIPELINE_IDS.has(p.id)) {
+            return tone === "failed" ? "critical" : null;
+          }
+          if (tone === "failed") return "critical";
+          if (tone === "pending") return "warning";
+          return null;
+        };
+        const problems = pipes
+          .map((p) => ({ p, severity: problemSeverity(p) }))
+          .filter((x): x is { p: PipelineRaw[number]; severity: "critical" | "warning" } => x.severity !== null);
         const worst_tone: DashboardPipelineSlice["worst_tone"] =
           pipes.length === 0
             ? "unknown"
-            : tones.has("failed")
+            : problems.some((x) => x.severity === "critical")
               ? "critical"
-              : tones.has("pending") || tones.has("warning")
+              : problems.some((x) => x.severity === "warning")
                 ? "warning"
                 : "ok";
         return {
           worst_tone,
-          growing_or_stale_count: concerning.length,
+          needs_attention_count: problems.length,
           total_pipelines: pipes.length,
-          concerning: concerning.slice(0, 20).map((p) => ({
+          concerning: problems.slice(0, 20).map(({ p, severity }) => ({
             id: p.id,
             label: p.label,
+            severity,
             verdict: p.verdict,
             trend_direction: p.trend_direction,
             count: p.count,

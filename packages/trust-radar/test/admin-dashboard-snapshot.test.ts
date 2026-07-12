@@ -98,14 +98,19 @@ interface SnapshotBody {
     budget: unknown | null;
     feeds: {
       at_risk_count: number;
-      at_risk: Array<{ feed_name: string; verdict: { label: string } }>;
+      at_risk: Array<{
+        feed_name: string;
+        severity: "critical" | "high";
+        verdict: { label: string };
+        paused_reason: string | null;
+      }>;
       totals_24h: unknown;
     } | null;
     pipeline: {
       worst_tone: string;
-      growing_or_stale_count: number;
+      needs_attention_count: number;
       total_pipelines: number;
-      concerning: Array<{ id: string }>;
+      concerning: Array<{ id: string; severity: "critical" | "warning" }>;
     } | null;
     email_security: unknown | null;
     generated_at: string;
@@ -206,9 +211,15 @@ describe("handleAdminDashboard — independent nullability: warm slices populate
         data: {
           totals_24h: { total_pulls: 100, total_success: 80, total_failed: 20, total_records: 5000, feeds_active: 12 },
           per_feed: [
-            { feed_name: "greynoise", display_name: "GreyNoise", enabled: true, failure_rate_pct: 90, pct_to_auto_pause: 80, verdict: { tone: "failed", label: "AT RISK" } },
-            { feed_name: "abusech", display_name: "abuse.ch", enabled: true, failure_rate_pct: 40, pct_to_auto_pause: 20, verdict: { tone: "failed", label: "CRITICAL" } },
-            { feed_name: "openphish", display_name: "OpenPhish", enabled: true, failure_rate_pct: 0, pct_to_auto_pause: 0, verdict: { tone: "success", label: "HEALTHY" } },
+            { feed_name: "greynoise", display_name: "GreyNoise", enabled: true, pulls: 30, paused_reason: null, failure_rate_pct: 90, pct_to_auto_pause: 80, verdict: { tone: "failed", label: "AT RISK" } },
+            { feed_name: "abusech", display_name: "abuse.ch", enabled: true, pulls: 25, paused_reason: null, failure_rate_pct: 40, pct_to_auto_pause: 20, verdict: { tone: "failed", label: "CRITICAL" } },
+            // Auto-paused from consecutive failures — enabled=0 but MUST
+            // still escalate (this is the "OPERATIONAL while a feed is dead"
+            // guard the VerdictBand exists to prevent).
+            { feed_name: "certstream", display_name: "CertStream", enabled: false, pulls: 0, paused_reason: "auto:consecutive_failures", failure_rate_pct: 0, pct_to_auto_pause: 100, verdict: { tone: "inactive", label: "PAUSED" } },
+            // Manually disabled by an operator — NOT a health signal.
+            { feed_name: "manualoff", display_name: "Manual Off", enabled: false, pulls: 0, paused_reason: "operator: seasonal", failure_rate_pct: 0, pct_to_auto_pause: 0, verdict: { tone: "inactive", label: "PAUSED" } },
+            { feed_name: "openphish", display_name: "OpenPhish", enabled: true, pulls: 40, paused_reason: null, failure_rate_pct: 0, pct_to_auto_pause: 0, verdict: { tone: "success", label: "HEALTHY" } },
           ],
           recent_errors: [],
           generated_at: "2026-07-11T00:00:00.000Z",
@@ -231,23 +242,134 @@ describe("handleAdminDashboard — independent nullability: warm slices populate
       trend_14d: [{ day: "2026-07-10", count: 100 }],
     });
 
-    // Feeds: only AT RISK + CRITICAL survive the at-risk filter (HEALTHY dropped).
+    // Feeds: three signals survive the at-risk tiering —
+    //   greynoise (pct_to_auto_pause 80)   → critical
+    //   certstream (auto:consecutive_failures, enabled=0) → critical
+    //   abusech (failure_rate 40, pulls>=10) → high
+    // HEALTHY (openphish) and the MANUALLY-disabled feed (manualoff) are
+    // both dropped — a deliberate operator pause is not a health signal.
     expect(body.data.feeds).not.toBeNull();
-    expect(body.data.feeds!.at_risk_count).toBe(2);
-    const labels = body.data.feeds!.at_risk.map((f) => f.verdict.label).sort();
-    expect(labels).toEqual(["AT RISK", "CRITICAL"]);
-    expect(body.data.feeds!.at_risk.some((f) => f.feed_name === "openphish")).toBe(false);
+    expect(body.data.feeds!.at_risk_count).toBe(3);
+    const byName = new Map(body.data.feeds!.at_risk.map((f) => [f.feed_name, f]));
+    expect(byName.get("greynoise")!.severity).toBe("critical");
+    expect(byName.get("abusech")!.severity).toBe("high");
+    // The auto-paused (dead) feed must appear, marked critical.
+    expect(byName.get("certstream")!.severity).toBe("critical");
+    expect(byName.get("certstream")!.paused_reason).toBe("auto:consecutive_failures");
+    // Healthy + manually-disabled feeds excluded.
+    expect(byName.has("openphish")).toBe(false);
+    expect(byName.has("manualoff")).toBe(false);
+    // Critical rows sort ahead of high rows (20-cap keeps the worst).
+    expect(body.data.feeds!.at_risk[body.data.feeds!.at_risk.length - 1].feed_name).toBe("abusech");
 
-    // Pipeline: one GROWING (tone failed) → worst_tone critical, 1 concerning.
+    // Pipeline: one GROWING (tone failed) → worst_tone critical, 1 needs-attention.
     expect(body.data.pipeline).not.toBeNull();
     expect(body.data.pipeline!.total_pipelines).toBe(3);
     expect(body.data.pipeline!.worst_tone).toBe("critical");
-    expect(body.data.pipeline!.growing_or_stale_count).toBe(1);
+    expect(body.data.pipeline!.needs_attention_count).toBe(1);
     expect(body.data.pipeline!.concerning.map((p) => p.id)).toEqual(["geo"]);
+    expect(body.data.pipeline!.concerning[0].severity).toBe("critical");
 
     // Failing sources → null, in the SAME response.
     expect(body.data.budget).toBeNull();
     expect(body.data.email_security).toBeNull();
+  });
+});
+
+describe("handleAdminDashboard — pipeline worst_tone: benign GeoIP must not degrade the band", () => {
+  function warmPipeline(kv: MockKV, pipes: unknown[]): void {
+    kv.store.set("pipeline_status_v4", JSON.stringify({ success: true, data: pipes }));
+  }
+
+  it("benign GeoIP SETUP (unconfigured reference dataset) keeps worst_tone ok", async () => {
+    const kv = new MockKV();
+    // GeoIP is an OPTIONAL binding — a permanently-unconfigured dataset
+    // emits tone 'pending' / label 'SETUP'. All real backlogs are healthy.
+    warmPipeline(kv, [
+      { id: "geoip", label: "GeoIP Database", verdict: { tone: "pending", label: "SETUP" }, trend_direction: "unknown", count: 0 },
+      { id: "geo", label: "Geo Enrichment", verdict: { tone: "success", label: "DRAINING" }, trend_direction: "down", count: 10 },
+      { id: "dns", label: "DNS Resolution", verdict: { tone: "inactive", label: "STEADY" }, trend_direction: "flat", count: 3 },
+    ]);
+    const env = makeThrowingEnv(kv);
+
+    const body = await bodyOf(await handleAdminDashboard(req(), env, superAdminCtx()));
+    expect(body.data.pipeline).not.toBeNull();
+    // Pre-fix bug: tones.has('pending') → worst_tone 'warning' forever.
+    expect(body.data.pipeline!.worst_tone).toBe("ok");
+    expect(body.data.pipeline!.needs_attention_count).toBe(0);
+    expect(body.data.pipeline!.concerning.length).toBe(0);
+    expect(body.data.pipeline!.total_pipelines).toBe(3);
+  });
+
+  it("GeoIP STALE 7-14d (tone pending) is benign — worst_tone stays ok", async () => {
+    const kv = new MockKV();
+    warmPipeline(kv, [
+      { id: "geoip", label: "GeoIP Database", verdict: { tone: "pending", label: "STALE" }, trend_direction: "flat", count: 3_760_000 },
+    ]);
+    const env = makeThrowingEnv(kv);
+    const body = await bodyOf(await handleAdminDashboard(req(), env, superAdminCtx()));
+    expect(body.data.pipeline!.worst_tone).toBe("ok");
+    expect(body.data.pipeline!.needs_attention_count).toBe(0);
+  });
+
+  it("genuinely EMPTY GeoIP (tone failed) IS a signal — critical", async () => {
+    const kv = new MockKV();
+    warmPipeline(kv, [
+      { id: "geoip", label: "GeoIP Database", verdict: { tone: "failed", label: "EMPTY" }, trend_direction: "flat", count: 0 },
+    ]);
+    const env = makeThrowingEnv(kv);
+    const body = await bodyOf(await handleAdminDashboard(req(), env, superAdminCtx()));
+    expect(body.data.pipeline!.worst_tone).toBe("critical");
+    expect(body.data.pipeline!.needs_attention_count).toBe(1);
+    expect(body.data.pipeline!.concerning[0].id).toBe("geoip");
+    expect(body.data.pipeline!.concerning[0].severity).toBe("critical");
+  });
+
+  it("a REAL backlog STALE (tone pending, non-reference) still degrades to warning", async () => {
+    const kv = new MockKV();
+    warmPipeline(kv, [
+      { id: "geo", label: "Geo Enrichment", verdict: { tone: "pending", label: "STALE" }, trend_direction: "unknown", count: 500 },
+    ]);
+    const env = makeThrowingEnv(kv);
+    const body = await bodyOf(await handleAdminDashboard(req(), env, superAdminCtx()));
+    expect(body.data.pipeline!.worst_tone).toBe("warning");
+    expect(body.data.pipeline!.needs_attention_count).toBe(1);
+    expect(body.data.pipeline!.concerning[0].severity).toBe("warning");
+  });
+});
+
+describe("handleBudgetConfigPatch — busts both dashboard snapshot cache keys", () => {
+  it("deletes :sa and :admin snapshot entries on a successful config patch", async () => {
+    const { handleBudgetConfigPatch } = await import("../src/handlers/budget");
+    const kv = new MockKV();
+    // Seed both role-scoped snapshots as if warmed by prior loads.
+    kv.store.set("admin:dashboard_snapshot:v1:sa", JSON.stringify({ success: true, data: {} }));
+    kv.store.set("admin:dashboard_snapshot:v1:admin", JSON.stringify({ success: true, data: {} }));
+
+    // Minimal DB stub: budget config UPDATE .run() succeeds, config SELECT
+    // .first() returns a row. Only updateConfig's statements are exercised.
+    const okStmt = {
+      bind() { return this; },
+      run() { return Promise.resolve({ success: true }); },
+      first() { return Promise.resolve({ monthly_limit_usd: 500, soft_pct: 70, hard_pct: 85, emergency_pct: 95 }); },
+      all() { return Promise.resolve({ results: [] }); },
+    };
+    const env = {
+      DB: { prepare: () => okStmt },
+      CACHE: kv,
+    } as unknown as Env;
+
+    const patchReq = new Request("https://averrow.com/api/admin/budget/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Origin: "https://averrow.com" },
+      body: JSON.stringify({ monthly_limit_usd: 500 }),
+    });
+
+    const res = await handleBudgetConfigPatch(patchReq, env);
+    expect(res.status).toBe(200);
+    // Both snapshot keys must be gone so the next dashboard load recomputes.
+    expect(kv.store.has("admin:dashboard_snapshot:v1:sa")).toBe(false);
+    expect(kv.store.has("admin:dashboard_snapshot:v1:admin")).toBe(false);
   });
 });
 
@@ -286,7 +408,7 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
         data: {
           totals_24h: { total_pulls: 10, total_success: 8, total_failed: 2, feeds_active: 4 },
           per_feed: [
-            { feed_name: "greynoise", display_name: "GreyNoise", enabled: true, failure_rate_pct: 90, pct_to_auto_pause: 80, verdict: { tone: "failed", label: "AT RISK" } },
+            { feed_name: "greynoise", display_name: "GreyNoise", enabled: true, pulls: 30, paused_reason: null, failure_rate_pct: 90, pct_to_auto_pause: 80, verdict: { tone: "failed", label: "AT RISK" } },
           ],
         },
       }),

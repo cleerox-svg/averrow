@@ -5,6 +5,7 @@
 import type { Env } from "../types";
 import { json } from "../lib/cors";
 import { BudgetManager, fetchAnthropicUsageReport } from "../lib/budgetManager";
+import { dashboardSnapshotCacheKeys } from "./admin";
 
 /** GET /api/admin/budget/status */
 export async function handleBudgetStatus(_request: Request, env: Env): Promise<Response> {
@@ -51,5 +52,13 @@ export async function handleBudgetConfigPatch(request: Request, env: Env): Promi
 
   const mgr = new BudgetManager(env.DB);
   const updated = await mgr.updateConfig(body);
+
+  // Bust BOTH role-scoped admin-dashboard snapshot entries. The composite
+  // caches for ~75s (DASHBOARD_SNAPSHOT_TTL); without this, an operator's
+  // budget-limit edit wouldn't surface in the dashboard's budget slice /
+  // VerdictBand for up to 75s, and the client-side query invalidation
+  // can't take effect while the server keeps serving the stale snapshot.
+  await Promise.all(dashboardSnapshotCacheKeys().map((k) => env.CACHE.delete(k)));
+
   return json({ data: updated });
 }
