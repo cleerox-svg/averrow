@@ -30,7 +30,8 @@ their own context and only the tools their charter grants.
 | `code-reviewer` | Review | General correctness bugs + reuse/simplification/efficiency | opus | Review only |
 | `design-reviewer` | UI/UX | Visual/UX/a11y review vs the design system | sonnet | Review + small fixes |
 | `threat-intel-analyst` | Threat intel | Detection, enrichment, correlation, triage/AI-judge logic | opus | Logic design |
-| `appsec-reviewer` | Cyber (internal) | RBAC, auth, secrets, injection, security review | opus | Review only |
+| `appsec-reviewer` | Cyber (internal) | Per-diff: RBAC, auth, secrets, injection, security review | opus | Review only |
+| `platform-security` | Cyber (internal) | Standing posture: deps/supply-chain, infra/bindings, secret hygiene, exposed surface | opus | Diagnose only |
 | `platform-sre` | Reliability | Live health, feed breakers, cron, D1 spend | sonnet | Diagnose only |
 | `content-strategist` | Content | Marketing copy, changelogs, positioning, version bumps | sonnet | Copy/data |
 | `docs-maintainer` | Context | Keeps CLAUDE.md / API_REFERENCE / specs true | sonnet | Docs only |
@@ -105,6 +106,19 @@ injection, over-broad org scope. Read-only; produces a ranked, file:line-anchore
 findings list with concrete failure scenarios. Distinct from `threat-intel-analyst`
 (external threats).
 
+### `platform-security` — standing security posture
+Owns the platform's overall security beyond a single diff: dependency /
+supply-chain vulnerabilities (`pnpm audit`, lockfile CVEs), `wrangler.toml`
+infra/binding config (over-broad D1/KV/R2 bindings, secret declarations, internal
+routes exposed without their gate), repo-wide secret hygiene sweeps, the
+exposed `/api/internal/*` + admin surface, and the RBAC model as a whole. **Diagnose
+and report first** — never edits source, rotates secrets, or runs production
+mutations; inspects deployed config read-only via the Cloudflare tools (no
+data-query/write tools by design). Hands a diff-level vuln to `appsec-reviewer`,
+a fix to the owning engineer, a reliability angle to `platform-sre`. Distinct
+from `appsec-reviewer` (reviews one change) and `threat-intel-analyst` (external
+threats).
+
 ### `platform-sre` — reliability & cost
 Runs `platform-diagnostics.sh` / the averrow MCP; reports feed breaker health,
 cron health, stalled agents, D1 read-spend, backlog trends. **Diagnose and report
@@ -154,10 +168,21 @@ read-only questions bypass it.
 5. **After ship** → `content-strategist` for user-facing releases (changelog +
    version), `docs-maintainer` for any doc drift, `platform-sre` to confirm
    health.
+6. **On demand / periodically (not per-diff)** → `platform-security` for a
+   standing security-posture audit (dependency/supply-chain, infra & binding
+   config, repo-wide secret hygiene, exposed internal surface). This is a
+   holistic sweep, separate from step 4's `appsec-reviewer` diff review — reach
+   for it when the concern is the platform's overall posture, not one change.
 
 ## Boundaries (who does NOT do what)
-- Reviewers (`code-reviewer`, `design-reviewer`, `appsec-reviewer`) and
-  `platform-sre` don't ship feature code — they report and hand off.
+- Reviewers (`code-reviewer`, `design-reviewer`, `appsec-reviewer`),
+  `platform-security`, and `platform-sre` don't ship feature code — they report
+  and hand off.
+- Security has two distinct lanes: `appsec-reviewer` reviews a single **diff/flow**
+  for vulns (per-change, part of the pre-merge review); `platform-security` audits
+  the **standing posture** (deps/supply-chain, infra/bindings, secret hygiene,
+  exposed surface — on demand, not per-diff). A diff-level vuln surfaced by
+  platform-security goes to appsec-reviewer; a fix goes to the owning engineer.
 - The three review lanes are distinct: `code-reviewer` owns general correctness
   + quality, `appsec-reviewer` owns auth/RBAC/secrets/injection,
   `design-reviewer` owns UI/UX/a11y. Each hands cross-lane findings to the

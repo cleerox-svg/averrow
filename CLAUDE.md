@@ -61,7 +61,11 @@ owns that surface.
    touches auth/RBAC/data-exposure; `design-reviewer` when it touches
    UI. The three lanes are independent — fan them out concurrently. The
    `/code-review` and `/security-review` skills are the mechanical
-   layer beneath them.
+   layer beneath them. (For the platform's *standing* security posture —
+   deps/supply-chain, infra/bindings, secret hygiene, exposed surface —
+   use `platform-security` as an on-demand/periodic audit; it's separate
+   from `appsec-reviewer`'s per-diff review, not part of this per-change
+   gate.)
 6. **Ship** — commit as logical units, push to the feature branch, open
    a draft PR. Then `content-strategist` (changelog + version for
    user-facing releases), `docs-maintainer` (any doc drift),
