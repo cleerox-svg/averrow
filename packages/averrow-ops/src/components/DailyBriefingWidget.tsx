@@ -95,6 +95,8 @@ interface BriefingBody {
     totalVisits: number; botVisits: number; humanVisits: number;
     visits12h: number;
     pageBreakdown: Array<{ page: string; visits: number; bots: number }>;
+    /** True distinct-page count; pageBreakdown is capped at top-20 by visits. */
+    pageBreakdownTotal: number;
     recentBots: Array<{ page: string; bot_name: string; country: string; visited_at: string }>;
     suspiciousHumans: Array<{ page: string; country: string; visited_at: string; asn: string | null; reason: 'bait' | 'probe' }>;
   };
@@ -662,8 +664,13 @@ export function DailyBriefingWidget() {
           {briefing.honeypot.pageBreakdown.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
+              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>
+                {briefing.honeypot.pageBreakdownTotal > briefing.honeypot.pageBreakdown.length
+                  ? `Top 20 of ${fmt(briefing.honeypot.pageBreakdownTotal)} pages`
+                  : 'Pages'}
+              </div>
               <DataTable headers={['Page', 'Visits', 'Bots']}>
-                {briefing.honeypot.pageBreakdown.map((p) => (
+                {briefing.honeypot.pageBreakdown.slice(0, 20).map((p) => (
                   <tr key={p.page} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
                     <td className="py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{p.page}</td>
                     <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(p.visits)}</td>

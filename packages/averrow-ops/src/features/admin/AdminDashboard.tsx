@@ -25,7 +25,6 @@ import { VerdictBand } from './components/VerdictBand';
 import { Pipelines }        from './metrics/Pipelines';
 import { D1Budget }         from './metrics/D1Budget';
 import { AiSpend }          from './metrics/AiSpend';
-import { CostOptimization } from './metrics/CostOptimization';
 import { GeoCoverage }      from './metrics/GeoCoverage';
 import { FeedFailures }     from './metrics/FeedFailures';
 
@@ -1047,11 +1046,14 @@ export function AdminDashboard() {
 
       {/* COST & BUDGET — BudgetPanel stays open by default (VerdictBand's
           AI-budget contributor deep-links to `#budget-panel`); D1 Budget /
-          AI Spend / Cost Optimization were each a full standalone page
-          before Tier 3, so they default to COLLAPSED (CollapsibleSection,
-          same localStorage-persisted pattern as MaintenanceSection) instead
-          of stacking three full pages under Budget every time this tab
-          opens. */}
+          AI Spend were each a full standalone page before Tier 3, so they
+          default to COLLAPSED (CollapsibleSection, same localStorage-
+          persisted pattern as MaintenanceSection) instead of stacking full
+          pages under Budget every time this tab opens. AI Spend absorbed
+          the standalone Cost Optimization tab in Tier 4 (same three
+          dominant agents' cost, two window toggles = visible duplication)
+          — its own "Cost-reduction levers" sub-section is collapsed by
+          default inside AiSpend. */}
       <div
         role="tabpanel"
         id="tabpanel-cost"
@@ -1073,11 +1075,6 @@ export function AdminDashboard() {
             <section>
               <CollapsibleSection storageKey="dashboard-cost-aispend" icon={DollarSign} label="AI Spend" defaultExpanded={false}>
                 <AiSpend />
-              </CollapsibleSection>
-            </section>
-            <section>
-              <CollapsibleSection storageKey="dashboard-cost-costopt" icon={Zap} label="Cost Optimization" defaultExpanded={false}>
-                <CostOptimization />
               </CollapsibleSection>
             </section>
           </>

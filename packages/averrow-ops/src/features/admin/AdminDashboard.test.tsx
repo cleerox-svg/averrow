@@ -491,10 +491,14 @@ describe('AdminDashboard', () => {
 
   // ─── Cost & Budget tab: de-walled via CollapsibleSection ───────────────
   // BudgetPanel stays open by default (VerdictBand deep-links to
-  // #budget-panel); D1 Budget / AI Spend / Cost Optimization default to
-  // collapsed since each was a full standalone page pre-Tier-3.
+  // #budget-panel); D1 Budget / AI Spend default to collapsed since each
+  // was a full standalone page pre-Tier-3. Cost Optimization was folded
+  // into AI Spend in Tier 4 (duplicate window toggle over the same three
+  // dominant agents) — it's no longer a sibling panel on this tab; its
+  // content now lives inside AiSpend's own collapsed-by-default
+  // "Cost-reduction levers" sub-section (see AiSpend.tsx).
   describe('Cost & Budget tab defaults', () => {
-    it('shows BudgetPanel expanded and the other three panels collapsed by default', async () => {
+    it('shows BudgetPanel expanded and the other panels collapsed by default', async () => {
       renderWithProviders(<AdminDashboard />);
       await switchTab('Cost & Budget');
 
@@ -502,13 +506,14 @@ describe('AdminDashboard', () => {
       expect(screen.getAllByText('AI Budget').length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText(/% used/)).toBeInTheDocument();
 
-      // The other three are collapsed (aria-expanded="false") by default.
+      // The other two are collapsed (aria-expanded="false") by default.
       const d1Toggle = screen.getByRole('button', { name: /D1 Budget/ });
       const aiSpendToggle = screen.getByRole('button', { name: /AI Spend/ });
-      const costOptToggle = screen.getByRole('button', { name: /Cost Optimization/ });
       expect(d1Toggle).toHaveAttribute('aria-expanded', 'false');
       expect(aiSpendToggle).toHaveAttribute('aria-expanded', 'false');
-      expect(costOptToggle).toHaveAttribute('aria-expanded', 'false');
+
+      // Cost Optimization is no longer a standalone Cost & Budget panel.
+      expect(screen.queryByRole('button', { name: /^Cost Optimization$/ })).not.toBeInTheDocument();
     });
 
     it('expands a collapsed panel on click', async () => {

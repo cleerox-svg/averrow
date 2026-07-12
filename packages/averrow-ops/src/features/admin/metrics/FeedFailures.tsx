@@ -109,20 +109,20 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
 
 // ─── At-risk grid ────────────────────────────────────────────────
 // Exported for this page's own AtRiskGrid/FeedRiskCard tiering.
-// (Tier 2a: VerdictBand's "feeds" contributor no longer imports this —
-// it reads the dashboard snapshot's pre-filtered `at_risk` list instead,
-// which now carries a backend-computed `severity: 'critical' | 'high'`
-// field per row (handleAdminDashboard) — same critical/high split this
-// function encodes, but the frontend reads it directly rather than
-// re-deriving it from `verdict.label`. See VerdictBand.tsx's
-// feedsSeverity() for the fix-pass context.)
+// (Tier 4: thin reader of the backend-computed `row.severity` field
+// (lib/feed-severity.ts computeFeedSeverity, shared with
+// handleAdminDashboard's at-risk band) instead of re-deriving the
+// critical/high tiers from pct_to_auto_pause/failure_rate_pct here —
+// kills the two-diverging-copies drift risk that already caused a
+// production bug once. `severity` is `null` for both "healthy" and
+// "operator paused/disabled it" rows, so `muted` is still resolved
+// locally from `enabled`/`paused_reason` — a plain presence check,
+// not a re-derived threshold.)
 export type Tone = 'critical' | 'high' | 'green' | 'muted';
 export function feedRiskTier(row: FeedFailureRow): Tone {
-  if (row.paused_reason === 'auto:consecutive_failures') return 'critical';
-  if (!row.enabled || row.paused_reason)                  return 'muted';
-  if (row.pct_to_auto_pause >= 80)                        return 'critical';
-  if (row.pct_to_auto_pause >= 60)                        return 'high';
-  if (row.failure_rate_pct >= 30 && row.pulls >= 10)      return 'high';
+  if (row.severity === 'critical')        return 'critical';
+  if (row.severity === 'high')            return 'high';
+  if (!row.enabled || row.paused_reason)  return 'muted';
   return 'green';
 }
 function isAtRisk(row: FeedFailureRow): boolean {
