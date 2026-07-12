@@ -75,7 +75,7 @@ async function serveHoneypotDomain(url: URL, env: Env): Promise<Response> {
 const router = Router();
 
 // CORS preflight
-router.options("*", (request: Request) => handleOptions(request));
+router.options("*", (request: Request, env: Env) => handleOptions(request, env));
 
 // Register all route modules
 registerAuthRoutes(router);

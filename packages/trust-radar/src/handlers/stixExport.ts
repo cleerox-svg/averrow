@@ -89,7 +89,7 @@ export async function handleSTIXExport(
       headers: {
         "Content-Type": "application/stix+json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${filename}"`,
-        ...corsHeaders(origin),
+        ...corsHeaders(origin, env),
       },
     });
   } catch (err) {
@@ -153,7 +153,7 @@ export async function handleSTIXIndicators(
       status: 200,
       headers: {
         "Content-Type": "application/stix+json; charset=utf-8",
-        ...corsHeaders(origin),
+        ...corsHeaders(origin, env),
       },
     });
   } catch (err) {

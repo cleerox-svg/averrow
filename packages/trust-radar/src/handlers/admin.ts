@@ -3378,7 +3378,7 @@ export async function handleCubeBackfill(request: Request, env: Env): Promise<Re
     headers: {
       "Content-Type": "application/x-ndjson",
       "Cache-Control": "no-store",
-      ...corsHeaders(origin),
+      ...corsHeaders(origin, env),
     },
   });
 }
