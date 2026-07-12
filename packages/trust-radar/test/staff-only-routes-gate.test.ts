@@ -10,8 +10,11 @@
 // access tier. Adding a NEW staff-only routes file means appending
 // it to STAFF_ONLY_FILES below.
 //
-// Tenant routes (tenant.ts) and auth flow (auth.ts) keep
-// requireAuth — those are intentional and out of scope here.
+// Tenant routes (tenant.ts) are a separate family, out of scope
+// here: every /api/orgs/:orgId/* route is guarded by requireOrgMember
+// (route-layer org-isolation backstop, 37f4702), not requireAuth —
+// pinned separately by tenant-routes-guard-pin.test.ts. Auth flow
+// (auth.ts) legitimately keeps requireAuth.
 //
 // v3 Phase D D2c follow-up.
 
