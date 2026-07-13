@@ -41,6 +41,7 @@ import { handleListAgents } from '../handlers/agents';
 import { handleAdminDashboard } from '../handlers/admin';
 import type { AuthContext } from '../middleware/auth';
 import { handleListOperations, handleOperationsStats } from '../handlers/operations';
+import { handleFeedsAggregateStats } from '../handlers/feeds';
 import { handleListBrands, handleBrandStats } from '../handlers/brands';
 import { handleListThreatActors, handleThreatActorStats } from '../handlers/threatActors';
 import { getBudgetState, shouldSkipNonEssentialWarms, recordNavigatorSkip, DAILY_BUDGET, WARN_THRESHOLD } from '../lib/d1-budget';
@@ -562,6 +563,7 @@ async function runNavigatorImpl(
           handleListAgents(fakeReq('/api/agents'), env),
           handleListOperations(fakeReq('/api/v1/operations'), env),
           handleOperationsStats(fakeReq('/api/v1/operations/stats'), env),
+          handleFeedsAggregateStats(fakeReq('/api/feeds/aggregate-stats'), env),
           // Warm the super_admin variant — it's the fuller snapshot (its
           // threat_health slice is the more expensive one to compute) and a
           // super_admin visit hits it warm. A plain admin reads a separate

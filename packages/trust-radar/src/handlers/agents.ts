@@ -1,5 +1,5 @@
 import { json } from "../lib/cors";
-import { newTally, recordD1Reads } from "../lib/analytics";
+import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { executeAgent, resolveApproval, PROTECTED_FROM_CIRCUIT_BREAKER } from "../lib/agentRunner";
 import type { AgentName, TriggerType } from "../lib/agentRunner";
 import { agentModules, trustbotAgent } from "../agents";
@@ -77,14 +77,26 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   const tally = newTally();
 
   const [latestRuns, runStats24h, outputStats24h, hourlyActivity, hourlyOutputs, recentTickRows, lastOutputTimes, avgDurations, agentConfigs, workflowAgentStats] = await Promise.all([
+    // Latest run per agent (of ANY age — deriveStatus depends on the
+    // absolute most-recent run so a long-dormant agent whose last run
+    // FAILED still reads as 'error', not a falsely-'idle' online agent).
+    // The prior shape used a correlated subquery (WHERE id IN (SELECT ...
+    // WHERE r2.agent_id = agent_runs.agent_id ORDER BY started_at DESC
+    // LIMIT 1)) which EXPLAIN'd to a full unbounded SCAN of agent_runs
+    // plus a per-row correlated subquery (~100ms / 117K rows). Replaced
+    // with a single ROW_NUMBER pass — no time bound (must not hide an
+    // agent's latest run) — which the idx_agent_runs_agent (agent_id,
+    // started_at DESC) composite serves as an index-ordered scan
+    // (EXPLAIN: SCAN agent_runs USING INDEX idx_agent_runs_agent), with
+    // exactly one row per agent_id and no correlated per-row lookup.
     env.DB.prepare(
       `SELECT agent_id, status, started_at, completed_at, duration_ms, error_message
-       FROM agent_runs
-       WHERE id IN (
-         SELECT id FROM agent_runs r2
-         WHERE r2.agent_id = agent_runs.agent_id
-         ORDER BY r2.started_at DESC LIMIT 1
-       )`
+       FROM (
+         SELECT agent_id, status, started_at, completed_at, duration_ms, error_message,
+                ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY started_at DESC) AS rn
+         FROM agent_runs
+       )
+       WHERE rn = 1`
     ).all<{ agent_id: string; status: string; started_at: string; completed_at: string | null; duration_ms: number | null; error_message: string | null }>(),
 
     env.DB.prepare(
@@ -499,15 +511,28 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     paused_after_n_failures: null,
   });
 
-  // 9 .all() queries (was 7; +1 for hourlyOutputs, +1 carved out of
-  // hourlyActivity which now also pulls error counts). Same KV-cache
-  // protection as before — Navigator's 5-min pre-warm keeps cold
-  // cache rare. tally is approximate; CF's d1_top_queries_24h has
-  // exact rows_read attribution.
-  tally.queries += 9;
+  // Attribute real rows_read from each of the 9 .all() queries via
+  // their result.meta so this handler's D1 cost is visible in
+  // d1_attribution_24h (was a hardcoded `tally.queries += 9` with no
+  // rowsRead, making the cold-miss cost invisible). workflowAgentStats
+  // returns a Map, not a D1 result — its internal reads are tallied
+  // inside getWorkflowAgentStats, not here.
+  addToTally(tally, latestRuns.meta);
+  addToTally(tally, runStats24h.meta);
+  addToTally(tally, outputStats24h.meta);
+  addToTally(tally, hourlyActivity.meta);
+  addToTally(tally, hourlyOutputs.meta);
+  addToTally(tally, recentTickRows.meta);
+  addToTally(tally, lastOutputTimes.meta);
+  addToTally(tally, avgDurations.meta);
+  addToTally(tally, agentConfigs.meta);
 
   const responseData = { success: true, data: agents };
-  await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 300 });
+  // 900s TTL comfortably outlives Navigator's 15-min Phase B warm
+  // cadence (matches the observatory.ts precedent: 900s TTL / 10-min
+  // warm). At 300s the cache was expired ~67% of the time between
+  // warms, so real loads landed cold (~88% miss).
+  await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 900 });
   recordD1Reads(env, "agents_list", tally);
   return json(responseData, 200, ctx.origin);
 });

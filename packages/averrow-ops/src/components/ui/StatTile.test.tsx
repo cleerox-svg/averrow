@@ -3,6 +3,16 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StatTile } from './StatTile';
 
+// useCountUp animates via requestAnimationFrame over ~1.1s — real tests
+// asserting the rendered number would otherwise see the animation's
+// initial frame (0) rather than the settled value. Mock it to the
+// identity function so numeric-value assertions below are synchronous
+// and deterministic. Existing tests above never assert on the digits
+// themselves, so this doesn't change their behavior.
+vi.mock('@/design-system/hooks/useCountUp', () => ({
+  useCountUp: (target: number) => target,
+}));
+
 describe('StatTile', () => {
   it('renders label and value', () => {
     render(<StatTile label="Active Threats" value={42} accent="#C83C3C" />);
@@ -64,5 +74,44 @@ describe('StatTile', () => {
     render(<StatTile label="Threats" value={1} accent="#C83C3C" />);
     const tile = screen.getByText('Threats').parentElement!.parentElement!;
     expect(() => fireEvent.keyDown(tile, { key: 'Enter' })).not.toThrow();
+  });
+});
+
+// ─── value semantics: null (loading) vs genuine 0 vs a real number ───
+//
+// Regression coverage for the loading-state fix: `value` now accepts
+// `number | string | null`. `null` means "query still in flight" and
+// must render the neutral '—' placeholder — never a bare '0', which
+// would misrepresent an in-flight fetch as a real zero count. A
+// genuine settled `0` must still render '0', not fall through to the
+// loading affordance (the crux of the bug this locks down).
+describe('StatTile — value semantics (null vs 0 vs a number)', () => {
+  it('value={null} renders the "—" loading placeholder, not "0"', () => {
+    render(<StatTile label="Agents" value={null} accent="#38BDF8" />);
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('value={0} renders a genuine "0", not the loading placeholder', () => {
+    render(<StatTile label="Agents" value={0} accent="#38BDF8" />);
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+  });
+
+  it('value={42} renders the number (locale-formatted), not the loading placeholder', () => {
+    render(<StatTile label="Agents" value={42} accent="#38BDF8" />);
+    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+  });
+
+  it('a string value (e.g. a pre-formatted metric) passes through untouched', () => {
+    render(<StatTile label="Spend" value="$1.5K" accent="#38BDF8" />);
+    expect(screen.getByText('$1.5K')).toBeInTheDocument();
+  });
+
+  it('value={null} does not render the accent glow styling (muted tertiary color instead)', () => {
+    render(<StatTile label="Agents" value={null} accent="#38BDF8" />);
+    const numberEl = screen.getByText('—');
+    expect(numberEl).toHaveStyle({ color: 'var(--text-tertiary)', textShadow: 'none' });
   });
 });

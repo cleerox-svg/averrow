@@ -82,6 +82,25 @@ class ApiClient {
         const retryResponse = await fetch(`${API_BASE}${path}`, { ...options, headers });
         const retryBookmark = retryResponse.headers.get('x-d1-bookmark');
         if (retryBookmark) lastBookmark = retryBookmark;
+        if (!retryResponse.ok) {
+          // Don't silently hand callers an error envelope as if it were
+          // data — react-query (and anything else) needs the throw to
+          // land in its error path, not its success path. A retry that's
+          // itself a 401 means the freshly-refreshed session is already
+          // dead (or was invalidated mid-flight); treat it the same as
+          // the initial-401 branch below.
+          if (retryResponse.status === 401) {
+            this.onUnauthorized?.();
+          }
+          let message = `Request failed: ${retryResponse.status}`;
+          try {
+            const body = await retryResponse.json() as ApiResponse<T>;
+            if (body?.error) message = body.error;
+          } catch {
+            // Non-JSON error body — fall back to the status-based message.
+          }
+          throw new Error(message);
+        }
         return retryResponse.json() as Promise<ApiResponse<T>>;
       }
       this.onUnauthorized?.();

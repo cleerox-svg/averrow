@@ -118,7 +118,9 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    // KV cache: brand stats rarely change — cache for 2 minutes
+    // KV cache: brand stats rarely change — cache for 30 minutes so the
+    // TTL outlives Navigator's Phase C warm cadence (every 30 min); at a
+    // shorter TTL the cache would be cold for ~half of each cycle.
     const cacheKey = "brand_stats";
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
@@ -224,7 +226,10 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
         sector_breakdown: sectorBreakdown.results ?? [],
       },
     };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
+    // 1800s (30-min) TTL outlives Navigator's 30-min Phase C warm
+    // cadence so real loads hit warm cache (was 300s → expired ~83%
+    // between warms; 900s still left a ~50% cold gap under Phase C).
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 1800 });
     // 5 sequential queries — meta isn't exposed for .first(), tally
     // the breakdown queries' .all() rows from their meta.
     tally.queries += 5;

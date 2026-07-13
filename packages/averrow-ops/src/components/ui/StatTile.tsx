@@ -13,7 +13,13 @@ import { resolveStatAccent } from '@/design-system/tokens';
 
 export interface StatTileProps {
   label:     string;
-  value:     number | string;
+  /**
+   * `null` means "still loading" — renders the neutral `—` affordance
+   * instead of a number so an in-flight query never flashes a
+   * misleading 0. Pass the real value (including a genuine `0`) once
+   * the owning query has settled.
+   */
+  value:     number | string | null;
   sub?:      string;
   /**
    * Hex color used for the number text, accent dot, and radial halo.
@@ -37,9 +43,13 @@ export function StatTile({
   critical,
   onClick,
 }: StatTileProps) {
+  const isLoading = value == null;
   const accent = resolveStatAccent(value, rawAccent);
+  // Hooks must run unconditionally regardless of loading state.
   const counted = useCountUp(typeof value === 'number' ? value : 0);
-  const display = typeof value === 'number' ? counted.toLocaleString() : value;
+  const display = isLoading
+    ? '—'
+    : typeof value === 'number' ? counted.toLocaleString() : value;
   const isCrit  = (critical ?? 0) > 0;
 
   return (
@@ -144,8 +154,8 @@ export function StatTile({
         <div style={{
           fontSize: 30, fontWeight: 900, lineHeight: 1,
           fontFamily: 'monospace', letterSpacing: -1,
-          color: accent,
-          textShadow: `0 0 20px ${accent}60, 0 0 40px ${accent}30`,
+          color: isLoading ? 'var(--text-tertiary)' : accent,
+          textShadow: isLoading ? 'none' : `0 0 20px ${accent}60, 0 0 40px ${accent}30`,
         }}>
           {display}
         </div>

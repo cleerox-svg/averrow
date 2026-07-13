@@ -138,7 +138,9 @@ export async function handleOperationsStats(request: Request, env: Env): Promise
         threat_types: typeStats?.threat_types ?? 0,
       },
     };
-    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 300 });
+    // 900s TTL outlives Navigator's 15-min Phase B warm cadence so
+    // real loads hit warm cache (was 300s → expired ~67% between warms).
+    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 900 });
     recordD1Reads(env, "operations_stats", tally);
     return json(responseData, 200, origin);
   } catch (err) {

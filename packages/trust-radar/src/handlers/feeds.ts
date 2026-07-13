@@ -162,7 +162,10 @@ export async function handleTriggerFeed(request: Request, env: Env, feedName: st
 
     // Bust the feeds_overview cache so the UI sees the new pull
     // immediately (was stale up to 5 min after PR #1178 added KV).
-    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+    try {
+      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_aggregate_stats:v1');
+    } catch { /* ignore */ }
 
     return json({ success: true, data: result }, 200, origin);
   } catch (err) {
@@ -176,7 +179,10 @@ export async function handleTriggerAll(request: Request, env: Env): Promise<Resp
   const origin = request.headers.get("Origin");
   try {
     const result = await runAllFeeds(env, feedModules);
-    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+    try {
+      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_aggregate_stats:v1');
+    } catch { /* ignore */ }
     return json({ success: true, data: result }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -402,7 +408,10 @@ export async function handleUnpauseFeed(request: Request, env: Env, feedName: st
       ).bind(feedName),
     ]);
 
-    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+    try {
+      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_aggregate_stats:v1');
+    } catch { /* ignore */ }
 
     return json({ success: true, data: { feed_name: feedName } }, 200, origin);
   } catch (err) {
@@ -438,7 +447,10 @@ export async function handlePauseFeed(request: Request, env: Env, feedName: stri
 
     // Bust the feeds_overview cache so the UI reflects the new state
     // without a stale-cache window.
-    try { await env.CACHE.delete('feeds_overview:v1'); } catch { /* ignore */ }
+    try {
+      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_aggregate_stats:v1');
+    } catch { /* ignore */ }
 
     return json({ success: true, data: { feed_name: feedName } }, 200, origin);
   } catch (err) {
@@ -470,20 +482,39 @@ export async function handleFeedPullHistory(request: Request, env: Env, feedName
 }
 
 // ─── Aggregated feed stats ────────────────────────────────────
+//
+// KV cache: single query — cache for 15 minutes. v1 prefix is the
+// first cached version; bump if the response shape changes. Warmed by
+// Navigator Phase B every 15 min (see cron/navigator.ts); the 900s TTL
+// outlives that cadence so real page loads hit warm cache (a 300s TTL
+// would leave the cache cold for ~2/3 of each warm cycle). Busted
+// alongside feeds_overview:v1 on every feed mutation below.
 export async function handleFeedsAggregateStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
+  const cacheKey = 'feeds_aggregate_stats:v1';
   try {
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) return json(JSON.parse(cached), 200, origin);
+
+    // total_ingested reads the pre-aggregated per-feed counter
+    // feed_status.records_ingested_today (~44 rows) instead of an
+    // unbounded SUM over feed_pull_history (44.6K rows and growing
+    // forever — EXPLAIN was a full SCAN feed_pull_history). Bounded by
+    // feed count, not history depth; EXPLAIN no longer touches
+    // feed_pull_history.
     const stats = await env.DB.prepare(`
       SELECT
         COUNT(CASE WHEN enabled=1 THEN 1 END) as active,
         COUNT(CASE WHEN enabled=0 THEN 1 END) as disabled,
         COALESCE((
-          SELECT SUM(records_ingested) FROM feed_pull_history
+          SELECT SUM(records_ingested_today) FROM feed_status
         ), 0) as total_ingested
       FROM feed_configs
     `).first();
 
-    return json({ success: true, data: stats }, 200, origin);
+    const responseData = { success: true, data: stats };
+    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 900 });
+    return json(responseData, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
