@@ -33,7 +33,11 @@ their own context and only the tools their charter grants.
 | `appsec-reviewer` | Cyber (internal) | Per-diff: RBAC, auth, secrets, injection, security review | opus | Review only |
 | `platform-security` | Cyber (internal) | Standing posture: deps/supply-chain, infra/bindings, secret hygiene, exposed surface | opus | Diagnose only |
 | `platform-sre` | Reliability | Live health, feed breakers, cron, D1 spend | sonnet | Diagnose only |
-| `content-strategist` | Content | Marketing copy, changelogs, positioning, version bumps | sonnet | Copy/data |
+| `content-strategist` | Content | Marketing copy, changelogs, positioning, version bumps; **editor-in-chief for the content roster** | sonnet | Copy/data |
+| `web-copywriter` | Content | Long-form marketing & company page copy, blog/thought-leadership (fan-out workhorse) | sonnet | Copy/MDX |
+| `market-analyst` | Content | Competitive/market intelligence, peer teardowns, positioning briefs | sonnet | Report only |
+| `seo-strategist` | Content | Meta/OG/Twitter/JSON-LD, sitemap/robots, keyword map, internal linking | sonnet | Metadata/config |
+| `legal-content-drafter` | Content | Draft Privacy/Terms/DPA/trust-center copy (always flagged for legal review) | sonnet | Drafts only |
 | `docs-maintainer` | Context | Keeps CLAUDE.md / API_REFERENCE / specs true | sonnet | Docs only |
 | `delivery-lead` | Project mgmt | Decomposition, sequencing, owner assignment | opus | Plans only |
 
@@ -127,9 +131,48 @@ confirmation.
 
 ### `content-strategist` — copy, marketing, changelogs
 Marketing content, customer copy, the three changelog registers, version bumps.
+Also the **editor-in-chief** for the content roster below: writes the per-page
+briefs (voice + facts + structure) and is the brand-voice gate on their output.
 **Guardrails:** global (not Canada-first) positioning; no aviation/military
 framing; the proprietary-detail firewall between staff and public/tenant
 registers; semver + `platform-version.json`.
+
+### `web-copywriter` — long-form page & blog copy
+Writes the actual copy for new marketing-site pages (product deep-dives,
+solutions-by-persona, customers/case studies, resources, partners, the Company
+surface) plus blog/thought-leadership. **The fan-out workhorse** — run several
+instances in parallel, one page each. **Guardrails:** works from a
+`content-strategist` brief; global/no-aviation positioning + BRAND.md voice;
+never invents metrics or placeholder proof (see the accuracy discipline in its
+charter — the site has shipped self-contradicting numbers before); writes
+copy/MDX only and hands layout/components to `frontend-engineer`; never touches
+`public/` / `app.js` / `styles.css` / frozen components.
+
+### `market-analyst` — competitive & market intelligence
+Peer/competitor teardowns (IA, messaging, proof, pricing, CTA, SEO footprint),
+category conventions, and positioning briefs for the content roster. **Report
+only** — no `Edit`/`Write`. **Guardrails:** honest sourcing (many security-vendor
+sites 403 automated fetch — say so rather than guess); stays on CLAUDE.md §13
+positioning; never recommends claiming a capability the product doesn't ship.
+Distinct from `threat-intel-analyst` (external cyber threats, not market analysis).
+
+### `seo-strategist` — technical + content SEO
+Owns discoverability/shareability: OG/Twitter/JSON-LD, sitemap/robots coverage,
+canonical/hreflang, keyword map, internal linking, per-page metadata. Edits
+marketing metadata/config (chiefly `Layout.astro`); hands page-layout work to
+`frontend-engineer`. **Guardrails:** truthful metadata/structured data only (no
+keyword-stuffing, no fake review/rating schema); global/no-aviation positioning;
+verifies with a build before claiming sitemap/metadata correctness. The OG image
+asset already exists at `/brand/averrow-og.png` — wire it, don't recreate it.
+
+### `legal-content-drafter` — corporate/legal-adjacent drafts
+Drafts Privacy/Terms/DPA/sub-processor/trust-center copy in plain language.
+**Draft-only:** every output carries a visible "DRAFT — requires human and legal
+review. Not legal advice." marker, never removed; refuses to "finalize" legal
+copy. **Guardrails:** claims must match `/security` + actual infra (no invented
+certifications — SOC 2 is *scheduled*, not held); flags unknowns with
+`[NEEDS HUMAN INPUT: …]`; global positioning; drafts copy only, hands the page to
+`frontend-engineer`.
 
 ### `docs-maintainer` — knowledge base
 Keeps `CLAUDE.md`, `API_REFERENCE.md`, specs, and runbooks in sync with code.
@@ -174,6 +217,24 @@ read-only questions bypass it.
    holistic sweep, separate from step 4's `appsec-reviewer` diff review — reach
    for it when the concern is the platform's overall posture, not one change.
 
+## Marketing content production (the content roster fan-out)
+For a marketing/company-site content build (e.g. the restructure in
+`docs/MARKETING_SITE_ASSESSMENT_2026-07.md`), the content roster runs as a
+fan-out, since page-writing is the slow, parallelizable part:
+
+1. `content-strategist` (editor-in-chief) writes a **per-page brief** — voice,
+   verified facts, structure — for each page, drawing competitive framing from
+   `market-analyst`.
+2. **Fan out `web-copywriter` × N in parallel**, one page each (launch multiple in
+   a single message, or a Workflow with explicit user opt-in given token cost).
+   Every writer gets the same brand-voice brief + the assessment's defect list so
+   no one re-introduces Canada-first framing or contradictory numbers.
+3. Per page: `seo-strategist` (metadata/OG/JSON-LD/keywords) and `design-reviewer`
+   (layout/token/a11y) review; `legal-content-drafter` handles any legal-adjacent
+   page (draft-only).
+4. `frontend-engineer` builds each Astro page from the approved copy;
+   `qa-verifier` runs the gate.
+
 ## Boundaries (who does NOT do what)
 - Reviewers (`code-reviewer`, `design-reviewer`, `appsec-reviewer`),
   `platform-security`, and `platform-sre` don't ship feature code — they report
@@ -189,6 +250,12 @@ read-only questions bypass it.
   right owner rather than adjudicating them.
 - `docs-maintainer` never edits product source; `content-strategist` never edits
   component logic; `delivery-lead` never edits anything.
+- The content roster splits by artifact: `content-strategist` owns short copy +
+  changelogs + the briefs; `web-copywriter` owns long-form page/blog copy;
+  `market-analyst` researches and reports only (no edits); `seo-strategist` owns
+  metadata/config (not body copy or components); `legal-content-drafter` owns
+  legal-adjacent drafts only (always flagged, never finalized). None of them
+  build components or restructure layout — that's `frontend-engineer`.
 - Detection *logic* is `threat-intel-analyst`; Worker *plumbing* is
   `backend-engineer`.
 - `test-engineer` edits only test files; `qa-verifier` edits nothing (runs +
