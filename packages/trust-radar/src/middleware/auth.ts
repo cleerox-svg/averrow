@@ -2,6 +2,7 @@
 
 import { verifyJWT } from "../lib/jwt";
 import { json } from "../lib/cors";
+import { logger } from "../lib/logger";
 import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import type { Env, JWTPayload, UserRole } from "../types";
 
@@ -157,7 +158,25 @@ export function hasGlobalReadScope(role: UserRole): boolean {
  * super_admin can access admin routes, admin can access analyst routes, etc.
  */
 export function requireRole(...allowedRoles: UserRole[]) {
-  const minLevel = Math.min(...allowedRoles.map((r) => ROLE_HIERARCHY[r]));
+  const levels = allowedRoles.map((r) => ROLE_HIERARCHY[r]);
+  const minLevel = Math.min(...levels);
+
+  // Footgun guard (O6): requireRole is a MINIMUM-level gate — the bar is the
+  // LOWEST-level role listed, and hierarchy means any higher role also passes.
+  // So listing roles from different tiers silently widens access: e.g.
+  // requireRole("super_admin","client") sets the bar to client(1) and admits
+  // EVERYONE, not just super_admins. Listing multiple roles is only meaningful
+  // when they share one tier (e.g. the staff quartet at level 3) — a
+  // higher-tier role in a multi-role list is always redundant with hierarchy.
+  // This warns on a mixed-tier spread so a future miscall surfaces instead of
+  // silently opening the gate. Dev-safe: it never changes the computed bar.
+  if (allowedRoles.length > 1 && new Set(levels).size > 1) {
+    logger.warn("require_role_mixed_tier", {
+      roles: allowedRoles,
+      min_level: minLevel,
+      note: "min-level semantics — lowest listed role sets the bar",
+    });
+  }
 
   return async (request: Request, env: Env): Promise<AuthContext | Response> => {
     const ctx = await requireAuth(request, env);

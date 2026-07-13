@@ -20,6 +20,8 @@
 // words like "outlook" are too common in benign mail).
 
 import type { Env } from "../types";
+import { safeCompilePattern, MAX_REGEX_SOURCE_LEN } from "./safe-regex";
+import { logger } from "./logger";
 
 export interface NamedThreatEntry {
   id: string;
@@ -70,10 +72,18 @@ function parseJsonArray(raw: string | null): string[] {
 function compileRegexes(sources: string[]): RegExp[] {
   const out: RegExp[] = [];
   for (const src of sources) {
-    try {
-      out.push(new RegExp(src, "i"));
-    } catch {
-      // Skip a malformed pattern rather than break the whole catalog.
+    // Defense-in-depth (O5): bound the source length + complexity before
+    // compiling a catalog-provided pattern. safeCompilePattern returns null
+    // (never throws) on an over-long / over-complex / malformed source; we
+    // skip it rather than break the whole catalog.
+    const re = safeCompilePattern(src, "i");
+    if (re) {
+      out.push(re);
+    } else {
+      logger.warn("named_threat_regex_rejected", {
+        source_len: src.length,
+        max_len: MAX_REGEX_SOURCE_LEN,
+      });
     }
   }
   return out;

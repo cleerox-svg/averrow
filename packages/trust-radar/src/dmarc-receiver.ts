@@ -12,6 +12,7 @@
 
 import type { Env } from "./types";
 import { createNotification } from "./lib/notifications";
+import { safeCompilePattern } from "./lib/safe-regex";
 
 // ─── Cloudflare Email Worker types ───────────────────────────────
 
@@ -338,12 +339,19 @@ function sanitizeXmlField(s: string, maxLen = 200): string {
 }
 
 function xmlTag(xml: string, tag: string): string {
-  const m = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
+  // Defense-in-depth (O5): compile the tag-template pattern through the
+  // bounded helper. Tags here are hardcoded literals so this never rejects,
+  // but routing both dynamic compiles through one guard keeps the surface
+  // safe if a caller ever passes a caller-supplied tag.
+  const re = safeCompilePattern(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
+  if (!re) return "";
+  const m = xml.match(re);
   return m?.[1]?.trim() ?? "";
 }
 
 function xmlTagAll(xml: string, tag: string): string[] {
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi");
+  const re = safeCompilePattern(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi");
+  if (!re) return [];
   const out: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) {
