@@ -27,6 +27,8 @@ import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { Shell } from './Shell';
 import { useShellVersion } from '@/design-system/hooks/useShellVersion';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
+import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
+import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
 import './shell-v4.css';
 
 interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; }
@@ -176,6 +178,14 @@ export function ShellV4() {
   const closeDrawer = () => setDrawerOpen(false);
   const nav = buildV4Nav({ isSuperAdmin, role: user?.role });
   const commands = buildPaletteCommands(nav, { isSuperAdmin, role: user?.role });
+  // H-3 (AUTH_AUDIT_2026-06): mirrors Shell.tsx's gate, which this shell
+  // never got when it was added. A privileged user on an enrollment-scoped
+  // session (signed in without a passkey) who has switched to the v4 shell
+  // otherwise gets the full nav + Outlet with no blocking gate — every
+  // protected fetch 403s with nothing on screen to explain why. Render
+  // nothing in the Outlet while locked; PasskeyEnrollmentGate overlays the
+  // screen instead.
+  const enrollmentLocked = !!user?.passkey_required;
 
   // global ⌘K / Ctrl-K to toggle the palette (and "/" when not already typing)
   useEffect(() => {
@@ -269,11 +279,19 @@ export function ShellV4() {
           <div className="v4-live"><span className="dot" />LIVE</div>
         </header>
         <div className="v4-outlet">
-          <Outlet />
+          {enrollmentLocked ? null : <Outlet />}
         </div>
       </section>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+
+      {/* Auto-prompts biometric setup on first login when the user has zero
+          passkeys + WebAuthn is supported. Self-gates internally (localStorage
+          flag + passkey_count check) — safe to mount unconditionally. */}
+      <FirstSignInPasskeyPrompt />
+      {/* H-3: blocking gate for privileged users who signed in without a
+          passkey. Self-gates on user.passkey_required. */}
+      <PasskeyEnrollmentGate />
     </div>
   );
 }

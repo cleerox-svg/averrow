@@ -85,6 +85,14 @@ export function isValidCachedUser(value: unknown): value is SharedAuthUser {
   if (typeof v.email !== 'string') return false;
   if (typeof v.name  !== 'string') return false;
   if (typeof v.role  !== 'string') return false;
+  // H-3 defense-in-depth: passkey_required/passkey_count drive the
+  // mandatory enrollment gate (see PasskeyEnrollmentGate.tsx). Undefined is
+  // fine (cache entries written before H-3 shipped never had these fields),
+  // but a wrong-typed value — poisoned storage or a future schema
+  // regression — should invalidate the whole cache entry rather than
+  // silently hydrate a user object the gate can misread.
+  if (v.passkey_required != null && typeof v.passkey_required !== 'boolean') return false;
+  if (v.passkey_count    != null && typeof v.passkey_count    !== 'number')  return false;
   if (v.organization != null) {
     if (typeof v.organization !== 'object') return false;
     const o = v.organization as Record<string, unknown>;
