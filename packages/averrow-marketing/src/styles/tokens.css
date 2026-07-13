@@ -51,7 +51,7 @@
   --bg-elevated:   #FFFFFF;
   --text-primary:  #1A1F2E;
   --text-secondary:#5A6170;
-  --text-tertiary: #8A8F9C;
+  --text-tertiary: #6B7280; /* darkened from #8A8F9C (~3.0:1) to ~4.6:1 on light bg; dark theme unaffected (own --text-tertiary below) */
   --text-inverse:  #F0EDE8;
   --border:        #E2DDD5;
   --border-strong: rgba(226, 221, 213, 0.6);

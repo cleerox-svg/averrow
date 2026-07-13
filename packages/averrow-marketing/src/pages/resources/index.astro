@@ -38,7 +38,7 @@ const categories = [
   {
     label: "Free Brand Exposure Scan",
     desc: "Run a live scan against your domain in under five minutes. No signup, no credit card.",
-    href: "/",
+    href: "/scan",
     cta: "Run a free scan",
     icon: "radar",
   },
@@ -141,7 +141,7 @@ const categories = [
       <p>Run a free exposure scan in under five minutes, or talk to us about a full deployment.</p>
       <div class="res-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Run a Free Scan</a>
       </div>
     </div>
   </section>
@@ -371,6 +371,20 @@ const categories = [
     justify-content: center;
     flex-wrap: wrap;
   }
+
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Amber-as-text labels/links and severity-tinted icons are tuned
+     for dark backgrounds and drop below WCAG AA (4.5:1) as text on
+     the light theme's pale tinted pills/sections. Darkened here for
+     [data-theme="light"] only; dark theme values are untouched. */
+  :global([data-theme="light"]) .res-label { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-accent { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-card-link { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-latest-all { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-latest-badge { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-icon-radar { color: #106b32; }
+  :global([data-theme="light"]) .res-icon-shield { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-icon-layers { color: var(--blue-dim); }
 
   @media (max-width: 900px) {
     .res-grid { grid-template-columns: repeat(2, 1fr); }

@@ -418,4 +418,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     justify-content: center;
     flex-wrap: wrap;
   }
+
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Live/roadmap status pills, the icon-as-text-color live badge, and
+     amber-as-text accents/links are tuned for dark backgrounds and
+     drop below WCAG AA (4.5:1) as text on the light theme's pale
+     tinted pills/sections. Darkened here for [data-theme="light"]
+     only; dark theme values are untouched. */
+  :global([data-theme="light"]) .pt-int-card-status.live { color: #106b32; }
+  :global([data-theme="light"]) .pt-int-card-icon.live { color: #106b32; }
+  /* Kept visually distinct from the live green above. Sits on the
+     reddish var(--accent-bg) pill in light theme (rgba(181,48,48,0.06)
+     over the card), so #8a6a1f measured only 4.48:1 there — darkened
+     one step further to clear 4.5:1 with margin. */
+  :global([data-theme="light"]) .pt-int-card-status.planned { color: #7a5610; }
+  :global([data-theme="light"]) .pt-mssp-card-status { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .pt-mssp-link { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .hero-accent { color: var(--accent-section, #8A5F0F); }
 </style>
