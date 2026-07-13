@@ -395,7 +395,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-secondary);
     line-height: 1.65;
   }
-  .why-diff-card p a { color: var(--accent); }
+  .why-diff-card p a { color: var(--accent); text-decoration: underline; }
 
   /* Methodology flow */
   .why-method-flow {
@@ -637,6 +637,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin: 0 auto 2rem;
   }
   .why-cta-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Severity/status/accent colors are tuned for dark backgrounds and
+     drop below WCAG AA (4.5:1) as text on the light theme's pale
+     tinted pills/badges. Darkened here for [data-theme="light"] only;
+     dark theme values are untouched. */
+  :global([data-theme="light"]) .why-sev-high { color: #a34c08; }
+  :global([data-theme="light"]) .why-sev-medium { color: #8a5507; }
+  :global([data-theme="light"]) .why-sev-low { color: #1d4ed8; }
+  :global([data-theme="light"]) .why-status-live { color: #106b32; }
+  :global([data-theme="light"]) .why-status-scheduled { color: #8a5507; }
+  :global([data-theme="light"]) .why-sample-badge { color: #8a5507; }
+  :global([data-theme="light"]) .why-gap-figure-green { color: #106b32; }
+  /* Decorative flow arrow (↓) is too faint against the light background */
+  :global([data-theme="light"]) .why-flow-arrow { color: var(--text-secondary); }
 
   @media (max-width: 900px) {
     .why-diff-grid { grid-template-columns: 1fr; }

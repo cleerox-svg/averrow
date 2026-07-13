@@ -64,7 +64,7 @@
   --accent-hover: #9A2828;
   --accent-bg: rgba(181,48,48,0.06);
   --accent-bg-strong: rgba(181,48,48,0.12);
-  --accent-section: #C88B1E;
+  --accent-section: #8A5F0F; /* darkened from #C88B1E (2.74:1) to meet 4.5:1 on light bg; dark theme unaffected (no override there, falls back to --accent) */
   --nav-bg: rgba(248,247,245,0.8);
   --glass-card-bg: rgba(255,255,255,0.6);
   --glass-card-border: rgba(226,221,213,0.5);

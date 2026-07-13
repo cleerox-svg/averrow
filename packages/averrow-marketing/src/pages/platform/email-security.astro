@@ -722,6 +722,17 @@ const providers = [
     flex-wrap: wrap;
   }
 
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Grade-letter badges, the related-capability link color, and the
+     narrative label all render severity/accent colors as text on
+     pale tinted backgrounds — fine in dark, below 4.5:1 in light.
+     Darkened here for [data-theme="light"] only; dark theme unchanged. */
+  :global([data-theme="light"]) .es-grade-good .es-grade-letter-badge { color: #106b32; }
+  :global([data-theme="light"]) .es-grade-mid .es-grade-letter-badge { color: #8a5507; }
+  :global([data-theme="light"]) .es-grade-bad .es-grade-letter-badge { color: #b91c1c; }
+  :global([data-theme="light"]) .es-related-name { color: #8a5507; }
+  :global([data-theme="light"]) .narrative-label { color: #b91c1c; }
+
   /* ── RESPONSIVE ── */
   @media (max-width: 900px) {
     .es-check-grid { grid-template-columns: 1fr 1fr; }
