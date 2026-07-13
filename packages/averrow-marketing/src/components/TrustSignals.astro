@@ -1,8 +1,8 @@
 ---
 /*
- * Trust signals strip — sector icons + placeholder testimonial.
- * Used on / (R5) and /pricing (R4). Mirrors renderTrustSignals()
- * from packages/trust-radar/src/templates/shared.ts (Item 2).
+ * Trust signals strip — target-sector icons + a factual trust-posture
+ * card (compliance + security posture; no customer claims until real
+ * proof exists). Used on / (R5) and /pricing (R4).
  *
  * Wrap the import site in a <section class="trust-signals">
  * — that's where the outer padding lives in global.css.
@@ -51,7 +51,7 @@ const sectors: Sector[] = [
 ];
 ---
 
-<div class="trust-strip-label">Trusted by security teams across</div>
+<div class="trust-strip-label">Built to protect brands across</div>
 <div class="trust-strip-grid">
   {sectors.map(s => (
     <div class="trust-sector" title={s.title}>
@@ -60,20 +60,15 @@ const sectors: Sector[] = [
     </div>
   ))}
 </div>
-<div class="trust-disclaimer">Sample placement &mdash; customer logos publishing in 2026.</div>
 
-<div class="testimonial-card">
-  <div class="testimonial-quote-mark" aria-hidden="true">&ldquo;</div>
-  <div class="testimonial-quote">
-    Averrow caught three impersonation domains in our first week &mdash; two of
-    them already had MX records and were ready to send. We had been doing this
-    manually with two analysts, and they were missing this.
-  </div>
-  <div class="testimonial-attribution">
-    <span class="testimonial-role">VP of Security</span>
-    <span class="testimonial-attribution-divider" aria-hidden="true"></span>
-    <span class="testimonial-meta">Mid-market SaaS &middot; 800 employees</span>
-  </div>
+<div class="trust-posture-card">
+  <div class="trust-posture-heading">Proof, not promises</div>
+  <ul class="trust-posture-list">
+    <li><strong>GDPR-aligned, PIPEDA &amp; WCAG 2.1 AA</strong> controls operating today</li>
+    <li><strong>SOC 2 Type I</strong> audit scheduled for Q3 2026</li>
+    <li><strong>No customer PII stored</strong> &middot; encrypted at rest &middot; TLS 1.3 everywhere</li>
+    <li><strong>42 specialized AI agents</strong> across 45+ threat &amp; intelligence feeds</li>
+  </ul>
 </div>
 
 <style is:global>
@@ -136,17 +131,9 @@ const sectors: Sector[] = [
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .trust-disclaimer {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-tertiary);
-    opacity: 0.6;
-    letter-spacing: 0.05em;
-    margin-bottom: 36px;
-  }
-  .testimonial-card {
+  .trust-posture-card {
     max-width: 720px;
-    margin: 0 auto;
+    margin: 28px auto 0;
     padding: 28px 32px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
@@ -154,59 +141,47 @@ const sectors: Sector[] = [
     backdrop-filter: blur(12px) saturate(160%);
     -webkit-backdrop-filter: blur(12px) saturate(160%);
     text-align: left;
-    position: relative;
   }
-  .testimonial-quote-mark {
-    position: absolute;
-    top: 8px;
-    left: 18px;
-    font-family: var(--font-display);
-    font-size: 64px;
-    line-height: 1;
-    color: var(--amber);
-    opacity: 0.18;
-    pointer-events: none;
-    user-select: none;
-  }
-  .testimonial-quote {
-    font-family: var(--font-display);
-    font-size: 18px;
-    font-weight: 500;
-    line-height: 1.55;
-    color: var(--text-primary);
-    margin-bottom: 18px;
-    position: relative;
-    z-index: 1;
-  }
-  .testimonial-attribution {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+  .trust-posture-heading {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 16px;
+  }
+  .trust-posture-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+  }
+  .trust-posture-list li {
+    position: relative;
+    padding-left: 26px;
+    font-family: var(--font-display);
+    font-size: 15px;
+    line-height: 1.5;
     color: var(--text-secondary);
   }
-  .testimonial-attribution-divider {
-    width: 24px;
-    height: 1px;
-    background: var(--amber);
-    opacity: 0.6;
+  .trust-posture-list li::before {
+    content: "\2713";
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: var(--green, #3CB878);
+    font-weight: 700;
   }
-  .testimonial-role {
+  .trust-posture-list li strong {
     color: var(--text-primary);
     font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-  .testimonial-meta {
-    color: var(--text-tertiary);
-    letter-spacing: 0.04em;
   }
   @media (max-width: 640px) {
     .trust-strip-grid { gap: 24px; }
     .trust-signals { padding: 40px 16px 24px; }
-    .testimonial-card { padding: 22px 22px; }
-    .testimonial-quote { font-size: 16px; }
-    .testimonial-attribution { flex-direction: column; align-items: flex-start; gap: 6px; }
-    .testimonial-attribution-divider { display: none; }
+    .trust-posture-card { padding: 22px 22px; }
+    .trust-posture-list li { font-size: 14px; }
   }
 </style>

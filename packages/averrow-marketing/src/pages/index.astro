@@ -95,7 +95,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </div>
 
       <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
-        <input class="scan-input" id="domainInput" name="domain" placeholder="Enter any domain" autocomplete="off" />
+        <input class="scan-input" id="domainInput" name="domain" placeholder="Enter any domain" autocomplete="off" aria-label="Domain to scan for brand threats" />
         <button class="scan-btn" type="submit">Scan My Brand &mdash; Free</button>
       </form>
       <div class="scan-hint">
@@ -139,7 +139,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="squadron">
     <div class="section-label">The Agent Mesh</div>
-    <h2 class="squadron-title">Six core agents. {stats.agents_deployed} working continuously.</h2>
+    <h2 class="squadron-title">Six core agents. {stats.agents_deployed} in the mesh.</h2>
     <p class="squadron-subtitle">
       A deployed mesh of {stats.agents_deployed} AI agents &mdash; six core
       agents shown here, plus specialized agents handling enrichment,

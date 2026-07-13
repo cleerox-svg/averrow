@@ -30,11 +30,25 @@ const { Content } = await post.render();
 const related = pickRelatedPosts(all, post.slug, 2);
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const slug = categorySlug(post.data.category);
+
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site ?? "https://averrow.com").toString();
+const articleJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Article",
+  headline: post.data.title,
+  description: post.data.excerpt,
+  datePublished: post.data.publishedAt,
+  author: { "@type": "Person", name: post.data.author },
+  publisher: { "@type": "Organization", name: "Averrow" },
+  mainEntityOfPage: canonicalUrl,
+};
 ---
 
 <Layout
   title={`${post.data.title} — Averrow Blog`}
   description={post.data.excerpt}
+  ogType="article"
+  jsonLd={articleJsonLd}
 >
   <section class="blog-post-hero">
     <div class="container">
