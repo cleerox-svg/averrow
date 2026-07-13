@@ -60,7 +60,10 @@ const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
 export function PlatformStatusBadge({ variant = 'compact', linkToDiagnostics = false }: Props) {
   const { data, isLoading } = usePlatformStatus();
   const status: CategoryStatus | 'loading' = isLoading || !data ? 'loading' : data.overall;
-  const palette = PALETTE[status];
+  // Defensive: status should always be a known PALETTE key, but fall back to
+  // the neutral "loading" entry rather than crash if an unexpected value
+  // ever slips through (e.g. a malformed API response upstream).
+  const palette = PALETTE[status] ?? PALETTE.loading;
 
   // Prominent variant — used on mobile Command Center. Mirrors the
   // existing layout in MobileCommandCenter.tsx (pulse dot + label

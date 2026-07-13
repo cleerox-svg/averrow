@@ -14,16 +14,36 @@ import type { PlatformStatus } from '@averrow/shared';
 // long-resident tab should still refresh.
 const POLL_MS = 60_000;
 
+// The worker is expected to return the PlatformStatus body directly (not
+// wrapped in {success, data, error}). But api.get() only throws on 401
+// (see src/lib/api.ts), so a transient 500 that returns the platform's
+// generic error envelope {success:false, error:"..."} resolves as data
+// instead of rejecting. That envelope is a truthy object with no `overall`
+// field, so a blind cast would let `undefined` reach consumers that key a
+// lookup table on `data.overall` (e.g. PlatformStatusBadge's PALETTE[status])
+// and crash. Narrow the shape before trusting it.
+//
+// Validate BOTH fields the two consumers dereference: PlatformStatusBadge
+// reads `overall`, and PlatformStatusFlyout iterates `categories.map(...)`.
+// Requiring `categories` to be an array keeps a contract-drifted response
+// (valid `overall` but missing `categories`) from relocating the same crash
+// class into the flyout.
+function isPlatformStatus(value: unknown): value is PlatformStatus {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { overall?: unknown }).overall === 'string' &&
+    Array.isArray((value as { categories?: unknown }).categories)
+  );
+}
+
 export function usePlatformStatus() {
   return useQuery({
     queryKey: ['platform-status'],
     queryFn: async (): Promise<PlatformStatus | null> => {
       try {
-        // The worker returns the PlatformStatus body directly (not wrapped
-        // in {success, data, error}). Cast through unknown to hand the
-        // typed object to consumers.
         const res = await api.get('/api/v1/public/platform-status');
-        return res as unknown as PlatformStatus;
+        return isPlatformStatus(res) ? res : null;
       } catch {
         // Surface a `null` state to consumers rather than throwing — the
         // banner should fall back to a neutral "checking…" pill instead

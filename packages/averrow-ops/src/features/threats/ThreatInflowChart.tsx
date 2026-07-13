@@ -66,13 +66,29 @@ interface InflowResponse {
 
 type Window = '24h' | '7d';
 
+// Guard against the untyped `api.get` handing back a non-InflowResponse
+// body — e.g. the platform's `{success:false,error}` error envelope on a
+// transient 5xx, which `api.ts` resolves (not throws) for any non-401.
+// Without this, a malformed response would blind-cast through and the
+// `data.buckets.map(...)` below throws, crashing the whole root route via
+// the ErrorBoundary. Returning null routes to the component's "No data"
+// fallback instead. Mirrors the isPlatformStatus guard in usePlatformStatus.
+function isInflowResponse(value: unknown): value is InflowResponse {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { buckets?: unknown }).buckets) &&
+    Array.isArray((value as { series?: unknown }).series)
+  );
+}
+
 function useThreatInflow(window: Window) {
   return useQuery({
     queryKey: ['threats', 'inflow', window],
     queryFn: async (): Promise<InflowResponse | null> => {
       try {
         const res = await api.get(`/api/threats/inflow?window=${window}`);
-        return res as unknown as InflowResponse;
+        return isInflowResponse(res) ? res : null;
       } catch {
         return null;
       }

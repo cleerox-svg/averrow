@@ -136,7 +136,15 @@ export function PlatformAlertBanner() {
 
   if (!onTargetRoute || !alert) return null;
 
-  const palette = PALETTE[alert.severity];
+  // Defensive: alert.severity comes from API notification data
+  // (data?.notifications) and PALETTE has no index signature, so an
+  // unexpected/malformed severity value would make this `undefined` and
+  // crash the render below (same bug class as PlatformStatusBadge's
+  // PALETTE[status]). Fall back to the neutral 'info' entry — it's the
+  // least alarming, theme-aware (uses var(--text-primary) / var(--border-*))
+  // entry in the palette, so a malformed alert still renders as a plain,
+  // non-scary banner instead of throwing.
+  const palette = PALETTE[alert.severity] ?? PALETTE.info;
 
   const handleDismiss = () => {
     const next = new Set(dismissed);
