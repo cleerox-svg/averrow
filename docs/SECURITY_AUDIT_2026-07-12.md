@@ -47,7 +47,7 @@ The platform hardened substantially since 2026-06-10. **Every High and every non
 
 ## 2. Currently-open findings (severity-ordered)
 
-> **Remediation status (2026-07-13):** **O1 FIXED** (PR #1612 — service JWT re-scoped to read-only `auditor`, TTL 90d→30d, `/mcp` rate-limited). **O2 FIXED in config, deploy pending** (dedicated staging/dev D1 databases created + wired; see the O2 note for the remaining `wrangler d1 migrations apply` + `deploy` cutover steps). O3–O7 remain open as low-priority hygiene.
+> **Remediation status (2026-07-13):** **O1 FIXED** (PR #1612 — service JWT re-scoped to read-only `auditor`, TTL 90d→30d, `/mcp` rate-limited). **O2 FIXED** (PR #1613 — dedicated staging/dev D1 databases created + wired; verified no live cutover is needed, see the O2 note). O3–O7 remain open as low-priority hygiene.
 
 ### O1 — MCP service account mints a 90-day `super_admin` JWT; `/mcp` unthrottled *(High)* — **FIXED (PR #1612)**
 - `packages/trust-radar/src/handlers/auth.ts` `handleMintServiceJwt` — `INSERT OR IGNORE … role 'super_admin'` for `SERVICE_ACCOUNT_ID`, then `signJWT({ role: "super_admin" }, …, SERVICE_JWT_TTL_SECONDS)` (90 days); `packages/trust-radar/src/index.ts:663-671` mint route; `packages/averrow-mcp/src/index.ts:560-623` caches the JWT in `MCP_TOKEN_CACHE` KV.
@@ -55,7 +55,7 @@ The platform hardened substantially since 2026-06-10. **Every High and every non
 - **Remediation (owner: `backend-engineer`):** mint the service account at the least role the MCP tools actually need (a read-only global role — `auditor` is exactly this shape: global read scope, mutates nothing), shorten the TTL, and add a per-IP/token rate limit on the `/mcp` entrypoint (`averrow-mcp/src/index.ts:878`). If any MCP tool needs a mutation, gate that one path explicitly rather than blanket super-admin.
 - *Confidence: high on the JWT scope (read the mint code); the rate-limit gap is bounded by the bearer gate, so lower urgency than the role scope.*
 
-### O2 — `staging` and `dev` Workers were bound to the PRODUCTION D1 database *(Medium)* — **FIXED in config, deploy pending**
+### O2 — `staging` and `dev` Workers were bound to the PRODUCTION D1 database *(Medium)* — **FIXED (PR #1613)**
 - `packages/trust-radar/wrangler.toml`: `[[env.staging.d1_databases]]` and `[[env.dev.d1_databases]]` previously both set `database_id = "a3776a5f-…"` (and audit `55d58eff-…`) — the **same IDs** as the production `DB`/`AUDIT_DB` bindings.
 - **Exploit / blast radius:** this isn't a remote-attacker vuln, it's a standing data-integrity hazard with a large blast radius. Any deploy to `trust-radar-staging`/`trust-radar-dev`, any `wrangler dev`, or any test run that writes through `env.DB` mutated **production** threat/user/org data and the production audit log. There was no isolation boundary between test and prod at the data layer.
 - **Resolution (2026-07-13):** created four dedicated D1 databases and repointed the env bindings:
@@ -65,11 +65,9 @@ The platform hardened substantially since 2026-06-10. **Every High and every non
   | staging | `AUDIT_DB` | `trust-radar-v2-audit-staging` | `45539971-b965-4bfb-a1d3-93a03771b1c4` |
   | dev | `DB` | `trust-radar-v2-dev` | `83f702ee-3600-4f0a-84e8-102c49765429` |
   | dev | `AUDIT_DB` | `trust-radar-v2-audit-dev` | `3f2c2683-bc2b-474a-b61a-89d80bb2cded` |
-  Production bindings are unchanged. The new databases are **empty** — the config change alone does not isolate a running deployment. **Remaining cutover steps (need `wrangler` deploy auth, not available in the build sandbox):**
-  1. `wrangler d1 migrations apply trust-radar-v2-staging --env staging` and `… trust-radar-v2-audit-staging --env staging` (repeat for `--env dev`) to build the schema on the new DBs.
-  2. `wrangler deploy --env staging` (and `--env dev`) to cut the running Workers over to the isolated DBs.
-  3. Optional: seed staging with a sanitized dataset if realistic staging data is wanted.
-  Until steps 1–2 run, the deployed staging/dev Workers still point at whatever they were last deployed with. Also note (out of O2 scope): the env blocks declare only `DB`/`AUDIT_DB`, not `GEOIP_DB`/`DNS_QUEUE_DB`; if staging/dev exercise those code paths they need their own reference DBs too — track separately.
+  Production bindings are unchanged.
+- **No live cutover needed (verified 2026-07-13).** There is **no deployed `trust-radar-staging` / `trust-radar-dev` Worker** (Cloudflare `workers_list`: only `trust-radar` prod exists), and CI (`.github/workflows/deploy-radar.yml`) deploys **production only** — `pnpm run deploy` with no `--env staging|dev`, and migrations run against the prod DBs only. So the hazard was only ever reachable from a developer's *local* `wrangler deploy --env staging` / `wrangler dev`. The merged binding change is therefore a complete forward-looking guardrail: the moment anyone stands up staging/dev locally, they hit the isolated empty DBs instead of prod. The new DBs stay empty until such a deployment exists; whoever provisions a real staging/dev environment (with local `wrangler`) applies migrations (`wrangler d1 migrations apply … --env staging|dev`) as part of that workflow — nothing is pending on the current, prod-only deployment.
+- **Out of O2 scope (track separately):** the env blocks declare only `DB`/`AUDIT_DB`, not `GEOIP_DB`/`DNS_QUEUE_DB`; a future real staging/dev environment that exercises those code paths would need its own reference DBs too.
 
 ### O3 — Astro reflected-XSS advisory in `averrow-marketing` (likely unreachable) *(Low–Medium, uncertain)*
 - `packages/averrow-marketing/package.json:17` pins `astro ^4.16.18`; advisory GHSA-wrwg-2hg8-v723 (reflected XSS via **server islands**) covers `<=5.15.6`, patched `>=5.15.8`.
