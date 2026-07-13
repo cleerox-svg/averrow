@@ -1,0 +1,756 @@
+---
+/*
+ * Social Media Monitoring — deep dive on Platform Capability 03.
+ * Expands the "Social Media Monitoring" section of src/pages/platform.astro
+ * into a full page: platforms monitored, what we detect, confidence
+ * scoring, handle-permutation methodology, evidence collection for
+ * takedowns, a per-platform capability table, and a closing CTA.
+ */
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout
+  title="Social Media Monitoring — Averrow"
+  description="Averrow monitors six social platforms for impersonation, handle squatting, and executive spoofing — with AI confidence scoring and evidence for takedowns."
+>
+  <section class="sm-hero">
+    <div class="container">
+      <div class="sm-hero-eyebrow">Platform / Social Media Monitoring</div>
+      <h1>Impersonation moves<br /><span class="sm-hero-accent">faster than your brand team.</span></h1>
+      <p>
+        Averrow watches six platforms around the clock for fake accounts, handle squatting,
+        and executive impersonation &mdash; then scores every finding so your team only
+        reviews what actually warrants a takedown.
+      </p>
+      <div class="sm-status-panel" aria-label="Live social monitoring status">
+        <div class="sm-status-panel-label">
+          <span class="sm-status-dot" aria-hidden="true"></span>
+          Monitoring Status &mdash; All Platforms Active
+        </div>
+        <div class="sm-status-grid">
+          <div class="sm-status-row"><span class="sm-status-name">Twitter/X</span><span class="sm-status-state">SCANNING</span></div>
+          <div class="sm-status-row"><span class="sm-status-name">LinkedIn</span><span class="sm-status-state">SCANNING</span></div>
+          <div class="sm-status-row"><span class="sm-status-name">Instagram</span><span class="sm-status-state">SCANNING</span></div>
+          <div class="sm-status-row"><span class="sm-status-name">TikTok</span><span class="sm-status-state">SCANNING</span></div>
+          <div class="sm-status-row"><span class="sm-status-name">GitHub</span><span class="sm-status-state">SCANNING</span></div>
+          <div class="sm-status-row"><span class="sm-status-name">YouTube</span><span class="sm-status-state">SCANNING</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sm-nav">
+    <div class="sm-nav-inner">
+      <a href="#detect" class="sm-tab active">What We Detect</a>
+      <a href="#scoring" class="sm-tab">Confidence Scoring</a>
+      <a href="#permutation" class="sm-tab">Handle Permutation</a>
+      <a href="#evidence" class="sm-tab">Evidence Collection</a>
+      <a href="#platforms" class="sm-tab">Platform Coverage</a>
+    </div>
+  </div>
+
+  <section class="sm-section" id="detect">
+    <div class="sm-row">
+      <div class="sm-text">
+        <div class="section-label">What We Detect</div>
+        <h2>Four ways impersonation shows up on social.</h2>
+        <p>
+          Attackers don&rsquo;t need to touch your infrastructure to damage your brand &mdash;
+          a convincing profile picture and a plausible handle is often enough. Averrow
+          auto-discovers your real accounts from your company website, then watches for
+          anything imitating them.
+        </p>
+        <ul class="sm-features">
+          <li><strong>Impersonation accounts</strong> &mdash; fake profiles built to look like your brand, a product, or a support channel</li>
+          <li><strong>Handle squatting</strong> &mdash; your brand name or close variants registered and held, claimed or unclaimed</li>
+          <li><strong>Executive impersonation</strong> &mdash; fake accounts posing as your named leaders to run social-engineering or investment scams</li>
+          <li><strong>Unauthorized brand usage</strong> &mdash; logo abuse and brand-keyword misuse in bios, posts, and pinned content</li>
+        </ul>
+      </div>
+      <div class="sm-visual">
+        <div class="sm-detect-grid">
+          <div class="sm-detect-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+            <div class="sm-detect-name">Impersonation Accounts</div>
+          </div>
+          <div class="sm-detect-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+            <div class="sm-detect-name">Handle Squatting</div>
+          </div>
+          <div class="sm-detect-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><path d="M22 21l-2-2"/></svg>
+            <div class="sm-detect-name">Executive Impersonation</div>
+          </div>
+          <div class="sm-detect-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+            <div class="sm-detect-name">Unauthorized Brand Usage</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sm-section" id="scoring">
+    <div class="sm-row reversed">
+      <div class="sm-text">
+        <div class="section-label">How It Works</div>
+        <h2>AI confidence scoring, not a keyword match.</h2>
+        <p>
+          A handle containing your brand name isn&rsquo;t automatically a threat &mdash; fan
+          accounts and press mentions exist too. Averrow&rsquo;s AI weighs multiple signals
+          together and produces a confidence score, so your team reviews a short, ranked
+          list instead of every mention on the internet.
+        </p>
+        <ul class="sm-features">
+          <li>Name similarity between the handle/display name and your registered brand terms</li>
+          <li>Account age &mdash; newly created accounts carry more weight in the read</li>
+          <li>Follower count and engagement pattern</li>
+          <li>Brand-keyword usage in bio, pinned posts, and profile content</li>
+          <li>Verification status, including badges the account is attempting to spoof</li>
+          <li>Location and profile-metadata mismatch against your brand&rsquo;s real footprint</li>
+        </ul>
+        <div class="callout">Findings are cross-correlated with everything else Averrow already knows about your brand &mdash; a squatted handle linked to a phishing domain in the same feed cycle escalates automatically.</div>
+      </div>
+      <div class="sm-visual">
+        <div class="sm-score-eyebrow">Illustrative Example &mdash; Flagged Profile</div>
+        <div class="sm-score-card">
+          <div class="sm-score-card-row"><span>Handle</span><span class="sm-mono">@yourbrand_support</span></div>
+          <div class="sm-score-card-row"><span>Platform</span><span class="sm-mono">Twitter/X</span></div>
+          <div class="sm-score-card-row"><span>Account age</span><span class="sm-mono">6 days</span></div>
+          <div class="sm-score-card-row"><span>Verification</span><span class="sm-mono">None</span></div>
+          <div class="sm-score-card-row sm-score-card-last"><span>Brand keywords</span><span class="sm-mono">Bio + pinned post</span></div>
+          <div class="sm-score-verdict">
+            <div class="sm-score-verdict-label">Confidence</div>
+            <div class="sm-score-verdict-value">Likely Impersonation</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sm-section" id="permutation">
+    <div class="sm-row">
+      <div class="sm-text">
+        <div class="section-label">Methodology</div>
+        <h2>Handle permutation generation.</h2>
+        <p>
+          Averrow doesn&rsquo;t wait for a lookalike account to be reported &mdash; it generates
+          the plausible variants an attacker would register and checks each one across all
+          six platforms, on an ongoing basis.
+        </p>
+        <ul class="sm-features">
+          <li><strong>Separator variations</strong> &mdash; underscores, dots, and dashes inserted into your brand handle</li>
+          <li><strong>Suffix/prefix additions</strong> &mdash; official, HQ, team, support, and similar terms appended or prepended</li>
+          <li><strong>Character substitution</strong> &mdash; visually similar characters swapped in (0 for o, 1 for l, rn for m)</li>
+        </ul>
+      </div>
+      <div class="sm-visual">
+        <div class="sm-perm-eyebrow">Example Permutations &mdash; illustrative, not a real brand</div>
+        <div class="sm-perm-source">yourbrand</div>
+        <div class="sm-perm-grid">
+          <span class="sm-perm-chip">your_brand</span>
+          <span class="sm-perm-chip">your.brand</span>
+          <span class="sm-perm-chip">your-brand</span>
+          <span class="sm-perm-chip">yourbrandhq</span>
+          <span class="sm-perm-chip">official_yourbrand</span>
+          <span class="sm-perm-chip">yourbrandteam</span>
+          <span class="sm-perm-chip">y0urbrand</span>
+          <span class="sm-perm-chip">yourbrand_support</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sm-section" id="evidence">
+    <div class="sm-row reversed">
+      <div class="sm-text">
+        <div class="section-label">Takedowns</div>
+        <h2>Evidence, packaged for the platform&rsquo;s abuse team.</h2>
+        <p>
+          A takedown request that arrives with proof moves faster. Every flagged account
+          gets an evidence package your team can attach directly to a platform abuse report
+          &mdash; no manual screenshotting required.
+        </p>
+        <ul class="sm-features">
+          <li>Full profile capture (screenshot and metadata) at time of detection</li>
+          <li>The confidence score and the exact signals that produced it</li>
+          <li>Cross-references to related threats seen elsewhere &mdash; domains, email, other platforms</li>
+          <li>Analyst classification notes, ready to attach to a takedown submission</li>
+        </ul>
+      </div>
+      <div class="sm-visual">
+        <div class="sm-evidence-eyebrow">Evidence Package Contents</div>
+        <div class="sm-evidence-list">
+          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Profile screenshot + capture timestamp</div>
+          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Handle, display name, and profile URL</div>
+          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Confidence score + contributing signals</div>
+          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Related threat cross-references</div>
+          <div class="sm-evidence-item sm-evidence-last"><span class="sm-evidence-dot" aria-hidden="true"></span>Analyst classification notes</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sm-platforms" id="platforms">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Platform Coverage</div>
+      <h2 class="sm-platforms-h2">What Averrow Checks, Per Platform</h2>
+      <p class="sm-platforms-p">Every platform gets handle checking and impersonation scanning. Permutation checking and evidence generation are close behind &mdash; YouTube&rsquo;s more limited handle namespace makes permutation checking partial today.</p>
+    </div>
+    <div class="sm-table-wrap">
+      <table class="sm-table">
+        <thead>
+          <tr>
+            <th>Platform</th>
+            <th>Handle Check</th>
+            <th>Impersonation Scan</th>
+            <th>Permutation Check</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Twitter/X</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td></tr>
+          <tr><td>LinkedIn</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td></tr>
+          <tr><td>Instagram</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td></tr>
+          <tr><td>TikTok</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td></tr>
+          <tr><td>GitHub</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td></tr>
+          <tr><td>YouTube</td><td class="sm-yes">&#10003;</td><td class="sm-yes">&#10003;</td><td class="sm-partial">Partial</td><td class="sm-yes">&#10003;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sm-related">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Keep Exploring</div>
+      <h2 class="sm-related-h2">The Rest of the Platform</h2>
+      <div class="sm-related-grid">
+        <a href="/platform/threat-detection" class="sm-related-card">
+          <div class="sm-related-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+          <div class="sm-related-name">Threat Detection</div>
+          <div class="sm-related-desc">Continuous monitoring across phishing, domains, and threat feeds.</div>
+        </a>
+        <a href="/platform/email-security" class="sm-related-card">
+          <div class="sm-related-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+          <div class="sm-related-name">Email Security</div>
+          <div class="sm-related-desc">SPF, DKIM, DMARC, and MX graded A+ through F.</div>
+        </a>
+        <a href="/platform/ai-agents" class="sm-related-card">
+          <div class="sm-related-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+          <div class="sm-related-name">The Agent Mesh</div>
+          <div class="sm-related-desc">How 42 AI agents fuse social signals into one exposure score.</div>
+        </a>
+      </div>
+      <div class="sm-related-back"><a href="/platform">&larr; Back to Platform Overview</a></div>
+    </div>
+  </section>
+
+  <section class="sm-cta">
+    <div class="container">
+      <h2>See who&rsquo;s impersonating your brand on social right now.</h2>
+      <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
+      <div class="sm-cta-actions">
+        <a href="/demo" class="btn btn-primary">Get a Demo</a>
+        <a href="/" class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .sm-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+  .sm-hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .sm-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 4.6vw, 56px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+  .sm-hero-accent { color: var(--amber); }
+  .sm-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 620px;
+    margin: 0 auto 2.25rem;
+    line-height: 1.6;
+  }
+
+  /* ── STATUS PANEL ── */
+  .sm-status-panel {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--glass-card-bg);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    text-align: left;
+    font-family: var(--font-mono);
+  }
+  .sm-status-panel-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 12px;
+  }
+  .sm-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 0 rgba(60,184,120,0.55);
+    animation: sm-pulse 1.8s ease-out infinite;
+  }
+  @keyframes sm-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(60,184,120,0.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(60,184,120,0); }
+    100% { box-shadow: 0 0 0 0 rgba(60,184,120,0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sm-status-dot { animation: none; box-shadow: 0 0 0 4px rgba(60,184,120,0.2); }
+  }
+  .sm-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px 16px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .sm-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.02);
+  }
+  :global([data-theme="light"]) .sm-status-row { background: rgba(0,0,0,0.025); }
+  .sm-status-name { color: var(--text-primary); font-weight: 600; letter-spacing: 0.04em; }
+  .sm-status-state { color: var(--green); font-size: 11px; letter-spacing: 0.06em; }
+  @media (max-width: 720px) { .sm-status-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .sm-status-grid { grid-template-columns: 1fr; } }
+
+  /* ── SUB NAV ── */
+  .sm-nav {
+    position: sticky;
+    top: 64px;
+    z-index: 50;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 0.6rem 0;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  :global([data-theme="light"]) .sm-nav {
+    background: rgba(248,247,245,0.8);
+    border-bottom-color: rgba(226,221,213,0.5);
+  }
+  .sm-nav-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .sm-tab {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 0.5rem 1.25rem;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .sm-tab:hover,
+  .sm-tab.active {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  /* ── CAPABILITY SECTIONS ── */
+  .sm-section { padding: 3rem 0; position: relative; }
+  .sm-section:nth-of-type(odd) { background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%); }
+  .sm-section:nth-of-type(even) { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
+  .sm-row {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .sm-row.reversed { direction: rtl; }
+  .sm-row.reversed > * { direction: ltr; }
+  .sm-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .sm-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+  }
+  .sm-features {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .sm-features li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .sm-features li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .sm-features li strong { color: var(--text-primary); }
+  .callout {
+    background: var(--accent-bg);
+    border: 1px solid rgba(200,60,60,0.15);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 500;
+    margin-top: 1rem;
+  }
+
+  .sm-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .sm-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+
+  /* Detect grid */
+  .sm-detect-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+  .sm-detect-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.6rem;
+    padding: 1.25rem 0.75rem;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    color: var(--amber);
+  }
+  .sm-detect-card svg { width: 28px; height: 28px; flex-shrink: 0; }
+  .sm-detect-name {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+    line-height: 1.35;
+  }
+
+  /* Score card */
+  .sm-score-eyebrow,
+  .sm-perm-eyebrow,
+  .sm-evidence-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .sm-score-card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .sm-score-card-last { border-bottom: none; }
+  .sm-mono {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-primary);
+  }
+  .sm-score-verdict {
+    margin-top: 1rem;
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--accent-bg);
+    border: 1px solid rgba(200,60,60,0.2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sm-score-verdict-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .sm-score-verdict-value {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--accent);
+  }
+
+  /* Permutation chips */
+  .sm-perm-source {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.85rem;
+    display: inline-block;
+    margin-bottom: 1rem;
+  }
+  .sm-perm-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .sm-perm-chip {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--amber);
+    background: rgba(229,168,50,0.08);
+    border: 1px solid rgba(229,168,50,0.2);
+    border-radius: 100px;
+    padding: 0.4rem 0.85rem;
+  }
+
+  /* Evidence list */
+  .sm-evidence-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .sm-evidence-last { border-bottom: none; }
+  .sm-evidence-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue);
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 768px) {
+    .sm-row,
+    .sm-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+    .sm-detect-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 480px) {
+    .sm-detect-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ── PLATFORM TABLE ── */
+  .sm-platforms {
+    padding: 3rem 0;
+    text-align: center;
+    background: var(--bg-tertiary);
+  }
+  .sm-platforms-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+  .sm-platforms-p {
+    color: var(--text-secondary);
+    max-width: 620px;
+    margin: 0 auto;
+  }
+  .sm-table-wrap {
+    max-width: 1000px;
+    margin: 2rem auto 0;
+    padding: 0 2rem;
+    overflow-x: auto;
+  }
+  .sm-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .sm-table th {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    text-align: left;
+    padding: 1rem;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+  .sm-table td {
+    font-size: 14px;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    text-align: left;
+  }
+  .sm-table tr:last-child td { border-bottom: none; }
+  .sm-table td:first-child { font-weight: 600; color: var(--text-primary); }
+  .sm-yes { color: var(--green); font-weight: 600; }
+  .sm-partial { color: var(--amber); font-weight: 600; }
+
+  /* ── RELATED ── */
+  .sm-related { padding: 3rem 0; text-align: center; }
+  .sm-related-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 2rem;
+  }
+  .sm-related-grid {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    text-align: left;
+  }
+  .sm-related-card {
+    display: block;
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    color: var(--text-primary);
+    transition: all 0.25s;
+  }
+  :global([data-theme="light"]) .sm-related-card {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .sm-related-card:hover {
+    border-color: rgba(200,60,60,0.4);
+    transform: translateY(-4px);
+    text-decoration: none;
+  }
+  .sm-related-icon {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--accent-bg);
+    color: var(--accent);
+    margin-bottom: 0.85rem;
+  }
+  .sm-related-icon svg { width: 22px; height: 22px; }
+  .sm-related-name { font-weight: 700; font-size: 15px; margin-bottom: 0.35rem; }
+  .sm-related-desc { font-size: 0.82rem; color: var(--text-tertiary); line-height: 1.5; }
+  .sm-related-back { margin-top: 2rem; }
+  .sm-related-back a { font-family: var(--font-mono); font-size: 0.85rem; }
+  @media (max-width: 768px) { .sm-related-grid { grid-template-columns: 1fr; } }
+
+  /* ── CTA ── */
+  .sm-cta { padding: 3rem 0 5rem; text-align: center; }
+  .sm-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .sm-cta p {
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto 2rem;
+  }
+  .sm-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+</style>
+
+<script>
+  // Sticky sub-nav scroll-spy: highlight the tab matching the section
+  // currently most in view.
+  (function () {
+    const sections = ["detect", "scoring", "permutation", "evidence", "platforms"];
+    const tabs = document.querySelectorAll<HTMLAnchorElement>(".sm-tab");
+    if (!("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            tabs.forEach(t => t.classList.remove("active"));
+            const match = document.querySelector<HTMLAnchorElement>(`.sm-tab[href="#${entry.target.id}"]`);
+            match?.classList.add("active");
+          }
+        });
+      },
+      { threshold: 0.35 },
+    );
+    sections.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+  })();
+</script>

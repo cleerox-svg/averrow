@@ -1,0 +1,242 @@
+---
+/*
+ * Solutions overview. Hero + three persona cards (Mid-Market, MSSP,
+ * Startups) each linking to its dedicated page, closing CTA.
+ * Structure/tokens cloned from ../platform.astro.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Solutions — Averrow"
+  description="Brand threat intelligence for how your team actually works — mid-market companies without a SOC, MSSPs adding a new offering, and startups protecting their name from day one."
+>
+  <section class="sol-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Solutions</div>
+      <h1>Solutions for<br /><span class="hero-accent">every team.</span></h1>
+      <p>
+        Same 42-agent mesh. Same 45+ threat &amp; intelligence feeds. Configured
+        around how your organization actually operates &mdash; not a one-size
+        dashboard. Pick the path that matches your team.
+      </p>
+    </div>
+  </section>
+
+  <section class="sol-persona-section">
+    <div class="container">
+      <div class="sol-persona-grid">
+        <a href={`${base}/solutions/mid-market`} class="sol-persona-card">
+          <div class="sol-persona-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 21V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v15" />
+              <path d="M12 21V10a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v11" />
+              <path d="M4 21h16" />
+              <line x1="7" y1="9" x2="7" y2="9.01" />
+              <line x1="7" y1="13" x2="7" y2="13.01" />
+              <line x1="7" y1="17" x2="7" y2="17.01" />
+              <line x1="15" y1="13" x2="15" y2="13.01" />
+              <line x1="15" y1="17" x2="15" y2="17.01" />
+            </svg>
+          </div>
+          <div class="sol-persona-eyebrow">50&ndash;500 Employees</div>
+          <h2 class="sol-persona-title">Mid-Market</h2>
+          <p class="sol-persona-desc">Brand protection without a SOC &mdash; continuous monitoring that replaces the analyst team you don&rsquo;t have.</p>
+          <ul class="sol-persona-list">
+            <li>Full 42-agent mesh, zero added headcount</li>
+            <li>Professional plan at $1,499/mo</li>
+            <li>Daily Observer briefings, not alert floods</li>
+          </ul>
+          <span class="sol-persona-link">See the Mid-Market path &rarr;</span>
+        </a>
+
+        <a href={`${base}/solutions/mssp`} class="sol-persona-card">
+          <div class="sol-persona-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3z" />
+              <circle cx="12" cy="11" r="1.3" fill="currentColor" stroke="none" />
+              <circle cx="8.5" cy="14" r="1.3" fill="currentColor" stroke="none" />
+              <circle cx="15.5" cy="14" r="1.3" fill="currentColor" stroke="none" />
+              <line x1="12" y1="11" x2="8.5" y2="14" />
+              <line x1="12" y1="11" x2="15.5" y2="14" />
+            </svg>
+          </div>
+          <div class="sol-persona-eyebrow">Managed Security Providers</div>
+          <h2 class="sol-persona-title">MSSP &amp; MDR</h2>
+          <p class="sol-persona-desc">Add brand threat intelligence to your services &mdash; multi-tenant, API-first, built to sit inside an existing stack.</p>
+          <ul class="sol-persona-list">
+            <li>Org-isolated multi-tenant architecture</li>
+            <li>STIX/TAXII + REST API &mdash; live today</li>
+            <li>Business plan covers up to 10 brands</li>
+          </ul>
+          <span class="sol-persona-link">See the MSSP path &rarr;</span>
+        </a>
+
+        <a href={`${base}/solutions/startups`} class="sol-persona-card">
+          <div class="sol-persona-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2c2.5 2 4 5.5 4 9 0 2-1 4-1 4H9s-1-2-1-4c0-3.5 1.5-7 4-9z" />
+              <circle cx="12" cy="9" r="1.5" />
+              <path d="M9 15l-2.5 5" />
+              <path d="M15 15l2.5 5" />
+              <path d="M9 21h6" />
+            </svg>
+          </div>
+          <div class="sol-persona-eyebrow">Early-Stage &amp; Fast-Growing</div>
+          <h2 class="sol-persona-title">Startups</h2>
+          <p class="sol-persona-desc">Protect your brand from day one &mdash; new domains and thin email config make young companies easy targets.</p>
+          <ul class="sol-persona-list">
+            <li>Free Brand Exposure Report, no signup</li>
+            <li>A+ through F email posture grading</li>
+            <li>A board-ready security snapshot</li>
+          </ul>
+          <span class="sol-persona-link">See the Startup path &rarr;</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol-cta">
+    <div class="container">
+      <h2>Not sure which fits? Talk to us.</h2>
+      <p>Get a walkthrough of the platform tailored to your team, or see what&rsquo;s already targeting your brand in under five minutes.</p>
+      <div class="sol-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .sol-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .sol-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.05;
+  }
+  .hero-accent { color: var(--amber); }
+  .sol-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .sol-persona-section { padding: 3rem 0 4rem; }
+  .sol-persona-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .sol-persona-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.3s;
+  }
+  .sol-persona-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-glow);
+    text-decoration: none;
+  }
+  .sol-persona-icon {
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--accent-bg);
+    color: var(--accent);
+    margin-bottom: 1.25rem;
+  }
+  .sol-persona-icon svg { width: 26px; height: 26px; }
+  .sol-persona-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 0.5rem;
+  }
+  .sol-persona-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+  }
+  .sol-persona-desc {
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 1.25rem;
+  }
+  .sol-persona-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex: 1;
+  }
+  .sol-persona-list li {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .sol-persona-list li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .sol-persona-link {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .sol-cta { padding: 3rem 0 4rem; text-align: center; }
+  .sol-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .sol-cta p {
+    color: var(--text-secondary);
+    max-width: 520px;
+    margin: 0 auto 2rem;
+  }
+  .sol-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 900px) {
+    .sol-persona-grid { grid-template-columns: 1fr; }
+  }
+</style>

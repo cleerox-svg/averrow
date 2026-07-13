@@ -24,24 +24,19 @@ export const NAV_LINKS: NavLink[] = [
     icon: `<svg ${ICON_BASE}><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
   },
   {
-    href: "/abuse-mailbox",
-    label: "Abuse Mailbox",
-    icon: `<svg ${ICON_BASE}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
+    href: "/solutions",
+    label: "Solutions",
+    icon: `<svg ${ICON_BASE}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+  },
+  {
+    href: "/why-averrow",
+    label: "Why Averrow",
+    icon: `<svg ${ICON_BASE}><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`,
   },
   {
     href: "/pricing",
     label: "Pricing",
     icon: `<svg ${ICON_BASE}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25" fill="currentColor"/></svg>`,
-  },
-  {
-    href: "/about",
-    label: "About",
-    icon: `<svg ${ICON_BASE}><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h2"/><path d="M13 9h2"/><path d="M9 13h2"/><path d="M13 13h2"/><path d="M9 17h2"/><path d="M13 17h2"/></svg>`,
-  },
-  {
-    href: "/security",
-    label: "Security",
-    icon: `<svg ${ICON_BASE}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>`,
   },
   {
     href: "/blog",

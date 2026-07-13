@@ -1,0 +1,739 @@
+---
+/*
+ * Product deep-dive: Email Security Posture Engine.
+ * Expands Capability 02 of platform.astro into a full page —
+ * why email posture matters, what's checked, the A+–F grading
+ * methodology, provider-aware scoring, and how the grade rolls
+ * into the composite Brand Exposure Score. Self-contained,
+ * inline-SVG only, no new deps.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const grades = [
+  {
+    letter: "A+",
+    tier: "es-grade-good",
+    label: "Fully hardened",
+    desc: "SPF, DKIM, and DMARC all present and aligned, DMARC policy at enforcement (p=reject), and a recognized MX provider. Spoofing your domain requires compromising the provider itself.",
+  },
+  {
+    letter: "A",
+    tier: "es-grade-good",
+    label: "Strong, minor gaps",
+    desc: "Core authentication is in place with only cosmetic gaps — for example DMARC at p=quarantine instead of p=reject, or a reporting address not yet configured.",
+  },
+  {
+    letter: "B",
+    tier: "es-grade-mid",
+    label: "Workable, needs attention",
+    desc: "SPF and DKIM validate, but DMARC policy is set to p=none (monitor-only) — spoofed mail is being observed, not blocked.",
+  },
+  {
+    letter: "C",
+    tier: "es-grade-mid",
+    label: "One mechanism missing",
+    desc: "One of SPF, DKIM, or DMARC is absent or fails validation entirely, leaving a specific, exploitable authentication gap.",
+  },
+  {
+    letter: "D",
+    tier: "es-grade-bad",
+    label: "Multiple gaps",
+    desc: "Two or more mechanisms are missing, misconfigured, or unenforced. The domain can be spoofed with minimal attacker effort.",
+  },
+  {
+    letter: "F",
+    tier: "es-grade-bad",
+    label: "No effective protection",
+    desc: "No enforced SPF, DKIM, or DMARC. Anyone can send email that appears to come from this domain, with no authentication check to stop it.",
+  },
+];
+
+const providers = [
+  {
+    name: "Google Workspace",
+    color: "#0A8AB5",
+    desc: "Detected via MX and DKIM selector pattern; scoring accounts for Google's default alignment behavior so a compliant Workspace domain isn't penalized for provider defaults.",
+  },
+  {
+    name: "Microsoft 365",
+    color: "#3CB878",
+    desc: "Detected via MX and Microsoft-pattern DKIM selectors; scoring reflects Microsoft's own SPF/DKIM conventions rather than treating them as generic anomalies.",
+  },
+  {
+    name: "Proofpoint",
+    color: "#E5A832",
+    desc: "Recognized as a secure email gateway layered in front of the primary provider — scored as an added control, not confused with the underlying mailbox provider.",
+  },
+  {
+    name: "Mimecast",
+    color: "#C83C3C",
+    desc: "Same gateway-aware treatment as Proofpoint — the engine distinguishes “no protection” from “protection sitting in front of a compliant mailbox provider.”",
+  },
+];
+---
+
+<Layout
+  title="Email Security Posture Engine — Averrow"
+  description="Averrow grades SPF, DKIM (12+ enterprise selectors), DMARC, and MX on an A+ through F scale and folds the result into your Brand Exposure Score."
+>
+  <section class="es-hero">
+    <div class="container">
+      <a href={`${base}/platform`} class="es-back">&larr; Back to Platform</a>
+      <div class="es-eyebrow">Platform &middot; Capability 02</div>
+      <h1>Your email is the front door<br /><span class="es-accent">attackers spoof first.</span></h1>
+      <p class="es-lede">
+        Averrow grades your SPF, DKIM, DMARC, and MX configuration on an A+
+        through F scale &mdash; then tells you exactly which gap an attacker
+        would exploit first, and folds the result straight into your
+        composite Brand Exposure Score.
+      </p>
+
+      <div class="es-hero-grid">
+        <div class="es-hero-panel" aria-label="Sample email posture check">
+          <div class="es-panel-label">Sample Check &mdash; illustrative</div>
+          <div class="email-item"><span>SPF Record</span><span class="email-pass">PASS &#10003;</span></div>
+          <div class="email-item"><span>DKIM (google)</span><span class="email-pass">PASS &#10003;</span></div>
+          <div class="email-item"><span>DKIM (proofpoint)</span><span class="email-pass">PASS &#10003;</span></div>
+          <div class="email-item"><span>DMARC Policy</span><span class="email-pass">reject &#10003;</span></div>
+          <div class="email-item email-last"><span>MX Provider</span><span class="email-mx">Google Workspace</span></div>
+          <div class="email-grade-wrap">
+            <div class="email-grade-ring">
+              <svg viewBox="0 0 96 96" aria-hidden="true">
+                <circle class="grade-ring-track" cx="48" cy="48" r="42"/>
+                <circle class="grade-ring-fill" cx="48" cy="48" r="42"/>
+              </svg>
+              <div class="email-grade-inner">
+                <div class="email-grade-letter">A+</div>
+                <div class="email-grade-sub">Grade</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="es-section" id="why-it-matters">
+    <div class="container es-narrow">
+      <div class="section-label">Why It Matters</div>
+      <h2>An unprotected inbox is an open impersonation channel</h2>
+      <p>
+        Every brand-impersonation program eventually runs through email.
+        Attackers don&rsquo;t need to breach anything to send a message
+        that looks like it came from your domain &mdash; they just need
+        your SPF, DKIM, and DMARC configuration to have a gap. Most
+        companies have never checked whether one exists.
+      </p>
+      <p>
+        Brand-protection platforms typically watch the outside world for
+        impersonation &mdash; lookalike domains, fake social profiles,
+        phishing pages. Far fewer check whether the brand itself has left
+        its own front door unlocked. Averrow does both: external detection
+        feeds by Sentinel, plus a standing grade on your own email
+        authentication posture.
+      </p>
+    </div>
+  </section>
+
+  <section class="es-section es-alt" id="what-we-check">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">What We Check</div>
+      <h2 class="es-h2-center">Four checks, one composite grade</h2>
+      <div class="es-check-grid">
+        <div class="es-check-card">
+          <div class="es-check-icon" style="color:#3CB878;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          </div>
+          <div class="es-check-name">SPF Record Validation</div>
+          <p>Confirms a Sender Policy Framework record exists, resolves cleanly, and doesn&rsquo;t exceed the DNS lookup limits that silently break enforcement.</p>
+        </div>
+        <div class="es-check-card">
+          <div class="es-check-icon" style="color:#E5A832;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          </div>
+          <div class="es-check-name">DKIM Multi-Selector Verification</div>
+          <p>Checks <strong>12+ enterprise DKIM selectors</strong> spanning the major mailbox and gateway providers &mdash; not just the single default selector most tools stop at &mdash; so a secondary provider gap doesn&rsquo;t hide behind a passing primary one.</p>
+        </div>
+        <div class="es-check-card">
+          <div class="es-check-icon" style="color:#0A8AB5;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <div class="es-check-name">DMARC Policy Assessment</div>
+          <p>Reads the DMARC record and evaluates the actual enforcement policy &mdash; <code>none</code>, <code>quarantine</code>, or <code>reject</code> &mdash; because a monitor-only DMARC record provides visibility, not protection.</p>
+        </div>
+        <div class="es-check-card">
+          <div class="es-check-icon" style="color:#C83C3C;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          </div>
+          <div class="es-check-name">MX Provider Detection</div>
+          <p>Identifies the mail provider behind the domain (Google Workspace, Microsoft 365, and other major providers) and scores against that provider&rsquo;s own conventions instead of a one-size-fits-all rule.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="es-section" id="grading">
+    <div class="container">
+      <div class="section-label">Grading Methodology</div>
+      <h2>The A+ through F scale</h2>
+      <p class="es-section-p">
+        Every check rolls into a single letter grade so the posture is
+        readable at a glance &mdash; and so the underlying gap is never
+        more than one click away.
+      </p>
+      <div class="es-grade-list">
+        {grades.map(g => (
+          <div class={`es-grade-row ${g.tier}`}>
+            <div class="es-grade-letter-badge">{g.letter}</div>
+            <div class="es-grade-text">
+              <div class="es-grade-label">{g.label}</div>
+              <div class="es-grade-desc">{g.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="es-section es-alt" id="provider-aware">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Provider-Aware Scoring</div>
+      <h2 class="es-h2-center">The grade knows who&rsquo;s behind your inbox</h2>
+      <p class="es-section-p es-center">
+        A generic checker penalizes a domain for not matching a rule that
+        never applied to its provider in the first place. Averrow&rsquo;s
+        engine recognizes the mail provider first, then grades against
+        that provider&rsquo;s own authentication conventions.
+      </p>
+      <div class="es-provider-grid">
+        {providers.map(p => (
+          <div class="es-provider-card" style={`--pcolor:${p.color}`}>
+            <div class="es-provider-dot"></div>
+            <div class="es-provider-name">{p.name}</div>
+            <p>{p.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="es-section" id="exposure-score">
+    <div class="cap-row">
+      <div class="cap-text">
+        <div class="section-label">Feeds The Composite Score</div>
+        <h2>One grade, folded into the whole picture</h2>
+        <p>
+          The email grade doesn&rsquo;t live in isolation. It&rsquo;s one
+          input the agent mesh reasons over alongside active threats,
+          lookalike domains, and social impersonation to produce a single
+          composite <strong>Brand Exposure Score</strong> &mdash; and a
+          natural-language explanation of why the number is what it is.
+        </p>
+        <div class="narrative-block">
+          <div class="narrative-label"><span class="narrative-dot"></span> Illustrative example</div>
+          A domain with an <strong>F email grade</strong> and <strong>active
+          phishing</strong> already registered against it doesn&rsquo;t read
+          as two separate medium-severity findings &mdash; it reads as one
+          <strong> CRITICAL</strong> exposure. The unprotected inbox is the
+          exact mechanism a phishing operator needs to make a spoofed
+          message land convincingly. This example is illustrative, not a
+          live customer finding.
+        </div>
+      </div>
+      <div class="cap-visual">
+        <div class="es-compare-callout">
+          <div class="es-compare-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <p>
+            Most brand-protection platforms watch for impersonation from
+            the outside but provide little to no insight into your own
+            email authentication posture &mdash; the gap that makes
+            impersonation land in the first place.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="es-section es-alt" id="related">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Related Capabilities</div>
+      <h2 class="es-h2-center">Part of the full platform</h2>
+      <div class="es-related-grid">
+        <a href={`${base}/platform/threat-detection`} class="es-related-card">
+          <div class="es-related-name">Threat Detection</div>
+          <p>Continuous monitoring across phishing, malware, and CT-log feeds.</p>
+        </a>
+        <a href={`${base}/platform/social-monitoring`} class="es-related-card">
+          <div class="es-related-name">Social Monitoring</div>
+          <p>Impersonation detection across six major social platforms.</p>
+        </a>
+        <a href={`${base}/platform/ai-agents`} class="es-related-card">
+          <div class="es-related-name">The Agent Mesh</div>
+          <p>How 42 AI agents fuse signals into one exposure picture.</p>
+        </a>
+      </div>
+      <div class="es-back-row">
+        <a href={`${base}/platform`}>&larr; Back to the full Platform overview</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="plat-cta">
+    <div class="container">
+      <h2>Find out what your email grade actually is.</h2>
+      <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
+      <div class="plat-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .es-hero {
+    padding: 3.5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+  .es-back {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    margin-bottom: 1.5rem;
+  }
+  .es-back:hover { color: var(--amber); text-decoration: none; }
+  .es-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .es-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(30px, 4.4vw, 52px);
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 1rem;
+  }
+  .es-accent { color: var(--amber); }
+  .es-lede {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto 2.5rem;
+    line-height: 1.6;
+  }
+  .es-hero-grid { display: flex; justify-content: center; }
+  .es-hero-panel {
+    width: 100%;
+    max-width: 420px;
+    text-align: left;
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .es-hero-panel {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .es-panel-label {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 0.75rem;
+  }
+
+  /* Reused email-item / grade-ring vocabulary from platform.astro */
+  .email-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.72rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .email-last { border-bottom: none; }
+  .email-pass {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--green);
+    font-weight: 600;
+  }
+  .email-mx {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  .email-grade-wrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .email-grade-ring { position: relative; width: 96px; height: 96px; }
+  .email-grade-ring svg { width: 96px; height: 96px; }
+  .grade-ring-track { fill: none; stroke: rgba(60,184,120,0.12); stroke-width: 6; }
+  .grade-ring-fill {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 6;
+    stroke-linecap: round;
+    transform: rotate(-90deg);
+    transform-origin: 48px 48px;
+    stroke-dasharray: 263.9;
+    stroke-dashoffset: 13.2;
+    filter: drop-shadow(0 0 5px rgba(60,184,120,0.45));
+  }
+  .email-grade-inner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .email-grade-letter {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+  }
+  .email-grade-sub {
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    color: rgba(60,184,120,0.65);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+
+  /* ── GENERIC SECTIONS ── */
+  .es-section { padding: 3.5rem 0; }
+  .es-alt { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
+  .es-narrow { max-width: 760px; }
+  .es-section h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .es-h2-center { text-align: center; }
+  .es-section p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.1rem;
+  }
+  .es-section-p { max-width: 720px; }
+  .es-center { margin-left: auto; margin-right: auto; text-align: center; }
+
+  /* ── WHAT WE CHECK ── */
+  .es-check-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.25rem;
+    margin-top: 2rem;
+  }
+  .es-check-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .es-check-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 0.85rem;
+  }
+  .es-check-icon svg { width: 100%; height: 100%; }
+  .es-check-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .es-check-card p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 0;
+  }
+  .es-check-card code {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    background: var(--bg-tertiary);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+  }
+
+  /* ── GRADING SCALE ── */
+  .es-grade-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+  .es-grade-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.1rem;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    border-left: 3px solid transparent;
+  }
+  .es-grade-row.es-grade-good { border-left-color: var(--green); }
+  .es-grade-row.es-grade-mid { border-left-color: var(--amber); }
+  .es-grade-row.es-grade-bad { border-left-color: var(--red); }
+  .es-grade-letter-badge {
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.15rem;
+  }
+  .es-grade-good .es-grade-letter-badge { background: var(--green-bg); color: var(--green); }
+  .es-grade-mid .es-grade-letter-badge { background: rgba(229,168,50,0.1); color: var(--amber); }
+  .es-grade-bad .es-grade-letter-badge { background: var(--accent-bg); color: var(--red); }
+  .es-grade-label {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
+  }
+  .es-grade-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ── PROVIDER-AWARE ── */
+  .es-provider-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.25rem;
+    margin-top: 2rem;
+  }
+  .es-provider-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    position: relative;
+  }
+  .es-provider-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--pcolor);
+    margin-bottom: 0.85rem;
+    box-shadow: 0 0 8px var(--pcolor);
+  }
+  .es-provider-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+  .es-provider-card p {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 0;
+  }
+
+  /* ── EXPOSURE SCORE / cap-row reused ── */
+  .cap-row {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .cap-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .cap-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.25rem;
+  }
+  .cap-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+    display: flex;
+    align-items: center;
+  }
+  :global([data-theme="light"]) .cap-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .narrative-block {
+    border-left: 3px solid var(--red);
+    padding: 1rem 1.25rem;
+    background: rgba(200,60,60,0.05);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    font-size: 0.86rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+  .narrative-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .narrative-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--red);
+    border-radius: 50%;
+    animation: es-pulse 2s infinite;
+  }
+  @keyframes es-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(200,60,60,0.5); }
+    70%  { box-shadow: 0 0 0 8px rgba(200,60,60,0); }
+    100% { box-shadow: 0 0 0 0 rgba(200,60,60,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .narrative-dot { animation: none; } }
+
+  .es-compare-callout {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+  .es-compare-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    color: var(--amber);
+  }
+  .es-compare-icon svg { width: 100%; height: 100%; }
+  .es-compare-callout p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    margin-bottom: 0;
+  }
+
+  /* ── RELATED ── */
+  .es-related-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+    margin-top: 2rem;
+  }
+  .es-related-card {
+    display: block;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    color: var(--text-primary);
+    transition: all 0.2s;
+  }
+  .es-related-card:hover {
+    border-color: var(--amber);
+    transform: translateY(-3px);
+    text-decoration: none;
+  }
+  .es-related-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.98rem;
+    margin-bottom: 0.4rem;
+    color: var(--amber);
+  }
+  .es-related-card p {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin-bottom: 0;
+  }
+  .es-back-row {
+    text-align: center;
+    margin-top: 2rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+
+  /* ── CTA (mirrors platform.astro) ── */
+  .plat-cta { padding: 3.5rem 0 4rem; text-align: center; }
+  .plat-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .plat-cta p {
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto 2rem;
+  }
+  .plat-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    .es-check-grid { grid-template-columns: 1fr 1fr; }
+    .es-provider-grid { grid-template-columns: 1fr 1fr; }
+    .es-related-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 768px) {
+    .cap-row { grid-template-columns: 1fr; gap: 2rem; }
+  }
+  @media (max-width: 560px) {
+    .es-check-grid { grid-template-columns: 1fr; }
+    .es-provider-grid { grid-template-columns: 1fr; }
+    .es-grade-row { flex-direction: column; align-items: flex-start; }
+  }
+</style>

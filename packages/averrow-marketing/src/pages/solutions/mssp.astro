@@ -1,0 +1,468 @@
+---
+/*
+ * Solutions — MSSP / MDR. "Add brand threat intelligence to your
+ * managed services." Target: managed security service providers.
+ * Structure/tokens cloned from ../platform.astro.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Solutions for MSSPs — Averrow"
+  description="Add brand threat intelligence to your managed security services. Multi-tenant, API-first, STIX/TAXII export, live today."
+>
+  <section class="mssp-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Solutions &middot; MSSP &amp; MDR</div>
+      <h1>Add brand threat intelligence<br /><span class="hero-accent">to your managed services.</span></h1>
+      <p>
+        Your clients ask about brand and phishing protection. Averrow gives you
+        a multi-tenant, API-first brand-intelligence layer built to plug into
+        the stack you already run &mdash; not a standalone tool your clients
+        have to log into separately.
+      </p>
+    </div>
+  </section>
+
+  <section class="mssp-pain-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">The Problem</div>
+      <h2 class="mssp-h2" style="text-align:center;">What we hear from MSSPs and MDR providers</h2>
+      <div class="mssp-pain-grid">
+        <div class="mssp-pain-card">
+          <div class="mssp-pain-quote">&ldquo;Our clients ask about brand protection and we don&rsquo;t have an offering.&rdquo;</div>
+        </div>
+        <div class="mssp-pain-card">
+          <div class="mssp-pain-quote">&ldquo;We need multi-tenant architecture, not another siloed single-tenant tool.&rdquo;</div>
+        </div>
+        <div class="mssp-pain-card">
+          <div class="mssp-pain-quote">&ldquo;We need API access and SIEM-ready export &mdash; not a dashboard we have to screen-share.&rdquo;</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mssp-cap-section">
+    <div class="mssp-cap-row">
+      <div class="mssp-cap-text">
+        <div class="section-label">Architecture</div>
+        <h2>Built multi-tenant from day one</h2>
+        <p>
+          Every organization on Averrow is isolated at the data layer &mdash; role-based
+          access and org-level scoping keep each client&rsquo;s brands, threats, and
+          reports separate, on the same underlying platform. Add a new client
+          without spinning up new infrastructure.
+        </p>
+        <ul class="mssp-features">
+          <li>Organization-level data isolation, enforced at the API layer</li>
+          <li>Role-based access per organization (viewer / analyst / admin / owner)</li>
+          <li>The same 42-agent mesh runs across every client brand you onboard</li>
+          <li>Composite Brand Exposure Score per client, ready for your reporting</li>
+        </ul>
+      </div>
+      <div class="mssp-cap-visual">
+        <div class="mssp-tenant-grid">
+          <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client A</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
+          <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client B</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
+          <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client C</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
+          <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client D</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
+        </div>
+        <div class="mssp-tenant-caption">One platform. One agent mesh. Every client&rsquo;s data walled off from every other.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mssp-cap-section alt">
+    <div class="mssp-cap-row reversed">
+      <div class="mssp-cap-text">
+        <div class="section-label">Integration</div>
+        <h2>API-first, so it fits inside your stack</h2>
+        <p>
+          Your analysts shouldn&rsquo;t have to context-switch into another vendor
+          portal. Averrow ships REST API access and STIX 2.1 export so brand
+          threat intelligence lands in the same SIEM/SOAR workflow as everything
+          else you monitor.
+        </p>
+        <ul class="mssp-features">
+          <li>STIX/TAXII export &mdash; live today</li>
+          <li>Full REST API access &mdash; live today</li>
+          <li>Webhooks for real-time event delivery &mdash; live today</li>
+          <li>Email digests &mdash; live today</li>
+        </ul>
+        <div class="mssp-callout">
+          Splunk, IBM QRadar, and Microsoft Sentinel connectors are on the roadmap.
+          Slack notifications are also on the roadmap.
+        </div>
+      </div>
+      <div class="mssp-cap-visual">
+        <div class="mssp-int-grid">
+          <div class="mssp-int-item live"><span class="mssp-int-name">STIX/TAXII</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">REST API</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">Webhooks</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">Email</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item"><span class="mssp-int-name">Splunk</span><span class="mssp-int-status">Roadmap</span></div>
+          <div class="mssp-int-item"><span class="mssp-int-name">IBM QRadar</span><span class="mssp-int-status">Roadmap</span></div>
+          <div class="mssp-int-item"><span class="mssp-int-name">Microsoft Sentinel</span><span class="mssp-int-status">Roadmap</span></div>
+          <div class="mssp-int-item"><span class="mssp-int-name">Slack</span><span class="mssp-int-status">Roadmap</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mssp-economics-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Economics</div>
+      <h2 class="mssp-h2" style="text-align:center;">Volume that scales with your client list</h2>
+      <p class="mssp-economics-intro">
+        Business plan covers up to 10 client brands under one account for
+        $3,999/mo ($3,199/mo billed annually) &mdash; a fixed platform cost you
+        allocate across engagements however your commercial model works. Need
+        more than 10 brands, SSO/SAML, or a custom feed set? Enterprise is
+        built for that.
+      </p>
+      <div class="mssp-economics-grid">
+        <div class="mssp-economics-card">
+          <div class="mssp-economics-label">Business</div>
+          <div class="mssp-economics-amount">$3,999<span>/mo</span></div>
+          <ul class="mssp-economics-list">
+            <li>Up to 10 brands</li>
+            <li>Advanced API access</li>
+            <li>Webhook &amp; SIEM integration</li>
+            <li>Dedicated account manager</li>
+          </ul>
+        </div>
+        <div class="mssp-economics-card">
+          <div class="mssp-economics-label">Enterprise</div>
+          <div class="mssp-economics-amount">Custom</div>
+          <ul class="mssp-economics-list">
+            <li>Unlimited brands</li>
+            <li>SSO / SAML / SCIM</li>
+            <li>Custom integrations &amp; threat feeds</li>
+            <li>SLA guarantees</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mssp-roadmap-section">
+    <div class="container">
+      <div class="mssp-roadmap-card">
+        <div class="mssp-roadmap-tag">On the Roadmap</div>
+        <h3>White-label</h3>
+        <p>
+          Fully white-labeled reporting and client-facing portals are on the
+          roadmap and not available today. If white-label is a requirement for
+          your program, tell us &mdash; it directly informs prioritization.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mssp-cta">
+    <div class="container">
+      <h2>Request MSSP partnership information</h2>
+      <p>Tell us about your client base and stack &mdash; we&rsquo;ll walk you through the API, multi-tenant model, and Business plan economics.</p>
+      <div class="mssp-cta-actions">
+        <a href={`${base}/contact`} class="btn btn-primary">Request MSSP Partnership Info</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Business Plan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .mssp-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .mssp-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 4.6vw, 56px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+  .hero-accent { color: var(--amber); }
+  .mssp-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 660px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .mssp-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 2rem;
+  }
+
+  .mssp-pain-section { padding: 3rem 0; }
+  .mssp-pain-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+  .mssp-pain-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+  }
+  .mssp-pain-quote {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    font-style: italic;
+  }
+
+  .mssp-cap-section { padding: 3rem 0; }
+  .mssp-cap-section.alt { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
+  .mssp-cap-row {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .mssp-cap-row.reversed { direction: rtl; }
+  .mssp-cap-row.reversed > * { direction: ltr; }
+  .mssp-cap-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .mssp-cap-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+  }
+  .mssp-features {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .mssp-features li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 15px;
+    color: var(--text-secondary);
+  }
+  .mssp-features li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+  }
+  .mssp-callout {
+    background: var(--accent-bg);
+    border: 1px solid rgba(200,60,60,0.15);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 500;
+    margin-top: 1rem;
+  }
+
+  .mssp-cap-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .mssp-cap-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+
+  .mssp-tenant-grid { display: flex; flex-direction: column; gap: 0.6rem; }
+  .mssp-tenant-row {
+    padding: 0.85rem 1rem;
+    background: rgba(14,26,43,0.45);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255,255,255,0.04);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  :global([data-theme="light"]) .mssp-tenant-row { background: rgba(255,255,255,0.6); }
+  .mssp-tenant-name {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.9rem;
+  }
+  .mssp-tenant-badge {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.55rem;
+    border-radius: 100px;
+  }
+  .mssp-tenant-badge.isolated { background: var(--green-bg); color: var(--green); }
+  .mssp-tenant-caption {
+    margin-top: 0.85rem;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    text-align: center;
+  }
+
+  .mssp-int-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+  .mssp-int-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.7rem 0.9rem;
+    background: rgba(14,26,43,0.45);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .mssp-int-item { background: rgba(255,255,255,0.6); }
+  .mssp-int-name { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; }
+  .mssp-int-status {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.18rem 0.5rem;
+    border-radius: 100px;
+    color: var(--text-tertiary);
+    background: rgba(255,255,255,0.04);
+  }
+  .mssp-int-status.live { background: var(--green-bg); color: var(--green); }
+
+  .mssp-economics-section { padding: 3rem 0; }
+  .mssp-economics-intro {
+    max-width: 720px;
+    margin: 0 auto 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.7;
+  }
+  .mssp-economics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  .mssp-economics-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+  }
+  .mssp-economics-label {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+  .mssp-economics-amount {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    margin-bottom: 1.25rem;
+  }
+  .mssp-economics-amount span { font-size: 1rem; font-weight: 400; color: var(--text-tertiary); }
+  .mssp-economics-list {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .mssp-economics-list li {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .mssp-economics-list li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .mssp-roadmap-section { padding: 1rem 0 3rem; }
+  .mssp-roadmap-card {
+    max-width: 720px;
+    margin: 0 auto;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    text-align: center;
+  }
+  .mssp-roadmap-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+    background: rgba(229,168,50,0.1);
+    padding: 0.3rem 0.65rem;
+    border-radius: 100px;
+    margin-bottom: 1rem;
+  }
+  .mssp-roadmap-card h3 {
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+  }
+  .mssp-roadmap-card p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .mssp-cta { padding: 3rem 0 4rem; text-align: center; }
+  .mssp-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .mssp-cta p { color: var(--text-secondary); max-width: 520px; margin: 0 auto 2rem; }
+  .mssp-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 900px) {
+    .mssp-cap-row,
+    .mssp-cap-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+    .mssp-economics-grid { grid-template-columns: 1fr; max-width: 420px; }
+  }
+  @media (max-width: 768px) {
+    .mssp-pain-grid { grid-template-columns: 1fr; }
+    .mssp-int-grid { grid-template-columns: 1fr; }
+  }
+</style>

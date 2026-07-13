@@ -1,0 +1,655 @@
+---
+/*
+ * Why Averrow — honest proof/differentiation page.
+ *
+ * We have no customers yet, so this page does NOT use testimonials,
+ * logos, or case studies. Instead it argues the case on: the market
+ * gap, the product's actual mechanics (SQL does correlation, AI does
+ * narrative), a clearly-labeled ILLUSTRATIVE sample report, the
+ * compliance posture, and a self-serve proof point (the free scan).
+ * Structure follows platform.astro's section pattern.
+ */
+import Layout from "../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Why Averrow — Averrow"
+  description="No logos, no case studies yet — just a transparent detection methodology, honest pricing, and a free brand exposure scan you can run on your own domain right now."
+>
+  <section class="why-hero">
+    <div class="container">
+      <div class="section-label">Why Averrow</div>
+      <h1>We don&rsquo;t have case studies yet.<br /><span class="hero-accent">We have a live scan.</span></h1>
+      <p>
+        Averrow is a new platform. We won&rsquo;t manufacture a logo wall or
+        a customer quote to pretend otherwise &mdash; that&rsquo;s the kind
+        of dishonesty a security vendor can&rsquo;t afford. What we can show
+        you is the actual gap we built this to close, exactly how detection
+        works under the hood, and a free scan you can run on your own brand
+        in the next five minutes to see for yourself.
+      </p>
+    </div>
+  </section>
+
+  <section class="why-section" id="gap">
+    <div class="container">
+      <div class="why-row">
+        <div class="why-text">
+          <div class="section-label">The Gap</div>
+          <h2>Enterprise tools. Mid-market budgets. Nothing in between.</h2>
+          <p>
+            Enterprise brand-protection platforms cost <strong>$20,000 to
+            $150,000+ per year</strong> &mdash; before you add the analyst
+            headcount to actually operate them. That price point works for
+            a short list of global enterprises. It doesn&rsquo;t work for
+            the much longer list of mid-market companies facing the exact
+            same phishing kits, lookalike domains, and social impersonation
+            &mdash; just without a seven-figure security budget to fight
+            them with.
+          </p>
+          <p>
+            That gap is the reason Averrow exists: real threat coverage,
+            priced for the companies the enterprise tools were never built
+            for.
+          </p>
+        </div>
+        <div class="why-visual why-gap-cards">
+          <div class="why-gap-card">
+            <div class="why-gap-figure why-gap-figure-red">$20K&ndash;$150K+/yr</div>
+            <div class="why-gap-label">What incumbent enterprise platforms cost</div>
+          </div>
+          <div class="why-gap-card">
+            <div class="why-gap-figure why-gap-figure-green">50&ndash;66% less</div>
+            <div class="why-gap-label">What Averrow costs instead</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="why-section why-alt" id="different">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">How Averrow Is Different</div>
+      <h2 class="why-h2-center">Three decisions that change the economics</h2>
+      <div class="why-diff-grid">
+        <div class="why-diff-card">
+          <div class="why-diff-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <h3>Outside-in scanning, zero setup</h3>
+          <p>No agents to install, no DNS records to hand over, no onboarding call required. Point Averrow at a domain and get a real exposure picture in minutes &mdash; because the detection works entirely from public signals.</p>
+        </div>
+        <div class="why-diff-card">
+          <div class="why-diff-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2V13M6.6 17.6L11 13.6M17.4 17.6L13 13.6"/></svg>
+          </div>
+          <h3>AI-native, not AI-bolted-on</h3>
+          <p>42 specialized AI agents work as a coordinated mesh &mdash; the same mesh detailed on our <a href={`${base}/platform`}>Platform page</a> &mdash; cross-referencing email, domains, social, and threat feeds to reason about risk, not just list alerts.</p>
+        </div>
+        <div class="why-diff-card">
+          <div class="why-diff-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a14 14 0 0 1 0 20 14 14 0 0 1 0-20z"/></svg>
+          </div>
+          <h3>Edge-native economics</h3>
+          <p>Built on Cloudflare Workers, not a legacy server fleet with a license markup passed on to you. That infrastructure choice is most of the reason we can run 50&ndash;66% below incumbent pricing &mdash; not a discount, a different cost structure.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="why-section" id="methodology">
+    <div class="container">
+      <div class="why-row reversed">
+        <div class="why-text">
+          <div class="section-label">How Detection Actually Works</div>
+          <h2>No black box: SQL does correlation, AI does narrative</h2>
+          <p>
+            Every threat Averrow surfaces starts as a structured match
+            across phishing databases, malware URL feeds, threat-intel
+            feeds, Certificate Transparency logs, DNS intelligence, and
+            credential-breach intel &mdash; deduplicated and run through a
+            false-positive filter and safe-domains allowlist before it ever
+            reaches a human. That part is deterministic database work: fast,
+            auditable, and repeatable. It doesn&rsquo;t need AI, and we
+            don&rsquo;t pay AI tokens to do what a query can do in
+            milliseconds.
+          </p>
+          <p>
+            AI enters after the correlation, not instead of it &mdash; the
+            agent mesh takes the structured findings and writes the
+            natural-language threat report, the composite Brand Exposure
+            Score, and the daily intelligence briefing your team actually
+            reads. The detection is the query. The AI is the analyst who
+            explains what the query found.
+          </p>
+        </div>
+        <div class="why-visual why-method-flow">
+          <div class="why-flow-step">
+            <div class="why-flow-num">1</div>
+            <div class="why-flow-body">
+              <div class="why-flow-title">Structured detection</div>
+              <div class="why-flow-desc">Feed matching, dedup, false-positive filtering, allowlisting &mdash; SQL, not AI.</div>
+            </div>
+          </div>
+          <div class="why-flow-arrow" aria-hidden="true">&darr;</div>
+          <div class="why-flow-step">
+            <div class="why-flow-num">2</div>
+            <div class="why-flow-body">
+              <div class="why-flow-title">AI assessment on detection</div>
+              <div class="why-flow-desc">Confidence scoring and triage applied to what the query already found.</div>
+            </div>
+          </div>
+          <div class="why-flow-arrow" aria-hidden="true">&darr;</div>
+          <div class="why-flow-step">
+            <div class="why-flow-num">3</div>
+            <div class="why-flow-body">
+              <div class="why-flow-title">Narrative &amp; scoring</div>
+              <div class="why-flow-desc">Brand Exposure Score, natural-language reports, daily briefings.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="why-section why-alt" id="sample">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">A Sample Report</div>
+      <h2 class="why-h2-center">What a Brand Exposure Report looks like</h2>
+      <p class="why-sample-intro">
+        The card below is <strong>illustrative sample data for a fictional
+        brand</strong> &mdash; not a real customer, not a real domain. It
+        exists to show the shape of the output. To see your own numbers,
+        run the free scan.
+      </p>
+
+      <div class="why-sample-card">
+        <div class="why-sample-badge">SAMPLE DATA &mdash; fictional brand, not a customer</div>
+        <div class="why-sample-grid">
+          <div class="why-sample-score">
+            <svg viewBox="0 0 96 96" aria-hidden="true">
+              <circle class="why-score-track" cx="48" cy="48" r="42"/>
+              <circle class="why-score-fill" cx="48" cy="48" r="42"/>
+            </svg>
+            <div class="why-sample-score-inner">
+              <div class="why-sample-score-num">72</div>
+              <div class="why-sample-score-sub">Exposure Score</div>
+            </div>
+          </div>
+          <div class="why-sample-details">
+            <div class="why-sample-row"><span>Email Posture</span><span class="why-sample-pill why-pill-amber">B</span></div>
+            <div class="why-sample-row"><span>Active Threats</span><span>3 detected</span></div>
+            <div class="why-sample-row"><span>Lookalike Domains</span><span>2 flagged</span></div>
+            <div class="why-sample-row"><span>Social Exposure</span><span>1 unverified handle</span></div>
+          </div>
+        </div>
+        <ul class="why-sample-threats">
+          <li><span class="why-sev why-sev-high">HIGH</span> acme-secure-login.net &mdash; registered 6 days ago, active MX records</li>
+          <li><span class="why-sev why-sev-medium">MED</span> SPF record missing a hard-fail qualifier (spoofable)</li>
+          <li><span class="why-sev why-sev-low">LOW</span> @acmecorp_support &mdash; unverified handle, low follower count</li>
+        </ul>
+        <div class="why-sample-footnote">
+          &ldquo;Acme Corp&rdquo; is a placeholder name used for illustration only. This is not a real customer report.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="why-section" id="trust">
+    <div class="container">
+      <div class="section-label">Trust &amp; Compliance Posture</div>
+      <h2>Built to be checked, not just believed</h2>
+      <p class="why-trust-intro">
+        We&rsquo;d rather list what&rsquo;s actually in place today &mdash;
+        and be specific about what&rsquo;s scheduled &mdash; than round up.
+      </p>
+      <div class="why-trust-grid">
+        <div class="why-trust-pill why-status-live">GDPR-aligned processing &middot; In place</div>
+        <div class="why-trust-pill why-status-live">PIPEDA &middot; In place</div>
+        <div class="why-trust-pill why-status-live">WCAG 2.1 AA &middot; In place</div>
+        <div class="why-trust-pill why-status-live">No PII stored</div>
+        <div class="why-trust-pill why-status-live">TLS 1.3 in transit</div>
+        <div class="why-trust-pill why-status-scheduled">SOC 2 Type I &middot; Scheduled Q3 2026</div>
+      </div>
+      <p class="why-trust-link"><a href={`${base}/security`}>Full detail on our Security &amp; Trust page &rarr;</a></p>
+    </div>
+  </section>
+
+  <section class="why-section why-alt" id="see-it">
+    <div class="container">
+      <div class="why-proof-card">
+        <div class="why-proof-text">
+          <div class="section-label">See It On Your Own Brand</div>
+          <h2>The free scan is the proof, not a marketing gimmick</h2>
+          <p>
+            Instead of asking you to trust a case study that doesn&rsquo;t
+            exist yet, we&rsquo;d rather you run the scan on your own
+            domain. No signup, no credit card &mdash; you&rsquo;ll see your
+            real email posture grade and whatever public threat signals
+            exist against your brand today.
+          </p>
+        </div>
+        <div class="why-proof-cta">
+          <a href={`${base}/`} class="btn btn-primary">Run Your Free Scan</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="why-section" id="roi">
+    <div class="container">
+      <div class="section-label">The ROI Argument</div>
+      <h2>What replacing 2&ndash;3 monitoring analysts actually means</h2>
+      <p>
+        Averrow&rsquo;s agent mesh performs the continuous correlation and
+        triage work that would otherwise require dedicated headcount &mdash;
+        watching feeds around the clock, cross-referencing signals across
+        email, domains, and social, and drafting takedown evidence. Call it
+        the equivalent of 2&ndash;3 security analysts doing that work full
+        time. That&rsquo;s not a hire you have to source, train, and retain
+        to get the same coverage &mdash; it&rsquo;s a platform you turn on.
+      </p>
+      <p>
+        We&rsquo;re not going to cite a customer savings number we
+        don&rsquo;t have yet. This is a value argument, not a fabricated
+        statistic: the cost of the coverage versus the cost of building it
+        yourself with people.
+      </p>
+    </div>
+  </section>
+
+  <section class="why-cta">
+    <div class="container">
+      <h2>Ready to see it on your own brand?</h2>
+      <p>Get a guided walkthrough on your real data, or run the free scan first &mdash; your call.</p>
+      <div class="why-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Pricing</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .why-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .why-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 4.6vw, 56px);
+    font-weight: 800;
+    line-height: 1.12;
+    margin-bottom: 1.25rem;
+  }
+  .hero-accent { color: var(--amber); }
+  .why-hero p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    max-width: 680px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  /* ── SECTIONS ── */
+  .why-section { padding: 3.5rem 0; }
+  .why-section.why-alt { background: var(--bg-secondary); }
+  .why-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .why-row.reversed { direction: rtl; }
+  .why-row.reversed > * { direction: ltr; }
+  .why-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(22px, 2.8vw, 32px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+    line-height: 1.25;
+  }
+  .why-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.75;
+    margin-bottom: 1.1rem;
+  }
+  .why-text p:last-child { margin-bottom: 0; }
+  .why-text strong { color: var(--text-primary); }
+
+  .why-h2-center {
+    font-family: var(--font-display);
+    font-size: clamp(22px, 2.8vw, 32px);
+    font-weight: 700;
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto 2.5rem;
+    line-height: 1.3;
+  }
+
+  /* Gap cards */
+  .why-gap-cards { display: flex; flex-direction: column; gap: 1rem; }
+  .why-gap-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+    text-align: center;
+  }
+  .why-gap-figure {
+    font-family: var(--font-display);
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 800;
+    margin-bottom: 0.4rem;
+  }
+  .why-gap-figure-red { color: var(--accent); }
+  .why-gap-figure-green { color: var(--green); }
+  .why-gap-label {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+  }
+
+  /* Differentiator cards */
+  .why-diff-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .why-diff-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  }
+  .why-diff-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+  }
+  .why-diff-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+  .why-diff-icon svg { width: 22px; height: 22px; }
+  .why-diff-card h3 {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+  }
+  .why-diff-card p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+  .why-diff-card p a { color: var(--accent); }
+
+  /* Methodology flow */
+  .why-method-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+  }
+  .why-flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 0.75rem;
+  }
+  .why-flow-num {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .why-flow-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 0.2rem;
+  }
+  .why-flow-desc {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .why-flow-arrow {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 0.9rem;
+  }
+
+  /* Sample report card */
+  .why-sample-intro {
+    max-width: 640px;
+    margin: 0 auto 2rem;
+    text-align: center;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .why-sample-card {
+    max-width: 640px;
+    margin: 0 auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+  }
+  .why-sample-badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber);
+    background: rgba(229,168,50,0.10);
+    border: 1px solid rgba(229,168,50,0.3);
+    border-radius: 100px;
+    padding: 0.3rem 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .why-sample-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.75rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+  .why-sample-score { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
+  .why-sample-score svg { width: 96px; height: 96px; }
+  .why-score-track { fill: none; stroke: rgba(229,168,50,0.12); stroke-width: 6; }
+  .why-score-fill {
+    fill: none;
+    stroke: var(--amber);
+    stroke-width: 6;
+    stroke-linecap: round;
+    transform: rotate(-90deg);
+    transform-origin: 48px 48px;
+    stroke-dasharray: 263.9;
+    stroke-dashoffset: 74;
+  }
+  .why-sample-score-inner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .why-sample-score-num {
+    font-family: var(--font-display);
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--amber);
+    line-height: 1;
+  }
+  .why-sample-score-sub {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+  }
+  .why-sample-details { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+  .why-sample-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  }
+  .why-sample-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .why-sample-pill {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding: 0.05rem 0.5rem;
+    border-radius: 100px;
+  }
+  .why-pill-amber { color: var(--amber); background: rgba(229,168,50,0.12); }
+  .why-sample-threats {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 0 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .why-sev {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-right: 0.5rem;
+  }
+  .why-sev-high { color: var(--sev-high); background: rgba(251,146,60,0.10); }
+  .why-sev-medium { color: var(--sev-medium); background: rgba(251,191,36,0.10); }
+  .why-sev-low { color: var(--sev-low); background: rgba(96,165,250,0.10); }
+  .why-sample-footnote {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    font-style: italic;
+  }
+
+  /* Trust pills */
+  .why-trust-intro {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    max-width: 640px;
+    line-height: 1.7;
+  }
+  .why-trust-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .why-trust-pill {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.5rem 0.9rem;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+  }
+  .why-status-live { color: var(--green); background: var(--green-bg); border-color: rgba(60,184,120,0.3); }
+  .why-status-scheduled { color: var(--amber); background: rgba(229,168,50,0.10); border-color: rgba(229,168,50,0.3); }
+  .why-trust-link { margin-top: 1.25rem; font-size: 0.9rem; }
+
+  /* Proof / free scan card */
+  .why-proof-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 2rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2.25rem;
+  }
+  .why-proof-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(20px, 2.6vw, 28px);
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+  }
+  .why-proof-text p {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 560px;
+  }
+  .why-proof-cta { flex-shrink: 0; }
+
+  /* ROI section */
+  #roi p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.75;
+    max-width: 720px;
+    margin-bottom: 1.1rem;
+  }
+  #roi p:last-child { margin-bottom: 0; }
+
+  /* CTA */
+  .why-cta { padding: 3.5rem 0; text-align: center; background: var(--bg-secondary); }
+  .why-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(26px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .why-cta p {
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto 2rem;
+  }
+  .why-cta-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+  @media (max-width: 900px) {
+    .why-diff-grid { grid-template-columns: 1fr; }
+    .why-proof-card { grid-template-columns: 1fr; text-align: center; }
+    .why-proof-text p { margin: 0 auto; }
+  }
+  @media (max-width: 768px) {
+    .why-row, .why-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
+    .why-sample-grid { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+    .why-sample-details { width: 100%; }
+  }
+  @media (max-width: 540px) {
+    .why-hero { padding: 4rem 0 2rem; }
+    .why-section { padding: 2.5rem 0; }
+  }
+</style>

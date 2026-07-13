@@ -1,0 +1,501 @@
+---
+/*
+ * Solutions — Mid-Market. "Brand protection without a SOC."
+ * Target: 50-500 employees, no dedicated security team.
+ * Structure/tokens cloned from ../platform.astro.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Solutions for Mid-Market — Averrow"
+  description="Brand protection without a SOC. Averrow's 42-agent mesh replaces a monitoring team you don't have to hire, starting at $1,499/mo."
+>
+  <section class="mm-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Solutions &middot; Mid-Market</div>
+      <h1>Brand protection<br /><span class="hero-accent">without a SOC.</span></h1>
+      <p>
+        You know you should be watching for phishing domains, impersonation, and
+        email spoofing risk. You just don&rsquo;t have three analysts to do it.
+        Averrow&rsquo;s agent mesh runs the monitoring function so you don&rsquo;t
+        have to build one.
+      </p>
+    </div>
+  </section>
+
+  <section class="mm-pain-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">The Problem</div>
+      <h2 class="mm-h2" style="text-align:center;">This is the gap most 50&ndash;500 person companies live in</h2>
+      <div class="mm-pain-grid">
+        <div class="mm-pain-card">
+          <div class="mm-pain-quote">&ldquo;We know we should monitor for brand threats &mdash; we just don&rsquo;t have the team.&rdquo;</div>
+        </div>
+        <div class="mm-pain-card">
+          <div class="mm-pain-quote">&ldquo;Enterprise brand-protection platforms start at $20,000+/year and assume analysts we don&rsquo;t have.&rdquo;</div>
+        </div>
+        <div class="mm-pain-card">
+          <div class="mm-pain-quote">&ldquo;We found out about the impersonation site from a customer complaint &mdash; not from a monitoring tool.&rdquo;</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mm-mesh-section">
+    <div class="mm-mesh-row">
+      <div class="mm-mesh-text">
+        <div class="section-label">How It Works</div>
+        <h2>42 agents instead of a 3-person team</h2>
+        <p>
+          A dedicated brand-monitoring function usually means an analyst watching
+          feeds, one triaging alerts, and one writing reports. Averrow runs that
+          same workflow as a 42-agent mesh &mdash; six of them are the core
+          reasoning layer your team will interact with daily.
+        </p>
+        <ul class="mm-features">
+          <li>Continuous scanning across 45+ threat &amp; intelligence feeds</li>
+          <li>Automatic deduplication and false-positive filtering</li>
+          <li>Composite Brand Exposure Score, updated as new signal arrives</li>
+          <li>Natural-language threat reports instead of raw feed dumps</li>
+          <li>Automated takedown-evidence generation</li>
+          <li>Daily intelligence briefings from Observer</li>
+        </ul>
+      </div>
+      <div class="mm-mesh-visual">
+        <div class="mm-agent-grid">
+          <div class="mm-agent-row" style="border-left-color:#C83C3C;"><span class="mm-ar-name" style="color:#C83C3C;">Sentinel</span><span class="mm-ar-role">Threat Detection</span></div>
+          <div class="mm-agent-row" style="border-left-color:#E5A832;"><span class="mm-ar-name" style="color:#E5A832;">ASTRA</span><span class="mm-ar-role">Scoring &amp; Triage</span></div>
+          <div class="mm-agent-row" style="border-left-color:#0A8AB5;"><span class="mm-ar-name" style="color:#0A8AB5;">Observer</span><span class="mm-ar-role">Strategic Intel</span></div>
+          <div class="mm-agent-row" style="border-left-color:#065A78;"><span class="mm-ar-name" style="color:#065A78;">Navigator</span><span class="mm-ar-role">Geo Mapping</span></div>
+          <div class="mm-agent-row" style="border-left-color:#8A8F9C;"><span class="mm-ar-name" style="color:#8A8F9C;">Blackbox</span><span class="mm-ar-role">Timeline &amp; Narrative</span></div>
+          <div class="mm-agent-row" style="border-left-color:#3CB878;"><span class="mm-ar-name" style="color:#3CB878;">Pathfinder</span><span class="mm-ar-role">Prospect Intelligence</span></div>
+        </div>
+        <div class="mm-agent-caption">Six core agents shown &mdash; part of the full 42-agent mesh.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mm-cost-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Cost Framing</div>
+      <h2 class="mm-h2" style="text-align:center;">A fraction of the cost of building this in-house</h2>
+      <div class="mm-cost-grid">
+        <div class="mm-cost-card">
+          <div class="mm-cost-label">Hiring a Monitoring Analyst</div>
+          <div class="mm-cost-amount">$80K&ndash;$120K+<span>/yr, fully loaded</span></div>
+          <ul class="mm-cost-list">
+            <li>One person, business hours only</li>
+            <li>Still needs tooling to watch feeds</li>
+            <li>Manual triage, manual reporting</li>
+            <li>Recruiting, ramp time, turnover risk</li>
+          </ul>
+        </div>
+        <div class="mm-cost-card highlight">
+          <span class="mm-cost-badge">Averrow Professional</span>
+          <div class="mm-cost-label">Continuous Monitoring, No Headcount</div>
+          <div class="mm-cost-amount">$1,499<span>/mo ($1,199/mo billed annually)</span></div>
+          <ul class="mm-cost-list">
+            <li>1 brand, monitored 24/7 by the full agent mesh</li>
+            <li>Email security posture monitoring included</li>
+            <li>Social media monitoring included</li>
+            <li>Daily Observer briefings, API access</li>
+          </ul>
+        </div>
+      </div>
+      <p class="mm-cost-footnote">
+        Analyst compensation varies widely by market and level &mdash; treat the range
+        above as general context, not a quote. For reference, enterprise
+        brand-protection platforms alone commonly run $20,000&ndash;$150,000+/year,
+        before any analyst headcount to operate them.
+      </p>
+    </div>
+  </section>
+
+  <section class="mm-practice-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">What Continuous Monitoring Actually Means</div>
+      <h2 class="mm-h2" style="text-align:center;">Not a dashboard you have to remember to check</h2>
+      <div class="mm-practice-grid">
+        <div class="mm-practice-card">
+          <div class="mm-practice-title">It runs whether or not you log in</div>
+          <p>Feeds are pulled and scored around the clock. You don&rsquo;t need to open the platform for the monitoring to happen &mdash; you open it when there&rsquo;s something to act on.</p>
+        </div>
+        <div class="mm-practice-card">
+          <div class="mm-practice-title">It tells you what changed, not just what exists</div>
+          <p>Observer&rsquo;s daily briefing surfaces new findings, grade changes, and trend shifts &mdash; so your team reads one summary instead of scanning raw feeds.</p>
+        </div>
+        <div class="mm-practice-card">
+          <div class="mm-practice-title">It reasons before it alerts</div>
+          <p>A single feed hit doesn&rsquo;t become a fire drill. The mesh cross-references signals &mdash; a lookalike domain plus an active MX record plus a DKIM gap &mdash; before it calls something high severity.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mm-example-section">
+    <div class="container">
+      <div class="mm-example-card">
+        <div class="mm-example-tag">Illustrative Example &mdash; Not an Actual Customer</div>
+        <h3>What week 1 typically surfaces</h3>
+        <p>
+          The scenario below is a representative walkthrough of what a first week of
+          monitoring tends to find for a company of this profile &mdash; it is not a
+          real customer result, and results vary by brand, industry, and existing exposure.
+        </p>
+        <div class="mm-example-timeline">
+          <div class="mm-example-item"><span class="mm-example-day">Day 1</span> Onboarding scan runs across 45+ feeds; email posture graded; baseline Brand Exposure Score established.</div>
+          <div class="mm-example-item"><span class="mm-example-day">Day 2&ndash;3</span> Sentinel flags several lookalike domains registered in the prior 90 days; ASTRA triages by MX activity and DKIM alignment.</div>
+          <div class="mm-example-item"><span class="mm-example-day">Day 4&ndash;5</span> Social monitoring surfaces an unclaimed handle on a platform the brand hadn&rsquo;t registered on; evidence packaged for optional takedown.</div>
+          <div class="mm-example-item"><span class="mm-example-day">Day 6&ndash;7</span> Observer&rsquo;s first daily briefing lands with a single narrative tying the domain, email, and social signal together.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mm-cta">
+    <div class="container">
+      <h2>See what&rsquo;s already targeting your brand.</h2>
+      <p>Run a free exposure scan in under five minutes, then talk to us about the Professional plan.</p>
+      <div class="mm-cta-actions">
+        <a href={`${base}/`} class="btn btn-primary">Run a Free Scan</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Professional Plan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .mm-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .mm-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5vw, 60px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.05;
+  }
+  .hero-accent { color: var(--amber); }
+  .mm-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .mm-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 2rem;
+  }
+
+  .mm-pain-section { padding: 3rem 0; }
+  .mm-pain-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+  .mm-pain-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+  }
+  .mm-pain-quote {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    font-style: italic;
+  }
+
+  .mm-mesh-section {
+    padding: 3rem 0;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  }
+  .mm-mesh-row {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .mm-mesh-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .mm-mesh-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+  }
+  .mm-features {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .mm-features li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 15px;
+    color: var(--text-secondary);
+  }
+  .mm-features li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+  }
+  .mm-mesh-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .mm-mesh-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .mm-agent-grid { display: flex; flex-direction: column; gap: 0.6rem; }
+  .mm-agent-row {
+    padding: 0.85rem 1rem;
+    background: rgba(14,26,43,0.45);
+    border-radius: var(--radius-md);
+    border-left: 3px solid transparent;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  :global([data-theme="light"]) .mm-agent-row { background: rgba(255,255,255,0.6); }
+  .mm-ar-name {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.04em;
+  }
+  .mm-ar-role {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+  }
+  .mm-agent-caption {
+    margin-top: 0.85rem;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    text-align: center;
+  }
+
+  .mm-cost-section { padding: 3rem 0; }
+  .mm-cost-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .mm-cost-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    position: relative;
+  }
+  .mm-cost-card.highlight {
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-glow);
+  }
+  .mm-cost-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 100px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  .mm-cost-label {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+    margin-bottom: 0.5rem;
+  }
+  .mm-cost-amount {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    margin-bottom: 1.25rem;
+  }
+  .mm-cost-amount span {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  .mm-cost-list {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .mm-cost-list li {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .mm-cost-list li::before {
+    content: "\2013";
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+  .mm-cost-card.highlight .mm-cost-list li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+  }
+  .mm-cost-footnote {
+    max-width: 720px;
+    margin: 1.5rem auto 0;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .mm-practice-section {
+    padding: 3rem 0;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  }
+  .mm-practice-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .mm-practice-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .mm-practice-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+  }
+  .mm-practice-card p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .mm-example-section { padding: 3rem 0; }
+  .mm-example-card {
+    max-width: 820px;
+    margin: 0 auto;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+  }
+  .mm-example-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+    background: rgba(229,168,50,0.1);
+    padding: 0.3rem 0.65rem;
+    border-radius: 100px;
+    margin-bottom: 1rem;
+  }
+  .mm-example-card h3 {
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+  }
+  .mm-example-card > p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+  .mm-example-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .mm-example-item {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    padding-left: 1rem;
+    border-left: 2px solid var(--border-strong);
+  }
+  .mm-example-day {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-right: 0.5rem;
+  }
+
+  .mm-cta { padding: 3rem 0 4rem; text-align: center; }
+  .mm-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .mm-cta p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
+  .mm-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 900px) {
+    .mm-mesh-row { grid-template-columns: 1fr; }
+    .mm-cost-grid { grid-template-columns: 1fr; max-width: 480px; }
+  }
+  @media (max-width: 768px) {
+    .mm-pain-grid,
+    .mm-practice-grid { grid-template-columns: 1fr; }
+  }
+</style>

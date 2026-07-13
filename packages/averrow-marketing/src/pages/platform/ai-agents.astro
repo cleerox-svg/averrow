@@ -1,0 +1,658 @@
+---
+/*
+ * Platform deep-dive: The Agent Mesh.
+ * Expands Capability 04 from src/pages/platform.astro into a full page —
+ * philosophy, six core agent profiles, signal fusion into the Brand
+ * Exposure Score, the "SQL does correlation, AI does narrative" doctrine,
+ * an illustrative sample narrative, and cross-links to sibling deep dives.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const coreAgents = [
+  {
+    name: "Sentinel",
+    color: "#C83C3C",
+    role: "Threat Detection",
+    desc: "Watches the open feed network around the clock — phishing databases, malware URL lists, Certificate Transparency logs, DNS intelligence — and hands every new hit to the mesh for scoring the moment it appears.",
+  },
+  {
+    name: "ASTRA",
+    color: "#E5A832",
+    role: "Scoring & Triage",
+    desc: "Takes what Sentinel finds and everything else the mesh already knows about a brand, and decides how much it actually matters — folding email posture, social findings, and infrastructure signals into a single composite score.",
+  },
+  {
+    name: "Observer",
+    color: "#0A8AB5",
+    role: "Strategic Intel",
+    desc: "Steps back from individual threats to look at trend lines — grade changes, new campaign patterns, exposure moving up or down over time — and writes the daily intelligence briefing your team actually reads.",
+  },
+  {
+    name: "Navigator",
+    color: "#065A78",
+    role: "Geo Mapping",
+    desc: "Resolves and plots the infrastructure behind every threat — where a domain is hosted, which provider, which region — so a pattern of attacks from the same infrastructure is visible, not just a list of isolated incidents.",
+  },
+  {
+    name: "Blackbox",
+    color: "#8A8F9C",
+    role: "Timeline & Narrative",
+    desc: "Reconstructs how a threat unfolded — first seen, what changed, what else co-occurred — and writes it up in plain language a human can act on without reading raw log lines.",
+  },
+  {
+    name: "Pathfinder",
+    color: "#3CB878",
+    role: "Prospect Intelligence",
+    desc: "Applies the same correlation the mesh runs for active protection to forward-looking signal — surfacing where exposure is rising before an incident forces the question.",
+  },
+];
+
+const siblingLinks = [
+  {
+    href: "/platform/threat-detection",
+    title: "Threat Detection",
+    desc: "How Sentinel and the feed network find phishing, lookalikes, and malicious infrastructure.",
+  },
+  {
+    href: "/platform/email-security",
+    title: "Email Security Posture",
+    desc: "SPF, DKIM, DMARC, and MX graded A+ through F — and how the grade feeds the exposure score.",
+  },
+  {
+    href: "/platform/social-monitoring",
+    title: "Social Monitoring",
+    desc: "Impersonation and handle-squatting detection across six platforms, with AI confidence scoring.",
+  },
+];
+---
+
+<Layout
+  title="The Agent Mesh — Averrow"
+  description="Inside Averrow's 42-agent AI mesh — Sentinel, ASTRA, Observer, Navigator, Blackbox, and Pathfinder — fusing threat, email, and social signal into one Brand Exposure Score."
+>
+  <section class="dd-ai-hero">
+    <div class="container">
+      <a href={`${base}/platform`} class="dd-ai-back">&larr; Platform overview</a>
+      <div class="dd-ai-eyebrow">The Agent Mesh</div>
+      <h1>Intelligence,<br /><span class="dd-ai-accent">not alerts.</span></h1>
+      <p class="dd-ai-lede">
+        A list of matches is not intelligence. Averrow runs a 42-agent AI mesh
+        that reads every signal the platform collects &mdash; email posture,
+        social findings, domain infrastructure, threat feeds &mdash; and
+        reasons about what they mean together, in language a human can act
+        on the same day.
+      </p>
+
+      <div class="dd-ai-hero-visual" aria-hidden="true">
+        <svg viewBox="0 0 320 260" xmlns="http://www.w3.org/2000/svg">
+          <g stroke-width="1" opacity="0.55">
+            <line x1="160" y1="130" x2="160" y2="34" stroke="#C83C3C" />
+            <line x1="160" y1="130" x2="260" y2="76" stroke="#E5A832" />
+            <line x1="160" y1="130" x2="272" y2="176" stroke="#0A8AB5" />
+            <line x1="160" y1="130" x2="196" y2="232" stroke="#065A78" />
+            <line x1="160" y1="130" x2="86" y2="220" stroke="#8A8F9C" />
+            <line x1="160" y1="130" x2="52" y2="150" stroke="#3CB878" />
+          </g>
+          <circle cx="160" cy="130" r="26" fill="rgba(229,168,50,0.12)" stroke="#E5A832" stroke-width="1.5" />
+          <text x="160" y="126" text-anchor="middle" font-family="var(--font-mono)" font-size="8" fill="#E5A832" font-weight="700">EXPOSURE</text>
+          <text x="160" y="137" text-anchor="middle" font-family="var(--font-mono)" font-size="7" fill="#E5A832">SCORE</text>
+          <circle cx="160" cy="34" r="11" fill="#0E1A2B" stroke="#C83C3C" stroke-width="1.5" />
+          <circle cx="260" cy="76" r="11" fill="#0E1A2B" stroke="#E5A832" stroke-width="1.5" />
+          <circle cx="272" cy="176" r="11" fill="#0E1A2B" stroke="#0A8AB5" stroke-width="1.5" />
+          <circle cx="196" cy="232" r="11" fill="#0E1A2B" stroke="#065A78" stroke-width="1.5" />
+          <circle cx="86" cy="220" r="11" fill="#0E1A2B" stroke="#8A8F9C" stroke-width="1.5" />
+          <circle cx="52" cy="150" r="11" fill="#0E1A2B" stroke="#3CB878" stroke-width="1.5" />
+        </svg>
+      </div>
+
+      <div class="dd-ai-stat-strip">
+        <div class="dd-ai-stat"><span class="dd-ai-stat-num">42</span><span class="dd-ai-stat-label">AI agents in the mesh</span></div>
+        <div class="dd-ai-stat"><span class="dd-ai-stat-num">6</span><span class="dd-ai-stat-label">core agents profiled below</span></div>
+        <div class="dd-ai-stat"><span class="dd-ai-stat-num">1</span><span class="dd-ai-stat-label">composite Brand Exposure Score</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="dd-ai-section">
+    <div class="container dd-ai-narrow">
+      <div class="section-label">Philosophy</div>
+      <h2>An alert tells you what happened. Intelligence tells you what it means.</h2>
+      <p class="dd-ai-body">
+        Most brand-protection tools stop at detection: a phishing domain
+        appears, a row lands in a table, an email fires. That's data, not
+        intelligence &mdash; and it leaves the interpretation work to
+        whoever on your team has time to read the row.
+      </p>
+      <p class="dd-ai-body">
+        Averrow's agent mesh does the interpretation first. Every detection
+        is evaluated against everything else the platform already knows
+        about that brand &mdash; its email posture, its social exposure, its
+        domain history &mdash; before it ever reaches a person. What reaches
+        your team is a scored, explained, prioritized picture, not a raw
+        feed.
+      </p>
+      <div class="dd-ai-compare">
+        <div class="dd-ai-compare-col dd-ai-compare-old">
+          <div class="dd-ai-compare-head">A typical alert feed</div>
+          <ul>
+            <li>New domain match: acme-support.co</li>
+            <li>New domain match: acme-billing.net</li>
+            <li>Social handle flagged: @acme_help_desk</li>
+            <li>DMARC record changed</li>
+          </ul>
+        </div>
+        <div class="dd-ai-compare-col dd-ai-compare-new">
+          <div class="dd-ai-compare-head">Averrow's reasoning</div>
+          <p>
+            Two lookalike domains registered within 48 hours of each other,
+            paired with a new impersonation account and a DKIM gap that
+            makes spoofed mail from your domain harder to catch &mdash;
+            treated as one compound, high-severity situation, not four
+            unrelated rows.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="dd-ai-section dd-ai-section-alt" id="agents">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">The Core Six</div>
+      <h2 class="dd-ai-center-h2">Six agents that reason, not just detect</h2>
+      <p class="dd-ai-center-p">
+        The 42-agent mesh includes specialized processors for individual
+        feeds, enrichment steps, and platform maintenance. These six are the
+        ones whose output you'll see directly &mdash; the reasoning layer on
+        top of everything the mesh collects.
+      </p>
+      <div class="dd-ai-agent-grid">
+        {coreAgents.map((a) => (
+          <div class="dd-ai-agent-card" style={`--agent-color:${a.color}`}>
+            <div class="dd-ai-agent-name">{a.name}</div>
+            <div class="dd-ai-agent-role">{a.role}</div>
+            <p class="dd-ai-agent-desc">{a.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="dd-ai-section">
+    <div class="cap-row">
+      <div class="cap-text">
+        <div class="section-label">Signal Fusion</div>
+        <h2>Four signal streams. One score.</h2>
+        <p>
+          Email posture, social findings, active threats, and domain
+          infrastructure are collected by different parts of the platform
+          &mdash; but they describe one thing: how exposed a brand actually
+          is. The mesh fuses all four into a single composite Brand Exposure
+          Score, so priority is never decided by whichever feed happened to
+          fire most recently.
+        </p>
+        <ul class="dd-ai-features">
+          <li>Cross-system signal fusion across email, social, threats, and domains</li>
+          <li>Social intelligence correlated directly into risk scoring, not siloed</li>
+          <li>One composite Brand Exposure Score per brand</li>
+          <li>Natural-language threat reports generated from the same fused signal</li>
+          <li>Automated takedown-evidence generation once a threat clears triage</li>
+        </ul>
+      </div>
+      <div class="cap-visual">
+        <div class="dd-ai-fusion" aria-hidden="true">
+          <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+            <line x1="60" y1="30" x2="160" y2="100" stroke="#C83C3C" stroke-width="1.25" opacity="0.6" />
+            <line x1="60" y1="170" x2="160" y2="100" stroke="#0A8AB5" stroke-width="1.25" opacity="0.6" />
+            <line x1="260" y1="30" x2="160" y2="100" stroke="#E5A832" stroke-width="1.25" opacity="0.6" />
+            <line x1="260" y1="170" x2="160" y2="100" stroke="#3CB878" stroke-width="1.25" opacity="0.6" />
+            <rect x="14" y="14" width="92" height="32" rx="6" fill="rgba(200,60,60,0.1)" stroke="#C83C3C" stroke-width="1" />
+            <text x="60" y="34" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="#C83C3C">Threats</text>
+            <rect x="14" y="154" width="92" height="32" rx="6" fill="rgba(10,138,181,0.1)" stroke="#0A8AB5" stroke-width="1" />
+            <text x="60" y="174" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="#0A8AB5">Domains</text>
+            <rect x="214" y="14" width="92" height="32" rx="6" fill="rgba(229,168,50,0.1)" stroke="#E5A832" stroke-width="1" />
+            <text x="260" y="34" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="#E5A832">Email</text>
+            <rect x="214" y="154" width="92" height="32" rx="6" fill="rgba(60,184,120,0.1)" stroke="#3CB878" stroke-width="1" />
+            <text x="260" y="174" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="#3CB878">Social</text>
+            <circle cx="160" cy="100" r="34" fill="rgba(229,168,50,0.14)" stroke="#E5A832" stroke-width="1.5" />
+            <text x="160" y="97" text-anchor="middle" font-family="var(--font-mono)" font-size="9" fill="#E5A832" font-weight="700">EXPOSURE</text>
+            <text x="160" y="108" text-anchor="middle" font-family="var(--font-mono)" font-size="8" fill="#E5A832">SCORE</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="dd-ai-section dd-ai-section-alt">
+    <div class="container dd-ai-narrow">
+      <div class="section-label" style="text-align:center;">The Doctrine</div>
+      <h2 class="dd-ai-center-h2">SQL does correlation. AI does narrative.</h2>
+      <p class="dd-ai-center-p">
+        Most of what looks like "AI" in brand protection is really just
+        counting and grouping &mdash; work a database engine already does in
+        milliseconds. Averrow keeps that split explicit instead of routing
+        everything through a model:
+      </p>
+      <div class="dd-ai-doctrine-grid">
+        <div class="dd-ai-doctrine-card">
+          <div class="dd-ai-doctrine-head" style="color:var(--blue)">Structured correlation</div>
+          <p>
+            Counting hits, grouping by provider or region, matching a domain
+            against a feed, checking a DKIM selector &mdash; anything with a
+            deterministic, rule-based answer runs as fast structured queries
+            across the full dataset. No model call, no latency, no cost per
+            row.
+          </p>
+        </div>
+        <div class="dd-ai-doctrine-card">
+          <div class="dd-ai-doctrine-head" style="color:var(--amber)">AI narrative</div>
+          <p>
+            Explaining why a combination of signals matters, writing a daily
+            briefing, drafting takedown evidence in plain language &mdash;
+            work that genuinely benefits from reasoning over structured
+            correlation &mdash; is reserved for the agents built to do it.
+          </p>
+        </div>
+      </div>
+      <p class="dd-ai-body dd-ai-doctrine-close">
+        The result: correlation that scales to the full dataset without AI
+        cost attached to every row, and narrative that's only generated when
+        there's something worth explaining.
+      </p>
+    </div>
+  </section>
+
+  <section class="dd-ai-section" id="sample">
+    <div class="container dd-ai-narrow">
+      <div class="section-label">Sample Output</div>
+      <h2>What a fused narrative looks like</h2>
+      <p class="dd-ai-body">
+        The example below is illustrative &mdash; a representative sample of
+        the kind of narrative Blackbox generates once ASTRA has scored a
+        situation as worth explaining, not a live customer report.
+      </p>
+      <div class="narrative-block">
+        <div class="narrative-label"><span class="narrative-dot"></span> Blackbox &mdash; Timeline &amp; Narrative <span class="dd-ai-illustrative">Illustrative example</span></div>
+        &ldquo;A phishing domain matching your brand was registered 48 hours
+        ago with active MX records, combined with your current DKIM gap on
+        the proofpoint selector. This creates a HIGH-severity compound risk
+        &mdash; attackers can send spoofed emails that pass basic checks.&rdquo;
+      </div>
+    </div>
+  </section>
+
+  <section class="dd-ai-section dd-ai-section-alt">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Explore the Platform</div>
+      <h2 class="dd-ai-center-h2">The rest of the mesh's inputs</h2>
+      <div class="dd-ai-sibling-grid">
+        {siblingLinks.map((s) => (
+          <a href={`${base}${s.href}`} class="dd-ai-sibling-card">
+            <div class="dd-ai-sibling-title">{s.title}</div>
+            <p class="dd-ai-sibling-desc">{s.desc}</p>
+            <span class="dd-ai-sibling-cta">Read more &rarr;</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="plat-cta">
+    <div class="container">
+      <h2>See what the mesh finds for your brand.</h2>
+      <p>Run a free exposure scan in under five minutes, or book a demo to see the agent mesh reason through a real detection.</p>
+      <div class="plat-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .dd-ai-hero {
+    padding: 4.5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+  .dd-ai-back {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-decoration: none;
+    margin-bottom: 1.5rem;
+  }
+  .dd-ai-back:hover { color: var(--amber); }
+  .dd-ai-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .dd-ai-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5vw, 60px);
+    font-weight: 800;
+    margin-bottom: 1.1rem;
+    line-height: 1.05;
+  }
+  .dd-ai-accent { color: var(--amber); }
+  .dd-ai-lede {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 640px;
+    margin: 0 auto 2rem;
+    line-height: 1.65;
+  }
+  .dd-ai-hero-visual {
+    max-width: 340px;
+    margin: 0 auto 2rem;
+  }
+  .dd-ai-hero-visual svg { width: 100%; height: auto; }
+
+  .dd-ai-stat-strip {
+    display: flex;
+    justify-content: center;
+    gap: 2.5rem;
+    flex-wrap: wrap;
+  }
+  .dd-ai-stat { display: flex; flex-direction: column; align-items: center; }
+  .dd-ai-stat-num {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--amber);
+    line-height: 1;
+  }
+  .dd-ai-stat-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.04em;
+    margin-top: 0.35rem;
+    max-width: 130px;
+  }
+
+  /* ── SECTIONS ── */
+  .dd-ai-section { padding: 3.5rem 0; }
+  .dd-ai-section-alt { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
+  .dd-ai-narrow { max-width: 820px; margin: 0 auto; padding: 0 2rem; }
+  .container.dd-ai-narrow .section-label { text-align: left; }
+  .dd-ai-section h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1.1rem;
+    line-height: 1.2;
+  }
+  .dd-ai-center-h2 { text-align: center; max-width: 720px; margin-left: auto; margin-right: auto; }
+  .dd-ai-center-p {
+    text-align: center;
+    max-width: 680px;
+    margin: 0 auto 2.25rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .dd-ai-body { font-size: 16px; color: var(--text-secondary); line-height: 1.75; margin-bottom: 1.1rem; }
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent, var(--amber));
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+
+  /* ── COMPARE (alert vs reasoning) ── */
+  .dd-ai-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-top: 1.75rem;
+  }
+  .dd-ai-compare-col {
+    border-radius: var(--radius-lg);
+    padding: 1.35rem 1.5rem;
+    border: 1px solid var(--border);
+  }
+  .dd-ai-compare-old { background: rgba(120,130,150,0.06); }
+  .dd-ai-compare-new { background: rgba(229,168,50,0.08); border-color: rgba(229,168,50,0.25); }
+  .dd-ai-compare-head {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    margin-bottom: 0.85rem;
+  }
+  .dd-ai-compare-new .dd-ai-compare-head { color: var(--amber); }
+  .dd-ai-compare-old ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+  .dd-ai-compare-old li {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    padding-bottom: 0.55rem;
+    border-bottom: 1px dashed var(--border);
+  }
+  .dd-ai-compare-old li:last-child { border-bottom: none; padding-bottom: 0; }
+  .dd-ai-compare-new p { font-size: 0.9rem; color: var(--text-primary); line-height: 1.65; margin: 0; }
+
+  /* ── AGENT GRID ── */
+  .dd-ai-agent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.1rem;
+    margin-top: 0.5rem;
+  }
+  .dd-ai-agent-card {
+    --agent-color: var(--amber);
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--agent-color);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.35rem;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  :global([data-theme="light"]) .dd-ai-agent-card { background: rgba(255,255,255,0.65); }
+  .dd-ai-agent-name {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--agent-color);
+    letter-spacing: 0.03em;
+    margin-bottom: 0.25rem;
+  }
+  .dd-ai-agent-role {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    margin-bottom: 0.85rem;
+  }
+  .dd-ai-agent-desc { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; margin: 0; }
+
+  /* ── CAP-ROW (reuse platform.astro visual vocabulary) ── */
+  .cap-row {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .cap-text p { font-size: 16px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 1.5rem; }
+  .dd-ai-features { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  .dd-ai-features li { display: flex; align-items: center; gap: 0.5rem; font-size: 15px; color: var(--text-secondary); }
+  .dd-ai-features li::before { content: "\2713"; color: var(--green); font-weight: 700; }
+  .cap-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .cap-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .dd-ai-fusion svg { width: 100%; height: auto; }
+
+  /* ── DOCTRINE ── */
+  .dd-ai-doctrine-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .dd-ai-doctrine-card {
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.6rem;
+  }
+  :global([data-theme="light"]) .dd-ai-doctrine-card { background: rgba(255,255,255,0.6); }
+  .dd-ai-doctrine-head {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.75rem;
+  }
+  .dd-ai-doctrine-card p { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.65; margin: 0; }
+  .dd-ai-doctrine-close { text-align: center; max-width: 640px; margin: 0 auto; }
+
+  /* ── NARRATIVE BLOCK (reused from platform.astro) ── */
+  .narrative-block {
+    margin-top: 1.25rem;
+    border-left: 3px solid var(--red);
+    padding: 1.1rem 1.35rem;
+    background: rgba(200,60,60,0.05);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+  .narrative-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .narrative-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--red);
+    border-radius: 50%;
+    animation: dd-ai-pulse 2s infinite;
+  }
+  @keyframes dd-ai-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(200,60,60,0.5); }
+    70%  { box-shadow: 0 0 0 7px rgba(200,60,60,0); }
+    100% { box-shadow: 0 0 0 0 rgba(200,60,60,0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .narrative-dot { animation: none; box-shadow: 0 0 0 3px rgba(200,60,60,0.2); }
+  }
+  .dd-ai-illustrative {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 0.15rem 0.55rem;
+  }
+
+  /* ── SIBLING LINKS ── */
+  .dd-ai-sibling-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.1rem;
+  }
+  .dd-ai-sibling-card {
+    display: block;
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.4rem 1.35rem;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.25s;
+  }
+  :global([data-theme="light"]) .dd-ai-sibling-card { background: rgba(255,255,255,0.6); }
+  .dd-ai-sibling-card:hover {
+    border-color: rgba(229,168,50,0.4);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    text-decoration: none;
+  }
+  .dd-ai-sibling-title { font-weight: 700; font-size: 1.02rem; margin-bottom: 0.5rem; }
+  .dd-ai-sibling-desc { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 0.85rem; }
+  .dd-ai-sibling-cta {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--amber);
+  }
+
+  /* ── CTA (shared vocabulary with platform.astro) ── */
+  .plat-cta { padding: 3.5rem 0; text-align: center; }
+  .plat-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .plat-cta p {
+    color: var(--text-secondary);
+    max-width: 520px;
+    margin: 0 auto 2rem;
+  }
+  .plat-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    .dd-ai-agent-grid { grid-template-columns: repeat(2, 1fr); }
+    .dd-ai-sibling-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 768px) {
+    .cap-row { grid-template-columns: 1fr; gap: 2rem; }
+    .dd-ai-compare { grid-template-columns: 1fr; }
+    .dd-ai-doctrine-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .dd-ai-agent-grid { grid-template-columns: 1fr; }
+    .dd-ai-sibling-grid { grid-template-columns: 1fr; }
+    .dd-ai-stat-strip { gap: 1.5rem; }
+  }
+</style>

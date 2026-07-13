@@ -71,7 +71,8 @@ const withBase = (href: string) => `${base}${href}`;
       </button>
       <ThemeCycle client:load />
       <a href={withBase("/login")} class="btn btn-outline" style="font-size:0.82rem;padding:0.45rem 1rem;">Login</a>
-      <a href={withBase("/scan")} class="btn btn-primary" style="font-size:0.82rem;padding:0.45rem 1rem;">Free Scan</a>
+      <a href={withBase("/scan")} class="btn btn-outline" style="font-size:0.82rem;padding:0.45rem 1rem;">Free Scan</a>
+      <a href={withBase("/demo")} class="btn btn-primary" style="font-size:0.82rem;padding:0.45rem 1rem;">Get a Demo</a>
     </div>
   </div>
 </nav>
@@ -90,7 +91,8 @@ const withBase = (href: string) => `${base}${href}`;
   ))}
   <div class="mobile-menu-divider"></div>
   <a href={withBase("/login")} class="mobile-link mobile-link-secondary">Login</a>
-  <a href={withBase("/scan")} class="mobile-link mobile-link-primary">Free Scan</a>
+  <a href={withBase("/scan")} class="mobile-link mobile-link-secondary">Free Scan</a>
+  <a href={withBase("/demo")} class="mobile-link mobile-link-primary">Get a Demo</a>
 </div>
 
 <script>

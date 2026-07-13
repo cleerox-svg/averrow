@@ -1,0 +1,363 @@
+---
+/*
+ * Solutions — Startups. "Protect your brand from day one."
+ * Target: early-stage, funded, fast-growing companies.
+ * Structure/tokens cloned from ../platform.astro.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Solutions for Startups — Averrow"
+  description="Protect your brand from day one. A free Brand Exposure scan gives fast-growing companies a board-ready security snapshot in minutes — no signup required."
+>
+  <section class="su-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Solutions &middot; Startups</div>
+      <h1>Protect your brand<br /><span class="hero-accent">from day one.</span></h1>
+      <p>
+        New domain, new email setup, first press coverage &mdash; that&rsquo;s exactly
+        the window attackers watch for. Averrow gives fast-growing companies a
+        free, instant read on their exposure, then continuous coverage once
+        there&rsquo;s a brand worth defending.
+      </p>
+    </div>
+  </section>
+
+  <section class="su-target-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Why Early-Stage Companies Get Targeted</div>
+      <h2 class="su-h2" style="text-align:center;">You look like an easy target &mdash; even if you&rsquo;re not</h2>
+      <div class="su-target-grid">
+        <div class="su-target-card">
+          <div class="su-target-title">Freshly registered domains</div>
+          <p>New domains rarely have DMARC enforcement or a history of monitoring, which makes lookalike registration and email spoofing cheap and easy for an attacker to attempt.</p>
+        </div>
+        <div class="su-target-card">
+          <div class="su-target-title">Incomplete email configuration</div>
+          <p>SPF, DKIM, and DMARC are often an afterthought in the first year. That gap is exactly what an attacker checks first before spoofing your domain in a phishing email.</p>
+        </div>
+        <div class="su-target-card">
+          <div class="su-target-title">Funding and press attention</div>
+          <p>A funding announcement, a hiring push, or a product launch puts your name in front of more people &mdash; including the ones building lookalike domains and fake social accounts to ride the attention.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="su-scan-section">
+    <div class="su-scan-row">
+      <div class="su-scan-text">
+        <div class="section-label">The Free Scan</div>
+        <h2>A board-ready security snapshot, in minutes</h2>
+        <p>
+          Run the free Brand Exposure scan on any domain &mdash; no signup, no
+          credit card. It checks email security posture, threat feeds, lookalike
+          domains, and social handles, and rolls it into a single exposure
+          score you can put in front of your board or your first investor
+          security questionnaire.
+        </p>
+        <ul class="su-features">
+          <li>Email security grade (A+ through F)</li>
+          <li>Threat feed check across 45+ sources</li>
+          <li>Lookalike domain scan</li>
+          <li>Social handle check across six platforms</li>
+          <li>Composite Brand Exposure Score</li>
+        </ul>
+      </div>
+      <div class="su-scan-visual">
+        <div class="su-scan-item"><span>Domain</span><span class="su-scan-value">yourcompany.com</span></div>
+        <div class="su-scan-item"><span>Email Security</span><span class="su-scan-grade">B+</span></div>
+        <div class="su-scan-item"><span>Threat Feeds</span><span class="su-scan-pass">Checked &#10003;</span></div>
+        <div class="su-scan-item"><span>Lookalike Domains</span><span class="su-scan-pass">Checked &#10003;</span></div>
+        <div class="su-scan-item su-scan-last"><span>Social Handles</span><span class="su-scan-pass">Checked &#10003;</span></div>
+        <div class="su-scan-cta-hint">Free &middot; No signup &middot; Under 5 minutes</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="su-quickwin-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">The Quick Win</div>
+      <h2 class="su-h2" style="text-align:center;">Email posture is the fastest thing to fix</h2>
+      <p class="su-quickwin-intro">
+        Most early-stage companies haven&rsquo;t touched their DMARC policy since
+        setting up email. Averrow grades SPF, DKIM, and DMARC on an A+ through F
+        scale and tells you exactly which record to fix first &mdash; often a
+        same-day change with your DNS provider, not a project.
+      </p>
+      <div class="su-quickwin-grid">
+        <div class="su-quickwin-card">
+          <div class="su-quickwin-label">Before</div>
+          <div class="su-quickwin-grade fail">D</div>
+          <p>DMARC set to <code>none</code>, one DKIM selector configured, SPF record incomplete.</p>
+        </div>
+        <div class="su-quickwin-arrow" aria-hidden="true">&rarr;</div>
+        <div class="su-quickwin-card highlight">
+          <div class="su-quickwin-label">After</div>
+          <div class="su-quickwin-grade pass">A</div>
+          <p>DMARC moved to <code>quarantine</code>/<code>reject</code>, DKIM aligned across selectors, SPF corrected.</p>
+        </div>
+      </div>
+      <p class="su-quickwin-footnote">Illustrative before/after &mdash; the exact gap and fix path depend on your current DNS configuration and mail provider.</p>
+    </div>
+  </section>
+
+  <section class="su-cta">
+    <div class="container">
+      <h2>Run your free scan.</h2>
+      <p>See your Brand Exposure Score in under five minutes, then move to continuous monitoring on Professional when you&rsquo;re ready.</p>
+      <div class="su-cta-actions">
+        <a href={`${base}/`} class="btn btn-primary">Run a Free Scan</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Professional Plan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .su-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .su-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5vw, 60px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.05;
+  }
+  .hero-accent { color: var(--amber); }
+  .su-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 660px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .su-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 2rem;
+  }
+
+  .su-target-section { padding: 3rem 0; }
+  .su-target-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .su-target-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .su-target-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+    color: var(--accent-section, var(--accent));
+  }
+  .su-target-card p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .su-scan-section {
+    padding: 3rem 0;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  }
+  .su-scan-row {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .su-scan-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .su-scan-text p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+  }
+  .su-features {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .su-features li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 15px;
+    color: var(--text-secondary);
+  }
+  .su-features li::before {
+    content: "\2713";
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  .su-scan-visual {
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.12);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .su-scan-visual {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .su-scan-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.72rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .su-scan-last { border-bottom: none; }
+  .su-scan-value {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  .su-scan-grade {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--amber);
+  }
+  .su-scan-pass {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--green);
+    font-weight: 600;
+  }
+  .su-scan-cta-hint {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.04em;
+  }
+
+  .su-quickwin-section { padding: 3rem 0; }
+  .su-quickwin-intro {
+    max-width: 720px;
+    margin: 0 auto 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.7;
+  }
+  .su-quickwin-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1.25rem;
+    max-width: 760px;
+    margin: 0 auto;
+    align-items: center;
+  }
+  .su-quickwin-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    text-align: center;
+  }
+  .su-quickwin-card.highlight { border-color: var(--green); }
+  .su-quickwin-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 0.5rem;
+  }
+  .su-quickwin-grade {
+    font-family: var(--font-display);
+    font-size: 2.5rem;
+    font-weight: 800;
+    margin-bottom: 0.75rem;
+  }
+  .su-quickwin-grade.fail { color: var(--sev-high); }
+  .su-quickwin-grade.pass { color: var(--green); }
+  .su-quickwin-card p {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .su-quickwin-card code {
+    font-family: var(--font-mono);
+    background: rgba(255,255,255,0.06);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+  }
+  .su-quickwin-arrow {
+    font-size: 1.75rem;
+    color: var(--amber);
+    text-align: center;
+  }
+  .su-quickwin-footnote {
+    max-width: 640px;
+    margin: 1.5rem auto 0;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .su-cta { padding: 3rem 0 4rem; text-align: center; }
+  .su-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .su-cta p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
+  .su-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 900px) {
+    .su-scan-row { grid-template-columns: 1fr; gap: 2rem; }
+  }
+  @media (max-width: 768px) {
+    .su-target-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .su-quickwin-grid { grid-template-columns: 1fr; }
+    .su-quickwin-arrow { transform: rotate(90deg); }
+  }
+</style>
