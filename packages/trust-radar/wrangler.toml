@@ -354,16 +354,18 @@ routes = [
 ]
 vars = { ENVIRONMENT = "staging" }
 
+# Isolated staging DBs — never the prod database (SECURITY_AUDIT O2). Empty
+# on creation; `wrangler deploy --env staging` applies migrations_dir on deploy.
 [[env.staging.d1_databases]]
 binding = "DB"
-database_name = "trust-radar-v2"
-database_id = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6"
+database_name = "trust-radar-v2-staging"
+database_id = "7709322c-7020-41f9-ad96-aa797cf585de"
 migrations_dir = "migrations"
 
 [[env.staging.d1_databases]]
 binding = "AUDIT_DB"
-database_name = "trust-radar-v2-audit"
-database_id = "55d58eff-47f3-4533-afa4-e52d494376e0"
+database_name = "trust-radar-v2-audit-staging"
+database_id = "45539971-b965-4bfb-a1d3-93a03771b1c4"
 migrations_dir = "migrations-audit"
 
 # ─── Local dev overrides ─────────────────────────────────────
@@ -371,16 +373,18 @@ migrations_dir = "migrations-audit"
 name = "trust-radar-dev"
 vars = { ENVIRONMENT = "development" }
 
+# Isolated dev DBs — never the prod database (SECURITY_AUDIT O2). Empty on
+# creation; `wrangler deploy --env dev` applies migrations_dir on deploy.
 [[env.dev.d1_databases]]
 binding = "DB"
-database_name = "trust-radar-v2"
-database_id = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6"
+database_name = "trust-radar-v2-dev"
+database_id = "83f702ee-3600-4f0a-84e8-102c49765429"
 migrations_dir = "migrations"
 
 [[env.dev.d1_databases]]
 binding = "AUDIT_DB"
-database_name = "trust-radar-v2-audit"
-database_id = "55d58eff-47f3-4533-afa4-e52d494376e0"
+database_name = "trust-radar-v2-audit-dev"
+database_id = "3f2c2683-bc2b-474a-b61a-89d80bb2cded"
 migrations_dir = "migrations-audit"
 
 [[r2_buckets]]
