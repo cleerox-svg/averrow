@@ -1,0 +1,290 @@
+---
+/*
+ * Getting Started walkthrough. Five real steps through the actual
+ * product flow: free scan/signup -> add a brand -> understand the
+ * Brand Exposure Score -> set up alerts -> connect a live integration.
+ * No invented API endpoints, payloads, or keys (docs honesty rule) —
+ * anything requiring endpoint-level detail routes to /contact.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const steps = [
+  {
+    n: "01",
+    title: "Run a free scan or create an account",
+    body:
+      "Averrow's free Brand Exposure scan needs no signup and no credit card &mdash; enter your domain and the platform checks public threat feeds, DNS, and email authentication records for exposure signals in minutes. Ready for continuous monitoring, alerts, and the full agent mesh? Create an account on the Free plan, or go straight to Professional or Business.",
+    links: [
+      { href: "/", label: "Run a free scan" },
+      { href: "/pricing", label: "Compare plans" },
+    ],
+  },
+  {
+    n: "02",
+    title: "Add your brand",
+    body:
+      "Once you have an account, add the brand you want Averrow to watch: your primary domain, plus &mdash; optionally &mdash; the official social handles and app-store listings you already control. That context is what lets the platform tell a real impersonation attempt apart from your own verified presence, instead of flagging everything that merely resembles your brand.",
+    links: [],
+  },
+  {
+    n: "03",
+    title: "Understand your Brand Exposure Score",
+    body:
+      "Every brand gets one composite Brand Exposure Score, fused by the AI agent mesh from four signal streams: active threats, email authentication posture (SPF, DKIM, DMARC, and MX graded A+ through F), social exposure across six platforms, and domain infrastructure. The score moves as any of those four inputs change &mdash; and Observer's daily intelligence briefing explains why it moved, not just that it did.",
+    links: [{ href: "/platform/ai-agents", label: "How the score is built" }],
+  },
+  {
+    n: "04",
+    title: "Set up alerts",
+    body:
+      "Decide how you want to hear about new findings. Rule-based triage runs first &mdash; matches against your own verified handles, or detections with no real risk signal, are auto-dismissed before they reach a person &mdash; so what lands in your queue is worth a look. From there, choose email digests, in-app notifications, or both.",
+    links: [],
+  },
+  {
+    n: "05",
+    title: "Connect a live integration",
+    body:
+      "When Averrow needs to plug into the rest of your stack, four integrations are live today: STIX/TAXII for standard threat-intel export, a REST API for programmatic access, webhooks for real-time event delivery, and email for alert digests. Slack, Splunk, IBM QRadar, and Microsoft Sentinel are on the roadmap. For API credentials or help wiring up an integration, request access directly &mdash; this walkthrough won't hand you a fabricated endpoint reference.",
+    links: [
+      { href: "/partners", label: "See live integrations" },
+      { href: "/contact", label: "Request API access" },
+    ],
+  },
+];
+---
+
+<Layout
+  title="Getting Started — Averrow Docs"
+  description="A five-step walkthrough of the Averrow product flow: run a free scan, add your brand, understand your Brand Exposure Score, set up alerts, and connect a live integration."
+>
+  <section class="docs-gs-hero">
+    <div class="container">
+      <a href={`${base}/docs`} class="docs-gs-back">&larr; Documentation</a>
+      <div class="docs-gs-eyebrow">Getting Started</div>
+      <h1>From zero to your first<br /><span class="docs-gs-accent">Brand Exposure Score.</span></h1>
+      <p class="docs-gs-lede">
+        Five steps, plain language, no fabricated API detail. This is the
+        real product flow &mdash; not a hypothetical one.
+      </p>
+    </div>
+  </section>
+
+  <section class="docs-gs-steps">
+    <div class="container docs-gs-narrow">
+      {steps.map((s, i) => (
+        <div class="docs-gs-step">
+          <div class="docs-gs-step-num" aria-hidden="true">{s.n}</div>
+          <div class="docs-gs-step-body">
+            <h2>{s.title}</h2>
+            <p set:html={s.body} />
+            {s.links.length > 0 && (
+              <div class="docs-gs-step-links">
+                {s.links.map((l) => (
+                  <a href={`${base}${l.href}`} class="docs-gs-step-link">{l.label} &rarr;</a>
+                ))}
+              </div>
+            )}
+          </div>
+          {i < steps.length - 1 && <div class="docs-gs-connector" aria-hidden="true" />}
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="docs-gs-next">
+    <div class="container docs-gs-narrow">
+      <div class="docs-gs-next-card">
+        <h3>What's next</h3>
+        <p>
+          Once your brand is added and alerts are configured, the agent
+          mesh runs continuously in the background &mdash; you don't have
+          to trigger anything manually. Come back to the documentation hub
+          any time for a refresher on a specific capability, or book a demo
+          to see the platform reason through a real detection with someone
+          on the team.
+        </p>
+        <div class="docs-gs-next-links">
+          <a href={`${base}/docs`} class="btn btn-outline">Back to Documentation</a>
+          <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="docs-gs-cta">
+    <div class="container">
+      <h2>See what's already targeting your brand.</h2>
+      <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
+      <div class="docs-gs-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .docs-gs-hero {
+    padding: 4.5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .docs-gs-back {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-decoration: none;
+    margin-bottom: 1.5rem;
+  }
+  .docs-gs-back:hover { color: var(--amber); }
+  .docs-gs-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .docs-gs-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 5vw, 54px);
+    font-weight: 800;
+    margin-bottom: 1.1rem;
+    line-height: 1.1;
+  }
+  .docs-gs-accent { color: var(--amber); }
+  .docs-gs-lede {
+    font-size: 17px;
+    color: var(--text-secondary);
+    max-width: 560px;
+    margin: 0 auto;
+    line-height: 1.65;
+  }
+
+  /* ── STEPS ── */
+  .docs-gs-steps { padding: 3.5rem 0 1rem; }
+  .docs-gs-narrow { max-width: 760px; margin: 0 auto; padding: 0 2rem; }
+  .docs-gs-step {
+    position: relative;
+    display: flex;
+    gap: 1.75rem;
+    padding-bottom: 2.75rem;
+  }
+  .docs-gs-step:last-child { padding-bottom: 0; }
+  .docs-gs-step-num {
+    flex-shrink: 0;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: 2px solid rgba(229,168,50,0.4);
+    background: rgba(229,168,50,0.08);
+    color: var(--amber);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1.05rem;
+    position: relative;
+    z-index: 1;
+  }
+  .docs-gs-connector {
+    position: absolute;
+    left: 28px;
+    top: 56px;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, rgba(229,168,50,0.35), var(--border));
+    transform: translateX(-1px);
+  }
+  .docs-gs-step-body { flex: 1; min-width: 0; padding-top: 0.5rem; }
+  .docs-gs-step-body h2 {
+    font-family: var(--font-display);
+    font-size: clamp(20px, 2.6vw, 26px);
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    line-height: 1.25;
+  }
+  .docs-gs-step-body p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.75;
+    margin: 0;
+  }
+  .docs-gs-step-links {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+  .docs-gs-step-link {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--amber);
+  }
+
+  /* ── WHAT'S NEXT ── */
+  .docs-gs-next { padding: 1.5rem 0 3rem; }
+  .docs-gs-next-card {
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2rem 2.25rem;
+  }
+  :global([data-theme="light"]) .docs-gs-next-card { background: rgba(255,255,255,0.6); }
+  .docs-gs-next-card h3 {
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+  }
+  .docs-gs-next-card p {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.5rem;
+  }
+  .docs-gs-next-links {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  /* ── CTA ── */
+  .docs-gs-cta {
+    padding: 3.5rem 0;
+    text-align: center;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  }
+  .docs-gs-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .docs-gs-cta p {
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto 2rem;
+  }
+  .docs-gs-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 640px) {
+    .docs-gs-step { gap: 1.1rem; }
+    .docs-gs-step-num { width: 44px; height: 44px; font-size: 0.9rem; }
+    .docs-gs-connector { left: 22px; top: 44px; }
+    .docs-gs-next-card { padding: 1.5rem 1.5rem; }
+  }
+</style>

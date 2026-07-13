@@ -1,0 +1,56 @@
+---
+title: "SPF, DKIM, and DMARC: An Email-Authentication Guide for Brand Protection"
+excerpt: "What each protocol actually does, how gaps in them enable brand impersonation, and what a strong posture looks like."
+category: "Threat Intel"
+author: "Averrow Research"
+publishedAt: "2026-07-02"
+readingMinutes: 9
+---
+
+Most conversations about brand impersonation start with the visible stuff — a fake domain, a cloned website, a phishing page with a stolen logo. Email authentication rarely comes up first, even though it's frequently the mechanism that decides whether an impersonation attempt lands in an inbox looking legitimate or gets caught before it ever reaches anyone.
+
+SPF, DKIM, and DMARC are the three protocols that determine whether a message claiming to be from your domain can actually be verified as coming from your domain. When they're properly configured and enforced, spoofing your domain directly — no lookalike required, just your real domain name in the "From" field — becomes very difficult. When they're missing, partial, or set to a non-enforcing policy, an attacker doesn't need a lookalike domain at all. They can just use yours.
+
+This is a practical guide to what each protocol does, where the common gaps are, and what a genuinely strong posture looks like.
+
+### SPF: who's allowed to send
+
+SPF (Sender Policy Framework) is a DNS record that lists the mail servers authorized to send email on behalf of your domain. When a receiving mail server gets a message claiming to be from you, it checks the sending server's IP address against your published SPF record. If the IP isn't on the list, the message fails the check.
+
+SPF is the simplest of the three to set up and the easiest to get subtly wrong. The most common failure mode isn't a missing record — it's an incomplete one. Companies add a new email marketing tool, a new transactional email provider, or a new CRM integration, and forget to add that provider's sending infrastructure to the SPF record. The record technically exists, but it doesn't cover every legitimate sender, which either breaks deliverability for real mail or — more relevant here — doesn't actually constrain who can spoof the domain if the record is too permissive to begin with (a bare `~all` "soft fail" rather than `-all` "hard fail" is a common half-measure).
+
+SPF alone is also easily bypassed in certain configurations, which is exactly why it's not meant to stand alone.
+
+### DKIM: proving the message wasn't altered
+
+DKIM (DomainKeys Identified Mail) works differently. Instead of authorizing servers by IP, it attaches a cryptographic signature to outgoing mail. The signature is generated with a private key held by the sending system and verified by the receiving server against a public key published in your DNS. If the signature checks out, the receiving server knows two things: the message really was signed by a system with access to your private key, and the content wasn't altered in transit.
+
+The gap that shows up constantly in practice: organizations run several email systems — Google Workspace or Microsoft 365 for internal mail, a marketing platform for campaigns, a transactional provider for receipts and password resets, sometimes a dedicated security gateway like Proofpoint or Mimecast layered on top. Each of these needs its own DKIM selector configured and published. It's common to find DKIM fully deployed for the primary mail provider and completely absent for two or three of the others — meaning a portion of legitimate outbound mail isn't authenticated at all, and more importantly, an attacker studying which of your systems lacks DKIM coverage knows exactly which sending path is easiest to spoof convincingly.
+
+This is why Averrow verifies DKIM across multiple enterprise selectors — 12 or more — rather than checking for a single record and calling the job done. A single-selector check can show "DKIM: present" while missing that half your actual sending infrastructure has no coverage.
+
+### DMARC: the policy that ties it together
+
+DMARC (Domain-based Message Authentication, Reporting and Conformance) doesn't introduce a new verification mechanism — it uses the results of SPF and DKIM and adds something both were missing: an enforceable policy, plus visibility.
+
+A DMARC record tells receiving mail servers what to do when a message fails both SPF and DKIM alignment: `p=none` (do nothing, just report), `p=quarantine` (send it to spam), or `p=reject` (block it outright). It also gives you reporting — aggregate reports showing every source claiming to send mail as your domain, which is often the first time a company discovers unauthorized senders using their name.
+
+The gap here is the most consequential of the three, because it's a policy choice, not just a technical omission. A huge share of domains that have gotten as far as publishing a DMARC record still leave it at `p=none`. That's monitoring mode — you'll see the reports, but nothing is actually blocked. It's the equivalent of installing a security camera pointed at your front door and never locking it. Moving to `quarantine` and eventually `reject` is what converts DMARC from a reporting tool into an actual enforcement mechanism, and it's usually the step that gets skipped because it carries some risk of blocking legitimate mail that wasn't properly authenticated in the first place — which is exactly why getting SPF and DKIM fully correct across every sending system has to come first.
+
+### How these gaps enable brand impersonation
+
+Put the three together and the pattern is straightforward: SPF without full coverage, DKIM without full selector deployment, and DMARC without enforcement add up to a domain that can be spoofed directly. An attacker doesn't need to register a single lookalike domain, buy a certificate, or stand up hosting. They send a message with your domain in the From field, from infrastructure with no relationship to you, and unless the receiving mail server independently distrusts the sender, it can land looking completely legitimate — your real domain, your real brand name, in a customer's actual inbox.
+
+This is also why email posture and lookalike-domain monitoring have to be read together, not separately. A brand with weak email authentication makes every other impersonation vector more dangerous. A newly registered domain with an active MX record targeting your brand is a meaningfully higher-severity finding when paired with a known gap in your own DKIM coverage — the attacker now has two paths into the same inbox instead of one.
+
+### What a strong posture looks like
+
+A fully hardened setup has SPF covering every legitimate sending system with a hard fail for anything not listed, DKIM signatures active and passing across every provider that sends on your behalf — marketing platform, transactional provider, internal mail, and any security gateway layered in front of it — and DMARC enforced at `p=reject`, not just published at `p=none`.
+
+Averrow grades this whole picture on an A+ through F scale, factoring in SPF validity, multi-selector DKIM coverage, DMARC policy strength, and MX provider detection, and tracks the grade over time so a regression — a selector that silently expired, a DMARC policy someone relaxed during a migration and never restored — gets caught quickly rather than discovered months later.
+
+### Why brand protection has to watch this
+
+Email authentication doesn't fit neatly into the categories most security tools are built around. It's not quite a network control, not quite an application security concern, and it's rarely owned by the same team that manages phishing takedowns or social media monitoring. That's exactly why it tends to fall through the cracks — and exactly why it belongs inside brand protection rather than treated as a separate workstream. The whole point of monitoring for impersonation is protecting the trust relationship between a brand and the people who receive its communications. Email is the channel where that relationship gets exploited most directly, and it deserves to be watched with the same continuity as domains and social profiles.
+
+See how Averrow scores email posture in more depth on the [email security page](/platform/email-security), or [run a free scan](/) to see your current grade.

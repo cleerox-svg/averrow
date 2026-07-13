@@ -1,0 +1,54 @@
+---
+title: "What MSSPs Should Know About Adding Brand Threat Intelligence"
+excerpt: "Clients are already asking about phishing domains and social impersonation. Here's what it takes to add brand threat intelligence to an MDR offering."
+category: "Company"
+author: "Averrow Research"
+publishedAt: "2026-06-24"
+readingMinutes: 8
+---
+
+If you run a managed security practice, you've likely had this conversation more than once: a client forwards a phishing email using their domain, or a customer reports a fake support account on social media, and asks why it wasn't caught by anything in the stack you already manage for them. The honest answer is usually that nothing in a standard MDR stack is built to catch it — brand impersonation lives outside the network, endpoint, and identity telemetry that most managed detection and response programs are built around.
+
+That gap is becoming harder to wave off. Phishing and impersonation attacks aren't a network security problem in the traditional sense — there's no endpoint to instrument, no log source to ingest, no anomalous authentication event to alert on. The infrastructure lives entirely outside the client's perimeter: a domain registered by someone else, a social account opened by someone else, a mail server the client doesn't control. Clients feel this gap acutely because it's their brand and their customers being targeted, and they're increasingly asking their security partner to cover it rather than treating it as someone else's problem.
+
+### The demand signal
+
+The request usually doesn't arrive framed as "we need brand threat intelligence." It shows up as something more specific: "can you tell us if anyone's impersonating us online," or "our customers keep forwarding suspicious emails, can you help us figure out which ones are real," or "we just found a fake domain using our name and we don't know what to do about it." Each of those is a brand protection request wearing a different name.
+
+For an MSSP, that's an opening rather than a distraction. It's a service the client already trusts you to evaluate — you're the security partner they call first — and it's a service that very few managed providers currently offer natively, which makes it a differentiator rather than a commodity add-on.
+
+### What it adds to an MDR offering
+
+Brand threat intelligence covers a category of risk that sits adjacent to, but distinct from, what MDR typically monitors:
+
+- **Lookalike and phishing domains** targeting the client's brand name, tracked from registration through weaponization.
+- **Email authentication posture** — SPF, DKIM, DMARC, and MX configuration — which determines how easily the client's own domain can be spoofed directly, independent of any lookalike infrastructure.
+- **Social media impersonation** across the platforms attackers actually use to run scams against a brand's customers and employees.
+- **Threat feed correlation** — matching the client's brand against phishing databases, malware URL feeds, certificate transparency logs, and breach intelligence.
+- **A composite exposure score and natural-language briefings**, so the output is something a client's leadership can read without needing a security background to interpret it.
+
+None of this replaces the network- and endpoint-centric work an MDR program already does. It extends coverage to the parts of a client's risk surface that live entirely outside their infrastructure — the parts a firewall or EDR agent was never going to see in the first place.
+
+### Built for delivery at scale, not one client at a time
+
+The economics of adding a new service line only work if it can be delivered across a client book without a linear increase in analyst headcount. A few things matter here specifically for MSSPs evaluating whether to add this capability:
+
+**Multi-tenant from the ground up.** Managing brand exposure for dozens of client organizations needs to look like managing dozens of separate brand profiles inside one platform, not standing up separate instances or juggling separate logins per client.
+
+**API-first.** Brand exposure data — scores, findings, alert status — needs to be pullable programmatically so it can be folded into whatever reporting or ticketing workflow the MSSP already runs for clients, rather than requiring analysts to work inside a second dashboard all day.
+
+**Standard intelligence export.** STIX/TAXII export means brand-derived threat intelligence — newly identified phishing domains, malicious infrastructure, impersonation indicators — can flow into the same threat intelligence platforms and SIEMs an MSSP already uses, instead of sitting in a silo that only makes sense on its own.
+
+These three — multi-tenant management, a REST API, and STIX/TAXII export — are live in Averrow today, not on a roadmap. That matters, because a brand intelligence source that can't plug into an existing SOC workflow ends up being a second screen someone has to remember to check, which is exactly the kind of tool sprawl MSSPs are trying to eliminate for their own clients.
+
+### The economics
+
+Brand impersonation monitoring has historically been priced and packaged for enterprises — platforms built for organizations with dedicated security budgets and named account teams, with pricing that reflects it. That pricing model doesn't translate to an MSSP's client book, where most clients are mid-market organizations that need the coverage but were never going to buy an enterprise brand protection contract on their own.
+
+An AI-native approach changes the underlying cost structure. When agents handle continuous monitoring, scoring, and narrative generation instead of a team of human analysts triaging alerts by hand, the cost of covering an additional brand doesn't scale the way headcount-based coverage does. That's what makes it feasible to offer as a line item across a client book rather than reserve it for the largest few accounts.
+
+### Where to go from here
+
+If you're an MSSP evaluating whether to add brand threat intelligence to your service catalog, the [MSSP solutions page](/solutions/mssp) covers the delivery model in more detail, and the [partners page](/partners) has the specifics on how to get set up. White-label delivery is on our roadmap and worth a conversation if that's the direction your practice is heading.
+
+The clients asking about this today aren't going to stop asking. The question is whether they get the answer from you or from whoever they call next.

@@ -1,0 +1,57 @@
+---
+title: "Reading Your Brand Exposure Score: What Each Signal Means"
+excerpt: "The Brand Exposure Score isn't a single number to watch — it's four categories of signal. Here's how to read each one and what to act on first."
+category: "Product"
+author: "Averrow Research"
+publishedAt: "2026-07-13"
+readingMinutes: 7
+---
+
+The first thing most people want to know when they add a brand to Averrow is simple: what's the number? The second question, usually asked a week later after the number moves, is harder: what actually changed, and does it matter?
+
+That second question is the more useful one. The Brand Exposure Score is a composite — a single figure built from several independent categories of signal, each measuring a different way your brand can be targeted. Understanding what feeds it turns the score from a scoreboard into a diagnostic tool.
+
+### It's a composite, not a single measurement
+
+A brand with a perfect email authentication setup and a dozen active phishing domains looks very different from a brand with a fragile email posture and a clean domain landscape — but both could land at a similar overall score if you only looked at the headline number. The value is in the breakdown underneath it.
+
+Four categories feed the composite:
+
+**Email security posture.** SPF, DKIM, DMARC, and MX configuration, graded A+ through F. This measures how easy it is for an attacker to send email that appears to come from your domain — not a lookalike, your actual domain — and land it in an inbox looking legitimate.
+
+**Lookalike and phishing domains.** Typosquats, homoglyph variants, TLD swaps, and keyword-appended domains that resemble your brand, plus phishing pages actively impersonating it. This category weighs both how many exist and how weaponized they are — a parked domain scores differently than one with an active MX record and a certificate issued yesterday.
+
+**Social impersonation.** Fake accounts, handle squatting, and unauthorized brand usage across the platforms Averrow monitors, scored with AI confidence so that ambiguous cases (a fan account, a regional reseller) don't inflate the picture the way an unambiguous impersonation does.
+
+**Threat feed hits.** Direct mentions and matches for your brand across phishing databases, malware URL feeds, threat intelligence feeds, certificate transparency logs, and breach intelligence — the open signal that something already has your brand in its sights.
+
+Each category has its own severity distribution. The composite score weights them together, but the categories are always visible individually in your dashboard — that's where the real information lives.
+
+### Reading a change
+
+A score that moves 3 points in a week means something different depending on which category moved.
+
+A drop driven by email posture usually means a DNS change — a new mail provider added without updating SPF, a DKIM selector that expired, a DMARC policy that got relaxed during a migration and never got tightened back up. These are usually self-inflicted and self-correctable. They're also the fastest fixes available, because the gap is on your side of the fence, not the attacker's.
+
+A drop driven by lookalike domains or threat feed hits usually means new attacker activity — a domain was registered, a phishing kit went live, your brand showed up in a feed it hadn't appeared in before. These are external and require a response: verification, evidence collection, and in many cases a takedown request.
+
+A drop driven by social impersonation is often the most time-sensitive of the four, because impersonation accounts are frequently used to run active scams against real people in real time — fake support accounts harvesting credentials, fake giveaway accounts collecting payment details — rather than sitting dormant the way a parked domain might.
+
+The direction of the trend line matters as much as the current value. A brand sitting at a mediocre score that's been flat for months is a different conversation than a brand whose score just dropped sharply this week. Averrow's agent mesh is built to catch the second case fast — that's the whole point of continuous monitoring instead of periodic audits.
+
+### What to act on first
+
+When multiple categories are flagged at once, prioritize in this order:
+
+1. **Email posture gaps you control.** Fix these first because they're free, fast, and they reduce the blast radius of everything else. A brand with strong DMARC enforcement makes every subsequent phishing attempt harder to pull off convincingly, even the ones using lookalike infrastructure.
+2. **Active, weaponized external threats.** A phishing domain with live content and an MX record beats a parked domain for urgency, every time. Averrow's risk scoring reflects this — activity level matters more than raw domain count.
+3. **Live social impersonation.** Especially anything actively engaging with real accounts, since the harm compounds with every interaction the fake account has before takedown.
+4. **Everything else in the queue.** Dormant registrations, low-confidence social matches, and stale threat feed mentions still deserve attention, but they're lower urgency than the three categories above.
+
+This is also why Averrow's agents write narratives instead of just listing alerts. A newly registered domain sharing infrastructure with a domain already flagged in a threat feed, paired with a known DKIM gap on your side, isn't three separate line items — it's one compound risk that deserves to be read as a single story with a single next action.
+
+### The score is a compass, not a verdict
+
+No score is ever "finished." Brand exposure changes with your DNS configuration, your social footprint, and what attackers are doing in the world that has nothing to do with you. The goal isn't to chase a perfect number — it's to know, continuously, which of the four categories needs attention this week, and to close the gaps you control before someone else finds them.
+
+If you want to see how your own brand breaks down across these categories, [run a free exposure scan](/) — it takes a few minutes and requires no signup. For a deeper look at how the underlying agent mesh produces the score, see the [platform overview](/platform).

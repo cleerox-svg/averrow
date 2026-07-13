@@ -39,9 +39,9 @@ export const NAV_LINKS: NavLink[] = [
     icon: `<svg ${ICON_BASE}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25" fill="currentColor"/></svg>`,
   },
   {
-    href: "/blog",
-    label: "Blog",
-    icon: `<svg ${ICON_BASE}><path d="M4 4h16v16H4z"/><path d="M4 8h16"/><path d="M8 4v16"/></svg>`,
+    href: "/resources",
+    label: "Resources",
+    icon: `<svg ${ICON_BASE}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
   },
   {
     href: "/contact",

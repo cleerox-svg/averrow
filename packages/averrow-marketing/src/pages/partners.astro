@@ -1,0 +1,421 @@
+---
+/*
+ * Partners page. Technology Integrations grid (live + roadmap, cloned
+ * from platform.astro's int-section visual vocabulary) + MSSP
+ * Partnership Program section for managed security providers.
+ * Structure/tokens cloned from ../pages/platform.astro and
+ * ../pages/solutions/mssp.astro.
+ */
+import Layout from "../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Partners &amp; Integrations — Averrow"
+  description="Averrow's technology integrations and MSSP partnership program. STIX/TAXII, REST API, webhooks, and email are live today; SIEM connectors are on the roadmap."
+>
+  <section class="pt-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Partners</div>
+      <h1>Built to plug into<br /><span class="hero-accent">the stack you already run.</span></h1>
+      <p>
+        Averrow exports threat intelligence in open, standard formats and
+        partners with managed security providers who want to add brand
+        protection to what they already sell &mdash; not a walled garden
+        clients have to log into separately.
+      </p>
+    </div>
+  </section>
+
+  <section class="pt-int-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Technology Integrations</div>
+      <h2 class="pt-h2" style="text-align:center;">Works With Your Existing Stack</h2>
+      <p class="pt-int-p">Export data and receive alerts in the tools you already use.</p>
+    </div>
+
+    <div class="pt-group-label">Live Today</div>
+    <div class="pt-int-grid">
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="pt-int-card-name">STIX/TAXII</div>
+        <div class="pt-int-card-desc">Standard threat intelligence export</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </div>
+        <div class="pt-int-card-name">REST API</div>
+        <div class="pt-int-card-desc">Full programmatic access</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        </div>
+        <div class="pt-int-card-name">Webhooks</div>
+        <div class="pt-int-card-desc">Real-time event notifications</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
+        <div class="pt-int-card-name">Email</div>
+        <div class="pt-int-card-desc">Alert delivery and digests</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+    </div>
+
+    <div class="pt-group-label">On the Roadmap</div>
+    <div class="pt-int-grid">
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon planned" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+        </div>
+        <div class="pt-int-card-name">Slack</div>
+        <div class="pt-int-card-desc">Team alert channels</div>
+        <span class="pt-int-card-status planned">Roadmap</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon planned" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        </div>
+        <div class="pt-int-card-name">Splunk</div>
+        <div class="pt-int-card-desc">SIEM data integration</div>
+        <span class="pt-int-card-status planned">Roadmap</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon planned" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+        </div>
+        <div class="pt-int-card-name">IBM QRadar</div>
+        <div class="pt-int-card-desc">Security analytics feed</div>
+        <span class="pt-int-card-status planned">Roadmap</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon planned" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg>
+        </div>
+        <div class="pt-int-card-name">Microsoft Sentinel</div>
+        <div class="pt-int-card-desc">Cloud SIEM integration</div>
+        <span class="pt-int-card-status planned">Roadmap</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="pt-mssp-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">MSSP Partnership Program</div>
+      <h2 class="pt-h2" style="text-align:center;">Add brand intelligence to your managed services</h2>
+      <p class="pt-mssp-intro">
+        Built for managed security service providers and MDR teams who want a
+        multi-tenant, API-first brand-intelligence layer they can fold into an
+        existing client program &mdash; not a separate portal every client has
+        to be onboarded to.
+      </p>
+
+      <div class="pt-mssp-grid">
+        <div class="pt-mssp-card">
+          <div class="pt-mssp-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">Multi-tenant, org-isolated</div>
+          <div class="pt-mssp-card-desc">Every client organization is isolated at the data layer, enforced at the API. Add a client without new infrastructure.</div>
+        </div>
+        <div class="pt-mssp-card">
+          <div class="pt-mssp-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">API-first</div>
+          <div class="pt-mssp-card-desc">Full REST API access so brand threat intelligence lands in the same workflow as everything else you monitor.</div>
+        </div>
+        <div class="pt-mssp-card">
+          <div class="pt-mssp-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">STIX/TAXII export</div>
+          <div class="pt-mssp-card-desc">Standard threat-intel export &mdash; live today &mdash; so findings feed straight into your SIEM/SOAR pipeline.</div>
+        </div>
+        <div class="pt-mssp-card">
+          <div class="pt-mssp-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">Volume economics</div>
+          <div class="pt-mssp-card-desc">The Business plan covers up to 10 client brands under one account for a fixed platform cost, not a per-seat markup.</div>
+        </div>
+        <div class="pt-mssp-card">
+          <div class="pt-mssp-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/><path d="M17 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-1a4 4 0 0 0-3-3.87"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">Dedicated partner support</div>
+          <div class="pt-mssp-card-desc">Business and Enterprise partners get a dedicated account contact for onboarding, escalation, and roadmap input.</div>
+        </div>
+        <div class="pt-mssp-card roadmap">
+          <div class="pt-mssp-card-icon planned" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>
+          </div>
+          <div class="pt-mssp-card-name">White-label reporting</div>
+          <div class="pt-mssp-card-desc">Fully white-labeled reporting and client-facing portals are not available today.</div>
+          <span class="pt-mssp-card-status">Roadmap</span>
+        </div>
+      </div>
+
+      <a href={`${base}/solutions/mssp`} class="pt-mssp-link">See the full MSSP solution page &rarr;</a>
+    </div>
+  </section>
+
+  <section class="pt-cta">
+    <div class="container">
+      <h2>Let&rsquo;s talk partnership.</h2>
+      <p>Tell us about your stack and client base &mdash; we&rsquo;ll walk you through the API, integrations, and Business plan economics.</p>
+      <div class="pt-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Request partnership info</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See pricing</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .pt-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .pt-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 4.6vw, 56px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+  .hero-accent { color: var(--amber); }
+  .pt-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 660px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .pt-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  /* ── TECHNOLOGY INTEGRATIONS ── */
+  .pt-int-section {
+    padding: 3rem 0;
+    text-align: center;
+  }
+  .pt-int-p { color: var(--text-secondary); margin: 0 0 0.5rem; }
+  .pt-group-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin: 1.5rem auto 0.75rem;
+    max-width: 1400px;
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .pt-group-label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--border), transparent);
+  }
+  .pt-int-grid {
+    max-width: 1400px;
+    margin: 0.5rem auto 0;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .pt-int-card {
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.25rem;
+    text-align: center;
+    transition: all 0.3s;
+    position: relative;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  :global([data-theme="light"]) .pt-int-card {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .pt-int-card:hover {
+    border-color: rgba(200,60,60,0.4);
+    transform: translateY(-5px);
+    box-shadow: 0 0 28px rgba(200,60,60,0.14), 0 8px 24px rgba(0,0,0,0.2);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pt-int-card:hover { transform: none; }
+  }
+  .pt-int-card-icon {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 0.875rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: transform 0.3s;
+  }
+  .pt-int-card:hover .pt-int-card-icon { transform: scale(1.1); }
+  @media (prefers-reduced-motion: reduce) {
+    .pt-int-card:hover .pt-int-card-icon { transform: none; }
+  }
+  .pt-int-card-icon svg { width: 28px; height: 28px; }
+  .pt-int-card-icon.live { background: var(--green-bg); color: var(--green); }
+  .pt-int-card-icon.planned { background: var(--accent-bg); color: var(--accent); }
+  .pt-int-card-name {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+  }
+  .pt-int-card-desc {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    line-height: 1.4;
+    margin-bottom: 0.5rem;
+  }
+  .pt-int-card-status {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 100px;
+    display: inline-block;
+  }
+  .pt-int-card-status.live { background: var(--green-bg); color: var(--green); }
+  .pt-int-card-status.planned { background: var(--accent-bg); color: var(--text-tertiary); }
+  @media (max-width: 768px) { .pt-int-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .pt-int-grid { grid-template-columns: 1fr; } }
+
+  /* ── MSSP PARTNERSHIP PROGRAM ── */
+  .pt-mssp-section {
+    padding: 3rem 0 4rem;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  }
+  .pt-mssp-intro {
+    max-width: 720px;
+    margin: 0 auto 2.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.7;
+  }
+  .pt-mssp-grid {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+  .pt-mssp-card {
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    text-align: left;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  :global([data-theme="light"]) .pt-mssp-card {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .pt-mssp-card.roadmap {
+    border-style: dashed;
+    border-color: var(--border-strong);
+  }
+  .pt-mssp-card-icon {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--green-bg);
+    color: var(--green);
+  }
+  .pt-mssp-card-icon.planned { background: var(--accent-bg); color: var(--accent); }
+  .pt-mssp-card-icon svg { width: 22px; height: 22px; }
+  .pt-mssp-card-name {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+  }
+  .pt-mssp-card-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+  .pt-mssp-card-status {
+    display: inline-block;
+    margin-top: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber);
+    background: rgba(229,168,50,0.1);
+    padding: 0.2rem 0.55rem;
+    border-radius: 100px;
+  }
+  .pt-mssp-link {
+    display: block;
+    text-align: center;
+    margin-top: 2.5rem;
+    color: var(--amber);
+    font-weight: 600;
+    font-family: var(--font-display);
+    text-decoration: none;
+  }
+  .pt-mssp-link:hover { text-decoration: underline; }
+
+  @media (max-width: 900px) {
+    .pt-mssp-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .pt-mssp-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ── CTA ── */
+  .pt-cta { padding: 3rem 0 4rem; text-align: center; }
+  .pt-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .pt-cta p { color: var(--text-secondary); max-width: 520px; margin: 0 auto 2rem; }
+  .pt-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+</style>
