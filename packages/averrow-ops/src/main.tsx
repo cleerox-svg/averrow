@@ -16,6 +16,37 @@ import '@/index.css';
 // sets data-theme on <html> in one shot.
 bootstrapTheme();
 
+// Self-heal from stale-chunk-after-deploy failures.
+//
+// Route views are lazy-loaded as vite-hashed chunks
+// (/v2/assets/View-HASH.js). Every deploy produces new hashes and
+// deletes the previous build's chunk files. A tab left open across a
+// deploy (or a warm in-memory bundle) is still running the OLD entry
+// JS with the OLD chunk map; navigating client-side to a not-yet-loaded
+// route calls import('/v2/assets/View-OLDHASH.js'), which 404s. Vite's
+// dynamic-import wrapper detects that failure and fires 'vite:preloadError'
+// on window before letting it propagate to the ErrorBoundary. Catching it
+// here means we can recover with a single full reload — which re-fetches
+// index.html and gets the CURRENT chunk map — instead of leaving the user
+// stuck on a "Something went wrong" screen tied to the stale bundle.
+//
+// Loop guard: sessionStorage (not state) so it survives the reload itself,
+// and a 10s cooldown so a genuinely broken chunk (bad deploy, not just a
+// stale tab) reloads once, fails again, and then falls through to the
+// ErrorBoundary's normal error UI instead of reload-looping forever.
+window.addEventListener('vite:preloadError', (event) => {
+  const KEY = 'av:chunkReloadAt';
+  const last = Number(sessionStorage.getItem(KEY) || 0);
+  if (Date.now() - last > 10_000) {
+    sessionStorage.setItem(KEY, String(Date.now()));
+    event.preventDefault(); // suppress the default throw — we're handling it
+    window.location.reload();
+  }
+  // else: within cooldown of a previous reload attempt — let the error
+  // propagate to the ErrorBoundary so the user sees the real error UI
+  // instead of reloading forever.
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

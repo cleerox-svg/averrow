@@ -30,7 +30,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-06-10.1';
+const VERSION = '2026-07-13.1';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 
