@@ -1,0 +1,317 @@
+---
+/*
+ * Data Processing Agreement — informational "available on request"
+ * page. This is NOT a published binding agreement; it explains what
+ * a DPA covers, who typically needs one, and our data-handling
+ * summary (kept consistent with /security), then routes the actual
+ * request to /contact. Static markup, no islands.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Data Processing Agreement — Averrow"
+  description="What our Data Processing Agreement covers, who needs one, and a summary of how Averrow handles data. Available on request — not a published agreement."
+>
+  <section class="dpa-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Legal</div>
+      <h1>Data Processing Agreement</h1>
+      <p>
+        A Data Processing Agreement (DPA) is a contract that governs
+        how Averrow processes personal data on a customer&rsquo;s
+        behalf. This page explains what ours covers and how to get
+        one &mdash; it is <strong>not</strong> the agreement itself.
+      </p>
+    </div>
+  </section>
+
+  <div class="dpa-notice">
+    <div class="dpa-notice-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="dpa-notice-text">
+        <span class="dn-eyebrow">Available on request</span>
+        Our DPA is issued directly to customers who need one, not
+        published as a self-serve document &mdash; the terms are tied
+        to the customer&rsquo;s specific plan and processing
+        relationship. <strong>Request our DPA</strong> through the
+        contact form and our team will send it over.
+      </div>
+    </div>
+  </div>
+
+  <section class="dpa-section">
+    <div class="container">
+      <div class="dpa-content">
+        <div class="section-label">What It Covers</div>
+        <h2>What a DPA typically includes</h2>
+        <ul class="dpa-list">
+          <li>The roles of each party &mdash; who is the data controller and who is the data processor</li>
+          <li>The subject matter, duration, nature, and purpose of processing</li>
+          <li>The categories of personal data and data subjects involved</li>
+          <li>Our sub-processors and the obligations we flow down to them</li>
+          <li>Security measures applied to the data we process</li>
+          <li>How we assist with data subject rights requests</li>
+          <li>Breach notification commitments and timelines</li>
+          <li>Deletion or return of data at the end of the engagement</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="dpa-section">
+    <div class="container">
+      <div class="dpa-content">
+        <div class="section-label">Who Needs One</div>
+        <h2>Business and Enterprise customers, generally</h2>
+        <p>
+          If your organization is processing personal data through
+          Averrow &mdash; and you fall under a framework like GDPR or
+          PIPEDA &mdash; a DPA formalizes that relationship. This
+          typically applies to <strong>Business</strong> and
+          <strong>Enterprise</strong> plan customers. Professional and
+          Free Scan users are welcome to request one too; we just
+          haven&rsquo;t needed to standardize it for that tier yet.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="dpa-section">
+    <div class="container">
+      <div class="dpa-content">
+        <div class="section-label">Our Data Handling, In Summary</div>
+        <h2>Consistent with our Security &amp; Trust page</h2>
+        <p>
+          The summary below reflects how the platform actually
+          operates today &mdash; see <a href={`${base}/security`}>Security &amp; Trust</a> for
+          the full detail.
+        </p>
+        <div class="dpa-summary-grid">
+          <div class="dpa-summary-item">
+            <h4><span class="dpa-dot" style="background:var(--accent)"></span>Sub-processors</h4>
+            <p>Cloudflare (edge compute, database, cache, and storage) and our AI model provider (inference, routed through an AI gateway). No customer data goes further than that.</p>
+          </div>
+          <div class="dpa-summary-item">
+            <h4><span class="dpa-dot" style="background:var(--green)"></span>No PII beyond account info</h4>
+            <p>Averrow scans public signals &mdash; domains, public DNS records, public social profiles, and threat feed matches. We don&rsquo;t collect email content, credentials, or internal network data.</p>
+          </div>
+          <div class="dpa-summary-item">
+            <h4><span class="dpa-dot" style="background:var(--accent)"></span>Encrypted at rest and in transit</h4>
+            <p>Data is encrypted at rest (D1) and in transit (TLS 1.3). API keys are stored as hashed secrets.</p>
+          </div>
+          <div class="dpa-summary-item">
+            <h4><span class="dpa-dot" style="background:var(--amber)"></span>Retention</h4>
+            <p>Active account data is retained during the subscription. Scan results are cached 24 hours. Deletion completes within 30 days of a request.</p>
+          </div>
+        </div>
+        <div class="dpa-compliance-row">
+          <span class="dpa-pill">GDPR-aligned processing</span>
+          <span class="dpa-pill">PIPEDA</span>
+          <span class="dpa-pill">WCAG 2.1 AA</span>
+          <span class="dpa-pill dpa-pill-scheduled">SOC 2 Type I &mdash; Q3 2026</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="dpa-cta">
+    <div class="container">
+      <h2>Need a signed DPA?</h2>
+      <p>Tell us about your organization and plan, and we&rsquo;ll get one over to you.</p>
+      <div class="dpa-cta-actions">
+        <a href={`${base}/contact`} class="btn btn-primary">Request Our DPA</a>
+        <a href={`${base}/security`} class="btn btn-outline">Review Security &amp; Trust</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .dpa-hero {
+    padding: 5rem 0 2.5rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .dpa-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+  .dpa-hero p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    max-width: 620px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+  .dpa-hero p strong { color: var(--text-primary); }
+
+  .dpa-notice { max-width: 900px; margin: 0 auto; padding: 1.75rem 2rem 0; }
+  .dpa-notice-card {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 1rem;
+    align-items: flex-start;
+    padding: 1.5rem 1.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: var(--radius-md);
+  }
+  .dpa-notice-card svg { width: 26px; height: 26px; color: var(--amber); margin-top: 2px; }
+  .dpa-notice-text {
+    font-family: var(--font-body);
+    color: var(--text-secondary);
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+  .dn-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .dpa-notice-text strong { color: var(--text-primary); }
+  @media (max-width: 560px) {
+    .dpa-notice-card { grid-template-columns: 1fr; text-align: center; }
+    .dpa-notice-card svg { margin: 0 auto; }
+  }
+
+  .dpa-section { padding: 2.5rem 0; }
+  .dpa-section:nth-of-type(even) { background: var(--bg-tertiary); }
+  .dpa-content { max-width: 820px; margin: 0 auto; padding: 0 2rem; }
+  .dpa-content h2 {
+    font-family: var(--font-display);
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 700;
+    margin-bottom: 1.25rem;
+    line-height: 1.25;
+  }
+  .dpa-content p {
+    color: var(--text-secondary);
+    line-height: 1.75;
+    margin-bottom: 1rem;
+    font-size: 15.5px;
+  }
+  .dpa-content p strong { color: var(--text-primary); }
+  .dpa-content a { color: var(--accent); font-weight: 600; }
+  .dpa-content a:hover { text-decoration: underline; }
+
+  .dpa-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    padding: 0;
+  }
+  .dpa-list li {
+    position: relative;
+    padding-left: 1.5rem;
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .dpa-list li::before {
+    content: "\2713";
+    position: absolute;
+    left: 0;
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  .dpa-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.25rem;
+    margin: 1.5rem 0 1.75rem;
+  }
+  .dpa-summary-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+    transition: all 0.3s;
+  }
+  .dpa-summary-item:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-2px);
+  }
+  .dpa-summary-item h4 {
+    font-family: var(--font-display);
+    font-size: 0.98rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .dpa-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dpa-summary-item p {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    padding-left: 1.3rem;
+    margin-bottom: 0;
+  }
+
+  .dpa-compliance-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .dpa-pill {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 0.4rem 0.9rem;
+    border-radius: 100px;
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid rgba(60,184,120,0.3);
+  }
+  .dpa-pill-scheduled {
+    background: rgba(229,168,50,0.10);
+    color: var(--amber);
+    border-color: rgba(229,168,50,0.3);
+  }
+
+  .dpa-cta { padding: 3rem 0; text-align: center; }
+  .dpa-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(26px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .dpa-cta p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
+  .dpa-cta-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+  :global([data-theme="light"]) .dpa-notice-card,
+  :global([data-theme="light"]) .dpa-summary-item {
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-color: rgba(226,221,213,0.5);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+
+  @media (max-width: 640px) {
+    .dpa-summary-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Light-theme contrast: darken accent-as-text (fails on pale bg). */
+  :global([data-theme="light"]) .dn-eyebrow,
+  :global([data-theme="light"]) .dpa-notice-card svg,
+  :global([data-theme="light"]) .dpa-pill-scheduled { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .dpa-pill-live,
+  :global([data-theme="light"]) .dpa-list li::before { color: #106b32; }
+</style>
