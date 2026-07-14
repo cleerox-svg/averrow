@@ -337,21 +337,50 @@ framing or contradictory numbers.
 
 ## 8. Recommended sequence
 
-1. **P1 credibility sprint** (this + next pass): fix §3.1–§3.2 numbers/positioning,
-   replace placeholder proof (§3.3 C1), wire SEO/OG (§3.5 S1), a11y `<main>`+label
-   (§3.4 U1/U2). Small diffs, high trust ROI.
-2. **P2 proof + persona depth:** `/customers` + case studies, `/solutions/*`,
-   `/platform/*` deep-dives, persistent Get-a-Demo CTA. Extract shared primitives first.
-3. **P3 reach layer:** `/resources`, `/docs`, `/partners`, blog cadence.
-4. **P4 corporate surface:** `/company` hub, leadership, careers, press,
-   `/legal/dpa`.
+1. **P1 credibility sprint** — ✅ SHIPPED. Numbers/positioning, placeholder proof,
+   SEO/OG, a11y `<main>`+label.
+2. **P2 proof + persona depth:** `/solutions/*`, `/platform/*` deep-dives,
+   `/why-averrow`, `/demo`, persistent Get-a-Demo CTA — ✅ SHIPPED. (Note:
+   `/customers` case studies were **deferred** — see §9 — because there are no
+   real customers to feature yet; `/why-averrow` is the honest proof substitute.)
+3. **P3 reach layer:** `/resources`, `/docs` (+ getting-started), `/partners`,
+   3 new blog posts — ✅ SHIPPED.
+4. **P4 corporate surface:** `/company` hub, careers, press, `/legal/dpa`
+   (on-request) — ✅ SHIPPED. (Leadership page **deferred** — see §9.)
 
-Each phase is a fan-out of the §7 pattern. P1 is mostly editing existing files;
-P2–P4 is net-new pages composing shared primitives.
+Plus follow-ups shipped: live public-stats pipeline fix, light/dark contrast
+fixes, and blog content-hygiene (unified byline + fact-checked stats).
+
+Each phase was a fan-out of the §7 pattern (parallel content agents → wire →
+design-review → fix → verify → ship).
+
+## 9. Deferred follow-ups (awaiting real-world input)
+
+These are intentionally NOT built because they require real information only the
+company can supply — fabricating them would violate the honesty rules
+(`BRAND.md`, CLAUDE.md §13). Pick up when the input exists.
+
+1. **Leadership / team page** (`/company/leadership`, linked from the `/company`
+   hub). Blocked on **real named people + bios** (names, roles, short bios,
+   optional headshots). We will not invent executives. Once provided → build via
+   `web-copywriter` + `frontend-engineer`, mirroring the existing page patterns;
+   add it to the `/company` hub card grid and the footer Company column.
+2. **DPA legal review + publish decision.** An internal draft exists at
+   **`docs/legal/DPA_DRAFT.md`** (produced by `legal-content-drafter`, marked
+   "not legal advice"). Next: (a) counsel completes the **20 `[NEEDS HUMAN INPUT]`
+   items** (governing law, effective date, entity address, DPO contact,
+   data-transfer mechanism, full sub-processor list, breach-notice window, …);
+   (b) decide whether to **publish the reviewed DPA on-page** at `/legal/dpa`
+   (replacing the current "available on request" copy) or keep it on-request.
+   The public `/legal/dpa` page + footer link are already live.
+
+Also awaiting real-world input (related): **customer case studies / a `/customers`
+page** — deferred until there are real, nameable (even anonymized-with-permission)
+customers. Until then `/why-averrow` carries the honest proof substitute.
 
 ---
 
-*Assessment produced 2026-07-13. Every cited file:line was re-verified against
-the working tree. Companion deliverable: four new content sub-agents in
-`.claude/agents/` (see `docs/CLAUDE_SUBAGENTS.md`). Building the pages is the next
-pass, gated on review of this document.*
+*Assessment produced 2026-07-13; §8–§9 updated 2026-07-14 to reflect shipped
+work. Companion deliverable: four content sub-agents in `.claude/agents/` (see
+`docs/CLAUDE_SUBAGENTS.md`). P1–P4 + follow-ups are merged; the §9 items remain
+open pending the noted inputs.*
