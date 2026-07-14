@@ -1,0 +1,290 @@
+---
+/*
+ * Company hub. The corporate cluster landing page — hero, a
+ * company-level ethos note (no named individuals), a card grid
+ * linking About / Careers / Press / Security / Contact / Legal,
+ * fast facts, CTA. Static markup, no islands.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout
+  title="Company — Averrow"
+  description="The company behind Averrow — LRX Enterprises Inc. Global, AI-native brand protection. Team, careers, press, security, and legal."
+>
+  <section class="co-hero">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Company</div>
+      <h1>The company behind Averrow.</h1>
+      <p>
+        Averrow is built by LRX Enterprises Inc. &mdash; a small, global
+        team building the outside-in threat intelligence platform every
+        company deserves, not just the ones with six-figure security
+        budgets.
+      </p>
+    </div>
+  </section>
+
+  <div class="co-ethos">
+    <div class="co-ethos-card">
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <circle cx="32" cy="18" r="7" fill="currentColor" />
+        <circle cx="14" cy="44" r="6" fill="currentColor" opacity="0.65" />
+        <circle cx="50" cy="44" r="6" fill="currentColor" opacity="0.65" />
+        <path d="M32 25 L18 39 M32 25 L46 39" stroke="currentColor" stroke-width="2" fill="none" opacity="0.5" />
+      </svg>
+      <div class="co-ethos-text">
+        <span class="ce-eyebrow">How we work</span>
+        We&rsquo;re a small, distributed team that ships AI-native
+        security tooling on edge infrastructure. We hire for depth in
+        engineering, threat intelligence, and go-to-market &mdash; not
+        headcount for its own sake. <strong>Everyone on the team is
+        close to the product.</strong>
+      </div>
+    </div>
+  </div>
+
+  <section class="co-section">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Get to Know Averrow</div>
+      <h2 style="text-align:center;">Where to go next</h2>
+    </div>
+    <div class="co-grid">
+      <a class="co-card" href={`${base}/about`}>
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </div>
+        <div class="co-card-title">About</div>
+        <p>Our story, principles, and why Averrow exists.</p>
+      </a>
+      <a class="co-card" href={`${base}/careers`}>
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+        </div>
+        <div class="co-card-title">Careers</div>
+        <p>How the team works, and the kinds of people we look for.</p>
+      </a>
+      <a class="co-card" href={`${base}/press`}>
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11v3a1 1 0 0 0 1 1h2l4.5 4V6L7 10H5a1 1 0 0 0-1 1z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        </div>
+        <div class="co-card-title">Press</div>
+        <p>Boilerplate, fast facts, and brand assets for media.</p>
+      </a>
+      <a class="co-card" href={`${base}/security`}>
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        </div>
+        <div class="co-card-title">Trust &amp; Security</div>
+        <p>Architecture, controls in place today, and compliance status.</p>
+      </a>
+      <a class="co-card" href={`${base}/contact`}>
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
+        <div class="co-card-title">Contact</div>
+        <p>Sales, support, security disclosure, and general inquiries.</p>
+      </a>
+      <div class="co-card co-card-legal">
+        <div class="co-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M5 7l-3 7a3 3 0 0 0 6 0z"/><path d="M19 7l-3 7a3 3 0 0 0 6 0z"/><path d="M3 7h18"/><path d="M8 21h8"/></svg>
+        </div>
+        <div class="co-card-title">Legal</div>
+        <p>
+          <a href={`${base}/privacy`}>Privacy</a> &middot;
+          <a href={`${base}/terms`}>Terms</a> &middot;
+          <a href={`${base}/legal/dpa`}>DPA</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="co-section" style="text-align:center;">
+    <div class="container">
+      <h2 style="font-family:var(--font-display);font-size:clamp(24px,3vw,36px);font-weight:700;margin-bottom:0.5rem;">Company Facts</h2>
+    </div>
+    <div class="co-facts">
+      <div class="co-fact"><div class="co-fact-value">LRX Enterprises Inc.</div><div class="co-fact-label">Parent company</div></div>
+      <div class="co-fact"><div class="co-fact-value">Global</div><div class="co-fact-label">Not region-locked</div></div>
+      <div class="co-fact"><div class="co-fact-value">AI-Native</div><div class="co-fact-label">42-agent mesh</div></div>
+      <div class="co-fact"><div class="co-fact-value">Edge-First</div><div class="co-fact-label">Cloudflare Workers</div></div>
+    </div>
+  </section>
+
+  <section class="co-cta">
+    <div class="container">
+      <h2>See what Averrow can do.</h2>
+      <p>Explore the platform or talk to our team about your brand.</p>
+      <div class="co-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/pricing`} class="btn btn-outline">See Pricing</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .co-hero {
+    padding: 5rem 0 2.5rem;
+    text-align: center;
+    background: var(--gradient-hero);
+  }
+  .co-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+  .co-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 580px;
+    margin: 0 auto;
+    line-height: 1.7;
+  }
+
+  .co-ethos { max-width: 980px; margin: 0 auto; padding: 1.75rem 2rem 0; }
+  .co-ethos-card {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 1.5rem;
+    align-items: center;
+    padding: 1.5rem 1.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: var(--radius-md);
+  }
+  .co-ethos-card svg { width: 100%; height: auto; color: var(--amber); }
+  .co-ethos-text {
+    font-family: var(--font-body);
+    color: var(--text-secondary);
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+  .ce-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .co-ethos-text strong { color: var(--text-primary); }
+  @media (max-width: 640px) {
+    .co-ethos-card { grid-template-columns: 1fr; text-align: center; }
+    .co-ethos-card svg { width: 72px; margin: 0 auto; }
+  }
+
+  .co-section { padding: 3rem 0; }
+  .co-section:nth-of-type(even) { background: var(--bg-tertiary); }
+
+  .co-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    max-width: 1200px;
+    margin: 2rem auto 0;
+    padding: 0 2rem;
+  }
+  .co-card {
+    display: block;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.25s;
+  }
+  .co-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-3px);
+    text-decoration: none;
+  }
+  .co-card-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-md);
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+  .co-card-icon svg { width: 20px; height: 20px; }
+  .co-card-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    color: var(--text-primary);
+  }
+  .co-card p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; margin: 0; }
+  .co-card-legal p a { color: var(--accent); font-weight: 600; }
+  .co-card-legal p a:hover { text-decoration: underline; }
+
+  .co-facts {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    max-width: 1000px;
+    margin: 2rem auto 0;
+    padding: 0 2rem;
+  }
+  .co-fact {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    text-align: center;
+    transition: border-color 0.2s;
+  }
+  .co-fact:hover { border-color: var(--accent); }
+  .co-fact-value {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+    color: var(--text-primary);
+  }
+  .co-fact-label { font-size: 0.78rem; color: var(--text-tertiary); }
+
+  .co-cta { padding: 3rem 0; text-align: center; }
+  .co-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+  .co-cta p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
+  .co-cta-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+  :global([data-theme="light"]) .co-card,
+  :global([data-theme="light"]) .co-fact {
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-color: rgba(226,221,213,0.5);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+
+  @media (max-width: 900px) {
+    .co-grid { grid-template-columns: repeat(2, 1fr); }
+    .co-facts { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .co-grid { grid-template-columns: 1fr; }
+    .co-facts { grid-template-columns: 1fr; }
+  }
+
+  /* Light-theme contrast: darken amber-as-text/icon (fails on pale bg). */
+  :global([data-theme="light"]) .ce-eyebrow,
+  :global([data-theme="light"]) .co-ethos-card svg { color: var(--accent-section, #8A5F0F); }
+</style>
