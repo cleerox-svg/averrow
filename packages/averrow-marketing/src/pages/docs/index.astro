@@ -160,7 +160,7 @@ const icons: Record<string, string> = {
       <p>Run a free exposure scan in under five minutes, or book a demo to see the platform end to end.</p>
       <div class="docs-hub-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Run a Free Scan</a>
       </div>
     </div>
   </section>
@@ -394,6 +394,17 @@ const icons: Record<string, string> = {
     justify-content: center;
     flex-wrap: wrap;
   }
+
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Amber-as-text eyebrow/CTA/link labels and the API icon's severity
+     tint are tuned for dark backgrounds and drop below WCAG AA
+     (4.5:1) as text on the light theme's pale tinted pills/sections.
+     Darkened here for [data-theme="light"] only; dark theme values
+     are untouched. */
+  :global([data-theme="light"]) .docs-hub-start-eyebrow { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-hub-start-cta { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-hub-card-link { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-hub-api-icon { color: #106b32; }
 
   /* ── RESPONSIVE ── */
   @media (max-width: 900px) {

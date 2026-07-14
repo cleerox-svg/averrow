@@ -17,7 +17,7 @@ const steps = [
     body:
       "Averrow's free Brand Exposure scan needs no signup and no credit card &mdash; enter your domain and the platform checks public threat feeds, DNS, and email authentication records for exposure signals in minutes. Ready for continuous monitoring, alerts, and the full agent mesh? Create an account on the Free plan, or go straight to Professional or Business.",
     links: [
-      { href: "/", label: "Run a free scan" },
+      { href: "/scan", label: "Run a free scan" },
       { href: "/pricing", label: "Compare plans" },
     ],
   },
@@ -119,7 +119,7 @@ const steps = [
       <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
       <div class="docs-gs-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Run a Free Scan</a>
       </div>
     </div>
   </section>
@@ -279,6 +279,17 @@ const steps = [
     justify-content: center;
     flex-wrap: wrap;
   }
+
+  /* ── LIGHT THEME CONTRAST OVERRIDES ──
+     Amber-as-text eyebrow/accent/step-link/step-number colors are
+     tuned for dark backgrounds and drop below WCAG AA (4.5:1) as
+     text on the light theme's pale tinted pills/sections. Darkened
+     here for [data-theme="light"] only; dark theme values are
+     untouched. */
+  :global([data-theme="light"]) .docs-gs-eyebrow { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-gs-accent { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-gs-step-link { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-gs-step-num { color: var(--accent-section, #8A5F0F); }
 
   /* ── RESPONSIVE ── */
   @media (max-width: 640px) {

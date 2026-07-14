@@ -51,9 +51,19 @@ export const NAV_LINKS: NavLink[] = [
 ];
 
 /**
+ * Hub-children: pages that live at their own top-level URL (not under
+ * their hub's own href prefix) but should still light up that hub's
+ * nav item. `/docs`, `/docs/getting-started`, and `/partners` are all
+ * Resources destinations, and `/blog/<slug>` is too (there's no
+ * standalone "Blog" nav item) — none of them start with `/resources/`
+ * so the plain prefix match below never catches them.
+ */
+const RESOURCES_HUB_CHILDREN = ["/docs", "/partners"];
+
+/**
  * Decide which top-level link should be marked active for a given
  * current path. Sub-pages activate their parent (`/blog/<slug>` lights
- * up Blog).
+ * up Resources; see RESOURCES_HUB_CHILDREN above for the rest).
  *
  * @param currentPath - The current pathname (e.g. "/platform" or
  *   "/blog/my-post"). May be empty for the index route.
@@ -71,5 +81,9 @@ export function activeFor(currentPath: string): string | null {
     if (link.href === stripped) return link.href;
     if (link.href !== "/" && stripped.startsWith(link.href + "/")) return link.href;
   }
+  for (const prefix of RESOURCES_HUB_CHILDREN) {
+    if (stripped === prefix || stripped.startsWith(prefix + "/")) return "/resources";
+  }
+  if (stripped.startsWith("/blog/")) return "/resources";
   return null;
 }
