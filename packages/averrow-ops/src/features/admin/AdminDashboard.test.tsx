@@ -43,7 +43,7 @@ const mockSystemHealthData = {
   infrastructure: {
     mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
     auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
-    worker: { name: 'averrow', platform: 'Cloudflare Workers' },
+    worker: { name: 'averrow-worker', platform: 'Cloudflare Workers' },
     kvNamespaces: [
       { name: 'averrow-cache' },
       { name: 'SESSIONS' },
@@ -313,7 +313,7 @@ describe('AdminDashboard', () => {
   it('renders worker status on the System tab', async () => {
     renderWithProviders(<AdminDashboard />);
     await switchTab('System');
-    expect(screen.getByText('averrow')).toBeInTheDocument();
+    expect(screen.getByText('averrow-worker')).toBeInTheDocument();
     expect(screen.getByText('Cloudflare Workers')).toBeInTheDocument();
   });
 

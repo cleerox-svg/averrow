@@ -1,4 +1,4 @@
-name = "averrow"
+name = "averrow-worker"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -135,7 +135,7 @@ class_name = "GeoipRefreshWorkflow"
 # wrangler deploy to fail.
 #
 # Cleanup order (run from CLI, then delete this block + index.ts handler):
-#   1. wrangler queues consumer remove architect-analysis averrow
+#   1. wrangler queues consumer remove architect-analysis averrow-worker
 #   2. wrangler queues delete architect-analysis
 #   3. wrangler queues delete architect-analysis-dlq
 #   4. Remove [[queues.consumers]] block below + no-op handler in index.ts
@@ -353,7 +353,7 @@ TENANT_DIGEST_MODE = "off"
 
 # ─── Staging environment ─────────────────────────────────────
 [env.staging]
-name = "averrow-staging"
+name = "averrow-worker-staging"
 routes = [
   { pattern = "staging.averrow.com", custom_domain = true },
   { pattern = "staging.trustradar.ca", custom_domain = true }
@@ -378,7 +378,7 @@ migrations_dir = "migrations-audit"
 
 # ─── Local dev overrides ─────────────────────────────────────
 [env.dev]
-name = "averrow-dev"
+name = "averrow-worker-dev"
 vars = { ENVIRONMENT = "development" }
 
 # Isolated dev DBs — never the prod database (SECURITY_AUDIT O2). Empty on

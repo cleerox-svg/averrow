@@ -389,7 +389,7 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
       infrastructure: {
         mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
         auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
-        worker: { name: 'averrow', platform: 'Cloudflare Workers' },
+        worker: { name: 'averrow-worker', platform: 'Cloudflare Workers' },
         kvNamespaces: [
           { name: 'averrow-cache' },
           { name: 'SESSIONS' },
