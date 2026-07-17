@@ -1,7 +1,7 @@
 // Unified passkey (WebAuthn) helpers. Both averrow-ops and
 // averrow-tenant render the same per-device list, registration
 // flow, and sign-in flow against the same backend
-// (packages/trust-radar/src/handlers/passkeys.ts). This module
+// (packages/averrow-worker/src/handlers/passkeys.ts). This module
 // owns the @simplewebauthn/browser integration; products pass
 // their HTTP client + a default returnTo via the factory.
 

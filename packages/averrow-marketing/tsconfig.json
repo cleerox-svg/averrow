@@ -9,5 +9,5 @@
     }
   },
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist", "../trust-radar/public/marketing"]
+  "exclude": ["dist", "../averrow-worker/public/marketing"]
 }

@@ -1,7 +1,7 @@
 /**
  * Hooks for AGENT_STANDARD §12.1 deployment-approval workflow.
  *
- * Backend lives in packages/trust-radar/src/handlers/agent-approvals.ts.
+ * Backend lives in packages/averrow-worker/src/handlers/agent-approvals.ts.
  * All endpoints are super_admin gated.
  *
  * Phase 5.4c — frontend wiring. Phase 5.4d (future) will add per-run

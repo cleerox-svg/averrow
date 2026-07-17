@@ -1,10 +1,10 @@
-name: Deploy — Trust Radar (trustradar.ca)
+name: Deploy — Averrow Worker
 
-# Canonical production deploy for Trust Radar / Averrow.
+# Canonical production deploy for the Averrow Worker.
 #
 # Builds the averrow-ops React SPA (formerly averrow-ui, rebadged
 # in v3 Phase D2) before wrangler deploy so the /v2/* assets land
-# in packages/trust-radar/public/v2/ before the worker bundle is
+# in packages/averrow-worker/public/v2/ before the worker bundle is
 # shipped. That directory is gitignored — without this build step
 # the deployed worker has no SPA assets and every /v2/* path
 # returns 404 (ERR_INVALID_RESPONSE).
@@ -20,7 +20,7 @@ on:
   push:
     branches: [master, main]
     paths:
-      - "packages/trust-radar/**"
+      - "packages/averrow-worker/**"
       - "packages/averrow-ops/**"
       - "packages/averrow-tenant/**"
       - "packages/averrow-marketing/**"
@@ -51,7 +51,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type check (worker)
-        working-directory: packages/trust-radar
+        working-directory: packages/averrow-worker
         run: pnpm typecheck
 
   deploy:
@@ -84,7 +84,7 @@ jobs:
 
       # Astro marketing site (averrow.com /). Builds Astro, then runs
       # generate-sitemap.mjs + sync-to-worker.mjs which overlay-copy
-      # the artifacts into packages/trust-radar/public/. Without this
+      # the artifacts into packages/averrow-worker/public/. Without this
       # step the Worker deploys with no Astro output and every public
       # page falls through to the dashboard.html SPA fallback in
       # routes/public.ts:356. Added 2026-05 after R7 cutover went
@@ -94,7 +94,7 @@ jobs:
         run: pnpm run build
 
       - name: Run DB migrations (production)
-        working-directory: packages/trust-radar
+        working-directory: packages/averrow-worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -127,7 +127,7 @@ jobs:
       # workflow loudly when they don't. Add new assertions for each
       # new migration that seeds data. See scripts/verify-db-seed.ts.
       - name: Verify seeded rows landed
-        working-directory: packages/trust-radar
+        working-directory: packages/averrow-worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -137,7 +137,7 @@ jobs:
       # workflow log so a human glancing at the deploy can spot any
       # pending migrations at a glance.
       - name: Show migration status
-        working-directory: packages/trust-radar
+        working-directory: packages/averrow-worker
         if: always()
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
@@ -145,7 +145,7 @@ jobs:
         run: pnpm run db:migrate:status:prod || true
 
       - name: Deploy Worker + Assets
-        working-directory: packages/trust-radar
+        working-directory: packages/averrow-worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TRUST_RADAR_IMPRSN8 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

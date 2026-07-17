@@ -18,7 +18,7 @@ different collector. See "Recommendation" below.
 
 ```
 $ grep -c '"schedule": null' \
-    packages/trust-radar/src/agents/architect/manifest.generated.ts
+    packages/averrow-worker/src/agents/architect/manifest.generated.ts
 38
 ```
 
@@ -27,7 +27,7 @@ faithful rendering of what the repo collector is looking at — the feed
 TypeScript modules — because those modules genuinely do not declare a
 schedule in code.
 
-`packages/trust-radar/src/feeds/types.ts:19` defines the entire
+`packages/averrow-worker/src/feeds/types.ts:19` defines the entire
 `FeedModule` contract:
 
 ```ts
@@ -39,7 +39,7 @@ export interface FeedModule {
 One field. No `schedule`, no `interval`, no cron metadata. A per-file
 source walker cannot discover a schedule that was never written into
 the source. The collector at
-`packages/trust-radar/src/agents/architect/collectors/repo-fs.ts:387`
+`packages/averrow-worker/src/agents/architect/collectors/repo-fs.ts:387`
 is explicit about this:
 
 ```ts
@@ -55,7 +55,7 @@ That comment is accurate. The repo collector is not broken.
 The real dispatch chain, end to end:
 
 1. **Cloudflare Cron Trigger** wakes the Worker hourly.
-   `packages/trust-radar/wrangler.toml:26-27`:
+   `packages/averrow-worker/wrangler.toml:26-27`:
    ```toml
    [triggers]
    crons = ["0 * * * *"]
@@ -206,17 +206,17 @@ tweak in the feeds analyzer.
 ```bash
 # Prove the manifest reports 38 nulls:
 grep -c '"schedule": null' \
-  packages/trust-radar/src/agents/architect/manifest.generated.ts
+  packages/averrow-worker/src/agents/architect/manifest.generated.ts
 
 # Prove feeds have no schedule field in TypeScript:
-grep -rn 'schedule' packages/trust-radar/src/feeds/types.ts
+grep -rn 'schedule' packages/averrow-worker/src/feeds/types.ts
 
 # Prove the dispatch chain reads from D1:
-grep -n 'feed_configs' packages/trust-radar/src/lib/feedRunner.ts
+grep -n 'feed_configs' packages/averrow-worker/src/lib/feedRunner.ts
 
 # Prove no collector reads feed_configs:
 grep -rn 'feed_configs\|schedule_cron' \
-  packages/trust-radar/src/agents/architect/collectors/
+  packages/averrow-worker/src/agents/architect/collectors/
 ```
 
 Expected output: `38`, no match, matches in `feedRunner.ts`, no match

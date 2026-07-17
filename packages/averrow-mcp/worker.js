@@ -19,7 +19,7 @@ const SERVER_VERSION = "1.0.0";
 // ─── Auth helpers ───────────────────────────────────────────────
 // Constant-time secret comparison (M3, SECURITY_AUDIT_2026-06-10).
 // Mirrors packages/averrow-mcp/src/index.ts (ported from
-// packages/trust-radar/src/lib/internal-secret.ts). `!==` short-circuits
+// packages/averrow-worker/src/lib/internal-secret.ts). `!==` short-circuits
 // at the first mismatching byte, leaking the matching-prefix length via
 // timing; the XOR loop runs all bytes regardless of where the first
 // mismatch sits.

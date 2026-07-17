@@ -91,7 +91,7 @@ papered over by editing product source to pass a check.
 ```
 /
 ├── packages/
-│   ├── trust-radar/              ← Cloudflare Worker (backend) — internal name kept
+│   ├── averrow-worker/            ← Cloudflare Worker (backend), deploy name `averrow`
 │   │   ├── src/
 │   │   │   ├── agents/           ← All agent files
 │   │   │   ├── routes/           ← API route handlers
@@ -416,7 +416,7 @@ Not wired (historically declared but never implemented):
 
 Industry guidance ([StartupHub.ai 2026](https://www.startuphub.ai/ai-news/artificial-intelligence/2026/multi-agent-orchestration-patterns))
 calls hybrid models without explicit lanes the #1 cause of
-multi-agent system failure. Trust-Radar is explicitly orchestrator-
+multi-agent system failure. Averrow is explicitly orchestrator-
 pattern with a single event-driven exception (pivot_detected, where
 sub-hourly latency matters).
 
@@ -708,6 +708,14 @@ context is the column name, not the value.
 ---
 
 ## 8. Database Rules
+
+**D1/R2/Analytics-Engine resource names below intentionally retain the
+pre-rebrand `trust-radar` string** — renaming a live D1 database, R2 bucket,
+or Analytics Engine dataset requires a data migration, not a rename, so this
+was deferred out of the 2026-07-17 rebrand (see `docs/IMPROVEMENT_PLAN_2026-07.md`
+and `docs/TERMINOLOGY_LEXICON_2026-07.md` for the decision record). The
+Worker deploy name and package folder (`packages/averrow-worker`, deployed
+as `averrow`) did rename — see §2.
 
 - Primary DB: `trust-radar-v2` (D1, SQLite) — internal name kept intentionally
 - Audit DB: `trust-radar-v2-audit`

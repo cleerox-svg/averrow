@@ -62,14 +62,14 @@ Every column `brand_profiles` carried is now either on `brands` (canonical, shar
 
 | File | Role | What touches `brand_profiles` |
 |---|---|---|
-| `packages/trust-radar/src/handlers/brandProfiles.ts` | The CRUD handler | All read/write paths for `/api/brand-profiles*` |
-| `packages/trust-radar/src/routes/brands.ts` | Route registration | 7 routes mount the brandProfiles handler |
-| `packages/trust-radar/src/handlers/lookalikeDomains.ts` | Ownership-verify joins | 3 SELECT + 1 JOIN |
-| `packages/trust-radar/src/handlers/ctMonitor.ts` | Ownership-verify joins | 3 SELECT + 1 JOIN |
-| `packages/trust-radar/src/handlers/admin.ts` | One-shot backfill endpoint | `POST /api/admin/backfill-social-config` — already-run migration tool |
-| `packages/trust-radar/src/agents/sentinel.ts` | Read-only join | 1 declared `reads:` entry + 1 JOIN in social-mention enrichment |
-| `packages/trust-radar/src/agents/narrator.ts` | Read-only ownership lookup | 1 declared `reads:` entry + 1 SELECT for alert→brand-owner resolution |
-| `packages/trust-radar/src/agents/architect/manifest.generated.ts` | Auto-generated agent manifest | 2 mentions (downstream of the agent declarations above) |
+| `packages/averrow-worker/src/handlers/brandProfiles.ts` | The CRUD handler | All read/write paths for `/api/brand-profiles*` |
+| `packages/averrow-worker/src/routes/brands.ts` | Route registration | 7 routes mount the brandProfiles handler |
+| `packages/averrow-worker/src/handlers/lookalikeDomains.ts` | Ownership-verify joins | 3 SELECT + 1 JOIN |
+| `packages/averrow-worker/src/handlers/ctMonitor.ts` | Ownership-verify joins | 3 SELECT + 1 JOIN |
+| `packages/averrow-worker/src/handlers/admin.ts` | One-shot backfill endpoint | `POST /api/admin/backfill-social-config` — already-run migration tool |
+| `packages/averrow-worker/src/agents/sentinel.ts` | Read-only join | 1 declared `reads:` entry + 1 JOIN in social-mention enrichment |
+| `packages/averrow-worker/src/agents/narrator.ts` | Read-only ownership lookup | 1 declared `reads:` entry + 1 SELECT for alert→brand-owner resolution |
+| `packages/averrow-worker/src/agents/architect/manifest.generated.ts` | Auto-generated agent manifest | 2 mentions (downstream of the agent declarations above) |
 
 UI: zero references. The averrow-ops side already uses `org_brands` exclusively.
 
@@ -132,7 +132,7 @@ When v3 ingest starts dual-writing in Mode B, the v3 schema does **not** include
 
 | # | Question | Owner | When |
 |---|---|---|---|
-| Q1 ✅ | Single remaining `brand_profiles` row was a "Trust Radar" test profile (cleerox@gmail.com, trustradar.ca, never scanned, no matching `brands` row). Operator decision 2026-05-07: **drop**. Archived to `_legacy_brand_profiles_2026_05` and removed in migration 0149 | Operator | Closed — Phase A sprint 7 |
+| Q1 ✅ | Single remaining `brand_profiles` row was a "Averrow" test profile (cleerox@gmail.com, trustradar.ca, never scanned, no matching `brands` row). Operator decision 2026-05-07: **drop**. Archived to `_legacy_brand_profiles_2026_05` and removed in migration 0149 | Operator | Closed — Phase A sprint 7 |
 
 ---
 
@@ -142,13 +142,13 @@ When v3 ingest starts dual-writing in Mode B, the v3 schema does **not** include
 - ADR-001 (actor-centric schema; `brand` stays in context tier, `brand_profiles` absent)
 - ADR-002 (migration strategy; R1-R5 scheduled before Mode B)
 - v2 code references:
-  - `packages/trust-radar/src/handlers/brandProfiles.ts`
-  - `packages/trust-radar/src/handlers/lookalikeDomains.ts`
-  - `packages/trust-radar/src/handlers/ctMonitor.ts`
-  - `packages/trust-radar/src/handlers/admin.ts` — `POST /api/admin/backfill-social-config`
-  - `packages/trust-radar/src/agents/sentinel.ts`
-  - `packages/trust-radar/src/agents/narrator.ts`
+  - `packages/averrow-worker/src/handlers/brandProfiles.ts`
+  - `packages/averrow-worker/src/handlers/lookalikeDomains.ts`
+  - `packages/averrow-worker/src/handlers/ctMonitor.ts`
+  - `packages/averrow-worker/src/handlers/admin.ts` — `POST /api/admin/backfill-social-config`
+  - `packages/averrow-worker/src/agents/sentinel.ts`
+  - `packages/averrow-worker/src/agents/narrator.ts`
 - Replacement model:
-  - `packages/trust-radar/src/handlers/tenantData.ts` (org-scoped reads from `org_brands`)
-  - `packages/trust-radar/src/middleware/auth.ts` (tenant scope via `org_brands`)
+  - `packages/averrow-worker/src/handlers/tenantData.ts` (org-scoped reads from `org_brands`)
+  - `packages/averrow-worker/src/middleware/auth.ts` (tenant scope via `org_brands`)
   - Migration 0049 (`org_brands.monitoring_config_json`)

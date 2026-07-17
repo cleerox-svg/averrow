@@ -1,8 +1,8 @@
 /*
  * Design tokens — aligned with the platform (CLAUDE.md §5) and ported
- * from packages/trust-radar/src/templates/shared.ts.
+ * from packages/averrow-worker/src/templates/shared.ts.
  *
- * The trust-radar copy remains authoritative until R6 cuts over
+ * The averrow-worker copy remains authoritative until R6 cuts over
  * production. At that point shared.ts retires and this file becomes
  * the single source of truth.
  */

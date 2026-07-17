@@ -1,12 +1,12 @@
 # Contributing
 
-Guidelines for contributing to Trust Radar.
+Guidelines for contributing to Averrow.
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/cleerox-svg/trust-radar.git
-cd trust-radar
+git clone https://github.com/cleerox-svg/averrow.git
+cd averrow
 pnpm install
 pnpm dev
 ```
@@ -63,7 +63,7 @@ claude/description-sessionId   (Claude Code branches)
 
 ```
 packages/
-├── trust-radar/          → Main Worker (TypeScript)
+├── averrow-worker/        → Main Worker (TypeScript), deploy name `averrow`
 │   ├── src/
 │   │   ├── handlers/     → HTTP route handlers
 │   │   ├── agents/       → AI agents (Analyst, Observer, etc.)
@@ -91,7 +91,7 @@ packages/
 
 ### New AI Agent
 1. Create agent in `src/agents/`
-2. Use `callHaikuRaw` from `src/lib/haiku.ts` or `TrustRadarAI` from `src/lib/ai-client.ts`
+2. Use `callHaikuRaw` from `src/lib/haiku.ts`
 3. Add cron trigger in `src/cron/orchestrator.ts` if scheduled
 
 ### New Threat Feed

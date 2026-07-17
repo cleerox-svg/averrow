@@ -2,7 +2,7 @@
 // fanning out to ~6 independently-cached endpoints (system-health, budget
 // status+breakdown, feed-failures, pipeline-status, email-security stats).
 //
-// Backend contract: packages/trust-radar/src/handlers/admin.ts
+// Backend contract: packages/averrow-worker/src/handlers/admin.ts
 // (`handleAdminDashboard`), routed at GET /api/admin/dashboard
 // (requireAdmin), documented in docs/API_REFERENCE.md. Backend cache TTL
 // is ~75s (`DASHBOARD_SNAPSHOT_TTL`) — staleTime/refetchInterval below

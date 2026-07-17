@@ -791,7 +791,7 @@ isCampaignSignificant(campaign) ⇒
 
 
 These files are frozen throughout all sessions:
-- packages/trust-radar/src/** — backend untouched
+- packages/averrow-worker/src/** — backend untouched
 - ThreatMap.tsx — WebGL canvas untouched
 - ExposureGauge.tsx — custom SVG untouched
 - PortfolioHealthCard.tsx — SVG donut untouched

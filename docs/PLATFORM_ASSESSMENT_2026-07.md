@@ -1,6 +1,6 @@
 # Averrow Platform — Capabilities & Gaps Assessment — July 2026
 
-**Scope:** Full code-level assessment of the Averrow platform (trust-radar Worker,
+**Scope:** Full code-level assessment of the Averrow platform (averrow Worker,
 averrow-ops, averrow-tenant, averrow-marketing, averrow-mcp, shared) across four gap
 dimensions — competitive/capability, technical/architecture, security/RBAC,
 reliability/ops — plus a dedicated **terminology** audit and a **takedown standing-model**

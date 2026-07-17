@@ -10,7 +10,7 @@ BIMI (Brand Indicators for Message Identification) shows the Averrow logo next t
 
 1. Review the DMARC reports collected during the observation window:
    - `averrow.com` reports → Cloudflare Dashboard → Email → DMARC Management
-   - `averrow.ca` reports → trust-radar worker's email handler (`dmarc_rua@trustradar.ca`)
+   - `averrow.ca` reports → averrow worker's email handler (`dmarc_rua@trustradar.ca`)
 2. Verify that all legitimate senders (Resend, Google Workspace) are passing both SPF + DKIM alignment — no surprises in the "failed" column
 3. If clean, edit both DMARC TXT records via CF Dashboard → DNS:
    - `_dmarc.averrow.com`: change `p=none` → `p=quarantine` (keep `pct=100`)
@@ -31,9 +31,9 @@ Validators to check publish state (no auth needed):
 
 ## Files already in place
 
-- `packages/trust-radar/public/bimi.svg` — BIMI-compliant SVG (SVG Tiny 1.2 PS)
+- `packages/averrow-worker/public/bimi.svg` — BIMI-compliant SVG (SVG Tiny 1.2 PS)
 - Same artwork as `favicon.svg` but with `baseProfile="tiny-ps"` and `<title>` element required by BIMI
-- Served at `https://<any-platform-domain>/bimi.svg` automatically by the trust-radar Worker (static assets)
+- Served at `https://<any-platform-domain>/bimi.svg` automatically by the averrow Worker (static assets)
 
 Verify after deploy:
 ```bash
@@ -53,7 +53,7 @@ Add in **CF Dashboard → averrow.com → DNS → Records → Add record**:
 
 Same on averrow.ca, trustradar.ca, lrxradar.com (any domain you intend to send email from).
 
-The trust-radar Worker is configured to receive DMARC reports at `dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` per `src/index.ts:117` — that wiring already works.
+The averrow Worker is configured to receive DMARC reports at `dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` per `src/index.ts:117` — that wiring already works.
 
 ### Starting more conservatively
 
@@ -121,8 +121,8 @@ Plus DMARC at p=quarantine/p=reject prevents spoofed mail from impersonating you
 
 ## Related
 
-- `packages/trust-radar/public/bimi.svg` — the hosted BIMI SVG
-- `packages/trust-radar/public/favicon.svg` — same artwork, regular SVG
+- `packages/averrow-worker/public/bimi.svg` — the hosted BIMI SVG
+- `packages/averrow-worker/public/favicon.svg` — same artwork, regular SVG
 - `src/handlers/dmarc-email.ts` — DMARC report receiver (already wired)
 - `src/lib/abuse-mailbox-responder.ts` — the abuse-mailbox emails that benefit from BIMI
 - BIMI spec: https://bimigroup.org/

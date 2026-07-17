@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [trust-radar]
+        package: [averrow-worker]
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +39,7 @@ jobs:
       - name: Run tests
         working-directory: packages/${{ matrix.package }}
         run: pnpm test
-        if: matrix.package == 'trust-radar'
+        if: matrix.package == 'averrow-worker'
 
       # Phase 4.3 drift CI gate — fails when an agent's declared
       # `reads` / `writes` diverge from the architect manifest's static
@@ -48,7 +48,7 @@ jobs:
       - name: Resource declaration drift check
         working-directory: packages/${{ matrix.package }}
         run: pnpm build:manifest && pnpm check:resource-drift
-        if: matrix.package == 'trust-radar'
+        if: matrix.package == 'averrow-worker'
 
       # Phase 5.2 AGENT_STANDARD §22 enforcement — cross-file
       # consistency rules the TS compiler can't verify (metadata
@@ -58,7 +58,7 @@ jobs:
       - name: AGENT_STANDARD §22 audit
         working-directory: packages/${{ matrix.package }}
         run: pnpm audit:agent-standard
-        if: matrix.package == 'trust-radar'
+        if: matrix.package == 'averrow-worker'
 
   test-react-ui:
     name: Test React UI

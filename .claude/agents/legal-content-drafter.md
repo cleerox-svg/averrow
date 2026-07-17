@@ -27,7 +27,7 @@ a human.
 - `CLAUDE.md` §13 — parent company **LRX Enterprises Inc.**; global positioning.
 - `BRAND.md` §6 — voice: clear, readable, plain language (not wall-of-legalese).
 - Existing `/privacy` and `/terms` (currently Worker-rendered:
-  `packages/trust-radar/src/templates/{privacy,terms}.ts`) — match their scope
+  `packages/averrow-worker/src/templates/{privacy,terms}.ts`) — match their scope
   and factual claims; do not contradict them.
 - `docs/MARKETING_SITE_ASSESSMENT_2026-07.md` — the gap list (no DPA today).
 - The real data-handling facts from `src/pages/security.astro` (retention,

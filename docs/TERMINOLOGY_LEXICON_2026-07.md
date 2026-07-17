@@ -160,3 +160,28 @@ Concrete edit sites for Wave-1 sessions S1.1–S1.3. All paths under `packages/`
 - **Verification:** after Wave 1, grep the customer surfaces for the internal code names
   (`Sentinel|ASTRA|Observer|Navigator|Blackbox|Pathfinder|Sparrow|squadron|cockpit`) and
   confirm zero primary-label hits; confirm one canonical noun per concept across surfaces.
+
+---
+
+## 8. Trust Radar → Averrow rebrand (executed 2026-07-17)
+
+The oldest surviving old-name instance: the backend package/Worker still carried the
+pre-Averrow product name `trust-radar` at the STRUCTURAL layer (folder name + deployed
+Worker name), plus dozens of DISPLAY-SAFE doc mentions. Classified and executed per the
+§0 rename-safety framework:
+
+| Item | Layer | Action | Why |
+|---|---|---|---|
+| `packages/trust-radar` folder | STRUCTURAL-adjacent (path, not a DB/enum/JWT identifier) | **Renamed** → `packages/averrow-worker` | Pure filesystem path — no CHECK constraint, FK, or `agent_id` literal depends on the folder name; low blast radius, high occurrence trace (paths only) |
+| Deployed Worker name `trust-radar` | STRUCTURAL (Cloudflare resource) | **Renamed** → `averrow` | Not referenced by any stored row (Workers aren't a DB foreign key); `wrangler.toml` owned by backend-engineer, not touched by this docs sweep — verify current value there, not here |
+| GitHub repo `cleerox-svg/trust-radar` | External identifier | **Renamed** → `cleerox-svg/averrow` | Platform (GitHub), not app data — no D1/KV coupling |
+| Doc/comment prose "Trust Radar" (product) and `packages/trust-radar/...` path mentions | DISPLAY-SAFE | **Renamed freely** to "Averrow" / `packages/averrow-worker/...` across the doc set (see `docs/IMPROVEMENT_PLAN_2026-07.md` rebrand entry for the full file list) | Text only, no contract |
+| D1 databases `trust-radar-v2`, `trust-radar-v2-audit`, `trust-radar-dns-queue` | STRUCTURAL (live Cloudflare resource + binding config) | **KEPT** | Renaming a D1 database is a migration (new DB + backfill + cutover + binding-id swap), not a label edit — deferred, not in scope of a docs sweep |
+| R2 bucket `trust-radar-trademark-assets` | STRUCTURAL (live Cloudflare resource) | **KEPT** | Same class as above — bucket rename requires object copy, not a rename API |
+| Analytics Engine dataset `trust_radar_d1_reads` | STRUCTURAL (write-target string in code, historical data keyed to it) | **KEPT** | Renaming loses continuity with historical AE data under the old dataset name |
+| Outbound webhook headers `X-Trust-Radar-Signature`/`-Event`/`-Delivery` + UA `TrustRadar-Webhook/1.0` (`lib/webhooks.ts`) | STRUCTURAL (customer-integration wire contract) | **KEPT** | Highest-risk class in §0 — any subscriber that pins the header name/UA breaks silently. Needs a versioned/dual-emit rollout coordinated with customers, not a rename |
+| Legacy `public/manifest.json` `"name": "Trust Radar"` / `"short_name": "TrustRadar"` | DISPLAY-SAFE in isolation, but inside the **frozen** `public/`/`app.js`/`styles.css` tree (CLAUDE.md §3: "NEVER MODIFY — frozen forever") | **KEPT** | The freeze outranks the display-safe default; overriding it for this one field needs an explicit owner decision, not a docs-maintainer edit |
+| Outbound feed User-Agents (`packages/averrow-worker/src/feeds/*.ts`) | DISPLAY-SAFE | Already `Averrow-ThreatIntel/1.0` / `Averrow/1.0` | Verified during this sweep, not changed — no doc claimed otherwise |
+
+**Full changed-file list and additional context:** `docs/IMPROVEMENT_PLAN_2026-07.md`,
+"Trust Radar → Averrow rebrand" entry (end of Wave 3).

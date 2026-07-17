@@ -501,7 +501,7 @@ the §6.3 / §6.4 norm in this space.
 
 What Averrow actually has, grouped by the category dimensions
 in §2 + §3. This is the inventory feeding §8's differentiator
-selection. All references are to `packages/trust-radar/src/`.
+selection. All references are to `packages/averrow-worker/src/`.
 
 ### 7.1 Detection surfaces
 

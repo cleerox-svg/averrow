@@ -1,13 +1,13 @@
 # Workflow Dispatch Runbook
 
-Companion runbook for `packages/trust-radar/src/lib/workflow-dispatch.ts`
+Companion runbook for `packages/averrow-worker/src/lib/workflow-dispatch.ts`
 and the FC supervisor block that watches it.
 
 **See also:** [`PLATFORM_DATA_DEPENDENCIES.md`](../PLATFORM_DATA_DEPENDENCIES.md) for the
 cross-surface map of where workflow-dispatched agents (nexus, future cart)
 need to be reconciled vs `agent_runs` (PR-J / PR-R).
 
-Three workflows live in the trust-radar worker:
+Three workflows live in the averrow worker:
 
 | Binding | Class | wrangler.toml `name` |
 |---|---|---|
@@ -43,7 +43,7 @@ Alert template: `renderPlatformWorkflowDispatchSilent` in
 ### 1. Type check + unit tests pass
 
 ```bash
-cd packages/trust-radar
+cd packages/averrow-worker
 npx tsc --noEmit
 npx vitest run test/workflow-dispatch.test.ts
 ```

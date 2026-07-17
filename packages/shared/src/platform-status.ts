@@ -1,6 +1,6 @@
 // Shared types for the platform-status rollup that backs the Home
 // banner (Phase 2) and the public status page (Phase 3). Keep this
-// file in sync with packages/trust-radar/src/lib/platform-status.ts —
+// file in sync with packages/averrow-worker/src/lib/platform-status.ts —
 // changing one without the other is a typecheck error in the consumer.
 
 export type CategoryStatus = "operational" | "degraded" | "outage";

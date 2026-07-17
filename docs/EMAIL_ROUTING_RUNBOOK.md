@@ -11,7 +11,7 @@ External submitter
 Cloudflare Email Routing MX for averrow.ca
     │
     ▼
-trust-radar Worker  ───►  handleAbuseMailboxEmail()
+averrow Worker  ───►  handleAbuseMailboxEmail()
     │
     ├─►  INSERT abuse_inbox_messages
     ├─►  sendAck() to original submitter (Resend, ~1-3s)
@@ -42,16 +42,16 @@ Then add either a catch-all or individual routes. Catch-all is simplest:
 
 | Pattern | Action |
 |---|---|
-| `*@averrow.ca` | Send to Worker → trust-radar |
+| `*@averrow.ca` | Send to Worker → averrow |
 
 Or individual rules (4):
 
 | Pattern | Action |
 |---|---|
-| `abuse@averrow.ca` | Send to Worker → trust-radar |
-| `phishing@averrow.ca` | Send to Worker → trust-radar |
-| `report@averrow.ca` | Send to Worker → trust-radar |
-| `security@averrow.ca` | Send to Worker → trust-radar |
+| `abuse@averrow.ca` | Send to Worker → averrow |
+| `phishing@averrow.ca` | Send to Worker → averrow |
+| `report@averrow.ca` | Send to Worker → averrow |
+| `security@averrow.ca` | Send to Worker → averrow |
 
 ### 2. Confirm migrations applied
 

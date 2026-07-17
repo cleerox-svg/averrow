@@ -140,13 +140,24 @@ The platform has been validated through manual testing and live production data.
 - Phase 3: End-to-end tests with Playwright for key user flows
 - Target: 70%+ coverage on business-critical paths within 3 months
 
-### Medium Priority — Backend Naming
+### Resolved — Backend Naming (2026-07-17)
 
-**Internal references still use "trust-radar" (the pre-rebrand name).**
+**Was:** internal references used "trust-radar" (the pre-rebrand name) —
+the Cloudflare Worker, package folder, and GitHub repo directory.
 
-The Cloudflare Worker, D1 database, KV namespace, R2 bucket, GitHub repo directory, and various code comments still reference "Trust Radar." The public-facing platform is fully rebranded to Averrow, but internals need cleanup.
+**Now:** the backend package renamed `packages/trust-radar` →
+`packages/averrow-worker`, the deployed Worker `trust-radar` → `averrow`,
+and the GitHub repo `cleerox-svg/averrow` → `cleerox-svg/averrow`.
+Display strings and feed outbound User-Agents were swept to Averrow.
 
-**Plan:** Scheduled rename after React migration to avoid disrupting active development. This is cosmetic — it has zero impact on functionality or users.
+**Intentionally kept** (not a naming cosmetic — renaming these is a data
+migration or a breaking wire-contract change): the D1 databases
+(`trust-radar-v2`, `trust-radar-v2-audit`, `trust-radar-dns-queue`), the R2
+bucket (`trust-radar-trademark-assets`), the Analytics Engine dataset
+(`trust_radar_d1_reads`), the outbound webhook headers
+(`X-Trust-Radar-Signature`/`-Event`/`-Delivery`, UA `TrustRadar-Webhook/1.0`),
+and the frozen legacy `public/manifest.json` PWA name. See
+`docs/TERMINOLOGY_LEXICON_2026-07.md` for the full decision record.
 
 ### Low Priority — Remaining Inline Styles
 

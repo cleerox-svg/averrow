@@ -11,7 +11,7 @@
         ".astro/**"
       ]
     },
-    "trust-radar#build": {
+    "averrow-worker#build": {
       "dependsOn": ["^build", "@averrow/marketing#build"],
       "outputs": [
         "dist/**",
@@ -24,16 +24,16 @@
       "outputs": [
         "dist/**",
         ".astro/**",
-        "../trust-radar/public/_astro/**",
-        "../trust-radar/public/index.html",
-        "../trust-radar/public/about/**",
-        "../trust-radar/public/blog/**",
-        "../trust-radar/public/changelog/**",
-        "../trust-radar/public/contact/**",
-        "../trust-radar/public/platform/**",
-        "../trust-radar/public/pricing/**",
-        "../trust-radar/public/report-abuse/**",
-        "../trust-radar/public/security/**"
+        "../averrow-worker/public/_astro/**",
+        "../averrow-worker/public/index.html",
+        "../averrow-worker/public/about/**",
+        "../averrow-worker/public/blog/**",
+        "../averrow-worker/public/changelog/**",
+        "../averrow-worker/public/contact/**",
+        "../averrow-worker/public/platform/**",
+        "../averrow-worker/public/pricing/**",
+        "../averrow-worker/public/report-abuse/**",
+        "../averrow-worker/public/security/**"
       ]
     },
     "dev": {

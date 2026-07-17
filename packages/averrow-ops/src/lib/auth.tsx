@@ -33,7 +33,7 @@ const httpClient: AuthHttpClient = {
 // role='client' user (any customer) belongs at /tenant/, not
 // here. Hard-redirects so we don't even briefly render the staff
 // shell with their identity. Worker-side login redirect is the
-// matching backstop in packages/trust-radar/src/handlers/auth.ts.
+// matching backstop in packages/averrow-worker/src/handlers/auth.ts.
 const config: AuthProviderConfig = {
   userCacheKey:     'averrow-user',
   loginPath:        '/api/auth/login?return_to=/v2/',

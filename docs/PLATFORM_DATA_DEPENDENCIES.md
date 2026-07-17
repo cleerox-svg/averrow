@@ -244,7 +244,7 @@ When adding a new workflow-dispatched agent:
 | PR-V | 2026-05-14 | Cache-discipline pass: wrap brands count, unify `admin.threats_*` → `count.threats.*`, bump diagnostics carto-queue TTLs 60→300s. |
 | PR-X | 2026-05-14 | Billing-cycle (18th-17th) D1 tracker. New `fetchBillingCycleMetrics` aggregates rows_read across all account D1 databases, replaces 24h × 30 projection. UI surfaces per-database breakdown. |
 | PR-Y | 2026-05-14 | Top-queries leaderboard now includes `databaseId` dimension — each card shows which DB the query came from. |
-| PR-Z | 2026-05-14 | New `threat_cube_arcs` (country × brand × type × severity per hour). `handleObservatoryArcs` + `handleObservatoryBrandArcs` swapped to read from cube — eliminates the largest D1 spender on the trust-radar side (~14M reads/24h → ~0.5M). Same OLAP-cubes pattern as `threat_cube_geo` / `threat_cube_brand` / `threat_cube_provider` / `threat_cube_status`. |
+| PR-Z | 2026-05-14 | New `threat_cube_arcs` (country × brand × type × severity per hour). `handleObservatoryArcs` + `handleObservatoryBrandArcs` swapped to read from cube — eliminates the largest D1 spender on the backend side (~14M reads/24h → ~0.5M). Same OLAP-cubes pattern as `threat_cube_geo` / `threat_cube_brand` / `threat_cube_provider` / `threat_cube_status`. |
 
 ---
 

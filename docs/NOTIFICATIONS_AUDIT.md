@@ -61,10 +61,10 @@ improved" appearing 3× in a row.
 
 Sources walked:
 
-- `packages/trust-radar/src/lib/notifications.ts` (creation + dedup)
-- `packages/trust-radar/src/handlers/notifications.ts` (LIST / read endpoints)
-- `packages/trust-radar/migrations/0018_notifications.sql` (schema)
-- `packages/trust-radar/migrations/0107_notifications_schema_check.sql` (type CHECK constraint)
+- `packages/averrow-worker/src/lib/notifications.ts` (creation + dedup)
+- `packages/averrow-worker/src/handlers/notifications.ts` (LIST / read endpoints)
+- `packages/averrow-worker/migrations/0018_notifications.sql` (schema)
+- `packages/averrow-worker/migrations/0107_notifications_schema_check.sql` (type CHECK constraint)
 - `packages/shared/src/notification-events.ts` (declared type registry; deleted in earlier rebase, now in averrow-ops)
 - `packages/averrow-ops/src/lib/notification-events.ts` (current registry)
 - `packages/averrow-ops/src/components/NotificationBell.tsx` (bell + dropdown)
@@ -812,7 +812,7 @@ telling me." Per-row is the default action button.
 ### Q7. Mobile / push — use existing PWA push (VAPID); add iOS/Android channels. ✅ approved
 
 **Rationale:** the PWA already has VAPID + push wired (see
-`packages/trust-radar/src/lib/push.ts`). Channel definitions in
+`packages/averrow-worker/src/lib/push.ts`). Channel definitions in
 the SW give users OS-native control without us writing native
 apps. iOS interruption levels via the W3C
 `UNNotificationInterruptionLevel` mapping in §6.6.
@@ -1495,11 +1495,11 @@ orchestrator (hour===13)
 ```
 
 Key files:
-- `packages/trust-radar/src/handlers/briefing.ts` — entry, dedup
+- `packages/averrow-worker/src/handlers/briefing.ts` — entry, dedup
   against same-day cron briefings
-- `packages/trust-radar/src/lib/briefing-email.ts:555` — content
+- `packages/averrow-worker/src/lib/briefing-email.ts:555` — content
   assembly; this is where stale/empty briefings originate
-- `packages/trust-radar/src/lib/email.ts` — Resend wrapper
+- `packages/averrow-worker/src/lib/email.ts` — Resend wrapper
 
 ### 12.2 Failure modes observed
 

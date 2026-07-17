@@ -8,8 +8,8 @@
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "deploy:shield": "turbo run deploy --filter=trust-radar",
-    "deploy:radar": "turbo run deploy --filter=trust-radar"
+    "deploy:shield": "turbo run deploy --filter=averrow-worker",
+    "deploy:radar": "turbo run deploy --filter=averrow-worker"
   },
   "devDependencies": {
     "turbo": "^2.10.4",
@@ -19,7 +19,7 @@
   "overridesNotes": {
     "_": "Rationale for each pnpm.overrides entry (D3 dep-hygiene). pnpm forbids comment keys inside overrides, so notes live here. Drop a pin once the upstream dep resolves the fix within our semver range.",
     "protocol-buffers-schema": "moderate (prototype pollution, <3.6.1). Browser-shipped in the averrow-ops SPA bundle via deck.gl>@deck.gl/carto>pbf>resolve-protobuf-schema. No non-major direct-dep bump exposes the fix, so pin the transitive to the patched patch release.",
-    "flatted": "high (DoS, <3.4.2). Dev-only, buried under trust-radar>eslint>file-entry-cache>flat-cache>flatted — pinned by flat-cache with no direct-dep bump that reaches it. Pin the transitive to the patched patch release (3.4.2, the current latest).",
+    "flatted": "high (DoS, <3.4.2). Dev-only, buried under averrow-worker>eslint>file-entry-cache>flat-cache>flatted — pinned by flat-cache with no direct-dep bump that reaches it. Pin the transitive to the patched patch release (3.4.2, the current latest).",
     "ws": "high (DoS, <8.21.0). Dev/test-only, pulled by averrow-ops>jsdom (the vitest test env). jsdom's dep range is ^8.18.0 so a jsdom major bump wouldn't change the resolution; pnpm dedup keeps 8.18.0. Pin to the patched 8.x release — patch-level within jsdom's existing ws major, no behavior change.",
     "form-data": "high (unsafe boundary randomness, <4.0.6). Dev/test-only, pulled by averrow-ops>jsdom. jsdom's dep range is ^4.0.0; pnpm resolved 4.0.5. Pin to the patched 4.x release — patch-level within jsdom's existing form-data major."
   },

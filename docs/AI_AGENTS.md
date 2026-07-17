@@ -1,6 +1,6 @@
 # AI Agents
 
-Trust Radar uses a mesh of AI agents plus infrastructure agents (Navigator, Cube Healer) powered by Claude Haiku via the Anthropic API. Agents are defined as modules in `packages/trust-radar/src/agents/` and orchestrated by the agent runner in `packages/trust-radar/src/lib/agentRunner.ts`. The registry is `packages/trust-radar/src/agents/index.ts`.
+Averrow uses a mesh of AI agents plus infrastructure agents (Navigator, Cube Healer) powered by Claude Haiku via the Anthropic API. Agents are defined as modules in `packages/averrow-worker/src/agents/` and orchestrated by the agent runner in `packages/averrow-worker/src/lib/agentRunner.ts`. The registry is `packages/averrow-worker/src/agents/index.ts`.
 
 **Companion docs:**
 - [`AGENT_STANDARD.md`](./AGENT_STANDARD.md) — the contract every agent must satisfy (lifecycle, resource declarations, output schemas, per-agent budgets, approval gates, tests).
@@ -56,7 +56,7 @@ When grepping, use the file name; when querying D1, use the agent_id.
 
 ### Agent Runner
 
-The agent runner (`packages/trust-radar/src/lib/agentRunner.ts`) provides the execution framework. Each agent implements the `AgentModule` interface:
+The agent runner (`packages/averrow-worker/src/lib/agentRunner.ts`) provides the execution framework. Each agent implements the `AgentModule` interface:
 
 ```typescript
 interface AgentModule {
@@ -72,7 +72,7 @@ interface AgentModule {
 
 ### AI Client
 
-All agents use Claude Haiku via the direct Anthropic API. The AI client is in `packages/trust-radar/src/lib/haiku.ts` and provides specialized functions:
+All agents use Claude Haiku via the direct Anthropic API. The AI client is in `packages/averrow-worker/src/lib/haiku.ts` and provides specialized functions:
 
 - `inferBrand()` — Brand identification from domain/URL patterns
 - `classifyThreat()` — Threat classification and severity scoring
@@ -83,7 +83,7 @@ All agents use Claude Haiku via the direct Anthropic API. The AI client is in `p
 
 ### Agent Registry
 
-Agents are registered in `packages/trust-radar/src/agents/index.ts`. The registry maps agent names to modules for the scheduler and API.
+Agents are registered in `packages/averrow-worker/src/agents/index.ts`. The registry maps agent names to modules for the scheduler and API.
 
 ### Cost Guard
 
@@ -133,7 +133,7 @@ Sync agents (handler-driven, no inter-agent edges) and the ops cluster (`cube_he
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/sentinel.ts` |
+| **File** | `packages/averrow-worker/src/agents/sentinel.ts` |
 | **Trigger** | Hourly tick — event-dispatched when the feed scan ingests new threats |
 | **Purpose** | Classify new threats, assign confidence scores and severity |
 
@@ -154,15 +154,15 @@ The Sentinel runs on every feed ingestion cycle. It processes newly ingested thr
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/analyst.ts` |
+| **File** | `packages/averrow-worker/src/agents/analyst.ts` |
 | **Trigger** | Scheduled — every hourly tick (dispatched via `ctx.waitUntil`) |
 | **Purpose** | Brand attribution for threats that rule-based detection missed |
 
-The Analyst processes threats that have no `target_brand_id` assigned. It uses Claude Haiku to infer which brand is being targeted from domain and URL patterns, supplementing the rule-based detection in `packages/trust-radar/src/lib/brandDetect.ts`.
+The Analyst processes threats that have no `target_brand_id` assigned. It uses Claude Haiku to infer which brand is being targeted from domain and URL patterns, supplementing the rule-based detection in `packages/averrow-worker/src/lib/brandDetect.ts`.
 
 - Loads the top 100 known brands for context
-- Filters against the safe domain allowlist (`packages/trust-radar/src/lib/safeDomains.ts`)
-- Runs brand-threat correlation via `packages/trust-radar/src/brand-threat-correlator.ts`
+- Filters against the safe domain allowlist (`packages/averrow-worker/src/lib/safeDomains.ts`)
+- Runs brand-threat correlation via `packages/averrow-worker/src/brand-threat-correlator.ts`
 - Processes up to 30 unattributed threats per run
 
 **Outputs** (`agent_outputs`): writes `type='insight'` rows for actionable narratives —
@@ -180,7 +180,7 @@ audit, insights were `type='classification'` and never reached any consumer.)
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/observer.ts` |
+| **File** | `packages/averrow-worker/src/agents/observer.ts` |
 | **Trigger** | Scheduled — daily at 00:00 UTC (inline await on the hourly mesh) |
 | **Purpose** | Generate intelligence briefings from trend analysis |
 
@@ -203,7 +203,7 @@ This context is sent to Claude Haiku, which generates 3-5 professional intellige
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/strategist.ts` |
+| **File** | `packages/averrow-worker/src/agents/strategist.ts` |
 | **Trigger** | Scheduled — every 6 hours (hours 0/6/12/18, via `ctx.waitUntil`) |
 | **Purpose** | Campaign correlation and clustering |
 
@@ -225,16 +225,16 @@ When clusters are found, Claude Haiku generates descriptive campaign names. New 
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/cartographer.ts` |
+| **File** | `packages/averrow-worker/src/agents/cartographer.ts` |
 | **Trigger** | Scheduled — every hourly tick (dispatched as `CartographerBackfillWorkflow`) |
 | **Purpose** | Infrastructure mapping and hosting provider reputation scoring |
 
 The Cartographer operates in two phases:
 
-1. **Geo enrichment** — Enriches threats missing geographic data (IP geolocation via `packages/trust-radar/src/lib/geoip.ts`)
+1. **Geo enrichment** — Enriches threats missing geographic data (IP geolocation via `packages/averrow-worker/src/lib/geoip.ts`)
 2. **Provider scoring** — Uses Claude Haiku to score the top 50 hosting providers based on threat volume, response times, and trends
 
-Also runs email security scans for monitored brands via `packages/trust-radar/src/email-security.ts`.
+Also runs email security scans for monitored brands via `packages/averrow-worker/src/email-security.ts`.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
 **Outputs:** Enriched threat records (`threats.registrar`, `registration_date` populated via IANA RDAP bootstrap — switched from rdap.org in PR-C of the 2026-05-16 audit because rdap.org returns HTTP 403 to CF Workers); provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
@@ -253,7 +253,7 @@ written to `agent_outputs(type='score')` with zero readers.
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/pathfinder.ts` |
+| **File** | `packages/averrow-worker/src/agents/pathfinder.ts` |
 | **Trigger** | Scheduled — daily at 03:00 UTC (KV throttle enforces ≤1 run per 7 days) |
 | **Purpose** | Sales intelligence and lead generation |
 
@@ -274,7 +274,7 @@ Processes up to 5 prospects per run. Results are stored in the `sales_leads` tab
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/sparrow.ts` |
+| **File** | `packages/averrow-worker/src/agents/sparrow.ts` |
 | **Trigger** | Scheduled — every 6 hours (hours 0/6/12/18, via `ctx.waitUntil`) |
 | **Purpose** | Takedown automation — drafts and submits takedown requests for active phishing infrastructure |
 
@@ -302,8 +302,8 @@ Kill switch: flip the var back to `'draft'`.
 
 | Property | Value |
 |----------|-------|
-| **Workflow** | `packages/trust-radar/src/workflows/nexusRun.ts` (class `NexusWorkflow`, binding `NEXUS_RUN`) |
-| **Agent module (fallback)** | `packages/trust-radar/src/agents/nexus.ts` (manual trigger only at `/api/internal/agents/nexus/run`) |
+| **Workflow** | `packages/averrow-worker/src/workflows/nexusRun.ts` (class `NexusWorkflow`, binding `NEXUS_RUN`) |
+| **Agent module (fallback)** | `packages/averrow-worker/src/agents/nexus.ts` (manual trigger only at `/api/internal/agents/nexus/run`) |
 | **Trigger** | Scheduled — every 4 hours (hours 0/4/8/12/16/20). Cron at `hour % 4 === 0` calls `dispatchWorkflow()` in `lib/workflow-dispatch.ts`, which has KV cooldown on `WorkflowInternalError` + last-dispatch stamp watched by FC supervisor. |
 | **Purpose** | Infrastructure cluster detection — the operations layer |
 
@@ -318,7 +318,7 @@ Nexus correlates shared infrastructure into `infrastructure_clusters` rows that 
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/attributor.ts` |
+| **File** | `packages/averrow-worker/src/agents/attributor.ts` |
 | **Trigger** | Scheduled — every 4 hours at `hour % 4 === 1` (one tick after Nexus) |
 | **Purpose** | Classifies Nexus infrastructure clusters by responsible threat actor |
 
@@ -339,7 +339,7 @@ For unresolved clusters: stamps `attribution_attempted_at = now()` so the agent 
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/news-watcher.ts` |
+| **File** | `packages/averrow-worker/src/agents/news-watcher.ts` |
 | **Trigger** | Scheduled — every 6 hours at `hour % 6 === 2` |
 | **Purpose** | Ingest threat-intel RSS feeds; extract actors + geopolitical context |
 
@@ -362,7 +362,7 @@ Bounded: at most 30 new articles per run (`ARTICLES_PER_RUN`). Most cycles see �
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/narrator.ts` |
+| **File** | `packages/averrow-worker/src/agents/narrator.ts` |
 | **Trigger** | Scheduled — daily at 06:00 UTC (via `executeAgent`, after Observer briefing) |
 | **Purpose** | Multi-signal threat narrative generation per brand |
 
@@ -377,7 +377,7 @@ Narrator correlates threats, email security posture, social impersonation, looka
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/notification_narrator.ts` |
+| **File** | `packages/averrow-worker/src/agents/notification_narrator.ts` |
 | **Trigger** | Scheduled — daily at 13:00 UTC (via `executeAgent`, inside the hourly orchestrator's `hour === 13` gate) |
 | **Purpose** | Per-user daily digest envelope builder (Q5b backlog) |
 
@@ -396,7 +396,7 @@ unrelated beyond firing in the same hour.
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/handlers/briefing.ts` |
+| **File** | `packages/averrow-worker/src/handlers/briefing.ts` |
 | **Trigger** | Scheduled — dedicated cron `13 13 * * *` (`generateAndEmailBriefing`, `cron/orchestrator.ts`), plus on-demand via `POST /api/briefings/generate` (`handleGenerateBriefing`) and `POST /api/internal/briefing/send` |
 | **Purpose** | 12-section Platform Operations Briefing (feed health, enrichment pipeline, agent activity, new threats, spam trap, honeypot, brand coverage, geopolitical campaigns) |
 
@@ -428,7 +428,7 @@ exhausted before the `threat_briefings` INSERT could land).
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/trustbot.ts` |
+| **File** | `packages/averrow-worker/src/agents/trustbot.ts` |
 | **Trigger** | Manual — on user request via `/api/trustbot/chat` |
 | **Purpose** | Interactive AI threat intelligence copilot |
 
@@ -452,7 +452,7 @@ Context is sent to Claude Haiku along with the user's question for a contextual 
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/seed-strategist.ts` |
+| **File** | `packages/averrow-worker/src/agents/seed-strategist.ts` |
 | **Trigger** | Scheduled — daily at 6am UTC |
 | **Purpose** | Spam trap seeding strategy and coverage optimization |
 
@@ -472,7 +472,7 @@ The Seed Strategist analyzes spam trap performance and identifies coverage gaps:
 
 | Property | Value |
 |----------|-------|
-| **File** | `packages/trust-radar/src/agents/cube-healer.ts` |
+| **File** | `packages/averrow-worker/src/agents/cube-healer.ts` |
 | **Trigger** | Scheduled — every 6 hours (`12 */6 * * *`) |
 | **Purpose** | Retroactive drift remediation for OLAP cube tables |
 

@@ -1,8 +1,8 @@
 /*
  * Changelog manifest — canonical source after R6 cutover. Mirrors
- * packages/trust-radar/src/templates/changelog-entries.ts during the
+ * packages/averrow-worker/src/templates/changelog-entries.ts during the
  * migration window. Keep both files in sync until R6 drops the
- * trust-radar copy.
+ * averrow-worker copy.
  */
 
 export type ChangelogKind = "Feature" | "Improvement" | "Fix" | "Security";

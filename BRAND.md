@@ -18,10 +18,10 @@ arrow in the mark is a direct nod to the CF-105 Avro Arrow.
 
 | Path | Role |
 |---|---|
-| `packages/trust-radar/public/favicon.svg` | **Master logo SVG** — the canonical Avro Arrow on dark navy. Edit this file to change the brand mark; regenerate everything else. |
-| `packages/trust-radar/public/bimi.svg` | BIMI-compliant variant (`baseProfile="tiny-ps"` + `<title>`). Same artwork. Updated when favicon.svg changes — see `docs/BIMI_SETUP_RUNBOOK.md`. |
-| `packages/trust-radar/public/icon-192.svg` / `icon-512.svg` | PWA manifest icons (round-canvas variant). Same artwork on a circular background instead of rounded square. |
-| `packages/trust-radar/public/brand/` | **Generated** — do not edit by hand. Regenerate via `scripts/generate-logo-assets.py`. |
+| `packages/averrow-worker/public/favicon.svg` | **Master logo SVG** — the canonical Avro Arrow on dark navy. Edit this file to change the brand mark; regenerate everything else. |
+| `packages/averrow-worker/public/bimi.svg` | BIMI-compliant variant (`baseProfile="tiny-ps"` + `<title>`). Same artwork. Updated when favicon.svg changes — see `docs/BIMI_SETUP_RUNBOOK.md`. |
+| `packages/averrow-worker/public/icon-192.svg` / `icon-512.svg` | PWA manifest icons (round-canvas variant). Same artwork on a circular background instead of rounded square. |
+| `packages/averrow-worker/public/brand/` | **Generated** — do not edit by hand. Regenerate via `scripts/generate-logo-assets.py`. |
 
 ### Regenerate the asset suite
 
@@ -31,7 +31,7 @@ python3 scripts/generate-logo-assets.py
 
 Pre-reqs: `pip install cairosvg Pillow` (already installed in the
 dev environment). The script is idempotent — re-run any time the
-master SVG changes. Output goes to `packages/trust-radar/public/brand/`
+master SVG changes. Output goes to `packages/averrow-worker/public/brand/`
 and is served live at `https://averrow.com/brand/...`.
 
 ### Generated file naming
@@ -45,7 +45,7 @@ and is served live at `https://averrow.com/brand/...`.
 
 | Special locations (not under `brand/`) | Why |
 |---|---|
-| `packages/trust-radar/public/logo-email.png` | Stable URL `https://averrow.com/logo-email.png` referenced by the abuse-mailbox email template (`src/lib/abuse-mailbox-responder.ts`). 144×144 retina-grade PNG. Don't move — would break previously sent emails' image refs. |
+| `packages/averrow-worker/public/logo-email.png` | Stable URL `https://averrow.com/logo-email.png` referenced by the abuse-mailbox email template (`src/lib/abuse-mailbox-responder.ts`). 144×144 retina-grade PNG. Don't move — would break previously sent emails' image refs. |
 
 ---
 
@@ -197,7 +197,7 @@ serve identical static assets.
 ## 7. When in doubt
 
 1. Read this file.
-2. Look at the master SVG: `packages/trust-radar/public/favicon.svg`.
+2. Look at the master SVG: `packages/averrow-worker/public/favicon.svg`.
 3. If you think the brand needs to evolve, change this file FIRST,
    then regenerate via `scripts/generate-logo-assets.py`, then
    update the master SVG, then deploy.

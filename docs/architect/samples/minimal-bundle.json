@@ -71,7 +71,7 @@
     ],
     "workers": [
       {
-        "name": "trust-radar",
+        "name": "averrow-worker",
         "path": "src/index.ts",
         "bindings": ["DB", "CACHE"]
       }

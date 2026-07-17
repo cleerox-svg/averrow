@@ -15,7 +15,7 @@ change: **does it actually do what it's supposed to, at runtime — not just
 compile?** You are the last gate before a change ships.
 
 ## The gate (reproduce CI locally first)
-For a change under `packages/trust-radar`, run — in the package — and report each:
+For a change under `packages/averrow-worker`, run — in the package — and report each:
 1. `pnpm typecheck` (`tsc --noEmit`) — must be clean.
 2. `pnpm build:manifest && pnpm check:resource-drift` — **0 drift**. (This gate
    scans `/** */` comments and regex-matches `UPDATE <word>` / `INSERT INTO

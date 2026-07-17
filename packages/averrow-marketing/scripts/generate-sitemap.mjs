@@ -26,7 +26,7 @@ const ROOT = resolve(here, "..");
 const DIST = join(ROOT, "dist");
 const SITE = "https://averrow.com";
 
-/** Routes served by the trust-radar Worker that need to appear
+/** Routes served by the averrow Worker that need to appear
  *  in the sitemap. Astro doesn't generate these, so we add them
  *  manually. Update if Worker routes change. */
 const WORKER_ROUTES = [

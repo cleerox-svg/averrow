@@ -187,6 +187,65 @@ this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE
 - **S3.6 (R4, R5)** — track the D1 read-budget trend; fix the wrangler CPU-limit and
   ct-monitor docblock drift.
 
+## Trust Radar → Averrow rebrand (executed 2026-07-17) ✅
+
+Out-of-band of the wave sequence above — a same-day structural rename, not a Wave 1
+terminology/copy pass. Landed by a docs-maintainer sweep against a code change already
+merged on this branch.
+
+**Changed:**
+- Backend package folder `packages/trust-radar` → `packages/averrow-worker`
+  (`package.json` name: `averrow-worker`).
+- Deployed Cloudflare Worker name `trust-radar` → `averrow`.
+- GitHub repo `cleerox-svg/trust-radar` → `cleerox-svg/averrow`.
+- Doc/comment display strings referencing "Trust Radar" the product and
+  `packages/trust-radar/...` paths swept to "Averrow" / `packages/averrow-worker/...`
+  across `CLAUDE.md`, `README.md`, `RESTRUCTURE_SPEC.md`, `TECHNICAL_ROADMAP.md`,
+  `LRX_PRODUCT_BOUNDARIES.md`, `docs/AI_AGENTS.md`, `docs/ARCHITECTURE.md`,
+  `docs/THREAT_FEEDS.md`, `docs/DEPLOYMENT.md`, `docs/AGENT_STANDARD.md`,
+  `docs/PLATFORM_DATA_DEPENDENCIES.md`, `docs/CLAUDE_SUBAGENTS.md`,
+  `docs/NOTIFICATIONS_AUDIT.md`, `docs/CATEGORY_RESEARCH.md`,
+  `docs/EMAIL_SECURITY_ENGINE.md`, `docs/legal/DPA_DRAFT.md`,
+  `docs/SEED_DOMAINS_RUNBOOK.md`, `docs/EMAIL_ROUTING_RUNBOOK.md`,
+  `docs/BIMI_SETUP_RUNBOOK.md`, `docs/CONTRIBUTING.md`, `docs/runbooks/*`,
+  `.claude/agents/{backend-engineer,test-engineer,qa-verifier,legal-content-drafter}.md`,
+  and the header comments of `scripts/platform-diagnostics.sh` +
+  `scripts/dns-queue-stability-check.sh`.
+- Outbound feed User-Agents already read `Averrow-ThreatIntel/1.0` / `Averrow/1.0`
+  (verified in `packages/averrow-worker/src/feeds/*.ts` — no doc claimed otherwise, so
+  no doc change was needed here, only confirmation for this record).
+
+**Intentionally KEPT — deferred, with rationale (not oversights):**
+1. **D1 database names** (`trust-radar-v2`, `trust-radar-v2-audit`,
+   `trust-radar-dns-queue`), the **R2 bucket** (`trust-radar-trademark-assets`), and the
+   **Analytics Engine dataset** (`trust_radar_d1_reads`). Renaming a live D1
+   database/R2 bucket/AE dataset is a data migration (new resource + backfill + cutover),
+   not a label edit — out of scope for a docs sweep and not requested. Every doc that
+   names one of these now carries a one-line "kept intentionally" note instead of
+   silently going stale next to the renamed package/Worker.
+2. **Outbound webhook wire contract** (`lib/webhooks.ts`): HMAC headers
+   `X-Trust-Radar-Signature` / `X-Trust-Radar-Event` / `X-Trust-Radar-Delivery` and the
+   `TrustRadar-Webhook/1.0` User-Agent. These are a **customer-integration contract** —
+   any subscriber that pins the header name or UA string breaks silently on a rename.
+   Changing it needs a versioned/dual-emit rollout coordinated with webhook subscribers,
+   not a docs edit.
+3. **Frozen legacy `public/manifest.json`** (`packages/averrow-worker/public/`, the
+   old-SPA tree CLAUDE.md §3 marks "NEVER MODIFY — frozen forever"): `"name": "Trust
+   Radar"`, `"short_name": "TrustRadar"`. Left as-is because the file lives under the
+   frozen `public/`/`app.js`/`styles.css` tree; overriding the freeze for this one field
+   needs an explicit owner decision, not a docs-maintainer edit.
+4. **`trustradar.ca` / `lrxradar.com` domains** — already documented in `README.md` §Domains
+   as legacy, redirecting to `averrow.com`. Unrelated to the package/Worker rename;
+   not touched.
+
+**Pre-existing (unrelated) doc drift noticed, not fixed here:** `docs/NOTIFICATIONS_AUDIT.md`
+cites `packages/averrow-worker/src/lib/email.ts` as "Resend wrapper" — no such file exists
+(no single `lib/email.ts`; Resend calls are scattered across `briefing-email.ts`,
+`invite-email.ts`, `magic-link-email.ts`, etc.) and `docs/CONTRIBUTING.md` cited a
+`TrustRadarAI` export from a `src/lib/ai-client.ts` that also doesn't exist (removed, the
+stale mention was dropped rather than guessed at). Neither is a rebrand-caused break —
+flagging for a follow-up doc-accuracy pass.
+
 ---
 
 ## Sequencing notes

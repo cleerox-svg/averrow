@@ -23,7 +23,7 @@ their own context and only the tools their charter grants.
 
 | Agent | Category | Owns | Model | Writes code? |
 |---|---|---|---|---|
-| `backend-engineer` | Software dev | Workers, D1, internal agents, feeds, cron (`trust-radar`, `averrow-mcp`) | opus | ✅ |
+| `backend-engineer` | Software dev | Workers, D1, internal agents, feeds, cron (`averrow-worker`, `averrow-mcp`) | opus | ✅ |
 | `frontend-engineer` | Software dev | React SPAs (`averrow-ops`, `averrow-tenant`, `shared`, marketing islands) | sonnet | ✅ |
 | `test-engineer` | Testing | Writes/maintains vitest unit + integration tests (backend + React) | sonnet | Tests only |
 | `qa-verifier` | Testing | Runs the gate + drives changes end-to-end to catch runtime bugs | sonnet | Verify only |
@@ -61,7 +61,7 @@ touch `public/` / `app.js` / `styles.css`; user avatars = initials only; light +
 dark theme; login/profile parity spec; `tsc --noEmit` clean.
 
 ### `test-engineer` — automated test coverage
-Writes and maintains vitest tests: backend logic in `packages/trust-radar/test/`
+Writes and maintains vitest tests: backend logic in `packages/averrow-worker/test/`
 and React components/hooks in `averrow-ops` / `averrow-tenant` (`src/test/`
 scaffolding). **Key guardrails:** test behavior not implementation; pure decision
 functions get table-driven coverage (the `decide…Triage` model); cover the

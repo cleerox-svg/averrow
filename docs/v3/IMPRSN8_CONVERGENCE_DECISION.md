@@ -25,7 +25,7 @@ This doc closes the question with the rationale and what stays decoupled.
 
 **Keep imprsn8 standalone**. Two parallel Cloudflare Workers under the same parent (LRX Enterprises Inc.), no code-level coupling, no shared data.
 
-The v3 work in `packages/trust-radar/` and the in-flight `packages/trust-radar-v3/` work do **not** touch `packages/imprsn8/`. imprsn8 keeps its own:
+The v3 work in `packages/averrow-worker/` and the in-flight `packages/trust-radar-v3/` work do **not** touch `packages/imprsn8/`. imprsn8 keeps its own:
 
 - Cloudflare Worker (`imprsn8.com`)
 - D1 (`imprsn8-db`)
@@ -52,10 +52,10 @@ A buyer for one doesn't naturally buy the other. The pitch, the price point, the
 ### 3.2 Zero code coupling today
 
 ```
-$ grep -rn "imprsn8" packages/trust-radar/src/
-packages/trust-radar/src/agents/architect/collectors/repo-fs.ts:36   # comment only
-packages/trust-radar/src/agents/architect/collectors/repo-fs.ts:92   # comment only
-packages/trust-radar/src/lib/cors.ts:8-9                              # CORS allowlist
+$ grep -rn "imprsn8" packages/averrow-worker/src/
+packages/averrow-worker/src/agents/architect/collectors/repo-fs.ts:36   # comment only
+packages/averrow-worker/src/agents/architect/collectors/repo-fs.ts:92   # comment only
+packages/averrow-worker/src/lib/cors.ts:8-9                              # CORS allowlist
 
 $ grep -rn "trust-radar\|averrow" packages/imprsn8/src/
 packages/imprsn8/src/templates/homepage.ts:416  # "Also by LRX: Averrow →" link
@@ -127,7 +127,7 @@ The two products *may* eventually share infrastructure tooling (e.g. a common de
 
 | # | Question | Owner | When |
 |---|---|---|---|
-| Q1 | Should the architect agent (`packages/trust-radar/src/agents/architect/`) document imprsn8 as a sibling system in its architecture maps? Currently it has comments excluding it from its scan | Engineer A | Whenever architect agent next gets work |
+| Q1 | Should the architect agent (`packages/averrow-worker/src/agents/architect/`) document imprsn8 as a sibling system in its architecture maps? Currently it has comments excluding it from its scan | Engineer A | Whenever architect agent next gets work |
 | Q2 | If Averrow grows a "personal brand" SKU via cross-tenant intel, would that re-introduce the convergence question? | Operator | Before cross-tenant intel pricing tier (§5.5) reaches the personal-brand market |
 | Q3 | Cost-tracking dashboard: should imprsn8 spend roll up into the same Averrow-master view, or stay separate? | Operator | When Phase 0 step 7 (Pathfinder cron decision) closes — they're in similar ops territory |
 

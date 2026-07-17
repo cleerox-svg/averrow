@@ -10,8 +10,8 @@ dist/
 *.tsbuildinfo
 
 # Frontend built assets (built in CI before deploy)
-packages/trust-radar/public/v2/
-packages/trust-radar/public/tenant/
+packages/averrow-worker/public/v2/
+packages/averrow-worker/public/tenant/
 
 # Python
 __pycache__/

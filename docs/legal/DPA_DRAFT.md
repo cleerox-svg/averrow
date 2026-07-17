@@ -31,7 +31,7 @@ an actual audit report in hand.
 > **DRAFT — requires human and legal review before publishing. Not legal advice.**
 
 - This draft is scoped to match the facts on `/security` and the existing
-  `/privacy` and `/terms` pages (`packages/trust-radar/src/templates/privacy.ts`,
+  `/privacy` and `/terms` pages (`packages/averrow-worker/src/templates/privacy.ts`,
   `terms.ts`) as of 2026-07-14. If those pages change, this draft will drift
   and needs to be re-checked against them before use.
 - Every `[NEEDS HUMAN INPUT: ...]` placeholder must be resolved before this

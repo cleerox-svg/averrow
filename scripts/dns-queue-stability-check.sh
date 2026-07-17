@@ -40,7 +40,7 @@
 #   AVERROW_HOURS=12 ./scripts/dns-queue-stability-check.sh
 #
 # Required env vars (same as platform-diagnostics.sh):
-#   AVERROW_INTERNAL_SECRET  — internal-secret on the trust-radar Worker
+#   AVERROW_INTERNAL_SECRET  — internal-secret on the averrow Worker
 #   AVERROW_API_URL          — (optional) defaults to https://averrow.com
 #
 # Exit codes:

@@ -49,7 +49,7 @@ interface ContextBundle {
 ```
 
 The full TypeScript types live in
-[`packages/trust-radar/src/agents/architect/types.ts`](../../packages/trust-radar/src/agents/architect/types.ts).
+[`packages/averrow-worker/src/agents/architect/types.ts`](../../packages/averrow-worker/src/agents/architect/types.ts).
 
 ### Collector contracts
 
@@ -90,7 +90,7 @@ zeros or `null` with a `TODO` comment. **Never fabricate values.**
 ### One-shot against dev D1
 
 ```bash
-cd packages/trust-radar
+cd packages/averrow-worker
 pnpm architect:collect
 ```
 
@@ -216,7 +216,7 @@ and confirm the bundle landed. Phase 5 is where the richer dashboard
 ## File map
 
 ```
-packages/trust-radar/
+packages/averrow-worker/
 ├── migrations/
 │   └── 0070_architect_reports.sql    # architect_reports + architect_table_snapshots
 └── src/
@@ -300,9 +300,9 @@ interface DataLayerAnalysis extends SectionAnalysisBase {
 ```
 
 Full TypeScript definitions live in
-[`packages/trust-radar/src/agents/architect/analysis/types.ts`](../../packages/trust-radar/src/agents/architect/analysis/types.ts),
+[`packages/averrow-worker/src/agents/architect/analysis/types.ts`](../../packages/averrow-worker/src/agents/architect/analysis/types.ts),
 and the hand-rolled JSON validator is in
-[`schema.ts`](../../packages/trust-radar/src/agents/architect/analysis/schema.ts).
+[`schema.ts`](../../packages/averrow-worker/src/agents/architect/analysis/schema.ts).
 The orchestrator throws on invalid JSON and the analyzer row flips to
 `failed` with a path-prefixed `SchemaError` message so debugging a bad
 model response is a one-grep affair.
@@ -322,7 +322,7 @@ model response is a one-grep affair.
   three section rows have been persisted. Trips the outer `runAnalysis`
   throw but keeps the analyses that did complete.
 - **Pricing constants** live in
-  [`analysis/pricing.ts`](../../packages/trust-radar/src/agents/architect/analysis/pricing.ts)
+  [`analysis/pricing.ts`](../../packages/averrow-worker/src/agents/architect/analysis/pricing.ts)
   — rate updates are a one-file edit.
 
 ### Triggering an analysis
@@ -388,7 +388,7 @@ Returns the three section rows with `analysis_json` already parsed:
 ### File map additions
 
 ```
-packages/trust-radar/
+packages/averrow-worker/
 ├── migrations/
 │   └── 0071_architect_analyses.sql           # architect_analyses table
 └── src/

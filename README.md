@@ -21,9 +21,9 @@ Averrow monitors the internet for brand impersonation, phishing infrastructure, 
 ## Repository Layout
 
 ```
-trust-radar/                         ← repo name kept for git history
+averrow/                             ← repo: cleerox-svg/averrow (renamed from trust-radar 2026-07-17)
 ├── packages/
-│   ├── trust-radar/                 ← Averrow Worker (backend) — internal name
+│   ├── averrow-worker/              ← Averrow Worker (backend)
 │   ├── averrow-ops/                 ← Staff back-office React SPA (rebadged from averrow-ui; serves /v2/*)
 │   ├── averrow-tenant/              ← Customer-facing React SPA (serves /tenant/*)
 │   └── averrow-mcp/                 ← MCP server exposing platform diagnostics to Claude Code
@@ -75,7 +75,7 @@ Averrow runs entirely on Cloudflare's edge. There is no traditional backend serv
 
 ## Cron Triggers
 
-From `packages/trust-radar/wrangler.toml`:
+From `packages/averrow-worker/wrangler.toml`:
 
 | Schedule | Handler | Purpose |
 |---|---|---|
@@ -89,7 +89,7 @@ The orchestrator's `:07` offset (rather than `:00`) exists to stop Navigator, cu
 
 - Primary: `trust-radar-v2` (D1, SQLite at the edge) — internal name kept
 - Audit: `trust-radar-v2-audit`
-- **95 migrations** in `packages/trust-radar/migrations/`
+- **95 migrations** in `packages/averrow-worker/migrations/`
 - Key tables: `threats`, `brands`, `hosting_providers`, `campaigns`, `infrastructure_clusters`, `agent_runs`, `agent_events`, `feed_configs`, `feed_status`, OLAP cubes (`threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand`)
 
 ## Development
@@ -101,7 +101,7 @@ pnpm typecheck      # Type check every package
 pnpm lint           # Lint every package
 
 # Single package
-pnpm --filter trust-radar dev
+pnpm --filter averrow-worker dev
 pnpm --filter averrow-ops build
 
 # Deploy manually (normally auto-deploys on push to master)
@@ -111,7 +111,7 @@ pnpm deploy:radar
 ### Migrations
 
 ```bash
-cd packages/trust-radar
+cd packages/averrow-worker
 
 # Local
 npx wrangler d1 execute trust-radar-v2 --local --file=migrations/NNNN_name.sql

@@ -1,6 +1,6 @@
 // Unified passkey client. Wraps @simplewebauthn/browser using a
 // product-agnostic HTTP adapter. Backend lives in
-// packages/trust-radar/src/handlers/passkeys.ts and produces the
+// packages/averrow-worker/src/handlers/passkeys.ts and produces the
 // same session shape as OAuth + magic-link, so once a sign-in
 // completes the AuthProvider hydrates without any changes
 // elsewhere.

@@ -406,7 +406,7 @@ next* and lets them act in bulk.
 | W8 | **SLA / aging indicators** — visible age + SLA-breach warning per severity (Crit 15m, High 1h, Med 4h, Low 24h). | SOC SLA standards |
 | W9 | **Assignment + notes/comments** — assign to an analyst, attach notes / a comment thread / evidence to a case. | Chronicle Cases, Sentinel |
 
-> Platform context to check against the UI: Trust-Radar already has rule-based
+> Platform context to check against the UI: Averrow already has rule-based
 > **alert auto-triage** (`lib/alert-triage.ts`), an **AI judge**
 > (`lib/alert-ai-judge.ts` — Haiku verdict + confidence), and backfill endpoints
 > (`POST /api/admin/alerts/backfill-triage`, `…/run-ai-judge`). The open question
@@ -620,7 +620,7 @@ loop approval).
 | A7 | **Human-in-the-loop approval** — approve/reject/request-changes checkpoints, **discoverable**, triggered by confidence/risk. | HITL layered model (in-loop / on-loop) |
 | A8 | **Orchestration/lane visibility** — which agent dispatches which, dispatch source (cron vs event), event lanes. | multi-agent routing/context-flow |
 
-> Platform context to score against: Trust-Radar already has deep telemetry —
+> Platform context to score against: Averrow already has deep telemetry —
 > `agent_runs`, `agent_events`, `agent_outputs`, `agent_configs.enabled`
 > (circuit-breaker), and `/api/internal/platform-diagnostics` (per-agent
 > total_runs/success/failed/running/last_error/avg_duration_ms/dispatch_source,

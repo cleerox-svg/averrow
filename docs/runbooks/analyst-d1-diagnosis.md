@@ -288,7 +288,7 @@ eliminates the primary bottleneck (temp B-tree). Enrichment indexes are deferred
 
 ## Index usage map (Phase D)
 
-Built via `rg "FROM threats" packages/trust-radar/src` cross-referenced with each index's column(s).
+Built via `rg "FROM threats" packages/averrow-worker/src` cross-referenced with each index's column(s).
 
 | # | Index name | Callers | Decision |
 |---|-----------|---------|----------|

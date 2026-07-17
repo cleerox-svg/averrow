@@ -1,6 +1,6 @@
 /*
  * Base + chrome styles for the marketing rebuild. Ported from
- * packages/trust-radar/src/templates/shared.ts. Token blocks live
+ * packages/averrow-worker/src/templates/shared.ts. Token blocks live
  * in ./tokens.css; this file is the visual primitives layer.
  *
  * Component-specific CSS lives in the .astro file that uses it

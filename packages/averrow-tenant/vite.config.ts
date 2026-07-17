@@ -31,7 +31,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../trust-radar/public/tenant',
+    outDir: '../averrow-worker/public/tenant',
     emptyOutDir: true,
   },
   server: {

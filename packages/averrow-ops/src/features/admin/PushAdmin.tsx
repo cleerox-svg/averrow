@@ -257,7 +257,7 @@ function BootstrapPanel({
               <ol className="text-xs space-y-1.5 pl-4 list-decimal" style={{ color: 'var(--text-secondary)' }}>
                 <li>Save the private key to a password manager.</li>
                 <li>
-                  Run from <code className="font-mono">packages/trust-radar</code>:{' '}
+                  Run from <code className="font-mono">packages/averrow-worker</code>:{' '}
                   <code className="font-mono px-1 rounded" style={{ background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
                     wrangler secret put VAPID_PRIVATE_KEY
                   </code>

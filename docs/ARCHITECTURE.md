@@ -9,9 +9,9 @@ Averrow is a monorepo-based platform built on Cloudflare Workers, D1, and KV. Th
 The repository uses Turborepo with pnpm workspaces. Configuration lives in `turbo.json` and `pnpm-workspace.yaml` at the root.
 
 ```
-trust-radar/
+averrow/
 ├── packages/
-│   ├── trust-radar/        → Primary Cloudflare Worker (API + SPA)
+│   ├── averrow-worker/     → Primary Cloudflare Worker (API + SPA), deploy name `averrow`
 │   │   ├── src/
 │   │   │   ├── index.ts            → Router + Worker entry point
 │   │   │   ├── agents/             → AI agent modules (16 agents)
@@ -44,7 +44,7 @@ trust-radar/
 
 ### Entry Point
 
-The main Worker is defined in `packages/trust-radar/src/index.ts`. It exports a standard Workers `fetch` handler along with a `scheduled` handler for cron-triggered feed ingestion.
+The main Worker is defined in `packages/averrow-worker/src/index.ts`. It exports a standard Workers `fetch` handler along with a `scheduled` handler for cron-triggered feed ingestion.
 
 ### Router
 
@@ -78,15 +78,17 @@ Authentication uses JWT tokens issued via Google OAuth. Three auth levels exist:
 - `requireAdmin` — Admin role required
 - `requireSuperAdmin` — Super-admin role required
 
-Auth middleware is in `packages/trust-radar/src/middleware/auth.ts`. JWT verification uses `packages/trust-radar/src/lib/jwt.ts`.
+Auth middleware is in `packages/averrow-worker/src/middleware/auth.ts`. JWT verification uses `packages/averrow-worker/src/lib/jwt.ts`.
 
 ### Rate Limiting
 
-Rate limiting uses KV-based counters, implemented in `packages/trust-radar/src/middleware/rateLimit.ts`. Different rate limit buckets exist for `auth`, `scan`, and general API usage.
+Rate limiting uses KV-based counters, implemented in `packages/averrow-worker/src/middleware/rateLimit.ts`. Different rate limit buckets exist for `auth`, `scan`, and general API usage.
 
 ## Database: Cloudflare D1
 
-Trust Radar uses two D1 databases:
+Averrow uses two D1 databases. Both retain their pre-rebrand `trust-radar-v2*`
+names intentionally — renaming a live D1 database is a migration, not a
+label change, so this was deferred (see `docs/TERMINOLOGY_LEXICON_2026-07.md`).
 
 | Binding | Database | Purpose |
 |---------|----------|---------|
@@ -95,7 +97,7 @@ Trust Radar uses two D1 databases:
 
 ### D1 Sessions API (Read Replicas)
 
-Read-heavy endpoints use the D1 Sessions API to route queries to read replicas, reducing latency and offloading the primary. The implementation lives in `packages/trust-radar/src/lib/db.ts`:
+Read-heavy endpoints use the D1 Sessions API to route queries to read replicas, reducing latency and offloading the primary. The implementation lives in `packages/averrow-worker/src/lib/db.ts`:
 
 - `getDbContext(request)` — returns a session-aware DB handle from the incoming request's `x-d1-bookmark` header
 - `getReadSession(env, ctx)` — returns a read-only session for cron/agent contexts without an HTTP request
@@ -132,7 +134,7 @@ Key tables carry denormalized aggregate columns to avoid JOINs to `threats`:
 
 ### Schema Overview
 
-Migrations are in `packages/trust-radar/migrations/` (88+ migration files). Key tables:
+Migrations are in `packages/averrow-worker/migrations/` (88+ migration files). Key tables:
 
 - `threats` — Core threat intelligence records (URL, domain, IP, severity, source)
 - `brands` — Monitored brands with canonical domains and threat counts
@@ -285,7 +287,7 @@ All requests pass through the Worker first, enabling API routing. The `not_found
 
 ## Durable Objects
 
-The `ThreatPushHub` Durable Object (`packages/trust-radar/src/durableObjects/ThreatPushHub.ts`) manages WebSocket connections for real-time threat push notifications. When new threats are ingested, the feed runner broadcasts events to all connected browser sessions.
+The `ThreatPushHub` Durable Object (`packages/averrow-worker/src/durableObjects/ThreatPushHub.ts`) manages WebSocket connections for real-time threat push notifications. When new threats are ingested, the feed runner broadcasts events to all connected browser sessions.
 
 ## Cron Triggers
 
@@ -363,8 +365,8 @@ unlike cron invocations which share the Worker's per-invocation CPU/wall budget.
 
 The Worker receives inbound emails for two purposes:
 
-- **DMARC reports** — Processed by `packages/trust-radar/src/dmarc-receiver.ts`
-- **Spam trap captures** — Processed by `packages/trust-radar/src/spam-trap.ts`
+- **DMARC reports** — Processed by `packages/averrow-worker/src/dmarc-receiver.ts`
+- **Spam trap captures** — Processed by `packages/averrow-worker/src/spam-trap.ts`
 
 ## Environments
 

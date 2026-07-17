@@ -311,7 +311,7 @@ This is the rough outline; ADR-002 owns the detail.
 - `.claude/plans/v3.md` §1 (six-engine vision), §2.2 (correlation gaps), §3 gap inventory, §4.1 (engine layout), §5.1 (split lock), §5.5 (cross-tenant pricing)
 - `docs/v3/PHASE_0_AUDIT.md` — confirms the actor-vs-brand framing matches the data
 - v2 schema:
-  - `packages/trust-radar/migrations/0135_threat_attributions.sql` — current attribution shape
-  - `packages/trust-radar/src/agents/nexus.ts` — current cluster + actor binding logic
-  - `packages/trust-radar/src/lib/cube-builder.ts` — cube pattern v3 inherits
+  - `packages/averrow-worker/migrations/0135_threat_attributions.sql` — current attribution shape
+  - `packages/averrow-worker/src/agents/nexus.ts` — current cluster + actor binding logic
+  - `packages/averrow-worker/src/lib/cube-builder.ts` — cube pattern v3 inherits
 - Migration plan: ADR-002 (Phase 0 step 3, next)

@@ -1,5 +1,5 @@
 // Client-side lookup for SaaS attack techniques (PushSecurity taxonomy).
-// Mirrors the backend seed in packages/trust-radar/src/lib/saas-techniques-seed.ts.
+// Mirrors the backend seed in packages/averrow-worker/src/lib/saas-techniques-seed.ts.
 // Used to render technique badges alongside MITRE TTPs on the Threat Actors view.
 //
 // Source:      github.com/pushsecurity/saas-attacks (CC-BY-4.0)

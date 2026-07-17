@@ -6,7 +6,7 @@ import react from "@astrojs/react";
 // R6 cutover config.
 //
 // Output mode: 'static' — every route is pre-rendered to HTML at build
-// time. Files are written into the trust-radar Worker's static-assets
+// time. Files are written into the averrow Worker's static-assets
 // directory so the Workers ASSETS binding picks them up.
 //
 // After R6 the base is "/" (was "/marketing" during R1-R5) so the
@@ -15,7 +15,7 @@ import react from "@astrojs/react";
 // removed in this PR — Static Assets takes over.
 //
 // Astro writes to its own ./dist/ (default). A postbuild sync script
-// copies the artifacts overlay-style into ../trust-radar/public/ so
+// copies the artifacts overlay-style into ../averrow-worker/public/ so
 // the Worker's ASSETS binding picks them up. Going through dist/
 // instead of writing directly into public/ prevents Astro's outDir
 // cleanup from wiping the legacy SPA assets (app.js, dashboard.html,

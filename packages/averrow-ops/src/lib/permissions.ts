@@ -1,4 +1,4 @@
-// Frontend mirror of packages/trust-radar/src/lib/role-permissions.ts.
+// Frontend mirror of packages/averrow-worker/src/lib/role-permissions.ts.
 //
 // The worker is the source of truth — every endpoint enforces these flags
 // server-side. This client-side copy exists only to show/hide UI coherently

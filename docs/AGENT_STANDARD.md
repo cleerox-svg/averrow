@@ -855,9 +855,9 @@ pnpm new-agent recon-deux \
 ```
 
 Output (all wired correctly):
-- `packages/trust-radar/src/agents/recon-deux.ts` — module skeleton with all required fields
-- `packages/trust-radar/src/agents/recon-deux.test.ts` — unit test stub
-- `packages/trust-radar/src/agents/recon-deux.integration.test.ts` — integration test stub
+- `packages/averrow-worker/src/agents/recon-deux.ts` — module skeleton with all required fields
+- `packages/averrow-worker/src/agents/recon-deux.test.ts` — unit test stub
+- `packages/averrow-worker/src/agents/recon-deux.integration.test.ts` — integration test stub
 - Patches `agentRunner.ts` (AgentName union)
 - Patches `agents/index.ts` (registry)
 - Patches `agent-metadata.ts` (UI metadata)

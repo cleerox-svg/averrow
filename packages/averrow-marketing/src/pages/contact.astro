@@ -1,7 +1,7 @@
 ---
 /*
  * Contact page. Form POSTs to /api/contact which stays handled by the
- * trust-radar Worker (the Astro static build never touches the API).
+ * Averrow Worker (the Astro static build never touches the API).
  * Inline submit script same as the inline-template version.
  */
 import Layout from "../layouts/Layout.astro";
@@ -315,7 +315,7 @@ import Layout from "../layouts/Layout.astro";
 
 <script>
   // Form submission. POSTs to /api/contact — that handler stays on the
-  // trust-radar Worker, untouched by the rebuild.
+  // Averrow Worker, untouched by the rebuild.
   const form = document.getElementById("contactForm") as HTMLFormElement | null;
   const btn = document.getElementById("submitBtn") as HTMLButtonElement | null;
   const msg = document.getElementById("formMessage") as HTMLElement | null;

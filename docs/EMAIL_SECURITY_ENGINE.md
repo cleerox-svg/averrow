@@ -4,9 +4,9 @@ The Email Security Posture Engine performs outside-in analysis of a domain's ema
 
 ## Source Files
 
-- **Engine:** `packages/trust-radar/src/email-security.ts`
-- **API Handlers:** `packages/trust-radar/src/handlers/emailSecurity.ts`
-- **Database Migration:** `packages/trust-radar/migrations/0020_email_security_posture.sql`
+- **Engine:** `packages/averrow-worker/src/email-security.ts`
+- **API Handlers:** `packages/averrow-worker/src/handlers/emailSecurity.ts`
+- **Database Migration:** `packages/averrow-worker/migrations/0020_email_security_posture.sql`
 
 ## How It Works
 
@@ -87,7 +87,7 @@ The composite score is out of 100 points, weighted as follows:
 | Policy = `quarantine` | +12 |
 | Policy = `none` | +4 |
 | Aggregate reporting (`rua`) configured | +5 |
-| Reports sent to Trust Radar (`trustradar.ca`) | +5 |
+| Reports sent to Averrow (`averrow.com` or legacy `trustradar.ca`) | +5 |
 
 ### SPF (30 points max)
 

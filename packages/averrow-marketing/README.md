@@ -29,7 +29,7 @@ packages/averrow-marketing/
 ├── scripts/
 │   ├── fetch-stats.mjs       ← prebuild: pulls /api/v1/public/stats
 │   ├── generate-sitemap.mjs  ← postbuild: walks dist/ → sitemap.xml
-│   └── sync-to-worker.mjs    ← postbuild: overlays dist/ → trust-radar/public/
+│   └── sync-to-worker.mjs    ← postbuild: overlays dist/ → averrow-worker/public/
 ├── tests/
 │   └── smoke.spec.ts         ← Playwright critical-path tests
 ├── astro.config.mjs
@@ -39,7 +39,7 @@ packages/averrow-marketing/
 
 Astro builds with `output: 'static'`. The artifacts land in
 `./dist/`, then `sync-to-worker.mjs` overlay-copies them into
-`packages/trust-radar/public/` so the trust-radar Worker's
+`packages/averrow-worker/public/` so the averrow Worker's
 `[assets]` binding serves them. Going through `dist/` + sync
 keeps Astro's outDir cleanup from wiping the legacy SPA assets
 (`app.js`, `dashboard.html`, `public/v2`, `public/tenant`) that
@@ -54,7 +54,7 @@ astro build                         ← static HTML + island chunks → dist/
 ↓
 node scripts/generate-sitemap.mjs   ← walk dist/, emit sitemap.xml
 ↓
-node scripts/sync-to-worker.mjs     ← overlay copy into trust-radar/public/
+node scripts/sync-to-worker.mjs     ← overlay copy into averrow-worker/public/
 ```
 
 `@astrojs/sitemap` is intentionally NOT used — version 3.7.x
@@ -95,10 +95,10 @@ pnpm --filter @averrow/marketing build
 ## Deploy
 
 The Worker deploy handles it. Turbo ensures `@averrow/marketing`
-builds before `trust-radar`, so the static files are present in
+builds before `averrow-worker`, so the static files are present in
 `public/` when wrangler uploads.
 
 ```bash
-pnpm turbo build --filter=trust-radar
-pnpm --filter trust-radar deploy
+pnpm turbo build --filter=averrow-worker
+pnpm --filter averrow-worker deploy
 ```

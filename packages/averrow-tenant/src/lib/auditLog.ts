@@ -1,7 +1,7 @@
 // Tenant audit-log API client.
 //
 // Backed by GET /api/orgs/:orgId/audit-log (handler:
-// trust-radar/src/handlers/tenantData.ts handleTenantAuditLog). Analyst+
+// averrow-worker/src/handlers/tenantData.ts handleTenantAuditLog). Analyst+
 // org role; the backend enforces it too. Shows org-scoped automation +
 // human actions (who/what/when); ip/user-agent are not exposed.
 

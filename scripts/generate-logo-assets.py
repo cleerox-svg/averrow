@@ -2,7 +2,7 @@
 """
 generate-logo-assets.py — Averrow brand asset suite generator
 
-Reads the master SVG (packages/trust-radar/public/favicon.svg) and
+Reads the master SVG (packages/averrow-worker/public/favicon.svg) and
 emits the full set of derived logo assets used across the platform:
 
   • Favicons (16, 32, 48 PNG + multi-res .ico)
@@ -21,8 +21,8 @@ Run:
   python3 scripts/generate-logo-assets.py
 
 Output:
-  packages/trust-radar/public/brand/  (all generated PNGs + .ico)
-  packages/trust-radar/public/logo-email.png  (kept in root for the
+  packages/averrow-worker/public/brand/  (all generated PNGs + .ico)
+  packages/averrow-worker/public/logo-email.png  (kept in root for the
     averrow.com URL referenced by Resend HTML)
 
 Re-run anytime the master favicon.svg changes — the script is
@@ -40,14 +40,14 @@ import cairosvg
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "packages/trust-radar/public/favicon.svg"
+SRC = ROOT / "packages/averrow-worker/public/favicon.svg"
 # Mark-only variant (no rounded-square background) — used in the
 # email template so Gmail Android dark mode has no dark pixels to
 # trip its per-image color-inversion heuristic. See PR-BB.
-SRC_MARK = ROOT / "packages/trust-radar/public/favicon-mark.svg"
-OUT = ROOT / "packages/trust-radar/public/brand"
-OUT_LEGACY_EMAIL = ROOT / "packages/trust-radar/public/logo-email.png"
-OUT_EMAIL_MARK = ROOT / "packages/trust-radar/public/logo-email-mark.png"
+SRC_MARK = ROOT / "packages/averrow-worker/public/favicon-mark.svg"
+OUT = ROOT / "packages/averrow-worker/public/brand"
+OUT_LEGACY_EMAIL = ROOT / "packages/averrow-worker/public/logo-email.png"
+OUT_EMAIL_MARK = ROOT / "packages/averrow-worker/public/logo-email-mark.png"
 
 # Brand colours — keep in sync with AVERROW_UI_STANDARD.md / favicon.svg
 BG_DARK = (8, 14, 24)        # #080E18 — favicon background

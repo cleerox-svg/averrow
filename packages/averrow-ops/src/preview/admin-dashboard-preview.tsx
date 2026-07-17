@@ -51,8 +51,8 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         infrastructure: {
           mainDb: { name: 'trust-radar-v2', sizeMb: 287.4, tables: 142, region: 'ENAM' },
           auditDb: { name: 'trust-radar-v2-audit', sizeKb: 412, tables: 4, region: 'ENAM' },
-          worker: { name: 'trust-radar', platform: 'Cloudflare Workers' },
-          kvNamespaces: [{ name: 'CACHE' }, { name: 'SESSIONS' }, { name: 'trust-radar-cache' }],
+          worker: { name: 'averrow', platform: 'Cloudflare Workers' },
+          kvNamespaces: [{ name: 'CACHE' }, { name: 'SESSIONS' }, { name: 'averrow-cache' }],
         },
       },
     });

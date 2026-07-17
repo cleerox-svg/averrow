@@ -1,19 +1,19 @@
 # Threat Feed Integrations
 
-Trust Radar ingests threat intelligence from ~48 external feeds split across three categories: **ingest feeds** (35) that create new threat records (two of these — CISA KEV and NVD CVE — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
+Averrow ingests threat intelligence from ~48 external feeds split across three categories: **ingest feeds** (35) that create new threat records (two of these — CISA KEV and NVD CVE — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
 
 ## Source Files
 
-- **Feed modules:** `packages/trust-radar/src/feeds/`
-- **Feed runner:** `packages/trust-radar/src/lib/feedRunner.ts`
-- **Feed types:** `packages/trust-radar/src/feeds/types.ts`
-- **Feed handlers (API):** `packages/trust-radar/src/handlers/feeds.ts`
-- **Legacy adapters:** `packages/trust-radar/src/threat-feeds.ts`
-- **Scoring logic:** `packages/trust-radar/src/lib/threatScoring.ts`
+- **Feed modules:** `packages/averrow-worker/src/feeds/`
+- **Feed runner:** `packages/averrow-worker/src/lib/feedRunner.ts`
+- **Feed types:** `packages/averrow-worker/src/feeds/types.ts`
+- **Feed handlers (API):** `packages/averrow-worker/src/handlers/feeds.ts`
+- **Legacy adapters:** `packages/averrow-worker/src/threat-feeds.ts`
+- **Scoring logic:** `packages/averrow-worker/src/lib/threatScoring.ts`
 
 ## Feed Module Interface
 
-Every feed implements the `FeedModule` interface defined in `packages/trust-radar/src/feeds/types.ts`:
+Every feed implements the `FeedModule` interface defined in `packages/averrow-worker/src/feeds/types.ts`:
 
 ```typescript
 interface FeedModule {
@@ -44,7 +44,7 @@ interface FeedResult {
 4. **IOC deduplication** — Before inserting a threat, the runner checks KV (`dedup:{type}:{value}`) with 24-hour TTL
 5. **Threat insertion** — New threats are inserted via `INSERT OR IGNORE` for database-level dedup
 6. **Brand matching** — Rule-based brand detection runs on each new threat
-7. **Scoring** — Confidence scores and severity are calculated via heuristics in `packages/trust-radar/src/lib/threatScoring.ts`
+7. **Scoring** — Confidence scores and severity are calculated via heuristics in `packages/averrow-worker/src/lib/threatScoring.ts`
 8. **History logging** — Results recorded in `feed_pull_history`
 9. **Status update** — `feed_status` updated with health information
 
@@ -79,7 +79,7 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/trust-radar/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 35 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 35 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
 
 **Cadence:** every ingest/social feed and 7 of the 9 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is gated by its own `feed_configs.interval_minutes` row in D1, not by a static per-feed cron. Two enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h) and **SecLookup** (`21 * * * *`, hourly) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts:164`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) — see `CLAUDE.md §6` for the full rationale and cron table.
 
@@ -235,11 +235,11 @@ See `docs/API_REFERENCE.md` for the full feeds API. The operationally important 
 
 To reduce false positives, the feed pipeline filters threats against a safe domain allowlist. The allowlist is maintained per-brand and stored in the `brand_safe_domains` table.
 
-Safe domain logic is in `packages/trust-radar/src/lib/safeDomains.ts`. Domains on the allowlist are excluded from brand-threat matching.
+Safe domain logic is in `packages/averrow-worker/src/lib/safeDomains.ts`. Domains on the allowlist are excluded from brand-threat matching.
 
 ## Legacy Adapters
 
-The file `packages/trust-radar/src/threat-feeds.ts` contains legacy Phase 1 adapters for:
+The file `packages/averrow-worker/src/threat-feeds.ts` contains legacy Phase 1 adapters for:
 
 - Have I Been Pwned (Pwned Passwords)
 - PhishTank (direct API)
@@ -247,4 +247,4 @@ The file `packages/trust-radar/src/threat-feeds.ts` contains legacy Phase 1 adap
 - AbuseIPDB
 - EmailRep.io
 
-These normalize signals to a `ThreatSignal` format and store them in the `threat_signals` table. The v2 feed modules in `packages/trust-radar/src/feeds/` are the current standard.
+These normalize signals to a `ThreatSignal` format and store them in the `threat_signals` table. The v2 feed modules in `packages/averrow-worker/src/feeds/` are the current standard.

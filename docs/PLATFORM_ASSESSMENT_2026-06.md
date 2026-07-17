@@ -1,6 +1,6 @@
 # Averrow Platform Assessment — June 2026
 
-**Scope:** Full code-level assessment of the Averrow platform (trust-radar Worker,
+**Scope:** Full code-level assessment of the Averrow platform (averrow Worker,
 averrow-ops, averrow-tenant, averrow-marketing, shared, imprsn8 — imprsn8 was
 decommissioned 2026-07-12, after this assessment was written; see note under
 §2.5) against the stated vision: *ingest intel feeds broadly → identify

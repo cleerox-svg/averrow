@@ -198,6 +198,6 @@ This sequence inverts the original framing: instead of "fix Pathfinder then ship
 - `.claude/plans/v3.md` §2.7 (Pathfinder description, demote note)
 - `docs/v3/PHASE_0_AUDIT.md` §9 (four Phase 0 blockers)
 - `docs/v3/PHASE_0_AUDIT.md` §10 (directional v0 targeting conclusion)
-- `packages/trust-radar/src/agents/pathfinder.ts` — agent implementation
-- `packages/trust-radar/src/cron/orchestrator.ts:948-953` — current demote
+- `packages/averrow-worker/src/agents/pathfinder.ts` — agent implementation
+- `packages/averrow-worker/src/cron/orchestrator.ts:948-953` — current demote
 - ADR-001, ADR-002 — schema + migration (Pathfinder lives on v2 throughout v3 build; convergence happens in `averrow-ops` per §5.1)

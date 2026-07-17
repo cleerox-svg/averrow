@@ -2,8 +2,8 @@
  * Notification event registry — SINGLE SOURCE OF TRUTH.
  *
  * Every event the platform can fire must appear here. The dispatcher
- * (`packages/trust-radar/src/lib/notifications.ts`), the preference
- * handlers (`packages/trust-radar/src/handlers/notifications.ts`), and
+ * (`packages/averrow-worker/src/lib/notifications.ts`), the preference
+ * handlers (`packages/averrow-worker/src/handlers/notifications.ts`), and
  * the UI matrix
  * (`packages/averrow-ops/src/features/settings/NotificationPreferences.tsx`)
  * all derive their event list, dedup windows, default state, and labels

@@ -6,7 +6,7 @@
 // cookie (H5, SECURITY_AUDIT_2026-06-10) — the browser attaches it to
 // /api/auth/refresh automatically; JS never sees it. On page reload
 // the shared AuthProvider bootstraps a fresh access token via that
-// cookie. Fetches go to the same backend (`packages/trust-radar`);
+// cookie. Fetches go to the same backend (`packages/averrow-worker`);
 // proxied via vite.config.ts in dev and via worker route in prod, so
 // everything is same-origin.
 

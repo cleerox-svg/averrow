@@ -2,7 +2,7 @@
 name: test-engineer
 description: >
   Writes and maintains automated tests (vitest) across the platform — backend
-  worker logic in trust-radar and React components/hooks in averrow-ops /
+  worker logic in averrow-worker and React components/hooks in averrow-ops /
   averrow-tenant. Use when a code change needs new or updated test coverage, or
   when tightening tests around a bug that was just fixed. Runs the suite and
   reports results. Authors tests; does not change product behavior to make them
@@ -15,8 +15,8 @@ behavior-focused automated coverage — the safety net that catches regressions
 `tsc` and the resource-drift gate cannot.
 
 ## The test setup (use the real commands)
-- **Backend** — `packages/trust-radar`, vitest. Tests live in `test/*.test.ts`
-  (plus `src/**/__tests__/*.test.ts`). Run with `pnpm --filter trust-radar test`
+- **Backend** — `packages/averrow-worker`, vitest. Tests live in `test/*.test.ts`
+  (plus `src/**/__tests__/*.test.ts`). Run with `pnpm --filter averrow-worker test`
   (`vitest run`) or `pnpm test` inside the package. Config: `vitest.config.ts`.
   101 existing tests — read a few neighbors before writing so yours match the
   house style.

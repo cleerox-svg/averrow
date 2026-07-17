@@ -10,14 +10,14 @@ Audit-recommended expansion (Wave 2.1) of the seeded-honeypot domain footprint f
 
 3. **Email Routing (optional but recommended)** — Enable Email Routing on the domain, point catch-all to `cleerox-svg@gmail.com` (or your operator inbox). This isn't required for the bait pages themselves but lets harvested addresses on this domain receive mail when they get spammed. Without Email Routing, captures land but the harvester's email bounces (still useful for source attribution).
 
-4. **Wrangler route** — Add to `packages/trust-radar/wrangler.toml` `routes`:
+4. **Wrangler route** — Add to `packages/averrow-worker/wrangler.toml` `routes`:
    ```toml
    { pattern = "<new-domain>", custom_domain = true },
    { pattern = "www.<new-domain>", custom_domain = true },
    ```
    Deploy with `pnpm deploy:worker`. CF provisions the custom-hostname cert (~30s).
 
-5. **Add to `HONEYPOT_HOSTNAMES`** in `packages/trust-radar/src/index.ts` so the bait-page handlers fire on the new domain:
+5. **Add to `HONEYPOT_HOSTNAMES`** in `packages/averrow-worker/src/index.ts` so the bait-page handlers fire on the new domain:
    ```ts
    const HONEYPOT_HOSTNAMES = new Set([
      "averrow.com", "www.averrow.com",

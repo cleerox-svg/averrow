@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Averrow corporate marketing site (averrow.com). Astro + MDX, output served by the trust-radar Worker via its Static Assets binding.",
+  "description": "Averrow corporate marketing site (averrow.com). Astro + MDX, output served by the averrow Worker via its Static Assets binding.",
   "scripts": {
     "dev": "astro dev --port 4321",
     "build": "node scripts/fetch-stats.mjs && astro build && node scripts/generate-sitemap.mjs && node scripts/sync-to-worker.mjs",

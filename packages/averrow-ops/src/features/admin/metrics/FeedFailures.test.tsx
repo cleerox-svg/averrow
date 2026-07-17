@@ -128,7 +128,7 @@ describe('FeedFailures — FeedRiskCard keyboard access', () => {
 });
 
 // ─── Tier 4: feedRiskTier is a thin reader of the backend `severity` ────
-// field (lib/feed-severity.ts computeFeedSeverity on the trust-radar
+// field (lib/feed-severity.ts computeFeedSeverity on the averrow-worker
 // side) instead of re-deriving critical/high from
 // pct_to_auto_pause/failure_rate_pct here. `muted` is still resolved
 // locally from enabled/paused_reason since severity is null for both

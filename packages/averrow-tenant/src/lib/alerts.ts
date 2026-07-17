@@ -1,7 +1,7 @@
 // Tenant Alerts API client.
 //
 // Backed by GET /api/orgs/:orgId/alerts (handler:
-// trust-radar/src/handlers/tenantData.ts:handleTenantAlerts).
+// averrow-worker/src/handlers/tenantData.ts:handleTenantAlerts).
 // Org-scoped at handler level via org_brands ownership.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

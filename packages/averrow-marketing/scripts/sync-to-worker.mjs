@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Overlay-copy Astro's dist/ into the trust-radar Worker's public/
+ * Overlay-copy Astro's dist/ into the averrow Worker's public/
  * directory. Runs after `astro build` (see package.json scripts).
  *
  * Why this exists: writing Astro's outDir directly into public/
@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
 const SRC = join(ROOT, "dist");
-const DEST = resolve(ROOT, "..", "trust-radar", "public");
+const DEST = resolve(ROOT, "..", "averrow-worker", "public");
 
 async function main() {
   if (!existsSync(SRC)) {

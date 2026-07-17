@@ -268,7 +268,7 @@ The model above is not net-new logic — it's making existing backend decisions 
 So the design references to copy: **Doppel** (confidence-threshold + AI justification +
 feedback loop), **Darktrace** (mode toggle with guardrails), **Netcraft** (takedown
 lifecycle + `false_positive` override + aging), **Bolster** ("Dispute" one-click
-override). Every one of these has a backend analogue already in Trust-Radar.
+override). Every one of these has a backend analogue already in Averrow.
 
 ---
 
@@ -423,5 +423,5 @@ Verplanck automation taxonomy (arxiv), NIST SP 800-82, arxiv HITL papers
 
 **Averrow current state:** live prod walkthrough (`org_id=1`) of `/tenant`, `/threats`,
 `/alerts`, `/takedowns`; code inventory of `packages/averrow-tenant/src` +
-`packages/trust-radar/src/routes/tenant.ts` & handlers (endpoints in §3).
+`packages/averrow-worker/src/routes/tenant.ts` & handlers (endpoints in §3).
 

@@ -1,13 +1,13 @@
 # Deployment
 
-Trust Radar deploys to Cloudflare Workers via GitHub Actions on push to `master`.
+Averrow deploys to Cloudflare Workers via GitHub Actions on push to `master`.
 
 ## Architecture
 
 ```
 GitHub Actions (CI/CD)
-├── deploy-radar.yml    → Cloudflare Workers (trust-radar)
-└── ci.yml              → TypeCheck trust-radar Worker
+├── deploy-radar.yml    → Cloudflare Workers (averrow)
+└── ci.yml              → TypeCheck averrow Worker
 ```
 
 ## Prerequisites
@@ -30,7 +30,7 @@ Copy `.env.example` to `.env` and configure:
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | Yes |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Yes |
 
-See `packages/trust-radar/wrangler.toml` for Worker bindings (D1, KV, R2).
+See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
 ## Local Development
 
@@ -44,7 +44,7 @@ Local dev uses Miniflare (Wrangler's local runtime) with local D1 SQLite databas
 
 ## Database Migrations
 
-Migrations are SQL files in `packages/trust-radar/migrations/`:
+Migrations are SQL files in `packages/averrow-worker/migrations/`:
 
 ```bash
 # Run locally
@@ -62,7 +62,7 @@ Migrations are also run automatically by the deploy workflow.
 ## Manual Deploy
 
 ```bash
-cd packages/trust-radar
+cd packages/averrow-worker
 npx wrangler deploy          # Deploy to production
 npx wrangler deploy --env staging  # Deploy to staging
 ```
@@ -70,11 +70,11 @@ npx wrangler deploy --env staging  # Deploy to staging
 ## CI/CD Pipeline
 
 ### ci.yml (on every PR and push to master)
-1. TypeCheck trust-radar Worker
+1. TypeCheck averrow Worker
 
 > **Note:** The `deploy-api.yml` workflow (FastAPI/Railway) has been removed — all compute runs on Cloudflare Workers.
 
-### deploy-radar.yml (on push to master, paths: `packages/trust-radar/**`)
+### deploy-radar.yml (on push to master, paths: `packages/averrow-worker/**`)
 1. Type check
 2. Run D1 migrations (both DB and AUDIT_DB)
 3. Deploy via `wrangler deploy`

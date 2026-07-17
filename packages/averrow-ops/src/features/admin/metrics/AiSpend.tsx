@@ -28,7 +28,7 @@
 // Same hook (useAiSpend) → same data → same backend cost. Backend:
 // handleMetricsAiSpend now returns the superset that absorbed the
 // retired-from-the-frontend ai-cost-optimization shape (see
-// packages/trust-radar/src/handlers/admin.ts).
+// packages/averrow-worker/src/handlers/admin.ts).
 
 import { Fragment, useState } from 'react';
 import {
@@ -46,7 +46,7 @@ import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 
 // The three focus agents account for ~97% of platform AI spend — same
 // roster the retired-from-the-frontend ai-cost-optimization endpoint
-// used (FOCUS_AGENTS in packages/trust-radar/src/handlers/admin.ts).
+// used (FOCUS_AGENTS in packages/averrow-worker/src/handlers/admin.ts).
 // Always present in the by_agent top-20.
 const FOCUS_AGENTS: readonly AgentId[] = ['cartographer', 'analyst', 'sentinel'];
 
@@ -662,7 +662,7 @@ interface CostLever {
 }
 
 // Copied verbatim from the backend `levers[]` array in
-// handleMetricsAiCostOptimization (packages/trust-radar/src/handlers/
+// handleMetricsAiCostOptimization (packages/averrow-worker/src/handlers/
 // admin.ts) — that copy is authoritative (it also feeds the internal
 // CLI, scripts/ai-cost-optimization.sh). If the backend roster changes,
 // update this list to match; don't let the two drift.

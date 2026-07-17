@@ -1,7 +1,7 @@
 // Tenant dashboard API client.
 //
 // Backed by GET /api/orgs/:orgId/dashboard
-// (handler: trust-radar/src/handlers/tenantData.ts:handleTenantDashboard).
+// (handler: averrow-worker/src/handlers/tenantData.ts:handleTenantDashboard).
 //
 // Returns the cross-brand overview: headline stats, per-brand
 // active-threat rollup, 7-day threat trend, and recent alerts.

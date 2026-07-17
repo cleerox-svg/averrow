@@ -1,6 +1,6 @@
 /*
  * Blog RSS feed via @astrojs/rss. Replaces the hand-rolled
- * blog-rss.ts that lived in packages/trust-radar/src/templates/
+ * blog-rss.ts that lived in packages/averrow-worker/src/templates/
  * during the inline-template era.
  */
 import rss from "@astrojs/rss";

@@ -1,7 +1,7 @@
 // averrow-tenant — module entitlement client.
 //
 // Talks to GET /api/orgs/:orgId/modules (handler in
-// packages/trust-radar/src/handlers/tenantModules.ts). Returns the
+// packages/averrow-worker/src/handlers/tenantModules.ts). Returns the
 // 7 canonical modules with their entitlement status, metric
 // definitions, this-month usage rollup, and the active takedown
 // authorization summary.

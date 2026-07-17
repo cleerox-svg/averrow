@@ -10,7 +10,7 @@
 #
 # Required env vars:
 #   AVERROW_INTERNAL_SECRET  — must match the secret of the same name on the
-#                              trust-radar Cloudflare Worker
+#                              averrow Cloudflare Worker
 #   AVERROW_API_URL          — (optional) defaults to https://averrow.com
 #
 # Exit codes:
