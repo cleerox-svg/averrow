@@ -1,0 +1,395 @@
+<title>Averrow Platform Assessment — July 2026 · Exec Summary</title>
+<style>
+  :root {
+    /* light theme — neutrals biased toward the platform navy, not cream */
+    --bg: #EEF1F5;
+    --bg-2: #E4E9F0;
+    --card: #FFFFFF;
+    --card-2: #F6F8FB;
+    --ink: #10141c;
+    --ink-2: #3a4353;
+    --ink-3: #697487;
+    --line: rgba(16,20,28,0.10);
+    --line-2: rgba(16,20,28,0.06);
+    --amber: #B8821F;
+    --amber-bright: #E5A832;
+    --red: #C83C3C;
+    --green: #1F8B54;
+    --blue: #0A6E92;
+    --sev-critical: #d64545;
+    --sev-critical-bg: rgba(214,69,69,0.10);
+    --sev-high: #d97706;
+    --sev-high-bg: rgba(217,119,6,0.10);
+    --sev-medium: #b8860b;
+    --sev-medium-bg: rgba(184,134,11,0.10);
+    --sev-low: #2563eb;
+    --sev-low-bg: rgba(37,99,235,0.09);
+    --ok: #1F8B54;
+    --ok-bg: rgba(31,139,84,0.10);
+    --shadow: 0 1px 2px rgba(16,20,28,0.06), 0 8px 24px rgba(16,20,28,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #060A14;
+      --bg-2: #0a1120;
+      --card: rgba(22,30,48,0.72);
+      --card-2: rgba(14,20,34,0.6);
+      --ink: rgba(255,255,255,0.92);
+      --ink-2: rgba(255,255,255,0.62);
+      --ink-3: rgba(255,255,255,0.42);
+      --line: rgba(255,255,255,0.10);
+      --line-2: rgba(255,255,255,0.05);
+      --amber: #E5A832;
+      --amber-bright: #F0B94A;
+      --red: #E05555;
+      --green: #3CB878;
+      --blue: #2FA6CE;
+      --sev-critical: #f87171;
+      --sev-critical-bg: rgba(239,68,68,0.13);
+      --sev-high: #fb923c;
+      --sev-high-bg: rgba(249,115,22,0.12);
+      --sev-medium: #fbbf24;
+      --sev-medium-bg: rgba(229,168,50,0.12);
+      --sev-low: #60a5fa;
+      --sev-low-bg: rgba(59,130,246,0.12);
+      --ok: #3CB878;
+      --ok-bg: rgba(60,184,120,0.13);
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 40px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #EEF1F5; --bg-2: #E4E9F0; --card: #FFFFFF; --card-2: #F6F8FB;
+    --ink: #10141c; --ink-2: #3a4353; --ink-3: #697487;
+    --line: rgba(16,20,28,0.10); --line-2: rgba(16,20,28,0.06);
+    --amber: #B8821F; --amber-bright: #E5A832; --red: #C83C3C; --green: #1F8B54; --blue: #0A6E92;
+    --sev-critical: #d64545; --sev-critical-bg: rgba(214,69,69,0.10);
+    --sev-high: #d97706; --sev-high-bg: rgba(217,119,6,0.10);
+    --sev-medium: #b8860b; --sev-medium-bg: rgba(184,134,11,0.10);
+    --sev-low: #2563eb; --sev-low-bg: rgba(37,99,235,0.09);
+    --ok: #1F8B54; --ok-bg: rgba(31,139,84,0.10);
+    --shadow: 0 1px 2px rgba(16,20,28,0.06), 0 8px 24px rgba(16,20,28,0.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #060A14; --bg-2: #0a1120; --card: rgba(22,30,48,0.72); --card-2: rgba(14,20,34,0.6);
+    --ink: rgba(255,255,255,0.92); --ink-2: rgba(255,255,255,0.62); --ink-3: rgba(255,255,255,0.42);
+    --line: rgba(255,255,255,0.10); --line-2: rgba(255,255,255,0.05);
+    --amber: #E5A832; --amber-bright: #F0B94A; --red: #E05555; --green: #3CB878; --blue: #2FA6CE;
+    --sev-critical: #f87171; --sev-critical-bg: rgba(239,68,68,0.13);
+    --sev-high: #fb923c; --sev-high-bg: rgba(249,115,22,0.12);
+    --sev-medium: #fbbf24; --sev-medium-bg: rgba(229,168,50,0.12);
+    --sev-low: #60a5fa; --sev-low-bg: rgba(59,130,246,0.12);
+    --ok: #3CB878; --ok-bg: rgba(60,184,120,0.13);
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 40px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ---- masthead ---- */
+  header.mast {
+    position: relative;
+    padding: 56px 0 28px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+    overflow: hidden;
+  }
+  header.mast::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(120% 90% at 12% -20%, color-mix(in srgb, var(--amber) 14%, transparent), transparent 60%);
+    pointer-events: none;
+  }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--amber); font-weight: 600; margin: 0 0 14px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 22%, transparent); }
+  h1 {
+    font-size: clamp(28px, 5vw, 46px); line-height: 1.05; margin: 0 0 16px;
+    letter-spacing: -0.02em; font-weight: 700; text-wrap: balance; max-width: 20ch;
+  }
+  h1 .accent { color: var(--amber); }
+  .mast .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--ink-3);
+    font-size: 13px; margin-top: 8px;
+  }
+  .mast .meta b { color: var(--ink-2); font-weight: 600; }
+
+  /* ---- verdict band ---- */
+  .verdict {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 3px solid var(--amber);
+    border-radius: 12px; padding: 24px 26px; box-shadow: var(--shadow);
+    margin-bottom: 48px;
+  }
+  .verdict p { margin: 0; font-size: 18px; line-height: 1.5; color: var(--ink); text-wrap: pretty; }
+  .verdict strong { color: var(--amber-bright); font-weight: 650; }
+
+  section { margin-bottom: 52px; scroll-margin-top: 24px; }
+  h2 {
+    font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600; margin: 0 0 4px;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .n { color: var(--amber); font-weight: 700; }
+  .section-lead { color: var(--ink-2); font-size: 15px; margin: 0 0 22px; max-width: 68ch; }
+
+  /* ---- maturity matrix ---- */
+  .matrix { display: grid; gap: 2px; background: var(--line-2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .mrow {
+    display: grid; grid-template-columns: 1.6fr 128px 40px 1.7fr; align-items: center;
+    gap: 16px; padding: 13px 18px; background: var(--card);
+  }
+  .mrow .dom { font-weight: 600; font-size: 14.5px; }
+  .bars { display: flex; gap: 4px; }
+  .bars i { height: 8px; flex: 1; border-radius: 2px; background: color-mix(in srgb, var(--ink) 12%, transparent); }
+  .bars i.on { background: var(--amber); }
+  .bars i.warnfill { background: var(--sev-high); }
+  .bars i.critfill { background: var(--sev-critical); }
+  .delta { font-size: 13px; font-weight: 700; text-align: center; }
+  .delta.up { color: var(--ok); }
+  .delta.down { color: var(--sev-critical); }
+  .delta.flat { color: var(--ink-3); }
+  .mrow .verdict-cell { font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+  @media (max-width: 720px) {
+    .mrow { grid-template-columns: 1fr auto; row-gap: 6px; }
+    .mrow .verdict-cell { grid-column: 1 / -1; }
+    .bars { min-width: 110px; }
+  }
+
+  /* ---- findings ---- */
+  .findings { display: grid; gap: 12px; }
+  .finding {
+    display: grid; grid-template-columns: 34px 1fr; gap: 16px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+  }
+  .finding::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--sev); }
+  .finding .tag {
+    font-family: ui-monospace, monospace; font-size: 18px; font-weight: 700;
+    color: var(--sev); line-height: 1;
+  }
+  .finding h3 { margin: 0 0 6px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .finding p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
+  .finding p code, .verdict-cell code, li code { font-family: ui-monospace, monospace; font-size: 12.5px; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+  .chip {
+    display: inline-block; font-family: ui-monospace, monospace; font-size: 10.5px;
+    letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700;
+    padding: 2px 7px; border-radius: 5px; margin-left: 8px; vertical-align: middle;
+    background: var(--sev-bg); color: var(--sev);
+  }
+  .sev-crit { --sev: var(--sev-critical); --sev-bg: var(--sev-critical-bg); }
+  .sev-high { --sev: var(--sev-high); --sev-bg: var(--sev-high-bg); }
+  .sev-med { --sev: var(--sev-medium); --sev-bg: var(--sev-medium-bg); }
+  .sev-low { --sev: var(--sev-low); --sev-bg: var(--sev-low-bg); }
+  .sev-ok { --sev: var(--ok); --sev-bg: var(--ok-bg); }
+
+  /* severity legend row */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 20px; font-size: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+  .legend b { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
+  /* ---- callout (takedown / differentiator) ---- */
+  .callout {
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: 1px solid var(--line); border-radius: 14px; padding: 26px 28px;
+    box-shadow: var(--shadow); position: relative; overflow: hidden;
+  }
+  .callout.decision { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); }
+  .callout .kicker { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); font-weight: 700; margin-bottom: 10px; }
+  .callout h3 { margin: 0 0 14px; font-size: 21px; letter-spacing: -0.015em; text-wrap: balance; }
+  .callout p { margin: 0 0 12px; color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+  .callout ul { margin: 6px 0 0; padding-left: 0; list-style: none; display: grid; gap: 10px; }
+  .callout li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
+  .callout li .mk { color: var(--ok); font-weight: 700; }
+  .callout li.gap .mk { color: var(--sev-high); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 680px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* ---- roadmap waves ---- */
+  .waves { display: grid; gap: 14px; }
+  .wave {
+    display: grid; grid-template-columns: 132px 1fr; gap: 20px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .wave .wid { }
+  .wave .wnum { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--amber); text-transform: uppercase; }
+  .wave .wname { font-size: 15px; font-weight: 650; margin-top: 3px; line-height: 1.25; }
+  .wave .whorizon { font-size: 12px; color: var(--ink-3); margin-top: 6px; font-family: ui-monospace, monospace; }
+  .wave ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+  .wave li { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+  .wave li b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 680px) { .wave { grid-template-columns: 1fr; gap: 10px; } }
+
+  /* ---- doc pointers ---- */
+  .docs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .doc { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); }
+  .doc .dname { font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--amber); font-weight: 600; word-break: break-all; margin-bottom: 8px; }
+  .doc .ddesc { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+  @media (max-width: 680px) { .docs { grid-template-columns: 1fr; } }
+
+  footer { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 8px; color: var(--ink-3); font-size: 12.5px; line-height: 1.6; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal { opacity: 0; transform: translateY(12px); animation: rise 0.6s cubic-bezier(0.2,0.7,0.2,1) forwards; }
+    @keyframes rise { to { opacity: 1; transform: none; } }
+  }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <header class="mast reveal">
+    <p class="eyebrow"><span class="dot"></span> Averrow Platform · Capabilities &amp; Gaps Assessment</p>
+    <h1>The capability is real. The <span class="accent">story it tells about itself</span> is the gap.</h1>
+    <div class="meta mono">
+      <span><b>Date</b> 2026-07-17</span>
+      <span><b>Method</b> 9 parallel read-only code lenses</span>
+      <span><b>Audience</b> Exec · Engineering · Positioning</span>
+      <span><b>Supersedes</b> PLATFORM_ASSESSMENT_2026-06</span>
+    </div>
+  </header>
+
+  <div class="verdict reveal">
+    <p>Averrow is a broad, genuinely strong, remarkably low-cost <strong>Digital Risk Protection</strong> engine. Detection breadth, standing-gated takedown execution, cost discipline, and the agent mesh are real and largely production-grade. Three things hold it back: a positioning &amp; terminology layer that <strong>misnames its own capabilities</strong> and leaks internal code names to customers; a headline differentiator — <em>"identify who conducts attacks"</em> — the <strong>code doesn't yet deliver</strong>; and a handful of live operational and security sharp edges that are cheap to fix.</p>
+  </div>
+
+  <section class="reveal">
+    <h2><span class="n">01</span> Maturity at a glance</h2>
+    <p class="section-lead">Twelve domains, rated 1–5, with the delta since the June assessment. The two corrections: takedown is far more built than June recorded; attribution is named as aspirational for the first time.</p>
+    <div class="matrix">
+      <div class="mrow"><span class="dom">Feed ingestion</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">~45 feeds, live CertStream CT subscription, disciplined breakers</span></div>
+      <div class="mrow"><span class="dom">Agent mesh / enrichment</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">7 production agents; strong triage + Haiku-judge stack</span></div>
+      <div class="mrow"><span class="dom">Brand-protection detection</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">Lookalike / CT / social / app-store / dark-web live; depth uneven</span></div>
+      <div class="mrow"><span class="dom">Takedown execution + standing</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta up">▲</span><span class="verdict-cell">Live submitters + per-org signed MSA; <b>cannot fire for a non-customer</b>. Was rated ★★ — June was stale</span></div>
+      <div class="mrow"><span class="dom">Threat-actor attribution</span><span class="bars"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="delta down">▼</span><span class="verdict-cell">External-label passthrough + &lt;1% AI resolution — the "WHO" claim is aspirational</span></div>
+      <div class="mrow"><span class="dom">Email intel (trap / abuse / DMARC)</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">Uncommon at this price point; a genuine differentiator</span></div>
+      <div class="mrow"><span class="dom">Multi-tenancy / tenant app</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">Isolation solid — but the customer SPA has <b>zero tests</b></span></div>
+      <div class="mrow"><span class="dom">Cost architecture</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span><span class="delta flat">=</span><span class="verdict-cell">Thesis proven — ~85–90% margin; OLAP cubes + KV caches</span></div>
+      <div class="mrow"><span class="dom">Security / RBAC</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="warnfill"></i><i></i></span><span class="delta down">▼</span><span class="verdict-cell">Clean secrets &amp; deps; one secret→admin escalation, one auditor read-only bypass</span></div>
+      <div class="mrow"><span class="dom">Reliability / ops</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i class="warnfill"></i><i></i></span><span class="delta down">▼</span><span class="verdict-cell">Cron &amp; breaker discipline sound; a live gap drops ~67% of 3 scanners' runs</span></div>
+      <div class="mrow"><span class="dom">Terminology / positioning</span><span class="bars"><i class="on"></i><i class="critfill"></i><i></i><i></i><i></i></span><span class="delta down">▼</span><span class="verdict-cell">Code names on the public site, a phantom agent, 3 wrong descriptions</span></div>
+      <div class="mrow"><span class="dom">Documentation</span><span class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="delta flat">=</span><span class="verdict-cell">Improving, but the June assessment itself went stale in 5 weeks</span></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <h2><span class="n">02</span> Headline findings, ranked</h2>
+    <div class="legend mono">
+      <span><b style="background:var(--sev-critical)"></b> P0 · urgent / live / security</span>
+      <span><b style="background:var(--sev-high)"></b> P1 · high leverage</span>
+      <span><b style="background:var(--sev-medium)"></b> P2 · important</span>
+      <span><b style="background:var(--sev-low)"></b> context</span>
+    </div>
+    <div class="findings">
+      <div class="finding sev-crit"><span class="tag">R1</span><div><h3>A live starvation gap is dropping ~67% of three scanners' runs<span class="chip">P0 · live</span></h3><p>CT monitor, lookalike scanner, and trademark scan run inline at the tail of the hourly tick after a 153s Analyst wait and complete only 8 of 24 runs. <code>ct_monitor</code> has zero <code>agent_runs</code> telemetry, so the stall watchdog can't even see it fail. Same fix pattern already applied to nine other agents.</p></div></div>
+      <div class="finding sev-crit"><span class="tag">S1</span><div><h3>One shared internal secret can mint an admin-mutation token<span class="chip">P0 · security</span></h3><p>The <code>mint-ui-preview-jwt</code> endpoint plus a single shared <code>AVERROW_INTERNAL_SECRET</code> can issue a 4-hour <code>admin</code> JWT reaching ~58 admin endpoints. The diagnostics/agent-trigger secret is effectively admin-equivalent if it leaks. Two independent lenses converged here.</p></div></div>
+      <div class="finding sev-crit"><span class="tag">S2</span><div><h3>The "auditor" read-only role is a convention, not a mechanism<span class="chip">P0 · security</span></h3><p>It sits at staff hierarchy level 3, so any bare <code>requireStaff</code>-gated mutation (brands, email-security scan, investigations) accepts an auditor token — despite the role being designed to write nothing.</p></div></div>
+      <div class="finding sev-high"><span class="tag">§5</span><div><h3>Terminology: internal code names are the public labels<span class="chip">P1 · positioning</span></h3><p>Sentinel / ASTRA / Observer / Navigator / <b>Blackbox</b> / Pathfinder are the <em>primary</em> labels on the marketing site and in the public changelog. <b>"Blackbox" is a phantom</b> — no such agent exists — and is aviation framing. Three customer descriptions are factually wrong: Navigator (geo vs DNS), Pathfinder (a <em>sales</em> tool sold as customer protection), Blackbox↔Narrator.</p></div></div>
+      <div class="finding sev-high"><span class="tag">D1</span><div><h3>The "identify WHO conducts attacks" differentiator is aspirational<span class="chip">P1 · positioning</span></h3><p>NEXUS is single-attribute <code>GROUP BY</code>; actor names are external-label passthrough with &lt;1% AI resolution; "pivot detection" is a volume-decay alarm, not infrastructure movement. The marketing was written as if actor-fingerprinting ships today.</p></div></div>
+      <div class="finding sev-high"><span class="tag">C2</span><div><h3>Takedown execution is real — but no metric is published<span class="chip">P1 · competitive</span></h3><p>Peers lead with hard numbers (Netcraft 33-min median, PhishLabs 40K/mo, BrandShield 98%). Averrow can execute standing-gated takedowns and publishes none. Highest-leverage messaging gap once instrumented.</p></div></div>
+      <div class="finding sev-med"><span class="tag">T1</span><div><h3>D1 cost discipline leaks on hot page-load paths<span class="chip">P2 · technical</span></h3><p>Dashboard, brands, campaigns, and trends handlers still <code>GROUP BY</code> over the raw 113K-row <code>threats</code> table — the platform's own #1 red-flag rule. Fix: swap to the existing cubes / pre-computed columns.</p></div></div>
+      <div class="finding sev-low"><span class="tag">✓</span><div><h3>Verified strong — protect and market these<span class="chip sev-ok">healthy</span></h3><p>~45 feeds incl. live CertStream; deterministic "SQL correlates, AI narrates" scoring; a genuinely strong alert-triage + Haiku-judge stack; clean secrets, dependency pinning, migrations, and staging/dev D1 isolation; 118 backend test files.</p></div></div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <h2><span class="n">03</span> Takedown standing model — founder decision, verified in code</h2>
+    <p class="section-lead">Averrow has no legal standing to submit a takedown for a brand until that brand is a customer with an authorizing tenant. The verification found this principle is <b>already ~90% enforced</b> — with two net-new surfaces and one integrity fix remaining.</p>
+    <div class="callout">
+      <div class="kicker">Enforced today</div>
+      <ul>
+        <li><span class="mk">✓</span><span><b>The sole outbound dispatcher</b> (Sparrow Phase G) hard-excludes brands with no owning org and requires a per-org signed MSA + entitlement + provider opt-in + an <code>auto</code> policy decision. <b>No path can fire a takedown for a non-customer.</b></span></li>
+        <li><span class="mk">✓</span><span>The <code>org_brands</code> join table is a clean customer-vs-prospect marker; auto / semi-auto / off posture is stored <b>per tenant</b> on the signed scope.</span></li>
+      </ul>
+      <div class="kicker" style="margin-top:20px;">Remaining work</div>
+      <ul>
+        <li class="gap"><span class="mk">▹</span><span><b>TK1 — integrity fix.</b> An admin status-flip can stamp any takedown "submitted" with no standing check, misrepresenting an unsent/unauthorized action as sent.</span></li>
+        <li class="gap"><span class="mk">▹</span><span><b>TK2 — analyst hand-submit (net-new).</b> No ops path for an Averrow analyst to dispatch an authorized customer's edge case. The primitives to build it cleanly already exist, unused.</span></li>
+        <li class="gap"><span class="mk">▹</span><span><b>TK3 — Ops "Takedowns" becomes two surfaces (net-new, mostly composition).</b> Authorized execution <em>plus</em> a per-brand prospect/pitch view — "everything we'd action for you" — composed from ingredients that already exist (exposure scan, BrandDetail Risk tab, orgless drafts already in the admin queue).</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <h2><span class="n">04</span> The differentiator decision — locked</h2>
+    <div class="callout decision">
+      <div class="kicker">Re-anchor now, invest next</div>
+      <h3>Stop implying actor-fingerprinting the code doesn't do; lead with what's genuinely defensible — then build the claim back.</h3>
+      <div class="two-col">
+        <div>
+          <p style="color:var(--amber-bright);font-weight:650;font-size:13px;letter-spacing:.02em;text-transform:uppercase;font-family:ui-monospace,monospace;margin-bottom:8px;">Now — re-anchor</p>
+          <p>Shift customer copy onto the free no-signup scan, the transparent "SQL correlates, AI narrates" stance, edge-native price/cost, standing-gated takedown execution, and campaign clustering. Retire "42 agents" as the headline — Group-IB now markets the same idea.</p>
+        </div>
+        <div>
+          <p style="color:var(--amber-bright);font-weight:650;font-size:13px;letter-spacing:.02em;text-transform:uppercase;font-family:ui-monospace,monospace;margin-bottom:8px;">Next — invest, in ROI order</p>
+          <p>Close the "WHO" claim: the newly-registered-domain signal (the data is already on the wire, discarded) → favicon / JA3-JARM lanes + connected-components clustering + real infra-movement pivots → page-content / visual phishing → detection breadth.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <h2><span class="n">05</span> Remediation roadmap</h2>
+    <p class="section-lead">Four waves. Fix live and security-material issues first; re-anchor positioning and terminology in parallel; then the takedown surfaces and the differentiator investment; then debt.</p>
+    <div class="waves">
+      <div class="wave">
+        <div class="wid"><div class="wnum">Wave 0</div><div class="wname">Urgent / live / security</div><div class="whorizon">days</div></div>
+        <ul>
+          <li><b>Starvation:</b> dedicated crons + telemetry for CT / lookalike / trademark</li>
+          <li><b>Security:</b> split the mint secret; make auditor read-only a mechanism</li>
+          <li><b>DNS-queue drift</b> root-cause; <b>D1 hot-path</b> cube swaps; <b>takedown integrity</b> fix (TK1)</li>
+        </ul>
+      </div>
+      <div class="wave">
+        <div class="wid"><div class="wnum">Wave 1</div><div class="wname">Terminology &amp; positioning re-anchor</div><div class="whorizon">1–2 weeks</div></div>
+        <ul>
+          <li>Purge code names from marketing + changelog; kill the Blackbox phantom</li>
+          <li>Fix the 3 wrong agent descriptions; canonicalize core nouns</li>
+          <li>Adopt the DRPS category term (SEO); surface unmarketed real capabilities</li>
+        </ul>
+      </div>
+      <div class="wave">
+        <div class="wid"><div class="wnum">Wave 2</div><div class="wname">Takedown surfaces + close the claim</div><div class="whorizon">quarter</div></div>
+        <ul>
+          <li>Takedown metrics instrumentation; analyst hand-submit path (TK2)</li>
+          <li>Ops "Takedowns" → execution + prospect-pitch surfaces (TK3)</li>
+          <li>Detection depth in ROI order (newly-registered-domain signal first)</li>
+        </ul>
+      </div>
+      <div class="wave">
+        <div class="wid"><div class="wnum">Wave 3</div><div class="wname">Debt &amp; hardening</div><div class="whorizon">ongoing</div></div>
+        <ul>
+          <li>Shared <code>verifyOrgAccess</code>; blanket internal-POST gate; drift cleanup</li>
+          <li>Tenant SPA tests; split the 4,461-line admin handler; orchestrator dispatch tests</li>
+          <li>Finish R4/R7/R9 restructure cleanup; decide observatory-v3 before R10</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="reveal">
+    <h2><span class="n">06</span> The full deliverables</h2>
+    <div class="docs">
+      <div class="doc"><div class="dname">PLATFORM_ASSESSMENT_2026-07.md</div><div class="ddesc">The layered report: verdict, capability inventory, the full gap register across all dimensions, competitive matrix, terminology audit.</div></div>
+      <div class="doc"><div class="dname">IMPROVEMENT_PLAN_2026-07.md</div><div class="ddesc">The sequenced, owner-assigned roadmap. Every gap ID maps to a PR-sized session across Waves 0–3.</div></div>
+      <div class="doc"><div class="dname">TERMINOLOGY_LEXICON_2026-07.md</div><div class="ddesc">The old→new naming map: agent labels, category term, canonical nouns, RBAC vocabulary, and a per-file leak-remediation checklist.</div></div>
+    </div>
+  </section>
+
+  <footer class="mono">
+    Averrow / trust-radar · Capabilities &amp; Gaps Assessment · 2026-07-17 · Produced via nine parallel read-only specialist lenses. Every finding in the source documents carries a file:line reference for verification. This exec summary is an overview — the gap register, evidence, and roadmap detail live in the three markdown deliverables above.
+  </footer>
+</div>
