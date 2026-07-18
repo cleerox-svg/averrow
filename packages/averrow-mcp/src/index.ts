@@ -8,16 +8,25 @@
 // MCP spec: https://modelcontextprotocol.io/specification/2025-03-26
 //
 // Required secrets (set via CF Dashboard → Worker → Settings → Variables):
-//   AVERROW_INTERNAL_SECRET  — authenticates with averrow.com internal API
+//   AVERROW_INTERNAL_SECRET  — authenticates diagnostics/agent-trigger calls
+//                              against averrow.com /api/internal/* routes
+//   AVERROW_PREVIEW_SECRET   — authenticates the service-JWT mint call
+//                              (/api/internal/auth/mint-service-jwt). Separated
+//                              from the internal secret in Phase 1 PR-A: the
+//                              mint endpoints now require this grant with NO
+//                              fallback to AVERROW_INTERNAL_SECRET. Provision
+//                              the SAME value on the averrow worker and here.
 //   MCP_AUTH_TOKEN            — authenticates Claude Code with this MCP server
 //
 // The UI verification tools auto-mint a 90-day service-account JWT via
-// /api/internal/auth/mint-service-jwt and cache it in MCP_TOKEN_CACHE KV.
-// First-call latency is ~50ms extra; subsequent calls hit the cache.
-// JWT is re-minted automatically when fewer than 7 days remain.
+// /api/internal/auth/mint-service-jwt (authenticated with AVERROW_PREVIEW_SECRET)
+// and cache it in MCP_TOKEN_CACHE KV. First-call latency is ~50ms extra;
+// subsequent calls hit the cache. JWT is re-minted automatically when fewer
+// than 7 days remain.
 
 interface Env {
   AVERROW_INTERNAL_SECRET: string;
+  AVERROW_PREVIEW_SECRET: string;
   MCP_AUTH_TOKEN: string;
   MCP_TOKEN_CACHE: KVNamespace;
 }
@@ -606,7 +615,9 @@ async function getServiceJwt(env: Env): Promise<string> {
   const res = await fetch(`${AVERROW_API}/api/internal/auth/mint-service-jwt`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.AVERROW_INTERNAL_SECRET}`,
+      // Mint endpoints require AVERROW_PREVIEW_SECRET (Phase 1 PR-A) — the
+      // internal secret is rejected here with no fallback.
+      Authorization: `Bearer ${env.AVERROW_PREVIEW_SECRET}`,
       "Content-Type": "application/json",
     },
   });

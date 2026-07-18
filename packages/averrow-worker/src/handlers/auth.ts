@@ -1008,9 +1008,11 @@ export async function handleMintServiceJwt(request: Request, env: Env): Promise<
 //
 // Mints a SHORT-LIVED, LOW-PRIVILEGE JWT so an automated agent (Claude
 // Code) can load the live SPA and inspect the UI. Auth is via
-// AVERROW_INTERNAL_SECRET — same gate as handleMintServiceJwt, and strictly
-// LESS powerful: the role is hard-capped (staff → analyst|admin, tenant →
-// client) so it can NEVER mint super_admin, and the TTL is hard-capped too.
+// AVERROW_PREVIEW_SECRET (S1, Phase 1 PR-A — separated from
+// AVERROW_INTERNAL_SECRET so the mint capability is a distinct grant), and
+// strictly LESS powerful: the role is hard-capped (staff → auditor
+// read-only, tenant → client) so it can NEVER mint an admin/mutation-
+// capable token, and the TTL is hard-capped too.
 //
 // Inject the token by navigating a browser to the returned `preview_url`
 // (`<origin>/v2/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
@@ -1042,9 +1044,14 @@ const UI_PREVIEW_TENANT: UiPreviewPreset = {
   name: "Claude UI Preview (Tenant)",
   returnTo: "/tenant/",
 };
-/** Roles the staff preview may request. super_admin is deliberately absent.
- *  Default is `auditor` — read-only global visibility (AUTH_AUDIT_2026-06). */
-const UI_PREVIEW_STAFF_ROLES: UserRole[] = ["auditor", "analyst", "admin"];
+/** Roles the staff preview may request. Restricted to `auditor` ONLY
+ *  (S1, Phase 1 PR-A): the staff preview must be strictly read-only, and
+ *  `analyst`/`admin` both carry mutation permissions (edit_alerts,
+ *  manage_takedowns), so admitting them left an internal-secret →
+ *  mutation-capable-mint escalation path. `super_admin` was already
+ *  absent. Read-only global visibility comes from the `auditor` seat
+ *  (AUTH_AUDIT_2026-06). */
+export const UI_PREVIEW_STAFF_ROLES: UserRole[] = ["auditor"];
 const UI_PREVIEW_DEFAULT_TTL_MIN = 60;
 const UI_PREVIEW_MAX_TTL_MIN = 240;
 
@@ -1068,14 +1075,15 @@ export async function handleMintUiPreviewJwt(request: Request, env: Env): Promis
       return json({ success: false, error: "surface must be 'staff' or 'tenant'" }, 400, origin);
     }
 
-    // Resolve preset + role. Tenant is always 'client'; staff defaults to
-    // 'analyst' and may opt up to 'admin' but never super_admin.
+    // Resolve preset + role. Tenant is always 'client'; the staff preview
+    // is locked to the read-only 'auditor' role (S1, Phase 1 PR-A) — no
+    // mutation-capable role can be minted.
     const preset = surface === "staff" ? UI_PREVIEW_STAFF : UI_PREVIEW_TENANT;
     let role: UserRole;
     if (surface === "staff") {
       const roleParam = (url.searchParams.get("role") ?? "auditor") as UserRole;
       if (!UI_PREVIEW_STAFF_ROLES.includes(roleParam)) {
-        return json({ success: false, error: "staff role must be 'auditor', 'analyst', or 'admin'" }, 400, origin);
+        return json({ success: false, error: "staff role must be 'auditor'" }, 400, origin);
       }
       role = roleParam;
     } else {

@@ -135,6 +135,14 @@ export interface Env {
    *  defaults to 200/day when unset. Plain var, not a secret. */
   PUBLIC_ASSESS_DAILY_CAP?: string;
   AVERROW_INTERNAL_SECRET?: string;
+  /** Bearer token that authenticates the two JWT-minting internal
+   *  endpoints — `mint-service-jwt` + `mint-ui-preview-jwt` (S1, Phase 1
+   *  PR-A). Deliberately SEPARATE from AVERROW_INTERNAL_SECRET so the
+   *  JWT-minting capability is a distinct grant from the diagnostics-read
+   *  / agent-trigger surface. Set via `wrangler secret put
+   *  AVERROW_PREVIEW_SECRET`. When unset the two mint endpoints fail
+   *  CLOSED (401) with NO fallback to AVERROW_INTERNAL_SECRET. */
+  AVERROW_PREVIEW_SECRET?: string;
   /** Master key for org_integrations.config_encrypted (AES-GCM, 32
    *  bytes, base64). Set via `wrangler secret put INTEGRATION_CONFIG_KEY`.
    *  When absent the encryption helpers throw on every read/write —

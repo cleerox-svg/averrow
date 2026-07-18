@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAdmin, requireStaff, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireAdmin, requireStaff, requireStaffMutation, isAuthContext, getOrgScope } from "../middleware/auth";
 import { corsHeaders } from "../lib/cors";
 import { rateLimitCustom } from "../middleware/rateLimit";
 import {
@@ -152,7 +152,7 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
 
   // ─── Briefings ────────────────────────────────────────────────────
   router.post("/api/briefings/generate", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const rl = await rateLimitCustom(request, env, { key: "briefing", maxRequests: 5, windowSeconds: 60 }, ctx.userId);
     if (rl) return rl;
@@ -250,7 +250,7 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     return handleGeoCampaignAttackTypes(request, env, request.params["slug"] ?? "");
   });
   router.post("/api/campaigns/geo/:slug/assessment", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGeoCampaignAssessment(request, env, request.params["slug"] ?? "");
   });

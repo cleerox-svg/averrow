@@ -12,6 +12,7 @@ import { logHoneypotVisit } from "./lib/honeypot-visit-logger";
 import type { Env } from "./types";
 import { handleScheduled } from "./cron/orchestrator";
 import { timingSafeBearerEq } from "./lib/internal-secret";
+import { isPreviewMintAuthorized } from "./lib/preview-mint-auth";
 
 // ─── Route modules ──────────────────────────────────────────────────
 import { registerPublicRoutes } from "./routes/public";
@@ -657,13 +658,16 @@ export default {
       }
 
       // Mint a service-account JWT for averrow-mcp UI verification tools.
-      // Internal secret authenticates the caller; the response carries a
+      // Authenticated by AVERROW_PREVIEW_SECRET — a SEPARATE grant from
+      // AVERROW_INTERNAL_SECRET (S1, Phase 1 PR-A) so the JWT-minting
+      // capability is split from the diagnostics/agent-trigger surface.
+      // Fails CLOSED: timingSafeBearerEq returns false when the secret is
+      // unset, so an unprovisioned AVERROW_PREVIEW_SECRET → 401 with NO
+      // fallback to AVERROW_INTERNAL_SECRET. The response carries a
       // 30-day, read-only `auditor` user JWT for SERVICE_ACCOUNT_ID
       // (SECURITY_AUDIT O1). See handleMintServiceJwt for the rationale.
       if (url.pathname === '/api/internal/auth/mint-service-jwt' && request.method === 'POST') {
-        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
-        const authHeader = request.headers.get('Authorization');
-        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+        if (!isPreviewMintAuthorized(request, env)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { handleMintServiceJwt } = await import('./handlers/auth');
@@ -671,15 +675,16 @@ export default {
       }
 
       // Mint a SHORT-LIVED, LOW-PRIVILEGE JWT for Claude Code UI inspection.
-      // Internal secret authenticates the caller. Role is hard-capped
-      // (staff → analyst|admin, tenant → client) — never super_admin. See
-      // handleMintUiPreviewJwt for params + the kill-switch SQL.
-      //   POST /api/internal/auth/mint-ui-preview-jwt?surface=staff[&role=analyst|admin][&ttl_minutes=N]
+      // Authenticated by AVERROW_PREVIEW_SECRET (S1, Phase 1 PR-A — a
+      // separate grant from AVERROW_INTERNAL_SECRET). Fails CLOSED: an
+      // unset AVERROW_PREVIEW_SECRET → 401 with NO internal-secret
+      // fallback. Role is hard-capped (staff → auditor read-only, tenant →
+      // client) — never admin/super_admin. See handleMintUiPreviewJwt for
+      // params + the kill-switch SQL.
+      //   POST /api/internal/auth/mint-ui-preview-jwt?surface=staff[&ttl_minutes=N]
       //   POST /api/internal/auth/mint-ui-preview-jwt?surface=tenant[&org_id=N][&ttl_minutes=N]
       if (url.pathname === '/api/internal/auth/mint-ui-preview-jwt' && request.method === 'POST') {
-        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
-        const authHeader = request.headers.get('Authorization');
-        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+        if (!isPreviewMintAuthorized(request, env)) {
           return new Response('Unauthorized', { status: 401 });
         }
         const { handleMintUiPreviewJwt } = await import('./handlers/auth');

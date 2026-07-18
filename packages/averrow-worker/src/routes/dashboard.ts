@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAuth, requireStaff, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope } from "../middleware/auth";
 import { handleStats, handleSourceMix, handleQualityTrend } from "../handlers/stats";
 import { handleHeatmap } from "../handlers/heatmap";
 import {
@@ -83,7 +83,7 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   // ─── Signals ──────────────────────────────────────────────────────
   router.get("/api/signals", (request: Request, env: Env) => handleSignals(request, env));
   router.post("/api/signals", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleIngestSignal(request, env, ctx.userId);
   });
@@ -110,7 +110,7 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     return handleGetAlert(request, env, request.params["id"] ?? "", ctx.userId, scope);
   });
   router.patch("/api/alerts/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const scope = await getOrgScope(ctx, env.DB);
     return handleUpdateAlert(request, env, request.params["id"] ?? "", ctx.userId, scope);
@@ -122,12 +122,12 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     return handleListAlerts(request, env, ctx.userId, scope);
   });
   router.post("/api/alerts/bulk-acknowledge", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBulkAcknowledge(request, env, ctx.userId);
   });
   router.post("/api/alerts/bulk-takedown", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBulkTakedown(request, env, ctx.userId);
   });

@@ -225,6 +225,42 @@ export async function requireStaff(request: Request, env: Env): Promise<AuthCont
 }
 
 /**
+ * Require a staff role that is allowed to MUTATE. Runs `requireAuth`
+ * first, then rejects the two read-only roles — `auditor` (global
+ * read-only seat, AUTH_AUDIT_2026-06) and `client` — with a 403.
+ * Everyone else who clears the staff tier (analyst, sales, support,
+ * billing, admin, super_admin) passes.
+ *
+ * This is the mutation-side companion to `requireStaff`: GET routes stay
+ * on `requireStaff` (so `auditor` keeps its read visibility), while
+ * POST/PUT/PATCH/DELETE routes move to `requireStaffMutation` so the
+ * read-only seat can never reach a write path (S2, Phase 1 PR-A).
+ *
+ * Deliberately NOT implemented by lowering `auditor` in ROLE_HIERARCHY:
+ * that would also break its `requireStaff` READ access.
+ *
+ * Fail-closed by construction: it inherits `requireStaff`'s level>=3 floor
+ * (which rejects `client` and any future sub-staff role), then explicitly
+ * denies the one read-only role that clears that floor — `auditor`. A new
+ * role added below the staff tier is rejected by the floor; a new role added
+ * AT the staff tier is admitted only if it is genuinely mutation-capable,
+ * which is the correct default (add it to the denylist here if not). This is
+ * an allowlist of "cleared staff minus read-only", not a denylist of two
+ * hard-coded names.
+ */
+export async function requireStaffMutation(request: Request, env: Env): Promise<AuthContext | Response> {
+  // Inherit the staff floor: rejects client + any sub-staff/unknown role,
+  // and applies requireAuth (401 on bad token, enrollment-scope gate, etc.).
+  const ctx = await requireStaff(request, env);
+  if (!isAuthContext(ctx)) return ctx;
+  // Deny the read-only global seat that clears the staff floor.
+  if (ctx.role === "auditor") {
+    return json({ success: false, error: "Forbidden: read-only role" }, 403, request.headers.get("Origin"));
+  }
+  return ctx;
+}
+
+/**
  * Permission-flavoured guards for the four staff sub-roles. These
  * collapse to a single role check today but exist as named helpers
  * so call sites read intent ("require sales access") rather than

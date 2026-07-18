@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, requireAdmin, isAuthContext } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, requireAdmin, isAuthContext } from "../middleware/auth";
 import {
   handleListAgents, handleGetAgent, handleTriggerAgent, handleTriggerAllAgents, handleAgentRuns,
   handleAgentTokenUsage, handleListApprovals, handleResolveApproval, handleTrustBotChat,
@@ -97,7 +97,7 @@ export function registerAgentRoutes(router: RouterType<IRequest>): void {
     return handleResolveApproval(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.post("/api/trustbot/chat", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTrustBotChat(request, env, ctx.userId);
   });

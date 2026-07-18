@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, isAuthContext } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, isAuthContext } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import { handleScan, handleScanHistory } from "../handlers/scan";
 import { handleScanReport } from "../handlers/scanReport";
@@ -40,7 +40,7 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
     const authHeader = request.headers.get("Authorization");
     let userId: string | undefined;
     if (authHeader?.startsWith("Bearer ")) {
-      const ctx = await requireStaff(request, env);
+      const ctx = await requireStaffMutation(request, env);
       if (isAuthContext(ctx)) userId = ctx.userId;
     }
     return handleScan(request, env, userId);
@@ -54,7 +54,7 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
 
   // ─── Brand Exposure Engine ────────────────────────────────────────
   router.post("/api/brand-scan", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBrandScan(request, env, ctx.userId);
   });

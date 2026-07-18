@@ -32,12 +32,22 @@ persist = true
 head_sampling_rate = 1
 
 # Secrets (set via `wrangler secret put` or Cloudflare dashboard):
-#   AVERROW_INTERNAL_SECRET  — must match the value set on the averrow worker
+#   AVERROW_INTERNAL_SECRET  — must match AVERROW_INTERNAL_SECRET on the averrow
+#                              worker; authenticates diagnostics/agent-trigger
+#                              calls against /api/internal/* routes.
+#   AVERROW_PREVIEW_SECRET   — must match AVERROW_PREVIEW_SECRET on the averrow
+#                              worker; authenticates the service-JWT mint call
+#                              (/api/internal/auth/mint-service-jwt). Separated
+#                              from the internal secret in Phase 1 PR-A — the
+#                              mint endpoints require this grant with NO fallback,
+#                              so this MUST be provisioned or the UI verification
+#                              tools 401. Provision the SAME value on both workers.
 #   MCP_AUTH_TOKEN            — bearer token Claude Code sends to authenticate with this MCP server
 #
 # UI verification tools (verify_ui_smoke + assert_endpoint) auto-mint a
-# 30-day read-only (auditor) service-account JWT via /api/internal/auth/mint-service-jwt and
-# cache it in MCP_TOKEN_CACHE KV — no manual JWT secret needed.
+# 30-day read-only (auditor) service-account JWT via /api/internal/auth/mint-service-jwt
+# (authenticated with AVERROW_PREVIEW_SECRET) and cache it in MCP_TOKEN_CACHE KV
+# — no manual JWT secret needed.
 
 # Deploy:
 #   cd packages/averrow-mcp

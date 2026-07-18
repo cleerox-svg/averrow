@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, requireAdmin, isAuthContext } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, requireAdmin, isAuthContext } from "../middleware/auth";
 import {
   handleListTickets, handleGetTicket, handleCreateTicket, handleUpdateTicket,
   handleAddEvidence,
@@ -21,19 +21,19 @@ export function registerInvestigationRoutes(router: RouterType<IRequest>): void 
     return handleGetTicket(request, env, request.params["id"] ?? "");
   });
   router.post("/api/tickets", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCreateTicket(request, env, ctx.userId);
   });
   router.patch("/api/tickets/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateTicket(request, env, request.params["id"] ?? "");
   });
 
   // ─── Evidence Attachment ─────────────────────────────────────────
   router.post("/api/tickets/:id/evidence", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAddEvidence(request, env, request.params["id"] ?? "", ctx.userId);
   });

@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, requireAdmin, isAuthContext } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, requireAdmin, isAuthContext } from "../middleware/auth";
 import {
   handleGetEmailSecurity,
   handleGetEmailSecurityHistory,
@@ -40,7 +40,7 @@ export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void 
     return handleGetEmailSecurity(request, env, request.params["brandId"] ?? "");
   });
   router.post("/api/email-security/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleScanBrandEmailSecurity(request, env, request.params["brandId"] ?? "");
   });

@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, requireAdmin, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, requireAdmin, isAuthContext, getOrgScope } from "../middleware/auth";
 import {
   handleListBrands, handleTopTargetedBrands, handleMonitoredBrands,
   handleAddMonitoredBrand, handleRemoveMonitoredBrand, handleGetBrand,
@@ -169,12 +169,12 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleGetBrandAnalysis(request, env, request.params["id"] ?? "");
   });
   router.post("/api/brands/:id/analysis", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGenerateBrandAnalysis(request, env, request.params["id"] ?? "");
   });
   router.post("/api/brands/:id/deep-scan", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBrandDeepScan(request, env, request.params["id"] ?? "");
   });
@@ -184,7 +184,7 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleBrandReport(request, env, request.params["id"] ?? "");
   });
   router.post("/api/brands/:id/clean-false-positives", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCleanFalsePositives(request, env, request.params["id"] ?? "");
   });
@@ -196,17 +196,17 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleListSafeDomains(request, env, request.params["id"] ?? "");
   });
   router.post("/api/brands/:id/safe-domains", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAddSafeDomain(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.post("/api/brands/:id/safe-domains/bulk", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBulkAddSafeDomains(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.delete("/api/brands/:id/safe-domains/:domainId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleDeleteSafeDomain(request, env, request.params["id"] ?? "", request.params["domainId"] ?? "");
   });
@@ -218,7 +218,7 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleGetBrandSocialConfig(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.patch("/api/brands/:id/social-config", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateBrandSocialConfig(request, env, request.params["id"] ?? "", ctx.userId);
   });
@@ -228,22 +228,22 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleGetBrandSocialProfiles(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.patch("/api/brands/:id/social-profiles/:profileId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleClassifySocialProfile(request, env, request.params["id"] ?? "", request.params["profileId"] ?? "", ctx.userId);
   });
   router.post("/api/brands/:id/discover-social", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleDiscoverSocialLinks(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.post("/api/brands/:id/social-profiles/:profileId/assess", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleReassessSocialProfile(request, env, request.params["id"] ?? "", request.params["profileId"] ?? "", ctx.userId);
   });
   router.post("/api/brands/:id/compute-score", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleComputeBrandScore(request, env, request.params["id"] ?? "");
   });
@@ -301,7 +301,7 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleSocialAlerts(request, env, ctx.userId);
   });
   router.post("/api/social/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTriggerSocialScan(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
@@ -315,17 +315,17 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleListLookalikes(request, env, request.params["brandId"] ?? "", ctx);
   });
   router.post("/api/lookalikes/:brandId/generate", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGenerateLookalikes(request, env, request.params["brandId"] ?? "", ctx);
   });
   router.patch("/api/lookalikes/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateLookalike(request, env, request.params["id"] ?? "", ctx);
   });
   router.post("/api/lookalikes/:brandId/scan", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleScanLookalikes(request, env, request.params["brandId"] ?? "", ctx);
   });
@@ -342,17 +342,17 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleListAppStoreListings(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
   router.post("/api/appstore/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTriggerAppStoreScan(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
   router.patch("/api/appstore/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateAppStoreListing(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.patch("/api/brands/:brandId/official-apps", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateOfficialApps(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
@@ -374,12 +374,12 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleListDarkWebMentions(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
   router.post("/api/darkweb/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTriggerDarkWebScan(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
   router.patch("/api/darkweb/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateDarkWebMention(request, env, request.params["id"] ?? "", ctx.userId);
   });
@@ -405,12 +405,12 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleCertStats(request, env, request.params["brandId"] ?? "", ctx);
   });
   router.patch("/api/ct/certificates/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateCertificate(request, env, request.params["id"] ?? "", ctx);
   });
   router.post("/api/ct/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTriggerCTScan(request, env, request.params["brandId"] ?? "", ctx);
   });
@@ -423,12 +423,12 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     return handleGetNarrative(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.post("/api/narratives/:brandId/generate", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGenerateNarrative(request, env, request.params["brandId"] ?? "", ctx.userId);
   });
   router.patch("/api/narratives/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaff(request, env);
+    const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleUpdateNarrative(request, env, request.params["id"] ?? "", ctx.userId);
   });
