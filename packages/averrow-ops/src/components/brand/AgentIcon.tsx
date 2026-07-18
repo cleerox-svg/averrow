@@ -235,6 +235,20 @@ const icons: Record<string, (size: number) => JSX.Element> = {
             stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
+  // Watchtower — CT Monitor. A tower with a scanning beam over the horizon.
+  ct_monitor: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      {/* tower body */}
+      <path d="M14 30V16L18 6L22 16V30" stroke="currentColor" strokeWidth="1.4" fill="currentColor" fillOpacity="0.08" strokeLinejoin="round"/>
+      {/* watch platform */}
+      <path d="M12.5 16H23.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+      {/* signal beam */}
+      <path d="M22 12C25 12 27 14 27.5 16.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.7"/>
+      <path d="M23 9.5C27 9.5 30 12.5 30.5 16.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.4"/>
+      {/* base */}
+      <line x1="12" y1="30" x2="24" y2="30" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+    </svg>
+  ),
   // Mockingbird — Social Monitor. Songbird with sound waves; mimicry detector.
   social_monitor: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">

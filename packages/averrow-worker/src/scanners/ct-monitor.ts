@@ -3,7 +3,9 @@
  * matching monitored brand domains and keywords. Flags suspicious certificates
  * (typosquatting, free-CA phishing sites) and creates alerts.
  *
- * Called by the cron orchestrator every 5 minutes.
+ * Dispatched hourly on its own dedicated cron (`18 * * * *`) via the
+ * `ct_monitor` agent wrapper (agents/ct-monitor.ts), which writes
+ * agent_runs telemetry (start + completion) + an agent_outputs diagnostic.
  */
 
 import { createAlert } from '../lib/alerts';
@@ -47,11 +49,21 @@ const CRTSH_USER_AGENT = "Averrow-CT-Monitor/1.0 (+https://averrow.com)";
 
 // ─── Main Poller ────────────────────────────────────────────────
 
+/** Aggregate result of one CT-monitor sweep. Returned so the
+ *  `ct_monitor` agent wrapper can populate agent_runs telemetry
+ *  (records_processed) and emit a diagnostic agent_output. */
+export interface CTMonitorStats {
+  brandsScanned: number;
+  totalCerts:    number;
+  newCerts:      number;
+  suspicious:    number;
+}
+
 /**
- * Poll crt.sh for certificates matching all active brand profiles.
- * Called by the cron orchestrator every 5 minutes.
+ * Poll crt.sh for certificates matching all tenant-monitored brands.
+ * Called hourly by the cron orchestrator via the `ct_monitor` agent.
  */
-export async function pollCertificates(env: Env): Promise<void> {
+export async function pollCertificates(env: Env): Promise<CTMonitorStats> {
   // R6 (2026-05-07): brand_profiles retired. Scan list comes from
   // brands that have at least one row in org_brands — i.e. a tenant
   // is actively monitoring the brand. DISTINCT keeps multi-tenant
@@ -68,7 +80,7 @@ export async function pollCertificates(env: Env): Promise<void> {
 
   if (brands.results.length === 0) {
     logger.info('ct_monitor_skip', { reason: 'no tenant-monitored brands' });
-    return;
+    return { brandsScanned: 0, totalCerts: 0, newCerts: 0, suspicious: 0 };
   }
 
   logger.info('ct_monitor_start', { brands: brands.results.length });
@@ -108,6 +120,13 @@ export async function pollCertificates(env: Env): Promise<void> {
     totalNew,
     totalSuspicious,
   });
+
+  return {
+    brandsScanned: brands.results.length,
+    totalCerts,
+    newCerts: totalNew,
+    suspicious: totalSuspicious,
+  };
 }
 
 // ─── Per-Brand Check ────────────────────────────────────────────

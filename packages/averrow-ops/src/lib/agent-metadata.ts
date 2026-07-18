@@ -41,6 +41,7 @@ export type AgentId =
   | 'honeypot_generator'
   | 'brand_enricher'
   | 'lookalike_scanner'
+  | 'ct_monitor'
   | 'admin_classify'
   | 'url_scan'
   | 'scan_report'
@@ -439,6 +440,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#A855F7',
     category: 'sync',
     pipelinePosition: 40,
+  },
+  ct_monitor: {
+    id: 'ct_monitor',
+    displayName: 'Watchtower',
+    codename: 'ct_monitor',
+    subtitle: 'Certificate Transparency monitor — polls crt.sh for newly-issued certs impersonating tenant-monitored brands and raises alerts on suspicious issuances',
+    color: '#0A8AB5',
+    category: 'intelligence',
+    pipelinePosition: 42,
   },
 };
 

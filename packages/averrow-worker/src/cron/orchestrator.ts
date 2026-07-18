@@ -233,6 +233,48 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Detection scanners on dedicated crons (S0.1 — CT / lookalike / trademark) ───
+  //
+  // Assessment 2026-07 §3.4 R1/R2. These three ran inline at the tail of the
+  // hourly orchestrator tick, AFTER analyst's ~153s inline await had already
+  // eaten the worker's budget — so they dropped ~67% of runs (lookalike +
+  // trademark each 9/24 in 24h). ct_monitor additionally wrote no agent_runs
+  // telemetry, so FC's stall watchdog structurally couldn't see it fail (R2).
+  //
+  // Same escape-hatch template as enricher (:08) / cartographer (:09) /
+  // strategist (:10) / seclookup (:21): each gets its own cron trigger and a
+  // fresh per-invocation CPU + wall budget, dispatched by exact event.cron
+  // match. Minutes 18/22/23 are hourly, off the */5 Navigator grid, and
+  // distinct from every other dedicated cron. Each branch returns early so a
+  // tick stays focused on one scanner. Hour-only cadence, no minute gates in
+  // the dispatched handlers → cron-audit-safe.
+  if (event.cron === '18 * * * *') {
+    try {
+      await runCTMonitor(env);
+    } catch (err) {
+      logger.error('ct_monitor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '22 * * * *') {
+    try {
+      await runLookalikeDomainCheck(env);
+    } catch (err) {
+      logger.error('lookalike_check_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (event.cron === '23 * * * *') {
+    try {
+      await runTrademarkScan(env);
+    } catch (err) {
+      logger.error('trademark_scan_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Abuse mailbox classifier dispatch (PR-AY) ─────────────────────
   //
   // Hourly at :17. Previously gated inside runThreatFeedScan at line ~1142
@@ -595,24 +637,23 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     results.push(digestResult);
   }
 
-  // CT certificate monitoring — runs every hourly tick (was every 5 min when cron was */15)
-  {
-    const result = await runJob('ct_monitor', () => runCTMonitor(env));
-    results.push(result);
-  }
-
-  // Lookalike domain checks — runs every hourly tick (was staggered to minute 15)
-  {
-    const result = await runJob('lookalike_check', () => runLookalikeDomainCheck(env));
-    results.push(result);
-  }
-
-  // Trademark correlation — runs every hourly tick (internal-only, cheap;
-  // unifies wordmark misuse across social/app-store/domain signals).
-  {
-    const result = await runJob('trademark_scan', () => runTrademarkScan(env));
-    results.push(result);
-  }
+  // ─── CT monitor / lookalike / trademark: RELOCATED to dedicated crons ───
+  //
+  // S0.1 (Assessment 2026-07 §3.4 R1). These three scanners previously ran
+  // here at the tail of the hourly tick, AFTER analyst's ~153s inline await
+  // had already exhausted the worker's CPU/wall budget — so they dropped
+  // ~67% of runs (lookalike + trademark each ran 9/24 in 24h; ct_monitor was
+  // additionally invisible with no agent_runs telemetry — R2).
+  //
+  // Each now has its own cron trigger with a fresh per-invocation budget,
+  // dispatched by exact event.cron match at the top of handleScheduled
+  // (same escape-hatch template as enricher :08 / cartographer :09 /
+  // strategist :10 / seclookup :21):
+  //   ct_monitor      → 18 * * * *
+  //   lookalike_check → 22 * * * *
+  //   trademark_scan  → 23 * * * *
+  // They are intentionally NOT dispatched here anymore — doing so would
+  // double-run them every hour.
 
   // Log summary
   logger.info('cron_complete', {
@@ -1365,8 +1406,15 @@ async function runObserverBriefing(env: Env): Promise<void> {
 }
 
 async function runCTMonitor(env: Env): Promise<void> {
-  const { pollCertificates } = await import('../scanners/ct-monitor');
-  await pollCertificates(env);
+  // Wrapped in executeAgent (agent_id 'ct_monitor') so the sweep writes
+  // agent_runs on start + completion (plus an agent_outputs diagnostic)
+  // — making CT monitoring visible to Flight Control's stall watchdog
+  // and platform-diagnostics (R2). The heavy SQL stays in
+  // scanners/ct-monitor.ts pollCertificates; the agent module is a thin
+  // wrapper (agents/ct-monitor.ts). ONE agent_runs row per dedicated-cron tick.
+  const { ctMonitorAgent } = await import('../agents/ct-monitor');
+  const { executeAgent } = await import('../lib/agentRunner');
+  await executeAgent(env, ctMonitorAgent, {}, 'cron', 'scheduled');
 }
 
 async function runLookalikeDomainCheck(env: Env): Promise<void> {
@@ -1381,9 +1429,9 @@ async function runLookalikeDomainCheck(env: Env): Promise<void> {
 }
 
 async function runTrademarkScan(env: Env): Promise<void> {
-  // Phase 1 trademark correlation — internal-only (no external calls / AI),
-  // so it rides the hourly tick like ct_monitor + lookalike_check. ONE
-  // agent_runs row per tick. See scanners/trademark-monitor.ts.
+  // Phase 1 trademark correlation — internal-only (no external calls / AI).
+  // Runs on its own dedicated cron ('23 * * * *') like ct_monitor ('18')
+  // + lookalike ('22'). ONE agent_runs row per tick. See scanners/trademark-monitor.ts.
   const { trademarkMonitorAgent } = await import('../agents/trademarkMonitor');
   const { executeAgent } = await import('../lib/agentRunner');
   await executeAgent(env, trademarkMonitorAgent, {}, 'cron', 'scheduled');
