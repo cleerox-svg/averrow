@@ -140,12 +140,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="squadron">
     <div class="section-label">The Agent Mesh</div>
-    <h2 class="squadron-title">Six core agents. {stats.agents_deployed} in the mesh.</h2>
+    <h2 class="squadron-title">SQL correlates. AI narrates. Nothing&rsquo;s hidden.</h2>
     <p class="squadron-subtitle">
-      A deployed mesh of {stats.agents_deployed} AI agents &mdash; six core
-      agents shown here, plus specialized agents handling enrichment,
-      infrastructure clustering, takedowns, social discovery, and continuous
-      health monitoring.
+      Six core agents cross-reference signals across email, domains, social,
+      and threat feeds &mdash; deterministic correlation first, AI narrative
+      second, so every score traces back to evidence you can see. They&rsquo;re
+      the visible layer of a {stats.agents_deployed}-agent mesh that also runs
+      enrichment, infrastructure clustering, takedowns, social discovery, and
+      continuous health monitoring &mdash; all on Cloudflare&rsquo;s edge,
+      which is why continuous protection costs a fraction of legacy DRP
+      platforms.
     </p>
     <div class="agent-grid">
       <div class="agent-card" style="--agent-color: #C83C3C;">
@@ -346,7 +350,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="cap-desc">Human-readable threat timelines and remediation steps so your team can act fast.</div>
         <div class="cap-mock cap-mock-narrative" aria-label="Sample threat narrative">
           &ldquo;A single actor registered three lookalikes in 72 hours, all behind the same Cloudflare account. Pattern matches the &lsquo;BeaverTooth&rsquo; phishing kit.&rdquo;
-          <div class="nm-meta">Analyst agent &middot; 2 min read</div>
+          <div class="nm-meta">AI-generated narrative &middot; 2 min read</div>
         </div>
       </div>
     </div>
@@ -429,17 +433,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="sp-ticker-label"><span class="sp-dot" /> INTEL FEED</div>
         <div class="sp-ticker-mask">
           <div class="sp-ticker-track">
-            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>SNT</b> ▸ New lookalike detected: acme-login.com</span>
-            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>CART</b> ▸ Enriched 1,204 threats with geo + provider data</span>
-            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>NXS</b> ▸ Pivot detected — infrastructure cluster expanding</span>
-            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>OBS</b> ▸ Coordinated phishing wave targeting finance sector</span>
-            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>STR</b> ▸ Actor APT-Nightjar shifting to a new ASN</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>DET</b> ▸ New lookalike detected: acme-login.com</span>
+            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>GEO</b> ▸ Enriched 1,204 threats with geo + provider data</span>
+            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>CAMP</b> ▸ Pivot detected — infrastructure cluster expanding</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>INT</b> ▸ Coordinated phishing wave targeting finance sector</span>
+            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>NAR</b> ▸ Infrastructure cluster shifted to a new ASN</span>
             <!-- duplicated for seamless loop -->
-            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>SNT</b> ▸ New lookalike detected: acme-login.com</span>
-            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>CART</b> ▸ Enriched 1,204 threats with geo + provider data</span>
-            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>NXS</b> ▸ Pivot detected — infrastructure cluster expanding</span>
-            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>OBS</b> ▸ Coordinated phishing wave targeting finance sector</span>
-            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>STR</b> ▸ Actor APT-Nightjar shifting to a new ASN</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>DET</b> ▸ New lookalike detected: acme-login.com</span>
+            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>GEO</b> ▸ Enriched 1,204 threats with geo + provider data</span>
+            <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>CAMP</b> ▸ Pivot detected — infrastructure cluster expanding</span>
+            <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>INT</b> ▸ Coordinated phishing wave targeting finance sector</span>
+            <span class="sp-ti"><span class="sp-ti-dot high"></span><b>NAR</b> ▸ Infrastructure cluster shifted to a new ASN</span>
           </div>
         </div>
       </div>
