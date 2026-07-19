@@ -107,6 +107,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
+  <section class="exec-teaser">
+    <div class="container">
+      <div class="exec-teaser-card">
+        <div class="exec-teaser-body">
+          <h3>Executive exposure, before it&rsquo;s a targeted attack</h3>
+          <p>
+            Add your executives to a watchlist, and Averrow monitors
+            dark-web, paste, and leak sources &mdash; paste archives, leak
+            channels, ransomware leak sites &mdash; for mentions of them
+            by name. An executive&rsquo;s name surfacing alongside a
+            credential dump or a leak-site post is often the earliest
+            signal of a targeted attack in the making, and it&rsquo;s one
+            most teams have no visibility into until it&rsquo;s too late.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="cap-section" id="email-posture">
     <div class="cap-row reversed">
       <div class="cap-text">
@@ -203,6 +222,32 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="narrative-block">
           <div class="narrative-label"><span class="narrative-dot"></span> Timeline &amp; Narrative</div>
           &ldquo;A phishing domain matching your brand was registered 48 hours ago with active MX records, combined with your current DKIM gap on the proofpoint selector. This creates a HIGH-severity compound risk &mdash; attackers can send spoofed emails that pass basic checks.&rdquo;
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ci-teaser">
+    <div class="container">
+      <div class="ci-teaser-row">
+        <div class="ci-teaser-text">
+          <div class="section-label">Beyond Detection &middot; Higher-Tier Capability</div>
+          <h2>When threats share infrastructure, Averrow sees the campaign</h2>
+          <p>
+            The four capabilities above catch individual threats. Campaign
+            Intelligence goes a layer deeper &mdash; it links threats that
+            share the same certificate, IP, subnet, network, registrar, or
+            app-store developer identity into a single connected campaign,
+            and tracks that infrastructure as it moves. Available on the
+            Business and Enterprise plans.
+          </p>
+          <a href={`${base}/platform/campaign-intelligence`} class="ci-teaser-link">Explore campaign intelligence &rarr;</a>
+        </div>
+        <div class="ci-teaser-visual">
+          <div class="ci-teaser-node ci-teaser-node-a">TLS Cert</div>
+          <div class="ci-teaser-node ci-teaser-node-b">Shared ASN</div>
+          <div class="ci-teaser-node ci-teaser-node-c">Registrar</div>
+          <div class="ci-teaser-center">Campaign</div>
         </div>
       </div>
     </div>
@@ -451,6 +496,29 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-top: 1rem;
   }
 
+  /* ── EXECUTIVE EXPOSURE CALLOUT ── */
+  .exec-teaser { padding: 0 0 1rem; }
+  .exec-teaser-card {
+    padding: 1.5rem 2rem;
+    background: rgba(14,26,43,0.4);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+  :global([data-theme="light"]) .exec-teaser-card { background: rgba(255,255,255,0.5); }
+  .exec-teaser-body { max-width: 760px; margin: 0 auto; text-align: center; }
+  .exec-teaser-body h3 {
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+  }
+  .exec-teaser-body p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+
   .cap-visual {
     background: rgba(14,26,43,0.55);
     border: 1px solid rgba(120,160,200,0.12);
@@ -663,6 +731,83 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     .cap-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
     .social-grid { grid-template-columns: repeat(2, 1fr); }
     .feed-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ── CAMPAIGN INTELLIGENCE TEASER ── */
+  .ci-teaser {
+    padding: 3.5rem 0;
+    background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .ci-teaser-row {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .ci-teaser-text h2 {
+    font-family: var(--font-display);
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 700;
+    margin: 0.5rem 0 1rem;
+  }
+  .ci-teaser-text p {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 1.25rem;
+  }
+  .ci-teaser-link {
+    display: inline-block;
+    color: var(--amber);
+    font-weight: 600;
+    font-family: var(--font-display);
+    text-decoration: none;
+  }
+  .ci-teaser-link:hover { text-decoration: underline; }
+  .ci-teaser-visual {
+    position: relative;
+    height: 220px;
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+  :global([data-theme="light"]) .ci-teaser-visual {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .ci-teaser-node {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.4rem 0.75rem;
+    border-radius: 100px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .ci-teaser-node-a { top: 18%; left: 8%; }
+  .ci-teaser-node-b { top: 14%; right: 10%; }
+  .ci-teaser-node-c { bottom: 16%; left: 14%; }
+  .ci-teaser-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 0.6rem 1.1rem;
+    border-radius: 100px;
+    background: var(--accent-bg);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+  }
+  @media (max-width: 768px) {
+    .ci-teaser-row { grid-template-columns: 1fr; }
+    .ci-teaser-visual { height: 160px; }
   }
 
   /* ── INTEGRATIONS ── */

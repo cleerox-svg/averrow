@@ -294,7 +294,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="dd-td-section dd-td-section-alt" id="explore-more">
     <div class="container">
       <div class="section-label" style="text-align:center;">Explore The Platform</div>
-      <h2 class="dd-td-explore-h2">Threat detection is one of four capabilities</h2>
+      <h2 class="dd-td-explore-h2">Threat detection is one of Averrow&rsquo;s core capabilities</h2>
       <div class="dd-td-explore-grid">
         <a class="dd-td-explore-card" href={`${base}/platform/email-security`}>
           <h3>Email Security</h3>
@@ -308,9 +308,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <h3>AI Agents</h3>
           <p>The reasoning layer behind every assessment.</p>
         </a>
+        <a class="dd-td-explore-card" href={`${base}/platform/campaign-intelligence`}>
+          <h3>Campaign Intelligence</h3>
+          <p>Threats that share infrastructure, connected into a single campaign.</p>
+        </a>
         <a class="dd-td-explore-card" href={`${base}/platform`}>
           <h3>Platform Overview</h3>
-          <p>All four capabilities, one exposure picture.</p>
+          <p>The full platform, one exposure picture.</p>
         </a>
       </div>
     </div>
@@ -735,7 +739,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .dd-td-explore-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
   }
   .dd-td-explore-card {

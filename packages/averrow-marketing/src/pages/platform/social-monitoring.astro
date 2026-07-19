@@ -240,6 +240,11 @@ import Layout from "../../layouts/Layout.astro";
           <div class="sm-related-name">The Agent Mesh</div>
           <div class="sm-related-desc">How 42 AI agents fuse social signals into one exposure score.</div>
         </a>
+        <a href="/platform/campaign-intelligence" class="sm-related-card">
+          <div class="sm-related-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16"/><line x1="16" y1="7.5" x2="13.5" y2="16"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg></div>
+          <div class="sm-related-name">Campaign Intelligence</div>
+          <div class="sm-related-desc">Threats that share infrastructure, connected into a single campaign.</div>
+        </a>
       </div>
       <div class="sm-related-back"><a href="/platform">&larr; Back to Platform Overview</a></div>
     </div>
@@ -668,7 +673,7 @@ import Layout from "../../layouts/Layout.astro";
     max-width: 1100px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
     text-align: left;
   }
@@ -706,7 +711,8 @@ import Layout from "../../layouts/Layout.astro";
   .sm-related-desc { font-size: 0.82rem; color: var(--text-tertiary); line-height: 1.5; }
   .sm-related-back { margin-top: 2rem; }
   .sm-related-back a { font-family: var(--font-mono); font-size: 0.85rem; }
-  @media (max-width: 768px) { .sm-related-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .sm-related-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .sm-related-grid { grid-template-columns: 1fr; } }
 
   /* ── CTA ── */
   .sm-cta { padding: 3rem 0 5rem; text-align: center; }
