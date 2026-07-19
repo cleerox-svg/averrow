@@ -166,7 +166,7 @@ owner sign-off. Unblocks the S1.5 marketing claim with a real figure.
 `dispatchSubmission` — a single-takedown, human-triggered Phase G for the "auto is on but
 this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE` gate.
 
-### S2.3 — Ops "Takedowns" → two surfaces (TK3) ⬜
+### S2.3 — Ops "Takedowns" → two surfaces (TK3) ✅ *(scope segmented-control on the `org_id IS NULL/NOT NULL` axis inside the existing Takedowns page — Authorized (customer) vs Prospect (orgless drafts, grouped by brand, deep-linking to BrandDetail Risk); backend `scope`/`brand_id` params + scoped `status_counts`; no new endpoint/nav/route)*
 **Owner:** frontend-engineer + backend-engineer. Split the Ops takedown feature by purpose:
 1. **Authorized execution** — the current SOC tracking/queue view (opted-in customers).
 2. **Prospect / pitch lane** — a per-brand "everything we'd action for you" view composing

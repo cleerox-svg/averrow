@@ -378,13 +378,28 @@ export async function handleUpdateTakedown(
 export const handleAdminListTakedowns = handler(async (request, env, ctx) => {
   const url = new URL(request.url);
   const { limit, offset } = parsePagination(request);
-  const filters = parseFilters(request, ["status", "org_id", "severity", "target_type"]);
+  const filters = parseFilters(request, ["status", "org_id", "severity", "target_type", "brand_id"]);
   const { clause: filterClause, bindings: filterBindings } = buildWhereClause(filters, {
     status: "tr.status",
     org_id: "tr.org_id",
     severity: "tr.severity",
     target_type: "tr.target_type",
+    brand_id: "tr.brand_id",
   });
+
+  // Scope — splits the queue into the two purpose-scoped Ops surfaces.
+  // `authorized` (default) = opted-in customer takedowns (SOC execution view);
+  // `prospect` = orgless Sparrow drafts (sales/pitch lane); `all` = both.
+  // buildWhereClause is equality-only and can't emit `IS NULL`, so the scope
+  // is a dedicated static SQL fragment (no bindings, no interpolation)
+  // composed with AND alongside the equality WHERE.
+  const scopeParam = (url.searchParams.get("scope") || "authorized").toLowerCase();
+  const scope: "authorized" | "prospect" | "all" =
+    scopeParam === "prospect" || scopeParam === "all" ? scopeParam : "authorized";
+  const scopeClause =
+    scope === "authorized" ? " AND tr.org_id IS NOT NULL"
+    : scope === "prospect" ? " AND tr.org_id IS NULL"
+    : "";
 
   // Search support
   const search = url.searchParams.get("search")?.trim() || "";
@@ -426,7 +441,7 @@ export const handleAdminListTakedowns = handler(async (request, env, ctx) => {
     FROM takedown_requests tr
     JOIN brands b ON b.id = tr.brand_id
     LEFT JOIN organizations o ON o.id = tr.org_id
-    WHERE ${filterClause}${searchClause}
+    WHERE ${filterClause}${scopeClause}${searchClause}
     ORDER BY ${orderClause}
     LIMIT ? OFFSET ?
   `).bind(...allBindings, limit, offset).all();
@@ -435,15 +450,28 @@ export const handleAdminListTakedowns = handler(async (request, env, ctx) => {
     SELECT COUNT(*) AS total
     FROM takedown_requests tr
     JOIN brands b ON b.id = tr.brand_id
-    WHERE ${filterClause}${searchClause}
+    WHERE ${filterClause}${scopeClause}${searchClause}
   `).bind(...allBindings).first<{ total: number }>();
 
+  // status_counts drives the stat cards, so it must reflect the active surface
+  // (scope + any brand_id) — not the other list filters (status/severity/etc.),
+  // which would collapse the per-status breakdown. brand_id fits the equality
+  // builder; scope reuses the same static fragment as the list query.
+  let statusCountsClause = `1=1${scopeClause}`;
+  const statusCountsBindings: unknown[] = [];
+  if (filters.brand_id) {
+    statusCountsClause += " AND tr.brand_id = ?";
+    statusCountsBindings.push(filters.brand_id);
+  }
   const statusCounts = await env.DB.prepare(`
-    SELECT status, COUNT(*) AS count FROM takedown_requests GROUP BY status
-  `).all();
+    SELECT status, COUNT(*) AS count FROM takedown_requests tr
+    WHERE ${statusCountsClause}
+    GROUP BY status
+  `).bind(...statusCountsBindings).all();
 
   return paginatedResponse(result.results || [], countResult?.total ?? 0, ctx.origin, {
     status_counts: statusCounts.results || [],
+    scope,
   });
 });
 
