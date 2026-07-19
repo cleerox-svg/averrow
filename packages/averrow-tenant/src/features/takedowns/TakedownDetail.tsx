@@ -143,7 +143,7 @@ function SubmissionsSection({ rows }: { rows: TakedownSubmissionAuditRow[] }) {
         <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
           <p className="text-white/55 text-sm">No submissions recorded yet.</p>
           <p className="text-white/35 text-xs mt-1">
-            Submissions land here when Sparrow auto-submits the request, or when ops sends it manually.
+            Submissions land here when Averrow automatically submits the request, or when ops sends it manually.
           </p>
         </div>
       ) : (

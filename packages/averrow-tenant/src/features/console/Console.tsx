@@ -1,4 +1,4 @@
-// Console — the analyst home: a two-stream supervision cockpit
+// Console — the analyst home: a two-stream supervision console
 // (TENANT_ANALYST_UX_RESEARCH_2026-06 §5.1).
 //
 //   ① "Needs you"      — items requiring a human: takedown drafts awaiting
@@ -39,7 +39,7 @@ export function Console() {
       <header>
         <h1 className="text-[28px] font-bold text-white tracking-tight">Console</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Your supervision cockpit — what needs a human, and what the platform handled on its own. Averrow runs autonomously by default; this is where you step in.
+          Your supervision console — what needs a human, and what the platform handled on its own. Averrow runs autonomously by default; this is where you step in.
         </p>
       </header>
 

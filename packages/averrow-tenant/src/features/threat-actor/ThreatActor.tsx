@@ -34,7 +34,7 @@ export function ThreatActor() {
           </span>
         </div>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Adversaries targeting your brands. Attribution from OTX advisories, NEXUS cluster fingerprints, and CISA / Mandiant / CrowdStrike intel feeds.
+          Adversaries targeting your brands. Attribution from OTX advisories, infrastructure-clustering fingerprints, and CISA / Mandiant / CrowdStrike intel feeds.
         </p>
       </header>
 
@@ -227,7 +227,7 @@ function NoActors() {
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No actors are currently attributed to attacks on your brands.</p>
       <p className="text-white/35 text-xs mt-1">
-        Attributions land here as OTX advisories, NEXUS cluster matches, and CISA / Mandiant / CrowdStrike feeds bind activity to specific actors.
+        Attributions land here as OTX advisories, infrastructure-clustering matches, and CISA / Mandiant / CrowdStrike feeds bind activity to specific actors.
       </p>
     </div>
   );
