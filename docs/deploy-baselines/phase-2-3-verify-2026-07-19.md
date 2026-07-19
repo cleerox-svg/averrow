@@ -62,17 +62,22 @@ pure no-op against current prod) for four other post-0126 `executeAgent`-gated
 agents that survive only on runtime operator approvals (`trademark_monitor`,
 `abuse_mailbox_classifier`, `attributor`, `news_watcher`).
 
-**Re-verification required post-merge:** after 0238 deploys to prod, re-run
-`./scripts/platform-diagnostics.sh 24` and confirm `ct_monitor` appears in
-`agent_mesh.per_agent[]` with `agent_runs` accruing hourly, and that a clean
-full-day window shows lookalike/trademark at 24/24.
+**Re-verification — DONE ✅ (2026-07-19 ~04:26Z).** 0238 shipped with PR #1641
+(merged ~03:27Z). A fresh `./scripts/platform-diagnostics.sh 6` after the
+`18 * * * *` tick shows **`ct_monitor` present in `agent_mesh.per_agent[]`:
+2 runs / 2 success / 0 failed, last completed 04:19:18Z** (`records_processed`
+0 = ran, no suspicious certs this window). The approval gate no longer blocks it;
+`pollCertificates` is executing again and CT monitoring is visible to Flight
+Control. lookalike/trademark remained healthy. The remaining "clean full-day 24/24"
+read is a passive confirmation that lands automatically once a full post-deploy
+day accrues — no action needed.
 
 ## Go/no-go
 
 - **Phase 2 go/no-go** (scanners at full cadence + `ct_monitor` visible to FC):
-  scanners ✅; `ct_monitor` **blocked on the 0238 redeploy** — not yet met until
-  the fix ships and re-verifies.
+  scanners ✅; `ct_monitor` ✅ **met** — visible to FC and running post-0238
+  (re-verified 2026-07-19 04:26Z).
 - **Phase 3 go/no-go** (read budget trending down): ✅ met.
 - **Phase 4** is copy/config with low incremental read volume, so it is not
-  budget-gated by the still-"warn" daily figure; proceed once 0238 is merged and
-  the ct_monitor re-verification is scheduled.
+  budget-gated by the still-"warn" daily figure; underway (S1.0–S1.5 shipping).
+  0238 merged and ct_monitor re-verification confirmed live (above).

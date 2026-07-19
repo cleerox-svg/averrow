@@ -39,10 +39,11 @@ omitted `ct_monitor`'s `agent_approvals` grandfather row, so `executeAgent`'s de
 gate blocked every tick. Fixed by `migrations/0238_ct_monitor_approval.sql` (PR #1641, merged into
 master).
 
-**Open action — post-merge ct_monitor re-verification.** Once 0238 has deployed to prod, re-run
-`./scripts/platform-diagnostics.sh 24` and confirm `ct_monitor` appears in
-`agent_mesh.per_agent[]` with `agent_runs` accruing hourly (the Phase 2 go/no-go — scanners ✅,
-ct_monitor's "visible to Flight Control" bullet — isn't fully met until this re-verify passes).
+**ct_monitor re-verification — DONE ✅ (2026-07-19 04:26Z).** 0238 deployed with PR #1641;
+`./scripts/platform-diagnostics.sh 6` after the `18 * * * *` tick shows `ct_monitor` present in
+`agent_mesh.per_agent[]` (2 runs / 2 success, last 04:19:18Z). **Phase 2 go/no-go now fully met** —
+scanners ✅ and ct_monitor ✅ visible to Flight Control. See
+`docs/deploy-baselines/phase-2-3-verify-2026-07-19.md`.
 
 **Scope corrections landed during execution** (a new session should trust these over the
 original assessment line-items): **S0.2/R3** was a phantom metric, not a backlog — became a
