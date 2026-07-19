@@ -275,6 +275,10 @@ const providers = [
           <div class="es-related-name">The Agent Mesh</div>
           <p>How 42 AI agents fuse signals into one exposure picture.</p>
         </a>
+        <a href={`${base}/platform/campaign-intelligence`} class="es-related-card">
+          <div class="es-related-name">Campaign Intelligence</div>
+          <p>Threats that share infrastructure, connected into a single campaign.</p>
+        </a>
       </div>
       <div class="es-back-row">
         <a href={`${base}/platform`}>&larr; Back to the full Platform overview</a>
@@ -664,7 +668,7 @@ const providers = [
   /* ── RELATED ── */
   .es-related-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1.25rem;
     margin-top: 2rem;
   }
@@ -737,7 +741,7 @@ const providers = [
   @media (max-width: 900px) {
     .es-check-grid { grid-template-columns: 1fr 1fr; }
     .es-provider-grid { grid-template-columns: 1fr 1fr; }
-    .es-related-grid { grid-template-columns: 1fr; }
+    .es-related-grid { grid-template-columns: repeat(2, 1fr); }
   }
   @media (max-width: 768px) {
     .cap-row { grid-template-columns: 1fr; gap: 2rem; }
@@ -746,5 +750,6 @@ const providers = [
     .es-check-grid { grid-template-columns: 1fr; }
     .es-provider-grid { grid-template-columns: 1fr; }
     .es-grade-row { flex-direction: column; align-items: flex-start; }
+    .es-related-grid { grid-template-columns: 1fr; }
   }
 </style>

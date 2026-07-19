@@ -1,0 +1,438 @@
+---
+/*
+ * Campaign Intelligence deep dive — child of /platform.
+ *
+ * Distinct from the four base capabilities (Threat Detection, Email
+ * Security, Social Monitoring, Agent Mesh): campaign intelligence is a
+ * higher-tier capability built on top of them — it correlates threats
+ * that share infrastructure into a single campaign, tracks that
+ * infrastructure as it moves, and (where warranted) associates it with
+ * a known actor profile at a stated confidence level, never a bare
+ * assertion.
+ *
+ * Structure cloned from threat-detection.astro (hero, section-label
+ * rhythm, monitor-card grid, 01/02/03 pipeline, cross-link footer,
+ * CTA); page-scoped `ci-` class prefix. No stat row — nothing here is
+ * instrumented, so no numbers are shown.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const signals = [
+  { color: "#C83C3C", title: "Shared TLS certificate", desc: "Same certificate authority signature or issuance pattern reused across lookalikes." },
+  { color: "#E5A832", title: "Shared IP address", desc: "Two threats sitting on the identical host." },
+  { color: "#DCAA32", title: "Shared /24 subnet", desc: "Infrastructure clustered in the same narrow IP range." },
+  { color: "#0A8AB5", title: "Shared network (ASN)", desc: "The same autonomous system behind seemingly unrelated attacks." },
+  { color: "#3CB878", title: "Shared registrar", desc: "The same registrar account or pattern, durable even as domains rotate." },
+  { color: "#8A8F9C", title: "Shared app-store developer identity", desc: "The same developer account behind apps impersonating multiple brands." },
+];
+
+const siblingLinks = [
+  { href: "/platform/threat-detection", title: "Threat Detection", desc: "How the detection engine and the feed network find phishing, lookalikes, and malicious infrastructure." },
+  { href: "/platform/email-security", title: "Email Security Posture", desc: "SPF, DKIM, DMARC, and MX graded A+ through F." },
+  { href: "/platform/social-monitoring", title: "Social Monitoring", desc: "Impersonation and handle-squatting detection across six platforms." },
+  { href: "/platform/ai-agents", title: "The Agent Mesh", desc: "The reasoning layer that fuses signals into one exposure score." },
+];
+---
+
+<Layout
+  title="Campaign Intelligence — Averrow"
+  description="How Averrow's Digital Risk Protection (DRPS) platform links threats sharing infrastructure into one campaign, with confidence-scored actor attribution."
+>
+  <section class="ci-hero">
+    <div class="container">
+      <a class="ci-breadcrumb" href={`${base}/platform`}>&larr; Platform Overview</a>
+      <div class="ci-eyebrow">Campaign Intelligence</div>
+      <h1>See the operation,<br /><span class="ci-accent">not just the symptom.</span></h1>
+      <p>
+        Attackers rarely build one-off infrastructure. The same TLS
+        certificate, IP address, subnet, network, or registrar shows up
+        behind a dozen lookalike domains &mdash; or the same developer
+        identity behind app-store impersonations of multiple brands.
+        Averrow connects the threats that share infrastructure into a
+        single campaign, and tracks that infrastructure as it moves.
+        Your team stops triaging isolated alerts and starts seeing the
+        operation behind them.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── THE SIGNAL ── -->
+  <section class="ci-section" id="signal">
+    <div class="container">
+      <div class="section-label">The Signal</div>
+      <h2>Infrastructure doesn&rsquo;t lie, even when a domain name does</h2>
+      <p class="ci-section-p">
+        A phishing kit gets torn down. The domain expires. A new lookalike
+        goes live a week later &mdash; but it&rsquo;s sitting behind the
+        same certificate authority signature, the same hosting network,
+        the same registrar account. Attackers reuse infrastructure
+        because standing it up from scratch is slow and expensive. That
+        reuse is the signal.
+      </p>
+      <div class="ci-signal-grid">
+        {signals.map((s) => (
+          <div class="ci-signal-card">
+            <span class="ci-signal-bar" style={`background:${s.color}`}></span>
+            <div class="ci-signal-body">
+              <h3>{s.title}</h3>
+              <p>{s.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ── HOW IT WORKS ── -->
+  <section class="ci-section ci-section-alt" id="how-it-works">
+    <div class="container">
+      <div class="section-label">How It Works</div>
+      <h2>From individual threat to connected campaign</h2>
+      <div class="ci-pipeline-grid">
+        <div class="ci-pipeline-card">
+          <div class="ci-pipeline-num">01</div>
+          <h3>Every new threat is fingerprinted.</h3>
+          <p>Its infrastructure &mdash; certificate, IP, subnet, ASN, registrar, developer identity &mdash; is captured alongside it.</p>
+        </div>
+        <div class="ci-pipeline-card">
+          <div class="ci-pipeline-num">02</div>
+          <h3>Shared infrastructure gets linked automatically.</h3>
+          <p>A new threat matching an existing one&rsquo;s infrastructure is connected into the same campaign, not logged as unrelated.</p>
+        </div>
+        <div class="ci-pipeline-card">
+          <div class="ci-pipeline-num">03</div>
+          <h3>Attribution carries a confidence level, never a certainty claim.</h3>
+          <p>Where enough overlap exists, a campaign is <em>associated</em> with a known actor profile at a stated confidence &mdash; never asserted. Averrow shows you what the infrastructure supports, not a name pulled out of the air.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── IN YOUR PLATFORM ── -->
+  <section class="ci-section" id="in-platform">
+    <div class="container">
+      <div class="section-label">In Your Platform</div>
+      <h2>Every threat actor has a campaign profile</h2>
+      <p class="ci-section-p">
+        Campaign intelligence isn&rsquo;t a separate dashboard you have to
+        learn &mdash; it surfaces inside the Threat Actor view your team
+        already works from. Open a threat actor profile and you get the
+        full picture in one place:
+      </p>
+      <div class="ci-profile-grid">
+        <div class="ci-profile-card">
+          <h3>Brands targeted</h3>
+          <p>Every brand this actor&rsquo;s campaigns have touched.</p>
+        </div>
+        <div class="ci-profile-card">
+          <h3>Attributed threats</h3>
+          <p>The individual detections tied to this actor, so you can move from pattern back to evidence.</p>
+        </div>
+        <div class="ci-profile-card">
+          <h3>Infrastructure rows</h3>
+          <p>ASN, IP range, domain, hosting provider, first observed, last observed, and confidence &mdash; per piece of infrastructure.</p>
+        </div>
+      </div>
+      <p class="ci-close-p">
+        Infrastructure that moves is still infrastructure you can watch.
+        A profile that shows where an actor has been hosted before is a
+        head start on where they&rsquo;ll show up next.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── WATCH IT MOVE ── -->
+  <section class="ci-section ci-section-alt" id="watch-it-move">
+    <div class="container">
+      <div class="section-label">Watch It Move</div>
+      <h2>Infrastructure clustering, visualized</h2>
+      <p class="ci-section-p">
+        Campaign intelligence is easier to understand in motion than in a
+        spec sheet. Inside the platform, the Observatory renders global
+        threat infrastructure as a live map &mdash; where attacks
+        originate, and the corridors connecting infrastructure to the
+        brands it targets. It&rsquo;s the same clustering logic behind
+        the Threat Actor view, rendered as a map instead of a table.
+      </p>
+      <a href={`${base}/demo`} class="btn btn-primary">See It In A Live Demo</a>
+    </div>
+  </section>
+
+  <!-- ── TAKEDOWNS (execution, under authorization) ── -->
+  <section class="ci-section" id="takedowns">
+    <div class="container">
+      <div class="section-label">From Pattern To Action</div>
+      <h2>Takedowns, executed &mdash; under your authorization</h2>
+      <div class="ci-takedown-card">
+        <p>
+          Detection is only useful if something happens next. Averrow
+          doesn&rsquo;t just flag threats &mdash; it submits abuse
+          reports directly to hosting providers, domain registrars, and
+          blocklists, and reaches out to abuse contacts by email. Every
+          submission happens under a takedown authorization you sign and
+          control, within limits you set, at the automation level you
+          choose: manual, semi-automatic with your approval, or fully
+          automatic. You can revoke that authorization at any time.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CROSS-LINKS ── -->
+  <section class="ci-section ci-section-alt" id="explore-more">
+    <div class="container">
+      <div class="section-label" style="text-align:center;">Explore The Platform</div>
+      <h2 class="ci-explore-h2">Campaign intelligence builds on the rest of the mesh</h2>
+      <div class="ci-explore-grid">
+        {siblingLinks.map((s) => (
+          <a class="ci-explore-card" href={`${base}${s.href}`}>
+            <h3>{s.title}</h3>
+            <p>{s.desc}</p>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CTA ── -->
+  <section class="ci-cta">
+    <div class="container">
+      <h2>Stop reading a list of alerts.<br />Start seeing the operation.</h2>
+      <p>Campaign Intelligence is part of the Business and Enterprise plans. See it running against your own brand in a live demo.</p>
+      <div class="ci-cta-actions">
+        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
+        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  /* ── HERO ── */
+  .ci-hero {
+    padding: 5rem 0 3rem;
+    text-align: center;
+    background: var(--gradient-hero);
+    position: relative;
+    overflow: hidden;
+  }
+  .ci-breadcrumb {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 1.25rem;
+    text-decoration: none;
+  }
+  .ci-breadcrumb:hover { color: var(--amber); text-decoration: none; }
+  .ci-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .ci-hero h1 {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 5vw, 56px);
+    font-weight: 800;
+    margin-bottom: 1rem;
+    line-height: 1.08;
+  }
+  .ci-accent { color: var(--amber); }
+  .ci-hero p {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 680px;
+    margin: 0 auto;
+    line-height: 1.6;
+  }
+
+  /* ── SECTION SHELL ── */
+  .ci-section { padding: 3.5rem 0; }
+  .ci-section-alt { background: var(--bg-secondary); }
+  .ci-section h2 {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 34px);
+    font-weight: 700;
+    margin-bottom: 0.85rem;
+    max-width: 720px;
+  }
+  .ci-section-p {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 720px;
+    margin-bottom: 2rem;
+  }
+  .ci-close-p {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 720px;
+    margin-top: 1.5rem;
+  }
+
+  /* ── SIGNAL GRID ── */
+  .ci-signal-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  .ci-signal-card {
+    display: flex;
+    align-items: stretch;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .ci-signal-bar { width: 4px; flex-shrink: 0; }
+  .ci-signal-body { padding: 1.1rem 1.25rem; }
+  .ci-signal-body h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .ci-signal-body p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
+
+  /* ── PIPELINE ── */
+  .ci-pipeline-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+  }
+  .ci-pipeline-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .ci-pipeline-num {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 0.1em;
+    margin-bottom: 0.6rem;
+  }
+  .ci-pipeline-card h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: 0.5rem; line-height: 1.35; }
+  .ci-pipeline-card p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; }
+  .ci-pipeline-card em { color: var(--text-primary); font-style: normal; font-weight: 600; }
+
+  /* ── PROFILE CARDS (light row, not a table) ── */
+  .ci-profile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+  .ci-profile-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+  }
+  .ci-section .ci-profile-card { background: var(--bg-tertiary); }
+  .ci-profile-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .ci-profile-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
+
+  /* ── TAKEDOWN CARD ── */
+  .ci-takedown-card {
+    max-width: 780px;
+    background: rgba(14,26,43,0.55);
+    border: 1px solid rgba(120,160,200,0.14);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  :global([data-theme="light"]) .ci-takedown-card {
+    background: rgba(255,255,255,0.72);
+    border-color: rgba(26,31,46,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  }
+  .ci-takedown-card p {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin: 0;
+  }
+
+  /* ── EXPLORE MORE ── */
+  .ci-explore-h2 {
+    font-family: var(--font-display);
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .ci-explore-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .ci-explore-card {
+    display: block;
+    background: rgba(14,26,43,0.5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.25rem;
+    text-decoration: none;
+    transition: all 0.25s;
+  }
+  :global([data-theme="light"]) .ci-explore-card {
+    background: rgba(255,255,255,0.6);
+    border-color: rgba(226,221,213,0.5);
+  }
+  .ci-explore-card:hover {
+    border-color: var(--amber);
+    transform: translateY(-4px);
+    text-decoration: none;
+  }
+  .ci-explore-card h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.4rem;
+  }
+  .ci-explore-card p {
+    font-size: 0.82rem;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+  }
+
+  /* ── CTA ── */
+  .ci-cta { padding: 3.5rem 0; text-align: center; }
+  .ci-cta h2 {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 700;
+    margin-bottom: 1rem;
+    line-height: 1.2;
+  }
+  .ci-cta p {
+    color: var(--text-secondary);
+    max-width: 520px;
+    margin: 0 auto 2rem;
+  }
+  .ci-cta-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    .ci-signal-grid { grid-template-columns: repeat(2, 1fr); }
+    .ci-pipeline-grid { grid-template-columns: 1fr; }
+    .ci-profile-grid { grid-template-columns: 1fr; }
+    .ci-explore-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .ci-signal-grid { grid-template-columns: 1fr; }
+    .ci-explore-grid { grid-template-columns: 1fr; }
+  }
+</style>
