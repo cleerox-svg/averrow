@@ -9,10 +9,11 @@ import {
   parsePagination, parseFilters, buildWhereClause,
   parseBody, success, error, paginatedResponse, requireFields,
 } from "../lib/handler-utils";
-import { requireAuthorizationForModule, TakedownNotAuthorizedError } from "../lib/takedown-authorizations";
+import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonthlyTakedownCap } from "../lib/takedown-authorizations";
 import type { Env, CreateTakedownBody, UpdateTakedownBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import type { ModuleKey } from "../lib/entitlements";
+import type { ProviderRecord } from "../lib/takedown-submitters";
 
 // ─── Platform Abuse Contacts ─────────────────────────────────
 
@@ -641,6 +642,344 @@ export async function handleAdminUpdateTakedown(
     }
 
     return json({ success: true, message: "Takedown request updated" }, 200, origin);
+  } catch (err) {
+    return error(String(err), 500, origin);
+  }
+}
+
+// ─── POST /api/admin/takedowns/:id/submit  (TK2 — analyst hand-submit) ─
+// Route gate: requirePermission("manage_takedowns") — analyst + admin +
+// super_admin (see lib/role-permissions.ts). This is the single-takedown,
+// human-triggered sibling of Sparrow Phase G's auto-submit
+// (agents/sparrow.ts:runPhaseGAutoSubmit) — for the "auto is on but THIS one
+// needs a human to push it" case. It dispatches a REAL external action, so it
+// re-runs the SAME standing/consent gates Phase G enforces and NEVER bypasses
+// them. The ONLY thing it drops is the automation decision: it does NOT
+// require takedown_providers.auto_submit_enabled=1 and does NOT consult the
+// auto/semi_auto automation policy — the staff user holding manage_takedowns
+// IS that decision (that is the entire point of TK2).
+//
+// Standing gates enforced here (all fail-closed), mirroring Phase G + TK1
+// (handleAdminUpdateTakedown's →submitted gate):
+//   1. org_id NOT NULL      — takedown authorization is org-scoped, so an
+//      orgless (SOC/prospect) draft has no signing party and no legal
+//      standing; reject 422. Same treatment as Phase G (candidate query
+//      filters `org_id IS NOT NULL`) and TK1 (422 on the →submitted flip).
+//      This is NOT a bypass — it is the absence of a party that could have
+//      authorized the action.
+//   2. org owns the target brand (org_brands) — 403 (TK1 parity; strictly
+//      more conservative than Phase G, which omits this check).
+//   3. module_key present   — 422 (can't resolve authorization without it).
+//   4. requireAuthorizationForModule — active signed authorization covering
+//      the module; 403 otherwise. Canonical gate; subsumes isModuleAuthorized.
+//   5. isUnderMonthlyTakedownCap     — signed monthly cap not spent; 409
+//      otherwise. Phase G's consent boundary.
+//
+// Dispatch inherits TAKEDOWN_SEND_MODE via dispatchSubmission → pickSubmitter
+// exactly like Phase G — no new send surface: whatever mode the platform runs
+// in, this path behaves identically to Phase G's auto-submit. PROD RUNS
+// TAKEDOWN_SEND_MODE='live' (wrangler.toml), so this endpoint sends REAL abuse
+// reports; it does NOT ship dark. That is why the atomic single-dispatch claim
+// below (guard against a concurrent double-send) is load-bearing, not cosmetic.
+//
+// Reads here use env.DB directly (NOT a read replica) so the cap COUNT and the
+// row state are the live primary. NOTE: getActiveAuthorization /
+// requireAuthorizationForModule are KV-cached (cachedValue, 120s) — a revoked
+// authorization is caught because revokeAuthorization() calls invalidateCache()
+// on the same key; do NOT remove that invalidation assuming this path always
+// re-reads D1, because it does not. The monthly-cap COUNT is an uncached live
+// read.
+//
+// NOTE (DRY): the standing-check + dispatch sequence is REPLICATED from Phase
+// G rather than factored into a shared helper. Phase G's loop is entangled
+// with batch-local cap accounting, per-row automation-policy evaluation,
+// entitlement checks, and de-duped customer notifications that do not apply to
+// a single human-triggered submit; extracting a shared helper would have
+// destabilized that hot path for little gain. The gate order + semantics are
+// kept identical on purpose.
+
+interface SubmitTakedownRow {
+  id:                     string;
+  status:                 string;
+  org_id:                 number | null;
+  brand_id:               string;
+  module_key:             string | null;
+  target_type:            string;
+  target_value:           string;
+  target_url:             string | null;
+  evidence_summary:       string;
+  evidence_detail:        string | null;
+  provider_name:          string | null;
+  provider_abuse_contact: string | null;
+  provider_method:        string | null;
+  severity:               string;
+}
+
+// Only draft/requested takedowns can be hand-submitted. Every other state
+// (submitted, pending_response, taken_down, failed, expired, withdrawn) is
+// already-submitted or terminal → idempotent 409.
+const SUBMITTABLE_SOURCE_STATUSES = ["draft", "requested"];
+
+// Load a provider row in the exact ProviderRecord shape dispatchSubmission
+// needs (same SELECT Sparrow Phase G uses), MINUS the auto_submit_enabled gate.
+async function loadSubmitProviderRecord(
+  env: Env, providerName: string,
+): Promise<ProviderRecord | null> {
+  return env.DB.prepare(
+    `SELECT id, provider_name, provider_type, abuse_email, abuse_url,
+            abuse_api_url, abuse_api_type, auto_submit_enabled
+     FROM takedown_providers
+     WHERE provider_name = ?
+     LIMIT 1`,
+  ).bind(providerName).first<ProviderRecord>();
+}
+
+export async function handleAdminSubmitTakedown(
+  request: Request, env: Env, takedownId: string, ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+
+  try {
+    // Fresh, non-replica read — consent boundary (see header note).
+    const td = await env.DB.prepare(
+      `SELECT id, status, org_id, brand_id, module_key,
+              target_type, target_value, target_url,
+              evidence_summary, evidence_detail,
+              provider_name, provider_abuse_contact, provider_method, severity
+       FROM takedown_requests WHERE id = ?`,
+    ).bind(takedownId).first<SubmitTakedownRow>();
+
+    if (!td) return error("Takedown request not found", 404, origin);
+
+    // ── Idempotency guard 1: status must be a submittable source state. ──
+    if (!SUBMITTABLE_SOURCE_STATUSES.includes(td.status)) {
+      return error(
+        `Takedown is '${td.status}' — only 'draft' or 'requested' takedowns can be submitted (this one is already submitted or in a terminal state).`,
+        409, origin,
+      );
+    }
+
+    // ── Idempotency guard 2: no prior successful/queued submission. ──
+    // Belt-and-suspenders against a status flip that failed after the
+    // submission row landed. 'failed'/'rejected' rows do NOT block a retry.
+    const priorSubmission = await env.DB.prepare(
+      `SELECT 1 FROM takedown_submissions
+       WHERE takedown_id = ? AND outcome IN ('submitted', 'queued') LIMIT 1`,
+    ).bind(takedownId).first();
+    if (priorSubmission) {
+      return error(
+        "Takedown already has a submission on record — refusing to double-dispatch.",
+        409, origin,
+      );
+    }
+
+    // ── STANDING GATE 1: owning org (authorization is org-scoped). ──
+    if (td.org_id === null || td.org_id === undefined) {
+      return error(
+        "Cannot submit an orgless (SOC/prospect) takedown — takedown authorization is org-scoped, so there is no signing party and no legal standing to dispatch. Assign an owning org first.",
+        422, origin,
+      );
+    }
+    const orgId = td.org_id;
+
+    // ── STANDING GATE 2: org owns the target brand (TK1 parity). ──
+    const ownsBrand = await env.DB.prepare(
+      "SELECT 1 FROM org_brands WHERE org_id = ? AND brand_id = ?",
+    ).bind(orgId, td.brand_id).first();
+    if (!ownsBrand) {
+      return error(
+        "Owning org does not own the target brand — no legal standing to submit this takedown.",
+        403, origin,
+      );
+    }
+
+    // ── STANDING GATE 3: module_key present. ──
+    if (!td.module_key) {
+      return error(
+        "Takedown has no module_key — cannot verify takedown authorization to submit.",
+        422, origin,
+      );
+    }
+    const moduleKey = td.module_key as ModuleKey;
+
+    // ── STANDING GATE 4: active signed authorization covers the module. ──
+    try {
+      await requireAuthorizationForModule(env, orgId, moduleKey);
+    } catch (authErr) {
+      if (authErr instanceof TakedownNotAuthorizedError) {
+        return error(
+          `Org lacks an active takedown authorization covering module '${moduleKey}' — cannot submit.`,
+          403, origin,
+        );
+      }
+      throw authErr;
+    }
+
+    // ── STANDING GATE 5: signed monthly cap not spent (Phase G parity). ──
+    // F2 (residual window, accepted): the cap is READ here, not RESERVED. The
+    // atomic claim below single-dispatches THIS row, but it does not reserve a
+    // cap slot, so N concurrent hand-submits of DIFFERENT takedowns for one org
+    // can each pass this read and overrun the signed cap by up to N. Phase G
+    // has the identical property (it reads the cap once per batch). A true
+    // reservation would need an atomic org-scoped counter; deliberately not
+    // built for this low-frequency, human-triggered path. The cap is a soft
+    // ceiling under concurrency, hard otherwise.
+    const cap = await isUnderMonthlyTakedownCap(env, orgId);
+    if (!cap.under) {
+      return error(
+        `Signed monthly takedown cap reached (${cap.used}/${cap.cap}). Re-sign the authorization to raise the cap, or wait until next month.`,
+        409, origin,
+      );
+    }
+
+    // ── Resolve the provider row (abuse endpoint). We deliberately do NOT
+    // gate on auto_submit_enabled — that is the automation gate the human
+    // replaces. Prefer the takedown's resolved provider_name; fall back to
+    // resolveProvider() when it's unset or not in the directory. ──
+    const { dispatchSubmission } = await import("../lib/takedown-submitters");
+    let providerName = td.provider_name;
+    let provider = providerName ? await loadSubmitProviderRecord(env, providerName) : null;
+    if (!provider) {
+      const { resolveProvider } = await import("../lib/provider-resolver");
+      const resolved = await resolveProvider(env, td.target_value);
+      if (resolved.abuse_contact) {
+        providerName = resolved.abuse_contact.provider_name;
+        provider = await loadSubmitProviderRecord(env, providerName);
+      }
+    }
+    if (!provider || !providerName) {
+      return error(
+        "No abuse provider could be resolved for this takedown's target — cannot dispatch.",
+        422, origin,
+      );
+    }
+
+    // ── ATOMIC SINGLE-DISPATCH CLAIM (F1) ──────────────────────────────
+    // Claim the row BEFORE dispatching. D1 serializes writes, so this
+    // conditional UPDATE is a genuine atomic compare-and-swap: exactly one of
+    // N concurrent requests flips the row out of draft/requested and gets
+    // meta.changes===1; every loser gets 0 and returns 409 WITHOUT dispatching.
+    // This is what makes the live-mode send safe against an analyst double-click
+    // or two SOC analysts on the same takedown — the idempotency reads above
+    // (status + prior-submission) are stale by the time we act, so they are a
+    // fast-path courtesy, not the real guard. We claim straight to 'submitted'
+    // (at-most-once): if the dispatch then fails/rejects we flip the row to
+    // 'failed' rather than back to draft, so an ambiguous provider error can't
+    // trigger an automatic re-send of a report that may already have gone out.
+    const claim = await env.DB.prepare(
+      `UPDATE takedown_requests
+       SET status = 'submitted',
+           submitted_at = datetime('now'),
+           submitted_by = ?,
+           updated_at   = datetime('now')
+       WHERE id = ? AND status IN ('draft', 'requested')`,
+    ).bind(ctx.userId, takedownId).run();
+
+    if (!claim.meta || claim.meta.changes !== 1) {
+      // Another concurrent request won the claim, or the row left
+      // draft/requested between our read and now. Do NOT dispatch.
+      return error(
+        "Takedown was already claimed for submission by a concurrent request — refusing to double-dispatch.",
+        409, origin,
+      );
+    }
+
+    // ── Dispatch — inherits TAKEDOWN_SEND_MODE (PROD = live → real send).
+    // Records the takedown_submissions audit row internally. ──
+    const { result, submission_id } = await dispatchSubmission(
+      env,
+      {
+        id:                     td.id,
+        org_id:                 orgId,
+        brand_id:               td.brand_id,
+        module_key:             moduleKey,
+        target_type:            td.target_type,
+        target_value:           td.target_value,
+        target_url:             td.target_url,
+        evidence_summary:       td.evidence_summary,
+        evidence_detail:        td.evidence_detail,
+        provider_name:          providerName,
+        provider_abuse_contact: td.provider_abuse_contact,
+        provider_method:        td.provider_method,
+        severity:               td.severity,
+      },
+      provider,
+    );
+
+    if (result.outcome === "failed" || result.outcome === "rejected") {
+      // We already claimed the row to 'submitted'; the send did not land, so
+      // move it to a terminal 'failed' (NOT back to draft — at-most-once, see
+      // claim note). The takedown_submissions row records the attempt + error;
+      // an operator can inspect and re-open manually if the failure was
+      // transient. Best-effort — never let a bookkeeping write mask the 502.
+      await env.DB.prepare(
+        `UPDATE takedown_requests
+         SET status = 'failed',
+             resolved_at = datetime('now'),
+             response_notes = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+      ).bind(
+        `Hand-submit dispatch ${result.outcome}: ${result.error_message ?? "provider did not accept the report"}`,
+        takedownId,
+      ).run().catch(() => {});
+      await audit(env, {
+        action: "admin_takedown_submit",
+        userId: ctx.userId,
+        resourceType: "takedown_request",
+        resourceId: takedownId,
+        details: {
+          previous_status: td.status, new_status: "failed", outcome: result.outcome,
+          submitter_kind: result.submitter_kind, provider: providerName,
+          submission_id, error: result.error_message ?? null,
+        },
+        outcome: "failure",
+        request,
+      }).catch(() => {});
+      return error(
+        `Submission ${result.outcome}: ${result.error_message ?? "provider did not accept the report"}`,
+        502, origin,
+      );
+    }
+
+    // Success — 'submitted' (live send) or 'queued' (draft under a non-live
+    // TAKEDOWN_SEND_MODE). Row is already 'submitted' from the claim above.
+    // WHO triggered the external action — audit the staff user (best-effort:
+    // a logging failure must NOT misreport a completed send as a 500).
+    await audit(env, {
+      action: "admin_takedown_submit",
+      userId: ctx.userId,
+      resourceType: "takedown_request",
+      resourceId: takedownId,
+      details: {
+        previous_status: td.status, new_status: "submitted",
+        outcome: result.outcome, submitter_kind: result.submitter_kind,
+        provider: providerName, submission_id,
+        send_mode: result.outcome === "submitted" ? "live" : "draft",
+      },
+      outcome: "success",
+      request,
+    }).catch(() => {});
+
+    // Notify the org's data-out destinations (best-effort), like Phase G + PATCH.
+    emitOrgEvent(env, orgId, "takedown.status_changed", {
+      takedown_id: takedownId,
+      previous_status: td.status,
+      new_status: "submitted",
+      updated_by: ctx.userId,
+    }).catch(() => {});
+
+    return success(
+      {
+        takedown_id:    takedownId,
+        status:         "submitted",
+        outcome:        result.outcome,
+        submitter_kind: result.submitter_kind,
+        submission_id,
+        provider:       providerName,
+      },
+      origin,
+    );
   } catch (err) {
     return error(String(err), 500, origin);
   }

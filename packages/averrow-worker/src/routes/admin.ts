@@ -31,7 +31,7 @@ import {
 } from "../handlers/organizations";
 import {
   handleAdminListTakedowns, handleAdminUpdateTakedown, handleAdminTakedownIntegrations,
-  handleAdminTakedownMetrics,
+  handleAdminTakedownMetrics, handleAdminSubmitTakedown,
 } from "../handlers/takedowns";
 import {
   handleGenerateVapidKeys, handleGetPushConfig, handleUpdatePushConfig, handlePushTest,
@@ -626,6 +626,16 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminUpdateTakedown(request, env, request.params["id"] ?? "", ctx);
+  });
+  // TK2 (Phase 4 / Wave 2 S2.2) — analyst hand-submit. Single-takedown,
+  // human-triggered sibling of Sparrow Phase G's auto-submit. Dispatches a
+  // REAL external action (draft under the default TAKEDOWN_SEND_MODE), so it
+  // re-runs the full standing/consent gate set and drops ONLY the automation
+  // gate (auto_submit_enabled / auto-policy). Gate: manage_takedowns.
+  router.post("/api/admin/takedowns/:id/submit", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requirePermission("manage_takedowns")(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminSubmitTakedown(request, env, request.params["id"] ?? "", ctx);
   });
 
   // ─── Leads Management ─────────────────────────────────────────────
