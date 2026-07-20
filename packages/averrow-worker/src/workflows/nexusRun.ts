@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:work
 import type { Env } from '../types';
 import { updateProviderTrends } from '../lib/provider-trends';
 import { groupClusterComponents } from '../lib/cluster-components';
+import { detectClusterInfraMovement } from '../lib/cluster-infra-movement';
 
 type NexusWorkflowParams = {
   forceRefresh?: boolean;
@@ -680,7 +681,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
           await this.env.DB.prepare(`
             INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
             VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
-          `).bind(crypto.randomUUID(), JSON.stringify({ cluster_id: clusterId, asn })).run();
+          `).bind(crypto.randomUUID(), JSON.stringify({ kind: 'dormancy', cluster_id: clusterId, asn })).run();
         }
 
         if (isAccelerating) accelerating++;
@@ -704,6 +705,23 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     // writes 0 rows. Pure SQL/deterministic, no AI.
     const components = await step.do('component-grouping', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
       return await groupClusterComponents(this.env.DB);
+    });
+
+    // Step 2c: Infrastructure-movement pivot trigger (S2.4 / D5b). Additive
+    // SECOND `pivot_detected` trigger alongside the ASN-lane DORMANCY pivot
+    // in step 2: fires when a bridge-kind cluster (cert-serial / cert-SAN /
+    // per-IP) GAINS new infra vs its last-run fingerprint (register-then-
+    // move / expand). Same event_type + target_agent='observer',
+    // discriminated by payload_json.kind='infra_movement' — no new dispatch
+    // wiring. Flood-controlled (prior-snapshot required, significance +
+    // confidence floor, 24h per-cluster cooldown, per-run hard cap). Kept in
+    // lockstep with agents/nexus.ts's post-pass — the SAME helper
+    // (lib/cluster-infra-movement.detectClusterInfraMovement) is called
+    // identically in both paths so movement never diverges by dispatch
+    // source. Bridge-kind-only scope guarantees this parity even though the
+    // workflow ASN lane mints random-UUID ids. Idempotent diff, no AI.
+    const movement = await step.do('infra-movement', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      return await detectClusterInfraMovement(this.env.DB);
     });
 
     // Step 3: Update hosting provider trends
@@ -749,6 +767,11 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       component_ids_cleared: components.componentIdsCleared,
       components_skipped_over_cap: components.componentsSkippedOverCap,
       leaves_skipped_multi_component: components.leavesSkippedMultiComponent,
+      infra_movement_emitted: movement.emitted,
+      infra_movement_candidates: movement.candidates,
+      infra_movement_over_cap_skipped: movement.overCapSkipped,
+      infra_movement_capped_out: movement.cappedOut,
+      infra_movement_fingerprints_written: movement.fingerprintsWritten,
     };
     const totalClustersWritten =
       correlation.clustersWritten + certSerialLane.clustersWritten +
@@ -762,7 +785,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${components.componentsFormed} components (${components.clustersGrouped} clusters grouped), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
+        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${components.componentsFormed} components (${components.clustersGrouped} clusters grouped), ${correlation.pivotsDetected} dormancy pivots, ${movement.emitted} infra-movement pivots, ${providers.providers_updated} providers updated`,
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 

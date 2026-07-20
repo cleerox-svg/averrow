@@ -30,6 +30,7 @@ import {
 } from "../lib/intel-templates";
 import { updateProviderTrends } from "../lib/provider-trends";
 import { groupClusterComponents } from "../lib/cluster-components";
+import { detectClusterInfraMovement } from "../lib/cluster-infra-movement";
 
 // ─── NEXUS core correlation logic ─────────────────────────────────
 
@@ -41,7 +42,8 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 }> {
   const outputs: AgentOutputEntry[] = [];
   let clustersWritten = 0;
-  let pivotsDetected = 0;
+  let pivotsDetected = 0; // DORMANCY pivots only (F2 parity — movement is separate)
+  let infraMovementPivots = 0; // S2.4/D5b infra-movement pivots (reported separately)
 
   // --- Correlation 2: Update hosting_providers trend data ---
   //
@@ -1076,7 +1078,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
           VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
         `).bind(
           crypto.randomUUID(),
-          JSON.stringify({ cluster_id: clusterId, asn: cluster.asn, cluster_name: clusterName })
+          JSON.stringify({ kind: 'dormancy', cluster_id: clusterId, asn: cluster.asn, cluster_name: clusterName })
         ).run();
       } catch (err) {
         console.error('[nexus] pivot event emit error:', err);
@@ -1174,6 +1176,46 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     console.warn('[nexus] component grouping post-pass skipped:', err instanceof Error ? err.message : String(err));
   }
 
+  // ══ Post-pass: infrastructure-movement pivot trigger (S2.4 / D5b) ═════
+  // Additive SECOND `pivot_detected` trigger (alongside the ASN-lane
+  // DORMANCY pivot above). Fires when a bridge-kind cluster (cert-serial /
+  // cert-SAN / per-IP) GAINS new infra (IPs / ASNs / cert-serials) vs its
+  // last-run fingerprint — the register-then-move / expand pattern. Same
+  // event_type + target_agent='observer', discriminated by
+  // payload_json.kind='infra_movement'; no new dispatch wiring. Heavily
+  // flood-controlled (prior-snapshot required, significance + confidence
+  // floor, 24h per-cluster cooldown, per-run hard cap). Kept in lockstep
+  // with workflows/nexusRun.ts — the SAME helper is called identically in
+  // both paths, so movement behavior never diverges by dispatch source.
+  // Idempotent diff, no AI.
+  try {
+    const mv = await detectClusterInfraMovement(db);
+    infraMovementPivots = mv.emitted;
+    outputs.push({
+      type: "diagnostic",
+      summary: `NEXUS infra-movement: ${mv.emitted} pivot(s) emitted from ${mv.candidates} candidate(s) over ${mv.bridgeClustersConsidered} bridge cluster(s) (${mv.suppressedNoBaseline} no-baseline, ${mv.suppressedCooldown} cooldown, ${mv.overCapSkipped} over-cap, ${mv.cappedOut} capped, ${mv.fingerprintsWritten} fingerprints written)`,
+      severity: mv.emitted > 0 ? "high" : "info",
+      details: {
+        emitted: mv.emitted,
+        candidates: mv.candidates,
+        bridge_clusters_considered: mv.bridgeClustersConsidered,
+        hub_excluded: mv.hubExcluded,
+        suppressed_no_baseline: mv.suppressedNoBaseline,
+        suppressed_cooldown: mv.suppressedCooldown,
+        suppressed_low_confidence: mv.suppressedLowConfidence,
+        suppressed_insufficient: mv.suppressedInsufficient,
+        over_cap_skipped: mv.overCapSkipped,
+        capped_out: mv.cappedOut,
+        fingerprints_written: mv.fingerprintsWritten,
+      },
+    });
+    // F2/parity: keep `pivotsDetected` DORMANCY-only (mirrors the workflow
+    // path, which reports movement as a SEPARATE field). Conflating the two
+    // would make cross-dispatch-source diagnostics diverge.
+  } catch (err) {
+    console.warn('[nexus] infra-movement post-pass skipped:', err instanceof Error ? err.message : String(err));
+  }
+
   // --- Emit completion event ---
   try {
     await db.prepare(`
@@ -1185,6 +1227,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
         clusters_written: clustersWritten,
         providers_updated: providersUpdated,
         pivots_detected: pivotsDetected,
+        infra_movement_pivots: infraMovementPivots,
         app_store_clusters: appStoreClustersWritten,
         dark_web_clusters: darkWebClustersWritten,
       })
@@ -1195,12 +1238,13 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 
   outputs.push({
     type: "diagnostic",
-    summary: `NEXUS: ${clustersWritten} clusters written (${asnClusters.results.length} ASN groups analyzed, ${appStoreClustersWritten} app-store dev clusters, ${darkWebClustersWritten} dark-web actor clusters), ${providersUpdated} providers trend-updated, ${pivotsDetected} pivots detected`,
-    severity: pivotsDetected > 0 ? "high" : "info",
+    summary: `NEXUS: ${clustersWritten} clusters written (${asnClusters.results.length} ASN groups analyzed, ${appStoreClustersWritten} app-store dev clusters, ${darkWebClustersWritten} dark-web actor clusters), ${providersUpdated} providers trend-updated, ${pivotsDetected} dormancy pivots, ${infraMovementPivots} infra-movement pivots`,
+    severity: pivotsDetected > 0 || infraMovementPivots > 0 ? "high" : "info",
     details: {
       clusters_written: clustersWritten,
       providers_updated: providersUpdated,
       pivots_detected: pivotsDetected,
+      infra_movement_pivots: infraMovementPivots,
       asn_clusters_analyzed: asnClusters.results.length,
       app_store_clusters: appStoreClustersWritten,
       dark_web_clusters: darkWebClustersWritten,

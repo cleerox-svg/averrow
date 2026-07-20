@@ -1,0 +1,46 @@
+-- 0241_infrastructure_clusters_infra_movement.sql
+-- NEXUS infrastructure-movement pivot trigger (S2.4 / D5b).
+--
+-- Until now `pivot_detected` (the platform's ONLY live event-driven
+-- dispatch edge, nexus → Observer) fired on ONE condition: DORMANCY — an
+-- ASN cluster whose activity dropped >80% run-over-run. D5b adds a SECOND,
+-- additive trigger on the OPPOSITE signal: a cluster GAINING new
+-- infrastructure between runs (new IPs / ASNs / cert-serials) — the
+-- register-then-move / expand pattern. It is emitted with the SAME
+-- event_type ('pivot_detected') + target_agent ('observer'); the two are
+-- distinguished by payload_json.kind ('dormancy' | 'infra_movement'), so
+-- NO new dispatch wiring is needed and Observer (which wakes to run its
+-- full briefing and never reads the payload) stays compatible.
+--
+-- These three columns are the per-cluster run-over-run diff state:
+--   * infra_fingerprint      — bounded, sorted JSON set of the cluster's
+--                              distinct infra elements {a:[asns], i:[ips],
+--                              s:[cert-serials]}, capped. The run computes
+--                              the current set from member threats, DIFFs
+--                              it against this stored value to find what is
+--                              NEW, then overwrites. A hash won't do — the
+--                              set is required to know WHAT is new.
+--   * infra_fingerprint_at   — when the fingerprint was last written.
+--   * last_movement_pivot_at — flood-control cooldown stamp. A movement
+--                              pivot is NOT re-emitted for the same cluster
+--                              within the cooldown window (24h). Only set
+--                              on runs that actually emit.
+--
+-- Movement detection runs ONLY over bridge-kind clusters (cert-serial /
+-- cert-SAN / per-IP) — the SPECIFIC-evidence, operator-level clusters that
+-- carry byte-identical DETERMINISTIC ids in BOTH the agents/nexus.ts and
+-- workflows/nexusRun.ts paths. ASN / /24 / registrar clusters are excluded
+-- (the workflow's ASN lane mints per-run random UUIDs, so its fingerprint
+-- baseline could never persist across runs — this is the same divergence
+-- D5a's component layer sidesteps by deriving labels from bridge clusters
+-- only). Restricting to bridge clusters gives true agent<->workflow parity
+-- AND a stronger signal.
+--
+-- Additive only — ADD COLUMN, never DROP/ALTER (CLAUDE.md §8). Every
+-- existing cluster leaves all three NULL and keeps working unchanged; the
+-- first run computes a baseline fingerprint and (by requiring a prior
+-- snapshot to exist) emits NO movement for that first observation.
+
+ALTER TABLE infrastructure_clusters ADD COLUMN infra_fingerprint TEXT;
+ALTER TABLE infrastructure_clusters ADD COLUMN infra_fingerprint_at TEXT;
+ALTER TABLE infrastructure_clusters ADD COLUMN last_movement_pivot_at TEXT;

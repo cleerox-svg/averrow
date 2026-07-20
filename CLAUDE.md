@@ -389,7 +389,14 @@ operator traceability but no auto-dispatch happens (PR-L:1306).
 
 ```
 Active edges (event-driven):
-  Nexus → [pivot_detected]   → Observer    (target_agent='observer')
+  Nexus → [pivot_detected]   → Observer    (target_agent='observer'; two triggers
+                                             discriminated by payload_json.kind —
+                                             'dormancy' (>80% activity drop, ASN lane)
+                                             and 'infra_movement' (bridge-kind cluster
+                                             gains new IPs/ASNs/cert-serials vs its
+                                             prior-run fingerprint, S2.4/D5b). Same
+                                             event_type + target_agent — no new
+                                             dispatch wiring.)
 
 Telemetry only (target_agent=NULL):
   Sentinel        → [feed_pulled]         — operator sees "new items found"

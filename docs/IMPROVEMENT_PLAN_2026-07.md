@@ -174,7 +174,7 @@ this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE
    (`takedowns.ts:419-429`), BrandDetail's Risk tab, and the exposure-scan/qualified-report
    engines. Mostly composition — no new detection. This is the sales-demonstration artifact.
 
-### S2.4 — Detection depth, ROI order (D4 → D2/D3/D5 → D6 → C5/D7) ⬜ *(D4 + D5a shipped; D5b/D2/D3 deferred — see below)*
+### S2.4 — Detection depth, ROI order (D4 → D2/D3/D5 → D6 → C5/D7) ⬜ *(D4 + D5a + D5b shipped; D2/D3 deferred, D6 + C5/D7 remaining — see below)*
 **Owner:** threat-intel-analyst + backend-engineer. Sequenced:
 1. **D4 — "newly registered domain" signal** from the VirusTotal `creation_date` already
    on the wire (`feeds/virustotal.ts:58`). Cheapest, highest-ROI. ✅
@@ -186,9 +186,16 @@ this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE
      `infrastructure_clusters` rows into `component_id`s. Wired into both
      `agents/nexus.ts` and `workflows/nexusRun.ts`; migration `0240`. Additive —
      does not touch `threats.cluster_id` or the Attributor's `asns.length>=3` gate.
-   - **D5b (pivot-on-movement) deferred** — `pivot_detected` still fires on the
-     legacy ASN-lane heuristic, not on real component-level infrastructure
-     movement; wiring components into pivot detection is future work.
+   - **D5b (pivot-on-movement) ✅** — `lib/cluster-infra-movement.ts`
+     (`detectClusterInfraMovement()`) post-pass diffs each bridge-kind cluster's
+     (cert-serial/cert-SAN/per-IP only, same parity rationale as D5a) infra
+     fingerprint run-over-run and emits a second `pivot_detected` trigger
+     (`payload_json.kind='infra_movement'`, alongside the existing `dormancy`
+     kind — same event_type/target_agent, no new dispatch wiring) on genuine
+     new-infra growth. Flood-controlled (prior-snapshot required, confidence
+     >40 + hub exclusion, growth thresholds, 24h per-cluster cooldown, per-run
+     cap of 5, over-cap skip). Migration `0241`. Additive — does not touch
+     `threats.cluster_id` or the dormancy signal.
    - **D2 (favicon-hash) deferred** — needs a favicon-fetch/hash enrichment stage
      that doesn't exist yet; no lane can consume it until that stage ships.
    - **D3 (JA3/JARM) deferred** — infeasible on Cloudflare Workers: no raw
