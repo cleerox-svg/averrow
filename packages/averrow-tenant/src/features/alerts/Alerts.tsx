@@ -14,8 +14,8 @@
 // read-only. (Phase 1, TENANT_ANALYST_UX_RESEARCH_2026-06 §6.)
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, ShieldCheck, Bell, Check, UserPlus, Loader2, X, type LucideIcon } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, ShieldCheck, Bell, Check, UserPlus, Loader2, X, Filter, type LucideIcon } from 'lucide-react';
 import {
   useTenantAlerts, useCanTriage, useBulkUpdateAlerts, extractConfidence,
   type Alert, type AlertSeverity, type AlertStatus,
@@ -48,11 +48,27 @@ const STATUS_OPTIONS: Array<{ key: StatusFilter; label: string }> = [
 ];
 
 export function Alerts() {
+  // Incoming deep-link filters — e.g. the executives registry links here
+  // as `/alerts?brand=<brandId>&type=executive_impersonation` ("view this
+  // brand's executive-impersonation alerts"). Fixed for the session; not
+  // exposed as its own picker UI, just a dismissible chip, since these two
+  // params only ever arrive via a deep link, never a user click in this
+  // page. Per-executive scoping isn't possible — the alerts API has no
+  // executive_id filter (only brand_id / alert_type) — so this is
+  // brand-wide for that alert type, not exec-specific.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const brandFilter = searchParams.get('brand') ?? undefined;
+  const typeFilter   = searchParams.get('type') ?? undefined;
+  const clearDeepLinkFilter = () => setSearchParams({});
+
   const [severity, setSeverityState] = useState<SeverityFilter>('all');
   const [status, setStatusState]     = useState<StatusFilter>('new');
   const [page, setPage]              = useState(0);
   const [selected, setSelected]      = useState<Set<string>>(new Set());
-  const { data, isLoading, error } = useTenantAlerts({ severity, status, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+  const { data, isLoading, error } = useTenantAlerts({
+    severity, status, limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+    brandId: brandFilter, alertType: typeFilter,
+  });
   const canTriage = useCanTriage();
 
   const clearSelection = () => setSelected(new Set());
@@ -82,6 +98,23 @@ export function Alerts() {
           Brand alerts — impersonations, typosquats, email security drift, dark-web mentions. Sorted by severity, then recency.
         </p>
       </header>
+
+      {(brandFilter || typeFilter) && (
+        <div className="inline-flex items-center gap-2 rounded-lg border border-amber/[0.25] bg-amber/[0.06] px-3 py-1.5 text-[12px] text-amber/90">
+          <Filter size={12} />
+          <span>
+            Filtered{typeFilter && <> · {typeFilter.replace(/_/g, ' ')}</>}{brandFilter && <> · this brand</>}
+          </span>
+          <button
+            type="button"
+            onClick={clearDeepLinkFilter}
+            className="inline-flex items-center gap-1 text-white/60 hover:text-white/90"
+            aria-label="Clear filter"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {data && <SeverityRollup breakdown={data.severity_breakdown} />}
 

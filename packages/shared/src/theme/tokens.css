@@ -325,6 +325,17 @@
 [data-theme="light"] .text-white\/35         { color: rgba(15,20,35,0.42); }
 [data-theme="light"] .text-white\/30         { color: rgba(15,20,35,0.36); }
 [data-theme="light"] .text-white\/25         { color: rgba(15,20,35,0.30); }
+
+/* placeholder-white/X — Tailwind's `placeholder-white/X` targets the
+   ::placeholder pseudo-element, a different selector than `text-white/X`
+   (which the rules above cover), so it needs its own rule even at the
+   same opacity. Added for EXEC_IMPERSONATION_2026-07 Stage 5's
+   Executives form inputs; values match the text-white/30 and
+   text-white/25 overrides above for consistency. Additive — every
+   existing rule above is untouched. */
+[data-theme="light"] .placeholder-white\/30::placeholder { color: rgba(15,20,35,0.36); }
+[data-theme="light"] .placeholder-white\/25::placeholder { color: rgba(15,20,35,0.30); }
+
 [data-theme="light"] .text-white\/20         { color: rgba(15,20,35,0.24); }
 [data-theme="light"] .text-white\/10         { color: rgba(15,20,35,0.18); }
 [data-theme="light"] .text-white\/\[0\.15\]  { color: rgba(15,20,35,0.20); }

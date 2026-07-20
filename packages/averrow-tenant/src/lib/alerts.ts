@@ -53,11 +53,22 @@ export interface AlertsResponse {
 }
 
 interface AlertsFilters {
-  status?:   AlertStatus | 'all';
-  severity?: AlertSeverity | 'all';
-  brandId?:  string;
-  limit?:    number;
-  offset?:   number;
+  status?:    AlertStatus | 'all';
+  severity?:  AlertSeverity | 'all';
+  brandId?:   string;
+  /** Server-side `alert_type` exact match (handleTenantAlerts already
+   *  accepts this param; only the client type was missing it — added
+   *  for EXEC_IMPERSONATION_2026-07 Stage 5 so the executives registry
+   *  can deep-link into "this brand's executive_impersonation alerts"). */
+  alertType?: string;
+  limit?:     number;
+  offset?:    number;
+  /** Extra gate ANDed with the existing hasOrg/orgId gate below. Defaults
+   *  to true (existing callers are unaffected). Added so callers like the
+   *  executives registry can skip the request entirely when there's no
+   *  useful scope to query yet (e.g. no single brand selected), instead of
+   *  firing and discarding the result. */
+  enabled?:   boolean;
 }
 
 /** Detection confidence (0–100) when the alert carries a structured score —
@@ -111,6 +122,7 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
   if (filters.status   && filters.status   !== 'all') params.set('status',   filters.status);
   if (filters.severity && filters.severity !== 'all') params.set('severity', filters.severity);
   if (filters.brandId)                                  params.set('brand_id', filters.brandId);
+  if (filters.alertType)                                params.set('alert_type', filters.alertType);
   params.set('limit', String(filters.limit ?? 50));
   if (filters.offset)                                   params.set('offset', String(filters.offset));
 
@@ -131,7 +143,7 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
         severity_breakdown:  res.severity_breakdown ?? [],
       };
     },
-    enabled: hasOrg && !!orgId,
+    enabled: hasOrg && !!orgId && (filters.enabled ?? true),
     staleTime: 30_000,
   });
 }
