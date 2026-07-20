@@ -944,3 +944,21 @@ export interface ScanResult {
   cached: boolean;
   created_at: string;
 }
+
+// ─── Executive identity registry (EXEC_IMPERSONATION_2026-07 Stage 1) ──
+// Row shape of org_executives (migration 0244). official_handles and
+// watch_platforms are stored as JSON text; parsed shapes are documented
+// below. photo_ref is reserved for the later photo-match gate.
+export interface OrgExecutive {
+  id: string;
+  org_id: number;
+  brand_id: string;
+  full_name: string;
+  title: string | null;
+  official_handles: string | null;   // JSON object: platform -> handle
+  watch_platforms: string | null;    // JSON array of platform keys
+  photo_ref: string | null;
+  status: string;                     // active | paused
+  created_at: string;
+  updated_at: string;
+}
