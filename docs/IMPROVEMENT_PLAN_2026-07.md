@@ -174,12 +174,25 @@ this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE
    (`takedowns.ts:419-429`), BrandDetail's Risk tab, and the exposure-scan/qualified-report
    engines. Mostly composition — no new detection. This is the sales-demonstration artifact.
 
-### S2.4 — Detection depth, ROI order (D4 → D2/D3/D5 → D6 → C5/D7) ⬜
+### S2.4 — Detection depth, ROI order (D4 → D2/D3/D5 → D6 → C5/D7) ⬜ *(D4 + D5a shipped; D5b/D2/D3 deferred — see below)*
 **Owner:** threat-intel-analyst + backend-engineer. Sequenced:
 1. **D4 — "newly registered domain" signal** from the VirusTotal `creation_date` already
-   on the wire (`feeds/virustotal.ts:58`). Cheapest, highest-ROI.
+   on the wire (`feeds/virustotal.ts:58`). Cheapest, highest-ROI. ✅
 2. **D2/D3/D5** — favicon-hash + JA3/JARM NEXUS lanes; convert clustering to
    connected-components; make `pivot_detected` fire on real infrastructure movement.
+   - **D5a (connected-components) ✅** — `lib/cluster-components.ts` post-pass
+     (union-find over specific-evidence bridges only: cert-serial/cert-SAN/per-IP;
+     ASN/subnet/registrar are receive-only leaves) groups the six lanes'
+     `infrastructure_clusters` rows into `component_id`s. Wired into both
+     `agents/nexus.ts` and `workflows/nexusRun.ts`; migration `0240`. Additive —
+     does not touch `threats.cluster_id` or the Attributor's `asns.length>=3` gate.
+   - **D5b (pivot-on-movement) deferred** — `pivot_detected` still fires on the
+     legacy ASN-lane heuristic, not on real component-level infrastructure
+     movement; wiring components into pivot detection is future work.
+   - **D2 (favicon-hash) deferred** — needs a favicon-fetch/hash enrichment stage
+     that doesn't exist yet; no lane can consume it until that stage ships.
+   - **D3 (JA3/JARM) deferred** — infeasible on Cloudflare Workers: no raw
+     TLS-handshake access, so JA3/JARM fingerprints can't be computed.
 3. **D6** — page-content/visual phishing analysis.
 4. **C5/D7** — breadth: Google Play parity, IDN/punycode homoglyphs, WHOIS registrant/NS,
    forum/Telegram dark-web.

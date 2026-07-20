@@ -29,6 +29,7 @@ import {
   renderIntelPredictive,
 } from "../lib/intel-templates";
 import { updateProviderTrends } from "../lib/provider-trends";
+import { groupClusterComponents } from "../lib/cluster-components";
 
 // ─── NEXUS core correlation logic ─────────────────────────────────
 
@@ -1139,6 +1140,38 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
         }
       }
     }
+  }
+
+  // ══ Post-pass: connected-components grouping (S2.4 / D5a) ═════════
+  // Runs AFTER all six per-key lanes above have finished stamping
+  // threats.cluster_id + writing infrastructure_clusters rows. Groups
+  // those per-key clusters into transitive components using
+  // SPECIFIC-evidence bridges only (cert-serial / cert-SAN / per-IP);
+  // ASN / /24 / registrar clusters receive a component_id but never
+  // bridge. Stamps `infrastructure_clusters.component_id`; does NOT
+  // touch threats.cluster_id or the `asns` array. Kept in lockstep with
+  // workflows/nexusRun.ts's `component-grouping` step — the SAME helper
+  // is called identically in both paths so component_id never diverges
+  // by dispatch source. Pure SQL/deterministic, no AI.
+  try {
+    const comp = await groupClusterComponents(db);
+    outputs.push({
+      type: "diagnostic",
+      summary: `NEXUS components: ${comp.componentsFormed} component(s) grouping ${comp.clustersGrouped} clusters (${comp.componentIdsWritten} labels written, ${comp.componentIdsCleared} cleared, ${comp.componentsSkippedOverCap} skipped over size-cap)`,
+      severity: "info",
+      details: {
+        components_formed: comp.componentsFormed,
+        clusters_grouped: comp.clustersGrouped,
+        component_ids_written: comp.componentIdsWritten,
+        component_ids_cleared: comp.componentIdsCleared,
+        bridges_seeked: comp.bridgesSeeked,
+        bridges_skipped_hub: comp.bridgesSkippedHub,
+        components_skipped_over_cap: comp.componentsSkippedOverCap,
+        leaves_skipped_multi_component: comp.leavesSkippedMultiComponent,
+      },
+    });
+  } catch (err) {
+    console.warn('[nexus] component grouping post-pass skipped:', err instanceof Error ? err.message : String(err));
   }
 
   // --- Emit completion event ---

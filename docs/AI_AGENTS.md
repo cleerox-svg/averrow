@@ -310,8 +310,10 @@ Kill switch: flip the var back to `'draft'`.
 
 Nexus correlates shared infrastructure into `infrastructure_clusters` rows that represent distinct threat actor operations, via a 6-lane precedence pipeline (most-specific first — first lane to claim a threat wins): cert-serial → cert-SAN → per-IP fan-out → /24 subnet → registrar cohort → ASN (mops up leftovers). The cert lanes run first because shared certificate identity is near-conclusive same-operator evidence; the ASN pass runs last even though it's the oldest lane. Pivot detection emits immediate events for Observer.
 
+**Connected-components post-pass (S2.4 / D5a):** after all six lanes finish, `lib/cluster-components.ts`'s `groupClusterComponents()` runs as a pure-SQL, no-AI post-pass that groups the per-key `infrastructure_clusters` rows a single operator spans (e.g. one cert-serial cluster + one per-IP cluster) into a transitive component, stamping `infrastructure_clusters.component_id`. Edges are **specific-evidence only** — cert-serial / cert-SAN / per-IP clusters may bridge; ASN / /24 / registrar clusters are receive-only leaves and can never connect two bridges (the over-merge trap). A hub-fan-out exclusion (>150 brands) and a 25-cluster component-size cap both fail safe toward under-merge. `component_id` is derived deterministically from the minimum bridge-cluster id, so it's stable run-over-run and identical whether Nexus ran via the agent-module fallback or the `NEXUS_RUN` workflow. Wired identically into both `agents/nexus.ts` and `workflows/nexusRun.ts`. Purely additive: it does not touch `threats.cluster_id` stamping or `lib/cluster-attribution-inherit.ts`, and does not widen the `asns` array the Attributor's `asns.length>=3` auto-Haiku gate reads.
+
 **Inputs:** Enriched threats, certificates, providers
-**Outputs:** `infrastructure_clusters` rows; `pivot_detected` event. (`cluster_detected` is declared in the event-type union but never emitted anywhere in code — see CLAUDE.md §6.)
+**Outputs:** `infrastructure_clusters` rows; `infrastructure_clusters.component_id` (post-pass); `pivot_detected` event. (`cluster_detected` is declared in the event-type union but never emitted anywhere in code — see CLAUDE.md §6.)
 
 ---
 

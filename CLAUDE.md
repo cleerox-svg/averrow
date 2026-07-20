@@ -547,7 +547,7 @@ for 22 hours. All orchestrator gates now use hour-only checks. If sub-hourly
 scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 
 ### Execution patterns:
-- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer still runs as the agent module via FC's `scaleAgents` (workflow path exists but is enrichment-only — see `docs/runbooks/workflow-dispatch.md`).
+- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer still runs as the agent module via FC's `scaleAgents` (workflow path exists but is enrichment-only — see `docs/runbooks/workflow-dispatch.md`). Both NEXUS paths finish with a connected-components post-pass (`lib/cluster-components.ts`, S2.4/D5a) that groups the six lanes' per-key `infrastructure_clusters` rows into `component_id`s via specific-evidence bridges only — additive, doesn't touch `threats.cluster_id` or attribution.
 - **ctx.waitUntil:** Analyst, Strategist, Sparrow run in parallel without blocking the cron mesh
 - **Inline await:** Observer, Pathfinder run sequentially (quiet times, fast execution)
 
