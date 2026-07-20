@@ -517,6 +517,15 @@ seclookup:    21 * * * *   (hourly at :21 — dedicated enrichment-feed cron,
                              cadence drains its enrichment backlog. Both feeds
                              also carry a per-run wall-clock budget guard so a
                              single run can't approach the 15-min reap window.)
+executive_monitor: 26 */6 * * * (every 6h at :26 — EXEC_IMPERSONATION Stage 4
+                             dedicated cron, own Worker budget — same S0.1/PR-Q
+                             pattern as ct_monitor/lookalike_scanner/trademark_monitor.
+                             `handleScheduled` (cron/orchestrator.ts) early-returns on
+                             an exact `event.cron === '26 */6 * * *'` match — ABOVE the
+                             hourly-mesh guard — and calls `executeAgent` on the
+                             `executive_monitor` AgentModule, so it writes `agent_runs`
+                             + `agent_events` like every other dispatch. Manual/fallback
+                             trigger: `POST /api/internal/agents/executive_monitor/run`.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -928,6 +937,9 @@ threat_cube_arcs          ← OLAP cube: hourly country × brand arc corridors (
 hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results
+org_executives            ← Org-scoped executive identity registry (migration 0244); watched
+                            by the executive_monitor agent (Doppelganger) for name→handle
+                            impersonation, raising executive_impersonation alerts
 alerts                    ← Platform alerts
 agent_runs                ← Agent execution log
 agent_events              ← Inter-agent event queue

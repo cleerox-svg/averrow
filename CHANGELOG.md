@@ -4,6 +4,104 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.2.0] — 2026-07-20
+
+Executive social-impersonation monitoring (`EXEC_IMPERSONATION_2026-07`,
+Stages 1-6, deterministic-first). Internal/staff register (detailed; the
+public + tenant registers carry a generic, non-proprietary summary).
+
+### Executive impersonation detection
+- **`org_executives` registry** (migration 0244) — customers register named
+  executives per brand: `full_name`, `title`, `official_handles` (JSON
+  platform→handle, mirrors `brands.official_handles`), `watch_platforms`
+  (subset of the social-monitor 6). `photo_ref` is declared but unused this
+  stage — reserved for a future photo-match gate that depends on paid,
+  ToS-restricted platform APIs (X/LinkedIn/Meta/TikTok) not yet configured
+  on the platform; there is no timeline commitment on that phase.
+- **Deterministic detector** (`scanners/executive-monitor.ts`,
+  `runExecutiveMonitorForExec`) — pure, side-effect-free. Generates
+  plausible impersonation handles from the exec's full name (canonical
+  first+last forms, multi-token/hyphenated-surname forms, "official/real"
+  dressing, initials — bounded to `MAX_CANDIDATES_PER_EXEC=12`), NFD-folds
+  diacritics, requires >=2 name tokens as a false-positive gate (mononyms
+  yield zero candidates), HEAD-checks each candidate across the six watched
+  platforms via the same `lib/social-check.ts` checker the brand path uses,
+  and scores name-similarity with the shared deterministic
+  `scanners/impersonation-scorer.ts` (Levenshtein-based, no AI). Account
+  age, follower count, verification badge, and bio-content signals are
+  **not** computed for this path (HEAD-probe only) — the scorer's inputs
+  for those fields are hardcoded `false`/unavailable, never real data.
+- **`executive_monitor` agent** (`agents/executiveMonitor.ts`, delegating to
+  `scanners/executive-monitor-batch.ts`) — dedicated cron `26 */6 * * *`.
+  `EXEC_BATCH_LIMIT=10` execs/run with a KV rotation cursor
+  (`exec_monitor:rotation_cursor`) so the full registry cycles across runs.
+  Non-official over-threshold candidates raise `executive_impersonation`
+  alerts (migration 0245 extends the `alerts.alert_type` CHECK); the exec's
+  own registered handle is never alerted (`isOfficialHandle` short-circuit).
+  Grandfathered into `agent_approvals` as `approved` (migration 0246) so the
+  standard agent-approval gate doesn't silently skip its first ticks (the
+  ct_monitor/0238 failure mode).
+- **Org-scoped alert security** (migration 0247, `alerts.org_id`) — this
+  PII-bearing alert family (an executive's real name + a fake profile URL)
+  is stamped with the owning org's `org_id` at creation and the routing
+  user is resolved strictly within that same org (`resolveAlertUser`,
+  keyed by `org_id`, never falls back cross-org). Brands are many-to-many
+  with orgs, so a brand-scoped lookup could otherwise leak an exec's name
+  to a co-monitoring org; this closes that gap. Dedup window `-6h` (shared
+  `ALERT_TYPES` registry) guards against re-observation flooding.
+- **Triage** (`decideExecutiveImpersonationTriage`,
+  `lib/alert-triage.ts`) — Tier 1.5, mirrors the social/app-store
+  impersonation rules: dismiss when the handle matches the exec's own
+  `official_handles` (rule B) or `details.score < 0.5` (rule A, tunable via
+  `impersonationThreshold`).
+- **Tenant UI** (`packages/averrow-tenant/src/features/executives/
+  Executives.tsx`, route `/settings/executives`) — CRUD over
+  `GET/POST/PATCH/DELETE /api/orgs/:orgId/executives(/:execId)`
+  (`handlers/tenantExecutives.ts`). Reads: any org member. Mutations:
+  org-admin+ (`requireOrgAdmin`), matching the existing member-management
+  gate. `Social.tsx` now links to the new surface.
+
+### Marketing / changelog truth-up
+- Rewrote the exec-impersonation claims on
+  `packages/averrow-marketing/src/pages/platform/social-monitoring.astro`
+  (the "What We Detect" bullet + the "Confidence Scoring" section) to
+  describe the shipped deterministic name/handle-matching capability and
+  removed the previously-published (never-built) profile-photo,
+  account-age, follower-count, verification-badge, and bio-content
+  detection claims — those depend on paid platform APIs not configured on
+  the platform. See public + tenant changelog entries below for the
+  customer-facing summary.
+- Same page's "Evidence Collection" section (`id="evidence"`) claimed
+  automated "profile screenshot" capture ("no manual screenshotting
+  required") for every flagged account. Verified against
+  `lib/social-check.ts` (HEAD-probe only, no HTML/DOM fetch),
+  `scanners/social-monitor.ts` (`social_profiles.avatar_url` /
+  `bio` / `followers_count` / `verified` are never written), and
+  `handlers/investigations.ts` `handleAddEvidence` (the only
+  `evidence_captures` writer — an operator-supplied manual upload, not
+  an automated capture pipeline; `takedown_requests.screenshot_url` is
+  explicitly commented "R2 link to screenshot (future)" in migration
+  0039 and has no writer anywhere in the codebase). No screenshot
+  pipeline exists for brand-level OR executive findings — this was not
+  an executive-specific gap, it was already inaccurate for the
+  brand-level claim the section was scoped to. Softened the paragraph +
+  both bullet/evidence-content lists to describe what IS captured
+  automatically (handle, platform, profile URL, detection timestamp,
+  confidence score + signals, threat cross-references, classification
+  notes) and dropped the screenshot/"no manual screenshotting" claim.
+  Flagging automated screenshot capture as a real product gap — not
+  scheduled, would need a Browser Rendering binding (see the identical
+  "vision/screenshot analysis... deferred to increment 2" note in
+  migration 0243 for the lookalike-domain page-analysis path).
+- `packages/averrow-marketing/src/pages/why-averrow.astro`'s illustrative
+  sample card had the same false-signal pattern (follower count /
+  verification badge aren't real detected signals): "1 unverified
+  handle" → "1 flagged handle"; "@acmecorp_support — unverified handle,
+  low follower count" → "@acmecorp_support — 91% name similarity, common
+  impersonation suffix pattern" (matches the real deterministic signals
+  used in the score-card fix above). Sample data, fictional brand,
+  unaffected by the wording change.
+
 ## [Unreleased] — 2026-07-11
 
 ### Threat intelligence

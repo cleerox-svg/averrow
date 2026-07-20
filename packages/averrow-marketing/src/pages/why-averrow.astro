@@ -182,13 +182,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <div class="why-sample-row"><span>Email Posture</span><span class="why-sample-pill why-pill-amber">B</span></div>
             <div class="why-sample-row"><span>Active Threats</span><span>3 detected</span></div>
             <div class="why-sample-row"><span>Lookalike Domains</span><span>2 flagged</span></div>
-            <div class="why-sample-row"><span>Social Exposure</span><span>1 unverified handle</span></div>
+            <div class="why-sample-row"><span>Social Exposure</span><span>1 flagged handle</span></div>
           </div>
         </div>
         <ul class="why-sample-threats">
           <li><span class="why-sev why-sev-high">HIGH</span> acme-secure-login.net &mdash; registered 6 days ago, active MX records</li>
           <li><span class="why-sev why-sev-medium">MED</span> SPF record missing a hard-fail qualifier (spoofable)</li>
-          <li><span class="why-sev why-sev-low">LOW</span> @acmecorp_support &mdash; unverified handle, low follower count</li>
+          <li><span class="why-sev why-sev-low">LOW</span> @acmecorp_support &mdash; 91% name similarity, common impersonation suffix pattern</li>
         </ul>
         <div class="why-sample-footnote">
           &ldquo;Acme Corp&rdquo; is a placeholder name used for illustration only. This is not a real customer report.
