@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import type { Env } from '../types';
 import { updateProviderTrends } from '../lib/provider-trends';
+import { groupClusterComponents } from '../lib/cluster-components';
 
 type NexusWorkflowParams = {
   forceRefresh?: boolean;
@@ -688,6 +689,23 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       return { clustersWritten, pivotsDetected, accelerating, asnsAnalyzed: asnClusters.results.length };
     });
 
+    // Step 2b: Connected-components grouping post-pass (S2.4 / D5a).
+    // Runs AFTER every per-key stamping lane above so it groups the
+    // fully-populated infrastructure_clusters rows. Uses SPECIFIC-evidence
+    // bridges only (cert-serial / cert-SAN / per-IP); ASN / /24 / registrar
+    // clusters receive a component_id but never bridge. Stamps
+    // infrastructure_clusters.component_id; does NOT touch
+    // threats.cluster_id or the `asns` array (component grouping is a
+    // separate label, kept out of the Attributor's asns.length>=3 gate).
+    // Kept in lockstep with agents/nexus.ts's post-pass — the SAME helper
+    // (lib/cluster-components.groupClusterComponents) is called identically
+    // in both paths so component_id never diverges by dispatch source.
+    // Retry-idempotent: diff-writes only, a rerun over unchanged data
+    // writes 0 rows. Pure SQL/deterministic, no AI.
+    const components = await step.do('component-grouping', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
+      return await groupClusterComponents(this.env.DB);
+    });
+
     // Step 3: Update hosting provider trends
     const providers = await step.do('update-provider-trends', async () => {
       // Phase 2 D1 migration: read aggregates from threat_cube_provider
@@ -725,6 +743,12 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       subnets_analyzed: subnetLane.subnetsAnalyzed,
       registrar_clusters: registrarLane.clustersWritten,
       registrars_analyzed: registrarLane.registrarsAnalyzed,
+      components_formed: components.componentsFormed,
+      component_clusters_grouped: components.clustersGrouped,
+      component_ids_written: components.componentIdsWritten,
+      component_ids_cleared: components.componentIdsCleared,
+      components_skipped_over_cap: components.componentsSkippedOverCap,
+      leaves_skipped_multi_component: components.leavesSkippedMultiComponent,
     };
     const totalClustersWritten =
       correlation.clustersWritten + certSerialLane.clustersWritten +
@@ -738,7 +762,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
+        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${components.componentsFormed} components (${components.clustersGrouped} clusters grouped), ${correlation.pivotsDetected} pivots, ${providers.providers_updated} providers updated`,
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 
