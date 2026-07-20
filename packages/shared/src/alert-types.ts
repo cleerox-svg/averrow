@@ -47,6 +47,7 @@ export type AlertTypeKey =
   | 'takedown_resurrected'
   | 'campaign_impacts_brand'
   | 'threat_actor_targeting_brand'
+  | 'executive_impersonation'
   | 'unknown';
 
 export interface AlertTypeDef {
@@ -200,6 +201,18 @@ export const ALERT_TYPES: readonly AlertTypeDef[] = [
     // re-firing on every observer/nexus refresh of the same actor.
     dedupWindow: '-7 days',
     writers: ['observer', 'nexus'],
+  },
+  {
+    key: 'executive_impersonation',
+    label: 'Executive Impersonation',
+    description: 'A social profile is impersonating one of your registered executives',
+    defaultSeverity: 'high',
+    // Impersonation profiles surface and vanish quickly; match the
+    // social_impersonation window so a single fake profile re-observed
+    // through the day doesn't flood the executive's inbox.
+    dedupWindow: '-6 hours',
+    // Written by the executive-impersonation scanner (stages 3-5).
+    writers: ['social_monitor'],
   },
 
   // ─── Legacy ──────────────────────────────────────────────────
