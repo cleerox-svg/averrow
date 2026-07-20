@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.2.0",
+    publishedAt: "2026-07-20",
+    kind: "Feature",
+    title: "Executive impersonation monitoring",
+    description:
+      "Register your executives and get alerted when someone impersonates them on social platforms.",
+  },
+  {
     version: "v4.1.0",
     publishedAt: "2026-07-11",
     kind: "Improvement",

@@ -27,7 +27,9 @@ export function Social() {
           </span>
         </div>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
-          Fake accounts, executive impersonation, and brand-misuse handles across Twitter, LinkedIn, Instagram, TikTok, and others.
+          Fake accounts and brand-misuse handles across Twitter, LinkedIn, Instagram, TikTok, and others. Watching for
+          executives too? <Link to="/settings/executives" className="text-amber hover:underline">Register your leadership team</Link> to
+          get alerted when someone impersonates them by name.
         </p>
       </header>
 

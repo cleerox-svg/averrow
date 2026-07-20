@@ -56,15 +56,16 @@ import Layout from "../../layouts/Layout.astro";
         <h2>Four ways impersonation shows up on social.</h2>
         <p>
           Attackers don&rsquo;t need to touch your infrastructure to damage your brand &mdash;
-          a convincing profile picture and a plausible handle is often enough. Averrow
-          auto-discovers your real accounts from your company website, then watches for
-          anything imitating them.
+          a convincing handle is often enough. Averrow auto-discovers your real brand
+          accounts from your company website, then watches for anything imitating them.
+          Register your named executives too, and the same handle-based detection runs
+          on their identities.
         </p>
         <ul class="sm-features">
           <li><strong>Impersonation accounts</strong> &mdash; fake profiles built to look like your brand, a product, or a support channel</li>
           <li><strong>Handle squatting</strong> &mdash; your brand name or close variants registered and held, claimed or unclaimed</li>
-          <li><strong>Executive impersonation</strong> &mdash; fake accounts posing as your named leaders to run social-engineering or investment scams</li>
-          <li><strong>Unauthorized brand usage</strong> &mdash; logo abuse and brand-keyword misuse in bios, posts, and pinned content</li>
+          <li><strong>Executive impersonation</strong> &mdash; register your leadership team by name once; Averrow generates the handles an attacker would use to impersonate them, checks all six platforms, and flags matches that aren&rsquo;t your executives&rsquo; own official accounts</li>
+          <li><strong>Unauthorized brand usage</strong> &mdash; logo abuse and brand-keyword misuse in handles and profile content</li>
         </ul>
       </div>
       <div class="sm-visual">
@@ -94,31 +95,35 @@ import Layout from "../../layouts/Layout.astro";
     <div class="sm-row reversed">
       <div class="sm-text">
         <div class="section-label">How It Works</div>
-        <h2>AI confidence scoring, not a keyword match.</h2>
+        <h2>Multi-signal confidence scoring, not a keyword match.</h2>
         <p>
-          A handle containing your brand name isn&rsquo;t automatically a threat &mdash; fan
-          accounts and press mentions exist too. Averrow&rsquo;s AI weighs multiple signals
-          together and produces a confidence score, so your team reviews a short, ranked
-          list instead of every mention on the internet.
+          A handle containing your brand name &mdash; or your CEO&rsquo;s name &mdash; isn&rsquo;t
+          automatically a threat: fan accounts and press mentions exist too. Averrow weighs
+          name-similarity and handle-construction signals together to produce a confidence
+          score, so your team reviews a short, ranked list instead of every mention on
+          the internet.
         </p>
         <ul class="sm-features">
-          <li>Name similarity between the handle/display name and your registered brand terms</li>
-          <li>Account age &mdash; newly created accounts carry more weight in the read</li>
-          <li>Follower count and engagement pattern</li>
-          <li>Brand-keyword usage in bio, pinned posts, and profile content</li>
-          <li>Verification status, including badges the account is attempting to spoof</li>
-          <li>Location and profile-metadata mismatch against your brand&rsquo;s real footprint</li>
+          <li>Name similarity between the handle/display name and your registered brand or executive name</li>
+          <li>Handle-permutation match &mdash; found using one of the exact variants an impersonator would register (separator swaps, &ldquo;official&rdquo;/&ldquo;support&rdquo; suffixes, character substitution)</li>
+          <li>Brand-keyword usage in the handle itself</li>
+          <li>Cross-reference against your registered official handles, so your own accounts and executives are never flagged</li>
         </ul>
         <div class="callout">Findings are cross-correlated with everything else Averrow already knows about your brand &mdash; a squatted handle linked to a phishing domain in the same feed cycle escalates automatically.</div>
+        <p>
+          Executive impersonation runs on this same name/handle matching &mdash; entirely
+          deterministic, with no photo, bio, or follower analysis involved. Register an
+          executive once and Averrow checks all six platforms on an ongoing basis for
+          handles that could pass as them.
+        </p>
       </div>
       <div class="sm-visual">
         <div class="sm-score-eyebrow">Illustrative Example &mdash; Flagged Profile</div>
         <div class="sm-score-card">
           <div class="sm-score-card-row"><span>Handle</span><span class="sm-mono">@yourbrand_support</span></div>
           <div class="sm-score-card-row"><span>Platform</span><span class="sm-mono">Twitter/X</span></div>
-          <div class="sm-score-card-row"><span>Account age</span><span class="sm-mono">6 days</span></div>
-          <div class="sm-score-card-row"><span>Verification</span><span class="sm-mono">None</span></div>
-          <div class="sm-score-card-row sm-score-card-last"><span>Brand keywords</span><span class="sm-mono">Bio + pinned post</span></div>
+          <div class="sm-score-card-row"><span>Name similarity</span><span class="sm-mono">92%</span></div>
+          <div class="sm-score-card-row sm-score-card-last"><span>Handle construction</span><span class="sm-mono">Brand + &ldquo;_support&rdquo; suffix</span></div>
           <div class="sm-score-verdict">
             <div class="sm-score-verdict-label">Confidence</div>
             <div class="sm-score-verdict-value">Likely Impersonation</div>
@@ -167,12 +172,12 @@ import Layout from "../../layouts/Layout.astro";
         <div class="section-label">Takedowns</div>
         <h2>Evidence, packaged for the platform&rsquo;s abuse team.</h2>
         <p>
-          A takedown request that arrives with proof moves faster. Every flagged account
-          gets an evidence package your team can attach directly to a platform abuse report
-          &mdash; no manual screenshotting required.
+          A takedown request that arrives with context moves faster. Every flagged account
+          carries an automatically-assembled record your team can attach directly to a
+          platform abuse report.
         </p>
         <ul class="sm-features">
-          <li>Full profile capture (screenshot and metadata) at time of detection</li>
+          <li>Handle, platform, profile URL, and detection timestamp captured automatically</li>
           <li>The confidence score and the exact signals that produced it</li>
           <li>Cross-references to related threats seen elsewhere &mdash; domains, email, other platforms</li>
           <li>Analyst classification notes, ready to attach to a takedown submission</li>
@@ -181,8 +186,7 @@ import Layout from "../../layouts/Layout.astro";
       <div class="sm-visual">
         <div class="sm-evidence-eyebrow">Evidence Package Contents</div>
         <div class="sm-evidence-list">
-          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Profile screenshot + capture timestamp</div>
-          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Handle, display name, and profile URL</div>
+          <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Handle, display name, profile URL, and capture timestamp</div>
           <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Confidence score + contributing signals</div>
           <div class="sm-evidence-item"><span class="sm-evidence-dot" aria-hidden="true"></span>Related threat cross-references</div>
           <div class="sm-evidence-item sm-evidence-last"><span class="sm-evidence-dot" aria-hidden="true"></span>Analyst classification notes</div>
