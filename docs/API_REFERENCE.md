@@ -348,6 +348,17 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/lookalikes/:brandId/scan` | Staff | Scan lookalike domains |
 | PATCH | `/api/lookalikes/:id` | Staff | Update lookalike status |
 
+> **Page-content analysis fields (S2.4 / D6, migration 0243, additive).** The
+> `GET /api/lookalikes/:brandId` rows (`SELECT *`) now also carry the
+> deterministic page-phishing verdict written by the `lookalike_scanner` cron
+> (`22 * * * *`): `page_fetched_at`, `page_http_status`, `page_phishing_score`
+> (0–100), `page_signals` (JSON array of fired signal keys, e.g.
+> `["credential_form","offdomain_form_exfil"]`), and `page_content_hash`
+> (SHA-256 of the fetched HTML). All are `null` until the SSRF-safe fetcher
+> (`lib/page-fetch.ts`) first analyzes the domain. No new endpoint; response is
+> a superset of the prior shape. A credential-form-off-domain page escalates the
+> row's `threat_level` (and the linked alert's severity) MEDIUM→HIGH/CRITICAL.
+
 ## App Store Impersonation Monitoring
 
 iOS App Store impersonation scanner (Google Play + 3rd-party Android

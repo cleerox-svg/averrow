@@ -12,7 +12,17 @@ import { analyzeWithHaiku } from '../lib/haiku';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
+import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
+import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
+import { runPageAnalysisForDomain } from './lookalike-page-analysis';
 import type { Env } from '../types';
+
+// Inline page-analysis budget for the newly-registered compositor. The
+// broader re-check set is handled by analyzeLookalikePages (throttled);
+// here we only fetch a bounded number of just-registered has_web domains
+// per tick so a backfill surge can't blow the tick's wall-clock budget.
+const INLINE_PAGE_FETCH_CAP = 10;
+const INLINE_PAGE_BUDGET_MS = 60_000;
 
 // ─── Generate & Store ────────────────────────────────────────────
 
@@ -132,6 +142,11 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
   let newRegistrations = 0;
   let totalChecked = 0;
 
+  // Shared inline page-fetch budget across the whole tick (JS is single-
+  // threaded between awaits, so the synchronous `remaining--` before each
+  // fetch is race-free even under the concurrency below).
+  const inlinePageBudget = { remaining: INLINE_PAGE_FETCH_CAP, runStart: Date.now() };
+
   // Process in batches of 5 concurrent checks
   const CONCURRENCY = 5;
   for (let i = 0; i < rows.results.length; i += CONCURRENCY) {
@@ -241,6 +256,36 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           }
         } catch {
           // BIMI check failed — non-blocking
+        }
+
+        // Deterministic page-content analysis (D6 / S2.4). Slots the
+        // page phishing score into this same threat_level compositor: a
+        // credential-form-off-domain page escalates MEDIUM→HIGH/CRITICAL
+        // (monotonic — never downgrades). Inline only for newly-
+        // registered has_web domains and capped per tick; the throttled
+        // analyzeLookalikePages pass re-checks the broader registered set.
+        // All fetches funnel through the SSRF-safe fetchSuspectPage.
+        if (
+          result.hasWeb &&
+          inlinePageBudget.remaining > 0 &&
+          Date.now() - inlinePageBudget.runStart < INLINE_PAGE_BUDGET_MS
+        ) {
+          inlinePageBudget.remaining -= 1;
+          try {
+            const { phishing } = await runPageAnalysisForDomain(
+              env,
+              { id: row.id, domain: row.domain, brand_name: brand.brand_name, brand_domain: brand.domain },
+              Date.now() + DEFAULT_DEADLINE_MS,
+            );
+            if (phishing) {
+              threatLevel = escalateThreatLevelForPage(threatLevel, phishing);
+            }
+          } catch (err) {
+            logger.error('lookalike_inline_page_error', {
+              domain: row.domain,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
 
         // Update threat level and AI assessment

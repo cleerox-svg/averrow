@@ -18,6 +18,7 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { checkLookalikeBatch, seedLookalikesForOrgBrands } from "../scanners/lookalike-domains";
+import { analyzeLookalikePages } from "../scanners/lookalike-page-analysis";
 
 export const lookalikeScannerAgent: AgentModule = {
   name: "lookalike_scanner",
@@ -73,6 +74,30 @@ export const lookalikeScannerAgent: AgentModule = {
         summary: `lookalike_scanner batch failed: ${scanError}`,
         severity: "high",
         details: { error: scanError },
+      });
+    }
+
+    // Deterministic page-content phishing analysis (D6 / S2.4). Throttled
+    // re-check of the registered + resolving + has_web population via the
+    // SSRF-safe fetcher. Best-effort — never fails the run. Runs after the
+    // registration check so freshly-registered domains (analyzed inline)
+    // are already page_fetched_at-stamped and skipped here.
+    try {
+      const pages = await analyzeLookalikePages(ctx.env);
+      if (pages.analyzed > 0) {
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `Page analysis: ${pages.analyzed} scanned, ${pages.escalated} escalated, ${pages.credential_harvest} credential-harvest`,
+          severity: pages.credential_harvest > 0 ? "high" : "info",
+          details: { ...pages } as Record<string, unknown>,
+        });
+      }
+    } catch (err) {
+      agentOutputs.push({
+        type: "diagnostic",
+        summary: `lookalike page analysis failed: ${err instanceof Error ? err.message : String(err)}`,
+        severity: "low",
+        details: { error: err instanceof Error ? err.message : String(err) },
       });
       // Don't throw — let the standard runner mark the run 'success'
       // with a diagnostic. The scanner's failure modes are mostly

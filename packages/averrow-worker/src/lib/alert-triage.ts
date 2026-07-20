@@ -50,6 +50,16 @@ export interface ThreatTriageSnapshot {
   /** Domain age in whole days at detection time (D4 / NRD signal).
    *  NULL when VT had no WHOIS creation date. See lib/domain-age.ts. */
   domain_age_days: number | null;
+  /**
+   * Deterministic page-content credential-harvest flag (D6 / S2.4). 1
+   * when lib/page-fetch.ts + page-phishing-scorer.ts observed a live
+   * credential form posting to an off-domain endpoint on the suspect's
+   * page. OPTIONAL / absent for threat-sourced snapshots — the threats
+   * table has no page-analysis column, so this stays undefined there
+   * and the guard below is a no-op for the threat flow (keeps `threats`
+   * untouched this increment). Only lookalike-page analysis ever sets
+   * it. See the guard in decideThreatAutoTriage. */
+  page_credential_harvest?: number | null;
 }
 
 /**
@@ -98,6 +108,19 @@ export function decideThreatAutoTriage(snapshot: ThreatTriageSnapshot): AutoTria
       action: 'keep',
       reason: `newly_registered_domain (age ${snapshot.domain_age_days}d <= ${NRD_MAX_AGE_DAYS}d)`,
     };
+  }
+
+  // Page-content credential-harvest guard (D6 / S2.4). Exactly like the
+  // NRD guard above: only ever flips a would-be *dismiss* to 'keep',
+  // never escalates severity. If the deterministic page fetcher observed
+  // a live credential form exfiltrating to an off-domain endpoint, the
+  // domain is actively phishing regardless of how clean every reputation
+  // feed reads (fresh phishing infra has no reputation history yet), so
+  // withhold auto-dismissal and leave it for a human. Scoped to
+  // lookalike-page analysis — undefined/null for threat-sourced
+  // snapshots, so the threats flow is unaffected this increment.
+  if (snapshot.page_credential_harvest === 1) {
+    return { action: 'keep', reason: 'page_credential_harvest_detected' };
   }
 
   return { action: 'dismiss', reason: 'auto: clean enrichment (vt+gsb+greynoise+seclookup)' };

@@ -509,3 +509,33 @@ describe("decideAppStoreImpersonationTriage — Rule B+ (brand-name developer ma
     expect(d.action).toBe('keep');
   });
 });
+
+// ─── Page-content credential-harvest guard (D6 / S2.4) ────────────
+
+describe("decideAutoTriage — page credential-harvest guard", () => {
+  it("keeps an otherwise-clean alert when a credential-harvest page is detected", () => {
+    const d = decideAutoTriage({ ...cleanIpSnapshot, page_credential_harvest: 1 });
+    expect(d.action).toBe('keep');
+    expect(d.reason).toBe('page_credential_harvest_detected');
+  });
+
+  it("still dismisses a clean alert when the page flag is 0 (no harvest)", () => {
+    const d = decideAutoTriage({ ...cleanIpSnapshot, page_credential_harvest: 0 });
+    expect(d.action).toBe('dismiss');
+  });
+
+  it("still dismisses when the page flag is null/absent (threat-sourced, no page data)", () => {
+    const d = decideAutoTriage({ ...cleanIpSnapshot, page_credential_harvest: null });
+    expect(d.action).toBe('dismiss');
+    const d2 = decideAutoTriage(cleanIpSnapshot); // field omitted entirely
+    expect(d2.action).toBe('dismiss');
+  });
+
+  it("the guard only flips dismiss→keep — a keep decision is unaffected", () => {
+    // VT flagged → keep regardless of the page flag (no severity change,
+    // reason stays the reputation reason, not the page reason).
+    const d = decideAutoTriage({ ...cleanIpSnapshot, vt_malicious: 3, page_credential_harvest: 1 });
+    expect(d.action).toBe('keep');
+    expect(d.reason).toBe('vt_flagged');
+  });
+});

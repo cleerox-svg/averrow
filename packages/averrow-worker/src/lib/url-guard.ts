@@ -26,7 +26,7 @@ const PLATFORM_HOSTS = ["averrow.com", "averrow.ca"];
 const BLOCKED_SUFFIXES = [".local", ".internal", ".workers.dev"];
 
 /** Returns a rejection reason if the IPv4 address is non-public, else null. */
-function ipv4BlockReason(host: string): string | null {
+export function ipv4BlockReason(host: string): string | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   if (!m) return null; // not an IPv4 literal
   const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
@@ -42,7 +42,7 @@ function ipv4BlockReason(host: string): string | null {
 }
 
 /** Returns a rejection reason if the IPv6 address is non-public, else null. */
-function ipv6BlockReason(host: string): string | null {
+export function ipv6BlockReason(host: string): string | null {
   const addr = host.toLowerCase();
   if (addr === "::" || addr === "0:0:0:0:0:0:0:0") return "Unspecified IPv6 address is not allowed";
   if (addr === "::1" || addr === "0:0:0:0:0:0:0:1") return "Loopback IPv6 address is not allowed";
@@ -115,4 +115,70 @@ export function validateOutboundWebhookUrl(url: string): UrlGuardResult {
   }
 
   return { ok: true };
+}
+
+/**
+ * Return a rejection reason if a resolved IP literal (v4 or v6) falls
+ * in any private / loopback / link-local / CGNAT / metadata range,
+ * else null. Thin dispatcher over the shared block helpers so the
+ * SSRF page-fetcher (lib/page-fetch.ts) validates *resolved* IPs with
+ * exactly the same range logic used for static webhook-URL checks —
+ * no re-implementation of IP-range math. `169.254.169.254` (the cloud
+ * metadata endpoint) is covered by the 169.254.0.0/16 link-local rule.
+ */
+export function resolvedIpBlockReason(ip: string): string | null {
+  const trimmed = ip.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  if (!trimmed) return 'Empty IP address';
+  if (trimmed.includes(':')) {
+    return ipv6BlockReason(trimmed) ?? null;
+  }
+  return ipv4BlockReason(trimmed);
+}
+
+/**
+ * Static (pre-resolution) host block check for the SSRF page-fetcher.
+ *
+ * Unlike `validateOutboundWebhookUrl` this operates on a *bare
+ * hostname* (not a full URL) and does NOT enforce a scheme — the
+ * page-fetcher allows both http and https (phishing pages are
+ * frequently plain http). Everything else is identical: reject IP
+ * literals in non-public ranges (so a hostname that IS an IP literal
+ * can't slip past), localhost, *.local / *.internal / *.workers.dev,
+ * and the platform's own hosts.
+ *
+ * This is only the FIRST gate. The fetcher MUST still resolve the host
+ * via DoH and run every resolved IP through `resolvedIpBlockReason`
+ * before connecting (DNS-rebinding defense) — a public hostname can
+ * still resolve to a private IP, which this static check cannot see.
+ */
+export function pageFetchHostStaticBlockReason(rawHost: string): string | null {
+  const host = rawHost.trim().toLowerCase().replace(/\.$/, '');
+  if (!host) return 'Empty host';
+  if (host.includes(' ') || host.includes('/')) return 'Malformed host';
+
+  // Bracketed IPv6 literal.
+  if (host.startsWith('[') && host.endsWith(']')) {
+    return ipv6BlockReason(host.slice(1, -1)) ?? null;
+  }
+  // Bare IPv6 literal (contains a colon and isn't host:port — page
+  // hosts here never carry a port).
+  if (host.includes(':')) {
+    return ipv6BlockReason(host) ?? 'IPv6 host not allowed';
+  }
+
+  const v4Reason = ipv4BlockReason(host);
+  if (v4Reason) return v4Reason;
+
+  if (host === 'localhost' || host.endsWith('.localhost')) {
+    return 'localhost is not allowed';
+  }
+  for (const suffix of BLOCKED_SUFFIXES) {
+    if (host.endsWith(suffix)) return `Hostnames ending in ${suffix} are not allowed`;
+  }
+  for (const platformHost of PLATFORM_HOSTS) {
+    if (host === platformHost || host.endsWith(`.${platformHost}`)) {
+      return "Cannot fetch the platform's own hosts";
+    }
+  }
+  return null;
 }
