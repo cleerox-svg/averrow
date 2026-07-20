@@ -788,6 +788,11 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | POST | `/api/orgs/:orgId/investigations/:investigationId/items` | Analyst+ | Link an item to the case. Body: `item_type` (alert/threat/takedown), `item_id`, `note`. Item ownership verified against the org's brands; `INSERT OR IGNORE` (idempotent). Returns `{ added }`. |
 | DELETE | `/api/orgs/:orgId/investigations/:investigationId/items/:itemId` | Analyst+ | Unlink an item (the `:itemId` is the link-row id). |
 | POST | `/api/orgs/:orgId/investigations/:investigationId/notes` | Analyst+ | Append a note to the case timeline. Body: `body`. Returns `{ id }`. |
+| GET | `/api/orgs/:orgId/executives` | Member | Executive identity registry (EXEC_IMPERSONATION_2026-07 Stage 1) — list the org's registered executives. Optional `brand_id` filter. Each row carries parsed `official_handles` (platform→handle) + `watch_platforms` (array). Returns `{ data, total }`. |
+| POST | `/api/orgs/:orgId/executives` | Admin (org) | Register an executive. Body: `brand_id` (required, must belong to the org), `full_name` (required), `title`, `official_handles` (object platform→handle), `watch_platforms` (array of the 6 social-monitor platform keys; defaults to all), `status` (active/paused). Returns `{ id }`. |
+| GET | `/api/orgs/:orgId/executives/:execId` | Member | Executive detail (parsed JSON columns). Org-scoped; 404 when not owned. |
+| PATCH / PUT | `/api/orgs/:orgId/executives/:execId` | Admin (org) | Update an executive (partial). Body (any of): `brand_id` (re-validated against org ownership), `full_name`, `title`, `official_handles`, `watch_platforms`, `status`. |
+| DELETE | `/api/orgs/:orgId/executives/:execId` | Admin (org) | Hard-delete an executive (customer PII). Org-scoped; 404 when not owned. |
 | GET | `/api/orgs/:orgId/brands/:brandId/detail` | Member | Tenant brand detail |
 | GET | `/api/orgs/:orgId/brands/:brandId/threats` | Member | Tenant brand threats |
 | GET | `/api/orgs/:orgId/brands/:brandId/social-profiles` | Member | Tenant brand social profiles |

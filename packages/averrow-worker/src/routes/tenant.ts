@@ -65,6 +65,10 @@ import {
   handleUpdateInvestigation, handleAddInvestigationItem, handleRemoveInvestigationItem,
   handleAddInvestigationNote,
 } from "../handlers/tenantInvestigations";
+import {
+  handleListExecutives, handleCreateExecutive, handleGetExecutive,
+  handleUpdateExecutive, handleDeleteExecutive,
+} from "../handlers/tenantExecutives";
 
 export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // ─── Organizations (org-scoped) ───────────────────────────────────
@@ -581,6 +585,43 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireOrgMember(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAddInvestigationNote(request, env, request.params["orgId"] ?? "", request.params["investigationId"] ?? "", ctx);
+  });
+
+  // ─── Executive identity registry (org-scoped) ────────────────────
+  // EXEC_IMPERSONATION_2026-07 Stage 1. Reads are member-visible; every
+  // mutation is org-admin+ (enforced in the handlers via requireOrgAdmin).
+  // Outer net here is requireOrgMember; inner net is in the handlers.
+  // Collection routes register before /:execId so the bare path matches
+  // the list.
+  router.get("/api/orgs/:orgId/executives", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListExecutives(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.post("/api/orgs/:orgId/executives", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleCreateExecutive(request, env, request.params["orgId"] ?? "", ctx);
+  });
+  router.get("/api/orgs/:orgId/executives/:execId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetExecutive(request, env, request.params["orgId"] ?? "", request.params["execId"] ?? "", ctx);
+  });
+  router.patch("/api/orgs/:orgId/executives/:execId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUpdateExecutive(request, env, request.params["orgId"] ?? "", request.params["execId"] ?? "", ctx);
+  });
+  router.put("/api/orgs/:orgId/executives/:execId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleUpdateExecutive(request, env, request.params["orgId"] ?? "", request.params["execId"] ?? "", ctx);
+  });
+  router.delete("/api/orgs/:orgId/executives/:execId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleDeleteExecutive(request, env, request.params["orgId"] ?? "", request.params["execId"] ?? "", ctx);
   });
 
   // ─── Monitoring Config (org-brand scoped) ────────────────────────
