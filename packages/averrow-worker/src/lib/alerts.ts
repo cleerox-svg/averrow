@@ -31,6 +31,16 @@ export interface CreateAlertParams {
   title: string;
   summary: string;
   details?: Record<string, any>;
+  /**
+   * Owning org for ORG-PRIVATE alerts. When set, the brand-scoped tenant
+   * read/write paths restrict this alert to the owning org (via the
+   * `a.org_id IS NULL OR a.org_id = ?` predicate). MUST be left undefined
+   * for brand-wide alert types (phishing / threat-feed / campaign / …) so
+   * they stay visible to every co-monitoring org — undefined → NULL column.
+   * Currently only `executive_impersonation` sets it (the alert embeds a
+   * named executive's PII belonging to one org). See migration 0247.
+   */
+  orgId?: number;
   sourceType?: string;
   sourceId?: string;
   aiAssessment?: string;
@@ -103,8 +113,8 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
   const lowerSeverity = (params.severity as string).toLowerCase() as AlertSeverity;
 
   await db.prepare(
-    `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, details, source_type, source_id, ai_assessment, ai_recommendations)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, details, source_type, source_id, ai_assessment, ai_recommendations, org_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     id,
     params.brandId,
@@ -118,6 +128,10 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
     params.sourceId ?? null,
     params.aiAssessment ?? null,
     recommendationsJson,
+    // Org-private ownership: only set for exec-impersonation today; every
+    // other alert type leaves this NULL so co-monitoring visibility is
+    // unchanged (migration 0247).
+    params.orgId ?? null,
   ).run();
 
   // Tier 1 + Tier 1.5 auto-triage: dispatch by alert source/type and
@@ -144,6 +158,16 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
       } else {
         decision = triage.decideAppStoreImpersonationTriage(params.details ?? null, allow);
       }
+    } else if (params.alertType === 'executive_impersonation') {
+      // Exec-impersonation triage keys off the EXECUTIVE's own official
+      // handles (from org_executives), not the brand's — loaded by
+      // details.executive_id which the executive_monitor batch always sets.
+      const executiveId =
+        typeof params.details?.executive_id === 'string' ? params.details.executive_id : null;
+      const allow = executiveId
+        ? await triage.loadExecutiveAllowlist(db, executiveId)
+        : { full_name: null, official_handles: null };
+      decision = triage.decideExecutiveImpersonationTriage(params.details ?? null, allow);
     }
 
     if (decision && decision.action === 'dismiss') {

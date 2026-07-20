@@ -79,16 +79,19 @@ export async function handleBrandAdminDashboard(
          ORDER BY threat_count DESC`
       ).bind(...brand_ids).all(),
 
-      // Recent alerts (org user alerts scoped to org brands)
+      // Recent alerts (org user alerts scoped to org brands). Defense-in-depth:
+      // gate org-private alerts (exec-impersonation) to this surface's org so
+      // a shared brand doesn't surface another org's executive PII here.
       env.DB.prepare(
         `SELECT a.id, a.title, a.severity, a.status, a.alert_type,
                 a.created_at, b.name AS brand_name
          FROM alerts a
          LEFT JOIN brands b ON b.id = a.brand_id
          WHERE a.brand_id IN (${placeholders})
+           AND (a.org_id IS NULL OR a.org_id = ?)
          ORDER BY a.created_at DESC
          LIMIT 20`
-      ).bind(...brand_ids).all(),
+      ).bind(...brand_ids, Number(org_id)).all(),
 
       // Takedown summary
       env.DB.prepare(

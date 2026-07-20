@@ -57,7 +57,8 @@ export type AgentName =
   | "news_watcher"
   | "campaign_hunter"
   | "abuse_mailbox_classifier"
-  | "ct_monitor";
+  | "ct_monitor"
+  | "executive_monitor";
 
 export type TriggerType = "scheduled" | "event" | "manual" | "api";
 export type RunStatus = "success" | "partial" | "failed";

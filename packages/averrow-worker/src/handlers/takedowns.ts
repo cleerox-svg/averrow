@@ -85,9 +85,16 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
   }
 
   if (body.source_type === "alert" && body.source_id) {
+    // Org-private guard (migration 0247): the org_brands check above only
+    // proves the brand is assigned to this org — a co-monitoring org would
+    // pass it for a shared brand and could otherwise copy another org's
+    // executive_impersonation evidence (which embeds the exec's name) into
+    // its own takedown. Restrict to brand-wide (org_id NULL) or this org's
+    // own alerts, identical to the eight tenant read/write paths. Empty
+    // result is handled gracefully by the `if (alert)` guard below.
     const alert = await env.DB.prepare(
-      "SELECT severity, summary, ai_assessment FROM alerts WHERE id = ? AND brand_id = ?"
-    ).bind(body.source_id, brandId).first<{ severity: string; summary: string; ai_assessment: string | null }>();
+      "SELECT severity, summary, ai_assessment FROM alerts WHERE id = ? AND brand_id = ? AND (org_id IS NULL OR org_id = ?)"
+    ).bind(body.source_id, brandId, Number(orgId)).first<{ severity: string; summary: string; ai_assessment: string | null }>();
     if (alert) {
       severity = alert.severity || severity;
       if (!evidenceDetail) evidenceDetail = [alert.summary, alert.ai_assessment].filter(Boolean).join("\n\n");

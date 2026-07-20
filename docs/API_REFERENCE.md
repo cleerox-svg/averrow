@@ -873,6 +873,7 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 | POST | `/api/debug/run-enrichment` | Manually trigger the enrichment pipeline |
 | POST | `/api/internal/agents/cartographer/run` | Trigger Cartographer agent inline |
 | POST | `/api/internal/agents/nexus/run` | Trigger NEXUS agent inline |
+| POST | `/api/internal/agents/executive_monitor/run` | Trigger the executive social-impersonation monitor (Doppelganger) inline — manual trigger / fallback for the `26 */6 * * *` cron |
 | POST | `/api/internal/agents/cartographer/backfill` | Run Cartographer backfill inline |
 | POST | `/api/internal/agents/cartographer/backfill-workflow` | Dispatch Cartographer backfill as a durable Workflow |
 | GET | `/api/internal/agents/cartographer/backfill-workflow/:instanceId` | Check backfill workflow status |

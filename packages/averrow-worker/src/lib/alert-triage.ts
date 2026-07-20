@@ -496,6 +496,64 @@ export async function loadBrandAllowlists(
   return result;
 }
 
+// ─── Executive allowlist loading ─────────────────────────────────
+
+/**
+ * Bulk-load `org_executives` (full_name + official_handles) for a set of
+ * executive ids in one query. Returns a Map keyed by executive id with the
+ * parsed `ExecutiveAllowlist`. Missing rows / malformed JSON yield an empty
+ * allowlist `{ full_name: null, official_handles: null }`. Mirrors
+ * `loadBrandAllowlists`, but keyed by executive_id (from alert
+ * `details.executive_id`) rather than brand_id — a fake exec profile is
+ * safe to dismiss only when it IS that exec's own registered account.
+ */
+export async function loadExecutiveAllowlists(
+  db: D1Database,
+  executiveIds: string[],
+): Promise<Map<string, ExecutiveAllowlist>> {
+  const result = new Map<string, ExecutiveAllowlist>();
+  if (executiveIds.length === 0) return result;
+
+  const uniqueIds = Array.from(new Set(executiveIds));
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const rows = await db.prepare(`
+    SELECT id, full_name, official_handles
+    FROM org_executives
+    WHERE id IN (${placeholders})
+  `).bind(...uniqueIds).all<{
+    id: string;
+    full_name: string | null;
+    official_handles: string | null;
+  }>();
+
+  for (const row of rows.results) {
+    let handles: ExecutiveAllowlist['official_handles'] = null;
+    if (row.official_handles) {
+      try {
+        const parsed = JSON.parse(row.official_handles);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          handles = parsed as Record<string, string>;
+        }
+      } catch { /* malformed JSON — treat as empty */ }
+    }
+    result.set(row.id, { full_name: row.full_name, official_handles: handles });
+  }
+  return result;
+}
+
+/**
+ * Single-executive convenience loader for the real-time createAlert hook,
+ * where only one alert (one executive_id) is in hand. Always returns a
+ * usable allowlist — empty when the id is missing/malformed.
+ */
+export async function loadExecutiveAllowlist(
+  db: D1Database,
+  executiveId: string,
+): Promise<ExecutiveAllowlist> {
+  const map = await loadExecutiveAllowlists(db, [executiveId]);
+  return map.get(executiveId) ?? { full_name: null, official_handles: null };
+}
+
 // ─── Backfill ────────────────────────────────────────────────────
 
 export interface BackfillResult {
@@ -565,6 +623,15 @@ export async function runAlertTriageBackfill(
     .map((r) => r.brand_id);
   const allowlists = await loadBrandAllowlists(db, brandIdsForAllowlist);
 
+  // Pre-load executive allowlists for the exec-impersonation alerts in the
+  // batch. These are keyed by details.executive_id (not brand_id), so parse
+  // each alert's details once to collect the ids, then bulk-load.
+  const executiveIdsForAllowlist = rows.results
+    .filter((r) => r.alert_type === 'executive_impersonation')
+    .map((r) => parseDetails<ExecutiveImpersonationDetails & { executive_id?: string }>(r.details)?.executive_id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const executiveAllowlists = await loadExecutiveAllowlists(db, executiveIdsForAllowlist);
+
   let dismissed = 0;
   let kept = 0;
   let noThreat = 0;
@@ -598,6 +665,12 @@ export async function runAlertTriageBackfill(
       const details = parseDetails<AppStoreImpersonationDetails>(alert.details);
       const allow = allowlists.get(alert.brand_id) ?? { name: null, official_handles: null, official_apps: null };
       decision = decideAppStoreImpersonationTriage(details, allow, threshold);
+    } else if (alert.alert_type === 'executive_impersonation') {
+      const details = parseDetails<ExecutiveImpersonationDetails & { executive_id?: string }>(alert.details);
+      const execId = details?.executive_id;
+      const allow = (execId ? executiveAllowlists.get(execId) : undefined) ??
+        { full_name: null, official_handles: null };
+      decision = decideExecutiveImpersonationTriage(details, allow, threshold);
     }
 
     if (decision.action === 'dismiss') {

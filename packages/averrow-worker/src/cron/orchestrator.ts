@@ -427,6 +427,41 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Executive-impersonation monitor: dedicated cron (26 */6 * * *) ──
+  //
+  // Stage 4 of EXEC_IMPERSONATION_2026-07. Scans the active org_executives
+  // registry for fake social profiles impersonating a customer org's named
+  // executives and raises executive_impersonation alerts.
+  //
+  // Given its OWN 6-hourly cron rather than pairing onto the 15 */6 social
+  // branch: its network profile (≤10 execs × ≤12 HEAD probes) is the same
+  // shape as the social scanner it would otherwise share a Worker
+  // invocation — and CPU/wall budget — with. A dedicated trigger gives it a
+  // fresh 5-min CPU / 15-min wall budget, the same starvation-avoidance
+  // pattern as PR-E (enricher) / PR-F (cartographer) / PR-Q (strategist /
+  // sparrow) / PR-T (brand-scores). Dispatched via executeAgent so every
+  // run writes agent_runs (start + completion) + agent_events + a
+  // diagnostic agent_output and surfaces in FC / platform-diagnostics.
+  //
+  // CRON-AUDIT (CLAUDE.md §6): dispatched by EXACT event.cron match with NO
+  // minute gate anywhere in this branch OR in runExecutiveMonitorBatch —
+  // the batch has no time gates at all — so it is cron-audit-safe. Minute
+  // 26 is off the */5 Navigator grid and distinct from every other
+  // dedicated cron. Early return keeps the tick focused on the one agent
+  // (and MUST stay above the `event.cron !== '7 * * * *'` mesh guard below,
+  // which would otherwise swallow this cron).
+  if (event.cron === '26 */6 * * *') {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['executive_monitor'];
+      if (mod) await executeAgent(env, mod, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('executive_monitor_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a

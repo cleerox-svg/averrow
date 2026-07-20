@@ -181,7 +181,7 @@ export async function handleGetInvestigation(
     const itemRows = await env.DB.prepare(
       "SELECT * FROM investigation_items WHERE investigation_id = ? ORDER BY added_at ASC",
     ).bind(id).all<Record<string, unknown>>();
-    const items = await resolveItemSummaries(env, itemRows.results ?? []);
+    const items = await resolveItemSummaries(env, orgId, itemRows.results ?? []);
 
     const noteRows = await env.DB.prepare(
       "SELECT * FROM investigation_notes WHERE investigation_id = ? ORDER BY created_at ASC",
@@ -208,7 +208,7 @@ export async function handleGetInvestigation(
 }
 
 // Resolve a friendly title/severity/status per linked item, batched by type.
-async function resolveItemSummaries(env: Env, rows: Array<Record<string, unknown>>) {
+async function resolveItemSummaries(env: Env, orgId: string, rows: Array<Record<string, unknown>>) {
   const byType = { alert: [] as string[], threat: [] as string[], takedown: [] as string[] };
   for (const r of rows) {
     const t = r.item_type as keyof typeof byType;
@@ -216,15 +216,18 @@ async function resolveItemSummaries(env: Env, rows: Array<Record<string, unknown
   }
 
   const summary: Record<string, { label: string; severity: string | null; status: string | null }> = {};
-  const fetchInto = async (ids: string[], sql: (ph: string) => string) => {
+  const fetchInto = async (ids: string[], sql: (ph: string) => string, extra: unknown[] = []) => {
     if (ids.length === 0) return;
     const ph = ids.map(() => "?").join(",");
-    const res = await env.DB.prepare(sql(ph)).bind(...ids).all<{ id: string; label: string; severity: string | null; status: string | null }>();
+    const res = await env.DB.prepare(sql(ph)).bind(...ids, ...extra).all<{ id: string; label: string; severity: string | null; status: string | null }>();
     for (const row of res.results ?? []) summary[`${row.id}`] = { label: row.label, severity: row.severity, status: row.status };
   };
 
+  // Defense-in-depth: org-private alerts (exec-impersonation) only resolve
+  // for their owning org, so a cross-org item id can't leak a label.
   await fetchInto(byType.alert, (ph) =>
-    `SELECT id, title AS label, severity, status FROM alerts WHERE id IN (${ph})`);
+    `SELECT id, title AS label, severity, status FROM alerts WHERE id IN (${ph}) AND (org_id IS NULL OR org_id = ?)`,
+    [Number(orgId)]);
   await fetchInto(byType.threat, (ph) =>
     `SELECT id, COALESCE(malicious_domain, malicious_url, ip_address, threat_type) AS label, severity, status FROM threats WHERE id IN (${ph})`);
   await fetchInto(byType.takedown, (ph) =>
@@ -357,7 +360,7 @@ async function verifyItemOwnership(env: Env, orgId: string, type: string, itemId
   if (type === "alert") {
     const r = await env.DB.prepare(`
       SELECT 1 FROM alerts a JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
-      WHERE a.id = ? LIMIT 1`).bind(orgId, itemId).first();
+      WHERE a.id = ? AND (a.org_id IS NULL OR a.org_id = ?) LIMIT 1`).bind(orgId, itemId, Number(orgId)).first();
     return !!r;
   }
   if (type === "threat") {

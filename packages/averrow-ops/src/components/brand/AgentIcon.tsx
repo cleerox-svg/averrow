@@ -249,6 +249,18 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <line x1="12" y1="30" x2="24" y2="30" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
     </svg>
   ),
+  // Doppelganger — Executive Monitor. Two overlapping face silhouettes;
+  // the real exec and the impersonator.
+  executive_monitor: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      {/* back (impersonator) silhouette */}
+      <circle cx="22" cy="14" r="4.5" stroke="currentColor" strokeWidth="1.2" opacity="0.4"/>
+      <path d="M14.5 30C14.5 25 18 22.5 22 22.5C26 22.5 29.5 25 29.5 30" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.4"/>
+      {/* front (real exec) silhouette */}
+      <circle cx="15" cy="13.5" r="5" stroke="currentColor" strokeWidth="1.4" fill="currentColor" fillOpacity="0.1"/>
+      <path d="M6.5 30C6.5 24.5 10.5 21.5 15 21.5C19.5 21.5 23.5 24.5 23.5 30" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="currentColor" fillOpacity="0.08"/>
+    </svg>
+  ),
   // Mockingbird — Social Monitor. Songbird with sound waves; mimicry detector.
   social_monitor: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">

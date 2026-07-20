@@ -84,7 +84,8 @@ export async function handleTenantDashboard(
       SELECT COUNT(*) AS cnt FROM alerts a
       JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
       WHERE a.status IN ('new', 'acknowledged', 'investigating')
-    `).bind(orgId).first<{ cnt: number }>();
+        AND (a.org_id IS NULL OR a.org_id = ?)
+    `).bind(orgId, Number(orgId)).first<{ cnt: number }>();
 
     // Recent alerts (top 5) — diversified across alert_type so one noisy
     // category (e.g. campaign_impacts_brand) can't crowd out the rest.
@@ -98,6 +99,7 @@ export async function handleTenantDashboard(
         JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
         JOIN brands b ON b.id = a.brand_id
         WHERE a.status IN ('new', 'acknowledged', 'investigating')
+          AND (a.org_id IS NULL OR a.org_id = ?)
       )
       SELECT id, title, severity, alert_type, status, created_at, brand_name
       FROM ranked
@@ -106,7 +108,7 @@ export async function handleTenantDashboard(
         CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
         created_at DESC
       LIMIT 5
-    `).bind(orgId).all();
+    `).bind(orgId, Number(orgId)).all();
 
     // 7-day threat trend
     const trendResult = await env.DB.prepare(`
@@ -158,9 +160,13 @@ export async function handleTenantAlerts(
     const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 100);
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
-    // Build dynamic WHERE clause
-    const conditions: string[] = ["1=1"];
-    const bindings: unknown[] = [orgId];
+    // Build dynamic WHERE clause. The org-private predicate is added up
+    // front so it applies to all three queries below (list, count,
+    // severity breakdown) that share this clause: brand-wide alerts
+    // (org_id NULL) stay visible to every co-monitoring org, but
+    // org-private ones (exec-impersonation) only to their owning org.
+    const conditions: string[] = ["1=1", "(a.org_id IS NULL OR a.org_id = ?)"];
+    const bindings: unknown[] = [orgId, Number(orgId)];
 
     if (status) { conditions.push("a.status = ?"); bindings.push(status); }
     if (severity) { conditions.push("a.severity = ?"); bindings.push(severity); }
@@ -254,7 +260,8 @@ export async function handleTenantAlertDetail(
       JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
       JOIN brands b ON b.id = a.brand_id
       WHERE a.id = ?
-    `).bind(orgId, alertId).first<Record<string, unknown>>();
+        AND (a.org_id IS NULL OR a.org_id = ?)
+    `).bind(orgId, alertId, Number(orgId)).first<Record<string, unknown>>();
 
     if (!alert) {
       return json({ success: false, error: "Signal not found" }, 404, origin);
@@ -575,13 +582,15 @@ export async function handleTenantUpdateAlert(
       return json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` }, 400, origin);
     }
 
-    // Verify alert belongs to an org brand
+    // Verify alert belongs to an org brand AND (if org-private) to THIS org
+    // — org B must not ack/resolve/assign org A's exec-impersonation alert.
     const alert = await env.DB.prepare(`
       SELECT a.id, a.status AS current_status
       FROM alerts a
       JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
       WHERE a.id = ?
-    `).bind(orgId, alertId).first<{ id: string; current_status: string }>();
+        AND (a.org_id IS NULL OR a.org_id = ?)
+    `).bind(orgId, alertId, Number(orgId)).first<{ id: string; current_status: string }>();
 
     if (!alert) {
       return json({ success: false, error: "Alert not found or not accessible" }, 404, origin);
@@ -713,13 +722,16 @@ export async function handleTenantBulkUpdateAlerts(
       }
     }
 
-    // Restrict to alerts actually owned by this org.
+    // Restrict to alerts actually owned by this org — including the
+    // org-private guard so a bulk update can't touch another org's
+    // exec-impersonation alert on a shared brand.
     const ph = ids.map(() => "?").join(",");
     const owned = await env.DB.prepare(`
       SELECT a.id FROM alerts a
       JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
       WHERE a.id IN (${ph})
-    `).bind(orgId, ...ids).all<{ id: string }>();
+        AND (a.org_id IS NULL OR a.org_id = ?)
+    `).bind(orgId, ...ids, Number(orgId)).all<{ id: string }>();
     const ownedIds = (owned.results ?? []).map((r) => r.id);
     if (ownedIds.length === 0) {
       return json({ success: true, data: { updated: 0 } }, 200, origin);
@@ -825,14 +837,17 @@ export async function handleTenantBrandDetail(
       ORDER BY classification DESC, confidence_score DESC
     `).bind(brandId).all();
 
-    // Recent alerts for this brand
+    // Recent alerts for this brand. No org_brands join here (already scoped
+    // to this org's brand), so gate org-private alerts directly: brand-wide
+    // (org_id NULL) stay visible; exec-impersonation only to its owning org.
     const alertsResult = await env.DB.prepare(`
       SELECT id, title, severity, alert_type, status, created_at, summary
       FROM alerts
       WHERE brand_id = ?
+        AND (org_id IS NULL OR org_id = ?)
       ORDER BY created_at DESC
       LIMIT 10
-    `).bind(brandId).all();
+    `).bind(brandId, Number(orgId)).all();
 
     return json({
       success: true,

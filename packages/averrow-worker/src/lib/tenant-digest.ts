@@ -102,12 +102,16 @@ async function collectBrandDigest(env: Env, row: DigestBrandRow): Promise<BrandD
        LIMIT ?`,
     ).bind(row.brand_id, TOP_THREATS_PER_BRAND).all<{ indicator: string; threat_type: string; severity: string }>(),
     env.DB.prepare(
+      // Consistency (migration 0247): exclude another org's org-private
+      // (exec-impersonation) alert counts from this org's blended digest
+      // totals on a shared brand. Count-only, no PII — same predicate as
+      // the tenant read/write paths, keyed to this digest row's org.
       `SELECT
          SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS opened,
          SUM(CASE WHEN status = 'resolved' AND updated_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS resolved
        FROM alerts
-       WHERE brand_id = ?`,
-    ).bind(row.brand_id).first<{ opened: number | null; resolved: number | null }>(),
+       WHERE brand_id = ? AND (org_id IS NULL OR org_id = ?)`,
+    ).bind(row.brand_id, row.org_id).first<{ opened: number | null; resolved: number | null }>(),
   ]);
 
   const bySeverity: BrandDigestData["threatsBySeverity"] = {};

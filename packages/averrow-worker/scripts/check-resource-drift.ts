@@ -99,6 +99,7 @@ const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
   cube_healer: "cube-healer",
   dark_web_monitor: "darkWebMonitor",
   evidence_assembler: "evidence-assembler",
+  executive_monitor: "executiveMonitor",
   flight_control: "flightControl",
   geo_campaign_assessment: "geo-campaign-assessment",
   geoip_refresh: "geoip-refresh",

@@ -508,6 +508,16 @@ export default {
           return Response.json({ triggered: true, agent: 'nexus' });
         }
 
+        // Executive-impersonation monitor — manual trigger / fallback for
+        // the `26 */6 * * *` dedicated cron (EXEC_IMPERSONATION Stage 4).
+        if (url.pathname === '/api/internal/agents/executive_monitor/run') {
+          const { agentModules } = await import('./agents/index');
+          const { executeAgent } = await import('./lib/agentRunner');
+          const mod = agentModules["executive_monitor"];
+          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
+          return Response.json({ triggered: true, agent: 'executive_monitor' });
+        }
+
         if (url.pathname === '/api/internal/agents/cartographer/backfill') {
           const { agentModules } = await import('./agents/index');
           const { executeAgent } = await import('./lib/agentRunner');

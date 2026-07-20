@@ -49,7 +49,8 @@ export type AgentId =
   | 'geo_campaign_assessment'
   | 'evidence_assembler'
   | 'campaign_hunter'
-  | 'abuse_mailbox_classifier';
+  | 'abuse_mailbox_classifier'
+  | 'executive_monitor';
 
 export interface AgentMetadata {
   id: AgentId;
@@ -449,6 +450,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#0A8AB5',
     category: 'intelligence',
     pipelinePosition: 42,
+  },
+  executive_monitor: {
+    id: 'executive_monitor',
+    displayName: 'Doppelganger',
+    codename: 'executive_monitor',
+    subtitle: 'Executive social-impersonation monitor — permutes each registered executive\'s name, HEAD-checks the watched platforms, and raises executive_impersonation alerts on non-official matches',
+    color: '#C83C3C',
+    category: 'intelligence',
+    pipelinePosition: 43,
   },
 };
 
