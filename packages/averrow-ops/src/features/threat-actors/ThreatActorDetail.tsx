@@ -398,10 +398,10 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   href={m.article_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-amber/30 transition-all"
+                  className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-[var(--amber-border)] transition-all"
                 >
                   <div className="flex items-start justify-between gap-3 mb-1">
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-amber">
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--amber-text)]">
                       {m.source_feed}
                     </span>
                     {m.is_geopolitical === 1 && (

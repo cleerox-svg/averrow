@@ -1316,7 +1316,7 @@ function ModuleRow({ orgId, module: m }: { orgId: string; module: CustomerModule
               </span>
             )}
             {m.trial_ends_at && (
-              <span className="text-[11px] font-mono text-amber/85">
+              <span className="text-[11px] font-mono text-[color:var(--amber-text)]">
                 trial ends {formatDateShort(m.trial_ends_at)}
               </span>
             )}

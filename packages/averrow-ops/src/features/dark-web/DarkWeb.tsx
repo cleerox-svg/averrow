@@ -251,7 +251,7 @@ function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n:
                     <span className="font-mono text-white/60 tabular-nums">{d.n.toLocaleString()} · {pct}%</span>
                   </div>
                   <div className="mt-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                    <div className="h-full bg-amber/70" style={{ width: `${pct}%` }} />
+                    <div className="h-full bg-[var(--amber)] opacity-70" style={{ width: `${pct}%` }} />
                   </div>
                 </div>
               );
@@ -278,10 +278,10 @@ function SeverityMixCard({ data, totalActive }: { data: Array<{ severity: string
               const n = map.get(sev) ?? 0;
               const pct = totalActive > 0 ? Math.round((n / totalActive) * 100) : 0;
               const barColor =
-                sev === 'CRITICAL' ? 'bg-sev-critical/70' :
-                sev === 'HIGH'     ? 'bg-sev-high/70' :
-                sev === 'MEDIUM'   ? 'bg-amber/60' :
-                                     'bg-blue/60';
+                sev === 'CRITICAL' ? 'bg-[var(--sev-critical)] opacity-70' :
+                sev === 'HIGH'     ? 'bg-[var(--sev-high)] opacity-70' :
+                sev === 'MEDIUM'   ? 'bg-[var(--amber)] opacity-60' :
+                                     'bg-[var(--blue)] opacity-60';
               return (
                 <div key={sev}>
                   <div className="flex items-center justify-between text-xs">
@@ -318,13 +318,13 @@ function SearchAndScopeCard({
           value={q}
           onChange={e => onQ(e.target.value)}
           placeholder="Search snippet, channel, brand…"
-          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/35 focus:border-amber/40 focus:outline-none"
+          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/35 focus:border-[var(--amber-border)] focus:outline-none"
         />
         {hasFilters && (
           <button
             type="button"
             onClick={onReset}
-            className="mt-3 text-[11px] font-mono text-amber hover:underline"
+            className="mt-3 text-[11px] font-mono text-[var(--amber-text)] hover:underline"
           >
             Clear filters
           </button>
@@ -348,7 +348,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-amber/40 focus:outline-none"
+        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-[var(--amber-border)] focus:outline-none"
       >
         {options.map(o => (
           <option key={o.value} value={o.value} className="bg-bg-card">{o.label}</option>
@@ -374,7 +374,7 @@ function SortableTh({
       <button
         type="button"
         onClick={() => onClick(sortKey)}
-        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-amber' : ''}`}
+        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-[var(--amber-text)]' : ''}`}
       >
         <span>{label}</span>
         {active && <span className="text-[9px]">{dir === 'asc' ? '↑' : '↓'}</span>}
@@ -403,7 +403,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
           <button
             type="button"
             onClick={onBrandClick}
-            className="text-left hover:text-amber"
+            className="text-left hover:text-[var(--amber-text)]"
           >
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
             {m.brand_domain && <div className="font-mono text-[10px] text-white/45">{m.brand_domain}</div>}
@@ -440,7 +440,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             href={m.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 mt-1 text-[10px] text-amber hover:underline"
+            className="inline-flex items-center gap-1 mt-1 text-[10px] text-[var(--amber-text)] hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             <ExternalLink size={10} /> source
@@ -460,7 +460,7 @@ function SeverityPill({ level }: { level: string }) {
   // Badge uses 'critical' / 'high' variants — map MEDIUM/LOW to default with text accent.
   if (sev === 'medium' || sev === 'low') {
     return (
-      <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 text-amber/85 bg-amber/[0.06] border-amber/[0.15]">
+      <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 text-[var(--amber-text)] bg-[var(--amber-glow)] border-[var(--amber-border)]">
         {level}
       </span>
     );
@@ -470,8 +470,8 @@ function SeverityPill({ level }: { level: string }) {
 
 function ClassificationPill({ classification }: { classification: string }) {
   const tone =
-    classification === 'confirmed'      ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    classification === 'suspicious'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
+    classification === 'confirmed'      ? 'text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
+    classification === 'suspicious'     ? 'text-[var(--amber-text)]        bg-[var(--amber-glow)]       border-[var(--amber-border)]'        :
     classification === 'false_positive' ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
