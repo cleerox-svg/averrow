@@ -1323,7 +1323,7 @@ function InboxToolbar({
           onClick={() => onClassFilterChange(null)}
           className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
             classFilter === null
-              ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+              ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
               : 'border-white/[0.08] text-white/55 hover:text-white/85'
           }`}
         >
@@ -1340,7 +1340,7 @@ function InboxToolbar({
               onClick={() => onClassFilterChange(active ? null : c.key)}
               className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
                 active
-                  ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+                  ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
               }`}
             >
@@ -1353,7 +1353,7 @@ function InboxToolbar({
           placeholder="Search subject / sender / alias…"
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/35 focus:outline-none focus:border-amber/[0.40] min-w-[200px]"
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/35 focus:outline-none focus:border-[var(--amber-border)] min-w-[200px]"
         />
       </div>
     </div>

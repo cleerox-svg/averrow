@@ -584,7 +584,7 @@ function SignalFilterRow({
           onClick={() => onChange(opt.key)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors ${
             value === opt.key
-              ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+              ? 'bg-[var(--amber-glow)] text-[var(--amber-text)] border-[var(--amber-border)]'
               : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85'
           }`}
         >
@@ -1059,7 +1059,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
                 <TsTd>
                   {r.source_feed === 'abuse_mailbox' ? (
                     <span
-                      className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] border border-amber/[0.20] rounded px-1.5 py-0.5"
+                      className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--amber-text)] bg-[var(--amber-glow)] border border-[var(--amber-border)] rounded px-1.5 py-0.5"
                       title="Reported via abuse mailbox — community-submitted phishing capture"
                     >
                       community report
@@ -1111,9 +1111,9 @@ function TsTd({ children, className = '' }: { children: React.ReactNode; classNa
 function TsSeverityPill({ severity }: { severity: string }) {
   const sev = severity.toLowerCase();
   const tone =
-    sev === 'critical' ? 'text-[var(--sev-critical)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
-    sev === 'high'     ? 'text-[var(--amber)]        bg-[var(--sev-high-bg)]   border-amber/[0.20]'                  :
-    sev === 'medium'   ? 'text-[var(--sev-medium)]   bg-[var(--sev-medium-bg)] border-amber/[0.10]'                  :
+    sev === 'critical' ? 'text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
+    sev === 'high'     ? 'text-[var(--amber-text)]        bg-[var(--sev-high-bg)]   border-[var(--amber-border)]'         :
+    sev === 'medium'   ? 'text-[var(--sev-medium-text)]   bg-[var(--sev-medium-bg)] border-[var(--amber-border)]'         :
                          'text-[var(--text-secondary)] bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
