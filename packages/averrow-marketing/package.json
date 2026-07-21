@@ -11,7 +11,8 @@
     "astro": "astro",
     "typecheck": "astro check",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:responsive": "playwright test responsive --project=chromium"
   },
   "dependencies": {
     "astro": "^4.16.19",

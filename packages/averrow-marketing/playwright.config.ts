@@ -1,4 +1,20 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
+import path from "node:path";
+
+// Browser resolution: in a normal CI/dev env Playwright downloads and
+// manages its own version-matched browser. Some build sandboxes ship a
+// pre-installed chromium under PLAYWRIGHT_BROWSERS_PATH instead (and the
+// managed download is blocked), so point `executablePath` at it when it's
+// present — otherwise fall back to Playwright's managed browser. Guarded
+// so this is a no-op wherever the managed browser is available.
+const preinstalledChromium = process.env.PLAYWRIGHT_BROWSERS_PATH
+  ? path.join(process.env.PLAYWRIGHT_BROWSERS_PATH, "chromium")
+  : "";
+const launchOptions =
+  preinstalledChromium && existsSync(preinstalledChromium)
+    ? { executablePath: preinstalledChromium }
+    : {};
 
 /*
  * Playwright smoke tests for the Astro marketing site.
@@ -29,6 +45,7 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    launchOptions,
   },
   projects: [
     {

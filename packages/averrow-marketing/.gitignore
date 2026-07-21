@@ -14,3 +14,7 @@ node_modules/
 *.log
 .env
 .env.production
+
+# Playwright test output
+test-results/
+playwright-report/
