@@ -32,6 +32,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { isNewlyRegistered, NRD_MAX_AGE_DAYS } from './domain-age';
+import { normalizeHandleForPlatform } from './handle-normalize';
 
 export type AutoTriageDecision =
   | { action: 'dismiss'; reason: string }
@@ -183,16 +184,6 @@ export interface SocialImpersonationDetails {
 }
 
 /**
- * Normalize a social handle so allowlist comparisons are
- * case-insensitive and tolerant of leading '@' / whitespace.
- */
-export function normalizeHandle(raw: string): string {
-  let h = raw.trim().toLowerCase();
-  if (h.startsWith('@')) h = h.slice(1);
-  return h;
-}
-
-/**
  * Decide auto-triage for a social_impersonation alert.
  *
  *   Rule B (always-safe): handle matches the brand's official_handles
@@ -210,12 +201,19 @@ export function decideSocialImpersonationTriage(
 ): AutoTriageDecision {
   if (!details) return { action: 'keep', reason: 'social_details_missing' };
 
-  // Rule B — official handle match.
+  // Rule B — official handle match, normalized per the platform's own rules
+  // so a dotted `jane.doe` matches an official `jane.doe` on Instagram but
+  // does NOT spuriously match `janedoe` (bug #22). Guard against an empty
+  // normalization on BOTH sides: an all-invalid-chars handle reduces to ''
+  // for the platform, and '' === '' would be a false auto-dismiss on this
+  // security-adjacent path (unreachable from the real probe, which only ever
+  // yields valid >=2-char handles, but cheap defense-in-depth).
   if (allowlist.official_handles && details.platform && details.handle) {
     const platformKey = details.platform.toLowerCase();
     const officialRaw = allowlist.official_handles[platformKey];
     if (officialRaw) {
-      if (normalizeHandle(officialRaw) === normalizeHandle(details.handle)) {
+      const normOfficial = normalizeHandleForPlatform(officialRaw, platformKey);
+      if (normOfficial !== '' && normOfficial === normalizeHandleForPlatform(details.handle, platformKey)) {
         return { action: 'dismiss', reason: 'auto: matches brand official handle' };
       }
     }
@@ -419,12 +417,15 @@ export function decideExecutiveImpersonationTriage(
 ): AutoTriageDecision {
   if (!details) return { action: 'keep', reason: 'executive_details_missing' };
 
-  // Rule B — official handle match.
+  // Rule B — official handle match, normalized per the platform's own rules
+  // (bug #22) — identical to the social decider, keyed on the exec's handles.
+  // Same empty-normalization guard: '' === '' must not auto-dismiss.
   if (allowlist.official_handles && details.platform && details.handle) {
     const platformKey = details.platform.toLowerCase();
     const officialRaw = allowlist.official_handles[platformKey];
     if (officialRaw) {
-      if (normalizeHandle(officialRaw) === normalizeHandle(details.handle)) {
+      const normOfficial = normalizeHandleForPlatform(officialRaw, platformKey);
+      if (normOfficial !== '' && normOfficial === normalizeHandleForPlatform(details.handle, platformKey)) {
         return { action: 'dismiss', reason: 'auto: matches executive official handle' };
       }
     }

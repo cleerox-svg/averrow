@@ -6,8 +6,13 @@
  * Useful for detecting potential impersonation vectors.
  */
 
+import { normalizeHandleForPlatform } from './handle-normalize';
+
 export interface SocialCheckResult {
   platform: string;
+  /** The handle actually probed for THIS platform — normalized per that
+   *  platform's rules (e.g. `jane.doe` on Instagram, `janedoe` on X). Read
+   *  this, not the caller's raw input, as the authoritative probed handle. */
   handle: string;
   available: boolean | null; // null = couldn't check
   url: string;
@@ -66,13 +71,16 @@ const PLATFORMS: PlatformConfig[] = [
 // ─── Normalize brand name to a likely social handle ─────────────
 
 /**
- * Normalize an arbitrary input into the exact handle string this checker
- * actually queries. Strips everything except [a-z0-9_-] — notably DROPS
- * dots — lowercases, and caps at 30 chars. Exported so callers that build
- * candidate handles (e.g. the executive-impersonation scanner) can apply
- * the SAME transform BEFORE they dedup / key / compare, so what they think
- * they probed matches what this function really requests. See the FIX 1
- * consistency note in scanners/executive-monitor.ts.
+ * Legacy platform-AGNOSTIC name→base-handle transform. Strips everything
+ * except [a-z0-9_-] — notably DROPS dots — lowercases, and caps at 30 chars.
+ *
+ * @deprecated for handle normalization. Because it drops dots uniformly it is
+ * wrong for the platforms that ALLOW dots (Instagram/TikTok/YouTube): it made
+ * `jane.doe` probe `janedoe`, conflating two distinct accounts (bug #22). The
+ * probe below and the triage deciders now use `normalizeHandleForPlatform`
+ * (lib/handle-normalize.ts) so probing and official-handle matching agree
+ * per-platform. Retained only for callers that genuinely reduce a NAME to a
+ * loose base slug; do NOT use it to normalize an actual handle for probing.
  */
 export function toHandle(brandName: string): string {
   return brandName
@@ -116,21 +124,22 @@ async function checkPlatform(
 // ─── Check all platforms ────────────────────────────────────────
 
 export async function checkSocialHandles(
-  brandName: string,
+  rawHandle: string,
 ): Promise<SocialCheckResult[]> {
-  const handle = toHandle(brandName);
-  if (!handle || handle.length < 2) {
-    return PLATFORMS.map((p) => ({
-      platform: p.name,
-      handle: brandName,
-      available: null,
-      url: p.urlTemplate(brandName),
-    }));
-  }
-
-  // Check all platforms in parallel (each has its own 2s timeout)
+  // Normalize the handle PER PLATFORM (bug #22): dots survive on
+  // Instagram/TikTok/YouTube but are stripped for X/Twitter and GitHub, so a
+  // single input can resolve to different exact handles on different
+  // platforms. Each platform is probed with its own normalized handle and the
+  // returned result carries that handle + the real URL that was requested.
   const results = await Promise.all(
-    PLATFORMS.map((p) => checkPlatform(p, handle)),
+    PLATFORMS.map(async (p): Promise<SocialCheckResult> => {
+      const handle = normalizeHandleForPlatform(rawHandle, p.name);
+      if (!handle || handle.length < 2) {
+        // Nothing probe-able for this platform after normalization.
+        return { platform: p.name, handle, available: null, url: p.urlTemplate(handle) };
+      }
+      return checkPlatform(p, handle);
+    }),
   );
 
   return results;

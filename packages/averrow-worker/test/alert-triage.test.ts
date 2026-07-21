@@ -4,7 +4,6 @@ import {
   decideSocialImpersonationTriage,
   decideAppStoreImpersonationTriage,
   decideExecutiveImpersonationTriage,
-  normalizeHandle,
   normalizeCompanyName,
   type ThreatTriageSnapshot,
   type BrandAllowlist,
@@ -201,17 +200,6 @@ describe("decideAutoTriage — null safety", () => {
 
 const emptyAllowlist: BrandAllowlist = { name: null, official_handles: null, official_apps: null };
 
-describe("normalizeHandle", () => {
-  it("strips leading @ and lowercases", () => {
-    expect(normalizeHandle('@Acme')).toBe('acme');
-    expect(normalizeHandle('acme')).toBe('acme');
-    expect(normalizeHandle('@ACME')).toBe('acme');
-  });
-  it("trims whitespace", () => {
-    expect(normalizeHandle('  @AcmeCorp  ')).toBe('acmecorp');
-  });
-});
-
 describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
   it("dismisses when handle matches the brand's official handle for the platform", () => {
     const allow: BrandAllowlist = {
@@ -264,6 +252,92 @@ describe("decideSocialImpersonationTriage — Rule B (allowlist match)", () => {
       allow,
     );
     expect(d.action).toBe('keep');
+  });
+});
+
+describe("decideSocialImpersonationTriage — Rule B platform-aware dots (bug #22)", () => {
+  it("matches a dotted official handle on Instagram (dot preserved)", () => {
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { instagram: "jane.doe" },
+      official_apps: null,
+    };
+    const d = decideSocialImpersonationTriage(
+      { platform: "instagram", handle: "jane.doe", score: 0.95 },
+      allow,
+    );
+    expect(d.action).toBe("dismiss");
+    expect(d.reason).toBe("auto: matches brand official handle");
+  });
+
+  it("does NOT spuriously match `janedoe` against official `jane.doe` on Instagram", () => {
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { instagram: "jane.doe" },
+      official_apps: null,
+    };
+    // A distinct dot-stripped IG account is a real impostor — must stay open.
+    const d = decideSocialImpersonationTriage(
+      { platform: "instagram", handle: "janedoe", score: 0.95 },
+      allow,
+    );
+    expect(d.action).toBe("keep");
+  });
+
+  it("strips the dot on X so official `jane.doe` matches probed `janedoe`", () => {
+    // X forbids dots; both sides collapse to `janedoe`.
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { twitter: "jane.doe" },
+      official_apps: null,
+    };
+    const d = decideSocialImpersonationTriage(
+      { platform: "twitter", handle: "janedoe", score: 0.95 },
+      allow,
+    );
+    expect(d.action).toBe("dismiss");
+  });
+
+  it("keeps an underscore on Instagram (jane_doe matches jane_doe)", () => {
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { instagram: "jane_doe" },
+      official_apps: null,
+    };
+    const d = decideSocialImpersonationTriage(
+      { platform: "instagram", handle: "@Jane_Doe", score: 0.9 },
+      allow,
+    );
+    expect(d.action).toBe("dismiss");
+  });
+
+  it("strips underscores on GitHub so `jane_doe` and `janedoe` collapse", () => {
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { github: "jane_doe" },
+      official_apps: null,
+    };
+    const d = decideSocialImpersonationTriage(
+      { platform: "github", handle: "janedoe", score: 0.9 },
+      allow,
+    );
+    expect(d.action).toBe("dismiss");
+  });
+
+  it("does NOT auto-dismiss when handle AND official both normalize to '' (empty guard)", () => {
+    // On GitHub, an all-dot handle strips to '' on both sides — '' === ''
+    // must NOT be treated as an official-handle match. High score → stays open.
+    const allow: BrandAllowlist = {
+      name: null,
+      official_handles: { github: "..." },
+      official_apps: null,
+    };
+    const d = decideSocialImpersonationTriage(
+      { platform: "github", handle: "...", score: 0.95 },
+      allow,
+    );
+    expect(d.action).toBe("keep");
+    expect(d.reason).toBe("high_impersonation_score");
   });
 });
 
@@ -579,6 +653,46 @@ describe("decideExecutiveImpersonationTriage — Rule B (exec official-handle ma
       allow,
     );
     expect(d.action).toBe('keep');
+  });
+});
+
+describe("decideExecutiveImpersonationTriage — Rule B platform-aware dots (bug #22)", () => {
+  it("matches a dotted exec official handle on TikTok (dot preserved)", () => {
+    const allow: ExecutiveAllowlist = {
+      full_name: "Jane Doe",
+      official_handles: { tiktok: "jane.doe" },
+    };
+    const d = decideExecutiveImpersonationTriage(
+      { platform: "tiktok", handle: "@jane.doe", score: 0.9 },
+      allow,
+    );
+    expect(d.action).toBe("dismiss");
+    expect(d.reason).toBe("auto: matches executive official handle");
+  });
+
+  it("does NOT dismiss a dot-stripped impostor against the dotted exec handle on TikTok", () => {
+    const allow: ExecutiveAllowlist = {
+      full_name: "Jane Doe",
+      official_handles: { tiktok: "jane.doe" },
+    };
+    const d = decideExecutiveImpersonationTriage(
+      { platform: "tiktok", handle: "janedoe", score: 0.9 },
+      allow,
+    );
+    expect(d.action).toBe("keep");
+  });
+
+  it("does NOT auto-dismiss when handle AND official both normalize to '' (empty guard)", () => {
+    const allow: ExecutiveAllowlist = {
+      full_name: "Jane Doe",
+      official_handles: { github: "___" },
+    };
+    const d = decideExecutiveImpersonationTriage(
+      { platform: "github", handle: "___", score: 0.95 },
+      allow,
+    );
+    expect(d.action).toBe("keep");
+    expect(d.reason).toBe("high_impersonation_score");
   });
 });
 

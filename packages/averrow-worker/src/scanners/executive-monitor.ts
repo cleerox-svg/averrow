@@ -23,7 +23,8 @@
  * consistent across the social / app-store / executive alert families.
  */
 
-import { checkSocialHandles, toHandle, type SocialCheckResult } from '../lib/social-check';
+import { checkSocialHandles, type SocialCheckResult } from '../lib/social-check';
+import { normalizeHandleForPlatform } from '../lib/handle-normalize';
 import {
   scoreImpersonation,
   nameSimilarity,
@@ -55,9 +56,9 @@ export interface ExecutiveScanInput {
 export interface ExecutiveImpersonationCandidate {
   execId: string;
   platform: string;
-  /** The candidate handle actually probed — normalized via `toHandle`
-   *  (lowercased, dots stripped, no leading '@'), so it equals what the
-   *  HEAD checker really queried. */
+  /** The candidate handle actually probed on THIS platform — normalized per
+   *  the platform's own rules (bug #22): dots kept on Instagram/TikTok/YouTube,
+   *  stripped on X/GitHub. Equals the exact string the HEAD probe requested. */
   handle: string;
   /** Always true here — we only return handles the HEAD probe found to exist. */
   exists: boolean;
@@ -203,21 +204,21 @@ export function generateExecutiveHandleCandidates(fullName: string): string[] {
  * candidate handles across the exec's watched platforms. Writes nothing,
  * creates no alerts, makes no AI calls.
  *
- * FIX 1 — normalization consistency. The real HEAD probe applies
- * `toHandle` internally (which STRIPS dots: `jane.doe` -> `janedoe`). We
- * therefore push every generated candidate AND every official handle
- * through the SAME `toHandle` transform BEFORE we dedup / probe / key /
- * compare. Consequences:
- *   - `jane.doe` and `janedoe` collapse to ONE probed candidate, and its
- *     `profileUrl` is built from the handle actually probed.
- *   - An official handle stored as `jane.doe` compares equal to that
- *     collapsed candidate, so the exec's OWN account is flagged
- *     isOfficialHandle=true and is NOT also emitted as an impersonation.
- * Residual limitation (inherited from the shared brand path, tracked as
- * follow-up #22, NOT fixed here): because dots are stripped, this scanner
- * cannot distinguish `instagram.com/jane.doe` from `instagram.com/janedoe`
- * — they are one probe. That's a detection-granularity gap, separate from
- * the internal-consistency fix above.
+ * Normalization consistency (bug #22, now fixed at the root). The HEAD probe
+ * (`checkSocialHandles`) normalizes PER PLATFORM: dots survive on
+ * Instagram/TikTok/YouTube, are stripped on X/GitHub. So each candidate is
+ * matched against the exact handle the probe resolved for that platform
+ * (`platformResult.handle`), and the exec's official handle is compared with
+ * the SAME per-platform normalization. Consequences:
+ *   - On X, `jane.doe` and `janedoe` collapse to one account (`janedoe`) and
+ *     are emitted once; on Instagram they are DISTINCT accounts, so an
+ *     impostor at `janedoe` is no longer masked by the exec's real `jane.doe`.
+ *   - An official handle `jane.doe` matches the probed `jane.doe` on Instagram
+ *     (isOfficialHandle=true, never emitted as impersonation) but does NOT
+ *     match a probed `janedoe`.
+ * This supersedes the earlier `toHandle`-for-consistency workaround, which
+ * only made the path internally consistent while still conflating the two
+ * dotted/undotted accounts.
  *
  * @param exec         the org_executives row slice
  * @param checkHandles injectable HEAD-existence probe (defaults to the real
@@ -227,15 +228,15 @@ export async function runExecutiveMonitorForExec(
   exec: ExecutiveScanInput,
   checkHandles: SocialExistenceChecker = checkSocialHandles,
 ): Promise<ExecutiveImpersonationCandidate[]> {
-  // Parse official handles (platform -> handle), normalized via toHandle so
-  // the comparison matches what the probe actually queries (FIX 1).
+  // Parse official handles (platform -> RAW handle). Kept raw here; normalized
+  // per-platform at compare time (bug #22) so the dot-rules match the probe.
   const officialByPlatform: Record<string, string> = {};
   try {
     const parsed = exec.official_handles ? JSON.parse(exec.official_handles) : null;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       for (const [platform, handle] of Object.entries(parsed as Record<string, unknown>)) {
         if (typeof handle === 'string' && handle.trim()) {
-          officialByPlatform[platform.toLowerCase()] = toHandle(handle);
+          officialByPlatform[platform.toLowerCase()] = handle;
         }
       }
     }
@@ -265,20 +266,22 @@ export async function runExecutiveMonitorForExec(
     if (platforms.length >= MAX_PLATFORMS_PER_EXEC) break;
   }
 
-  // Generate candidate handles, then normalize each through the SAME
-  // transform the real probe applies (toHandle) and dedup so what we think
-  // we probed matches what actually got queried (FIX 1).
+  // Generate candidate handles, kept in RAW dot-preserving form and deduped on
+  // that raw form. Per-platform normalization (bug #22) happens inside the
+  // probe and at compare time — NOT here — so dots survive to the platforms
+  // that allow them.
   const candSeen = new Set<string>();
   const candidates: string[] = [];
   for (const raw of generateExecutiveHandleCandidates(exec.full_name)) {
-    const norm = toHandle(raw);
-    if (norm.length < 2 || candSeen.has(norm)) continue;
-    candSeen.add(norm);
-    candidates.push(norm);
+    const key = raw.toLowerCase();
+    if (key.length < 2 || candSeen.has(key)) continue;
+    candSeen.add(key);
+    candidates.push(raw);
   }
   if (candidates.length === 0 || platforms.length === 0) return [];
 
-  // Dedupe network checks: ONE call per unique handle covers all platforms.
+  // Dedupe network checks: ONE call per unique raw candidate covers all
+  // platforms (the probe normalizes per-platform internally).
   const resultsByHandle = new Map<string, SocialCheckResult[]>();
   for (const handle of candidates) {
     resultsByHandle.set(handle, await checkHandles(handle));
@@ -286,17 +289,34 @@ export async function runExecutiveMonitorForExec(
 
   const out: ExecutiveImpersonationCandidate[] = [];
   for (const platform of platforms) {
-    for (const handle of candidates) {
+    // The exec's own handle for this platform, normalized to compare against
+    // the probed handle under the platform's rules.
+    const officialForPlatform =
+      officialByPlatform[platform] !== undefined
+        ? normalizeHandleForPlatform(officialByPlatform[platform]!, platform)
+        : undefined;
+
+    // Distinct raw candidates can resolve to the SAME probed handle on a given
+    // platform (e.g. `jane.doe` and `janedoe` both → `janedoe` on X) — emit once.
+    const emittedOnPlatform = new Set<string>();
+
+    for (const rawHandle of candidates) {
       const platformResult = resultsByHandle
-        .get(handle)
+        .get(rawHandle)
         ?.find((r) => r.platform === platform);
 
       // available===false means "profile exists (taken)". Anything else
       // (available / unknown / no result) is not an impersonation hit.
       if (!platformResult || platformResult.available !== false) continue;
 
+      // The handle the probe ACTUALLY resolved for this platform.
+      const probedHandle = platformResult.handle;
+      if (!probedHandle || probedHandle.length < 2) continue;
+      if (emittedOnPlatform.has(probedHandle)) continue;
+      emittedOnPlatform.add(probedHandle);
+
       const signals: ImpersonationSignals = {
-        name_similarity: nameSimilarity(exec.full_name, handle),
+        name_similarity: nameSimilarity(exec.full_name, probedHandle),
         uses_brand_keywords: false, // person, not a brand — no brand-keyword signal
         account_age_suspicious: false, // HEAD-only, cannot determine
         low_followers: false, // HEAD-only, cannot determine
@@ -306,19 +326,18 @@ export async function runExecutiveMonitorForExec(
       const scored = scoreImpersonation(signals);
 
       const isOfficialHandle =
-        officialByPlatform[platform] !== undefined &&
-        officialByPlatform[platform] === handle;
+        officialForPlatform !== undefined && officialForPlatform === probedHandle;
 
       out.push({
         execId: exec.id,
         platform,
-        handle,
+        handle: probedHandle,
         exists: true,
         score: scored.score,
         severity: scored.severity,
         signals: scored.reasons,
         isOfficialHandle,
-        profileUrl: PLATFORM_URL_TEMPLATES[platform]?.(handle) ?? '',
+        profileUrl: platformResult.url || PLATFORM_URL_TEMPLATES[platform]?.(probedHandle) || '',
       });
     }
   }

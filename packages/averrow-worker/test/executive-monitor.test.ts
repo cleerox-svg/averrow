@@ -7,7 +7,8 @@ import {
   type ExecutiveScanInput,
   type SocialExistenceChecker,
 } from "../src/scanners/executive-monitor";
-import { toHandle, type SocialCheckResult } from "../src/lib/social-check";
+import type { SocialCheckResult } from "../src/lib/social-check";
+import { normalizeHandleForPlatform } from "../src/lib/handle-normalize";
 
 // The six platforms the HEAD checker covers (mirrors SUPPORTED_PLATFORMS).
 const PLATFORMS = [
@@ -21,41 +22,46 @@ const PLATFORMS = [
 
 /**
  * Build a deterministic, offline existence-checker that FAITHFULLY
- * replicates the real `checkSocialHandles`:
- *   - applies `toHandle` to the input (so dots are stripped, exactly like
- *     the real probe) — this is what makes the suite actually exercise
- *     FIX 1 instead of masking it;
- *   - returns all-`null` (unknown) when the normalized handle is < 2 chars,
- *     matching the real fallback;
- *   - reports `available:false` (taken) for the platforms listed in
- *     `exists[normalizedHandle]`, else `available:true` (free).
+ * replicates the real `checkSocialHandles` (bug #22 semantics):
+ *   - normalizes the input PER PLATFORM via `normalizeHandleForPlatform`
+ *     (so `jane.doe` stays `jane.doe` on Instagram/TikTok/YouTube but becomes
+ *     `janedoe` on X/GitHub), exactly like the real probe;
+ *   - returns `null` (unknown) for any platform whose normalized handle is
+ *     < 2 chars, matching the real per-platform fallback;
+ *   - reports `available:false` (taken) when the PLATFORM-NORMALIZED handle is
+ *     listed in `exists[normalizedHandle]`, else `available:true` (free).
  *
- * `exists` / `unknownFor` keys must be the TOHANDLE-NORMALIZED handle
- * (e.g. `janedoe`, since a real account at `.../jane.doe` collapses to it).
+ * `exists` / `unknownFor` keys are the PLATFORM-NORMALIZED handle. A real
+ * account at `instagram.com/jane.doe` is keyed `jane.doe` (dot kept); the same
+ * account probed on X is keyed `janedoe` (dot stripped).
+ *
+ * `calls` records the RAW handle passed in (one probe per unique candidate).
  */
 function makeChecker(
   exists: Record<string, string[]>,
   opts?: { calls?: string[]; unknownFor?: Record<string, string[]> },
 ): SocialExistenceChecker {
   return async (rawHandle: string): Promise<SocialCheckResult[]> => {
-    const handle = toHandle(rawHandle);
-    opts?.calls?.push(handle);
-    if (!handle || handle.length < 2) {
-      return PLATFORMS.map((platform) => ({
+    opts?.calls?.push(rawHandle);
+    return PLATFORMS.map((platform) => {
+      const handle = normalizeHandleForPlatform(rawHandle, platform);
+      if (!handle || handle.length < 2) {
+        return {
+          platform,
+          handle,
+          available: null,
+          url: `https://example.test/${platform}/${handle}`,
+        };
+      }
+      const taken = new Set(exists[handle] ?? []);
+      const unknown = new Set(opts?.unknownFor?.[handle] ?? []);
+      return {
         platform,
-        handle: rawHandle,
-        available: null,
-        url: `https://example.test/${platform}/${rawHandle}`,
-      }));
-    }
-    const taken = new Set(exists[handle] ?? []);
-    const unknown = new Set(opts?.unknownFor?.[handle] ?? []);
-    return PLATFORMS.map((platform) => ({
-      platform,
-      handle,
-      available: unknown.has(platform) ? null : taken.has(platform) ? false : true,
-      url: `https://example.test/${platform}/${handle}`,
-    }));
+        handle,
+        available: unknown.has(platform) ? null : taken.has(platform) ? false : true,
+        url: `https://example.test/${platform}/${handle}`,
+      };
+    });
   };
 }
 
@@ -171,8 +177,9 @@ describe("runExecutiveMonitorForExec — detection", () => {
     expect(official!.isOfficialHandle).toBe(true);
   });
 
-  // FIX 1 — the exec's own dotted handle must not be double-flagged.
-  it("does NOT double-flag the exec's own dotted Instagram handle as impersonation", async () => {
+  // Bug #22 — on Instagram, a dotted official handle and its dot-stripped
+  // impostor are DISTINCT accounts and must be told apart.
+  it("distinguishes the exec's dotted Instagram handle from a dot-stripped impostor", async () => {
     const exec: ExecutiveScanInput = {
       id: "exec_jd",
       full_name: "Jane Doe",
@@ -180,18 +187,41 @@ describe("runExecutiveMonitorForExec — detection", () => {
       official_handles: JSON.stringify({ instagram: "jane.doe" }),
       watch_platforms: JSON.stringify(["instagram"]),
     };
-    // The real account lives at instagram.com/jane.doe → the probe strips the
-    // dot, so it exists under the normalized key `janedoe`.
-    const checker = makeChecker({ janedoe: ["instagram"] });
+    // BOTH accounts exist on IG: the exec's real dotted one AND an impostor at
+    // the dot-stripped handle. Instagram keeps dots, so they are separate keys.
+    const checker = makeChecker({ "jane.doe": ["instagram"], janedoe: ["instagram"] });
     const out = await runExecutiveMonitorForExec(exec, checker);
 
     const igHits = out.filter((c) => c.platform === "instagram");
-    // `jane.doe` and `janedoe` collapse to ONE candidate for the account…
-    expect(igHits).toHaveLength(1);
-    expect(igHits[0]!.handle).toBe("janedoe");
-    // …and it is the exec's OWN account, flagged official, never impersonation.
-    expect(igHits[0]!.isOfficialHandle).toBe(true);
-    expect(igHits.some((c) => !c.isOfficialHandle)).toBe(false);
+    const official = igHits.find((c) => c.handle === "jane.doe");
+    const impostor = igHits.find((c) => c.handle === "janedoe");
+
+    // The dotted account is the exec's own → flagged official, never impersonation.
+    expect(official).toBeDefined();
+    expect(official!.isOfficialHandle).toBe(true);
+    // The dot-stripped account is a DIFFERENT account → real impersonation hit.
+    expect(impostor).toBeDefined();
+    expect(impostor!.isOfficialHandle).toBe(false);
+  });
+
+  // Bug #22 — on X/Twitter, dots are illegal, so `jane.doe` collapses to
+  // `janedoe` and matches the exec's undotted official handle (emitted once).
+  it("strips the dot on X so jane.doe collapses to janedoe and matches the official handle", async () => {
+    const exec: ExecutiveScanInput = {
+      id: "exec_jd_x",
+      full_name: "Jane Doe",
+      official_handles: JSON.stringify({ twitter: "janedoe" }),
+      watch_platforms: JSON.stringify(["twitter"]),
+    };
+    // Only the single dot-stripped account exists on X.
+    const checker = makeChecker({ janedoe: ["twitter"] });
+    const out = await runExecutiveMonitorForExec(exec, checker);
+
+    const twHits = out.filter((c) => c.platform === "twitter");
+    // `jane.doe` and `janedoe` candidates both resolve to `janedoe` on X → one row.
+    expect(twHits.filter((c) => c.handle === "janedoe")).toHaveLength(1);
+    expect(twHits.every((c) => c.handle === "janedoe")).toBe(true);
+    expect(twHits[0]!.isOfficialHandle).toBe(true);
   });
 
   it("does NOT return handles that do not exist (available=true)", async () => {
@@ -227,7 +257,7 @@ describe("runExecutiveMonitorForExec — detection", () => {
     expect(calls).toEqual([]); // no candidates → no network probes at all
   });
 
-  it("dedupes network probes: one call per unique NORMALIZED candidate handle", async () => {
+  it("dedupes network probes: one call per unique RAW candidate handle", async () => {
     const calls: string[] = [];
     // watch all six platforms — the point is calls != candidates × platforms.
     const allPlatforms: ExecutiveScanInput = {
@@ -237,10 +267,11 @@ describe("runExecutiveMonitorForExec — detection", () => {
     const checker = makeChecker({}, { calls });
     await runExecutiveMonitorForExec(allPlatforms, checker);
 
-    // Expected probe count = distinct toHandle-normalized candidates
-    // (jane.doe collapses into janedoe), and never exceeds the cap.
+    // One probe per distinct RAW candidate (per-platform normalization happens
+    // INSIDE the probe now, so raw dotted/undotted forms are NOT pre-collapsed),
+    // and never exceeds the cap.
     const expected = new Set(
-      generateExecutiveHandleCandidates("Jane Doe").map(toHandle),
+      generateExecutiveHandleCandidates("Jane Doe").map((h) => h.toLowerCase()),
     ).size;
     expect(calls.length).toBe(expected);
     expect(calls.length).toBeLessThanOrEqual(MAX_CANDIDATES_PER_EXEC);

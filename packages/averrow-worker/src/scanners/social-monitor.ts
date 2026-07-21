@@ -10,6 +10,7 @@
 
 import type { Env } from '../types';
 import { checkSocialHandles, type SocialCheckResult } from '../lib/social-check';
+import { normalizeHandleForPlatform } from '../lib/handle-normalize';
 import { generateHandlePermutations } from '../lib/handle-permutations';
 import { scoreImpersonation, nameSimilarity, type ImpersonationSignals } from './impersonation-scorer';
 import { createAlert } from '../lib/alerts';
@@ -160,13 +161,19 @@ export async function runSocialMonitorForBrand(
       }
     }
 
+    // The handle actually probed for the official account on THIS platform,
+    // normalized per the platform's rules (bug #22) — used to skip permutations
+    // that collapse to the same account.
+    const officialForPlatform = officialHandle
+      ? normalizeHandleForPlatform(officialHandle, platform)
+      : null;
+
+    // Dedup: distinct permutations can collapse to the SAME probed handle on a
+    // given platform (e.g. `jane.doe` and `janedoe` both probe `janedoe` on X).
+    const emittedOnPlatform = new Set<string>();
+
     // 2. Check top permutations for squatting / impersonation
     for (const perm of permsToCheck) {
-      // Skip if this permutation IS the official handle
-      if (officialHandle && perm.handle.toLowerCase() === officialHandle.toLowerCase()) {
-        continue;
-      }
-
       const platformResult = handleResultsByHandle.get(perm.handle.toLowerCase())
         ?.find((r) => r.platform === platform);
 
@@ -175,10 +182,24 @@ export async function runSocialMonitorForBrand(
         continue;
       }
 
+      // The handle the probe ACTUALLY resolved for this platform (dots kept on
+      // Instagram/TikTok/YouTube, stripped on X/GitHub). This is the account
+      // identity, the URL, and the string we score against.
+      const probedHandle = platformResult.handle;
+      if (!probedHandle || probedHandle.length < 2) continue;
+
+      // Skip if this permutation IS the official handle for this platform.
+      if (officialForPlatform && probedHandle === officialForPlatform) {
+        continue;
+      }
+
+      // Collapse duplicate permutations that map to the same probed account.
+      if (emittedOnPlatform.has(probedHandle)) continue;
+
       // Handle exists — score impersonation risk
       const signals: ImpersonationSignals = {
-        name_similarity: nameSimilarity(brand.brand_name, perm.handle),
-        uses_brand_keywords: brandKeywords.some((kw) => perm.handle.toLowerCase().includes(kw)),
+        name_similarity: nameSimilarity(brand.brand_name, probedHandle),
+        uses_brand_keywords: brandKeywords.some((kw) => probedHandle.toLowerCase().includes(kw)),
         account_age_suspicious: false,  // Cannot determine from HEAD request
         low_followers: false,           // Cannot determine from HEAD request
         verified: false,               // Assume not verified (conservative)
@@ -189,15 +210,15 @@ export async function runSocialMonitorForBrand(
 
       // Only report if score indicates at least MEDIUM risk
       if (impersonationResult.score >= 0.3) {
-        const urlTemplate = PLATFORM_URL_TEMPLATES[platform];
+        emittedOnPlatform.add(probedHandle);
         results.push({
           brandId: brand.id,
           platform,
           checkType: 'impersonation_scan',
-          handleChecked: perm.handle,
+          handleChecked: probedHandle,
           handleAvailable: false,
-          suspiciousAccountUrl: urlTemplate ? urlTemplate(perm.handle) : undefined,
-          suspiciousAccountName: perm.handle,
+          suspiciousAccountUrl: platformResult.url,
+          suspiciousAccountName: probedHandle,
           impersonationScore: impersonationResult.score,
           impersonationSignals: impersonationResult.reasons,
           severity: impersonationResult.severity,

@@ -786,7 +786,7 @@ swap to the pre-computed column or the matching cube.
 
 ### Alert auto-triage (`lib/alert-triage.ts`)
 
-`createAlert` dispatches to one of three decision rules based on
+`createAlert` dispatches to one of four decision rules based on
 the new alert's source/type:
 
 1. **Threat-sourced** (`source_type='threat'`, Tier 1) —
@@ -801,14 +801,30 @@ the new alert's source/type:
    independent gates. Dismisses when the alerted handle matches
    the brand's `official_handles` for the same platform (rule B,
    always-safe), OR when `details.score < 0.5` (rule A,
-   low-confidence noise). Either gate is sufficient.
+   low-confidence noise). Either gate is sufficient. Rule B's match
+   is platform-aware via `normalizeHandleForPlatform`
+   (`lib/handle-normalize.ts`): dots are preserved on
+   instagram/tiktok/youtube handles and stripped on
+   twitter/github/linkedin, so a dotted handle like `jane.doe`
+   matches its own official Instagram handle but doesn't
+   spuriously match an undotted impostor, and correctly collapses
+   on platforms where dots aren't legal (#22).
 
 3. **App-store impersonation** (`alert_type='app_store_impersonation'`,
    Tier 1.5) — `decideAppStoreImpersonationTriage` mirrors social
    for the app-store world. Dismisses when bundle_id, app_id,
    developer_id, or developer_name matches the brand's
    `official_apps` for the store (rule B), OR when
-   `details.impersonation_score < 0.5` (rule A).
+   `details.impersonation_score < 0.5` (rule A). Rule B matches on
+   store identifiers/developer name, not a social handle, so the
+   platform-aware handle normalization above doesn't apply here.
+
+4. **Executive impersonation** (`alert_type='executive_impersonation'`,
+   Tier 1.5) — `decideExecutiveImpersonationTriage` is a structural
+   mirror of the social-impersonation decider, but matches against
+   the impersonated executive's own `official_handles`
+   (`org_executives`) rather than the brand's. Same two gates,
+   same platform-aware rule B via `normalizeHandleForPlatform`.
 
 The `0.5` threshold is the platform default — tunable per call via
 the `impersonationThreshold` parameter on `runAlertTriageBackfill`.
@@ -823,7 +839,7 @@ alert_type. Every dismissal stamps the rule reason into
 `resolution_notes` so the action is auditable and reversible.
 
 To add a new alert family's rule, write a new `decide…Triage`
-function alongside the existing three, add a case to
+function alongside the existing four, add a case to
 `runAlertTriageBackfill`'s dispatch switch and to `createAlert`'s
 real-time hook. Don't add a second classifier elsewhere; the
 rules should stay in one place.
