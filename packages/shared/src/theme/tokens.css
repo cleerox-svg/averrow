@@ -80,6 +80,16 @@
   --sev-info-text:     #86efac;
   --cyan-text:         #7aeaff;
 
+  /* ── Amber-as-text (task #23, tenant design-system debt — the
+     averrow-tenant counterpart to the S2.3/ops primitive-debt fix).
+     --amber (#E5A832) used as TEXT color is ~2.1:1 against a light
+     card — fails WCAG AA's 4.5:1 text minimum (the icon/border use of
+     --amber is a non-text 3:1 check and is unaffected — accents stay
+     constant across themes per design rule). Dark-mode default is
+     byte-identical to --amber; the [data-theme="light"] block below
+     supplies the only override. ── */
+  --amber-text: var(--amber);
+
   /* ── Text ── */
   --text-primary:   rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.60);
@@ -188,6 +198,14 @@
   --sev-low-text:      #1d4ed8;
   --sev-info-text:     #166534;
   --cyan-text:         #155e75;
+
+  /* ~5.9:1 on #FFFFFF (--bg-card), ~5.3:1 on #EFF2F7 (--bg-page) —
+     comfortable margin over AA's 4.5:1 on either surface a tenant
+     text-amber site can sit on. Composited over the palest tenant
+     tint in use (bg-amber/[0.12]) the backdrop is still ~(252,246,234),
+     effectively unchanged from raw white, so the same value clears
+     the badge-pill case too (see task #23 notes). */
+  --amber-text: #8a5a00;
 }
 
 /* ============================================================
@@ -408,4 +426,86 @@
    mode; flip it. */
 [data-theme="light"] .detail-stat-metric-label {
   color: rgba(15,20,35,0.40);
+}
+
+/* ============================================================
+   Task #23 — averrow-tenant design-system debt (tenant counterpart
+   to the S2.3 ops primitive-debt fix, 19fa560).
+
+   averrow-tenant's tailwind.config.ts (unlike ops) declares
+   `sev-critical` / `sev-high` / `sev-medium` / `sev-low` and `amber`
+   as literal, theme-constant hex colors, so `text-sev-*` / `text-amber`
+   compile to plain Tailwind utilities with no theme awareness at all.
+   Rather than sweep the ~103 text-sev-* and ~223 text-amber call
+   sites, override the utility CLASSES themselves under
+   [data-theme="light"] — every consumer gets AA-passing color for
+   free, present and future. Specificity (0,2,0) beats Tailwind's
+   plain (0,1,0) utility regardless of stylesheet order, so this is
+   safe even though @import places this file before @tailwind.
+
+   Also safe for averrow-ops, which loads this same file: ops's own
+   tailwind.config.ts has no `sev-*` or bare `amber` color entries
+   (it uses `severity.*` / `afterburner` instead), so `.text-sev-*`
+   and `.text-amber` are not real generated Tailwind utilities there
+   — these rules are inert for every ops call site that already
+   renders correctly, and only helps the handful of legacy `text-amber`
+   / `text-sev-critical` classNames in ops (e.g. DarkWeb.tsx) that
+   currently resolve to no color at all in EITHER theme (a separate,
+   pre-existing ops issue, not touched here).
+
+   Dark mode is untouched — these rules only fire under
+   [data-theme="light"], and dark's --sev-*-text / --amber-text
+   defaults are byte-identical to the values already in use. ── */
+[data-theme="light"] .text-sev-critical { color: var(--sev-critical-text); }
+[data-theme="light"] .text-sev-high     { color: var(--sev-high-text); }
+[data-theme="light"] .text-sev-medium   { color: var(--sev-medium-text); }
+[data-theme="light"] .text-sev-low      { color: var(--sev-low-text); }
+[data-theme="light"] .text-amber        { color: var(--amber-text); }
+/* No `.text-sev-info` rule here: tenant's tailwind.config declares no
+   `sev-info` color key and neither app has a `text-sev-info` call
+   site, so the class is never generated — dead selector, dropped.
+   `--sev-info-text` itself stays (ops Badge consumes it via inline
+   style, not this class). */
+
+/* placeholder-white/35 and the placeholder:text-white/{30,35} variant
+   form (Tailwind's `placeholder:` modifier generates a DIFFERENT
+   class name — `.placeholder\:text-white\/30`, not
+   `.placeholder-white\/30` — even though both target ::placeholder)
+   were missing from the Stage-5 placeholder pass above. Values match
+   the existing text-white/35 and text-white/30 mappings for
+   consistency. */
+[data-theme="light"] .placeholder-white\/35::placeholder      { color: rgba(15,20,35,0.42); }
+[data-theme="light"] .placeholder\:text-white\/30::placeholder { color: rgba(15,20,35,0.36); }
+[data-theme="light"] .placeholder\:text-white\/35::placeholder { color: rgba(15,20,35,0.42); }
+
+/* ── Keyboard focus-visible ring, delivered globally (task #23 issue 2).
+   Targets the Tailwind utility `focus:outline-none`, which every
+   ring-suppressing site in both apps now uses (verified via grep for
+   bare `\boutline-none\b` excluding the `focus:` variant — zero
+   remain). Two ops inputs originally used unconditional `outline-none`
+   (suppressing the outline in ALL states, not just :focus, so this
+   selector never matched them and they had no keyboard ring at all):
+   `components/agents/ConfigView.tsx` and `features/threats/Threats.tsx`.
+   Both were converted to `focus:outline-none` so this rule now covers
+   them for free — no other call-site change needed.
+   Targeting the generated class name directly gives every current AND
+   future `focus:outline-none` call site a keyboard focus ring with
+   zero further call-site edits, instead of introducing `.ds-focusable`
+   markup at ~13 tenant files.
+   Tailwind's own rule is `.focus\:outline-none:focus { outline: 2px
+   solid transparent; ... }` — specificity (0,2,0), loaded after this
+   file (utilities layer comes after this @import). A same-specificity
+   `:focus-visible` rule here would lose that tie by source order, so
+   the class is repeated once to bump specificity to (0,3,0) without
+   resorting to !important. `:focus` (mouse+keyboard) keeps Tailwind's
+   transparent outline; `:focus-visible` (keyboard only) gets the ring.
+   None of the 26 tenant + 5 ops `focus:outline-none` sites sit on an
+   amber-filled surface (all are dark/glass form inputs), so no
+   `-on-amber` swap is needed here. */
+.focus\:outline-none.focus\:outline-none:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+[data-theme="light"] .focus\:outline-none.focus\:outline-none:focus-visible {
+  outline-color: var(--text-primary);
 }

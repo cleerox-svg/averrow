@@ -93,7 +93,7 @@ function ListingRow({ listing: l }: { listing: AppStoreListingRow }) {
             )}
             {l.rating !== null && l.rating > 0 && (
               <span className="inline-flex items-center gap-1">
-                <Star size={11} className="fill-amber text-amber" />
+                <Star size={11} className="fill-[var(--amber-text)] text-[var(--amber-text)]" />
                 {l.rating.toFixed(1)}
                 {l.rating_count !== null && l.rating_count > 0 && (
                   <span className="text-white/35">({formatCount(l.rating_count)})</span>

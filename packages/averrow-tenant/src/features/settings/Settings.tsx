@@ -484,7 +484,7 @@ function SignAuthorizationForm() {
               placeholder="Unlimited"
               value={cap}
               onChange={(e) => setCap(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white placeholder-white/30 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
             />
             <p className="text-[10px] text-white/40 mt-1">Leave blank for unlimited.</p>
           </div>
@@ -499,7 +499,7 @@ function SignAuthorizationForm() {
               placeholder="Off"
               value={autoFollowup}
               onChange={(e) => setAutoFollowup(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white placeholder-white/30 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
             />
             <p className="text-[10px] text-white/40 mt-1">Re-submit after provider misses SLA.</p>
           </div>
@@ -512,7 +512,7 @@ function SignAuthorizationForm() {
           <select
             value={escalation}
             onChange={(e) => setEscalation(e.target.value as EscalationMode)}
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-amber focus:outline-none"
           >
             <option value="auto_resubmit_on_pivot">{ESCALATION_LABELS.auto_resubmit_on_pivot}</option>
             <option value="manual_only">{ESCALATION_LABELS.manual_only}</option>

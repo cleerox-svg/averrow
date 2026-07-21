@@ -289,7 +289,7 @@ function CircuitBreakerSection({ agentId, agent }: { agentId: string; agent: Age
                 value={thresholdInput}
                 onChange={(e) => setThresholdInput(e.target.value)}
                 placeholder="global"
-                className="w-16 px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.1] font-mono text-[11px] text-white/80 outline-none focus:border-amber-500/50"
+                className="w-16 px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/[0.1] font-mono text-[11px] text-white/80 focus:outline-none focus:border-amber-500/50"
               />
               <button
                 onClick={handleThresholdSave}

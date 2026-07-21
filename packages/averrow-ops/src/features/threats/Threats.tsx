@@ -319,7 +319,7 @@ function SlicersBar(props: {
           value={props.search}
           onChange={(e) => props.setSearch(e.target.value)}
           placeholder="Search domain / URL / IP"
-          className="bg-transparent border-none outline-none text-[11px] font-mono"
+          className="bg-transparent border-none focus:outline-none text-[11px] font-mono"
           style={{ color: 'var(--text-primary)', width: 220 }}
         />
       </div>

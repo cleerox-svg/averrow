@@ -170,12 +170,12 @@ function InviteForm() {
           placeholder="email@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="flex-1 min-w-0 rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white placeholder-white/30 focus:border-amber focus:outline-none"
+          className="flex-1 min-w-0 rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
         />
         <select
           value={role}
           onChange={(e) => setRole(e.target.value as OrgRole)}
-          className="rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white focus:border-amber focus:outline-none"
+          className="rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-amber focus:outline-none"
         >
           {INVITABLE_ROLES.map((r) => (
             <option key={r} value={r}>{ORG_ROLE_LABELS[r] ?? r}</option>
@@ -293,7 +293,7 @@ function MemberRow({
             defaultValue={member.role}
             onBlur={() => setEditingRole(false)}
             onChange={(e) => handleRoleChange(e.target.value as OrgRole)}
-            className="rounded-md border border-white/[0.10] bg-bg-page px-2 py-1 text-[11px] font-mono text-white focus:border-amber focus:outline-none"
+            className="rounded-md border border-white/[0.10] bg-bg-page px-2 py-1 text-[11px] font-mono text-white/90 focus:border-amber focus:outline-none"
           >
             {INVITABLE_ROLES.map((r) => (
               <option key={r} value={r}>{ORG_ROLE_LABELS[r] ?? r}</option>
