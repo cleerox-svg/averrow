@@ -7,7 +7,7 @@ interface DrillHeaderProps {
 export function DrillHeader({ title, badge, onBack }: DrillHeaderProps) {
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-40 flex items-center gap-2.5 border-b border-bulkhead px-4 py-3.5"
+      className="fixed top-0 left-0 right-0 z-40 flex items-center gap-2.5 border-b border-[var(--border-strong)] px-4 py-3.5"
       style={{ background: 'var(--bg-page)' }}
     >
       <button

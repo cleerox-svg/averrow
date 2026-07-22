@@ -43,10 +43,6 @@ export default {
         'panel-highlight': '#1A2234',
         'instrument-edge': '#2A3548',
 
-        // Text
-        'instrument-white': '#E8ECF1',
-        'gauge-gray': '#8896AB',
-
         // Primary accent — Afterburner Amber
         'afterburner': {
           DEFAULT: '#E5A832',

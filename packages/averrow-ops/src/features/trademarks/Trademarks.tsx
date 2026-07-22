@@ -25,7 +25,7 @@ function BrandRow({ row, onClick }: { row: TrademarkOverviewRow; onClick: () => 
       className="w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-white/5 transition-colors border-b border-white/[0.04] last:border-b-0"
     >
       <div className="flex-1 min-w-0">
-        <div className="font-mono text-sm text-instrument-white truncate">{row.brand_name}</div>
+        <div className="font-mono text-sm text-[var(--text-primary)] truncate">{row.brand_name}</div>
         <div className="font-mono text-[10px] text-white/50 truncate">{row.domain ?? 'no domain'}</div>
       </div>
 

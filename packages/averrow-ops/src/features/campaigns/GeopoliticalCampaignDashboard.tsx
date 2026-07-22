@@ -63,7 +63,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function TimelineChart({ labels, values }: { labels: string[]; values: number[] }) {
   if (labels.length === 0) {
-    return <p className="text-[11px] text-gauge-gray font-mono">No timeline data available.</p>;
+    return <p className="text-[11px] text-[var(--text-tertiary)] font-mono">No timeline data available.</p>;
   }
 
   const maxVal = Math.max(...values, 1);
@@ -135,7 +135,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
 
 function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count: number; critical_count: number; high_count: number; sector: string | null; bimi_grade?: string | null; domain?: string | null }> }) {
   if (brands.length === 0) {
-    return <p className="text-[11px] text-gauge-gray font-mono">No brand targeting data.</p>;
+    return <p className="text-[11px] text-[var(--text-tertiary)] font-mono">No brand targeting data.</p>;
   }
 
   const maxCount = Math.max(...brands.map(b => b.threat_count), 1);
@@ -156,7 +156,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
               style={{ backgroundColor: `rgba(255,255,255,${opacity * 0.06})` }}
             >
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-mono font-semibold text-instrument-white truncate">
+                <span className="text-[11px] font-mono font-semibold text-[var(--text-primary)] truncate">
                   {brand.name}
                 </span>
                 <div className="flex items-center gap-1.5">
@@ -166,7 +166,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-[9px] font-mono text-gauge-gray">
+              <div className="flex items-center gap-2 text-[9px] font-mono text-[var(--text-tertiary)]">
                 {brand.sector && <span>{brand.sector}</span>}
                 {brand.critical_count > 0 && (
                   <span className="text-[#f87171]">{brand.critical_count} crit</span>
@@ -205,7 +205,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
 
 function AttackTypeBreakdown({ types }: { types: Array<{ threat_type: string; count: number; critical: number; high: number; medium: number; low: number }> }) {
   if (types.length === 0) {
-    return <p className="text-[11px] text-gauge-gray font-mono">No attack type data.</p>;
+    return <p className="text-[11px] text-[var(--text-tertiary)] font-mono">No attack type data.</p>;
   }
 
   const maxCount = Math.max(...types.map(t => t.count), 1);
@@ -218,10 +218,10 @@ function AttackTypeBreakdown({ types }: { types: Array<{ threat_type: string; co
         return (
           <div key={type.threat_type}>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-mono text-instrument-white">
+              <span className="text-[11px] font-mono text-[var(--text-primary)]">
                 {formatThreatType(type.threat_type)}
               </span>
-              <span className="text-[11px] font-mono text-gauge-gray">{type.count}</span>
+              <span className="text-[11px] font-mono text-[var(--text-tertiary)]">{type.count}</span>
             </div>
             <div className="h-2 rounded-full bg-white/5 overflow-hidden">
               <div
@@ -229,7 +229,7 @@ function AttackTypeBreakdown({ types }: { types: Array<{ threat_type: string; co
                 style={{ width: `${pct}%`, backgroundColor: color }}
               />
             </div>
-            <div className="flex gap-3 mt-1 text-[9px] font-mono text-gauge-gray">
+            <div className="flex gap-3 mt-1 text-[9px] font-mono text-[var(--text-tertiary)]">
               {type.critical > 0 && <span className="text-[#f87171]">{type.critical} critical</span>}
               {type.high > 0 && <span className="text-[#fb923c]">{type.high} high</span>}
               {type.medium > 0 && <span className="text-[#fbbf24]">{type.medium} medium</span>}
@@ -245,14 +245,14 @@ function AttackTypeBreakdown({ types }: { types: Array<{ threat_type: string; co
 
 function AsnClusterTable({ asns }: { asns: Array<{ asn: string; provider_name: string; country_code: string | null; threat_count: number; unique_ips: number; unique_domains: number; is_known_adversary: boolean }> }) {
   if (asns.length === 0) {
-    return <p className="text-[11px] text-gauge-gray font-mono">No ASN data.</p>;
+    return <p className="text-[11px] text-[var(--text-tertiary)] font-mono">No ASN data.</p>;
   }
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[11px] font-mono">
         <thead>
-          <tr className="text-gauge-gray text-left border-b border-white/10">
+          <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
             <th className="pb-2 pr-4">ASN</th>
             <th className="pb-2 pr-4">Provider</th>
             <th className="pb-2 pr-4">Country</th>
@@ -265,7 +265,7 @@ function AsnClusterTable({ asns }: { asns: Array<{ asn: string; provider_name: s
           {asns.map(asn => (
             <tr key={asn.asn} className="data-row border-b border-white/5">
               <td className="py-2 pr-4">
-                <span className="text-instrument-white">{asn.asn}</span>
+                <span className="text-[var(--text-primary)]">{asn.asn}</span>
                 {asn.is_known_adversary && (
                   <span className="ml-2 rounded bg-signal-red/20 px-1.5 py-0.5 text-[8px] text-red-400 border border-signal-red/30 uppercase">
                     adversary
@@ -329,14 +329,14 @@ function IocSourceBadges({ sources }: { sources: string[] }) {
 
 function RecentThreatsTable({ threats }: { threats: GeoCampaignThreat[] }) {
   if (threats.length === 0) {
-    return <p className="text-[11px] text-gauge-gray font-mono">No threats detected yet.</p>;
+    return <p className="text-[11px] text-[var(--text-tertiary)] font-mono">No threats detected yet.</p>;
   }
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[11px] font-mono">
         <thead>
-          <tr className="text-gauge-gray text-left border-b border-white/10">
+          <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
             <th className="pb-2 pr-4">Domain</th>
             <th className="pb-2 pr-4">Type</th>
             <th className="pb-2 pr-4">Severity</th>
@@ -348,7 +348,7 @@ function RecentThreatsTable({ threats }: { threats: GeoCampaignThreat[] }) {
         <tbody>
           {threats.slice(0, 20).map(threat => (
             <tr key={threat.id} className="data-row border-b border-white/5">
-              <td className="py-2 pr-4 text-instrument-white truncate max-w-[200px]">
+              <td className="py-2 pr-4 text-[var(--text-primary)] truncate max-w-[200px]">
                 {threat.malicious_domain ?? '—'}
               </td>
               <td className="py-2 pr-4 text-white/70">{formatThreatType(threat.threat_type)}</td>
@@ -381,7 +381,7 @@ function TtpBadges({ ttps }: { ttps: string[] }) {
       {ttps.map(ttp => (
         <span
           key={ttp}
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[11px] text-instrument-white"
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[11px] text-[var(--text-primary)]"
         >
           {ttp}
         </span>
@@ -409,7 +409,7 @@ function EscalationRules({ rules }: { rules: Record<string, string> }) {
           <span className="text-[11px] font-mono text-white/70">
             {signal.replace(/_/g, ' ')}
           </span>
-          <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${severityStyles[action] ?? 'text-gauge-gray bg-white/5 border-white/10'}`}>
+          <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${severityStyles[action] ?? 'text-[var(--text-tertiary)] bg-white/5 border-white/10'}`}>
             {action}
           </span>
         </div>
@@ -466,10 +466,10 @@ export function GeopoliticalCampaignDashboard() {
   if (!campaign) {
     return (
       <div className="p-6">
-        <button onClick={() => navigate('/campaigns')} className="text-[11px] text-gauge-gray hover:text-instrument-white font-mono transition-colors mb-4">
+        <button onClick={() => navigate('/campaigns')} className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors mb-4">
           &larr; Back to Operations
         </button>
-        <p className="text-gauge-gray font-mono">Geopolitical campaign not found.</p>
+        <p className="text-[var(--text-tertiary)] font-mono">Geopolitical campaign not found.</p>
       </div>
     );
   }
@@ -489,7 +489,7 @@ export function GeopoliticalCampaignDashboard() {
       {/* Back nav */}
       <button
         onClick={() => navigate('/campaigns')}
-        className="text-[11px] text-gauge-gray hover:text-instrument-white font-mono transition-colors"
+        className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
       >
         &larr; Back to Operations
       </button>
@@ -504,15 +504,15 @@ export function GeopoliticalCampaignDashboard() {
                   ? 'bg-signal-red/20 text-red-400 border-signal-red/30 animate-pulse'
                   : campaign.status === 'dormant'
                     ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                    : 'bg-white/5 text-gauge-gray border-white/10'
+                    : 'bg-white/5 text-[var(--text-tertiary)] border-white/10'
               }`}>
                 {campaign.status}
               </span>
-              <span className="font-mono text-[10px] text-gauge-gray uppercase tracking-widest">
+              <span className="font-mono text-[10px] text-[var(--text-tertiary)] uppercase tracking-widest">
                 Geopolitical Campaign
               </span>
             </div>
-            <h1 className="text-xl font-mono font-bold text-instrument-white mb-1">
+            <h1 className="text-xl font-mono font-bold text-[var(--text-primary)] mb-1">
               {campaign.name}
             </h1>
             {campaign.description && (
@@ -522,18 +522,18 @@ export function GeopoliticalCampaignDashboard() {
             )}
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-gauge-gray font-mono">Active since</div>
+            <div className="text-[10px] text-[var(--text-tertiary)] font-mono">Active since</div>
             <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--amber)' }}>
               {formatDate(campaign.start_date)}
             </div>
-            <div className="text-[10px] text-gauge-gray font-mono mt-1">{daysActive} days</div>
+            <div className="text-[10px] text-[var(--text-tertiary)] font-mono mt-1">{daysActive} days</div>
           </div>
         </div>
 
         {/* Adversary / Target flags */}
         <div className="flex gap-6 mt-4">
           <div>
-            <span className="text-[9px] font-mono text-gauge-gray uppercase tracking-widest">Adversary</span>
+            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Adversary</span>
             <div className="flex gap-1.5 mt-1">
               {adversaryCountries.map(c => (
                 <span key={c} className="text-lg" title={c}>{countryFlag(c)}</span>
@@ -541,7 +541,7 @@ export function GeopoliticalCampaignDashboard() {
             </div>
           </div>
           <div>
-            <span className="text-[9px] font-mono text-gauge-gray uppercase tracking-widest">Targets</span>
+            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Targets</span>
             <div className="flex gap-1.5 mt-1">
               {targetCountries.map(c => (
                 <span key={c} className="text-lg" title={c}>{countryFlag(c)}</span>
@@ -549,10 +549,10 @@ export function GeopoliticalCampaignDashboard() {
             </div>
           </div>
           <div>
-            <span className="text-[9px] font-mono text-gauge-gray uppercase tracking-widest">Known ASNs</span>
+            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Known ASNs</span>
             <div className="flex gap-1.5 mt-1">
               {adversaryAsns.map(a => (
-                <span key={a} className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-gauge-gray border border-white/10">
+                <span key={a} className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-[var(--text-tertiary)] border border-white/10">
                   {a}
                 </span>
               ))}
@@ -562,7 +562,7 @@ export function GeopoliticalCampaignDashboard() {
       </div>
 
       {/* AI Intelligence Assessment */}
-      <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+      <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
         <div className="flex justify-between items-center mb-3">
           <SectionTitle>AI Intelligence Assessment</SectionTitle>
           <AgentAttribution agent="ASTRA" />
@@ -587,7 +587,7 @@ export function GeopoliticalCampaignDashboard() {
         ) : assessmentError ? (
           <p className="text-[11px] text-red-400 font-mono">{assessmentError}</p>
         ) : (
-          <p className="text-[11px] text-gauge-gray font-mono">
+          <p className="text-[11px] text-[var(--text-tertiary)] font-mono">
             Generate an AI-powered intelligence assessment of this campaign using current platform threat data.
           </p>
         )}
@@ -635,12 +635,12 @@ export function GeopoliticalCampaignDashboard() {
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-[#f87171]" />
               <span className="text-[11px] text-white/60">Critical</span>
-              <span className="text-[11px] font-mono text-instrument-white">{stats?.critical_count ?? 0}</span>
+              <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.critical_count ?? 0}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-[#fb923c]" />
               <span className="text-[11px] text-white/60">High</span>
-              <span className="text-[11px] font-mono text-instrument-white">{stats?.high_count ?? 0}</span>
+              <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.high_count ?? 0}</span>
             </div>
           </div>
         </StatCard>
@@ -656,7 +656,7 @@ export function GeopoliticalCampaignDashboard() {
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-afterburner" />
             <span className="text-[11px] text-white/60">7-day</span>
-            <span className="text-[11px] font-mono text-instrument-white">{stats?.threats_7d ?? 0}</span>
+            <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.threats_7d ?? 0}</span>
           </div>
         </StatCard>
         <StatCard
@@ -685,13 +685,13 @@ export function GeopoliticalCampaignDashboard() {
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-[#fbbf24]" />
             <span className="text-[11px] text-white/60">Domains</span>
-            <span className="text-[11px] font-mono text-instrument-white">{stats?.unique_domains ?? 0}</span>
+            <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.unique_domains ?? 0}</span>
           </div>
         </StatCard>
       </div>
 
       {/* Timeline */}
-      <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+      <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
         <SectionTitle>Attack Timeline</SectionTitle>
         {timeline ? (
           <TimelineChart labels={timeline.labels} values={timeline.values} />
@@ -703,7 +703,7 @@ export function GeopoliticalCampaignDashboard() {
       {/* Two-column: Brands + Attack Types */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Targeted Brands Heat Map */}
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <SectionTitle>Targeted Brands Heat Map</SectionTitle>
           {brands ? (
             <BrandsHeatMap brands={brands} />
@@ -713,7 +713,7 @@ export function GeopoliticalCampaignDashboard() {
         </div>
 
         {/* Attack Type Breakdown */}
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <SectionTitle>Attack Type Breakdown</SectionTitle>
           {attackTypes ? (
             <AttackTypeBreakdown types={attackTypes} />
@@ -724,7 +724,7 @@ export function GeopoliticalCampaignDashboard() {
       </div>
 
       {/* ASN Cluster Analysis */}
-      <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+      <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
         <SectionTitle>ASN Cluster Analysis</SectionTitle>
         {asns ? (
           <AsnClusterTable asns={asns} />
@@ -736,7 +736,7 @@ export function GeopoliticalCampaignDashboard() {
       {/* Two-column: Threat Actors + IOC Sources */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Threat Actor Attribution */}
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <SectionTitle>Threat Actor Attribution</SectionTitle>
           <ThreatActorCards actors={threatActors} />
           {ttps.length > 0 && (
@@ -748,7 +748,7 @@ export function GeopoliticalCampaignDashboard() {
         </div>
 
         {/* IOC Correlation Sources */}
-        <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+        <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
           <SectionTitle>IOC Correlation Sources</SectionTitle>
           <IocSourceBadges sources={iocSources} />
           {Object.keys(escalationRules).length > 0 && (
@@ -761,7 +761,7 @@ export function GeopoliticalCampaignDashboard() {
       </div>
 
       {/* Recent Threats */}
-      <div className="rounded-xl border border-white/10 bg-instrument-panel p-4">
+      <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
         <div className="flex items-center justify-between mb-3">
           <SectionTitle>Recent Threats ({threatsData?.total ?? 0})</SectionTitle>
         </div>

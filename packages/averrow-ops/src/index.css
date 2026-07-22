@@ -25,9 +25,18 @@
   }
 
   ::selection {
-    background: rgba(200, 60, 60, 0.3);
+    background: var(--red-border);
     color: #F0EDE8;
   }
+}
+
+/* [data-theme="light"] parity for the ::selection rule above — the
+   background is an accent tint (var(--red-border), constant across
+   themes by design) but the text color #F0EDE8 was tuned for a dark
+   page and is unreadable on the light selection tint. Dark stays
+   byte-identical (declaration above untouched); this is additive. */
+[data-theme="light"] ::selection {
+  color: var(--text-primary);
 }
 
 @layer utilities {
@@ -40,7 +49,7 @@
     background: rgba(15, 23, 42, 0.50);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--border-sidebar);
     border-radius: 0.75rem;
     box-shadow:
       0 4px 24px rgba(0, 0, 0, 0.4),
@@ -57,12 +66,55 @@
 
   .glass-input {
     @apply bg-deep-space/50 backdrop-blur-sm
-           border border-instrument-edge/60 rounded-lg
-           text-instrument-white;
+           border border-instrument-edge/60 rounded-lg;
+    /* was `text-instrument-white` (#E8ECF1, a legacy solid-hex alias for
+       the same "primary readable text" intent as --text-primary); moved
+       out of @apply and onto the token directly so instrument-white can
+       be retired from tailwind.config.ts. Dark delta is imperceptible
+       (#E8ECF1 vs rgba(255,255,255,0.92) composited on the same dark
+       input bg) and this is the exact color the rest of the platform
+       already standardized on. */
+    color: var(--text-primary);
   }
   .glass-input:focus {
     @apply border-afterburner/50 ring-2 ring-afterburner/10;
   }
+}
+
+/* ── [data-theme="light"] parity for the glass framework above ──────
+   .glass-card's background/box-shadow have no exact-hex CSS-var
+   equivalent (they're a bespoke translucent navy tuned for the dark
+   page), so dark stays byte-identical (untouched above) and this
+   block supplies var-driven light values instead — this is also
+   what makes frozen PortfolioHealthCard.tsx (a `.glass-card`
+   consumer) read correctly in light mode without editing that file.
+   border-color already flipped for free via var(--border-sidebar)
+   in the base rule (exact dark-value match). */
+[data-theme="light"] .glass-card {
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.90);
+}
+[data-theme="light"] .glass-card:hover {
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 32px rgba(15, 20, 35, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+@supports not (backdrop-filter: blur(16px)) {
+  [data-theme="light"] .glass-card {
+    background: rgba(255, 255, 255, 0.92);
+  }
+}
+
+/* .glass-input is legacy-token @apply (bg-deep-space/text-instrument-white
+   etc, none theme-aware) — dark stays untouched, light gets a full var-driven
+   repaint using the semantically-correct input tokens. */
+[data-theme="light"] .glass-input {
+  background: var(--bg-input);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+[data-theme="light"] .glass-input:focus {
+  border-color: var(--amber-border);
+  box-shadow: 0 0 0 2px var(--amber-glow);
 }
 
 /* ═══════════════════════════════════════════════
@@ -99,12 +151,28 @@
   box-shadow:
     0 0 16px rgba(229,168,50,0.25),
     inset 0 1px 0 rgba(255,255,255,0.1);
-  color: #E5A832;
+  color: var(--amber);
 }
 .glass-btn-active:hover {
   box-shadow:
     0 0 24px rgba(229,168,50,0.35),
     inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+/* [data-theme="light"] parity — .glass-btn's neutral white-alpha
+   surface (no exact var match) and .glass-btn-active's amber-as-text
+   (AA fails on a light card at raw --amber, needs --amber-text).
+   Dark stays byte-identical throughout (bases above untouched /
+   var(--amber) dark-matches the #E5A832 it replaced). */
+[data-theme="light"] .glass-btn {
+  background: rgba(15, 20, 35, 0.04);
+  border-color: var(--border-base);
+}
+[data-theme="light"] .glass-btn:hover {
+  background: rgba(15, 20, 35, 0.06);
+}
+[data-theme="light"] .glass-btn-active {
+  color: var(--amber-text);
 }
 
 /* ── STATUS BADGES ───────────────────────────── */
@@ -124,41 +192,41 @@
   background: rgba(251,146,60,0.12);
   border: 1px solid rgba(251,146,60,0.35);
   box-shadow: 0 0 8px rgba(251,146,60,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
-  color: #fb923c;
+  color: var(--sev-high);
 }
 .badge-pivot {
   background: rgba(229,168,50,0.1);
   border: 1px solid rgba(229,168,50,0.35);
   box-shadow: 0 0 8px rgba(229,168,50,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
-  color: #E5A832;
+  color: var(--amber);
 }
 .badge-active {
   background: rgba(74,222,128,0.1);
   border: 1px solid rgba(74,222,128,0.3);
   box-shadow: 0 0 8px rgba(74,222,128,0.15);
-  color: #4ADE80;
+  color: var(--sev-info);
 }
 .badge-dormant {
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.4);
+  color: var(--text-tertiary);
 }
 .badge-critical {
   background: rgba(200,60,60,0.12);
   border: 1px solid rgba(200,60,60,0.4);
   box-shadow: 0 0 10px rgba(200,60,60,0.25);
-  color: #f87171;
+  color: var(--sev-critical);
   animation: badge-pulse-critical 3s ease-in-out infinite;
 }
 .badge-high {
   background: rgba(229,168,50,0.12);
   border: 1px solid rgba(229,168,50,0.3);
-  color: #E5A832;
+  color: var(--amber);
 }
 .badge-medium {
   background: rgba(10,138,181,0.12);
   border: 1px solid rgba(10,138,181,0.3);
-  color: #0A8AB5;
+  color: var(--blue);
 }
 .badge-low {
   background: rgba(136,150,171,0.1);
@@ -175,13 +243,41 @@
   background: rgba(74,222,128,0.1);
   border: 1px solid rgba(74,222,128,0.3);
   box-shadow: 0 0 6px rgba(74,222,128,0.15);
-  color: #4ADE80;
+  color: var(--sev-info);
 }
 .badge-failed {
   background: rgba(200,60,60,0.1);
   border: 1px solid rgba(200,60,60,0.3);
-  color: #f87171;
+  color: var(--sev-critical);
 }
+
+/* [data-theme="light"] parity for the badge system above. Every badge
+   `color:` was a "dot" hex used directly as text (AVERROW_UI_STANDARD
+   flags this — text should use the -text token, not the dot hex) —
+   dark keeps the exact same rendering (bases above now reference the
+   dot var, byte-identical to the literal hex they replaced), light
+   swaps to the AA-safe -text variant. badge-dormant's neutral bg/border
+   have no exact var match so dark stays raw; light gets a var-driven
+   surface. .badge-low / .badge-nexus have no dot-var equivalent in the
+   token set (legacy gauge-gray / one-off nexus violet) — dark stays
+   raw, light gets a computed AA-safe value. */
+[data-theme="light"] .badge-accelerating { color: var(--sev-high-text); }
+[data-theme="light"] .badge-pivot        { color: var(--amber-text); }
+[data-theme="light"] .badge-active       { color: var(--sev-info-text); }
+[data-theme="light"] .badge-dormant {
+  background: rgba(15, 20, 35, 0.04);
+  border-color: var(--border-base);
+}
+[data-theme="light"] .badge-critical { color: var(--sev-critical-text); }
+[data-theme="light"] .badge-high     { color: var(--amber-text); }
+[data-theme="light"] .badge-medium   { color: var(--blue-dim); }
+[data-theme="light"] .badge-low {
+  color: var(--text-secondary);
+  border-color: var(--border-base);
+}
+[data-theme="light"] .badge-nexus  { color: #6d28d9; }
+[data-theme="light"] .badge-success { color: var(--sev-info-text); }
+[data-theme="light"] .badge-failed  { color: var(--sev-critical-text); }
 
 /* ── PULSING STATUS DOTS ─────────────────────── */
 .dot-pulse {
@@ -218,6 +314,9 @@
 .dot-pulse-gray {
   background: rgba(255,255,255,0.2);
 }
+[data-theme="light"] .dot-pulse-gray {
+  background: rgba(15, 20, 35, 0.20);
+}
 
 @keyframes pulse-green {
   0%, 100% { box-shadow: 0 0 4px rgba(74,222,128,0.4); }
@@ -244,9 +343,12 @@
 .nav-item-active {
   background: linear-gradient(90deg, rgba(229,168,50,0.1) 0%, rgba(229,168,50,0.02) 100%) !important;
   border-left: 2px solid #E5A832 !important;
-  color: #E5A832 !important;
+  color: var(--amber) !important;
   box-shadow: -4px 0 12px rgba(229, 168, 50, 0.15),
               inset 0 0 20px rgba(229,168,50,0.04);
+}
+[data-theme="light"] .nav-item-active {
+  color: var(--amber-text) !important;
 }
 
 /* ── SECTION LABELS ──────────────────────────── */
@@ -258,6 +360,9 @@
   color: rgba(229,168,50,0.55);
   font-family: 'IBM Plex Mono', monospace;
 }
+[data-theme="light"] .section-label {
+  color: var(--amber-text);
+}
 
 /* ── PROGRESS BARS ───────────────────────────── */
 .progress-bar-track {
@@ -265,6 +370,10 @@
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 4px;
   overflow: hidden;
+}
+[data-theme="light"] .progress-bar-track {
+  background: rgba(15, 20, 35, 0.05);
+  border-color: var(--border-base);
 }
 .progress-bar-fill-teal {
   background: linear-gradient(90deg, #D49A28, #E5A832);
@@ -311,8 +420,11 @@
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: #4ADE80;
+  color: var(--sev-info);
   font-family: 'IBM Plex Mono', monospace;
+}
+[data-theme="light"] .live-indicator {
+  color: var(--sev-info-text);
 }
 .live-indicator::before {
   content: '';
@@ -328,10 +440,14 @@
 .glass-input::placeholder {
   color: rgba(255,255,255,0.3);
 }
+[data-theme="light"] .glass-input::placeholder {
+  color: var(--text-muted);
+}
 
 /* ── SCROLLBAR ───────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+[data-theme="light"] ::-webkit-scrollbar-track { background: rgba(15, 20, 35, 0.03); }
 ::-webkit-scrollbar-thumb {
   background: rgba(229,168,50,0.2);
   border-radius: 2px;
@@ -366,10 +482,13 @@
   font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.15em;
-  color: #E5A832;
+  color: var(--amber);
   text-transform: uppercase;
   gap: 6px;
   white-space: nowrap;
+}
+[data-theme="light"] .ticker-label {
+  color: var(--amber-text);
 }
 
 .ticker-track {
@@ -402,12 +521,20 @@
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   white-space: nowrap;
 }
+[data-theme="light"] .ticker-item {
+  color: var(--text-secondary);
+  border-right-color: var(--border-base);
+}
 
-.ticker-item-critical { color: #f87171; }
-.ticker-item-high     { color: #fb923c; }
-.ticker-item-warning  { color: #fbbf24; }
-.ticker-item-info     { color: rgba(255, 255, 255, 0.6); }
-.ticker-item-success  { color: #4ADE80; }
+.ticker-item-critical { color: var(--sev-critical); }
+.ticker-item-high     { color: var(--sev-high); }
+.ticker-item-warning  { color: var(--sev-medium); }
+.ticker-item-info     { color: var(--text-secondary); }
+.ticker-item-success  { color: var(--sev-info); }
+[data-theme="light"] .ticker-item-critical { color: var(--sev-critical-text); }
+[data-theme="light"] .ticker-item-high     { color: var(--sev-high-text); }
+[data-theme="light"] .ticker-item-warning  { color: var(--sev-medium-text); }
+[data-theme="light"] .ticker-item-success  { color: var(--sev-info-text); }
 
 .ticker-dot {
   width: 5px;
@@ -433,6 +560,9 @@
   color: rgba(229, 168, 50, 0.4);
   font-size: 0.5rem;
   padding: 0 4px;
+}
+[data-theme="light"] .ticker-bullet {
+  color: var(--amber-text);
 }
 
 /* ── SCROLLBAR HIDE (mobile pill containers) ── */
@@ -497,25 +627,25 @@
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.35);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 8px rgba(239,68,68,0.15);
-  color: rgb(252, 165, 165);
+  color: var(--sev-critical-text);
 }
 .chip-high {
   background: rgba(249, 115, 22, 0.12);
   border: 1px solid rgba(249, 115, 22, 0.30);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 6px rgba(249,115,22,0.12);
-  color: rgb(253, 186, 116);
+  color: var(--sev-high-text);
 }
 .chip-medium {
   background: rgba(229, 168, 50, 0.12);
   border: 1px solid rgba(229, 168, 50, 0.28);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 6px rgba(229,168,50,0.10);
-  color: rgb(252, 211, 77);
+  color: var(--sev-medium-text);
 }
 .chip-low {
   background: rgba(59, 130, 246, 0.10);
   border: 1px solid rgba(59, 130, 246, 0.25);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 6px rgba(59,130,246,0.08);
-  color: rgb(147, 197, 253);
+  color: var(--sev-low-text);
 }
 
 /* ── TABLE ROW HOVER — amber left border slide ── */
@@ -640,3 +770,71 @@
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT-MODE PARITY — legacy tailwind.config.ts palette + hardcoded
+   arbitrary-value hex classNames (2026-07 light-mode readability pass).
+
+   tailwind.config.ts declares a fixed, theme-constant color palette
+   (cockpit / instrument / gauge-gray / wing-blue / signal-red /
+   afterburner / positive / accent / warning / contrail, etc.) —
+   utility classes generated from it (`bg-instrument`, `text-accent`, …)
+   carry no theme awareness at all, so consuming files render broken
+   in light mode unless overridden here.
+
+   Same technique tokens.css already uses for `.text-sev-critical` /
+   `.text-amber` (its "task #23" section): target the *generated
+   utility class name* under `[data-theme="light"]` instead of editing
+   every call site. Dark is completely untouched (these rules only
+   fire under [data-theme="light"]) — the base classes stay wired to
+   tailwind.config's literal hexes.
+
+   NEUTRAL surfaces (no accent semantics) get a proper light card/text
+   value. ACCENT-as-text usages (amber/blue/red/green literal hex used
+   directly as a text color instead of the -text variant) get the
+   AA-safe darker pair from the existing token set. ACCENT-as-background
+   /border usages are intentionally left alone — accent hues are
+   constant across themes by design (AVERROW_UI_STANDARD) and read fine
+   as low-alpha fills/borders on a light card. ───────────────────── */
+
+/* Neutral panel/text surfaces. (text-gauge-gray / text-instrument-white
+   were migrated to text-[var(--text-tertiary/primary)] at every call
+   site instead of overridden here — see GeopoliticalCampaignDashboard.tsx,
+   Trademarks.tsx, Apps.tsx — since retiring the class outright was
+   feasible for those two. bg-instrument / bg-cockpit / text-parchment
+   remain in wide/frozen-file use, so they're overridden here instead.) */
+[data-theme="light"] .bg-instrument        { background-color: var(--bg-elevated); }
+[data-theme="light"] .bg-cockpit           { background-color: var(--bg-elevated); }
+[data-theme="light"] .bg-cockpit\/95       { background-color: var(--bg-elevated); }
+[data-theme="light"] .text-parchment       { color: var(--text-primary); }
+[data-theme="light"] .text-contrail\/70    { color: var(--sev-low-text); }
+[data-theme="light"] .text-contrail\/60    { color: var(--sev-low-text); }
+[data-theme="light"] .text-contrail\/50    { color: var(--sev-low-text); }
+
+/* Accent-hex used directly as TEXT (fails/thins AA on a light card —
+   AVERROW_UI_STANDARD says text should read the -text token, not the
+   dot hex; these tailwind.config keys predate that convention) */
+[data-theme="light"] .text-wing-blue  { color: var(--blue-dim); }
+[data-theme="light"] .text-positive   { color: var(--green-dim); }
+[data-theme="light"] .text-accent     { color: var(--red-dim); }
+[data-theme="light"] .text-warning    { color: var(--sev-high-text); }
+
+/* Arbitrary-value `text-[#HEX]` classNames that hardcode a severity/
+   amber dot hex directly (Fix C hardcoded-JSX pattern) — same AA-safe
+   swap, keyed off the exact literal Tailwind generates so no call site
+   needs touching. Covers every case-spelling found in packages/averrow-ops/src. */
+[data-theme="light"] .text-\[\#f87171\],
+[data-theme="light"] .text-\[\#C83C3C\]    { color: var(--sev-critical-text); }
+[data-theme="light"] .text-\[\#fb923c\],
+[data-theme="light"] .text-\[\#FB923C\],
+[data-theme="light"] .text-\[\#f97316\],
+[data-theme="light"] .text-\[\#F97316\]    { color: var(--sev-high-text); }
+[data-theme="light"] .text-\[\#fbbf24\]    { color: var(--sev-medium-text); }
+[data-theme="light"] .text-\[\#60a5fa\],
+[data-theme="light"] .text-\[\#78A0C8\]    { color: var(--sev-low-text); }
+[data-theme="light"] .text-\[\#4ADE80\],
+[data-theme="light"] .text-\[\#4ade80\]    { color: var(--sev-info-text); }
+[data-theme="light"] .text-\[\#E5A832\],
+[data-theme="light"] .text-\[\#D49A28\],
+[data-theme="light"] .hover\:text-\[\#D49A28\]:hover { color: var(--amber-text); }
+[data-theme="light"] .text-\[\#A78BFA\]    { color: #6d28d9; } /* NEXUS violet — no shared token; computed AA-safe pair */
