@@ -56,6 +56,7 @@
   --sev-high-text:     var(--sev-high);
   --sev-medium-text:   var(--sev-medium);
   --sev-low-text:      var(--sev-low);
+  --red-text:          var(--red);
   --green-text:        var(--green);
   --amber-text:        var(--amber);
   --blue-text:         var(--blue);
@@ -108,6 +109,7 @@
   --sev-high-text:     #7c2d12; /* 8.7:1 */
   --sev-medium-text:   #78350f; /* 8.5:1 */
   --sev-low-text:      #1e3a5f; /* 10.7:1 */
+  --red-text:          var(--red-dim);    /* #8B1A1A, 8.68:1 */
   --green-text:        var(--green-dim);  /* #1A6B3C, 6.1:1 */
   --blue-text:         var(--blue-dim);   /* #065A78, 7.1:1 */
   --amber-text:        #92400E;           /* 6.6:1 — --amber-dim fails AA (~3.1:1), so not reused here */

@@ -13,7 +13,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const coreAgents = [
   {
     name: "Threat Detection",
-    color: "#C83C3C",
+    color: "var(--red-text)",
     role: "Feed & certificate monitoring",
     desc: "Watches the open feed network around the clock — phishing databases, malware URL lists, Certificate Transparency logs, DNS intelligence — and hands every new hit to the mesh for scoring the moment it appears.",
   },
@@ -31,7 +31,7 @@ const coreAgents = [
   },
   {
     name: "DNS Resolution",
-    color: "var(--blue-dim)",
+    color: "var(--blue-text)",
     role: "Infrastructure resolution",
     desc: "Resolves the domains and hostnames behind every threat down to live IP addresses in real time, keeping the platform's infrastructure data current as attackers rotate hosting — the foundation the geo and provider mapping layer builds on.",
   },
@@ -558,7 +558,7 @@ const siblingLinks = [
     font-family: var(--font-mono);
     font-size: 0.68rem;
     font-weight: 600;
-    color: var(--red);
+    color: var(--red-text);
     margin-bottom: 0.6rem;
     display: flex;
     align-items: center;

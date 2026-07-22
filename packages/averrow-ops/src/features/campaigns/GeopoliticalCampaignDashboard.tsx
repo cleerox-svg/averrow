@@ -523,7 +523,7 @@ export function GeopoliticalCampaignDashboard() {
           </div>
           <div className="text-right">
             <div className="text-[10px] text-[var(--text-tertiary)] font-mono">Active since</div>
-            <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--amber)' }}>
+            <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--amber-text)' }}>
               {formatDate(campaign.start_date)}
             </div>
             <div className="text-[10px] text-[var(--text-tertiary)] font-mono mt-1">{daysActive} days</div>
@@ -570,7 +570,7 @@ export function GeopoliticalCampaignDashboard() {
             onClick={handleRunAssessment}
             disabled={assessmentMutation.isPending}
             className="rounded-lg border px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
-            style={{ borderColor: 'rgba(229,168,50,0.30)', background: 'rgba(229,168,50,0.10)', color: 'var(--amber)' }}
+            style={{ borderColor: 'rgba(229,168,50,0.30)', background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}
           >
             {assessmentMutation.isPending ? 'Analyzing...' : assessment ? 'Regenerate' : 'Run Assessment'}
           </button>
@@ -647,7 +647,7 @@ export function GeopoliticalCampaignDashboard() {
         <StatCard
           title="LAST 24 HOURS"
           metric={
-            <span className="text-[32px] font-bold leading-none" style={{ color: 'var(--amber)' }}>
+            <span className="text-[32px] font-bold leading-none" style={{ color: 'var(--amber-text)' }}>
               {stats?.threats_24h ?? 0}
             </span>
           }

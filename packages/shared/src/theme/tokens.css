@@ -206,6 +206,14 @@
      effectively unchanged from raw white, so the same value clears
      the badge-pill case too (see task #23 notes). */
   --amber-text: #8a5a00;
+
+  /* NEXUS badge/label text — no platform token existed for the
+     #A78BFA/#6d28d9 purple used by badge-nexus and the
+     text-[#A78BFA] utility. Dark mode keeps its existing hardcoded
+     class values unchanged (no --nexus-text reference there); this
+     light-mode-only value replaces the two hardcoded #6d28d9
+     light-theme overrides in averrow-ops/src/index.css. */
+  --nexus-text: #6d28d9;
 }
 
 /* ============================================================

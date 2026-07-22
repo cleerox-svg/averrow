@@ -275,7 +275,7 @@
   color: var(--text-secondary);
   border-color: var(--border-base);
 }
-[data-theme="light"] .badge-nexus  { color: #6d28d9; }
+[data-theme="light"] .badge-nexus  { color: var(--nexus-text); }
 [data-theme="light"] .badge-success { color: var(--sev-info-text); }
 [data-theme="light"] .badge-failed  { color: var(--sev-critical-text); }
 
@@ -837,4 +837,4 @@
 [data-theme="light"] .text-\[\#E5A832\],
 [data-theme="light"] .text-\[\#D49A28\],
 [data-theme="light"] .hover\:text-\[\#D49A28\]:hover { color: var(--amber-text); }
-[data-theme="light"] .text-\[\#A78BFA\]    { color: #6d28d9; } /* NEXUS violet — no shared token; computed AA-safe pair */
+[data-theme="light"] .text-\[\#A78BFA\]    { color: var(--nexus-text); } /* NEXUS violet */
