@@ -22,6 +22,8 @@
  */
 
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import process from "node:process";
 
 interface Assertion {
   label: string;
@@ -64,24 +66,115 @@ interface D1Row { n: number }
 interface D1Result { results: D1Row[] }
 interface WranglerOutput { 0?: D1Result; [k: number]: D1Result | undefined }
 
-function runQuery(query: string): number {
-  const escaped = query.replace(/"/g, '\\"');
-  const raw = execSync(
-    `wrangler d1 execute trust-radar-v2 --remote --command "${escaped}" --json`,
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
+/** Runs a shell command and returns stdout. Injectable so the retry
+ *  logic in {@link runQuery} can be unit-tested without a real wrangler
+ *  / Cloudflare round-trip. */
+export type ExecFn = (command: string) => string;
+
+const defaultExec: ExecFn = (command) =>
+  execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+/** Default retry policy for transient wrangler/D1 flakes. */
+export const DEFAULT_MAX_ATTEMPTS = 3;
+export const DEFAULT_BACKOFF_MS = [1000, 2000];
+
+/** Dependency-free synchronous sleep (no extra deps, no async plumbing
+ *  into the top-level script). */
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export interface RunQueryOptions {
+  /** Command executor — defaults to a real `execSync` wrapper. */
+  exec?: ExecFn;
+  /** Sleep between retries — defaults to a real synchronous sleep. */
+  sleep?: (ms: number) => void;
+  /** Total attempts before giving up (>= 1). */
+  maxAttempts?: number;
+  /** Backoff schedule between attempts, in ms. */
+  backoffMs?: number[];
+}
+
+/**
+ * Parse a numeric count out of wrangler's `--json` output.
+ * Returns `undefined` (rather than throwing) when the payload is
+ * missing/non-numeric so the caller can treat it as a retryable
+ * transient — an unparseable body is an infra hiccup, not a seed
+ * problem.
+ */
+function parseCount(raw: string): number | undefined {
+  let parsed: WranglerOutput | D1Result[];
+  try {
+    parsed = JSON.parse(raw) as WranglerOutput | D1Result[];
+  } catch {
+    return undefined;
+  }
   // Wrangler's --json output: [{ results: [{ n: <count> }], ... }] OR object form
-  const parsed = JSON.parse(raw) as WranglerOutput | D1Result[];
   const first = Array.isArray(parsed) ? parsed[0] : parsed[0];
   const rows = first?.results ?? [];
   const n = rows[0]?.n;
-  if (typeof n !== "number") {
-    throw new Error(`Query did not return a numeric count: ${raw.slice(0, 200)}`);
-  }
-  return n;
+  return typeof n === "number" ? n : undefined;
 }
 
-function main(): void {
+/**
+ * Run one assertion query against remote D1 and return its count.
+ *
+ * Retries ONLY on transient infrastructure failures — the exec call
+ * throwing (non-zero wrangler exit) or returning unparseable/non-numeric
+ * output. A query that SUCCEEDS but returns a low count (e.g. 0 when a
+ * seed is expected) is returned as-is on the first attempt and is NEVER
+ * retried: that is a genuine seed-missing failure and must surface
+ * loudly to the caller, not be masked by a retry loop.
+ */
+export function runQuery(query: string, opts: RunQueryOptions = {}): number {
+  const exec = opts.exec ?? defaultExec;
+  const sleep = opts.sleep ?? sleepSync;
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
+
+  const escaped = query.replace(/"/g, '\\"');
+  const command = `wrangler d1 execute trust-radar-v2 --remote --command "${escaped}" --json`;
+
+  let lastError: Error = new Error("runQuery: no attempts made");
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let raw: string;
+    try {
+      raw = exec(command);
+    } catch (err) {
+      // Transient: wrangler exited non-zero (network blip, D1 5xx, etc.).
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxAttempts) {
+        console.error(`    ↻ transient exec failure (attempt ${attempt}/${maxAttempts}): ${lastError.message.split("\n")[0]}`);
+        sleep(backoffMs[attempt - 1] ?? backoffMs[backoffMs.length - 1] ?? 0);
+        continue;
+      }
+      throw lastError;
+    }
+
+    const n = parseCount(raw);
+    if (typeof n === "number") {
+      // Success — return the count verbatim, INCLUDING low/zero counts.
+      // Threshold enforcement lives in main(); we must not retry a real
+      // seed-missing result or we'd hide a genuine data problem.
+      return n;
+    }
+
+    // Exec succeeded but produced unparseable/non-numeric output — treat
+    // as a transient (partial write, truncated pipe) and retry.
+    lastError = new Error(`Query did not return a numeric count: ${raw.slice(0, 200)}`);
+    if (attempt < maxAttempts) {
+      console.error(`    ↻ unparseable output (attempt ${attempt}/${maxAttempts})`);
+      sleep(backoffMs[attempt - 1] ?? backoffMs[backoffMs.length - 1] ?? 0);
+      continue;
+    }
+    throw lastError;
+  }
+  // Unreachable — the loop either returns or throws.
+  throw lastError;
+}
+
+export function main(): void {
   let failed = 0;
   console.log("─── DB seed verification ───");
   for (const a of ASSERTIONS) {
@@ -112,4 +205,8 @@ function main(): void {
   console.log(`\n  All ${ASSERTIONS.length} seed assertions passed.`);
 }
 
-main();
+// Run only when invoked directly (tsx scripts/verify-db-seed.ts), not when
+// imported by a test — importing must not fire real wrangler commands.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}
