@@ -835,6 +835,18 @@
 [data-theme="light"] .text-positive   { color: var(--green-dim); }
 [data-theme="light"] .text-accent     { color: var(--red-dim); }
 [data-theme="light"] .text-warning    { color: var(--sev-high-text); }
+/* Opacity-modifier + hover variants of the accent-as-text classes above.
+   Tailwind generates each `text-accent/60`, `hover:text-accent`, … as its
+   own class name, so the base rules don't match them — they'd otherwise
+   render the raw dark dot-hex at reduced alpha on a light card (same AA
+   failure the base rules fix). Map to the full -dim token (drop the alpha,
+   as `.text-contrail\/70` above already does) so contrast stays AA-safe. */
+[data-theme="light"] .text-accent\/85,
+[data-theme="light"] .text-accent\/70,
+[data-theme="light"] .text-accent\/60,
+[data-theme="light"] .hover\:text-accent:hover   { color: var(--red-dim); }
+[data-theme="light"] .text-positive\/80,
+[data-theme="light"] .text-positive\/70          { color: var(--green-dim); }
 
 /* Arbitrary-value `text-[#HEX]` classNames that hardcode a severity/
    amber dot hex directly (Fix C hardcoded-JSX pattern) — same AA-safe
