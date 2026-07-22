@@ -42,6 +42,16 @@ function countryFlag(code: string | null): string {
   );
 }
 
+function parseJsonArray(val: string | null): string[] {
+  if (!val) return [];
+  try {
+    const parsed = JSON.parse(val);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function SectionDivider({ label }: { label: string }) {
   return (
     <div className="px-4 py-2 flex items-center gap-2">
@@ -60,9 +70,10 @@ function Divider() {
 
 // ─── Summary header ─────────────────────────────────────────
 const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }) {
-  const { data: stats } = useObservatoryStats({ period });
-  const { data: nodesData } = useObservatoryThreats({ period });
+  const { data: stats, error: statsError, refetch: refetchStats } = useObservatoryStats({ period });
+  const { data: nodesData, error: nodesError, refetch: refetchNodes } = useObservatoryThreats({ period });
   const nodes = nodesData ?? [];
+  const summaryError = statsError || nodesError;
 
   const sev = nodes.reduce(
     (a, n) => ({
@@ -93,6 +104,23 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
 
   return (
     <div className="px-4 pt-3 pb-1">
+      {summaryError && (
+        <div
+          className="flex items-center justify-between gap-2 mb-2 px-2 py-1.5 rounded"
+          style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
+        >
+          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+            Summary failed to load
+          </span>
+          <button
+            onClick={() => { if (statsError) refetchStats(); if (nodesError) refetchNodes(); }}
+            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-2 mb-2">
         <Stat label="Threats" value={stats?.threats_mapped} />
         <Stat label="Countries" value={stats?.countries} />
@@ -269,6 +297,7 @@ const OperationsWidget = memo(function OperationsWidget() {
       ) : (
         operations.map((op) => {
           const countries = op.countries ? JSON.parse(op.countries) as string[] : [];
+          const asns = parseJsonArray(op.asns);
           const isAccelerating = op.agent_notes?.includes('ACCELERATING');
           return (
             <div
@@ -286,6 +315,18 @@ const OperationsWidget = memo(function OperationsWidget() {
                 <span>{op.threat_count.toLocaleString()} threats</span>
                 {countries.length > 0 && <span>{countries.slice(0, 3).join(', ')}</span>}
               </div>
+              {(asns.length > 0 || op.confidence_score != null) && (
+                <div className="flex items-center gap-3 text-[9px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  {asns.length > 0 && (
+                    <span className="truncate">{asns.slice(0, 2).join(', ')}</span>
+                  )}
+                  {op.confidence_score != null && (
+                    <span className="shrink-0 ml-auto tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                      {op.confidence_score}% conf
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           );
         })

@@ -8,8 +8,8 @@
 
 import ReactDOM from 'react-dom/client';
 import { ExposureGauge } from '../features/brands/components/ExposureGauge';
-import { ThreatMap } from '../features/observatory/components/ThreatMap';
-import { EventTicker } from '../features/observatory/components/EventTicker';
+import { ThreatMap } from '../components/observatory/ThreatMap';
+import { EventTicker } from '../components/observatory/EventTicker';
 import type { ThreatPoint, ArcData } from '../hooks/useObservatory';
 import '../index.css';
 

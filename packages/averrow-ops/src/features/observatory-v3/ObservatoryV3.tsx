@@ -15,12 +15,12 @@ import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { useOperations } from '@/hooks/useOperations';
 import type { Operation } from '@/hooks/useOperations';
-import { Card, Tabs } from '@/components/ui';
+import { Card, Tabs, Button } from '@/components/ui';
 import { ObservatoryVersionToggle } from '@/components/ui/ObservatoryVersionToggle';
-import { EventTicker } from '@/features/observatory/components/EventTicker';
+import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
-import { RefreshCw, PanelRightOpen, PanelRightClose } from 'lucide-react';
+import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
@@ -54,14 +54,25 @@ export function ObservatoryV3() {
   const [clickedCluster, setClickedCluster] = useState<{ cluster: Operation; x: number; y: number } | null>(null);
 
   // ─── Data ──
-  const { data: threatsRaw, isRefreshing, refetch } = useObservatoryThreats({ period, source });
+  const { data: threatsRaw, isRefreshing, error: threatsError, refetch } = useObservatoryThreats({ period, source });
   const threats = threatsRaw ?? [];
-  const { data: stats } = useObservatoryStats({ period, source });
-  const { data: arcs } = useObservatoryArcs({ period, source });
+  const { data: stats, error: statsError, refetch: refetchStats } = useObservatoryStats({ period, source });
+  const { data: arcs, error: arcsError, refetch: refetchArcs } = useObservatoryArcs({ period, source });
   const arcsResolved = arcs ?? [];
   const { data: operations = [] } = useOperations({ status: 'active', limit: 50 });
-  const { data: heatmapRaw } = useObservatoryHeatmap({ period });
+  const { data: heatmapRaw, error: heatmapError, refetch: refetchHeatmap } = useObservatoryHeatmap({ period });
   const heatmapData = heatmapRaw ?? [];
+
+  // Uniform across the four useObservatoryQuery-backed hooks above — same
+  // { error, refetch } shape (useObservatoryQuery.ts), so one combined
+  // retry-all affordance covers them without per-query bespoke handling.
+  const loadError = threatsError || statsError || arcsError || heatmapError;
+  const retryFailed = useCallback(() => {
+    if (threatsError) refetch();
+    if (statsError) refetchStats();
+    if (arcsError) refetchArcs();
+    if (heatmapError) refetchHeatmap();
+  }, [threatsError, statsError, arcsError, heatmapError, refetch, refetchStats, refetchArcs, refetchHeatmap]);
 
   const handleArcClick = useCallback((arc: ArcData, x: number, y: number) => {
     setClickedCluster(null);
@@ -153,6 +164,39 @@ export function ObservatoryV3() {
           <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {/* ─── Load-error banner ──────────────────────────────────
+          Mirrors v2's Observatory.tsx "Load failed / Retry" affordance
+          (previously the only version that surfaced this) — a failed
+          threats/stats/arcs/heatmap fetch no longer renders silently. */}
+      {loadError && (
+        <Card
+          variant="critical"
+          style={{
+            position: 'absolute',
+            top: 56,
+            // Clear the default-open desktop SidePanel (w-80 = 320px) +
+            // its own inset gap; collapses to a flat right-16 when the
+            // panel is closed or on mobile (SidePanel doesn't render there).
+            right: showPanel && !isMobile ? 336 : 16,
+            zIndex: 30,
+            padding: '8px 12px',
+            maxWidth: 260,
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={13} style={{ color: 'var(--sev-critical)', flexShrink: 0 }} />
+            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+              Observatory data failed to load
+            </span>
+          </div>
+          <div className="mt-1.5">
+            <Button variant="danger" size="sm" onClick={retryFailed} icon={<RefreshCw size={11} />}>
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* ─── Bottom-left: Layer toggles ───────────────────────── */}
       {!isMobile && mapMode === 'global' && (

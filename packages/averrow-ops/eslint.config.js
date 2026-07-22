@@ -25,12 +25,12 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       // Frozen components (CLAUDE.md §4) — never refactored, exempt from lint.
-      'src/features/observatory/components/ThreatMap.tsx',
+      'src/components/observatory/ThreatMap.tsx',
       'src/features/brands/components/ExposureGauge.tsx',
       'src/features/brands/components/PortfolioHealthCard.tsx',
       'src/features/brands/components/Sparkline.tsx',
       'src/components/ui/ActivitySparkline.tsx',
-      'src/features/observatory/components/EventTicker.tsx',
+      'src/components/observatory/EventTicker.tsx',
     ],
   },
   {

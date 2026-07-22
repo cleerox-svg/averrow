@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
 import { useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap } from '@/hooks/useObservatory';
 import type { ArcData } from '@/hooks/useObservatory';
-import { ThreatMap } from './components/ThreatMap';
-import type { MapMode } from './components/ThreatMap';
+import { ThreatMap } from '@/components/observatory/ThreatMap';
+import type { MapMode } from '@/components/observatory/ThreatMap';
 import { useBrands } from '@/hooks/useBrands';
 import { useProviders } from '@/hooks/useProviders';
 import { useAgents } from '@/hooks/useAgents';
 import { useOperations } from '@/hooks/useOperations';
 import type { Operation } from '@/hooks/useOperations';
 import { Card, Tabs, FilterBar, Badge } from '@/components/ui';
-import { EventTicker } from './components/EventTicker';
+import { EventTicker } from '@/components/observatory/EventTicker';
 import { relativeTime } from '@/lib/time';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
