@@ -6,13 +6,14 @@
  * Designed for rip-and-replace: same hooks, same data, swap route when ready.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap } from '@/hooks/useObservatory';
 import type { ArcData } from '@/hooks/useObservatory';
 import { ThreatMapV3 } from './components/ThreatMapV3';
 import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
+import { BottomSheet } from '@/components/BottomSheet';
 import { useOperations } from '@/hooks/useOperations';
 import type { Operation } from '@/hooks/useOperations';
 import { Card, Tabs, Button } from '@/components/ui';
@@ -20,7 +21,7 @@ import { ObservatoryVersionToggle } from '@/components/ui/ObservatoryVersionTogg
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
-import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle } from 'lucide-react';
+import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, ChevronDown } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
@@ -54,6 +55,36 @@ export function ObservatoryV3() {
   const [showBeams, setShowBeams] = useState(false); // beams off by default
   const [showParticles, setShowParticles] = useState(true);
   const [showPanel, setShowPanel] = useState(!isMobile);
+  // C1 — mobile-only: the 3 control rows (mode/period/source) collapse
+  // behind a single summary toggle so they don't crowd the map. Mirrors
+  // v2's Observatory.tsx filtersExpanded pattern (~line 70-83).
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // C2 — mobile-only: bottom-sheet drawer exposing the same SidePanel
+  // widgets desktop gets docked on the right.
+  const [showMobilePanel, setShowMobilePanel] = useState(false);
+
+  const handleFilterSelect = useCallback((setter: () => void) => {
+    setter();
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    collapseTimer.current = setTimeout(() => setFiltersExpanded(false), 300);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    };
+  }, []);
+
+  // Review fix (LOW): if the viewport crosses back to desktop while the
+  // mobile filter panel/drawer is open, don't let it silently spring back
+  // open the next time the viewport narrows to mobile again.
+  useEffect(() => {
+    if (!isMobile) {
+      setFiltersExpanded(false);
+      setShowMobilePanel(false);
+    }
+  }, [isMobile]);
 
   // Click state
   const [clickedArc, setClickedArc] = useState<{ arc: ArcData; x: number; y: number } | null>(null);
@@ -118,65 +149,199 @@ export function ObservatoryV3() {
       </div>
 
       {/* ─── Top controls ─────────────────────────────────────── */}
-      <div className="absolute top-3 left-4 z-10 flex flex-col gap-1.5">
-        {/* Mode tabs */}
-        <Tabs
-          tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
-          activeTab={mapMode}
-          onChange={(id) => setMapMode(id as MapMode)}
-          variant="bar"
-        />
-        {/* Period + controls row */}
-        <div className="flex items-center gap-2">
+      {isMobile ? (
+        /* R10 mobile chrome (C1): fold Mode + Period + Source behind a
+           single collapsible summary toggle so 3 stacked rows don't sit
+           on top of the map. Pattern mirrors v2's Observatory.tsx
+           filtersExpanded block (~line 184-268). Desktop branch below is
+           untouched. */
+        <div className="absolute top-3 left-0 right-0 z-10 flex flex-col gap-1.5 px-4">
+          {/* Review fix (MUST #1): the unconditional top-right cluster
+              (ObservatoryVersionToggle + LiveIndicator + Refresh, below)
+              shares this same top-3 band on desktop. On mobile it's gated
+              off entirely and a minimal LiveIndicator + Refresh subset
+              rides in-flow alongside the summary toggle instead of
+              absolutely-pinned top-right — normal flexbox flow means it
+              can never overlap the summary button, at any width. */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setFiltersExpanded(prev => !prev)}
+              className="ds-focusable"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                background: 'var(--bg-card)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid var(--border-base)',
+                borderRadius: 10,
+                padding: '8px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <span className="text-xs font-mono truncate">
+                <span style={{ color: 'var(--amber-text)' }}>{MAP_MODES.find(m => m.id === mapMode)?.label}</span>
+                <span style={{ color: 'var(--text-tertiary)' }}> · </span>
+                <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
+                <span style={{ color: 'var(--text-tertiary)' }}> · </span>
+                <span style={{ color: 'var(--amber-text)' }}>{SOURCES.find(s => s.id === source)?.label}</span>
+              </span>
+              <ChevronDown
+                className={cn('w-3.5 h-3.5 transition-transform duration-300 shrink-0', filtersExpanded && 'rotate-180')}
+                style={{ color: 'var(--text-tertiary)' }}
+              />
+            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <LiveIndicator />
+              <button
+                onClick={() => refetch()}
+                className="ds-focusable p-1.5 rounded-md transition-colors"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-base)',
+                  color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              'overflow-hidden transition-all duration-300 ease-in-out',
+              filtersExpanded ? 'max-h-[420px] opacity-100' : 'max-h-0 opacity-0'
+            )}
+          >
+            <Card variant="elevated" style={{ marginTop: 4, padding: '8px 14px' }}>
+              {/* VIEW group (map mode) */}
+              <div style={{ padding: '6px 0' }}>
+                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>View</div>
+                <Tabs
+                  tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
+                  activeTab={mapMode}
+                  onChange={(id) => handleFilterSelect(() => setMapMode(id as MapMode))}
+                  variant="bar"
+                />
+              </div>
+
+              {/* TIME group */}
+              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
+                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
+                <Tabs
+                  tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
+                  activeTab={period}
+                  onChange={(id) => handleFilterSelect(() => setPeriod(id))}
+                  variant="bar"
+                />
+              </div>
+
+              {/* COLOR group */}
+              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
+                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
+                <button
+                  onClick={() => handleFilterSelect(() => setColorBy(colorBy === 'severity' ? 'type' : 'severity'))}
+                  className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-base)',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {colorBy === 'severity' ? 'By Severity' : 'By Type'}
+                </button>
+              </div>
+
+              {/* SOURCE group */}
+              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
+                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Source</div>
+                <Tabs
+                  tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
+                  activeTab={source}
+                  onChange={(id) => handleFilterSelect(() => setSource(id))}
+                  variant="bar"
+                />
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : (
+        <div className="absolute top-3 left-4 z-10 flex flex-col gap-1.5">
+          {/* Mode tabs */}
           <Tabs
-            tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
-            activeTab={period}
-            onChange={setPeriod}
+            tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
+            activeTab={mapMode}
+            onChange={(id) => setMapMode(id as MapMode)}
             variant="bar"
           />
+          {/* Period + controls row */}
+          <div className="flex items-center gap-2">
+            <Tabs
+              tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
+              activeTab={period}
+              onChange={setPeriod}
+              variant="bar"
+            />
+            <button
+              onClick={() => setColorBy(colorBy === 'severity' ? 'type' : 'severity')}
+              className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-base)',
+                color: 'var(--text-secondary)',
+                backdropFilter: 'blur(12px)',
+                cursor: 'pointer',
+              }}
+            >
+              {colorBy === 'severity' ? 'By Severity' : 'By Type'}
+            </button>
+          </div>
+          {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
+          <Tabs
+            tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
+            activeTab={source}
+            onChange={setSource}
+            variant="bar"
+          />
+        </div>
+      )}
+
+      {/* ─── Top-right: Status + controls (desktop) ────────────────
+          Review fix (MUST #1): this whole cluster shared the top-3 band
+          with the new mobile filter summary and overlapped it at 375px.
+          Gated to desktop; mobile gets a minimal LiveIndicator + Refresh
+          subset laid out in-flow next to the summary toggle instead (see
+          the isMobile controls branch above) — no absolute-position
+          overlap possible. ObservatoryVersionToggle is dropped on mobile
+          rather than repositioned since it's slated for removal in the
+          next phase (v2 retirement). */}
+      {!isMobile && (
+        <div className="absolute top-3 right-4 z-10 flex items-center gap-2">
+          {/* v2 / v3 toggle */}
+          <ObservatoryVersionToggle />
+          {/* Live indicator */}
+          <LiveIndicator />
+          {/* Refresh */}
           <button
-            onClick={() => setColorBy(colorBy === 'severity' ? 'type' : 'severity')}
-            className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
+            onClick={() => refetch()}
+            className="p-1.5 rounded-md transition-colors"
             style={{
               background: 'var(--bg-card)',
               border: '1px solid var(--border-base)',
-              color: 'var(--text-secondary)',
-              backdropFilter: 'blur(12px)',
+              color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
               cursor: 'pointer',
             }}
           >
-            {colorBy === 'severity' ? 'By Severity' : 'By Type'}
+            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
         </div>
-        {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
-        <Tabs
-          tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
-          activeTab={source}
-          onChange={setSource}
-          variant="bar"
-        />
-      </div>
-
-      {/* ─── Top-right: Status + controls ─────────────────────── */}
-      <div className="absolute top-3 right-4 z-10 flex items-center gap-2">
-        {/* v2 / v3 toggle */}
-        <ObservatoryVersionToggle />
-        {/* Live indicator */}
-        <LiveIndicator />
-        {/* Refresh */}
-        <button
-          onClick={() => refetch()}
-          className="p-1.5 rounded-md transition-colors"
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-base)',
-            color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
-            cursor: 'pointer',
-          }}
-        >
-          <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-        </button>
-      </div>
+      )}
 
       {/* ─── Load-error banner ──────────────────────────────────
           Mirrors v2's Observatory.tsx "Load failed / Retry" affordance
@@ -296,6 +461,66 @@ export function ObservatoryV3() {
         >
           {showPanel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
         </button>
+      )}
+
+      {/* ─── Intel FAB (mobile) — opens the bottom-sheet drawer ── */}
+      {isMobile && mapMode !== 'heatmap' && (
+        <button
+          onClick={() => setShowMobilePanel(true)}
+          className="absolute z-20 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+          style={{
+            bottom: 120,
+            right: 16,
+            padding: '9px 16px',
+            borderRadius: 999,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-base)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            color: 'var(--amber-text)',
+            boxShadow: 'var(--card-shadow)',
+            cursor: 'pointer',
+          }}
+        >
+          <PanelRightOpen size={13} />
+          Intel
+        </button>
+      )}
+
+      {/* ─── Intel drawer (mobile) — reuses the existing BottomSheet
+          primitive (src/components/BottomSheet.tsx, already used by
+          UserAvatar/NotificationBell) instead of a hand-rolled portal.
+          Gets Esc-to-close + body-scroll-lock for free. BottomSheet owns
+          the single scroll container (its own `flex-1 overflow-y-auto`
+          wraps these children), so the title row below is made sticky
+          rather than adding a second scroll container. BottomSheet
+          already renders its own grip handle, so ours is dropped; it has
+          no title/close of its own, so both are kept here. */}
+      {isMobile && mapMode !== 'heatmap' && (
+        <BottomSheet open={showMobilePanel} onClose={() => setShowMobilePanel(false)}>
+          <div
+            className="flex items-center justify-between px-4 pb-2"
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 1,
+              background: 'var(--bg-card-deep)',
+              borderBottom: '1px solid var(--border-base)',
+            }}
+          >
+            <span className="font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
+              Intelligence
+            </span>
+            <button
+              onClick={() => setShowMobilePanel(false)}
+              aria-label="Close intelligence panel"
+              style={{ padding: 4, background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+            >
+              <PanelRightClose size={14} />
+            </button>
+          </div>
+          <SidePanel period={period} visible mobile />
+        </BottomSheet>
       )}
 
       {/* ─── Click cards (arc / cluster detail) ───────────────── */}

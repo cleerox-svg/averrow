@@ -521,11 +521,61 @@ const LiveFeedWidget = memo(function LiveFeedWidget() {
 interface SidePanelProps {
   period: string;
   visible: boolean;
+  /**
+   * R10 mobile chrome (C2): when true, renders full-width and in-flow
+   * (no fixed w-80 / absolute right-dock chrome) so the SAME widget set
+   * can be embedded inside a mobile bottom-sheet drawer instead of the
+   * desktop right-docked panel. The caller supplies the sheet's own
+   * background/scroll container — see ObservatoryV3.tsx. Desktop
+   * (`mobile` omitted/false) is unchanged.
+   */
+  mobile?: boolean;
 }
 
-export function SidePanel({ period, visible }: SidePanelProps) {
+export function SidePanel({ period, visible, mobile = false }: SidePanelProps) {
   if (!visible) return null;
   const P = fmtPeriod(period);
+
+  const widgets = (
+    <div className={mobile ? undefined : 'flex-1 overflow-y-auto'}>
+      <SectionDivider label={`Overview · ${P}`} />
+      <SummaryHeader period={period} />
+
+      <Divider />
+      <SectionDivider label={`Top Threat Origins · ${P}`} />
+      <TopOriginsWidget period={period} />
+
+      <Divider />
+      <SectionDivider label={`Top Targeted Brands · ${P}`} />
+      <TopBrandsWidget period={period} />
+
+      <Divider />
+      <SectionDivider label={"Hosting Providers · 7d trend"} />
+      <ProvidersWidget />
+
+      <Divider />
+      <SectionDivider label="Active Operations" />
+      <OperationsWidget />
+
+      <Divider />
+      <SectionDivider label={"Geopolitical Campaigns · 30d"} />
+      <GeoCampaignsWidget />
+
+      <Divider />
+      <SectionDivider label="Agent Intelligence" />
+      <AgentIntelWidget />
+
+      <Divider />
+      <SectionDivider label="Live Feed" />
+      <LiveFeedWidget />
+    </div>
+  );
+
+  if (mobile) {
+    // Full-width, in-flow — the drawer shell (ObservatoryV3.tsx) owns
+    // background, border, positioning and the scrollable container.
+    return <div className="w-full">{widgets}</div>;
+  }
 
   return (
     <div
@@ -538,38 +588,7 @@ export function SidePanel({ period, visible }: SidePanelProps) {
         boxShadow: '-8px 0 40px rgba(0,0,0,0.5), inset 1px 0 0 var(--border-base)',
       }}
     >
-      <div className="flex-1 overflow-y-auto">
-        <SectionDivider label={`Overview · ${P}`} />
-        <SummaryHeader period={period} />
-
-        <Divider />
-        <SectionDivider label={`Top Threat Origins · ${P}`} />
-        <TopOriginsWidget period={period} />
-
-        <Divider />
-        <SectionDivider label={`Top Targeted Brands · ${P}`} />
-        <TopBrandsWidget period={period} />
-
-        <Divider />
-        <SectionDivider label={"Hosting Providers · 7d trend"} />
-        <ProvidersWidget />
-
-        <Divider />
-        <SectionDivider label="Active Operations" />
-        <OperationsWidget />
-
-        <Divider />
-        <SectionDivider label={"Geopolitical Campaigns · 30d"} />
-        <GeoCampaignsWidget />
-
-        <Divider />
-        <SectionDivider label="Agent Intelligence" />
-        <AgentIntelWidget />
-
-        <Divider />
-        <SectionDivider label="Live Feed" />
-        <LiveFeedWidget />
-      </div>
+      {widgets}
     </div>
   );
 }
