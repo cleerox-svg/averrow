@@ -41,6 +41,17 @@ CREATE INDEX IF NOT EXISTS idx_threats_dns_backfill
 -- Includes created_at as the second column so the per-date GROUP BY used
 -- by the threat_history_json subquery can be satisfied from the index
 -- without additional table lookups per cluster.
+--
+-- Fresh-bootstrap fix: `threats.cluster_id` — the NEXUS cluster stamp that
+-- this partial index (and later migrations 0143/0176) key on — exists in
+-- production OUT-OF-BAND; no migration ever ADDs it, so a fresh
+-- `d1 migrations apply` failed creating the index below on a non-existent
+-- column. Add it additively first. Prod-invisible: 0099 is long-applied in
+-- prod (which already has the column) and never re-runs (D1 tracks migrations
+-- by filename). Plain TEXT (no FK) — matches the out-of-band ALTER; the
+-- companion infrastructure_clusters table is created in migration 0136.
+ALTER TABLE threats ADD COLUMN cluster_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_threats_cluster_recent
   ON threats(cluster_id, created_at)
   WHERE cluster_id IS NOT NULL;

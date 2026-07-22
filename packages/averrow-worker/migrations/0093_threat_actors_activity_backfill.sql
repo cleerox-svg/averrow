@@ -39,12 +39,19 @@
 -- Add the columns the handler expects (affiliation, country_code, etc.).
 -- Existing columns that diverge (attribution/country/ttps) are left in
 -- place — they're harmless extras the handler no longer references.
-ALTER TABLE threat_actors ADD COLUMN affiliation TEXT;
-ALTER TABLE threat_actors ADD COLUMN country_code TEXT;
-ALTER TABLE threat_actors ADD COLUMN capability TEXT;
-ALTER TABLE threat_actors ADD COLUMN primary_ttps TEXT;
-ALTER TABLE threat_actors ADD COLUMN attribution_confidence TEXT NOT NULL DEFAULT 'medium';
-ALTER TABLE threat_actors ADD COLUMN source TEXT DEFAULT 'manual';
+--
+-- Fresh-bootstrap fix: in production, threat_actors had a DIVERGENT out-of-band
+-- schema, so 0063's `CREATE TABLE IF NOT EXISTS` no-op'd and these six ALTERs
+-- were needed to heal it (the header note predicts "if this migration fails on
+-- a later ALTER, we iterate"). But on a fresh `d1 migrations apply`, 0063
+-- actually creates threat_actors WITH all six columns (affiliation,
+-- country_code, capability, primary_ttps, attribution_confidence, source), so
+-- these ALTERs fail with "duplicate column name". They are removed here: every
+-- column they added is already in 0063's canonical CREATE, so fresh DBs lose
+-- nothing, and this edit is prod-invisible — 0093 is long-applied in prod
+-- (which already healed via the original ALTERs) and never re-runs (D1 tracks
+-- migrations by filename). The upsert in section 3 still populates these
+-- columns on any pre-existing rows.
 
 CREATE INDEX IF NOT EXISTS idx_threat_actors_country ON threat_actors(country_code);
 CREATE INDEX IF NOT EXISTS idx_threat_actors_status ON threat_actors(status);

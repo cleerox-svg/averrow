@@ -39,6 +39,12 @@ CREATE INDEX idx_providers_reputation ON hosting_providers(reputation_score);
 CREATE TABLE IF NOT EXISTS campaigns (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
+  -- `description` exists in production (added out-of-band; no ALTER migration
+  -- ever introduced it) and is referenced by migration 0062's campaign seed.
+  -- Defining it here on the initial CREATE gives fresh/local bootstrap DBs the
+  -- same column prod already has. Prod-invisible: 0001 is long-applied there
+  -- and never re-runs (D1 tracks migrations by filename).
+  description     TEXT,
   first_seen      TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen       TEXT NOT NULL DEFAULT (datetime('now')),
   threat_count    INTEGER NOT NULL DEFAULT 0,

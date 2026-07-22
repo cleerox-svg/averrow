@@ -2,6 +2,20 @@
 -- NOTE: AbuseIPDB columns (abuseipdb_checked, abuseipdb_score, abuseipdb_reports, abuseipdb_isp)
 -- and CIRCL PDNS columns (pdns_checked, pdns_correlations) already exist on the threats table.
 -- ALTER TABLE ADD COLUMN removed to avoid "duplicate column" errors on re-run.
+--
+-- Fresh-bootstrap fix: those six columns were only ever added OUT-OF-BAND in
+-- prod — no migration adds them — so a fresh `d1 migrations apply` failed later
+-- (0095's partial indexes key on `pdns_checked = 0` / `abuseipdb_checked = 0`).
+-- Re-add them additively here, matching the feed writers' usage
+-- (src/feeds/abuseipdb.ts, src/feeds/circlPassiveDns.ts). Prod-invisible: 0053
+-- is long-applied in prod (which already has the columns) and never re-runs
+-- (D1 tracks migrations by filename).
+ALTER TABLE threats ADD COLUMN abuseipdb_checked INTEGER DEFAULT 0;
+ALTER TABLE threats ADD COLUMN abuseipdb_score   INTEGER;
+ALTER TABLE threats ADD COLUMN abuseipdb_reports INTEGER;
+ALTER TABLE threats ADD COLUMN abuseipdb_isp     TEXT;
+ALTER TABLE threats ADD COLUMN pdns_checked      INTEGER DEFAULT 0;
+ALTER TABLE threats ADD COLUMN pdns_correlations INTEGER;
 
 -- Passive DNS resolution records (relational — one domain maps to many IPs over time)
 CREATE TABLE IF NOT EXISTS passive_dns_records (

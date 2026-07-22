@@ -9,6 +9,7 @@ CREATE TABLE _brands_rebuild (
   name                      TEXT NOT NULL,
   canonical_domain          TEXT NOT NULL,
   sector                    TEXT,
+  source                    TEXT,
   first_seen                TEXT NOT NULL DEFAULT (datetime('now')),
   threat_count              INTEGER NOT NULL DEFAULT 0,
   last_threat_seen          TEXT,
@@ -36,7 +37,7 @@ CREATE TABLE _brands_rebuild (
 );
 
 INSERT INTO _brands_rebuild (
-  id, name, canonical_domain, sector, first_seen, threat_count, last_threat_seen,
+  id, name, canonical_domain, sector, source, first_seen, threat_count, last_threat_seen,
   threat_analysis, analysis_updated_at,
   email_security_score, email_security_grade, email_security_scanned_at,
   official_handles, aliases, brand_keywords, executive_names,
@@ -46,7 +47,7 @@ INSERT INTO _brands_rebuild (
   last_social_scan, next_social_scan
 )
 SELECT
-  id, name, canonical_domain, sector, first_seen, threat_count, last_threat_seen,
+  id, name, canonical_domain, sector, source, first_seen, threat_count, last_threat_seen,
   threat_analysis, analysis_updated_at,
   email_security_score, email_security_grade, email_security_scanned_at,
   official_handles, aliases, brand_keywords, executive_names,

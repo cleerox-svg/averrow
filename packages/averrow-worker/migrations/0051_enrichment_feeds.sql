@@ -14,6 +14,16 @@ ALTER TABLE threats ADD COLUMN vt_checked INTEGER DEFAULT 0;
 ALTER TABLE threats ADD COLUMN vt_malicious INTEGER DEFAULT 0;
 ALTER TABLE threats ADD COLUMN vt_reputation INTEGER;
 
+-- Enrichment completion timestamp (fresh-bootstrap fix). `threats.enriched_at`
+-- exists in production OUT-OF-BAND — no migration ever ADDs it, yet it's the
+-- core "geo/enrichment done" stamp that Cartographer's Phase 0 queue and many
+-- later data migrations (first used by 0091) key on (`enriched_at IS NULL`).
+-- On a fresh `d1 migrations apply` those hit "no such column: enriched_at".
+-- Added here, alongside the other enrichment-state columns and after the 0013
+-- threats rebuild, so fresh/local DBs match prod. Prod-invisible: 0051 is
+-- long-applied there and never re-runs (D1 tracks migrations by filename).
+ALTER TABLE threats ADD COLUMN enriched_at TEXT;
+
 -- Create stealer_log_results table for HIBP integration
 CREATE TABLE IF NOT EXISTS stealer_log_results (
   id TEXT PRIMARY KEY,

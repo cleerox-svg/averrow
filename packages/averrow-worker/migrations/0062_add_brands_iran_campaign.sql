@@ -2,6 +2,23 @@
 -- Priority 1 items: brands (Meta, Palantir), campaign creation, threat tagging
 -- NOTE: source column on brands and description column on campaigns already exist in production
 
+-- ─── 0) Ensure the attributed system/admin user exists ──────────────
+-- monitored_brands.added_by is NOT NULL REFERENCES users(id) (migration 0005).
+-- This migration attributes its internal watchlist rows to a fixed admin
+-- UUID that exists in production out-of-band, but is absent on a fresh/local
+-- bootstrap DB (no migration seeds users), causing the FK to fail here.
+-- Seed it idempotently: INSERT OR IGNORE is a no-op in prod (the real row
+-- already owns this PK) and, on a fresh DB, creates a clearly-synthetic
+-- bootstrap account so the FK is satisfied. role='admin' is CHECK-valid.
+INSERT OR IGNORE INTO users (id, email, name, role, status)
+VALUES (
+  'aae5bfa2-e702-4d48-99f9-4adef43a8330',
+  'bootstrap-system@averrow.internal',
+  'Bootstrap System (dev seed)',
+  'admin',
+  'active'
+);
+
 -- ─── A) Add Meta to monitored_brands ────────────────────────────────
 INSERT OR IGNORE INTO monitored_brands (brand_id, tenant_id, added_by, status)
 SELECT id, '__internal__', 'aae5bfa2-e702-4d48-99f9-4adef43a8330', 'active'
