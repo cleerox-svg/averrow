@@ -346,7 +346,19 @@
 
 /* ── EVENT TICKER ───────────────────────────── */
 .event-ticker {
-  height: 32px;
+  /* Fill whatever height the caller's wrapper gives it (100%, not a fixed
+     px value) — the wrapper (ObservatoryV3.tsx) is the single source of
+     truth for the ticker's height. A fixed px here previously beat the
+     Tailwind `h-full` utility on the component root (unlayered CSS wins
+     over the utility layer), so the ticker rendered shorter than its
+     wrapper and left a transparent strip of map showing below it. */
+  height: 100%;
+  /* EventTicker no longer paints its own dark backdrop (that lived on a
+     `bg-black/80` utility on the component's root, removed along with its
+     self-positioning — see components/observatory/EventTicker.tsx). It now
+     sits directly under the stats bar, which uses the same token, so the
+     two read as one continuous bottom chrome strip. */
+  background: var(--bg-card-deep);
   border-top: 1px solid rgba(229, 168, 50, 0.15);
   border-bottom: 1px solid rgba(229, 168, 50, 0.08);
   display: flex;
@@ -360,13 +372,18 @@
   height: 100%;
   display: flex;
   align-items: center;
-  background: rgba(229, 168, 50, 0.08);
+  /* Reads as a badge/tag rather than plain text. */
+  background: var(--amber-glow);
   border-right: 1px solid rgba(229, 168, 50, 0.2);
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.15em;
-  color: #E5A832;
+  /* Theme-aware — the hardcoded hex was ~1.7:1 (washed-out gold-on-tan)
+     against the light-theme --amber-glow badge background. --amber-text
+     is --amber itself in dark (identical to before) and the AA-safe
+     #8a5a00 in light. */
+  color: var(--amber-text);
   text-transform: uppercase;
   gap: 6px;
   white-space: nowrap;
@@ -403,11 +420,15 @@
   white-space: nowrap;
 }
 
-.ticker-item-critical { color: #f87171; }
-.ticker-item-high     { color: #fb923c; }
-.ticker-item-warning  { color: #fbbf24; }
-.ticker-item-info     { color: rgba(255, 255, 255, 0.6); }
-.ticker-item-success  { color: #4ADE80; }
+/* Theme-aware severity text — these hex values had no light-theme override,
+   so ticker text was unreadable (or low-contrast) in light mode. Swapped to
+   the same --sev-*-text tokens the rest of the platform uses for severity
+   copy (see AVERROW_UI_STANDARD.md / CLAUDE.md §5). */
+.ticker-item-critical { color: var(--sev-critical-text); }
+.ticker-item-high     { color: var(--sev-high-text); }
+.ticker-item-warning  { color: var(--sev-medium-text); }
+.ticker-item-info     { color: var(--text-secondary); }
+.ticker-item-success  { color: var(--sev-info-text); }
 
 .ticker-dot {
   width: 5px;
@@ -415,11 +436,11 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
-.ticker-dot-critical { background: #f87171; box-shadow: 0 0 4px rgba(248,113,113,0.8); }
-.ticker-dot-high     { background: #fb923c; box-shadow: 0 0 4px rgba(251,146,60,0.8); }
-.ticker-dot-warning  { background: #fbbf24; box-shadow: 0 0 4px rgba(251,191,36,0.6); }
+.ticker-dot-critical { background: var(--sev-critical-text); box-shadow: 0 0 4px rgba(248,113,113,0.8); }
+.ticker-dot-high     { background: var(--sev-high-text); box-shadow: 0 0 4px rgba(251,146,60,0.8); }
+.ticker-dot-warning  { background: var(--sev-medium-text); box-shadow: 0 0 4px rgba(251,191,36,0.6); }
 .ticker-dot-info     { background: rgba(255,255,255,0.3); }
-.ticker-dot-success  { background: #4ADE80; box-shadow: 0 0 4px rgba(74,222,128,0.6); }
+.ticker-dot-success  { background: var(--sev-info-text); box-shadow: 0 0 4px rgba(74,222,128,0.6); }
 
 .ticker-agent {
   font-weight: 700;

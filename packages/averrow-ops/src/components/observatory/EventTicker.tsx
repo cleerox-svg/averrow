@@ -107,7 +107,12 @@ export function EventTicker() {
   const doubled = [...events, ...events];
 
   return (
-    <div className="event-ticker fixed bottom-9 left-0 w-full z-30 bg-black/80 backdrop-blur-sm md:bottom-[52px] md:left-[200px] md:w-[calc(100%_-_200px)]">
+    // Root-cause fix: this used to be `fixed` with hardcoded bottom/left/width
+    // offsets (assuming a 200px sidebar, ignorant of the SidePanel), so it
+    // painted across the panel bottom + mis-aligned with the nav on desktop.
+    // It now just fills whatever box the caller (ObservatoryV3.tsx) gives it —
+    // sizing/position is entirely the wrapper's responsibility.
+    <div className="event-ticker w-full h-full">
       {/* Left label */}
       <div className="ticker-label">
         <span className="dot-pulse dot-pulse-teal" style={{ width: 5, height: 5 }} />

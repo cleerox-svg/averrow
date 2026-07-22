@@ -32,6 +32,7 @@ import type { DashboardProvider } from '@/hooks/useProviders';
 import { useOperations } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import { useAgents } from '@/hooks/useAgents';
+import { Card } from '@/components/ui/Card';
 import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
 import { Badge } from '@/components/ui/Badge';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
@@ -59,20 +60,28 @@ function parseJsonArray(val: string | null): string[] {
   }
 }
 
-function SectionDivider({ label }: { label: string }) {
+// Per-widget header row, rendered INSIDE each Card (replaces the old
+// hairline SectionDivider that used to separate flat, un-carded sections —
+// the Card border + the `gap-3` between cards now does that job). Deliberately
+// not Card.tsx's exported `CardHeader` — that hardcodes amber, which reads
+// fine for a single section title but is too loud repeated across 8 stacked
+// widget headers in one panel.
+function WidgetHeader({ label, count }: { label: string; count?: number }) {
   return (
-    <div className="px-4 py-2 flex items-center gap-2">
-      <div className="h-px flex-1 bg-white/[0.08]" />
-      <span className="text-[9px] font-mono tracking-[0.2em] uppercase shrink-0" style={{ color: 'var(--text-muted)' }}>
+    <div className="flex items-center justify-between mb-2">
+      <span
+        className="text-[9px] font-mono font-bold uppercase tracking-[0.20em]"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
         {label}
       </span>
-      <div className="h-px flex-1 bg-white/[0.08]" />
+      {count !== undefined && (
+        <span className="text-[9px] font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {count}
+        </span>
+      )}
     </div>
   );
-}
-
-function Divider() {
-  return <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mx-4 my-2" />;
 }
 
 // ─── Summary header ─────────────────────────────────────────
@@ -110,7 +119,8 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
   );
 
   return (
-    <div className="px-4 pt-3 pb-1">
+    <div>
+      <WidgetHeader label={`Overview · ${fmtPeriod(period)}`} />
       {summaryError && (
         <div
           className="flex items-center justify-between gap-2 mb-2 px-2 py-1.5 rounded"
@@ -167,7 +177,8 @@ const TopOriginsWidget = memo(function TopOriginsWidget({ period }: { period: st
   const max = top[0]?.[1] ?? 1;
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label={`Top Threat Origins · ${fmtPeriod(period)}`} />
       {top.length === 0 ? (
         <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No geolocated threats in this period</div>
       ) : (
@@ -226,7 +237,8 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
   const { data: brands = [] } = useBrands({ view: 'top', limit: 8, timeRange: period });
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label={`Top Targeted Brands · ${fmtPeriod(period)}`} count={brands.length} />
       {brands.length === 0 ? (
         <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No targeted brands in this period</div>
       ) : (
@@ -265,7 +277,8 @@ const ProvidersWidget = memo(function ProvidersWidget() {
   const { data: improving = [] } = useDashboardProviders('improving', 3);
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label="Hosting Providers · 7d trend" />
       <div className="mb-2">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-critical)' }} />
@@ -298,7 +311,8 @@ const OperationsWidget = memo(function OperationsWidget() {
   const { data: operations = [] } = useOperations({ status: 'active', limit: 4 });
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label="Active Operations" count={operations.length} />
       {operations.length === 0 ? (
         <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active operations</div>
       ) : (
@@ -355,7 +369,8 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
   });
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label="Geopolitical Campaigns · 30d" />
       {recent.length === 0 ? (
         <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active campaigns</div>
       ) : (
@@ -399,7 +414,8 @@ const AgentIntelWidget = memo(function AgentIntelWidget() {
   );
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label="Agent Intelligence" />
       <AgentAttribution agent="Observer + Sentinel" />
       {error ? (
         <div
@@ -471,7 +487,8 @@ const LiveFeedWidget = memo(function LiveFeedWidget() {
   });
 
   return (
-    <div className="px-4 pb-2">
+    <div>
+      <WidgetHeader label="Live Feed" />
       {error ? (
         <div
           className="flex items-center justify-between gap-2 px-2 py-1.5 rounded"
@@ -534,40 +551,44 @@ interface SidePanelProps {
 
 export function SidePanel({ period, visible, mobile = false }: SidePanelProps) {
   if (!visible) return null;
-  const P = fmtPeriod(period);
 
+  // Desktop keeps its own scroll container (`flex-1 overflow-y-auto`); the
+  // mobile variant renders inside the BottomSheet, which already owns the
+  // single scroll container for its content — a second one here would
+  // double-scroll.
   const widgets = (
-    <div className={mobile ? undefined : 'flex-1 overflow-y-auto'}>
-      <SectionDivider label={`Overview · ${P}`} />
-      <SummaryHeader period={period} />
+    <div className={mobile ? 'flex flex-col gap-3 p-3' : 'flex flex-col gap-3 p-3 flex-1 overflow-y-auto'}>
+      <Card variant="active" padding="16px">
+        <SummaryHeader period={period} />
+      </Card>
 
-      <Divider />
-      <SectionDivider label={`Top Threat Origins · ${P}`} />
-      <TopOriginsWidget period={period} />
+      <Card variant="base" padding="16px">
+        <TopOriginsWidget period={period} />
+      </Card>
 
-      <Divider />
-      <SectionDivider label={`Top Targeted Brands · ${P}`} />
-      <TopBrandsWidget period={period} />
+      <Card variant="base" padding="16px">
+        <TopBrandsWidget period={period} />
+      </Card>
 
-      <Divider />
-      <SectionDivider label={"Hosting Providers · 7d trend"} />
-      <ProvidersWidget />
+      <Card variant="base" padding="16px">
+        <ProvidersWidget />
+      </Card>
 
-      <Divider />
-      <SectionDivider label="Active Operations" />
-      <OperationsWidget />
+      <Card variant="base" padding="16px">
+        <OperationsWidget />
+      </Card>
 
-      <Divider />
-      <SectionDivider label={"Geopolitical Campaigns · 30d"} />
-      <GeoCampaignsWidget />
+      <Card variant="base" padding="16px">
+        <GeoCampaignsWidget />
+      </Card>
 
-      <Divider />
-      <SectionDivider label="Agent Intelligence" />
-      <AgentIntelWidget />
+      <Card variant="base" padding="16px">
+        <AgentIntelWidget />
+      </Card>
 
-      <Divider />
-      <SectionDivider label="Live Feed" />
-      <LiveFeedWidget />
+      <Card variant="base" padding="16px">
+        <LiveFeedWidget />
+      </Card>
     </div>
   );
 
@@ -578,8 +599,12 @@ export function SidePanel({ period, visible, mobile = false }: SidePanelProps) {
   }
 
   return (
+    // bottom-[76px] reserves the same stats-bar (36) + ticker (40) band as
+    // ObservatoryV3.tsx's map container and stats bar (desktop-only — this
+    // branch never renders on mobile), so the panel's own bottom edge stays
+    // flush with the top of that chrome strip.
     <div
-      className="absolute top-0 right-0 bottom-[84px] z-20 w-80 flex flex-col overflow-hidden"
+      className="absolute top-0 right-0 bottom-[76px] z-20 w-80 flex flex-col overflow-hidden"
       style={{
         background: 'var(--bg-card-deep)',
         backdropFilter: 'blur(24px)',

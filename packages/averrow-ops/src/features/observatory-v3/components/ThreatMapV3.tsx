@@ -18,10 +18,9 @@ import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { TripsLayer } from '@/lib/trips-layer';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
-import type { Operation } from '@/hooks/useOperations';
 
 // ─── Types ──────────────────────────────────────────────────
-export type MapMode = 'global' | 'operations' | 'heatmap';
+export type MapMode = 'global' | 'heatmap';
 
 interface TooltipInfo {
   x: number;
@@ -99,30 +98,6 @@ function computeBezierPath(srcLng: number, srcLat: number, tgtLng: number, tgtLa
     ]);
   }
   return path;
-}
-
-// ─── Country centroids ──────────────────────────────────────
-const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
-  CN: [104.1954, 35.8617], PK: [69.3451, 30.3753], IN: [78.9629, 20.5937],
-  US: [-95.7129, 37.0902], NL: [5.2913, 52.1326], DE: [10.4515, 51.1657],
-  GB: [-3.4360, 55.3781], RU: [105.3188, 61.5240], BR: [-51.9253, -14.2350],
-  ZA: [22.9375, -30.5595], SG: [103.8198, 1.3521], JP: [138.2529, 36.2048],
-  FR: [2.2137, 46.2276], AU: [133.7751, -25.2744], KR: [127.7669, 35.9078],
-  CA: [-106.3468, 56.1304], ID: [113.9213, -0.7893], VN: [108.2772, 14.0583],
-  TH: [100.9925, 15.8700], UA: [31.1656, 48.3794], TR: [35.2433, 38.9637],
-  IT: [12.5674, 41.8719], ES: [-3.7492, 40.4637], PL: [19.1451, 51.9194],
-  MX: [-102.5528, 23.6345], NG: [8.6753, 9.0820], EG: [30.8025, 26.8206],
-  BD: [90.3563, 23.6850], PH: [121.7740, 12.8797], HK: [114.1694, 22.3193],
-};
-
-function getClusterPosition(countries: string[]): [number, number] {
-  return COUNTRY_CENTROIDS[countries[0]] ?? [0, 20];
-}
-
-function parseJsonArray(val: string | null): string[] {
-  if (!val) return [];
-  try { return JSON.parse(val) as string[]; }
-  catch { return []; }
 }
 
 // ─── Map style ──────────────────────────────────────────────
@@ -302,10 +277,8 @@ interface ThreatMapV3Props {
   colorBy: 'severity' | 'type';
   mapMode: MapMode;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
-  operations?: Operation[];
   heatmapData?: HeatmapPoint[];
   onArcClick?: (arc: ArcData, x: number, y: number) => void;
-  onClusterClick?: (cluster: Operation, x: number, y: number) => void;
 }
 
 // ─── Error boundary ─────────────────────────────────────────
@@ -372,8 +345,8 @@ export function ThreatMapV3(props: ThreatMapV3Props) {
 
 function ThreatMapV3Inner({
   threats, arcs, showBeams, showParticles, showNodes, colorBy,
-  mapMode, period, operations = [], heatmapData = [],
-  onArcClick, onClusterClick, onContextLost,
+  mapMode, period, heatmapData = [],
+  onArcClick, onContextLost,
 }: ThreatMapV3Props & { onContextLost: () => void }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -552,45 +525,6 @@ function ThreatMapV3Inner({
       }
     }
 
-    // Operations mode
-    if (mapMode === 'operations' && operations.length > 0) {
-      layers.push(
-        new ScatterplotLayer({
-          id: 'operations-clusters',
-          data: operations,
-          getPosition: (d: any) => getClusterPosition(parseJsonArray(d.countries ?? '[]')),
-          getRadius: (d: any) => Math.max(20, Math.min(80, Math.sqrt(d.threat_count) * 2.5)),
-          radiusUnits: 'pixels' as any, radiusMinPixels: 20, radiusMaxPixels: 80,
-          getFillColor: (d: any) => {
-            if (d.agent_notes?.includes('ACCELERATING')) return [251, 146, 60, 35] as any;
-            if (d.agent_notes?.includes('PIVOT')) return [0, 212, 255, 25] as any;
-            return [200, 60, 60, 30] as any;
-          },
-          getLineColor: (d: any) => {
-            if (d.agent_notes?.includes('ACCELERATING')) return [251, 146, 60, 220] as any;
-            if (d.agent_notes?.includes('PIVOT')) return [0, 212, 255, 200] as any;
-            return [200, 60, 60, 200] as any;
-          },
-          stroked: true, lineWidthMinPixels: 1.5, lineWidthMaxPixels: 2, pickable: true,
-          onClick: ({ object, x, y }: any) => { if (object && onClusterClick) onClusterClick(object, x, y); },
-        }),
-        new ScatterplotLayer({
-          id: 'operations-clusters-inner',
-          data: operations,
-          getPosition: (d: any) => getClusterPosition(parseJsonArray(d.countries ?? '[]')),
-          getRadius: (d: any) => Math.max(6, Math.min(20, Math.sqrt(d.threat_count))),
-          radiusUnits: 'pixels' as any, radiusMinPixels: 6, radiusMaxPixels: 20,
-          getFillColor: (d: any) => {
-            if (d.agent_notes?.includes('ACCELERATING')) return [251, 146, 60, 240] as any;
-            if (d.agent_notes?.includes('PIVOT')) return [0, 212, 255, 220] as any;
-            return [200, 60, 60, 240] as any;
-          },
-          stroked: false, pickable: true,
-          onClick: ({ object, x, y }: any) => { if (object && onClusterClick) onClusterClick(object, x, y); },
-        }),
-      );
-    }
-
     // Heatmap mode
     if (mapMode === 'heatmap' && heatmapData.length > 0) {
       layers.push(new (HeatmapLayer as any)({
@@ -607,7 +541,7 @@ function ThreatMapV3Inner({
     }
 
     return layers;
-  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, operations, heatmapData, onArcClick, onClusterClick, isMobile]);
+  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, onArcClick, isMobile]);
 
   // ─── Update overlay + start particle animation ────────────
   useEffect(() => {
