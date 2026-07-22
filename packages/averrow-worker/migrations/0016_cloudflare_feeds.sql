@@ -1,5 +1,22 @@
 -- Cloudflare Radar feed setup: scanner + email security
--- Columns cf_scan_id, cf_verdict, cf_categories already exist on threats table
+--
+-- Backfill note (fresh-bootstrap fix): cf_scan_id / cf_verdict / cf_categories
+-- were originally added to prod OUT-OF-BAND (no migration ever created them),
+-- so this migration's index below assumed columns that a fresh
+-- `d1 migrations apply` never creates → bootstrap died here with
+-- "no such column: cf_scan_id". The three ADD COLUMNs below capture that
+-- out-of-band change so a fresh local/staging DB is self-contained.
+-- This is prod-safe: wrangler tracks applied migrations by filename in
+-- d1_migrations, so prod (which already recorded 0016) never re-runs this
+-- file and never re-executes these ALTERs. Only environments applying 0016
+-- fresh — which by definition lack the columns — run them. Plain ADD COLUMN
+-- (matches the codebase pattern, e.g. 0093) because SQLite has no
+-- ADD COLUMN IF NOT EXISTS.
+
+-- ─── Backfill out-of-band Cloudflare scanner columns ────────────
+ALTER TABLE threats ADD COLUMN cf_scan_id TEXT;
+ALTER TABLE threats ADD COLUMN cf_verdict TEXT;
+ALTER TABLE threats ADD COLUMN cf_categories TEXT;
 
 -- ─── Index for CF Scanner polling ───────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_threats_cf_scan ON threats(cf_scan_id) WHERE cf_scan_id IS NOT NULL;

@@ -1,6 +1,18 @@
 -- Migration 0043: Fix brand_id type mismatch
 -- brands.id is TEXT (e.g. "brand_amazon_com") but four tables declare brand_id as INTEGER
 -- SQLite doesn't support ALTER COLUMN, so recreate tables with correct types
+--
+-- Backfill note (fresh-bootstrap fix): dmarc_reports and dmarc_daily_stats
+-- were created in prod OUT-OF-BAND — no earlier migration ever CREATEs them
+-- (email_security_scans@0020 and org_brands@0027 do exist; the two dmarc
+-- tables never did). So the DROP TABLE statements below failed on a fresh
+-- `d1 migrations apply` with "no such table: dmarc_reports". The two
+-- `CREATE TABLE IF NOT EXISTS` stubs prepended below the section headers give
+-- the DROP something to remove on a fresh DB; the immediately-following
+-- CREATE ..._new + RENAME then installs the correct final schema. On prod the
+-- real tables already exist, so IF NOT EXISTS is a no-op — and prod never
+-- re-runs 0043 anyway (wrangler tracks migrations by filename). Additive,
+-- prod-safe, end state identical to the out-of-band schema.
 
 -- ═══════════════════════════════════════
 -- 1. email_security_scans (3,829 rows)
@@ -76,6 +88,8 @@ CREATE TABLE dmarc_reports_new (
   process_error TEXT,
   FOREIGN KEY (brand_id) REFERENCES brands(id)
 );
+-- Fresh-bootstrap stub: prod has this out-of-band; fresh DBs don't. Give DROP a target.
+CREATE TABLE IF NOT EXISTS dmarc_reports (id INTEGER PRIMARY KEY);
 DROP TABLE dmarc_reports;
 ALTER TABLE dmarc_reports_new RENAME TO dmarc_reports;
 
@@ -95,6 +109,8 @@ CREATE TABLE dmarc_daily_stats_new (
   reporters TEXT,
   FOREIGN KEY (brand_id) REFERENCES brands(id)
 );
+-- Fresh-bootstrap stub: prod has this out-of-band; fresh DBs don't. Give DROP a target.
+CREATE TABLE IF NOT EXISTS dmarc_daily_stats (id INTEGER PRIMARY KEY);
 DROP TABLE dmarc_daily_stats;
 ALTER TABLE dmarc_daily_stats_new RENAME TO dmarc_daily_stats;
 

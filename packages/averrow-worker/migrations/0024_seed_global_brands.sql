@@ -1,5 +1,17 @@
 -- Seed high-value global brands for expanded coverage
 -- Uses INSERT OR IGNORE to preserve existing records
+--
+-- Backfill note (fresh-bootstrap fix): the seed INSERTs below name a
+-- `source` column on brands that no migration ever created — it was added
+-- to prod OUT-OF-BAND. On a fresh `d1 migrations apply` these INSERTs failed
+-- with "no such column: source" (0161 later tried to ADD it but prod already
+-- had it, so 0161 was no-op'd — see 0161_brands_source_column.sql). Adding the
+-- column here, before its first use, makes a fresh DB self-contained.
+-- Prod-safe: wrangler tracks migrations by filename, so prod (0024 already
+-- recorded) never re-runs this ALTER; only a fresh apply — which lacks the
+-- column — executes it. 0161 stays a documented no-op.
+
+ALTER TABLE brands ADD COLUMN source TEXT;
 
 -- GLOBAL BANKING & FINANCE
 INSERT OR IGNORE INTO brands (id, name, canonical_domain, sector, source, threat_count) VALUES
