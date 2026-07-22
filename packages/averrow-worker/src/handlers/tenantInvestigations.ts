@@ -10,19 +10,12 @@
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import type { Env } from "../types";
-import { verifyOrgAccess } from "../middleware/auth";
+import { verifyOrgAccess, canPerformHITL } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 
-// ─── Helpers (local — mirror tenantData.ts's private gates) ──
-
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
-  viewer: 1, analyst: 2, admin: 3, owner: 4,
-};
-
-function canPerformHITL(ctx: AuthContext): boolean {
-  if (ctx.role === "super_admin") return true;
-  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= (ORG_ROLE_HIERARCHY["analyst"] ?? 2);
-}
+// ─── Helpers ─────────────────────────────────────────────────
+// canPerformHITL is the shared org-role gate from middleware/auth.ts
+// (consolidated in follow-up #36; previously a local copy here).
 
 const VALID_STATUS = new Set(["open", "monitoring", "closed"]);
 const VALID_SEVERITY = new Set(["critical", "high", "medium", "low"]);

@@ -195,6 +195,28 @@ export function verifyOrgAccess(ctx: AuthContext, orgId: string): string | null 
 }
 
 /**
+ * Human-in-the-loop authorization gate — the shared org-role predicate for
+ * tenant HITL mutations (status writes, investigation/case edits, abuse-mailbox
+ * triage). Analyst+ in the org hierarchy (viewer < analyst < admin < owner);
+ * `super_admin` is exempt as a full-privilege seat.
+ *
+ * Consolidated (follow-up #36) from three byte-identical local copies that had
+ * drifted across `handlers/tenantData.ts`, `handlers/tenantInvestigations.ts`,
+ * and `handlers/tenantAbuseMailboxModule.ts`. Single source of truth, mirroring
+ * the S3.1 `verifyOrgAccess` dedup. Reads the canonical `ORG_ROLE_HIERARCHY`
+ * below, so a future threshold tweak can no longer silently diverge per handler.
+ *
+ * NOTE: unlike `verifyOrgAccess`, `super_admin` is the ONLY global-read role
+ * exempted here — `auditor` (read-only) is intentionally NOT: it holds no org
+ * role, so `ORG_ROLE_HIERARCHY[null] ?? 0 = 0 < analyst`, and every HITL write
+ * stays closed to it. This preserves the old copies' exact truth table.
+ */
+export function canPerformHITL(ctx: AuthContext): boolean {
+  if (ctx.role === "super_admin") return true;
+  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= (ORG_ROLE_HIERARCHY["analyst"] ?? 2);
+}
+
+/**
  * Require a minimum role level. Roles are hierarchical —
  * super_admin can access admin routes, admin can access analyst routes, etc.
  */
@@ -515,9 +537,11 @@ export async function requireOrgMember(
 }
 
 /**
- * Org role hierarchy: viewer < analyst < admin < owner
+ * Org role hierarchy: viewer < analyst < admin < owner.
+ * Canonical single source of truth — exported so tenant handlers reuse it
+ * (follow-up #36) instead of maintaining scattered local copies.
  */
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
+export const ORG_ROLE_HIERARCHY: Record<string, number> = {
   viewer: 1,
   analyst: 2,
   admin: 3,

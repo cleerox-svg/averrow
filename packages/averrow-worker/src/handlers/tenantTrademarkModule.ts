@@ -19,12 +19,14 @@
 
 import { json, corsHeaders } from "../lib/cors";
 import type { Env } from "../types";
-import { verifyOrgAccess } from "../middleware/auth";
+import { verifyOrgAccess, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
 
-// Asset management (upload/delete) requires an org analyst+ role.
-const ORG_ROLE_HIERARCHY: Record<string, number> = { viewer: 1, analyst: 2, admin: 3, owner: 4 };
+// Asset management (upload/delete) requires an org analyst+ role. Kept as a
+// distinct predicate from canPerformHITL — same threshold today, but a
+// separate authorization intent (asset mutation vs HITL triage). Sources the
+// canonical shared ORG_ROLE_HIERARCHY (follow-up #36) rather than a local copy.
 function canManageAssets(ctx: AuthContext): boolean {
   if (ctx.role === "super_admin") return true;
   return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= 2;

@@ -6,19 +6,12 @@ import { audit } from "../lib/audit";
 import { emitOrgEvent } from "../lib/org-events";
 import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
-import { verifyOrgAccess } from "../middleware/auth";
+import { verifyOrgAccess, canPerformHITL, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 
 // ─── Helpers ─────────────────────────────────────────────────
-
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
-  viewer: 1, analyst: 2, admin: 3, owner: 4,
-};
-
-function canPerformHITL(ctx: AuthContext): boolean {
-  if (ctx.role === "super_admin") return true;
-  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= (ORG_ROLE_HIERARCHY["analyst"] ?? 2);
-}
+// canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
+// middleware/auth.ts (consolidated in follow-up #36). isOrgAdmin stays local.
 
 function isOrgAdmin(ctx: AuthContext): boolean {
   if (ctx.role === "super_admin") return true;

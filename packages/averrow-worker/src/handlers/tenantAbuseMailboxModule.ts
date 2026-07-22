@@ -19,22 +19,14 @@
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
-import { verifyOrgAccess, isReadOnlyGlobalRole } from "../middleware/auth";
+import { verifyOrgAccess, isReadOnlyGlobalRole, canPerformHITL } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
 
-// ─── Org-role gate (local mirror of tenantData.ts / tenantInvestigations.ts) ──
-// Status writes are HITL actions: analyst+ in the org hierarchy
-// (viewer < analyst < admin < owner). super_admin always passes.
-
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
-  viewer: 1, analyst: 2, admin: 3, owner: 4,
-};
-
-function canPerformHITL(ctx: AuthContext): boolean {
-  if (ctx.role === "super_admin") return true;
-  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= (ORG_ROLE_HIERARCHY["analyst"] ?? 2);
-}
+// ─── Org-role gate ───────────────────────────────────────────
+// Status writes are HITL actions: canPerformHITL is the shared analyst+ gate
+// from middleware/auth.ts (consolidated in follow-up #36; previously a local
+// mirror of tenantData.ts / tenantInvestigations.ts).
 
 interface AbuseMailboxBrandSummary {
   brand_id:                string;
