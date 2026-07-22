@@ -67,11 +67,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="mm-mesh-visual">
         <div class="mm-agent-grid">
           <div class="mm-agent-row" style="border-left-color:#C83C3C;"><span class="mm-ar-name" style="color:#C83C3C;">Threat Detection</span><span class="mm-ar-role">Feed &amp; certificate monitoring</span></div>
-          <div class="mm-agent-row" style="border-left-color:#E5A832;"><span class="mm-ar-name" style="color:#E5A832;">Scoring &amp; Triage</span><span class="mm-ar-role">Composite exposure scoring</span></div>
-          <div class="mm-agent-row" style="border-left-color:#0A8AB5;"><span class="mm-ar-name" style="color:#0A8AB5;">Strategic Intel</span><span class="mm-ar-role">Daily intelligence briefings</span></div>
+          <div class="mm-agent-row" style="border-left-color:#E5A832;"><span class="mm-ar-name" style="color:var(--amber-text);">Scoring &amp; Triage</span><span class="mm-ar-role">Composite exposure scoring</span></div>
+          <div class="mm-agent-row" style="border-left-color:#0A8AB5;"><span class="mm-ar-name" style="color:var(--blue-text);">Strategic Intel</span><span class="mm-ar-role">Daily intelligence briefings</span></div>
           <div class="mm-agent-row" style="border-left-color:#065A78;"><span class="mm-ar-name" style="color:#065A78;">DNS Resolution</span><span class="mm-ar-role">Infrastructure resolution</span></div>
-          <div class="mm-agent-row" style="border-left-color:#8A8F9C;"><span class="mm-ar-name" style="color:#8A8F9C;">Timeline &amp; Narrative</span><span class="mm-ar-role">Plain-language incident writeups</span></div>
-          <div class="mm-agent-row" style="border-left-color:#3CB878;"><span class="mm-ar-name" style="color:#3CB878;">Geo &amp; Provider Mapping</span><span class="mm-ar-role">Hosting &amp; regional mapping</span></div>
+          <div class="mm-agent-row" style="border-left-color:#8A8F9C;"><span class="mm-ar-name" style="color:var(--slate-text);">Timeline &amp; Narrative</span><span class="mm-ar-role">Plain-language incident writeups</span></div>
+          <div class="mm-agent-row" style="border-left-color:#3CB878;"><span class="mm-ar-name" style="color:var(--green-text);">Geo &amp; Provider Mapping</span><span class="mm-ar-role">Hosting &amp; regional mapping</span></div>
         </div>
         <div class="mm-agent-caption">Six core agents shown &mdash; part of the full 42-agent mesh.</div>
       </div>
@@ -436,7 +436,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--amber);
+    color: var(--amber-text);
     background: rgba(229,168,50,0.1);
     padding: 0.3rem 0.65rem;
     border-radius: 100px;

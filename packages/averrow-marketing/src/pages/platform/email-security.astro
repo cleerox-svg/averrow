@@ -380,7 +380,7 @@ const providers = [
   .email-pass {
     font-family: var(--font-mono);
     font-size: 0.75rem;
-    color: var(--green);
+    color: var(--green-text);
     font-weight: 600;
   }
   .email-mx {
@@ -421,7 +421,7 @@ const providers = [
     font-family: var(--font-display);
     font-size: 2rem;
     font-weight: 800;
-    color: var(--green);
+    color: var(--green-text);
     line-height: 1;
   }
   .email-grade-sub {
@@ -433,6 +433,7 @@ const providers = [
     text-transform: uppercase;
     margin-top: 1px;
   }
+  :global([data-theme="light"]) .email-grade-sub { color: var(--green-dim); }
 
   /* ── GENERIC SECTIONS ── */
   .es-section { padding: 3.5rem 0; }
@@ -525,8 +526,8 @@ const providers = [
     font-weight: 800;
     font-size: 1.15rem;
   }
-  .es-grade-good .es-grade-letter-badge { background: var(--green-bg); color: var(--green); }
-  .es-grade-mid .es-grade-letter-badge { background: rgba(229,168,50,0.1); color: var(--amber); }
+  .es-grade-good .es-grade-letter-badge { background: var(--green-bg); color: var(--green-text); }
+  .es-grade-mid .es-grade-letter-badge { background: rgba(229,168,50,0.1); color: var(--amber-text); }
   .es-grade-bad .es-grade-letter-badge { background: var(--accent-bg); color: var(--red); }
   .es-grade-label {
     font-family: var(--font-display);

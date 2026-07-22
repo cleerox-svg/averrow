@@ -284,7 +284,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     .pt-int-card:hover .pt-int-card-icon { transform: none; }
   }
   .pt-int-card-icon svg { width: 28px; height: 28px; }
-  .pt-int-card-icon.live { background: var(--green-bg); color: var(--green); }
+  .pt-int-card-icon.live { background: var(--green-bg); color: var(--green-text); }
   .pt-int-card-icon.planned { background: var(--accent-bg); color: var(--accent); }
   .pt-int-card-name {
     font-size: 15px;
@@ -307,7 +307,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-radius: 100px;
     display: inline-block;
   }
-  .pt-int-card-status.live { background: var(--green-bg); color: var(--green); }
+  .pt-int-card-status.live { background: var(--green-bg); color: var(--green-text); }
   .pt-int-card-status.planned { background: var(--accent-bg); color: var(--text-tertiary); }
   @media (max-width: 768px) { .pt-int-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 480px) { .pt-int-grid { grid-template-columns: 1fr; } }
@@ -358,7 +358,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     justify-content: center;
     border-radius: var(--radius-md);
     background: var(--green-bg);
-    color: var(--green);
+    color: var(--green-text);
   }
   .pt-mssp-card-icon.planned { background: var(--accent-bg); color: var(--accent); }
   .pt-mssp-card-icon svg { width: 22px; height: 22px; }
@@ -380,7 +380,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--amber);
+    color: var(--amber-text);
     background: rgba(229,168,50,0.1);
     padding: 0.2rem 0.55rem;
     border-radius: 100px;

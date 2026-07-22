@@ -481,7 +481,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .sp-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; text-align: left; }
   .sp-card-head { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 10px; }
   .sp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: sp-pulse 2s ease-in-out infinite; }
-  .sp-live { margin-left: auto; color: var(--sev-critical); font-weight: 700; }
+  .sp-live { margin-left: auto; color: var(--sev-critical-text); font-weight: 700; }
   .sp-map-svg { width: 100%; height: auto; display: block; }
   .sp-map-grid line { stroke: var(--border); stroke-width: 1; }
   .sp-arc { stroke-dasharray: 6 6; animation: sp-dash 3s linear infinite; }
@@ -638,9 +638,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     padding: 2px 0;
     border-radius: 3px;
   }
-  .ti-critical { color: var(--sev-critical); background: rgba(248,113,113,0.10); }
-  .ti-high     { color: var(--sev-high);     background: rgba(251,146,60,0.10); }
-  .ti-medium   { color: var(--sev-medium);   background: rgba(251,191,36,0.10); }
+  .ti-critical { color: var(--sev-critical-text); background: rgba(248,113,113,0.10); }
+  .ti-high     { color: var(--sev-high-text);     background: rgba(251,146,60,0.10); }
+  .ti-medium   { color: var(--sev-medium-text);   background: rgba(251,191,36,0.10); }
   .ti-target   { color: var(--text-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
   .ti-tag      { color: var(--text-secondary); font-size: 11px; }
   @keyframes ticker-scroll {
@@ -900,9 +900,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     padding: 2px 6px;
     border-radius: 3px;
   }
-  .cap-mock-badge.crit { color: var(--sev-critical); background: rgba(248,113,113,0.10); }
-  .cap-mock-badge.high { color: var(--sev-high); background: rgba(251,146,60,0.10); }
-  .cap-mock-badge.med  { color: var(--sev-medium); background: rgba(251,191,36,0.10); }
+  .cap-mock-badge.crit { color: var(--sev-critical-text); background: rgba(248,113,113,0.10); }
+  .cap-mock-badge.high { color: var(--sev-high-text); background: rgba(251,146,60,0.10); }
+  .cap-mock-badge.med  { color: var(--sev-medium-text); background: rgba(251,191,36,0.10); }
   .cap-mock-grade {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -917,8 +917,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .gl-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); }
   .gl-value { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; }
-  .gl-value.pass { color: var(--green); }
-  .gl-value.fail { color: var(--sev-critical); }
+  .gl-value.pass { color: var(--green-text); }
+  .gl-value.fail { color: var(--sev-critical-text); }
   .cap-mock-diff { display: flex; flex-direction: column; gap: 6px; }
   .cap-mock-diff-line { display: flex; gap: 8px; align-items: center; }
   .cap-mock-diff-label {
@@ -930,7 +930,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .cap-mock-diff-value { color: var(--text-primary); }
   .cap-mock-diff-value .hi {
-    color: var(--sev-high);
+    color: var(--sev-high-text);
     background: rgba(251,146,60,0.16);
     padding: 1px 2px;
     border-radius: 2px;
@@ -966,7 +966,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-display);
     font-size: 22px;
     font-weight: 700;
-    color: var(--sev-critical);
+    color: var(--sev-critical-text);
     line-height: 1;
   }
 

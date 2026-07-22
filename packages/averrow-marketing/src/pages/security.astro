@@ -394,9 +394,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     vertical-align: middle;
   }
   .sec-status-pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
-  .sec-status-pill.in-place { color: var(--green); background: var(--green-bg); border: 1px solid rgba(60,184,120,0.3); }
+  .sec-status-pill.in-place { color: var(--green-text); background: var(--green-bg); border: 1px solid rgba(60,184,120,0.3); }
   .sec-status-pill.in-place::before { background: var(--green); }
-  .sec-status-pill.scheduled { color: var(--amber); background: rgba(229,168,50,0.10); border: 1px solid rgba(229,168,50,0.3); }
+  .sec-status-pill.scheduled { color: var(--amber-text); background: rgba(229,168,50,0.10); border: 1px solid rgba(229,168,50,0.3); }
   .sec-status-pill.scheduled::before { background: var(--amber); }
 
   /* Practice cards */
@@ -426,8 +426,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     flex-shrink: 0;
   }
   .sec-card-icon-teal { background: var(--accent-bg); color: var(--accent); }
-  .sec-card-icon-coral { background: rgba(229,168,50,0.10); color: var(--amber); }
-  .sec-card-icon-green { background: var(--green-bg); color: var(--green); }
+  .sec-card-icon-coral { background: rgba(229,168,50,0.10); color: var(--amber-text); }
+  .sec-card-icon-green { background: var(--green-bg); color: var(--green-text); }
   .sec-card h3 { font-family: var(--font-display); font-size: 1.1rem; font-weight: 700; }
   .sec-card p { font-size: 0.92rem; color: var(--text-secondary); line-height: 1.75; }
 

@@ -30,12 +30,36 @@
   --green-bg:   rgba(60, 184, 120, 0.08);
   --blue:       #0A8AB5;
   --blue-dim:   #065A78;
+  --slate:      #8A8F9C; /* sixth "agent row" identity color (Timeline & Narrative) — decorative, stays flat across themes */
 
   /* Severity */
   --sev-critical: #f87171;
   --sev-high:     #fb923c;
   --sev-medium:   #fbbf24;
   --sev-low:      #60a5fa;
+
+  /*
+   * Theme-aware TEXT variants — same convention as the platform's
+   * `--sev-*-text` tokens (CLAUDE.md §5 / AVERROW_UI_STANDARD SEVERITY
+   * SYSTEM): the *-dot* hex above is decorative and intentionally stays
+   * identical across themes (RESTRUCTURE_SPEC: "Severity stays the same
+   * in light mode"), but a badge/pill/status label rendered in that raw
+   * hue as small TEXT loses AA contrast once its own translucent tint
+   * background composites against a light page (dark: ~5-8:1, light:
+   * ~1.5-2.5:1 — measured). These resolve to the dot color in dark mode
+   * (byte-identical) and to an AA-safe darker variant in light mode.
+   * Use for badge/chip/status/grade TEXT only — decorative dots, bars,
+   * icons, and borders keep using the flat --sev-* / --green / --amber /
+   * --blue tokens above, unchanged.
+   */
+  --sev-critical-text: var(--sev-critical);
+  --sev-high-text:     var(--sev-high);
+  --sev-medium-text:   var(--sev-medium);
+  --sev-low-text:      var(--sev-low);
+  --green-text:        var(--green);
+  --amber-text:        var(--amber);
+  --blue-text:         var(--blue);
+  --slate-text:        var(--slate);
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -70,6 +94,24 @@
   --glass-card-border: rgba(226,221,213,0.5);
   --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
   --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+
+  /*
+   * Badge/status/grade TEXT overrides — AA-checked against both white
+   * and the page bg (measured, not eyeballed). Reuses the platform's
+   * existing "dim" severity hexes from AVERROW_UI_STANDARD's SEV config
+   * (sev-critical.dim/sev-high.dim/sev-medium.dim/sev-low.dim) and the
+   * existing --green-dim / --blue-dim gradient-pair tokens above, all of
+   * which already clear 4.5:1. --amber-dim (#B8821F, ~3.1:1) does NOT
+   * clear AA as text, so amber-text gets its own darker value.
+   */
+  --sev-critical-text: #7f1d1d; /* 9.4:1 on page bg */
+  --sev-high-text:     #7c2d12; /* 8.7:1 */
+  --sev-medium-text:   #78350f; /* 8.5:1 */
+  --sev-low-text:      #1e3a5f; /* 10.7:1 */
+  --green-text:        var(--green-dim);  /* #1A6B3C, 6.1:1 */
+  --blue-text:         var(--blue-dim);   /* #065A78, 7.1:1 */
+  --amber-text:        #92400E;           /* 6.6:1 — --amber-dim fails AA (~3.1:1), so not reused here */
+  --slate-text:        #475569;           /* 7.6:1 — flat #8A8F9C only clears ~3.2:1 as text on light bg */
 }
 
 [data-theme="dark"] {

@@ -19,31 +19,31 @@ const coreAgents = [
   },
   {
     name: "Scoring & Triage",
-    color: "#E5A832",
+    color: "var(--amber-text)",
     role: "Composite exposure scoring",
     desc: "Takes every new detection and everything else the mesh already knows about a brand, and decides how much it actually matters — folding email posture, social findings, and infrastructure signals into a single composite score.",
   },
   {
     name: "Strategic Intel",
-    color: "#0A8AB5",
+    color: "var(--blue-text)",
     role: "Daily intelligence briefings",
     desc: "Steps back from individual threats to look at trend lines — grade changes, new campaign patterns, exposure moving up or down over time — and writes the daily intelligence briefing your team actually reads.",
   },
   {
     name: "DNS Resolution",
-    color: "#065A78",
+    color: "var(--blue-dim)",
     role: "Infrastructure resolution",
     desc: "Resolves the domains and hostnames behind every threat down to live IP addresses in real time, keeping the platform's infrastructure data current as attackers rotate hosting — the foundation the geo and provider mapping layer builds on.",
   },
   {
     name: "Geo & Provider Mapping",
-    color: "#3CB878",
+    color: "var(--green-text)",
     role: "Hosting & regional mapping",
     desc: "Maps resolved infrastructure to where it's actually hosted — provider, region, network — so a pattern of attacks from the same infrastructure is visible as one picture, not a list of isolated incidents.",
   },
   {
     name: "Timeline & Narrative",
-    color: "#8A8F9C",
+    color: "var(--slate-text)",
     role: "Plain-language incident writeups",
     desc: "Reconstructs how a threat unfolded — first seen, what changed, what else co-occurred — and writes it up in plain language a human can act on without reading raw log lines.",
   },
@@ -241,7 +241,7 @@ const siblingLinks = [
       </p>
       <div class="dd-ai-doctrine-grid">
         <div class="dd-ai-doctrine-card">
-          <div class="dd-ai-doctrine-head" style="color:var(--blue)">Structured correlation</div>
+          <div class="dd-ai-doctrine-head" style="color:var(--blue-text)">Structured correlation</div>
           <p>
             Counting hits, grouping by provider or region, matching a domain
             against a feed, checking a DKIM selector &mdash; anything with a
@@ -251,7 +251,7 @@ const siblingLinks = [
           </p>
         </div>
         <div class="dd-ai-doctrine-card">
-          <div class="dd-ai-doctrine-head" style="color:var(--amber)">AI narrative</div>
+          <div class="dd-ai-doctrine-head" style="color:var(--amber-text)">AI narrative</div>
           <p>
             Explaining why a combination of signals matters, writing a daily
             briefing, drafting takedown evidence in plain language &mdash;
@@ -440,7 +440,7 @@ const siblingLinks = [
     color: var(--text-tertiary);
     margin-bottom: 0.85rem;
   }
-  .dd-ai-compare-new .dd-ai-compare-head { color: var(--amber); }
+  .dd-ai-compare-new .dd-ai-compare-head { color: var(--amber-text); }
   .dd-ai-compare-old ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.55rem; }
   .dd-ai-compare-old li {
     font-family: var(--font-mono);

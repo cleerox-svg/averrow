@@ -358,7 +358,7 @@ import Layout from "../../layouts/Layout.astro";
   }
   :global([data-theme="light"]) .sm-status-row { background: rgba(0,0,0,0.025); }
   .sm-status-name { color: var(--text-primary); font-weight: 600; letter-spacing: 0.04em; }
-  .sm-status-state { color: var(--green); font-size: 11px; letter-spacing: 0.06em; }
+  .sm-status-state { color: var(--green-text); font-size: 11px; letter-spacing: 0.06em; }
   @media (max-width: 720px) { .sm-status-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 480px) { .sm-status-grid { grid-template-columns: 1fr; } }
 
@@ -662,8 +662,8 @@ import Layout from "../../layouts/Layout.astro";
   }
   .sm-table tr:last-child td { border-bottom: none; }
   .sm-table td:first-child { font-weight: 600; color: var(--text-primary); }
-  .sm-yes { color: var(--green); font-weight: 600; }
-  .sm-partial { color: var(--amber); font-weight: 600; }
+  .sm-yes { color: var(--green-text); font-weight: 600; }
+  .sm-partial { color: var(--amber-text); font-weight: 600; }
 
   /* ── RELATED ── */
   .sm-related { padding: 3rem 0; text-align: center; }

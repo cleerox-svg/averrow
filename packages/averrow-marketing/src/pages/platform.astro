@@ -216,11 +216,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="cap-visual">
         <div class="agent-grid-vert">
           <div class="agent-row" style="border-left-color:#C83C3C;"><div class="ar-name" style="color:#C83C3C;">Threat Detection</div><div class="ar-role">Certificate &amp; domain surveillance</div></div>
-          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:#E5A832;">Scoring &amp; Triage</div><div class="ar-role">Composite exposure scoring</div></div>
-          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:#0A8AB5;">Strategic Intel</div><div class="ar-role">Daily intelligence briefings</div></div>
+          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:var(--amber-text);">Scoring &amp; Triage</div><div class="ar-role">Composite exposure scoring</div></div>
+          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Strategic Intel</div><div class="ar-role">Daily intelligence briefings</div></div>
           <div class="agent-row" style="border-left-color:#065A78;"><div class="ar-name" style="color:#065A78;">DNS Resolution</div><div class="ar-role">Infrastructure resolution</div></div>
-          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:#8A8F9C;">Timeline &amp; Narrative</div><div class="ar-role">Plain-language incident writeups</div></div>
-          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:#3CB878;">Geo &amp; Provider Mapping</div><div class="ar-role">Hosting &amp; regional mapping</div></div>
+          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:var(--slate-text);">Timeline &amp; Narrative</div><div class="ar-role">Plain-language incident writeups</div></div>
+          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:var(--green-text);">Geo &amp; Provider Mapping</div><div class="ar-role">Hosting &amp; regional mapping</div></div>
         </div>
         <div class="narrative-block">
           <div class="narrative-label"><span class="narrative-dot"></span> Timeline &amp; Narrative</div>
@@ -384,7 +384,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   :global([data-theme="light"]) .squadron-row { background: rgba(0,0,0,0.025); }
   .squadron-name { color: var(--text-primary); font-weight: 600; letter-spacing: 0.04em; }
-  .squadron-state { color: #3CB878; font-size: 11px; letter-spacing: 0.06em; }
+  .squadron-state { color: var(--green-text); font-size: 11px; letter-spacing: 0.06em; }
   @media (max-width: 720px) { .squadron-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 480px) { .squadron-grid { grid-template-columns: 1fr; } }
 
@@ -573,7 +573,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .email-pass {
     font-family: var(--font-mono);
     font-size: 0.75rem;
-    color: var(--green);
+    color: var(--green-text);
     font-weight: 600;
   }
   .email-mx {
@@ -614,7 +614,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-display);
     font-size: 2rem;
     font-weight: 800;
-    color: var(--green);
+    color: var(--green-text);
     line-height: 1;
   }
   .email-grade-sub {
@@ -626,6 +626,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     text-transform: uppercase;
     margin-top: 1px;
   }
+  :global([data-theme="light"]) .email-grade-sub { color: var(--green-dim); }
 
   /* Social grid */
   .social-eyebrow {
@@ -887,7 +888,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .int-card:hover .int-card-icon { transform: scale(1.1); }
   .int-card-icon svg { width: 28px; height: 28px; }
-  .int-card-icon.live { background: var(--green-bg); color: var(--green); }
+  .int-card-icon.live { background: var(--green-bg); color: var(--green-text); }
   .int-card-icon.planned { background: var(--accent-bg); color: var(--accent); }
   .int-card-name {
     font-size: 15px;
@@ -910,7 +911,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-radius: 100px;
     display: inline-block;
   }
-  .int-card-status.live { background: var(--green-bg); color: var(--green); }
+  .int-card-status.live { background: var(--green-bg); color: var(--green-text); }
   .int-card-status.planned { background: var(--accent-bg); color: var(--text-tertiary); }
   @media (max-width: 768px) { .int-grid { grid-template-columns: repeat(2, 1fr); } }
 
