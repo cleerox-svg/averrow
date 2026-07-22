@@ -41,7 +41,7 @@ binding = "ASSETS"
 not_found_handling = "404-page"
 
 # ─── Cron Triggers ───────────────────────────────────────────
-# Hourly tick  (15min CPU limit) — Flight Control + full agent mesh
+# Hourly tick  (5min CPU limit)  — Flight Control + full agent mesh (cpu_ms = 300_000)
 # Navigator    (30s CPU limit)   — DNS resolution + cube refresh + cache warming (agent, runs */5)
 # Cube healer  (30s CPU limit)   — 30-day retroactive cube rebuild (6-hourly)
 #
@@ -344,6 +344,10 @@ TENANT_DIGEST_MODE = "off"
 
 # ─── Secrets (set via: wrangler secret put <NAME>) ────────────
 # ANTHROPIC_API_KEY        — Anthropic API key for Claude Haiku AI analysis
+# LRX_API_KEY              — fallback Anthropic API key. resolveApiKey (lib/anthropic.ts)
+#                            uses ANTHROPIC_API_KEY first, then LRX_API_KEY. Set as a
+#                            runtime secret (wrangler secret put) like the keys above —
+#                            never a [vars] literal.
 # ANTHROPIC_ADMIN_KEY      — Anthropic Admin API key (optional — budget verification)
 # JWT_SECRET
 # VIRUSTOTAL_API_KEY

@@ -18,7 +18,7 @@
 //                              the SAME value on the averrow worker and here.
 //   MCP_AUTH_TOKEN            — authenticates Claude Code with this MCP server
 //
-// The UI verification tools auto-mint a 90-day service-account JWT via
+// The UI verification tools auto-mint a 30-day service-account JWT via
 // /api/internal/auth/mint-service-jwt (authenticated with AVERROW_PREVIEW_SECRET)
 // and cache it in MCP_TOKEN_CACHE KV. First-call latency is ~50ms extra;
 // subsequent calls hit the cache. JWT is re-minted automatically when fewer
@@ -317,7 +317,7 @@ const TOOLS: ToolDef[] = [
       "/api/observatory/stats, /api/v1/operations/stats — and runs a baseline " +
       "assertion on each (auth still works, threat counts are non-zero, " +
       "response shape intact). Catches regressions like the cube-empty / " +
-      "headline-shows-0 class. Auto-mints + caches a 90-day service-account " +
+      "headline-shows-0 class. Auto-mints + caches a 30-day service-account " +
       "JWT — no manual token setup required. Returns " +
       "{ passed, failed, total, probes[] } with per-probe pass/fail and " +
       "the failure reason.",

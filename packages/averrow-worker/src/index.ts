@@ -284,6 +284,33 @@ export default {
         });
       }
 
+      // ─── Blanket internal POST guard (S3.2) ───────────────────────
+      // Requires AVERROW_INTERNAL_SECRET for ALL POST /api/internal/*
+      // requests, mirroring the GET guard further below. Placed ABOVE
+      // every per-route internal POST handler so it runs first — a future
+      // internal POST route that forgets its own inline check is still
+      // gated by default. On success it falls through (no early return),
+      // so route matching continues normally.
+      //
+      // EXCLUDES the two JWT-mint routes (mint-service-jwt /
+      // mint-ui-preview-jwt): those authenticate on the deliberately
+      // SEPARATE AVERROW_PREVIEW_SECRET grant via isPreviewMintAuthorized
+      // (S1, Phase 1 PR-A). Gating them here with AVERROW_INTERNAL_SECRET
+      // would re-couple the two secrets and defeat that split — they keep
+      // their own fail-closed preview-secret check below.
+      if (
+        url.pathname.startsWith('/api/internal/') &&
+        request.method === 'POST' &&
+        url.pathname !== '/api/internal/auth/mint-service-jwt' &&
+        url.pathname !== '/api/internal/auth/mint-ui-preview-jwt'
+      ) {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+      }
+
       // ─── Internal agent trigger endpoints ─────────────────────────
       // POST /api/internal/digest/weekly-tenant/run — manual trigger for
       // the tenant weekly digest (S4). Body (all optional): { org_id?:
