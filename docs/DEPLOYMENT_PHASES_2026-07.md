@@ -13,21 +13,26 @@ verification, and rollback for each phase.
 
 ---
 
-## Current status & session handoff (updated 2026-07-19)
+## Current status & session handoff (updated 2026-07-22)
 
-**Phases 0–3 are done and deployed to prod; the 24h post-deploy verification has run.** A new
-session should resume at **Phase 4 (terminology re-anchor), starting with session S1.0** (the
-naming occurrence map / rename-safety review — a hard prerequisite for S1.1–S1.6).
+**Phases 0–5 are done and deployed to prod. Phase 6 (Wave 3 debt) is partially done.**
+The Phase 4 terminology re-anchor and the Phase 5 takedown + differentiator work all
+shipped one-PR-per-session and merged. Phase 6's *specific* S3.1–S3.6 line-items (shared
+`verifyOrgAccess`, blanket `/api/internal/*` guard, tenant vitest, `handlers/admin.ts`
+split, R4/R7/R9 cleanup, D1-budget trend) are **still open**; the debt work that *did*
+land this cycle was an adjacent set — design-system primitive debt, a permanent
+responsive/visual-QA gate, and org-isolation fixes made inline during Phase 5. A new
+session resuming here should pick up the outstanding **S3.1–S3.6** items.
 
 | Phase | Sessions | Merged PRs | State |
 |---|---|---|---|
 | 0 Baseline | — | #1633 (plan), #1634 (baseline) | ✅ done |
 | 1 Security P0 | S0.3 (S1+S2), S0.5 (TK1) | #1635, #1636 | ✅ live |
-| 2 Ops P0 | S0.1, S0.2 | #1637, #1638, #1641 (ct_monitor fix) | ✅ live · scanners ✅ verified; ct_monitor fixed (0238), re-verify pending |
+| 2 Ops P0 | S0.1, S0.2 | #1637, #1638, #1641 (ct_monitor fix) | ✅ live · scanners ✅ verified; ct_monitor fixed (0238) ✅ re-verified |
 | 3 D1 hot-path | S0.4 | #1639 | ✅ live · 24h verify ✅ pass (89.7%, trending down) |
-| 4 Terminology | S1.0–S1.6 | — | ⬜ **next** |
-| 5 Takedown + differentiator | S2.1–S2.4 | — | ⬜ |
-| 6 Debt & hardening | S3.1–S3.6 | — | ⬜ |
+| 4 Terminology | S1.0–S1.6 | one PR per session, all merged | ✅ live |
+| 5 Takedown + differentiator | S2.1–S2.4 (+ exec-impersonation build) | one PR per session, all merged (…#1666) | ✅ live |
+| 6 Debt & hardening | S3.1–S3.6 | #1667 (adjacent debt only) | 🟡 partial · S3.1–S3.6 still open |
 
 **24h post-deploy verification — DONE (2026-07-19).** Full record:
 `docs/deploy-baselines/phase-2-3-verify-2026-07-19.md`. Summary: **S0.2** — `dns_queue_parity.delta`
@@ -251,7 +256,7 @@ in the next full-day diagnostics; confirm the affected pages render identical nu
 
 ---
 
-## Phase 4 — Terminology & positioning re-anchor (Wave 1) ⬜
+## Phase 4 — Terminology & positioning re-anchor (Wave 1) ✅
 
 **Ships:** improvement-plan **S1.0–S1.6** — purge internal code names from customer
 surfaces, fix the three wrong agent descriptions, canonicalize core nouns, adopt the DRPS
@@ -286,7 +291,7 @@ rename shipped without its protocol artifact.
 
 ---
 
-## Phase 5 — Takedown surfaces + close the differentiator (Wave 2) ⬜
+## Phase 5 — Takedown surfaces + close the differentiator (Wave 2) ✅
 
 **Ships:** **S2.1** (takedown metrics instrumentation), **S2.2** (analyst hand-submit path,
 **dark**), **S2.3** (Ops takedowns → execution + prospect surfaces), **S2.4** (detection
@@ -323,7 +328,7 @@ code).
 
 ---
 
-## Phase 6 — Debt & hardening (Wave 3, deploy as capacity allows) ⬜
+## Phase 6 — Debt & hardening (Wave 3, deploy as capacity allows) 🟡
 
 **Ships:** improvement-plan **S3.1–S3.6** — shared `verifyOrgAccess` + single global-read
 predicate (S3, S4); blanket `POST /api/internal/*` auth guard + manifest/CORS/TTL hygiene
@@ -334,6 +339,18 @@ predicate (S3, S4); blanket `POST /api/internal/*` auth guard + manifest/CORS/TT
 Non-urgent P2/P3. Each is an independent, low-risk merge deployed behind the standard gate.
 **S3.1/S3.2 still route through `appsec-reviewer`** (they touch org isolation + the
 internal surface). No dark flags, no time-delayed verification beyond the standard gate.
+
+> **Status (2026-07-22): partial.** The S3.1–S3.6 line-items above are **still open**. The
+> debt that *did* land alongside Phases 4–5 was an adjacent set, not this list:
+> design-system primitive debt (Card accent, Badge light-contrast, `.ds-focusable`,
+> theme-aware `--sev-*-text`/`--amber-text`, colorless-utility sweep across ops/tenant), the
+> shared platform-aware handle-normalization fix, a permanent responsive/visual-QA gate
+> (`packages/averrow-marketing/tests/responsive.spec.ts` + `docs/VISUAL_QA.md`, PR #1667),
+> and org-isolation fixes made **inline during Phase 5** (the additive `alerts.org_id`
+> column + `(org_id IS NULL OR org_id = ?)` predicate). Note the Phase-5 org-isolation work
+> partially overlaps S3.1's intent (org-scope correctness) but did **not** complete S3.1's
+> deliverable — extracting the single shared `verifyOrgAccess` + one global-read predicate.
+> A session resuming here should treat S3.1–S3.6 as the remaining work.
 
 **Go/no-go:** none downstream — this phase drains debt continuously.
 
