@@ -23,6 +23,19 @@ import { verifyOrgAccess, isReadOnlyGlobalRole } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
 
+// ─── Org-role gate (local mirror of tenantData.ts / tenantInvestigations.ts) ──
+// Status writes are HITL actions: analyst+ in the org hierarchy
+// (viewer < analyst < admin < owner). super_admin always passes.
+
+const ORG_ROLE_HIERARCHY: Record<string, number> = {
+  viewer: 1, analyst: 2, admin: 3, owner: 4,
+};
+
+function canPerformHITL(ctx: AuthContext): boolean {
+  if (ctx.role === "super_admin") return true;
+  return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= (ORG_ROLE_HIERARCHY["analyst"] ?? 2);
+}
+
 interface AbuseMailboxBrandSummary {
   brand_id:                string;
   brand_name:              string;
@@ -436,6 +449,12 @@ export async function handleUpdateAbuseInboxMessageStatus(
   if (isReadOnlyGlobalRole(ctx.role)) {
     return json({ success: false, error: "Forbidden: read-only role" }, 403, origin);
   }
+  // F2: status flips are HITL actions — require analyst+ org role, matching
+  // the sibling tenant mutations (alerts, investigations, trademark upload).
+  // Redundant-safe alongside the read-only block above (auditor has no org role).
+  if (!canPerformHITL(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
+  }
 
   const orgIdNum = Number(orgId);
   if (!Number.isFinite(orgIdNum)) {
@@ -507,6 +526,12 @@ export async function handleBulkUpdateAbuseInboxMessageStatus(
   // and has no org-role gate below, so block them here (S3.1 write-guard).
   if (isReadOnlyGlobalRole(ctx.role)) {
     return json({ success: false, error: "Forbidden: read-only role" }, 403, origin);
+  }
+  // F2: status flips are HITL actions — require analyst+ org role, matching
+  // the sibling tenant mutations (alerts, investigations, trademark upload).
+  // Redundant-safe alongside the read-only block above (auditor has no org role).
+  if (!canPerformHITL(ctx)) {
+    return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
   }
 
   const orgIdNum = Number(orgId);

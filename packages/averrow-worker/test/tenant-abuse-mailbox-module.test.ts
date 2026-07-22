@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   handleGetAbuseMailboxModuleSummary,
   handleListAbuseInboxMessages,
+  handleUpdateAbuseInboxMessageStatus,
+  handleBulkUpdateAbuseInboxMessageStatus,
 } from "../src/handlers/tenantAbuseMailboxModule";
 import type { Env } from "../src/types";
 import type { AuthContext } from "../src/middleware/auth";
@@ -34,6 +36,26 @@ const OTHER_ORG_MEMBER: AuthContext = {
   embeddedScope: undefined,
 };
 
+// Read-only org member (viewer < analyst) — must NOT be able to mutate status.
+const ORG_42_VIEWER: AuthContext = {
+  userId: "u-viewer",
+  email: "viewer@example.com",
+  role: "client",
+  orgId: "42",
+  orgRole: "viewer",
+  embeddedScope: undefined,
+};
+
+// Global read-only seat (auditor) — global read scope, no org role.
+const AUDITOR: AuthContext = {
+  userId: "u-auditor",
+  email: "auditor@averrow.local",
+  role: "auditor",
+  orgId: null,
+  orgRole: null,
+  embeddedScope: undefined,
+};
+
 class MockKV {
   store = new Map<string, string>();
   async get(key: string): Promise<string | null> { return this.store.get(key) ?? null; }
@@ -48,6 +70,8 @@ interface DbResults {
   brandRow?: { id: string } | null;
   alias?: { alias: string; forwarding_instructions: string | null } | null;
   unbound?: { unbound_total: number; unbound_pending: number } | null;
+  // meta.changes returned by the status-writer UPDATE run().
+  updatedRows?: number;
   // PR-AU: totals are computed by a direct aggregate over
   // abuse_inbox_messages, no longer summed from per-brand rollups.
   totals?: {
@@ -80,6 +104,7 @@ function makeDb(results: DbResults) {
     return {
       bind: () => ({
         all: async <T>() => allFor<T>(sql),
+        run: async () => ({ meta: { changes: results.updatedRows ?? 0 } }),
         first: async <T>() => {
           if (sql.includes("FROM org_abuse_aliases")) {
             return (results.alias ?? null) as T | null;
@@ -293,5 +318,81 @@ describe("handleListAbuseInboxMessages", () => {
     }));
     const res = await handleListAbuseInboxMessages(makeRequest("?brandId=b1"), env, "42", SUPER_ADMIN);
     expect(res.status).toBe(200);
+  });
+});
+
+// ─── Status writers — org-role gate (F2) ─────────────────────
+
+function makeWriteRequest(body: unknown, method = "PATCH"): Request {
+  return new Request("https://averrow.com/api/orgs/42/modules/abuse-mailbox/messages/m1/status", {
+    method,
+    headers: { Origin: "https://averrow.com", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("handleUpdateAbuseInboxMessageStatus — org-role gate", () => {
+  it("403s an org viewer (below analyst) attempting a status flip", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 1 }));
+    const res = await handleUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ status: "resolved" }), env, "42", "m1", ORG_42_VIEWER);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("Requires org role: analyst or higher");
+  });
+
+  it("403s a read-only global seat (auditor)", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 1 }));
+    const res = await handleUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ status: "resolved" }), env, "42", "m1", AUDITOR);
+    expect(res.status).toBe(403);
+  });
+
+  it("allows an org analyst to flip status", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 1 }));
+    const res = await handleUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ status: "resolved" }), env, "42", "m1", ORG_42_MEMBER);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { success: boolean; data: { status: string } };
+    expect(body.success).toBe(true);
+    expect(body.data.status).toBe("resolved");
+  });
+
+  it("allows super_admin to flip status", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: [], updatedRows: 1 }));
+    const res = await handleUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ status: "dismissed" }), env, "42", "m1", SUPER_ADMIN);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("handleBulkUpdateAbuseInboxMessageStatus — org-role gate", () => {
+  it("403s an org viewer (below analyst) attempting a bulk flip", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 3 }));
+    const res = await handleBulkUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ ids: ["m1", "m2", "m3"], status: "dismissed" }, "POST"),
+      env, "42", ORG_42_VIEWER);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("Requires org role: analyst or higher");
+  });
+
+  it("403s a read-only global seat (auditor)", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 3 }));
+    const res = await handleBulkUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ ids: ["m1", "m2"], status: "dismissed" }, "POST"),
+      env, "42", AUDITOR);
+    expect(res.status).toBe(403);
+  });
+
+  it("allows an org analyst to bulk-flip status", async () => {
+    const env = makeEnv(new MockKV(), makeDb({ enabledModules: ENTITLED, updatedRows: 3 }));
+    const res = await handleBulkUpdateAbuseInboxMessageStatus(
+      makeWriteRequest({ ids: ["m1", "m2", "m3"], status: "dismissed" }, "POST"),
+      env, "42", ORG_42_MEMBER);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { success: boolean; data: { updated: number } };
+    expect(body.success).toBe(true);
+    expect(body.data.updated).toBe(3);
   });
 });
