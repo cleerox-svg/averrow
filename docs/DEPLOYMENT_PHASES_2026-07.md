@@ -15,14 +15,14 @@ verification, and rollback for each phase.
 
 ## Current status & session handoff (updated 2026-07-22)
 
-**Phases 0–5 are done and deployed to prod. Phase 6 (Wave 3 debt) is partially done.**
-The Phase 4 terminology re-anchor and the Phase 5 takedown + differentiator work all
-shipped one-PR-per-session and merged. Phase 6's *specific* S3.1–S3.6 line-items (shared
-`verifyOrgAccess`, blanket `/api/internal/*` guard, tenant vitest, `handlers/admin.ts`
-split, R4/R7/R9 cleanup, D1-budget trend) are **still open**; the debt work that *did*
-land this cycle was an adjacent set — design-system primitive debt, a permanent
-responsive/visual-QA gate, and org-isolation fixes made inline during Phase 5. A new
-session resuming here should pick up the outstanding **S3.1–S3.6** items.
+**All phases (0–6) are done and deployed to prod. The July deployment plan is complete.**
+Phase 6 (Wave 3 debt & hardening) closed out on 2026-07-22: all six S3.1–S3.6 line-items
+shipped across #1669 (S3.1/S3.2/S3.3/S3.4a) and #1670 (S3.4b/S3.5 + a §6 docs reconcile),
+each through the standard pipeline (appsec on the two security items, qa-verifier on the
+`admin.ts` split, code-reviewer on the rest). Three lower-priority slices were deliberately
+deferred with tracked reasons rather than forced (see the Phase 6 note below). The earlier
+"adjacent debt" work (#1667: design-system primitives, the responsive/visual-QA gate) also
+remains live.
 
 | Phase | Sessions | Merged PRs | State |
 |---|---|---|---|
@@ -32,7 +32,7 @@ session resuming here should pick up the outstanding **S3.1–S3.6** items.
 | 3 D1 hot-path | S0.4 | #1639 | ✅ live · 24h verify ✅ pass (89.7%, trending down) |
 | 4 Terminology | S1.0–S1.6 | one PR per session, all merged | ✅ live |
 | 5 Takedown + differentiator | S2.1–S2.4 (+ exec-impersonation build) | one PR per session, all merged (…#1666) | ✅ live |
-| 6 Debt & hardening | S3.1–S3.6 | #1667 (adjacent debt only) | 🟡 partial · S3.1–S3.6 still open |
+| 6 Debt & hardening | S3.1–S3.6 | #1667 (adjacent debt), #1669 (S3.1–S3.4a), #1670 (S3.4b/S3.5 + §6 docs) | ✅ live · S3.1–S3.6 shipped; 3 slices deferred (tracked) |
 
 **24h post-deploy verification — DONE (2026-07-19).** Full record:
 `docs/deploy-baselines/phase-2-3-verify-2026-07-19.md`. Summary: **S0.2** — `dns_queue_parity.delta`
@@ -328,7 +328,7 @@ code).
 
 ---
 
-## Phase 6 — Debt & hardening (Wave 3, deploy as capacity allows) 🟡
+## Phase 6 — Debt & hardening (Wave 3, deploy as capacity allows) ✅
 
 **Ships:** improvement-plan **S3.1–S3.6** — shared `verifyOrgAccess` + single global-read
 predicate (S3, S4); blanket `POST /api/internal/*` auth guard + manifest/CORS/TTL hygiene
@@ -340,19 +340,38 @@ Non-urgent P2/P3. Each is an independent, low-risk merge deployed behind the sta
 **S3.1/S3.2 still route through `appsec-reviewer`** (they touch org isolation + the
 internal surface). No dark flags, no time-delayed verification beyond the standard gate.
 
-> **Status (2026-07-22): partial.** The S3.1–S3.6 line-items above are **still open**. The
-> debt that *did* land alongside Phases 4–5 was an adjacent set, not this list:
-> design-system primitive debt (Card accent, Badge light-contrast, `.ds-focusable`,
-> theme-aware `--sev-*-text`/`--amber-text`, colorless-utility sweep across ops/tenant), the
-> shared platform-aware handle-normalization fix, a permanent responsive/visual-QA gate
-> (`packages/averrow-marketing/tests/responsive.spec.ts` + `docs/VISUAL_QA.md`, PR #1667),
-> and org-isolation fixes made **inline during Phase 5** (the additive `alerts.org_id`
-> column + `(org_id IS NULL OR org_id = ?)` predicate). Note the Phase-5 org-isolation work
-> partially overlaps S3.1's intent (org-scope correctness) but did **not** complete S3.1's
-> deliverable — extracting the single shared `verifyOrgAccess` + one global-read predicate.
-> A session resuming here should treat S3.1–S3.6 as the remaining work.
+> **Status (2026-07-22): complete.** All six S3.1–S3.6 line-items shipped:
+> - **S3.1** (S3+S4) — one shared `verifyOrgAccess` in `middleware/auth.ts` using the single
+>   `hasGlobalReadScope` predicate; 14 duplicated copies removed; `auditor` now reads tenant
+>   data as documented with **zero** new write access (writes stay gated per-mutation, plus an
+>   explicit `isReadOnlyGlobalRole` block on the two abuse-mailbox status writers). appsec
+>   CLEAN. **#1669**.
+> - **S3.2** (S5+S6) — blanket `AVERROW_INTERNAL_SECRET` guard on `POST /api/internal/*` (mint
+>   routes excluded — they use the separate preview secret); `LRX_API_KEY` declared;
+>   `lrxradar.com` added to CORS; wrangler CPU + MCP TTL comments fixed. appsec CLEAN. **#1669**.
+> - **S3.3** (T2) — tenant vitest was already scaffolded in Phase 5; added the remaining billing
+>   smoke test. **#1669**.
+> - **S3.4a** (T3) — `handlers/admin.ts` (4,461 lines) split into 11 per-domain modules behind a
+>   barrel; **49 exports byte-identical, zero route drift** (qa-verifier PASS). **#1669**.
+> - **S3.4b** (T4) — orchestrator hour-gate dispatch test (the 22h-outage class), proven
+>   non-tautological. **#1670**.
+> - **S3.5** (T5) — deleted 4 provably-dead `components/mobile/` files; the Modal primitive was
+>   never built (need absorbed by Dropdown/BottomSheet), the two token stragglers were already
+>   CSS-var compliant. **#1670**.
+> - **S3.6** (R4+R5) — the wrangler CPU comment was folded into S3.2; the ct-monitor docblock was
+>   already correct; the D1 read-budget "watch" was already addressed by Phase 3 (89.7%, trending
+>   down) and is tracked live by `d1_budget_state`. No net-new code.
+> - A **CLAUDE.md §6 docs reconcile** (dispatch table vs `orchestrator.ts`) rode along on #1670.
+>
+> **Deliberately deferred (tracked, not dropped):** (1) the S3.5 ESLint `no-explicit-any` gate —
+> no ESLint setup exists anywhere in the monorepo to extend, so standing up ESLint 9 flat-config
+> against ~193 existing `any`s is its own PR; (2) retiring `observatory` v2 — it's an intentional
+> **live** v2/v3 version toggle, not dead code, and should be consolidated only once v3 reaches
+> parity; (3) a pre-existing Medium authz gap appsec surfaced during S3.1 (the two abuse-mailbox
+> status writers have no org-role gate, so an org `viewer` can flip message status — **not**
+> introduced by this wave).
 
-**Go/no-go:** none downstream — this phase drains debt continuously.
+**Go/no-go:** none downstream — this phase drains debt continuously. **The July plan is now complete.**
 
 ---
 
