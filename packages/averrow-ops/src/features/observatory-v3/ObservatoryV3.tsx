@@ -138,7 +138,7 @@ export function ObservatoryV3() {
             onClick={() => setColorBy(colorBy === 'severity' ? 'type' : 'severity')}
             className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
             style={{
-              background: 'rgba(6,10,20,0.80)',
+              background: 'var(--bg-card)',
               border: '1px solid var(--border-base)',
               color: 'var(--text-secondary)',
               backdropFilter: 'blur(12px)',
@@ -168,9 +168,9 @@ export function ObservatoryV3() {
           onClick={() => refetch()}
           className="p-1.5 rounded-md transition-colors"
           style={{
-            background: 'rgba(6,10,20,0.80)',
+            background: 'var(--bg-card)',
             border: '1px solid var(--border-base)',
-            color: isRefreshing ? 'var(--amber)' : 'var(--text-muted)',
+            color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
             cursor: 'pointer',
           }}
         >
@@ -226,9 +226,9 @@ export function ObservatoryV3() {
               onClick={() => set(!active)}
               className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
               style={{
-                background: active ? 'rgba(229,168,50,0.15)' : 'rgba(6,10,20,0.80)',
+                background: active ? 'rgba(229,168,50,0.15)' : 'var(--bg-card)',
                 border: `1px solid ${active ? 'rgba(229,168,50,0.30)' : 'var(--border-base)'}`,
-                color: active ? 'var(--amber)' : 'var(--text-muted)',
+                color: active ? 'var(--amber-text)' : 'var(--text-muted)',
                 backdropFilter: 'blur(12px)',
                 cursor: 'pointer',
               }}
@@ -245,14 +245,14 @@ export function ObservatoryV3() {
         style={{
           bottom: isMobile ? 72 : 48,
           height: 36,
-          background: 'rgba(6,10,20,0.92)',
+          background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
           borderTop: '1px solid var(--border-base)',
         }}
       >
         <div className="flex items-center gap-4">
           <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: 'var(--amber)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
+            <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
             {' \u00b7 '}
             <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
             {' \u00b7 '}

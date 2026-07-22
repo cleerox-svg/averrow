@@ -72,6 +72,16 @@ function getArcColor(
   return getTypeColor(d.threat_type ?? 'phishing', alpha);
 }
 
+// Theme-aware severity TEXT colors (tooltip labels only — the WebGL layers
+// above keep using getSeverityColor's RGBA tuples, which must stay fixed).
+const SEV_TEXT: Record<string, string> = {
+  critical: 'var(--sev-critical-text)',
+  high: 'var(--sev-high-text)',
+  medium: 'var(--sev-medium-text)',
+  low: 'var(--sev-low-text)',
+  info: 'var(--sev-info-text)',
+};
+
 // ─── Bezier helpers ─────────────────────────────────────────
 function computeBezierPath(srcLng: number, srcLat: number, tgtLng: number, tgtLat: number, segments = 30): [number, number][] {
   const midLng = (srcLng + tgtLng) / 2;
@@ -702,7 +712,7 @@ function ThreatMapV3Inner({
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
             left: tooltip.x + 10, top: tooltip.y + 10,
-            background: 'rgba(6,10,20,0.95)',
+            background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
             backdropFilter: 'blur(12px)',
           }}
@@ -716,7 +726,7 @@ function ThreatMapV3Inner({
                 <span className="capitalize">{tooltip.threat.top_threat_type?.replace(/_/g, ' ') || 'Mixed'}</span>
                 {tooltip.threat.top_severity && (
                   <> {' \u00b7 '}
-                    <span className="uppercase" style={{ color: `rgb(${getSeverityColor(tooltip.threat.top_severity).slice(0, 3).join(',')})` }}>
+                    <span className="uppercase" style={{ color: SEV_TEXT[tooltip.threat.top_severity?.toLowerCase() ?? ''] ?? 'var(--sev-low-text)' }}>
                       {tooltip.threat.top_severity}
                     </span>
                   </>
@@ -737,7 +747,7 @@ function ThreatMapV3Inner({
               </div>
               <div className="mt-1" style={{ color: 'var(--text-tertiary)' }}>{tooltip.arc.volume} threat{tooltip.arc.volume > 1 ? 's' : ''}</div>
               {tooltip.arc.brand_name && (
-                <div className="mt-1" style={{ color: 'var(--amber)' }}>Target: {tooltip.arc.brand_name}</div>
+                <div className="mt-1" style={{ color: 'var(--amber-text)' }}>Target: {tooltip.arc.brand_name}</div>
               )}
               {tooltip.arc.source_region && (
                 <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>From: {tooltip.arc.source_region}</div>
