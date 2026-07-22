@@ -102,8 +102,6 @@ export type { EmptyVariant } from '../../components/ui/EmptyState';
 
 export { Skeleton } from '../../components/ui/Skeleton';
 
-export { ObservatoryVersionToggle } from '../../components/ui/ObservatoryVersionToggle';
-
 // ── Aliases (backward compat — import new names for new code) ──────────────
 export { Card as DeepCard } from '../../components/ui/Card';
 export { Button as DimensionalButton } from '../../components/ui/Button';

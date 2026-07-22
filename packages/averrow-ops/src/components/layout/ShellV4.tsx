@@ -94,7 +94,7 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
         // workspaces: Explorer (Brands / Threat Actors / Campaigns /
         // Providers) and Coverage (Apps / Dark Web / Trademarks / Trends).
         // Their standalone routes remain live for deep links / pivots.
-        { label: 'Observatory', to: '/observatory-v3', icon: Globe },
+        { label: 'Observatory', to: '/observatory',    icon: Globe },
         { label: 'Explorer',    to: '/explore',        icon: Compass },
         { label: 'Coverage',    to: '/coverage',       icon: Layers },
       ],

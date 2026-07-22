@@ -61,7 +61,6 @@ const Threats = React.lazy(() => import('@/features/threats/Threats').then(m => 
 const Profile = React.lazy(() => import('@/features/settings/Profile').then(m => ({ default: m.Profile })));
 const Notifications = React.lazy(() => import('@/features/settings/Notifications').then(m => ({ default: m.Notifications })));
 const NotificationPreferences = React.lazy(() => import('@/features/settings/NotificationPreferences').then(m => ({ default: m.NotificationPreferences })));
-const Observatory = React.lazy(() => import('@/features/observatory/Observatory').then(m => ({ default: m.Observatory })));
 const ObservatoryV3 = React.lazy(() => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 })));
 const SearchResults = React.lazy(() => import('@/features/search/SearchResults').then(m => ({ default: m.SearchResults })));
 
@@ -178,8 +177,11 @@ export default function App() {
         <Route path="admin/operations" element={lazyRoute(<OperationsWorkspace />)} />
         <Route path="admin/governance" element={lazyRoute(<GovernanceWorkspace />)} />
         <Route path="admin/platform-users" element={lazyRoute(<PlatformUsers />)} />
-        <Route path="observatory" element={lazyRoute(<Observatory />, <ObservatoryLoader />)} />
-        <Route path="observatory-v3" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
+        <Route path="observatory" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />
+        {/* v2 retired (#35 Phase D) — v3 is now the sole Observatory at the
+            canonical path. Redirect for bookmarks/links still pointing at
+            the old v3 preview path. */}
+        <Route path="observatory-v3" element={<Navigate to="/observatory" replace />} />
         <Route path="brands" element={lazyRoute(<Brands />)} />
         <Route path="brands/:brandId" element={lazyRoute(<BrandDetail />)} />
         {/* Old /brands-v3 paths redirect to canonical /brands now that

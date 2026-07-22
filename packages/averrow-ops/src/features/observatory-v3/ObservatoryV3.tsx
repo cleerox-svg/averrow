@@ -1,9 +1,9 @@
 /**
- * Observatory v3 — GPU-driven particle visualization.
+ * Observatory — GPU-driven particle visualization.
  *
- * Parallel route to /observatory (v2). Uses TripsLayer for animation,
- * overlaid MapboxOverlay mode, enhanced side panel widgets.
- * Designed for rip-and-replace: same hooks, same data, swap route when ready.
+ * The sole Observatory surface as of #35 Phase D (v2 retired). Uses
+ * TripsLayer for animation, overlaid MapboxOverlay mode, enhanced side
+ * panel widgets.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -17,7 +17,6 @@ import { BottomSheet } from '@/components/BottomSheet';
 import { useOperations } from '@/hooks/useOperations';
 import type { Operation } from '@/hooks/useOperations';
 import { Card, Tabs, Button } from '@/components/ui';
-import { ObservatoryVersionToggle } from '@/components/ui/ObservatoryVersionToggle';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -157,12 +156,12 @@ export function ObservatoryV3() {
            untouched. */
         <div className="absolute top-3 left-0 right-0 z-10 flex flex-col gap-1.5 px-4">
           {/* Review fix (MUST #1): the unconditional top-right cluster
-              (ObservatoryVersionToggle + LiveIndicator + Refresh, below)
-              shares this same top-3 band on desktop. On mobile it's gated
-              off entirely and a minimal LiveIndicator + Refresh subset
-              rides in-flow alongside the summary toggle instead of
-              absolutely-pinned top-right — normal flexbox flow means it
-              can never overlap the summary button, at any width. */}
+              (LiveIndicator + Refresh, below) shares this same top-3 band
+              on desktop. On mobile it's gated off entirely and a minimal
+              LiveIndicator + Refresh subset rides in-flow alongside the
+              summary toggle instead of absolutely-pinned top-right —
+              normal flexbox flow means it can never overlap the summary
+              button, at any width. */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setFiltersExpanded(prev => !prev)}
@@ -318,13 +317,9 @@ export function ObservatoryV3() {
           Gated to desktop; mobile gets a minimal LiveIndicator + Refresh
           subset laid out in-flow next to the summary toggle instead (see
           the isMobile controls branch above) — no absolute-position
-          overlap possible. ObservatoryVersionToggle is dropped on mobile
-          rather than repositioned since it's slated for removal in the
-          next phase (v2 retirement). */}
+          overlap possible. */}
       {!isMobile && (
         <div className="absolute top-3 right-4 z-10 flex items-center gap-2">
-          {/* v2 / v3 toggle */}
-          <ObservatoryVersionToggle />
           {/* Live indicator */}
           <LiveIndicator />
           {/* Refresh */}

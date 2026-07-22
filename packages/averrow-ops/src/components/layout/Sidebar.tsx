@@ -14,7 +14,7 @@ import { api } from '@/lib/api';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
-import { useObservatoryVersion, useTheme } from '@/design-system/hooks';
+import { useTheme } from '@/design-system/hooks';
 
 interface NavItem {
   label: string;
@@ -22,9 +22,7 @@ interface NavItem {
   icon: LucideIcon;
   badge?: number;
   // Highlight this entry when location matches any of these prefixes
-  // (used so the single Observatory entry stays active across both
-  // /observatory and /observatory-v3 regardless of which version
-  // the user has selected).
+  // (e.g. Team should stay active on any /admin/users sub-path).
   matchPrefixes?: string[];
   // Force exact path match. Use for entries whose path is a prefix
   // of sibling entries (e.g. Dashboard at `/admin` would otherwise
@@ -105,7 +103,6 @@ const NAV_ACTIVE_STYLE: React.CSSProperties = {
 export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: SidebarProps) {
   const { user, logout, isSuperAdmin, isBrandAdmin } = useAuth();
   const [alertCount, setAlertCount] = useState(0);
-  const { path: observatoryPath } = useObservatoryVersion();
   const location = useLocation();
   const isRail = mode === 'rail';
 
@@ -131,7 +128,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
       label: 'INTELLIGENCE',
       items: [
         { label: 'Home',         path: '/',             icon: LayoutDashboard },
-        { label: 'Observatory',  path: observatoryPath, icon: Globe, matchPrefixes: ['/observatory', '/observatory-v3'] },
+        { label: 'Observatory',  path: '/observatory', icon: Globe, matchPrefixes: ['/observatory'] },
         { label: 'Brands',       path: '/brands',       icon: Shield },
         { label: 'Threats',      path: '/threats',       icon: Crosshair },
         { label: 'Apps',         path: '/apps',          icon: Smartphone },

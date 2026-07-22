@@ -1,9 +1,7 @@
 // Shell-level version toggle (v4 redesign coexistence).
 //
-// Distinct from useVersionToggle (which is path/navigation-scoped for
-// per-surface v2/v3 splits like Observatory). This one flips the WHOLE
-// app shell between the current chrome and the new cinematic v4 shell,
-// while both render the exact same route <Outlet/>. Same proven idiom:
+// This flips the WHOLE app shell between the current chrome and the new
+// cinematic v4 shell, while both render the exact same route <Outlet/>.
 // localStorage-persisted, synced across tabs via the storage event.
 //
 // Default stays 'current' until the W4 cutover flips it to 'v4'.
