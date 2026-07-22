@@ -37,11 +37,17 @@ const MAP_MODES: { id: MapMode; label: string }[] = [
   { id: 'heatmap', label: 'HEATMAP' },
 ];
 
+const SOURCES = [
+  { id: 'all', label: 'All Sources' },
+  { id: 'feeds', label: 'Feeds' },
+  { id: 'spam_trap', label: 'Spam Trap' },
+];
+
 export function ObservatoryV3() {
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
   const [period, setPeriod] = useState('7d');
-  const [source] = useState('all');
+  const [source, setSource] = useState('all');
   const [mapMode, setMapMode] = useState<MapMode>('global');
   const [colorBy, setColorBy] = useState<'severity' | 'type'>('severity');
   const [showNodes, setShowNodes] = useState(true);
@@ -142,6 +148,13 @@ export function ObservatoryV3() {
             {colorBy === 'severity' ? 'By Severity' : 'By Type'}
           </button>
         </div>
+        {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
+        <Tabs
+          tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
+          activeTab={source}
+          onChange={setSource}
+          variant="bar"
+        />
       </div>
 
       {/* ─── Top-right: Status + controls ─────────────────────── */}

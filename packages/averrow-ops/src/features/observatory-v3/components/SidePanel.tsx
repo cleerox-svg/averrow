@@ -17,18 +17,25 @@
  *   3. Hosting Providers (7d trend — structurally fixed)
  *   4. Active Operations
  *   5. Geopolitical Campaigns (30d)
+ *   6. Agent Intelligence         — v2 parity (observatory-v2 retirement)
+ *   7. Live Feed                  — v2 parity (observatory-v2 retirement)
  */
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { useObservatoryThreats, useObservatoryStats } from '@/hooks/useObservatory';
 import { useBrands } from '@/hooks/useBrands';
 import { useDashboardProviders } from '@/hooks/useProviders';
 import type { DashboardProvider } from '@/hooks/useProviders';
 import { useOperations } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
+import { useAgents } from '@/hooks/useAgents';
 import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
 import { Badge } from '@/components/ui/Badge';
+import { AgentAttribution } from '@/components/ui/AgentAttribution';
+import { relativeTime } from '@/lib/time';
 
 // ─── Helpers ────────────────────────────────────────────────
 function fmtPeriod(p: string): string {
@@ -379,6 +386,137 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
   );
 });
 
+// ─── Agent Intelligence (v2 parity) ─────────────────────────
+const AgentIntelWidget = memo(function AgentIntelWidget() {
+  const { data: agents, error, refetch } = useAgents();
+  const recentOutputs = useMemo(
+    () =>
+      (agents ?? [])
+        .filter(a => a.last_output_at)
+        .sort((a, b) => new Date(b.last_output_at!).getTime() - new Date(a.last_output_at!).getTime())
+        .slice(0, 5),
+    [agents],
+  );
+
+  return (
+    <div className="px-4 pb-2">
+      <AgentAttribution agent="Observer + Sentinel" />
+      {error ? (
+        <div
+          className="flex items-center justify-between gap-2 mt-2 px-2 py-1.5 rounded"
+          style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
+        >
+          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+            Agent feed failed to load
+          </span>
+          <button
+            onClick={() => refetch()}
+            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : recentOutputs.length === 0 ? (
+        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No recent agent output</div>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          {recentOutputs.map(agent => (
+            <div key={agent.agent_id} className="flex items-center gap-2 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: agent.color }} />
+              <span className="text-[10px] font-mono font-bold uppercase truncate flex-1" style={{ color: agent.color }}>
+                {agent.display_name}
+              </span>
+              <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                {agent.outputs_24h} out &middot; {relativeTime(agent.last_output_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+// ─── Live Feed (v2 parity) ───────────────────────────────────
+interface LiveThreatEntry {
+  id: string;
+  threat_type: string;
+  severity: string | null;
+  country_code: string | null;
+  created_at: string;
+  malicious_domain: string | null;
+}
+
+const LIVE_SEVERITY_COLOR: Record<string, string> = {
+  critical: 'var(--sev-critical)',
+  high: 'var(--sev-high)',
+  medium: 'var(--sev-medium)',
+  low: 'var(--sev-low)',
+};
+
+const LiveFeedWidget = memo(function LiveFeedWidget() {
+  // NOTE: the SidePanel doesn't currently receive the map's `source` filter
+  // (SidePanelProps only carries `period` + `visible`, and ObservatoryV3.tsx
+  // is owned by a sibling change) — this defaults to `all`, matching the
+  // current app state where source selection isn't wired to the panel yet.
+  const { data: entries = [], error, refetch } = useQuery({
+    queryKey: ['observatory-live-feed'],
+    queryFn: async () => {
+      const res = await api.get<LiveThreatEntry[]>('/api/observatory/live?limit=8');
+      if (!res.success) throw new Error(res.error || 'Live feed failed to load');
+      return res.data ?? [];
+    },
+    refetchInterval: 15_000,
+  });
+
+  return (
+    <div className="px-4 pb-2">
+      {error ? (
+        <div
+          className="flex items-center justify-between gap-2 px-2 py-1.5 rounded"
+          style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
+        >
+          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+            Live feed failed to load
+          </span>
+          <button
+            onClick={() => refetch()}
+            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>Waiting for threats...</div>
+      ) : (
+        <div className="space-y-1">
+          {entries.slice(0, 8).map(entry => (
+            <div key={entry.id} className="flex items-center gap-2 py-0.5">
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ background: LIVE_SEVERITY_COLOR[entry.severity?.toLowerCase() ?? ''] ?? 'var(--sev-low)' }}
+                aria-label={entry.severity ?? 'unknown severity'}
+                title={entry.severity ?? undefined}
+              />
+              <span className="text-[10px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>
+                {entry.threat_type?.replace(/_/g, ' ')}
+              </span>
+              {entry.country_code && (
+                <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
+              )}
+              <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                {relativeTime(entry.created_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 // ─── Main SidePanel ─────────────────────────────────────────
 interface SidePanelProps {
   period: string;
@@ -423,6 +561,14 @@ export function SidePanel({ period, visible }: SidePanelProps) {
         <Divider />
         <SectionDivider label={"Geopolitical Campaigns · 30d"} />
         <GeoCampaignsWidget />
+
+        <Divider />
+        <SectionDivider label="Agent Intelligence" />
+        <AgentIntelWidget />
+
+        <Divider />
+        <SectionDivider label="Live Feed" />
+        <LiveFeedWidget />
       </div>
     </div>
   );
