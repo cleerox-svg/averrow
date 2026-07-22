@@ -531,7 +531,7 @@ export function SidePanel({ period, visible }: SidePanelProps) {
     <div
       className="absolute top-0 right-0 bottom-[84px] z-20 w-80 flex flex-col overflow-hidden"
       style={{
-        background: 'rgba(6,10,20,0.88)',
+        background: 'var(--bg-card-deep)',
         backdropFilter: 'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
         borderLeft: '1px solid var(--border-base)',
