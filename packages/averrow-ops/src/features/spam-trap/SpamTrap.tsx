@@ -86,7 +86,7 @@ export function SpamTrap() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Spam Trap</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Spam Trap</h1>
           <p className="text-white/50 text-sm font-mono mt-1">
             THREAT ACTOR INTELLIGENCE · HONEYPOT NETWORK
           </p>
@@ -112,7 +112,7 @@ export function SpamTrap() {
         <div
           className="rounded-xl px-4 py-3 flex items-center gap-4"
           style={{
-            background: 'rgba(15,23,42,0.50)',
+            background: 'var(--bg-card)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
             border: '1px solid var(--border-base)',
@@ -123,7 +123,7 @@ export function SpamTrap() {
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/40">
               Catches · 30 days
             </div>
-            <div className="text-xl font-bold tabular-nums text-white mt-1">
+            <div className="text-xl font-bold tabular-nums text-[var(--text-primary)] mt-1">
               {sparklineValues.reduce((s, v) => s + v, 0)}
             </div>
           </div>
@@ -146,7 +146,7 @@ export function SpamTrap() {
             onClick={() => setActiveTab(t.key)}
             className={`px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors border-b-2 ${
               activeTab === t.key
-                ? 'text-white border-[var(--amber)]'
+                ? 'text-[var(--text-primary)] border-[var(--amber)]'
                 : 'text-white/45 hover:text-white/75 border-transparent'
             }`}
           >

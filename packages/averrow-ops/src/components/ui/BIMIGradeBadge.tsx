@@ -103,7 +103,7 @@ export function BIMIGradeBadge({
       {badge}
       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2
         hidden group-hover:block z-50 pointer-events-none">
-        <div className="bg-slate-800 border border-white/10 rounded-lg px-3 py-2
+        <div className="bg-[var(--bg-card)] border border-white/10 rounded-lg px-3 py-2
           text-[11px] text-white/70 whitespace-nowrap
           shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
           <span className={`font-bold font-mono ${config.text} mr-1.5`}>{grade}</span>

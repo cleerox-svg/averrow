@@ -131,7 +131,7 @@ export function EmptyState({
               onClick={action.onClick}
               className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${
                 action.variant === 'secondary'
-                  ? 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10'
+                  ? 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-[var(--text-primary)] border border-white/10'
                   : 'bg-amber-500 hover:bg-amber-400 text-black font-semibold'
               }`}
             >
@@ -142,7 +142,7 @@ export function EmptyState({
             <button
               onClick={secondaryAction.onClick}
               className="px-4 py-2 rounded-lg text-xs font-medium
-                bg-white/5 hover:bg-white/10 text-white/60 hover:text-white
+                bg-white/5 hover:bg-white/10 text-white/60 hover:text-[var(--text-primary)]
                 border border-white/10 transition-all"
             >
               {secondaryAction.label}

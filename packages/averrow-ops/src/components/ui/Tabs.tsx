@@ -78,13 +78,18 @@ export function Tabs({
                 fontFamily:    'var(--font-mono)',
                 letterSpacing: '0.08em',
                 cursor:        'pointer',
-                border:        `1px solid ${active ? 'var(--amber-border)' : 'transparent'}`,
+                // --pill-active-border / --pill-active-fill-2-strong /
+                // --pill-active-rim-strong: theme-aware, dark defaults
+                // byte-identical to the literals this replaced; boosted
+                // under [data-theme="light"] so the active tab pops
+                // instead of reading as a beige smudge.
+                border:        `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
                 background:    active
-                  ? 'linear-gradient(135deg, var(--amber-glow), rgba(229,168,50,0.08))'
+                  ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))'
                   : 'transparent',
-                color:         active ? 'var(--amber)' : 'var(--text-tertiary)',
+                color:         active ? 'var(--amber-text)' : 'var(--text-tertiary)',
                 boxShadow:     active
-                  ? 'inset 0 1px 0 rgba(229,168,50,0.25), 0 0 12px var(--amber-glow)'
+                  ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--amber-glow)'
                   : 'none',
                 transition:    'var(--transition-fast)',
                 whiteSpace:    'nowrap',
@@ -121,12 +126,15 @@ export function Tabs({
               padding:       '5px 14px',
               borderRadius:  99,
               cursor:        'pointer',
-              border:        `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
+              // --pill-active-border / --pill-active-fill-1/2 / --pill-active-rim:
+              // theme-aware, dark defaults byte-identical to the literals
+              // this replaced; boosted under [data-theme="light"].
+              border:        `1px solid ${active ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
               background:    active
-                ? 'linear-gradient(135deg, rgba(229,168,50,0.15), rgba(229,168,50,0.06))'
+                ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))'
                 : 'transparent',
-              color:         active ? 'var(--amber)' : 'var(--text-tertiary)',
-              boxShadow:     active ? 'inset 0 1px 0 rgba(229,168,50,0.20)' : 'none',
+              color:         active ? 'var(--amber-text)' : 'var(--text-tertiary)',
+              boxShadow:     active ? 'inset 0 1px 0 var(--pill-active-rim)' : 'none',
               transition:    'var(--transition-fast)',
               whiteSpace:    'nowrap',
               display:       'inline-flex',
@@ -207,7 +215,11 @@ function UnderlineTabs({
         position:             'sticky',
         top:                  0,
         zIndex:               10,
-        background:           'linear-gradient(180deg, var(--bg-page) 0%, rgba(6,10,20,0.90) 100%)',
+        // Theme-aware bottom stop — dark default is byte-identical to the
+        // literal this replaced; [data-theme="light"] flips it to the
+        // light page tone instead of a hardcoded dark rgba (which read as
+        // a dark band under the light theme's var(--bg-page)).
+        background:           'linear-gradient(180deg, var(--bg-page) 0%, var(--bg-sticky-deep) 100%)',
         backdropFilter:       'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         borderBottom:         '1px solid var(--border-base)',

@@ -115,12 +115,17 @@ export function FilterBar({
                 textTransform: 'uppercase',
                 cursor:        'pointer',
                 outline:       'none',
-                border:        `1px solid ${isActive ? 'var(--amber-border)' : 'var(--border-base)'}`,
+                // --pill-active-border / --pill-active-fill-1/2 / --pill-active-rim:
+                // theme-aware, dark defaults byte-identical to the literals
+                // this replaced; boosted under [data-theme="light"] (same
+                // token set as Tabs.tsx pills variant, which used the
+                // identical formula inline).
+                border:        `1px solid ${isActive ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
                 background:    isActive
-                  ? 'linear-gradient(135deg, rgba(229,168,50,0.15), rgba(229,168,50,0.06))'
+                  ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))'
                   : 'transparent',
-                color:         isActive ? 'var(--amber)' : 'var(--text-tertiary)',
-                boxShadow:     isActive ? 'inset 0 1px 0 rgba(229,168,50,0.20)' : 'none',
+                color:         isActive ? 'var(--amber-text)' : 'var(--text-tertiary)',
+                boxShadow:     isActive ? 'inset 0 1px 0 var(--pill-active-rim)' : 'none',
                 transition:    'var(--transition-fast)',
                 display:       'inline-flex',
                 alignItems:    'center',

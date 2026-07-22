@@ -72,7 +72,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
 
   if (isLoading) {
     return (
-      <div className="bg-slate-900/50 backdrop-blur-md border border-white/[0.07] rounded-xl p-5">
+      <div className="bg-[var(--bg-card)] backdrop-blur-md border border-white/[0.07] rounded-xl p-5">
         <div className="h-3 bg-white/10 rounded w-48 mb-3 animate-pulse" />
         <div className="space-y-2">
           <Skeleton className="h-2 w-full rounded" />
@@ -104,7 +104,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
   }
 
   return (
-    <div className="bg-slate-900/50 backdrop-blur-md border border-amber-500/15 rounded-xl p-5">
+    <div className="bg-[var(--bg-card)] backdrop-blur-md border border-amber-500/15 rounded-xl p-5">
       <div className="flex items-start justify-between mb-3">
         <div>
           <h2 className="text-white/80 font-semibold text-sm">

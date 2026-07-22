@@ -122,7 +122,7 @@ function ChartTooltip({ active, payload, label }: {
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+    <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="font-mono mb-1" style={{ color: 'var(--text-secondary)' }}>{label}</div>
       {payload.map((p) => (
         <div key={p.name} className="flex justify-between gap-4">
@@ -155,7 +155,7 @@ function BriefingCard({
       onClick={onSelect}
       className="w-full text-left rounded-xl p-4 transition-all cursor-pointer hover:bg-white/[0.03]"
       style={{
-        background: isSelected ? 'rgba(229,168,50,0.06)' : 'rgba(15,23,42,0.50)',
+        background: isSelected ? 'rgba(229,168,50,0.06)' : 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: isSelected
@@ -595,7 +595,7 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
                 if (!active || !payload?.length) return null;
                 const item = payload[0];
                 return (
-                  <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+                  <div className="rounded-lg px-3 py-2 text-xs" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
                     <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{((item.value as number) ?? 0).toLocaleString()}</span>
                   </div>
                 );

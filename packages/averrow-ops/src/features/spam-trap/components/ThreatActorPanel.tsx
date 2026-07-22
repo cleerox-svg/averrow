@@ -38,7 +38,7 @@ function ProfileCard({ profile }: { profile: ActorProfile }) {
   }, [profile.domain]);
 
   return (
-    <div className="rounded-xl p-4 space-y-2" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+    <div className="rounded-xl p-4 space-y-2" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="flex items-center gap-2">
         <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">Profile</span>
         <span className="text-white/40 text-[9px]">·</span>
@@ -47,7 +47,7 @@ function ProfileCard({ profile }: { profile: ActorProfile }) {
         </span>
       </div>
 
-      <div className="text-[13px] font-semibold text-white">{infraLabel}</div>
+      <div className="text-[13px] font-semibold text-[var(--text-primary)]">{infraLabel}</div>
 
       <div className="space-y-1 text-[10px] font-mono text-white/40">
         <div>
@@ -103,7 +103,7 @@ export function ThreatActorPanel() {
 
   if (isError) {
     return (
-      <div className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+      <div className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
         <span className="text-white/40 text-sm font-mono">Unable to load captures</span>
         <button
           onClick={() => refetch()}
@@ -116,7 +116,7 @@ export function ThreatActorPanel() {
   }
 
   return (
-    <div className="rounded-xl p-4 min-h-[400px] space-y-4" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+    <div className="rounded-xl p-4 min-h-[400px] space-y-4" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
         Threat Actor Profiling
       </div>
@@ -139,7 +139,7 @@ export function ThreatActorPanel() {
             <div
               className="rounded-lg p-3 text-[11px] text-white/40 font-mono leading-relaxed"
               style={{
-                background: 'rgba(15,23,42,0.50)',
+                background: 'var(--bg-card)',
                 backdropFilter: 'blur(12px)',
                 WebkitBackdropFilter: 'blur(12px)',
                 border: '1px solid var(--border-base)',

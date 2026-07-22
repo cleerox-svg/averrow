@@ -148,7 +148,12 @@ export function MilestoneBanner() {
           font-size: 9px;
           font-weight: 700;
           letter-spacing: 0.22em;
-          color: var(--amber);
+          /* --amber-text: byte-identical to --amber in dark; raw --amber
+             on this 9px eyebrow is ~2.1:1 in light mode — an AA fail for
+             small text. The large hero number below stays on the raw
+             vibrant gradient (large text clears 3:1; vibrancy is wanted
+             there). */
+          color: var(--amber-text);
           text-transform: uppercase;
           margin-bottom: 4px;
         }

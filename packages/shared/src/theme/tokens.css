@@ -120,6 +120,65 @@
   --card-accent-rim-pct:    25%;
   --card-accent-glow-pct:   9%;
 
+  /* ── Critical card background (light-mode UI defects pass, 2026-07-22).
+     Card.tsx's `critical` variant and StatusRow's inline "BURST DETECTED"
+     banner used to hardcode this exact near-black gradient inline —
+     theme-invariant, so it rendered the same dark box in BOTH themes. On
+     the light page that put near-black var(--text-primary) text on a
+     near-black card = illegible. Dark default below is byte-identical to
+     the literal it replaces. The [data-theme="light"] override further
+     down composites a pale red wash over the ACTUAL light --bg-card/
+     --bg-card-deep via color-mix (~8-12% weight, the same order as
+     --sev-critical-bg's 0.10 alpha over white) instead of another dark
+     box. ── */
+  --card-critical-bg: linear-gradient(150deg, rgba(40, 12, 12, 0.95) 0%, rgba(15, 8, 8, 0.98) 100%);
+
+  /* ── Sticky Tabs (underline variant) backdrop bottom stop. Dark default
+     below is byte-identical to the literal Tabs.tsx used to hardcode
+     (rgba(6,10,20,0.90)), which read as a dark band under the light
+     theme's var(--bg-page). ── */
+  --bg-sticky-deep: rgba(6, 10, 20, 0.90);
+
+  /* ── Active-nav amber treatment (fill / border / rim / glow) — consumed
+     by both Sidebar.tsx (classic shell, NAV_ACTIVE_STYLE) and
+     shell-v4.css (.v4-item.active). Dark defaults below are byte-identical
+     to the literal values each surface hardcoded before this pass; the
+     [data-theme="light"] overrides further down boost them so the active
+     item doesn't read as a beige smudge on the light sidebar (#E5E9F0) —
+     same design intent as the --border-base / --card-accent-*-pct boosts
+     above. The two surfaces keep independent FILL tokens (their gradients
+     differ in direction/alpha today, so a shared fill token would drift
+     one of them off its current dark pixels) but share border/rim/glow,
+     which already matched (or are unified here) across both. --nav-active-
+     glow-v4 defaults to 0 alpha in dark (v4's active item currently has NO
+     outer glow layer at all — only the inset ring) so the extra box-shadow
+     layer added below is a no-op in dark and only becomes visible once
+     boosted under [data-theme="light"]. ── */
+  --nav-active-border:    rgba(229, 168, 50, 0.22);
+  --nav-active-rim:       rgba(229, 168, 50, 0.20);
+  --nav-active-glow:      rgba(229, 168, 50, 0.08);
+  --nav-active-fill-1:    rgba(229, 168, 50, 0.12);  /* classic sidebar gradient stop 1 */
+  --nav-active-fill-2:    rgba(229, 168, 50, 0.06);  /* classic sidebar gradient stop 2 */
+  --nav-active-fill-v4-1: rgba(229, 168, 50, 0.16);  /* v4 shell gradient stop 1 */
+  --nav-active-fill-v4-2: rgba(229, 168, 50, 0.03);  /* v4 shell gradient stop 2 */
+  --nav-active-glow-v4:   rgba(229, 168, 50, 0);
+
+  /* ── Active pill/tab amber treatment — Tabs.tsx (pills + bar variants)
+     and FilterBar.tsx already used the IDENTICAL 0.15/0.06/0.20 formula
+     inline for the pills treatment, so one token set covers both call
+     sites. `--pill-active-border` mirrors --amber-border's current value
+     (0.25) rather than reusing that shared token directly, so boosting it
+     for light mode doesn't ripple into --amber-border's ~20 other
+     consumers (Card active variant, Button, Input, etc.) that haven't
+     been visually re-verified in this pass. Dark defaults below are
+     byte-identical to the literals replaced. ── */
+  --pill-active-fill-1:     rgba(229, 168, 50, 0.15);
+  --pill-active-fill-2:     rgba(229, 168, 50, 0.06);
+  --pill-active-fill-2-strong: rgba(229, 168, 50, 0.08);  /* bar variant gradient stop 2 */
+  --pill-active-rim:        rgba(229, 168, 50, 0.20);  /* pills variant inset highlight */
+  --pill-active-rim-strong: rgba(229, 168, 50, 0.25);  /* bar variant inset highlight */
+  --pill-active-border:     rgba(229, 168, 50, 0.25);
+
   /* ── Typography ── */
   --font-sans: system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
@@ -175,6 +234,33 @@
   --card-accent-border-pct: 30%;
   --card-accent-rim-pct:    39%;
   --card-accent-glow-pct:   14%;
+
+  /* Critical card — pale red-washed card (NOT another dark box). See
+     :root comment above for rationale. */
+  --card-critical-bg: linear-gradient(150deg, color-mix(in srgb, var(--red) 8%, var(--bg-card)) 0%, color-mix(in srgb, var(--red) 12%, var(--bg-card-deep)) 100%);
+
+  /* Sticky Tabs backdrop — flip to the light page tone instead of a
+     hardcoded dark rgba (see :root comment above). */
+  --bg-sticky-deep: rgba(239, 242, 247, 0.90);
+
+  /* Active-nav boost — border/glow targets per design review; fills
+     boosted ~1.6-1.75x their own dark value (see :root comment above). */
+  --nav-active-border:    rgba(229, 168, 50, 0.40);
+  --nav-active-rim:       rgba(229, 168, 50, 0.30);
+  --nav-active-glow:      rgba(229, 168, 50, 0.18);
+  --nav-active-fill-1:    rgba(229, 168, 50, 0.24);
+  --nav-active-fill-2:    rgba(229, 168, 50, 0.08);
+  --nav-active-fill-v4-1: rgba(229, 168, 50, 0.28);
+  --nav-active-fill-v4-2: rgba(229, 168, 50, 0.05);
+  --nav-active-glow-v4:   rgba(229, 168, 50, 0.18);
+
+  /* Active pill/tab boost — ~1.6x each token's own dark value. */
+  --pill-active-fill-1:     rgba(229, 168, 50, 0.24);
+  --pill-active-fill-2:     rgba(229, 168, 50, 0.10);
+  --pill-active-fill-2-strong: rgba(229, 168, 50, 0.13);
+  --pill-active-rim:        rgba(229, 168, 50, 0.32);
+  --pill-active-rim-strong: rgba(229, 168, 50, 0.40);
+  --pill-active-border:     rgba(229, 168, 50, 0.40);
 
   /* ── Severity text — AA contrast on the COMPOSITED badge fill, not
      raw #FFFFFF. Badge.tsx never paints text on a bare white card —

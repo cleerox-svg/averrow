@@ -252,7 +252,7 @@ export function HoneypotNetworkPanel() {
       <div
         className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3"
         style={{
-          background: 'rgba(15,23,42,0.50)',
+          background: 'var(--bg-card)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           border: '1px solid var(--border-base)',
@@ -274,7 +274,7 @@ export function HoneypotNetworkPanel() {
     <div
       className="rounded-xl p-4 min-h-[400px]"
       style={{
-        background: 'rgba(15,23,42,0.50)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',

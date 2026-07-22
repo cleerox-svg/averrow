@@ -86,13 +86,21 @@ const NAV_ACTIVE_STYLE: React.CSSProperties = {
   padding: '9px 12px',
   margin: '1px 8px',
   borderRadius: 10,
-  color: '#E5A832',
-  background: 'linear-gradient(135deg, rgba(229,168,50,0.12), rgba(229,168,50,0.06))',
-  border: '1px solid rgba(229,168,50,0.22)',
+  // --amber-text: byte-identical to --amber (#E5A832) in dark; resolves to
+  // an AA-checked darker amber in light mode (raw --amber is ~2.1:1 on the
+  // light sidebar — an AA text-contrast fail at 13px).
+  color: 'var(--amber-text)',
+  // --nav-active-fill-1/2, --nav-active-border, --nav-active-rim,
+  // --nav-active-glow: theme-aware (tokens.css), dark defaults
+  // byte-identical to the literals this replaced; boosted under
+  // [data-theme="light"] so the active item doesn't read as a beige
+  // smudge on the light sidebar (#E5E9F0).
+  background: 'linear-gradient(135deg, var(--nav-active-fill-1), var(--nav-active-fill-2))',
+  border: '1px solid var(--nav-active-border)',
   borderLeft: '2px solid #E5A832',
   boxShadow: [
-    'inset 0 1px 0 rgba(229,168,50,0.20)',
-    '0 0 12px rgba(229,168,50,0.08)',
+    'inset 0 1px 0 var(--nav-active-rim)',
+    '0 0 12px var(--nav-active-glow)',
   ].join(', '),
   cursor: 'pointer',
   fontSize: 13,
@@ -297,7 +305,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
                           size={isRail ? 18 : 16}
                           style={{
                             flexShrink: 0,
-                            color: active ? '#E5A832' : 'var(--text-tertiary)',
+                            color: active ? 'var(--amber-text)' : 'var(--text-tertiary)',
                             filter: active ? 'drop-shadow(0 0 4px rgba(229,168,50,0.60))' : undefined,
                           }}
                         />

@@ -21,7 +21,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
   const max = sorted.length > 0 ? sorted[0][1] : 0;
 
   return (
-    <div className="p-4" style={{ background:'rgba(15,23,42,0.50)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
+    <div className="p-4" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
       <div className="mb-3 font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
         Attack Vectors
       </div>

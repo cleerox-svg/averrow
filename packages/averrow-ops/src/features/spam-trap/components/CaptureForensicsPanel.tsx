@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/design-system/components';
 
 const GLASS_CARD: CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid var(--border-base)',
@@ -229,7 +229,7 @@ function ExpandedDetail({
         <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
           URLs
         </div>
-        <div className="text-[32px] font-bold font-mono text-white leading-none">
+        <div className="text-[32px] font-bold font-mono text-[var(--text-primary)] leading-none">
           {urls.length}
         </div>
         {urlsByDomain.length > 0 && (

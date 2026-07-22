@@ -32,7 +32,7 @@ import type {
 import { relativeTime } from '@/lib/time';
 
 const GLASS_CARD: CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid var(--border-base)',
@@ -89,7 +89,7 @@ function WeeklyTrendCard({ weekly }: { weekly: SpamTrapInsightsTrendsWeek[] }) {
         {weekly.slice(-4).map((w) => (
           <div key={w.week_start} className="rounded p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-base)' }}>
             <div className="text-white/40 text-[9px] uppercase tracking-wider">{w.week_start}</div>
-            <div className="text-white text-base font-bold tabular-nums mt-0.5">{w.total}</div>
+            <div className="text-[var(--text-primary)] text-base font-bold tabular-nums mt-0.5">{w.total}</div>
             <div className="text-white/40 text-[10px] mt-0.5">
               top: {pickTopChannel(w)}
             </div>

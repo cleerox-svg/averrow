@@ -89,7 +89,7 @@ export function StatusRow() {
           width: 100%;
           padding: 12px 18px;
           border-radius: 12px;
-          background: linear-gradient(150deg, rgba(40,12,12,0.95), rgba(15,8,8,0.98));
+          background: var(--card-critical-bg);
           border: 1px solid var(--sev-critical-border, rgba(239,68,68,0.30));
           color: inherit;
           cursor: pointer;
@@ -161,6 +161,16 @@ export function StatusRow() {
           color: var(--sev-critical, #f87171);
           flex-shrink: 0;
           margin-top: 5px;
+        }
+        /* Light mode only (gated by the [data-theme="light"] selector —
+           the base .home-critical-label/-cta rules above are untouched,
+           so dark output is unchanged). Raw --sev-critical (#f87171) is
+           ~3.7:1 on the new pale-red card background — under AA's 4.5:1
+           text minimum. --sev-critical-text resolves to an AA-checked
+           darker red in light mode (see tokens.css). */
+        [data-theme="light"] .home-critical-label,
+        [data-theme="light"] .home-critical-cta {
+          color: var(--sev-critical-text);
         }
         @keyframes home-critical-pulse {
           0%, 100% { opacity: 1;   transform: scale(1);   }

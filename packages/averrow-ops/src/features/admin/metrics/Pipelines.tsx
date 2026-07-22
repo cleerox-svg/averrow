@@ -185,7 +185,7 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
       }}
       className="rounded-lg overflow-hidden cursor-pointer transition-transform hover:scale-[1.01]"
       style={{
-        background: 'rgba(22,30,48,0.50)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: `1px solid ${borderColor}`,

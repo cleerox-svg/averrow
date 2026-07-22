@@ -91,7 +91,7 @@ export function AdminAbuseMailbox() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Abuse Mailbox</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Abuse Mailbox</h1>
           <p className="text-white/50 text-sm font-mono mt-1">
             AVERROW SELF · MARKETING-FACING ABUSE INTAKE · COVERT SPAM TRAP
           </p>
@@ -106,7 +106,7 @@ export function AdminAbuseMailbox() {
       <div
         className="rounded-xl p-4"
         style={{
-          background: 'rgba(15,23,42,0.50)',
+          background: 'var(--bg-card)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           border: '1px solid var(--border-base)',
@@ -295,7 +295,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
     <div
       className="rounded-xl p-5"
       style={{
-        background: 'rgba(15,23,42,0.50)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',
@@ -363,7 +363,7 @@ function HeadlineMetrics({
           key={t.label}
           className="rounded-xl p-3"
           style={{
-            background: 'rgba(15,23,42,0.50)',
+            background: 'var(--bg-card)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
             border: '1px solid var(--border-base)',
@@ -415,7 +415,7 @@ function MessageRow({ message, expanded, onToggle }: {
       onClick={onToggle}
       className={`w-full text-left rounded-xl px-4 py-3 transition-all hover:bg-white/[0.04] ${expanded ? 'ring-1 ring-[var(--amber)]/30' : ''}`}
       style={{
-        background: expanded ? 'rgba(229,168,50,0.04)' : 'rgba(15,23,42,0.50)',
+        background: expanded ? 'rgba(229,168,50,0.04)' : 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',
@@ -526,7 +526,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
     <div
       className="rounded-xl px-5 py-4 -mt-1 animate-fade-in"
       style={{
-        background: 'rgba(15,23,42,0.65)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(14px)',
         WebkitBackdropFilter: 'blur(14px)',
         border: '1px solid var(--border-base)',
@@ -536,7 +536,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       {/* Subject */}
       <div className="mb-4">
         <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
-        <div className="text-[14px] text-white font-medium">
+        <div className="text-[14px] text-[var(--text-primary)] font-medium">
           {message.original_subject || <span className="italic text-white/45">(no subject)</span>}
         </div>
       </div>
@@ -658,7 +658,7 @@ function DeepAnalysisSection({
       </div>
       <div
         className="rounded-lg p-4"
-        style={{ background: 'rgba(15,23,42,0.50)', border: '1px solid rgba(248,113,113,0.20)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid rgba(248,113,113,0.20)' }}
       >
         <p className="text-[13px] text-white/92 leading-relaxed">{d.internal_narrative}</p>
 
@@ -736,8 +736,8 @@ function PlatformIntelSection({
     <div className="mb-4">
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Platform intelligence</div>
       <div
-        className="rounded-lg p-3 grid grid-cols-1 md:grid-cols-2 gap-3"
-        style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.05)' }}
+        className="rounded-lg p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-black/20"
+        style={{ border: '1px solid rgba(255,255,255,0.05)' }}
       >
         {auth && (
           <div>
@@ -858,7 +858,7 @@ function RawTabButton({
       className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
       style={{
         background:    active ? 'rgba(229,168,50,0.10)' : 'transparent',
-        color:         active ? 'var(--amber)' : 'rgba(255,255,255,0.65)',
+        color:         active ? 'var(--amber)' : 'var(--text-secondary)',
         border:        active ? '1px solid rgba(229,168,50,0.30)' : '1px solid transparent',
       }}
     >
@@ -881,9 +881,8 @@ function BodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: stri
         </p>
       )}
       <pre
-        className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono"
+        className="text-[11px] text-white/85 leading-relaxed whitespace-pre-wrap break-words rounded-lg p-3 font-mono bg-black/30"
         style={{
-          background: 'rgba(0,0,0,0.30)',
           border: '1px solid rgba(255,255,255,0.05)',
           maxHeight: 360,
           overflow: 'auto',
@@ -900,8 +899,8 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
   if (urls.length === 0) return <EmptyPanel text="No URLs found in the body" />;
   return (
     <div
-      className="rounded-lg overflow-hidden"
-      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+      className="rounded-lg overflow-hidden bg-black/30"
+      style={{ border: '1px solid rgba(255,255,255,0.05)' }}
     >
       <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
         {urls.map((u, i) => (
@@ -941,8 +940,8 @@ function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; 
   });
   return (
     <div
-      className="rounded-lg overflow-hidden"
-      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+      className="rounded-lg overflow-hidden bg-black/30"
+      style={{ border: '1px solid rgba(255,255,255,0.05)' }}
     >
       <div className="max-h-72 overflow-auto">
         <table className="w-full text-[11px] font-mono">
@@ -965,8 +964,8 @@ function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAtta
   if (attachments.length === 0) return <EmptyPanel text="No attachments" />;
   return (
     <div
-      className="rounded-lg overflow-hidden"
-      style={{ background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(255,255,255,0.05)' }}
+      className="rounded-lg overflow-hidden bg-black/30"
+      style={{ border: '1px solid rgba(255,255,255,0.05)' }}
     >
       <div className="max-h-72 overflow-auto divide-y divide-white/[0.04]">
         {attachments.map((a, i) => (
@@ -985,8 +984,8 @@ function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAtta
 function EmptyPanel({ text }: { text: string }) {
   return (
     <div
-      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono"
-      style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.04)' }}
+      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono bg-black/20"
+      style={{ border: '1px solid rgba(255,255,255,0.04)' }}
     >
       {text}
     </div>
@@ -996,8 +995,8 @@ function EmptyPanel({ text }: { text: string }) {
 function LoadingPanel() {
   return (
     <div
-      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono"
-      style={{ background: 'rgba(0,0,0,0.20)', border: '1px solid rgba(255,255,255,0.04)' }}
+      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono bg-black/20"
+      style={{ border: '1px solid rgba(255,255,255,0.04)' }}
     >
       Loading…
     </div>
@@ -1152,7 +1151,7 @@ function IntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
     <section
       className="rounded-xl p-4 space-y-3"
       style={{
-        background: 'rgba(15,23,42,0.50)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',
@@ -1217,9 +1216,8 @@ function IntelCard({
 }: { title: string; accent: string; children: React.ReactNode }) {
   return (
     <div
-      className="rounded-lg p-3"
+      className="rounded-lg p-3 bg-black/20"
       style={{
-        background: 'rgba(0,0,0,0.20)',
         border: '1px solid rgba(255,255,255,0.05)',
         borderLeft: `2px solid ${accent}`,
       }}
@@ -1305,7 +1303,7 @@ function InboxToolbar({
               className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
               style={{
                 background: active ? 'rgba(229,168,50,0.10)' : 'transparent',
-                color:      active ? 'var(--amber)' : 'rgba(255,255,255,0.65)',
+                color:      active ? 'var(--amber)' : 'var(--text-secondary)',
                 border:     active ? '1px solid rgba(229,168,50,0.30)' : '1px solid transparent',
               }}
             >
@@ -1376,10 +1374,10 @@ function StatusActions({ message }: { message: AdminAbuseInboxMessage }) {
       type="button"
       onClick={() => next(target)}
       disabled={cur === target || mutate.isPending}
-      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default"
+      className={`text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default ${cur === target ? '' : 'bg-black/30'}`}
       style={{
         color,
-        background:  cur === target ? `${color}22` : 'rgba(0,0,0,0.30)',
+        background:  cur === target ? `${color}22` : undefined,
         border: `1px solid ${color}55`,
       }}
     >
@@ -1404,8 +1402,8 @@ function BulkBtn({ label, color, disabled, onClick }: {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default"
-      style={{ color, background: 'rgba(0,0,0,0.30)', border: `1px solid ${color}55` }}
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default bg-black/30"
+      style={{ color, border: `1px solid ${color}55` }}
     >
       {label}
     </button>
@@ -1417,7 +1415,7 @@ function EmptyMessages() {
     <div
       className="rounded-xl px-6 py-12 text-center"
       style={{
-        background: 'rgba(15,23,42,0.50)',
+        background: 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',

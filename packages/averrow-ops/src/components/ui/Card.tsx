@@ -53,7 +53,10 @@ const VARIANT_STYLES: Record<CardVariant, {
     shadow: 'var(--card-shadow), 0 0 20px var(--amber-glow)',
   },
   critical: {
-    bg:     'linear-gradient(150deg, rgba(40, 12, 12, 0.95) 0%, rgba(15, 8, 8, 0.98) 100%)',
+    // Theme-aware — dark default is byte-identical to the literal this
+    // replaced; [data-theme="light"] resolves to a pale red-washed card
+    // instead of the same near-black box (see tokens.css --card-critical-bg).
+    bg:     'var(--card-critical-bg)',
     border: 'var(--red-border)',
     rim:    'rgba(239, 68, 68, 0.45)',
     shadow: 'var(--card-shadow), 0 0 24px var(--red-glow)',

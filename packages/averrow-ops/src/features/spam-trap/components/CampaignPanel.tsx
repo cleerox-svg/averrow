@@ -8,7 +8,7 @@ import { Badge } from '@/design-system/components';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const GLASS_CARD: CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid var(--border-base)',
@@ -37,7 +37,7 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
   return (
     <div className="rounded-xl p-4 space-y-3" style={GLASS_CARD}>
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-semibold text-white">{campaign.name ?? '—'}</span>
+        <span className="text-[13px] font-semibold text-[var(--text-primary)]">{campaign.name ?? '—'}</span>
         <StatusBadge status={campaign.status ?? 'unknown'} />
       </div>
       <div className="flex items-center gap-4 text-[10px] font-mono text-white/40">

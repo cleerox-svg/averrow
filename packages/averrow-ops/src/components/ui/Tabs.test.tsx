@@ -46,7 +46,9 @@ describe('Tabs', () => {
   it('highlights active tab', () => {
     render(<Tabs tabs={tabs} activeTab="active" onChange={() => {}} />);
     const activeButton = screen.getByText('Active').closest('button') as HTMLButtonElement;
-    expect(activeButton.style.color).toBe('var(--amber)');
+    // Active tab text uses --amber-text (byte-identical to --amber in dark,
+    // AA-safe darker amber in light) — see the light-mode amber-3D pass.
+    expect(activeButton.style.color).toBe('var(--amber-text)');
   });
 
   it('does not highlight inactive tabs', () => {
@@ -75,7 +77,7 @@ describe('Tabs', () => {
     // Simulate parent updating the activeTab
     rerender(<Tabs tabs={tabs} activeTab="draft" onChange={onChange} />);
     const draftButton = screen.getByText('Draft').closest('button') as HTMLButtonElement;
-    expect(draftButton.style.color).toBe('var(--amber)');
+    expect(draftButton.style.color).toBe('var(--amber-text)');
   });
 
   // ─── ARIA tab roles (v2.0 a11y addition) ────────────────────────

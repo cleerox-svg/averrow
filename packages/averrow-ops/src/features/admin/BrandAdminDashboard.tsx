@@ -9,7 +9,7 @@ import { severityColor } from '@/lib/severityColor';
 import { relativeTime } from '@/lib/time';
 
 const GLASS_CARD: React.CSSProperties = {
-  background: 'rgba(15,23,42,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid var(--border-base)',
@@ -17,7 +17,7 @@ const GLASS_CARD: React.CSSProperties = {
   boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
 };
 const GLASS_STAT: React.CSSProperties = {
-  background: 'rgba(22,30,48,0.50)',
+  background: 'var(--bg-card)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
   border: '1px solid rgba(229,168,50,0.15)',

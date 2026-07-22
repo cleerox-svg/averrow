@@ -13,7 +13,7 @@ export function ObservatoryOverlay({
 }: ObservatoryOverlayProps) {
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-      <div className="bg-slate-900/80 backdrop-blur-xl border border-white/10
+      <div className="bg-[var(--bg-card)] backdrop-blur-xl border border-white/10
         rounded-2xl px-8 py-6 text-center max-w-xs
         shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
 
@@ -26,7 +26,7 @@ export function ObservatoryOverlay({
           </div>
         </div>
 
-        <h3 className="text-white font-semibold text-sm mb-1">
+        <h3 className="text-[var(--text-primary)] font-semibold text-sm mb-1">
           Threat Landscape Clear
         </h3>
         <p className="text-white/40 text-xs mb-5">
