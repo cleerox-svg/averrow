@@ -38,7 +38,7 @@ function makeRow(overrides: Partial<FeedFailureRow> = {}): FeedFailureRow {
 
 function makePayload(rows: FeedFailureRow[]): FeedFailurePayload {
   return {
-    totals_24h: { total_pulls: 20, total_success: 5, total_failed: 15, total_records: 10, feeds_active: 1 },
+    totals_24h: { total_pulls: 20, total_success: 5, total_failed: 15, total_records: 10, feeds_active: 1, feeds_enabled: 50 },
     per_feed: rows,
     recent_errors: [],
     generated_at: new Date().toISOString(),
@@ -57,6 +57,18 @@ describe('FeedFailures — FeedRiskCard keyboard access', () => {
       isError: false,
     });
   }
+
+  it('surfaces feeds-pulled (24h activity) and enabled (configured) as two distinct totals', () => {
+    mockFeeds([makeRow()]);
+    renderWithProviders(<FeedFailures />);
+
+    // The old single "Active feeds" tile collided with the Operations →
+    // Feeds "Active" (enabled) card. These are now separate, correctly named.
+    expect(screen.getByText('Feeds pulled (24h)')).toBeInTheDocument();
+    expect(screen.getByText('Enabled')).toBeInTheDocument();
+    expect(screen.queryByText('Active feeds')).not.toBeInTheDocument();
+    expect(screen.getByText('50')).toBeInTheDocument(); // feeds_enabled
+  });
 
   it('renders the at-risk card as a focusable, expandable button', () => {
     mockFeeds([makeRow()]);

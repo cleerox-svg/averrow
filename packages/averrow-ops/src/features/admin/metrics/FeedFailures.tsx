@@ -78,12 +78,16 @@ function Totals({ data }: { data: FeedFailurePayload }) {
                     'green';
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
       <Tile label="Pulls 24h"        value={t.total_pulls.toLocaleString()} />
       <Tile label="Successes"        value={t.total_success.toLocaleString()} accent="green" />
       <Tile label="Failures"         value={t.total_failed.toLocaleString()}  accent={t.total_failed > 0 ? 'sev-high' : undefined} />
       <Tile label="Failure rate"     value={`${ratePct}%`} accent={rateTone} />
-      <Tile label="Active feeds"     value={t.feeds_active.toString()} />
+      {/* Two distinct feed counts, deliberately separate: "Feeds pulled" is
+          24h activity (how many actually ran); "Enabled" is the configured
+          count that matches the Operations → Feeds "Active" card. */}
+      <Tile label="Feeds pulled (24h)" value={t.feeds_active.toString()} />
+      <Tile label="Enabled"          value={(t.feeds_enabled ?? 0).toString()} />
     </div>
   );
 }

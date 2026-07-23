@@ -275,7 +275,12 @@ export interface FeedFailurePayload {
     total_success: number;
     total_failed: number;
     total_records: number;
+    /** Feeds that pulled at least once in the 24h window (activity). */
     feeds_active: number;
+    /** Configured/enabled feeds (feed_configs.enabled=1) — matches the
+        Operations → Feeds "Active" card. Optional for back-compat with a
+        pre-v3 cached payload. */
+    feeds_enabled?: number;
   };
   per_feed: FeedFailureRow[];
   recent_errors: Array<{

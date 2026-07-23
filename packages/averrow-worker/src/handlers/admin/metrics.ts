@@ -665,6 +665,11 @@ export async function handleMetricsFeedFailures(
   // v2 — added the `severity` field to each per_feed row; bumped so a
   // stale v1 body (lacking severity) can't be served after deploy and
   // leave the Feeds-tab feedRiskTier reading `undefined`.
+  // NOTE: totals_24h.feeds_enabled was added additively WITHOUT a key
+  // bump — it's optional on the client (`feeds_enabled ?? 0`), so a
+  // stale v2 body simply shows 0 for the "Enabled" tile until the 60s
+  // TTL turns over. Not bumping keeps the composite dashboard's
+  // sub-handler read (handlers/admin/dashboard.ts) on the same key.
   const cacheKey = "metrics_feed_failures:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
@@ -841,8 +846,14 @@ export async function handleMetricsFeedFailures(
     { total_pulls: 0, total_success: 0, total_failed: 0, total_records: 0, feeds_active: 0 },
   );
 
+  // feeds_active counts feeds that PULLED in the 24h window (activity).
+  // feeds_enabled is the CONFIGURED count (feed_configs.enabled=1) — the
+  // same number the Operations → Feeds "Active" card shows. Surfacing both
+  // stops "Active feeds" here from looking like it should equal that card.
+  const feedsEnabled = configRows.results.filter((c) => c.enabled === 1).length;
+
   const data = {
-    totals_24h: totals,
+    totals_24h: { ...totals, feeds_enabled: feedsEnabled },
     per_feed: perFeed,
     recent_errors: recentErrors.results,
     generated_at: new Date().toISOString(),
