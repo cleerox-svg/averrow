@@ -39,7 +39,14 @@ export async function markSeen(env: Env, iocType: string, iocValue: string): Pro
 
 // ─── Threat Insertion (v2 schema) ────────────────────────────────
 
-export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<boolean> {
+/**
+ * Build the bound `INSERT OR IGNORE INTO threats` statement for one row,
+ * applying the same reclassification / confidence / severity / private-IP
+ * derivation the platform uses everywhere. Single source of truth for the
+ * threats column list so the single-row (`insertThreat`) and bulk
+ * (`bulkInsertThreats`) paths can never diverge.
+ */
+function buildThreatInsertStmt(db: D1Database, threat: ThreatRow): D1PreparedStatement {
   // Apply heuristic reclassification (first-pass before AI Analyst)
   const reclassified = reclassifyThreatType(
     threat.threat_type,
@@ -63,12 +70,7 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
   // for those rows).
   const isPrivateIp = threat.ip_address ? (isPrivateIP(threat.ip_address) ? 1 : 0) : 0;
 
-  // Returns true when the row was inserted, false when the PK
-  // conflict path was taken (duplicate). Callers that need to
-  // distinguish new-vs-dup (e.g. the TAXII multi-page drain) can
-  // skip a separate pre-dedup SELECT — D1 reports it via
-  // meta.changes on INSERT OR IGNORE.
-  const result = await db.prepare(
+  return db.prepare(
     `INSERT OR IGNORE INTO threats
        (id, source_feed, threat_type, malicious_url, malicious_domain,
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
@@ -101,8 +103,57 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
     threat.ssl_cert_serial ?? null,
     threat.ssl_cert_issuer ?? null,
     threat.ssl_san_hash ?? null,
-  ).run();
+  );
+}
+
+export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<boolean> {
+  // Returns true when the row was inserted, false when the PK
+  // conflict path was taken (duplicate). Callers that need to
+  // distinguish new-vs-dup (e.g. the TAXII multi-page drain) can
+  // skip a separate pre-dedup SELECT — D1 reports it via
+  // meta.changes on INSERT OR IGNORE.
+  const result = await buildThreatInsertStmt(db, threat).run();
   return (result.meta?.changes ?? 0) > 0;
+}
+
+/** Default chunk size for bulk threat inserts — one D1 transaction per chunk. */
+export const THREAT_INSERT_CHUNK = 50;
+
+/**
+ * Bulk-insert threats via chunked `db.batch(INSERT OR IGNORE)` — the
+ * canonical platform pattern (CLAUDE.md §8). Replaces the per-row
+ * isDuplicate(KV GET)→insertThreat(D1)→markSeen(KV PUT) loop, which does
+ * 3 sequential round-trips per IOC and gets the worker reaped on
+ * large/cold-cache pulls. Dedup is the deterministic `threatId` PK +
+ * INSERT OR IGNORE (authoritative, no KV cold-start cliff); callers should
+ * dedupe within the payload in memory before calling.
+ *
+ * For N rows this is ceil(N / chunkSize) round-trips instead of 3N.
+ * Accounting mirrors insertThreat: meta.changes=1 → new, 0 → duplicate;
+ * a chunk that throws counts its whole length as errors (rolled back).
+ */
+export async function bulkInsertThreats(
+  db: D1Database,
+  rows: ThreatRow[],
+  chunkSize: number = THREAT_INSERT_CHUNK,
+): Promise<{ itemsNew: number; itemsDuplicate: number; itemsError: number }> {
+  if (rows.length === 0) return { itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+
+  const stmts = rows.map((r) => buildThreatInsertStmt(db, r));
+  let itemsNew = 0;
+  let itemsError = 0;
+  for (let i = 0; i < stmts.length; i += chunkSize) {
+    const chunk = stmts.slice(i, i + chunkSize);
+    try {
+      const results = await db.batch(chunk);
+      for (const r of results) itemsNew += r.meta?.changes ?? 0;
+    } catch (err) {
+      itemsError += chunk.length;
+      console.error(`[bulkInsertThreats] chunk ${i}-${i + chunk.length} failed:`, err);
+    }
+  }
+  const itemsDuplicate = rows.length - itemsNew - itemsError;
+  return { itemsNew, itemsDuplicate, itemsError };
 }
 
 // ─── Feed Config Row ─────────────────────────────────────────────
