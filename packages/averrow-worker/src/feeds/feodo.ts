@@ -92,6 +92,8 @@ export const feodo: FeedModule = {
     }
 
     const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
-    return { itemsFetched: entries.length, itemsNew, itemsDuplicate, itemsError };
+    // itemsFetched = unique valid IPs we attempted (fetched == new+dup+error),
+    // consistent with the other bulk-migrated feeds.
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };

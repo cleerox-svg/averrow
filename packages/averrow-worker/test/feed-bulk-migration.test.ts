@@ -118,6 +118,7 @@ describe("threatfox (bulk)", () => {
     const { env, threatBinds } = makeEnv();
     const r = await threatfox.ingest({ env, feedName: "threatfox", feedUrl: "https://x" });
     expect(r.itemsNew).toBe(2); // hash skipped
+    expect(r.itemsFetched).toBe(2); // fetched == rows attempted (post hash-skip/dedup)
     const dom = threatBinds.find((b) => b[COL_MAL_DOMAIN] === "evil.com")!;
     expect(dom[COL_THREAT_TYPE]).toBe("malware_distribution");
     expect(dom[COL_SEVERITY]).toBe("critical"); // conf 95
@@ -137,6 +138,7 @@ describe("feodo (bulk)", () => {
     const { env, threatBinds } = makeEnv();
     const r = await feodo.ingest({ env, feedName: "feodo", feedUrl: "https://x" });
     expect(r.itemsNew).toBe(1);
+    expect(r.itemsFetched).toBe(1); // fetched == unique valid IPs attempted
     expect(threatBinds[0]![COL_IP]).toBe("9.9.9.9");
     expect(threatBinds[0]![COL_IOC_VALUE]).toBe("9.9.9.9 (Emotet)");
     expect(threatBinds[0]![COL_THREAT_TYPE]).toBe("malware_distribution");
@@ -165,5 +167,9 @@ describe("tweetfeed (bulk)", () => {
     const ip = threatBinds.find((b) => b[COL_IP] === "5.5.5.5")!;
     expect(ip[COL_THREAT_TYPE]).toBe("malicious_ip");
     expect(ip[COL_SEVERITY]).toBe("critical"); // c2 tag
+    // sha256 row: threat_type malware_distribution + JSON ioc_value payload preserved.
+    const hashRow = threatBinds.find((b) => b[COL_THREAT_TYPE] === "malware_distribution")!;
+    const payload = JSON.parse(String(hashRow[COL_IOC_VALUE]));
+    expect(payload).toMatchObject({ value: "ABCDEF", type: "sha256" });
   });
 });

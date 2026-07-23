@@ -43,8 +43,12 @@ export const threatfox: FeedModule = {
     for (const ioc of items) {
       const iocType = mapIocType(ioc.ioc_type);
       if (iocType === "hash" || iocType === "unknown") continue;
-      if (seen.has(ioc.ioc)) continue;
-      seen.add(ioc.ioc);
+      // Dedup key includes iocType (matches the old KV key + the
+      // threatId space), so the same string under two different types
+      // isn't collapsed.
+      const dedupKey = `${iocType}:${ioc.ioc}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
 
       const domain = iocType === "domain" ? ioc.ioc : extractDomain(ioc.ioc);
       const isUrl = iocType === "url";
@@ -70,7 +74,10 @@ export const threatfox: FeedModule = {
     }
 
     const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
-    return { itemsFetched: items.length, itemsNew, itemsDuplicate, itemsError };
+    // itemsFetched = rows we attempted to insert (post hash/unknown skip +
+    // dedup), so fetched == new + dup + error holds — consistent with the
+    // other bulk-migrated feeds.
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };
 
