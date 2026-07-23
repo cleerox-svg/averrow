@@ -77,8 +77,8 @@ const variantStyles: Record<ResolvedVariant, {
     border: 'border-red-500/15',
   },
   locked: {
-    iconBg: 'bg-slate-500/10',
-    iconColor: 'text-slate-400',
+    iconBg: 'bg-[var(--bg-card-deep)]',
+    iconColor: 'text-[var(--text-tertiary)]',
     titleColor: 'text-white/50',
     border: 'border-white/5',
   },
