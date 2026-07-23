@@ -84,6 +84,16 @@ import { taxii } from "./taxii";
 // indicators can be identified by name. See feeds/advisories.ts.
 import { advisories } from "./advisories";
 
+// ─── Feed-expansion Phase 1 (zero-key net-new feeds) ────────────
+// IPsum (scored bad-IP aggregate), Phishing.Database (validated
+// phishing domains), Scam-Blocklist (fresh scam/fraud domains), and
+// EPSS (exploit-prediction scores → agent_outputs insight, like
+// cisa_kev/nvd_cve). All free, no API key. See migration 0248.
+import { ipsum } from "./ipsum";
+import { phishing_database } from "./phishing_database";
+import { scam_blocklist } from "./scam_blocklist";
+import { epss } from "./epss";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -134,6 +144,12 @@ export const feedModules: Record<string, FeedModule> = {
 
   // Advisory ingestion — populates the named-threat catalog.
   advisories,
+
+  // Feed-expansion Phase 1 — zero-key net-new feeds.
+  ipsum,
+  phishing_database,
+  scam_blocklist,
+  epss,
 };
 
 /**

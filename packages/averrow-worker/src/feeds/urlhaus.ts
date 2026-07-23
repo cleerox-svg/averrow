@@ -12,7 +12,16 @@ const CSV_BULK_URL = "https://urlhaus.abuse.ch/downloads/csv_recent/";
  */
 export const urlhaus: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    const res = await diagnosticFetch(ctx.env.DB, "urlhaus", CSV_BULK_URL);
+    // abuse.ch is deprecating anonymous access to its download
+    // endpoints — send the shared Auth-Key (same secret ThreatFox /
+    // MalwareBazaar already use) so this CSV pull keeps working once
+    // anonymous pulls are cut off. Harmless while still optional.
+    const res = await diagnosticFetch(ctx.env.DB, "urlhaus", CSV_BULK_URL, {
+      headers: {
+        "Auth-Key": ctx.env.ABUSECH_AUTH_KEY,
+        "User-Agent": "Averrow-ThreatIntel/1.0",
+      },
+    });
     if (!res.ok) throw new Error(`URLhaus HTTP ${res.status}`);
 
     const text = await res.text();

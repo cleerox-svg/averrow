@@ -14,9 +14,17 @@ export const sslbl: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     let itemsNew = 0, itemsDuplicate = 0, itemsError = 0, itemsFetched = 0;
 
+    // abuse.ch is deprecating anonymous downloads — send the shared
+    // Auth-Key (same secret ThreatFox / MalwareBazaar use) on both the
+    // cert and IP blacklist pulls so SSLBL survives the cut-off.
+    const abusechHeaders = {
+      "Auth-Key": ctx.env.ABUSECH_AUTH_KEY,
+      "User-Agent": "Averrow-ThreatIntel/1.0",
+    };
+
     // 1. Fetch SSL certificate blacklist
     const certUrl = ctx.feedUrl || SSLBL_CSV_URL;
-    const certRes = await fetch(certUrl, { signal: AbortSignal.timeout(30_000) });
+    const certRes = await fetch(certUrl, { signal: AbortSignal.timeout(30_000), headers: abusechHeaders });
     if (!certRes.ok) throw new Error(`SSLBL cert HTTP ${certRes.status}`);
 
     const certText = await certRes.text();
@@ -57,7 +65,7 @@ export const sslbl: FeedModule = {
 
     // 2. Fetch IP blacklist for enrichment
     try {
-      const ipRes = await fetch(SSLBL_IP_URL, { signal: AbortSignal.timeout(30_000) });
+      const ipRes = await fetch(SSLBL_IP_URL, { signal: AbortSignal.timeout(30_000), headers: abusechHeaders });
       if (ipRes.ok) {
         const ipText = await ipRes.text();
         const ipLines = ipText.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
