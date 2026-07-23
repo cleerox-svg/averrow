@@ -594,8 +594,8 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
           </div>
           <div style={{ background: previewAccent }} className="h-1" />
           <div className="bg-white px-4 py-3">
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Determination</div>
-            <div className="text-[15px] font-extrabold text-slate-900 leading-tight">Phishing confirmed</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate font-semibold">Determination</div>
+            <div className="text-[15px] font-extrabold text-ink leading-tight">Phishing confirmed</div>
           </div>
         </div>
         <div className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-3 space-y-0.5">

@@ -126,7 +126,7 @@ function gradeBadge(grade: string | null) {
 function rankBadge(rank: number) {
   let style = 'border-white/10 text-white/40';
   if (rank === 1) style = 'border-yellow-400 text-yellow-400';
-  else if (rank === 2) style = 'border-slate-300 text-slate-300';
+  else if (rank === 2) style = 'border-[var(--border-strong)] text-[var(--text-secondary)]';
   else if (rank === 3) style = 'border-amber-600 text-amber-600';
   return (
     <span className={cn('w-6 h-6 rounded-full border text-[10px] font-mono flex items-center justify-center flex-shrink-0', style)}>
