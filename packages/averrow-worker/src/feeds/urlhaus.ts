@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId, extractDomain } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
 
 const CSV_BULK_URL = "https://urlhaus.abuse.ch/downloads/csv_recent/";
@@ -28,63 +28,46 @@ export const urlhaus: FeedModule = {
     const lines = text.split("\n").filter((l) => l && !l.startsWith("#"));
 
     // CSV columns: id, dateadded, url, url_status, last_online, threat, tags, urlhaus_link, reporter
-    const entries: Array<{
-      url: string; host: string; url_status: string;
-      threat: string; dateadded: string;
-    }> = [];
-
+    // Parse → dedupe within the payload → bulk insert.
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
     for (const line of lines) {
       const match = line.match(
         /^"?(\d+)"?,\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)"/,
       );
       if (!match || !match[3]) continue;
-      entries.push({
-        url: match[3],
-        url_status: match[4] ?? "",
-        threat: match[6] ?? "malware_download",
-        dateadded: match[2] ?? "",
-        host: "",
-      });
-      if (entries.length >= 1000) break;
-    }
+      const url = match[3];
+      if (seen.has(url)) continue;
+      seen.add(url);
 
-    let itemsNew = 0, itemsDuplicate = 0, itemsError = 0;
+      const urlStatus = match[4] ?? "";
+      const domain = extractDomain(url);
+      const isActive = urlStatus === "online";
 
-    for (const entry of entries) {
+      let host: string;
       try {
-        if (await isDuplicate(ctx.env, "url", entry.url)) { itemsDuplicate++; continue; }
-
-        const domain = extractDomain(entry.url);
-        const isActive = entry.url_status === "online";
-
-        let host: string;
-        try {
-          host = new URL(entry.url).hostname;
-        } catch {
-          host = domain ?? "";
-        }
-        const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("urlhaus", "url", entry.url),
-          source_feed: "urlhaus",
-          threat_type: "malware_distribution",
-          malicious_url: entry.url,
-          malicious_domain: domain,
-          ip_address: isIp ? host : null,
-          ioc_value: entry.url,
-          severity: isActive ? "high" : "medium",
-          confidence_score: isActive ? 90 : 75,
-          status: isActive ? "active" : "down",
-        });
-        await markSeen(ctx.env, "url", entry.url);
-        itemsNew++;
-      } catch (err) {
-        console.error(`[urlhaus] insert error for url=${entry.url}: ${err instanceof Error ? err.message : err}`);
-        itemsError++;
+        host = new URL(url).hostname;
+      } catch {
+        host = domain ?? "";
       }
+      const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+
+      rows.push({
+        id: threatId("urlhaus", "url", url),
+        source_feed: "urlhaus",
+        threat_type: "malware_distribution",
+        malicious_url: url,
+        malicious_domain: domain,
+        ip_address: isIp ? host : null,
+        ioc_value: url,
+        severity: isActive ? "high" : "medium",
+        confidence_score: isActive ? 90 : 75,
+        status: isActive ? "active" : "down",
+      });
+      if (rows.length >= 1000) break;
     }
 
-    return { itemsFetched: entries.length, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };

@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId, extractDomain } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 
 /**
  * TweetFeed.live — IOCs aggregated from 90+ infosec researchers
@@ -66,90 +66,78 @@ export const tweetfeed: FeedModule = {
       return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 
-    let itemsFetched = 0;
-    let itemsNew = 0;
-    let itemsDuplicate = 0;
-    let itemsError = 0;
-
+    // Build rows: map each IOC type to its ThreatRow shape, dedupe within
+    // the payload, then bulk insert (chunked db.batch — no per-row KV).
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
     for (const row of body) {
       if (!row.value || typeof row.value !== "string" || !row.type) continue;
-      itemsFetched++;
-      try {
-        const iocType = row.type.toLowerCase();
-        const value = row.value;
+      const iocType = row.type.toLowerCase();
+      const value = row.value;
 
-        // Pick the dedup key + ThreatRow shape per IOC type.
-        let dedupType: string;
-        // ThreatRow requires malicious_url + malicious_domain even
-        // when null; build the full set explicitly per IOC type so
-        // we never end up with undefined fields.
-        let row_url: string | null = null;
-        let row_domain: string | null = null;
-        let row_ip: string | null = null;
-        let iocValueForId = value;
+      // ThreatRow requires malicious_url + malicious_domain even when
+      // null; build the full set explicitly per IOC type.
+      let dedupType: string;
+      let row_url: string | null = null;
+      let row_domain: string | null = null;
+      let row_ip: string | null = null;
+      let iocValueForId = value;
 
-        switch (iocType) {
-          case "url":
-            dedupType = "url";
-            row_url = value;
-            row_domain = extractDomain(value);
-            break;
-          case "domain":
-            dedupType = "domain";
-            row_domain = value.toLowerCase();
-            iocValueForId = value.toLowerCase();
-            break;
-          case "ip":
-            dedupType = "ip";
-            row_ip = value;
-            break;
-          case "sha256":
-            dedupType = "sha256";
-            iocValueForId = `hash:sha-256:${value.toLowerCase()}`;
-            break;
-          case "md5":
-            dedupType = "md5";
-            iocValueForId = `hash:md5:${value.toLowerCase()}`;
-            break;
-          default:
-            // Unknown type — count as fetched but skip.
-            continue;
-        }
-
-        if (await isDuplicate(ctx.env, dedupType, value)) {
-          itemsDuplicate++;
-          continue;
-        }
-
-        const tagsList = Array.isArray(row.tags) ? row.tags : [];
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("tweetfeed", dedupType, iocValueForId),
-          source_feed: "tweetfeed",
-          threat_type: typeToThreatType(iocType),
-          malicious_url: row_url,
-          malicious_domain: row_domain,
-          ip_address: row_ip,
-          // Carry researcher attribution + tags in ioc_value so the
-          // analyst agent can pivot back to the original tweet.
-          ioc_value: JSON.stringify({
-            value,
-            type: iocType,
-            user: row.user,
-            tags: tagsList.slice(0, 10),
-          }),
-          severity: severityFromTags(tagsList),
-          confidence_score: 80,
-          status: "active",
-        });
-        await markSeen(ctx.env, dedupType, value);
-        itemsNew++;
-      } catch (err) {
-        itemsError++;
-        console.error("[tweetfeed] insert error:", err);
+      switch (iocType) {
+        case "url":
+          dedupType = "url";
+          row_url = value;
+          row_domain = extractDomain(value);
+          break;
+        case "domain":
+          dedupType = "domain";
+          row_domain = value.toLowerCase();
+          iocValueForId = value.toLowerCase();
+          break;
+        case "ip":
+          dedupType = "ip";
+          row_ip = value;
+          break;
+        case "sha256":
+          dedupType = "sha256";
+          iocValueForId = `hash:sha-256:${value.toLowerCase()}`;
+          break;
+        case "md5":
+          dedupType = "md5";
+          iocValueForId = `hash:md5:${value.toLowerCase()}`;
+          break;
+        default:
+          continue; // Unknown type — skip.
       }
+
+      const seenKey = `${dedupType}:${value}`;
+      if (seen.has(seenKey)) continue;
+      seen.add(seenKey);
+
+      const tagsList = Array.isArray(row.tags) ? row.tags : [];
+
+      rows.push({
+        id: threatId("tweetfeed", dedupType, iocValueForId),
+        source_feed: "tweetfeed",
+        threat_type: typeToThreatType(iocType),
+        malicious_url: row_url,
+        malicious_domain: row_domain,
+        ip_address: row_ip,
+        // Carry researcher attribution + tags in ioc_value so the
+        // analyst agent can pivot back to the original tweet.
+        ioc_value: JSON.stringify({
+          value,
+          type: iocType,
+          user: row.user,
+          tags: tagsList.slice(0, 10),
+        }),
+        severity: severityFromTags(tagsList),
+        confidence_score: 80,
+        status: "active",
+      });
     }
 
-    return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };

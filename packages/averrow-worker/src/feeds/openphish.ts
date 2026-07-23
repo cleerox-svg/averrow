@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId, extractDomain } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 
 /** OpenPhish Community — Active phishing URLs (plaintext feed, no auth) */
 export const openphish: FeedModule = {
@@ -9,35 +9,29 @@ export const openphish: FeedModule = {
     if (!res.ok) throw new Error(`OpenPhish HTTP ${res.status}`);
 
     const text = await res.text();
-    const urls = text
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.startsWith("http"))
-      .slice(0, 2000);
 
-    let itemsNew = 0, itemsDuplicate = 0, itemsError = 0;
-
-    for (const url of urls) {
-      try {
-        if (await isDuplicate(ctx.env, "url", url)) { itemsDuplicate++; continue; }
-
-        const domain = extractDomain(url);
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("openphish", "url", url),
-          source_feed: "openphish",
-          threat_type: "phishing",
-          malicious_url: url,
-          malicious_domain: domain,
-          ioc_value: url,
-          severity: "high",
-          confidence_score: 85,
-        });
-        await markSeen(ctx.env, "url", url);
-        itemsNew++;
-      } catch { itemsError++; }
+    // Parse → dedupe within the payload → bulk insert. No per-row KV
+    // round-trips (see lib/feedRunner bulkInsertThreats).
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
+    for (const line of text.split("\n")) {
+      const url = line.trim();
+      if (!url.startsWith("http") || seen.has(url)) continue;
+      seen.add(url);
+      rows.push({
+        id: threatId("openphish", "url", url),
+        source_feed: "openphish",
+        threat_type: "phishing",
+        malicious_url: url,
+        malicious_domain: extractDomain(url),
+        ioc_value: url,
+        severity: "high",
+        confidence_score: 85,
+      });
+      if (rows.length >= 2000) break;
     }
 
-    return { itemsFetched: urls.length, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };
