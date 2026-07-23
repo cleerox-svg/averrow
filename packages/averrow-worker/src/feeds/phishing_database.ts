@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 
 // Cap per pull. The NEW-today list is normally a few thousand fresh
 // domains; the bound protects the worker budget if the upstream has a
@@ -17,7 +17,14 @@ const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])
  * rather than the multi-million-row ACTIVE dump, which is too large to
  * fetch every tick. This complements openphish/phishdestroy (which are
  * URL feeds) with clean DOMAIN-level phishing signal and de-risks the
- * dead phishtank feed. Overlap is absorbed by the threatId PK dedup.
+ * dead phishtank feed.
+ *
+ * Ingest uses chunked bulk INSERT OR IGNORE (bulkInsertThreats), not the
+ * per-row isDuplicate/insert/markSeen loop — no cold-cache reap risk.
+ * Dedup is the deterministic, PER-FEED threatId PK: re-ingesting this
+ * feed's own domain is a cheap no-op; a domain shared with another feed
+ * records a separate per-source corroborating row (the old shared-KV
+ * pre-check cross-suppressed those).
  *
  * Format: bare domains, one per line, "#"-prefixed comments.
  * Schedule: daily (the upstream regenerates the NEW-today list daily).
@@ -32,41 +39,28 @@ export const phishing_database: FeedModule = {
     if (!res.ok) throw new Error(`Phishing.Database HTTP ${res.status}`);
 
     const text = await res.text();
-    const domains = text
-      .split("\n")
-      .map((l) => l.trim().toLowerCase())
-      .filter((l) => l && !l.startsWith("#") && DOMAIN_RE.test(l))
-      .slice(0, MAX_ITEMS);
 
-    let itemsNew = 0;
-    let itemsDuplicate = 0;
-    let itemsError = 0;
-
-    for (const domain of domains) {
-      try {
-        if (await isDuplicate(ctx.env, "domain", domain)) {
-          itemsDuplicate++;
-          continue;
-        }
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("phishing_database", "domain", domain),
-          source_feed: "phishing_database",
-          threat_type: "phishing",
-          malicious_url: null,
-          malicious_domain: domain,
-          ioc_value: domain,
-          severity: "high",
-          confidence_score: 80,
-        });
-        await markSeen(ctx.env, "domain", domain);
-        itemsNew++;
-      } catch (err) {
-        console.error(`[phishing_database] insert error for domain=${domain}: ${err instanceof Error ? err.message : err}`);
-        itemsError++;
-      }
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
+    for (const line of text.split("\n")) {
+      const domain = line.trim().toLowerCase();
+      if (!domain || domain.startsWith("#") || !DOMAIN_RE.test(domain)) continue;
+      if (seen.has(domain)) continue;
+      seen.add(domain);
+      rows.push({
+        id: threatId("phishing_database", "domain", domain),
+        source_feed: "phishing_database",
+        threat_type: "phishing",
+        malicious_url: null,
+        malicious_domain: domain,
+        ioc_value: domain,
+        severity: "high",
+        confidence_score: 80,
+      });
+      if (rows.length >= MAX_ITEMS) break;
     }
 
-    return { itemsFetched: domains.length, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };

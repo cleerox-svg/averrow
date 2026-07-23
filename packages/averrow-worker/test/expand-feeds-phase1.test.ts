@@ -41,7 +41,10 @@ function makeEnv(opts?: { priorInsightSummary?: string | null }): {
         // prepare(sql).first() with no bind (see cisa_kev / epss).
         const stmt = {
           bind(...args: unknown[]) {
+            // Carry sql+args so DB.batch() (bulkInsertThreats path) can
+            // record them the same way a per-row .run() does.
             return {
+              __sql: sql, __args: args,
               async run() {
                 if (/INSERT\s+OR\s+IGNORE\s+INTO\s+threats/i.test(sql)) {
                   captured.threatBinds.push(args);
@@ -63,6 +66,12 @@ function makeEnv(opts?: { priorInsightSummary?: string | null }): {
           },
         };
         return stmt;
+      },
+      async batch(stmts: Array<{ __sql: string; __args: unknown[] }>) {
+        return stmts.map((s) => {
+          if (/INSERT\s+OR\s+IGNORE\s+INTO\s+threats/i.test(s.__sql)) captured.threatBinds.push(s.__args);
+          return { meta: { changes: 1 } };
+        });
       },
     },
     ABUSECH_AUTH_KEY: "test-key",

@@ -62,6 +62,36 @@ function threatId(source: string, iocType: string, iocValue: string): string {
 }
 ```
 
+#### Bulk insert path (list feeds) — `bulkInsertThreats`
+
+The DB layer (deterministic PK + `INSERT OR IGNORE`) is **authoritative**;
+the KV layer is only a fast pre-check. Large plain-list feeds should skip
+the KV pre-check entirely and use `bulkInsertThreats(db, rows, chunkSize=50)`
+(`lib/feedRunner.ts`), which flushes chunked `db.batch(INSERT OR IGNORE)`
+transactions. This replaces the per-row
+`isDuplicate`(KV GET)→`insertThreat`(D1)→`markSeen`(KV PUT) loop — 3
+sequential round-trips per IOC — that got the worker reaped on large or
+cold-cache pulls (e.g. `scam_blocklist` at 5k domains × 3 = 15k
+subrequests). For N rows it is `ceil(N/50)` round-trips instead of `3N`,
+and there is no cold-cache cliff (the DB always knows what exists).
+`bulkInsertThreats` shares `insertThreat`'s exact column list + scoring via
+one internal statement builder, so the single-row and bulk paths can't
+diverge. **Routing through the shared `bulkInsertThreats` helper:**
+`scam_blocklist`, `phishing_database`. **Already on a chunked `db.batch`
+pattern via their own inline builders** (candidates to migrate onto the
+shared helper): `phishdestroy.ts`, `spamhausDrop.ts`, `blocklistde.ts`,
+`cins_army.ts`, `dataplane.ts`, `emergingThreats.ts`, `torExitNodes.ts`,
+`disposableEmail.ts`. The remaining per-row list feeds (`openphish`,
+`urlhaus`, `ipsum`, `dshield`, …) are migrating incrementally.
+
+> **Cross-feed note:** the KV dedup key (`dedup:{iocType}:{iocValue}`) is
+> NOT feed-scoped, so the old per-row path let one feed's `markSeen`
+> suppress *another* feed's distinct (feed-scoped) row for the same
+> domain. Dropping the KV pre-check restores per-source corroboration —
+> a domain on two feeds now records one row per feed. Expect a one-time
+> step-up in threats-per-domain counts for overlapping IOCs after a feed
+> migrates.
+
 ### Threat Classification
 
 Each ingested threat is classified into one of these types:
