@@ -94,6 +94,12 @@ import { phishing_database } from "./phishing_database";
 import { scam_blocklist } from "./scam_blocklist";
 import { epss } from "./epss";
 
+// ─── Feed-expansion Phase 2 (no-key MISP-format OSINT) ──────────
+// CIRCL OSINT (Luxembourg CERT) — free, no API key. NOT a TAXII feed
+// (CIRCL/abuse.ch dropped TAXII); ingested via a purpose-built MISP
+// manifest→event walker. See feeds/circl_osint.ts + migration 0249.
+import { circl_osint } from "./circl_osint";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -150,6 +156,9 @@ export const feedModules: Record<string, FeedModule> = {
   phishing_database,
   scam_blocklist,
   epss,
+
+  // Feed-expansion Phase 2 — no-key MISP-format OSINT.
+  circl_osint,
 };
 
 /**

@@ -1,6 +1,6 @@
 # Threat Feed Integrations
 
-Averrow ingests threat intelligence from ~52 external feeds split across three categories: **ingest feeds** (39) that create new threat records (three of these — CISA KEV, NVD CVE, and EPSS — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
+Averrow ingests threat intelligence from ~53 external feeds split across three categories: **ingest feeds** (40) that create new threat records (three of these — CISA KEV, NVD CVE, and EPSS — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
 
 ## Source Files
 
@@ -79,7 +79,7 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 39 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 40 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
 
 **Cadence:** every ingest/social feed and 7 of the 9 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is gated by its own `feed_configs.interval_minutes` row in D1, not by a static per-feed cron. Two enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h) and **SecLookup** (`21 * * * *`, hourly) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts:164`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) — see `CLAUDE.md §6` for the full rationale and cron table.
 
@@ -160,6 +160,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **OTX AlienVault** | `otx_alienvault.ts` | AlienVault | Open Threat Exchange pulses via direct REST; also persists pulse-level `threat_actors` / `threat_attributions` |
 | **TAXII: OTX** (`taxii_otx`) | `taxii.ts` | AlienVault (via TAXII 2.1) | Generic STIX/TAXII 2.1 collection consumer, currently subscribed to one OTX collection; multi-page draining with per-page cursor commits. Distinct transport from `otx_alienvault` above — same upstream, different pull path (`lib/taxii-client.ts` + `lib/stix-parser.ts`) |
 | **DigitalSide OSINT** | `digitalside_osint.ts` | DigitalSide.it | Three plain-text IOC lists (URLs, IPs, domains) fanned out from one module |
+| **CIRCL OSINT** | `circl_osint.ts` | CIRCL (Luxembourg CERT) | MISP-format feed (manifest + per-event JSON). Walks the manifest, drains events newer than a KV timestamp cursor (oldest-first, capped, 30-day floor), extracts detection-quality (`to_ids`) network IOCs (domain/url/ip). **Not TAXII** — purpose-built MISP walker (the free TAXII 2.1 IOC ecosystem has collapsed; see migration 0249) |
 | **TweetFeed** | `tweetfeed.ts` | tweetfeed.live | Researcher-curated IOCs aggregated from 90+ infosec accounts on X, refreshed every 15 min upstream |
 
 ### Ingest Feeds — Advisory / Named-Threat Catalog
