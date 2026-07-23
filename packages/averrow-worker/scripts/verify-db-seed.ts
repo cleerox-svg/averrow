@@ -60,6 +60,12 @@ const ASSERTIONS: Assertion[] = [
     min: 1,
     source: "0179_cube_arcs.sql + cron/navigator.ts (current+prev hour builds) + agents/cube-healer.ts (30-day rebuild)",
   },
+  {
+    label: "Feed-expansion Phase 1 feeds seeded (ipsum, phishing_database, scam_blocklist, epss)",
+    query: "SELECT COUNT(*) AS n FROM feed_configs WHERE feed_name IN ('ipsum','phishing_database','scam_blocklist','epss')",
+    min: 4,
+    source: "0248_expand_feeds_phase1.sql",
+  },
 ];
 
 interface D1Row { n: number }
