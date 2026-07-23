@@ -20,7 +20,16 @@ const IP_REGEX = /^\d+\.\d+\.\d+\.\d+$/;
 export const feodo: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     if (!ctx.feedUrl) throw new Error("Feodo: feed_configs.source_url is empty");
-    const res = await fetch(ctx.feedUrl, { signal: AbortSignal.timeout(30_000) });
+    // abuse.ch is deprecating anonymous downloads — send the shared
+    // Auth-Key (same secret ThreatFox / MalwareBazaar use) so this
+    // blocklist pull survives the cut-off. Harmless while optional.
+    const res = await fetch(ctx.feedUrl, {
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        "Auth-Key": ctx.env.ABUSECH_AUTH_KEY,
+        "User-Agent": "Averrow-ThreatIntel/1.0",
+      },
+    });
     if (!res.ok) throw new Error(`Feodo HTTP ${res.status}`);
 
     const text = await res.text();

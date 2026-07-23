@@ -1,6 +1,6 @@
 # Threat Feed Integrations
 
-Averrow ingests threat intelligence from ~48 external feeds split across three categories: **ingest feeds** (35) that create new threat records (two of these — CISA KEV and NVD CVE — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
+Averrow ingests threat intelligence from ~52 external feeds split across three categories: **ingest feeds** (39) that create new threat records (three of these — CISA KEV, NVD CVE, and EPSS — write aggregated insight digests to `agent_outputs` instead, see below), **social feeds** (4) that populate `social_mentions`, and **enrichment feeds** (9) that annotate existing threats. This document covers the feed architecture, individual feed integrations, and operational patterns.
 
 ## Source Files
 
@@ -79,7 +79,7 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 35 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 39 entries), `socialModules` (4 entries), or `enrichmentModules` (9 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
 
 **Cadence:** every ingest/social feed and 7 of the 9 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is gated by its own `feed_configs.interval_minutes` row in D1, not by a static per-feed cron. Two enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h) and **SecLookup** (`21 * * * *`, hourly) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts:164`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) — see `CLAUDE.md §6` for the full rationale and cron table.
 
@@ -93,6 +93,8 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **PhishStats** | `phishstats.ts` | Community-sourced | Public phishing URL feed, score 0-10 mapped to severity |
 | **urlscan.io** | `urlscanio.ts` | Public URL scanner | Recently-flagged-malicious public submissions (no auth, ~1/hr) |
 | **CryptoScamDB** | `cryptoscamdb.ts` | Community-maintained | Crypto/web3 phishing + fake-exchange scam URLs |
+| **Phishing.Database** | `phishing_database.ts` | Phishing-Database/Phishing.Database | PyFunceble-validated phishing DOMAINS — the NEW-today (freshly-added) list; domain-level signal complementing the URL feeds (migration 0248) |
+| **Scam-Blocklist** | `scam_blocklist.ts` | jarelllama/Scam-Blocklist | Newly-created scam/fraud domains (fake stores, crypto drainers, brand-impersonation shops) (migration 0248) |
 
 > **PhishStats history:** removed 2026-03 (upstream dead — 522/404), then re-added as part of the Tier-A OSINT-expansion volume adds (`feeds/index.ts:56,119`) once the endpoint came back up. Currently registered and active — do not treat the old removal note as current.
 
@@ -105,6 +107,8 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **Feodo** | `feodo.ts` | abuse.ch | Botnet C2 server tracking |
 | **MalwareBazaar** | `malwarebazaar.ts` | abuse.ch | Malware sample metadata |
 | **SSL Blacklist** | `sslbl.ts` | abuse.ch | Malicious SSL certificates |
+
+> **abuse.ch Auth-Key:** all five abuse.ch feeds send the shared `env.ABUSECH_AUTH_KEY` header. ThreatFox and MalwareBazaar (JSON API POSTs) always required it; `urlhaus`, `feodo`, and `sslbl` pull download endpoints and had it added defensively (0248 branch) because abuse.ch is deprecating anonymous access — the header is harmless while still optional and keeps those pulls working once anonymous access is cut off.
 
 ### Ingest Feeds — IP Reputation / Infrastructure
 
@@ -120,6 +124,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **Emerging Threats** | `emergingThreats.ts` | Proofpoint ET | Compromised IPs rule set |
 | **DataPlane** | `dataplane.ts` | dataplane.org | First-party honeypot mesh; rotates 1 of 6 attack-category lists per hourly tick (`hour % 6`) |
 | **Talos IPs** | `talos_ips.ts` | Cisco Talos | Snort community IP blocklist (daily-refreshed, plain-text) |
+| **IPsum** | `ipsum.ts` | stamparm/ipsum | Daily union of 30+ IP blocklists WITH a per-IP score (number of lists flagging it); ingested at score>=3 for tunable confidence. The score is the value-add over the individual blocklists above; overlap is absorbed by the `threatId` PK dedup (migration 0248) |
 
 ### Ingest Feeds — Vulnerability / Campaign Intelligence
 
@@ -128,6 +133,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **CISA KEV** | `cisa_kev.ts` | US CISA | Known exploited vulnerabilities — writes an insight digest to `agent_outputs`, not `threats` |
 | **NVD CVE** | `nvd_cve.ts` | NIST NVD | Full CVE 2.0 catalog, sliding 24h window of newly-published CVEs — also writes an insight digest to `agent_outputs`, not `threats` (a CVE isn't an IP/URL/domain IOC) |
 | **CISA Iran IOCs** | `cisa_iran_iocs.ts` | US CISA | Iran-related campaign IOCs |
+| **EPSS** | `epss.ts` | FIRST.org | Exploit Prediction Scoring System — top CVEs by 30-day exploitation probability; writes an insight digest to `agent_outputs`, not `threats`. Prioritizes the vuln signal class alongside CISA KEV / NVD (migration 0248) |
 
 ### Ingest Feeds — Domains / Certificates
 
