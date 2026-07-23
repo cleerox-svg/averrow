@@ -12,11 +12,12 @@ interface Update { sql: string; args: unknown[] }
 function makeEnv(
   threats: Array<{ id: string; indicator: string }>,
   riskByIndicator: Record<string, string>, // value, or "ERROR" for {error:...}
-  opts?: { key?: string | undefined; dailyCount?: number },
+  opts?: { key?: string | undefined; dailyCount?: number; monthlyCount?: number },
 ): { env: Env; updates: Update[]; fetchCount: () => number } {
   const updates: Update[] = [];
   const kv = new Map<string, string>();
   if (opts?.dailyCount != null) kv.set(`pulsedive_daily_${new Date().toISOString().slice(0, 10)}`, String(opts.dailyCount));
+  if (opts?.monthlyCount != null) kv.set(`pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`, String(opts.monthlyCount));
   let fetches = 0;
 
   globalThis.fetch = vi.fn(async (url: string) => {
@@ -73,8 +74,15 @@ describe("pulsedive enrichment", () => {
     expect(fetchCount()).toBe(0);
   });
 
-  it("no-ops when the daily budget is already spent", async () => {
-    const { env, fetchCount } = makeEnv([{ id: "t1", indicator: "evil.com" }], { "evil.com": "high" }, { dailyCount: 90 });
+  it("no-ops when the daily budget (15) is already spent", async () => {
+    const { env, fetchCount } = makeEnv([{ id: "t1", indicator: "evil.com" }], { "evil.com": "high" }, { dailyCount: 15 });
+    const r = await pulsedive.ingest({ env, ...CTX });
+    expect(r.itemsFetched).toBe(0);
+    expect(fetchCount()).toBe(0);
+  });
+
+  it("no-ops when the monthly budget (480) is already spent, even with day headroom", async () => {
+    const { env, fetchCount } = makeEnv([{ id: "t1", indicator: "evil.com" }], { "evil.com": "high" }, { dailyCount: 0, monthlyCount: 480 });
     const r = await pulsedive.ingest({ env, ...CTX });
     expect(r.itemsFetched).toBe(0);
     expect(fetchCount()).toBe(0);
@@ -135,7 +143,15 @@ describe("pulsedive enrichment", () => {
   it("clamps the batch to the remaining daily budget", async () => {
     const threats = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, indicator: `d${i}.com` }));
     const risks = Object.fromEntries(threats.map((t) => [t.indicator, "unknown"]));
-    const { env } = makeEnv(threats, risks, { dailyCount: 89 }); // 90 - 89 = 1 remaining
+    const { env } = makeEnv(threats, risks, { dailyCount: 14 }); // 15 - 14 = 1 remaining
+    const r = await pulsedive.ingest({ env, ...CTX });
+    expect(r.itemsFetched).toBe(1);
+  });
+
+  it("clamps the batch to the remaining monthly budget when it is the tighter ceiling", async () => {
+    const threats = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, indicator: `d${i}.com` }));
+    const risks = Object.fromEntries(threats.map((t) => [t.indicator, "unknown"]));
+    const { env } = makeEnv(threats, risks, { dailyCount: 0, monthlyCount: 479 }); // 480 - 479 = 1 remaining
     const r = await pulsedive.ingest({ env, ...CTX });
     expect(r.itemsFetched).toBe(1);
   });

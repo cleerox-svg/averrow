@@ -15,15 +15,19 @@ import { logger } from "../lib/logger";
  *   → { risk: "unknown"|"none"|"low"|"medium"|"high"|"critical"|"retired", ... }
  *   → { error: "Indicator not found." } when unknown to Pulsedive.
  *
- * Free tier is rate-limited (~30 req/min), so this runs on its own cron
- * with a daily budget + inter-call delay + wall-clock guard. Self-gates
- * to a no-op when PULSEDIVE_API_KEY is unset.
+ * Free-tier limits (verified from the Pulsedive account page): 1 req/s,
+ * 50 requests/day, 500 requests/month. The MONTHLY cap is the binding
+ * constraint — 50/day for a month is ~1500, far over 500 — so we pace to
+ * ~15/day (≈465/month) and enforce all three ceilings (per-second via the
+ * inter-call delay, plus daily + monthly KV counters). Runs on its own
+ * cron; self-gates to a no-op when PULSEDIVE_API_KEY is unset.
  */
 
-const DAILY_LIMIT = 90;    // conservative cap under the free tier
-const BATCH_SIZE = 15;     // per dedicated-cron run (×6 runs/day ≈ 90)
-const DELAY_MS = 3_000;    // ~20/min — comfortably under the ~30/min limit
-const BUDGET_MS = 240_000; // per-run wall-clock guard (reap-safe)
+const DAILY_LIMIT = 15;      // under the 50/day cap; 15 × 31 ≈ 465 < 500/month
+const MONTHLY_LIMIT = 480;   // hard backstop under the 500/month cap
+const BATCH_SIZE = 8;        // per dedicated-cron run; daily/monthly caps clamp it
+const DELAY_MS = 1_500;      // ≥1s spacing → under the 1 req/s cap (with margin)
+const BUDGET_MS = 240_000;   // per-run wall-clock guard (reap-safe)
 const FETCH_TIMEOUT_MS = 10_000;
 
 type PulsediveRisk = "unknown" | "none" | "low" | "medium" | "high" | "critical" | "retired";
@@ -82,6 +86,14 @@ async function incrementDailyCount(env: Env, by: number): Promise<void> {
   const key = `pulsedive_daily_${new Date().toISOString().slice(0, 10)}`;
   await env.CACHE.put(key, String((await getDailyCount(env)) + by), { expirationTtl: 86400 });
 }
+async function getMonthlyCount(env: Env): Promise<number> {
+  const val = await env.CACHE.get(`pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`);
+  return val ? parseInt(val, 10) : 0;
+}
+async function incrementMonthlyCount(env: Env, by: number): Promise<void> {
+  const key = `pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`;
+  await env.CACHE.put(key, String((await getMonthlyCount(env)) + by), { expirationTtl: 2_764_800 }); // ~32 days
+}
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -97,11 +109,18 @@ export const pulsedive: FeedModule = {
     }
 
     const dailyCalls = await getDailyCount(env);
+    const monthlyCalls = await getMonthlyCount(env);
     if (dailyCalls >= DAILY_LIMIT) {
       logger.info("pulsedive_daily_limit", { calls: dailyCalls, limit: DAILY_LIMIT });
       return empty;
     }
-    const batchLimit = Math.min(BATCH_SIZE, DAILY_LIMIT - dailyCalls);
+    if (monthlyCalls >= MONTHLY_LIMIT) {
+      logger.info("pulsedive_monthly_limit", { calls: monthlyCalls, limit: MONTHLY_LIMIT });
+      return empty;
+    }
+    // Clamp to whichever ceiling is closest — batch size, remaining day, or
+    // remaining month.
+    const batchLimit = Math.min(BATCH_SIZE, DAILY_LIMIT - dailyCalls, MONTHLY_LIMIT - monthlyCalls);
 
     // Highest-severity, recently-seen threats with a scoreable indicator
     // (domain preferred, else IP) not yet checked.
@@ -186,8 +205,11 @@ export const pulsedive: FeedModule = {
       }
     }
 
-    // Every attempt consumed quota, so count them all before deciding.
-    if (itemsFetched > 0) await incrementDailyCount(env, itemsFetched);
+    // Every attempt consumed quota, so count them against both ceilings.
+    if (itemsFetched > 0) {
+      await incrementDailyCount(env, itemsFetched);
+      await incrementMonthlyCount(env, itemsFetched);
+    }
 
     // If EVERY lookup failed (invalid key / sustained upstream outage),
     // throw so runFeed marks the pull failed and the per-feed circuit
