@@ -1,6 +1,6 @@
 import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId, extractDomain } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
 import { sanitizeIp } from "../lib/sanitizeIp";
 
@@ -34,57 +34,50 @@ export const threatfox: FeedModule = {
       return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 
-    let itemsNew = 0, itemsDuplicate = 0, itemsError = 0;
     const items = data.data.slice(0, 500);
 
+    // Build rows: skip hash/unknown IOC types (can't store as domain/url/ip),
+    // dedupe within the payload, then bulk insert.
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
     for (const ioc of items) {
-      try {
-        const iocType = mapIocType(ioc.ioc_type);
-        // Skip hash-type IOCs — they can't be stored as domains/URLs/IPs
-        if (iocType === "hash" || iocType === "unknown") continue;
-        if (await isDuplicate(ctx.env, iocType, ioc.ioc)) { itemsDuplicate++; continue; }
+      const iocType = mapIocType(ioc.ioc_type);
+      if (iocType === "hash" || iocType === "unknown") continue;
+      // Dedup key includes iocType (matches the old KV key + the
+      // threatId space), so the same string under two different types
+      // isn't collapsed.
+      const dedupKey = `${iocType}:${ioc.ioc}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
 
-        const domain = iocType === "domain" ? ioc.ioc : extractDomain(ioc.ioc);
-        const isUrl = iocType === "url";
-        const isIp = iocType === "ip";
-        const confidence = ioc.confidence_level ?? 50;
+      const domain = iocType === "domain" ? ioc.ioc : extractDomain(ioc.ioc);
+      const isUrl = iocType === "url";
+      const isIp = iocType === "ip";
+      const confidence = ioc.confidence_level ?? 50;
 
-        // ThreatFox emits IPs as `1.2.3.4:port` for ioc_type='ip:port'.
-        // Strip the port — every downstream consumer (ip-api batch,
-        // MMDB lookup, NEXUS clustering) parses bare IPv4 only. See
-        // lib/sanitizeIp.ts. malicious_domain mirrors the same string
-        // when the IOC is IP-shaped, so it gets the same treatment.
-        const ipForRow = isIp ? sanitizeIp(ioc.ioc) : null;
-        const domainForRow = iocType === "domain"
-          ? domain
-          : isIp
-            ? ipForRow
-            : domain;
+      // ThreatFox emits IPs as `1.2.3.4:port` for ioc_type='ip:port'.
+      // Strip the port — every downstream consumer parses bare IPv4 only.
+      const ipForRow = isIp ? sanitizeIp(ioc.ioc) : null;
+      const domainForRow = iocType === "domain" ? domain : isIp ? ipForRow : domain;
 
-        await insertThreat(ctx.env.DB, {
-          id: threatId("threatfox", iocType, ioc.ioc),
-          source_feed: "threatfox",
-          threat_type: mapThreatType(ioc.threat_type),
-          malicious_url: isUrl ? ioc.ioc : null,
-          malicious_domain: domainForRow,
-          ip_address: ipForRow,
-          ioc_value: ioc.ioc,
-          severity: confidenceToSeverity(confidence),
-          confidence_score: confidence,
-        });
-        await markSeen(ctx.env, iocType, ioc.ioc);
-        itemsNew++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[threatfox] insert error for ioc=${ioc.ioc} type=${ioc.ioc_type} threat=${ioc.threat_type}: ${msg}`);
-        itemsError++;
-        if (itemsError <= 3) {
-          console.error(`[threatfox] Full error detail:`, err);
-        }
-      }
+      rows.push({
+        id: threatId("threatfox", iocType, ioc.ioc),
+        source_feed: "threatfox",
+        threat_type: mapThreatType(ioc.threat_type),
+        malicious_url: isUrl ? ioc.ioc : null,
+        malicious_domain: domainForRow,
+        ip_address: ipForRow,
+        ioc_value: ioc.ioc,
+        severity: confidenceToSeverity(confidence),
+        confidence_score: confidence,
+      });
     }
 
-    return { itemsFetched: items.length, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    // itemsFetched = rows we attempted to insert (post hash/unknown skip +
+    // dedup), so fetched == new + dup + error holds — consistent with the
+    // other bulk-migrated feeds.
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };
 

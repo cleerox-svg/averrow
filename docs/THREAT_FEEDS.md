@@ -77,12 +77,23 @@ and there is no cold-cache cliff (the DB always knows what exists).
 `bulkInsertThreats` shares `insertThreat`'s exact column list + scoring via
 one internal statement builder, so the single-row and bulk paths can't
 diverge. **Routing through the shared `bulkInsertThreats` helper:**
-`scam_blocklist`, `phishing_database`. **Already on a chunked `db.batch`
-pattern via their own inline builders** (candidates to migrate onto the
+`scam_blocklist`, `phishing_database`, `openphish`, `ipsum`, `urlhaus`,
+`threatfox`, `feodo`, `tweetfeed`. **Already on a chunked `db.batch`
+pattern via their own inline builders** (candidates to consolidate onto the
 shared helper): `phishdestroy.ts`, `spamhausDrop.ts`, `blocklistde.ts`,
 `cins_army.ts`, `dataplane.ts`, `emergingThreats.ts`, `torExitNodes.ts`,
-`disposableEmail.ts`. The remaining per-row list feeds (`openphish`,
-`urlhaus`, `ipsum`, `dshield`, …) are migrating incrementally.
+`disposableEmail.ts`.
+
+**Intentionally NOT bulk-migrated** (kept on the per-row path for a
+reason): `dshield` / `sslbl` do a per-row `SELECT` + conditional `UPDATE`
+to *enrich* existing threats (bulk insert would lose that, and both pull
+≤100 rows so there's no reap risk); `otx_alienvault` also writes
+`threat_actors` / `threat_attributions`; `nrd_hagezi` only inserts the
+small brand-matched subset (its bulk work is the `nrd_domains` reference
+table, already chunked); `typosquat_scanner` is an internal generator, not
+a list fetch; `certstream` carries CT cert columns + a paired Durable
+Object. Disabled/dead feeds (`phishtank`, `phishstats`, `cryptoscamdb`,
+`talos_ips`, `urlscanio`, `digitalside_osint`) are skipped.
 
 > **Cross-feed note:** the KV dedup key (`dedup:{iocType}:{iocValue}`) is
 > NOT feed-scoped, so the old per-row path let one feed's `markSeen`

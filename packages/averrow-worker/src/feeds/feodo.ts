@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 
 const IP_REGEX = /^\d+\.\d+\.\d+\.\d+$/;
 
@@ -11,11 +11,8 @@ const IP_REGEX = /^\d+\.\d+\.\d+\.\d+$/;
  * Each entry has: { ip_address, port, status, hostname, as_number, as_name,
  *                   country, first_seen, last_online, malware }
  *
- * History: this parser previously assumed a flat newline-delimited IP list
- * (the old `ipblocklist.txt` URL). When `feed_configs.source_url` was migrated
- * to `ipblocklist.json` the parser was not updated, so every pull threw
- * `Feodo: 62 lines, 0 IPs (format change?): [ |     {` for ~weeks.
- * Switched to JSON parsing on 2026-05-03.
+ * Ingest builds a deduped ThreatRow[] and flushes via bulkInsertThreats
+ * (chunked db.batch) — no per-row KV round-trips.
  */
 export const feodo: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
@@ -53,50 +50,40 @@ export const feodo: FeedModule = {
       throw err;
     }
 
-    let itemsNew = 0;
-    let itemsDuplicate = 0;
-    let itemsError = 0;
+    const seen = new Set<string>();
+    const rows: ThreatRow[] = [];
     let ipMatches = 0;
 
     for (const entry of entries) {
       const ip = typeof entry.ip_address === "string" ? entry.ip_address.trim() : "";
       if (!IP_REGEX.test(ip)) continue;
       ipMatches++;
+      if (seen.has(ip)) continue;
+      seen.add(ip);
 
-      try {
-        if (await isDuplicate(ctx.env, "ip", ip)) {
-          itemsDuplicate++;
-          continue;
-        }
+      const malware = typeof entry.malware === "string" ? entry.malware : null;
+      // Carry the malware family in ioc_value so downstream classifiers
+      // (Sentinel, Cartographer) can see WHY this IP is on the list.
+      const iocValue = malware ? `${ip} (${malware})` : ip;
 
-        const malware = typeof entry.malware === "string" ? entry.malware : null;
-        // Carry the malware family in ioc_value so downstream classifiers
-        // (Sentinel, Cartographer) can see WHY this IP is on the list.
-        const iocValue = malware ? `${ip} (${malware})` : ip;
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("feodo", "ip", ip),
-          source_feed: "feodo",
-          threat_type: "malware_distribution",
-          malicious_url: null,
-          malicious_domain: null,
-          ip_address: ip,
-          ioc_value: iocValue,
-          severity: "high",
-          confidence_score: 90,
-        });
-        await markSeen(ctx.env, "ip", ip);
-        itemsNew++;
-      } catch {
-        itemsError++;
-      }
+      rows.push({
+        id: threatId("feodo", "ip", ip),
+        source_feed: "feodo",
+        threat_type: "malware_distribution",
+        malicious_url: null,
+        malicious_domain: null,
+        ip_address: ip,
+        ioc_value: iocValue,
+        severity: "high",
+        confidence_score: 90,
+      });
     }
 
     // Got a populated array but no rows had a usable ip_address — probable
     // schema rename upstream. Throw so the diagnostic lands in feed_pull_history
     // instead of being silently 0-record.
     if (entries.length > 0 && ipMatches === 0) {
-      const sampleKeys = entries.length > 0 && typeof entries[0] === "object"
+      const sampleKeys = typeof entries[0] === "object"
         ? Object.keys(entries[0] ?? {}).slice(0, 8).join(",")
         : "(no keys)";
       throw new Error(
@@ -104,6 +91,9 @@ export const feodo: FeedModule = {
       );
     }
 
-    return { itemsFetched: entries.length, itemsNew, itemsDuplicate, itemsError };
+    const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+    // itemsFetched = unique valid IPs we attempted (fetched == new+dup+error),
+    // consistent with the other bulk-migrated feeds.
+    return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };
