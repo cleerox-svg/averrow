@@ -22,17 +22,19 @@
 //     `sparkline` in /api/admin/pipeline-status — see PR #1178
 //     for the same pattern on feeds)
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { Card } from '@/design-system/components';
+import { Card, Button } from '@/design-system/components';
 import { Badge } from '@/components/ui/Badge';
 import type { VerdictTag } from '@/components/ui/Badge';
 import { ChevronDown } from 'lucide-react';
-import { usePipelineStatus, usePipelineDetail } from '@/hooks/useAgents';
+import { usePipelineStatus, usePipelineDetail, useTriggerAgent } from '@/hooks/useAgents';
 import type { Agent, PipelineEntry, PipelineDetail } from '@/hooks/useAgents';
 import { relativeTime, formatDuration } from '@/lib/time';
+import { useAuth } from '@/lib/auth';
 
 // Maps PipelineVerdict.label → VerdictTag for the styled Badge.
 // Verdict labels not in this map (EMPTY, SETUP) fall back to
@@ -328,6 +330,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
         <div className="space-y-4">
           {detail.reference_dataset ? (
             <ReferenceDatasetBlock
+              pipelineId={pipelineId}
               data={detail.reference_dataset}
               attempts={detail.recent_attempts ?? []}
             />
@@ -480,9 +483,11 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 }
 
 function ReferenceDatasetBlock({
+  pipelineId,
   data,
   attempts,
 }: {
+  pipelineId: string;
   data: NonNullable<PipelineDetail['reference_dataset']>;
   attempts: NonNullable<PipelineDetail['recent_attempts']>;
 }) {
@@ -492,6 +497,39 @@ function ReferenceDatasetBlock({
     last_refresh_duration_ms, last_refresh_error, currently_running,
     stale_threshold_days,
   } = data;
+
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const trigger = useTriggerAgent();
+  const queryClient = useQueryClient();
+  // Bridges the window between click and the server row flipping to
+  // `currently_running`: useTriggerAgent's shared onSuccess only
+  // invalidates ['agents'], not this pipeline's detail query, and the
+  // workflow dispatch is async, so `currently_running` can lag the
+  // mutation resolving. Cleared as soon as the detail query reports
+  // currently_running=true, with a timeout fallback in case dispatch
+  // errors or completes before the invalidated refetch lands.
+  const [justTriggered, setJustTriggered] = useState(false);
+
+  useEffect(() => {
+    if (currently_running) setJustTriggered(false);
+  }, [currently_running]);
+
+  // This block only renders for the GeoIP pipeline (reference_dataset is
+  // geoip-only, see PipelineDetail comment above) — agent id is fixed.
+  const refreshing = currently_running || trigger.isPending || justTriggered;
+
+  const handleRunNow = () => {
+    setJustTriggered(true);
+    trigger.mutate('geoip_refresh', {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['pipeline-detail', pipelineId] });
+      },
+      onSettled: () => {
+        window.setTimeout(() => setJustTriggered(false), 5000);
+      },
+    });
+  };
 
   const ageDays =
     last_refresh_age_hours != null ? last_refresh_age_hours / 24 : null;
@@ -525,9 +563,31 @@ function ReferenceDatasetBlock({
   return (
     <div className="space-y-4">
       <div>
-        <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
-          Reference dataset
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+            Reference dataset
+          </div>
+          {isAdmin && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={refreshing}
+              onClick={handleRunNow}
+            >
+              {currently_running ? 'Refreshing…' : trigger.isPending || justTriggered ? 'Starting…' : 'Run now'}
+            </Button>
+          )}
         </div>
+        {trigger.isError && (
+          <div
+            role="alert"
+            aria-live="polite"
+            className="font-mono text-[9px] mb-2"
+            style={{ color: 'var(--sev-critical-text)' }}
+          >
+            Trigger failed — retry
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Live rows" value={row_count.toLocaleString()} />

@@ -66,6 +66,10 @@ interface AgentHealth {
   agent_id: string;
   last_run_at: string | null;
   last_run_status: string | null;
+  // completed_at of the latest agent_runs row (null for workflow agents and
+  // for in-flight/killed runs). Used to distinguish a legitimately-finished
+  // 'partial' run from a killed orphan in the stall + recovery logic below.
+  last_run_completed_at: string | null;
   avg_duration_ms: number;
   is_stalled: boolean;
   circuit_state: 'closed' | 'tripped';
@@ -718,8 +722,14 @@ export const flightControlAgent: AgentModule = {
       // ~5.5M rows/day eliminated.
       const stuckCount = await cachedCount(env, 'count.threats.enriched_no_geo', 300, async () => {
         const row = await db.prepare(
+          // ip_address != '' added so the predicate matches the partial index
+          // idx_threats_stuck_geo (0174): ... WHERE lat IS NULL AND ip_address
+          // IS NOT NULL AND ip_address != ''. Without it SQLite can't prove the
+          // query predicate implies the index predicate and full-scans threats.
+          // Empty-string ip_address rows aren't real IPs, so excluding them is
+          // semantically correct for "enriched but geo-pending".
           `SELECT COUNT(*) AS n FROM threats
-            WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL`
+            WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL AND ip_address != ''`
         ).first<{ n: number }>();
         return row?.n ?? 0;
       });
@@ -2072,6 +2082,43 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
 
 // ─── Agent Health ────────────────────────────────────────────────
 
+/** Pure stall decision for a single agent's health snapshot. Mirrors the
+ *  is_stalled computation inline in getAgentHealth below — extracted so it
+ *  can be unit-tested without a D1 mock (getAgentHealth itself pulls in
+ *  dynamic agent-module imports + several joined queries that aren't worth
+ *  mocking just to exercise this predicate). Behavior-preserving extraction,
+ *  not a logic change — see test/flight-control-stall-recovery.test.ts. */
+export function computeIsStalled(opts: {
+  lastRunAgeMs: number;
+  thresholdMs: number;
+  isWorkflowAgent: boolean;
+  lastRunStatus: string | null;
+  lastRunCompletedAt: string | null;
+}): boolean {
+  const { lastRunAgeMs, thresholdMs, isWorkflowAgent, lastRunStatus, lastRunCompletedAt } = opts;
+  // A 'partial' run only counts as stalled when it's genuinely INCOMPLETE.
+  // agentRunner writes completed_at on every finished run (including the
+  // approvals-driven 'partial' finalize path), so a 'partial' with
+  // completed_at SET is a finished run and must NOT be recovered. Only a
+  // 'partial' whose completed_at is still NULL (a run killed mid-execution)
+  // is a real orphan. Workflow agents have no agent_runs completed_at, so
+  // they keep the original age-only stall behavior.
+  const partialOrphanStalled = !isWorkflowAgent &&
+    lastRunStatus === 'partial' &&
+    lastRunCompletedAt == null &&
+    lastRunAgeMs > 45 * 60 * 1000;
+  return lastRunAgeMs > thresholdMs || partialOrphanStalled;
+}
+
+/** Pure orphan predicate for the recovery force-fail clear. Mirrors the
+ *  isRunningOrphan || isPartialOrphan check inline in recoverStalledAgents
+ *  below. A 'running' row is always an orphan (worker died mid-run); a
+ *  'partial' row is only an orphan when completed_at is still NULL (killed
+ *  before agentRunner's finalize write landed). */
+export function isOrphanedRun(opts: { status: string | null; completedAt: string | null }): boolean {
+  return opts.status === 'running' || (opts.status === 'partial' && opts.completedAt == null);
+}
+
 /** Read each agent's `stallThresholdMinutes` declaration from its
  *  AgentModule. Replaces the hardcoded STALL_THRESHOLDS map that lived
  *  here pre-Phase 4.1 — supervision data is now owned by the module
@@ -2093,6 +2140,7 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
         agent_id,
         status as last_run_status,
         started_at as last_run_at,
+        completed_at as last_completed_at,
         duration_ms
       FROM agent_runs ar1
       WHERE started_at = (
@@ -2100,7 +2148,7 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
         WHERE ar2.agent_id = ar1.agent_id
       )
       AND agent_id IN (${placeholders})
-    `).bind(...agentIds).all<{ agent_id: string; last_run_status: string; last_run_at: string; duration_ms: number | null }>(),
+    `).bind(...agentIds).all<{ agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null }>(),
 
     db.prepare(`
       SELECT agent_id, AVG(duration_ms) as avg_ms
@@ -2157,8 +2205,17 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
         ? Date.now() - new Date(latest.last_run_at + 'Z').getTime()
         : Infinity;
     const effectiveLastStatus = wf ? wfLastRunStatus : latest?.last_run_status;
-    const isStalled = lastRunAge > thresholdMs ||
-      (effectiveLastStatus === 'partial' && lastRunAge > 45 * 60 * 1000);
+    // See computeIsStalled's doc comment above for the partial-orphan
+    // rationale (false-recovery loop for strategist/cartographer). The hard
+    // ceiling (lastRunAge > thresholdMs) is unchanged and covers both the
+    // workflow and agent_runs paths.
+    const isStalled = computeIsStalled({
+      lastRunAgeMs: lastRunAge,
+      thresholdMs,
+      isWorkflowAgent: !!wf,
+      lastRunStatus: effectiveLastStatus ?? null,
+      lastRunCompletedAt: latest?.last_completed_at ?? null,
+    });
 
     // Derive circuit state from agent_configs
     const isTripped = config?.enabled === 0 && config.paused_reason === 'auto:consecutive_failures';
@@ -2167,6 +2224,9 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
       agent_id: agentId,
       last_run_at: (wf?.last_event_at) ?? latest?.last_run_at ?? null,
       last_run_status: wfLastRunStatus ?? latest?.last_run_status ?? null,
+      // wf branch has no agent_runs completed_at → null (nexus is excluded
+      // from recovery anyway, so this never gates a workflow agent).
+      last_run_completed_at: wf ? null : (latest?.last_completed_at ?? null),
       avg_duration_ms: Math.round(avgMap.get(agentId) ?? 0),
       is_stalled: isStalled,
       circuit_state: isTripped ? 'tripped' as const : 'closed' as const,
@@ -2449,21 +2509,27 @@ async function recoverStalledAgents(
     // in `agent_runs` before this guard landed.
     if (agent.agent_id === 'nexus') continue;
 
-    // Force-fail orphaned 'running' rows before re-dispatching.
-    // A Worker timeout / unhandled exception leaves the row in
-    // 'running' state forever; without this UPDATE-to-failed,
-    // the orphan stays the latest started_at and re-trips
-    // is_stalled every FC tick. Marked 'failed' so the recovery
-    // run becomes the latest started_at on the next tick.
-    if (agent.last_run_status === 'running' && agent.last_run_at) {
+    // Force-fail orphaned rows before re-dispatching. Two orphan shapes:
+    //   1. status='running'      — Worker timeout / unhandled exception left
+    //      the row in 'running' forever (catch never ran).
+    //   2. status='partial' + completed_at IS NULL — the run was killed
+    //      mid-execution after agentRunner's INSERT (which seeds 'partial',
+    //      completed_at NULL) but before its finalize UPDATE. A finished
+    //      'partial' always has completed_at SET, so completed_at IS NULL is
+    //      the killed-orphan signature.
+    // Without this clear, the orphan stays the latest started_at and re-trips
+    // is_stalled every FC tick. Marked 'failed' so the recovery run becomes
+    // the latest started_at on the next tick. The completed_at IS NULL guard
+    // in the WHERE keeps the force-fail write from ever touching a completed row.
+    if (isOrphanedRun({ status: agent.last_run_status, completedAt: agent.last_run_completed_at }) && agent.last_run_at) {
       recoveryStmts.push(db.prepare(`
         UPDATE agent_runs
            SET status = 'failed',
                completed_at = datetime('now'),
-               error_message = 'auto-failed by flight_control after stall threshold exceeded'
+               error_message = 'auto-failed by flight_control: orphaned run (stall threshold exceeded)'
          WHERE agent_id = ?
            AND started_at = ?
-           AND status = 'running'
+           AND completed_at IS NULL
       `).bind(agent.agent_id, agent.last_run_at));
     }
 

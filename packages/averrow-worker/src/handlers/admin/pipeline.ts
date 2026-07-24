@@ -700,11 +700,14 @@ async function handleGeoipDetail(
     },
   };
   const body = { success: true, data: detail };
-  // Shorter TTL when a refresh is mid-flight so the in-flight progress
-  // updates while the operator watches. Falls back to the existing 60s
-  // cache otherwise.
-  await env.CACHE.put(cacheKey, JSON.stringify(body), {
-    expirationTtl: isRunning ? 15 : 60,
-  });
+  // While a refresh is mid-flight, skip the KV write entirely so the panel
+  // always renders fresh live progress. (A sub-60s expirationTtl is rejected
+  // by KV and would throw → 500; the read path falls through to compute on a
+  // miss, so skipping the write is safe.) Otherwise keep the 60s cache.
+  if (!isRunning) {
+    await env.CACHE.put(cacheKey, JSON.stringify(body), {
+      expirationTtl: 60,
+    });
+  }
   return json(body, 200, origin);
 }
