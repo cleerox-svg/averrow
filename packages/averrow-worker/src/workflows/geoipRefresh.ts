@@ -84,9 +84,6 @@ import {
   atomicSwap as atomicSwapHelper,
 } from '../lib/geoip-import';
 
-/** Days between forced full rebuilds (quarterly GC of dropped ranges). */
-const FULL_REBUILD_MAX_AGE_DAYS = 85;
-
 interface GeoipRefreshParams {
   /** Refresh log row id created by the geoip_refresh agent (or the
    *  manual-import admin endpoint) before workflow dispatch. Each
@@ -305,29 +302,35 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     });
 
     // ── decide-mode: in-place diff vs full rebuild ───────────
-    // Diff writes only changed rows (~1-5% of the table) instead of
-    // rebuilding all ~3.76M. A FULL rebuild is forced when: the operator
-    // asked for one (forceReload), it's a manual R2 import, the live
-    // table is empty (bootstrap), or no successful full rebuild has run
-    // in FULL_REBUILD_MAX_AGE_DAYS (quarterly GC of ranges MaxMind
-    // dropped + a clean repopulation of row_hash). Otherwise diff.
-    // Historical log rows have mode=NULL, so the first post-deploy run
-    // finds no tracked full rebuild and runs full — which populates
-    // row_hash on every row so subsequent diffs have hashes to compare.
+    // Prefer the in-place DIFF whenever the live table is already
+    // populated. Diff writes only the changed rows in many small,
+    // independent transactional batches and — critically — does NO
+    // atomic swap: no DROP of a ~3.8M-row table, no CREATE INDEX over
+    // millions of rows. Under the account's D1 read-throttle (prod
+    // 2026-07-24: 99.4% of the 25B/mo read ceiling, active skip state)
+    // that single giant swap operation hung for 70+ min and the full
+    // rebuild could never finalize (every attempt froze mid-swap and
+    // was recovered with rows_written=0). Diff sidesteps it entirely.
+    //
+    // Diff self-bootstraps row_hash: a live row whose hash is NULL (or
+    // from an older release) mismatches the incoming hash and is
+    // rewritten WITH a fresh hash, so after one diff pass every touched
+    // row carries a hash for the next diff to compare against. The
+    // diff's own DELETE pass removes ranges MaxMind dropped — exactly
+    // what the old quarterly FULL rebuild existed to garbage-collect —
+    // so that forced-full GC, and the bootstrap trap where a populated
+    // table with no tracked full kept re-forcing the (hanging) full
+    // path, are both retired here.
+    //
+    // FULL is now reserved for cases that genuinely need a clean
+    // rebuild: an operator force (forceReload), a manual R2 import, or
+    // a truly empty table (first-ever bootstrap).
     const mode = await step.do('decide-mode', async (): Promise<'full' | 'diff'> => {
       if (forceReload || isManualR2Import) return 'full';
       const live = await this.env.GEOIP_DB
         .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`)
         .first<{ n: number }>();
-      if ((live?.n ?? 0) === 0) return 'full';
-      const lastFull = await this.env.GEOIP_DB.prepare(`
-        SELECT completed_at FROM geo_ip_refresh_log
-         WHERE status = 'success' AND mode = 'full'
-         ORDER BY completed_at DESC LIMIT 1
-      `).first<{ completed_at: string | null }>();
-      if (!lastFull?.completed_at) return 'full';
-      const ageDays = (Date.now() - Date.parse(lastFull.completed_at)) / 86_400_000;
-      return ageDays >= FULL_REBUILD_MAX_AGE_DAYS ? 'full' : 'diff';
+      return (live?.n ?? 0) === 0 ? 'full' : 'diff';
     });
 
     // ── Step 3: prepare-shadow-table (FULL path only) ────────
