@@ -375,12 +375,23 @@ export function buildDnsQueueParity(opts: {
   };
 }
 
+/** Clamp the `?hours=` query param to [1, 168]. Extracted from
+ *  handlePlatformDiagnostics for direct unit testing — pure, no I/O.
+ *  Cap raised to 168h (7d) so 24/48/168h trending works. Floored at 1h and
+ *  guarded against NaN/negatives from a bad param so the window can never be
+ *  0 or negative. On-demand admin/internal endpoint — no windowed query here
+ *  full-scans threats, so 168h is safe. */
+export function clampHoursBack(raw: string | null): number {
+  const hoursParsed = parseInt(raw ?? "6");
+  return Math.min(Math.max(1, Number.isFinite(hoursParsed) ? hoursParsed : 6), 168);
+}
+
 /** GET /api/admin/platform-diagnostics  (JWT admin auth)
  *  GET /api/internal/platform-diagnostics (AVERROW_INTERNAL_SECRET auth) */
 export async function handlePlatformDiagnostics(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const url = new URL(request.url);
-  const hoursBack = Math.min(parseInt(url.searchParams.get("hours") ?? "6"), 48);
+  const hoursBack = clampHoursBack(url.searchParams.get("hours"));
 
   try {
     // ─── 1. Database clock ──────────────────────────────────────────
@@ -1573,7 +1584,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         d1_billing_cycle: d1BillingCycle,
 
         // PR-AM: per-database read/write activity over the requested
-        // window (defaults to 6h, capped at 48h via `hours` query
+        // window (defaults to 6h, capped at 168h via `hours` query
         // param). Lets the operator see whether a recent fix to a
         // specific worker has actually reduced its load, without
         // waiting for the cycle aggregate to update.
