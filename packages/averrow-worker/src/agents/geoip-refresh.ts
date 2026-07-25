@@ -40,6 +40,7 @@
 import type { Env } from '../types';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
 import { logger } from '../lib/logger';
+import { evaluateGeoipStall, type GeoipStallWatch } from '../lib/geoip-stall';
 
 interface RefreshConfigStatus {
   geoipDbBound: boolean;
@@ -248,12 +249,16 @@ export const geoipRefreshAgent: AgentModule = {
     // runs hourly; here we cover the on-demand-trigger case so the
     // operator gets immediate feedback when they click Force.
     //
-    // STUCK_THRESHOLD_MIN must exceed the workflow's worst-case
-    // runtime (~30 min for a fresh import). 60 min gives us 2x
-    // headroom and clearly distinguishes "still running" from
-    // "stuck". Aligned with §16 SLA — geoip_refresh's
-    // expectedRuntimeP99Ms is 1800000 (30 min).
-    const STUCK_THRESHOLD_MIN = 60;
+    // This Layer-B guard used to recover ANY 'running' row older than a
+    // fixed 60 min, purely on age. That killed legitimately-long imports
+    // the same way FC's old Layer-C age-kill did (prod 2026-07-24: a diff
+    // rebuild progressing under a D1 read-throttle was force-failed at
+    // ~60 min and re-dispatched from scratch). We now share FC's
+    // progress-aware `evaluateGeoipStall` decision + the same per-run KV
+    // high-water watermark: a run whose checkpoint is still advancing is
+    // treated as in-flight (never recovered, and it suppresses a
+    // duplicate dispatch); only a run whose checkpoint has stalled past
+    // the grace window — or blown the hard ceiling — is recovered.
     const forceReload = ctx.input?.forceReload === true;
 
     // ── Layer D: MaxMind 429 cooldown ──
@@ -302,14 +307,41 @@ export const geoipRefreshAgent: AgentModule = {
     }
 
     const runningRows = await env.GEOIP_DB!.prepare(`
-      SELECT id, started_at,
+      SELECT id, started_at, last_committed_row,
              CAST((julianday('now') - julianday(started_at)) * 24 * 60 AS INTEGER) AS age_min
       FROM geo_ip_refresh_log
       WHERE status = 'running'
-    `).all<{ id: string; started_at: string; age_min: number }>();
+    `).all<{ id: string; started_at: string; last_committed_row: number | null; age_min: number }>();
 
-    const stuck = runningRows.results.filter((r) => r.age_min > STUCK_THRESHOLD_MIN);
-    const young = runningRows.results.filter((r) => r.age_min <= STUCK_THRESHOLD_MIN);
+    // Partition running rows into genuinely-stuck (recover) vs in-flight
+    // (leave alone) using the shared progress-aware decision. Advancing
+    // runs are in-flight no matter how old; the watermark carries across
+    // FC + agent ticks via the same KV key.
+    const stuck: Array<{ id: string; reason: string }> = [];
+    const inFlight: Array<{ id: string; age_min: number }> = [];
+    for (const row of runningRows.results) {
+      const watchKey = `geoip:stuck_watch:${row.id}`;
+      let prev: GeoipStallWatch | null = null;
+      try {
+        prev = env.CACHE ? await env.CACHE.get<GeoipStallWatch>(watchKey, 'json') : null;
+      } catch { prev = null; }
+      const decision = evaluateGeoipStall({
+        lastCommittedRow: row.last_committed_row ?? 0,
+        ageMin: row.age_min,
+        prev,
+        nowMs: Date.now(),
+      });
+      if (decision.kill) {
+        stuck.push({ id: row.id, reason: decision.reason ?? 'stalled' });
+      } else {
+        inFlight.push({ id: row.id, age_min: row.age_min });
+        try {
+          if (env.CACHE) {
+            await env.CACHE.put(watchKey, JSON.stringify(decision.nextWatch), { expirationTtl: 6 * 3600 });
+          }
+        } catch { /* best-effort */ }
+      }
+    }
 
     let recoveredCount = 0;
     for (const row of stuck) {
@@ -321,43 +353,44 @@ export const geoipRefreshAgent: AgentModule = {
               error_message = ?
           WHERE id = ? AND status = 'running'
         `).bind(
-          `Auto-recovered: workflow exceeded ${STUCK_THRESHOLD_MIN}-min stuck threshold`,
+          `Auto-recovered (agent self-heal): ${row.reason}`,
           row.id,
         ).run();
+        try { if (env.CACHE) await env.CACHE.delete(`geoip:stuck_watch:${row.id}`); } catch { /* best-effort */ }
         recoveredCount++;
       } catch { /* best-effort */ }
     }
     if (recoveredCount > 0) {
       agentOutputs.push({
         type: 'insight',
-        summary: `Self-heal recovered ${recoveredCount} stuck workflow(s) from prior run(s).`,
+        summary: `Self-heal recovered ${recoveredCount} stalled workflow(s) from prior run(s).`,
         severity: 'info',
-        details: { stuck_recovered: stuck.map((s) => s.id), threshold_min: STUCK_THRESHOLD_MIN },
+        details: { stuck_recovered: stuck.map((s) => s.id) },
       });
       logger.warn('geoip_refresh_self_heal', {
         agent_id: 'geoip_refresh',
         recovered: recoveredCount,
         stuck_ids: stuck.map((s) => s.id),
-        threshold_min: STUCK_THRESHOLD_MIN,
       });
     }
 
-    // §15.3 dispatch guard — if a young workflow is in flight and
-    // the operator didn't pass forceReload, refuse to dispatch.
-    // Prevents the duplicate-workflow race the operator hit when
-    // they clicked Force twice.
-    if (young.length > 0 && !forceReload) {
+    // §15.3 dispatch guard — if a still-progressing workflow is in
+    // flight and the operator didn't pass forceReload, refuse to
+    // dispatch. Prevents the duplicate-workflow race (operator clicking
+    // Force twice) AND stops the agent from re-dispatching on top of a
+    // healthy long-running import.
+    if (inFlight.length > 0 && !forceReload) {
       agentOutputs.push({
         type: 'insight',
-        summary: `Skipped: ${young.length} workflow(s) already running (age <${STUCK_THRESHOLD_MIN} min). Pass forceReload=true to override.`,
+        summary: `Skipped: ${inFlight.length} workflow(s) still progressing. Pass forceReload=true to override.`,
         severity: 'info',
-        details: { running_workflows: young, threshold_min: STUCK_THRESHOLD_MIN },
+        details: { running_workflows: inFlight },
       });
       return {
         itemsProcessed: 0,
         itemsCreated: recoveredCount,
         itemsUpdated: 0,
-        output: { phase: 'skipped_already_running', running: young, recovered: recoveredCount },
+        output: { phase: 'skipped_already_running', running: inFlight, recovered: recoveredCount },
         agentOutputs,
       };
     }

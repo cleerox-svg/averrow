@@ -31,7 +31,9 @@ function makeEnv(opts: {
   licenseKeyPresent?: boolean;
   workflowBound?: boolean;
   cooldownUntil?: string | null;
-  runningRows?: Array<{ id: string; started_at: string; age_min: number }>;
+  runningRows?: Array<{ id: string; started_at: string; age_min: number; last_committed_row?: number }>;
+  /** Prior KV stall watermarks keyed by refresh row id. */
+  watch?: Record<string, { hwm: number; since: string }>;
   probeStatus?: number;
 } = {}) {
   const {
@@ -40,17 +42,30 @@ function makeEnv(opts: {
     workflowBound = true,
     cooldownUntil = null,
     runningRows = [],
+    watch = {},
     probeStatus = 200,
   } = opts;
 
   const cacheStore = new Map<string, string>();
   if (cooldownUntil) cacheStore.set('geoip:maxmind:cooldown_until', cooldownUntil);
+  for (const [id, w] of Object.entries(watch)) {
+    cacheStore.set(`geoip:stuck_watch:${id}`, JSON.stringify(w));
+  }
 
   const env: Record<string, unknown> = {
     CACHE: {
-      get: vi.fn(async (k: string) => cacheStore.get(k) ?? null),
+      // Mirror the real KVNamespace.get(key, 'json') contract: parse
+      // when the caller asks for json, return the raw string otherwise.
+      get: vi.fn(async (k: string, type?: string) => {
+        const v = cacheStore.get(k) ?? null;
+        if (v !== null && type === 'json') return JSON.parse(v);
+        return v;
+      }),
       put: vi.fn(async (k: string, v: string) => {
         cacheStore.set(k, v);
+      }),
+      delete: vi.fn(async (k: string) => {
+        cacheStore.delete(k);
       }),
     },
     AE: { writeDataPoint: vi.fn() },
@@ -136,29 +151,58 @@ describe('geoip_refresh agent — self-healing', () => {
     expect(result.output).not.toMatchObject({ phase: 'maxmind_cooldown_active' });
   });
 
-  it('Layer B: marks stuck rows (>60min) as failed before dispatch', async () => {
+  const recoveryUpdateCount = (db: MockedDB) =>
+    (db.prepare as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0] as string)
+      .filter((sql) => /UPDATE geo_ip_refresh_log[\s\S]+SET status = 'failed'[\s\S]+WHERE id = \? AND status = 'running'/.test(sql))
+      .length;
+
+  it('Layer B: does NOT recover a still-progressing run, even an old one (progress-aware)', async () => {
+    // age 200 min but the checkpoint advanced past the prior watermark
+    // → in-flight, not stuck. Must not be force-failed, and must suppress
+    // a duplicate dispatch.
     const env = makeEnv({
       runningRows: [
-        { id: 'stuck-1', started_at: '2026-01-01 00:00:00', age_min: 75 },
-        { id: 'stuck-2', started_at: '2026-01-01 00:30:00', age_min: 90 },
+        { id: 'progressing-1', started_at: '2026-01-01 00:00:00', age_min: 200, last_committed_row: 500_000 },
       ],
+      watch: { 'progressing-1': { hwm: 100_000, since: new Date().toISOString() } },
+    });
+    const result = await geoipRefreshAgent.execute({
+      env: env as never, input: {}, runId: 'r-5a',
+    } as never);
+    expect(result.output).toMatchObject({ phase: 'skipped_already_running' });
+    expect(recoveryUpdateCount(env.GEOIP_DB as MockedDB)).toBe(0);
+    expect((env.GEOIP_REFRESH as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
+  });
+
+  it('Layer B: recovers a run whose checkpoint is flat past the grace window', async () => {
+    // age 200 (>= 180 floor), checkpoint flat at 500K since 120 min ago
+    // (>= 90 grace) → stuck. Force-failed, then a fresh dispatch proceeds.
+    const env = makeEnv({
+      runningRows: [
+        { id: 'flat-1', started_at: '2026-01-01 00:00:00', age_min: 200, last_committed_row: 500_000 },
+      ],
+      watch: { 'flat-1': { hwm: 500_000, since: new Date(Date.now() - 120 * 60_000).toISOString() } },
     });
     await geoipRefreshAgent.execute({
-      env: env as never,
-      input: { forceReload: true },
-      runId: 'r-5',
+      env: env as never, input: { forceReload: true }, runId: 'r-5b',
     } as never);
-    const db = env.GEOIP_DB as MockedDB;
-    // The cleanup UPDATE is issued as `UPDATE geo_ip_refresh_log
-    // SET status = 'failed', completed_at = ..., error_message = ?
-    // WHERE id = ? AND status = 'running'`. We can't grep the
-    // message itself (it's a bound param, not a literal) but we
-    // CAN verify the SQL signature + that bind() was called with
-    // both stuck row ids.
-    const updateCalls = (db.prepare as ReturnType<typeof vi.fn>).mock.calls
-      .map((c) => c[0] as string)
-      .filter((sql) => /UPDATE geo_ip_refresh_log[\s\S]+SET status = 'failed'[\s\S]+WHERE id = \? AND status = 'running'/.test(sql));
-    expect(updateCalls.length).toBeGreaterThanOrEqual(2);
+    expect(recoveryUpdateCount(env.GEOIP_DB as MockedDB)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Layer B: recovers a run that blew the hard runaway ceiling regardless of progress', async () => {
+    // age 800 min (> 720 hard ceiling) → recovered even though the
+    // checkpoint is still advancing.
+    const env = makeEnv({
+      runningRows: [
+        { id: 'runaway-1', started_at: '2026-01-01 00:00:00', age_min: 800, last_committed_row: 3_000_000 },
+      ],
+      watch: { 'runaway-1': { hwm: 1_000_000, since: new Date().toISOString() } },
+    });
+    await geoipRefreshAgent.execute({
+      env: env as never, input: { forceReload: true }, runId: 'r-5c',
+    } as never);
+    expect(recoveryUpdateCount(env.GEOIP_DB as MockedDB)).toBeGreaterThanOrEqual(1);
   });
 
   it('Layer B: refuses dispatch when a young (<60min) workflow is running and forceReload is false', async () => {

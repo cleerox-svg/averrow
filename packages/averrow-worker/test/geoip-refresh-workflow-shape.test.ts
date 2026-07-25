@@ -111,4 +111,21 @@ describe("GeoipRefreshWorkflow — 1 MiB step-output invariant", () => {
     // resumeFromRow is derived from that checkpoint and passed to the loader.
     expect(importBody).toMatch(/resumeFromRow/);
   });
+
+  // ── decide-mode prefers diff on a populated table (prod 2026-07-24) ──
+  it("decide-mode chooses diff for any non-empty live table (no full-rebuild trap)", () => {
+    // The old logic forced a FULL rebuild whenever there was no tracked
+    // successful full (status='success' AND mode='full') OR the last full
+    // aged past a quarterly ceiling — trapping a populated-but-never-
+    // fully-rebuilt table into repeatedly attempting the full+atomic-swap
+    // path, which hangs under D1 read-throttle. Both are removed.
+    expect(source).not.toMatch(/status = 'success' AND mode = 'full'/);
+    expect(source).not.toMatch(/FULL_REBUILD_MAX_AGE_DAYS/);
+    // decide-mode now returns diff for any non-empty live table; full is
+    // reserved for force / manual-R2 / empty-table bootstrap.
+    const idx = source.search(/step\.do\(\s*['"]decide-mode['"]/);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const body = source.slice(idx, idx + 800);
+    expect(body).toMatch(/=== 0 \? 'full' : 'diff'/);
+  });
 });
