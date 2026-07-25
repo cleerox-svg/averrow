@@ -48,6 +48,15 @@ const BLOCKS_FILENAME = "GeoLite2-City-Blocks-IPv4.csv";
  */
 const D1_BATCH_LIMIT = 500;
 
+// Monotonic FC progress signal for the delete pass. Larger than any
+// insert-phase last_committed_row (~3.76M Blocks rows) so the insert→delete
+// transition is a strict INCREASE, and since deleteCursor (start_ip_int,
+// 0..2^32) only grows across the scan AND resumes from a persisted value,
+// DELETE_PROGRESS_BASE + cursor is strictly increasing across the whole
+// delete pass and across retries — so evaluateGeoipStall's `advancing`
+// test never falsely trips. 64-bit safe (1e10 + 4.29e9 well within range).
+export const DELETE_PROGRESS_BASE = 10_000_000_000;
+
 /**
  * 64-bit content hash of a geo_ip_ranges row's mutable fields, as 16
  * lowercase hex chars. Used by the diff loader to decide whether an
@@ -384,6 +393,66 @@ export interface GeoipDiffResult {
   locationsCount: number;
 }
 
+/**
+ * Options for the diff import's checkpoint/resume of the DELETE pass.
+ * Extends the shared insert-phase options (`onProgress` still drives
+ * the insert-phase last_committed_row write) with the delete-phase
+ * hooks the workflow persists into `geo_ip_refresh_log.delete_cursor`.
+ *
+ * See migration 0004_diff_delete_resume.sql for the `delete_cursor`
+ * state machine (NULL → -1 → >=0) that these fields drive.
+ */
+export interface GeoipDiffImportOptions extends GeoipImportOptions {
+  /**
+   * Resume cursor read from `geo_ip_refresh_log.delete_cursor` at the
+   * top of each attempt.
+   *   - `null` (or absent) → the insert/update phase has NOT completed
+   *     for this run → do the FULL insert/update pass (default).
+   *   - a number (the -1 sentinel, or a >=0 mid-delete cursor) → the
+   *     insert/update phase already completed in a prior attempt → SKIP
+   *     the insert/update existence-checks + upserts (idempotent and
+   *     already applied) and resume the delete pass from
+   *     `WHERE start_ip_int > delete_cursor` (or from the start when -1).
+   */
+  resumeDeleteCursor?: number | null;
+
+  /**
+   * Called EXACTLY ONCE, after the Blocks stream finishes and BEFORE
+   * the delete pass starts, ONLY on a non-resuming run. `rowsWritten` =
+   * rowsInserted + rowsUpdated at that point. The workflow persists
+   * `delete_cursor = -1` and `rows_written = rowsWritten` so a later
+   * retry skips the (already-applied) insert phase and the authoritative
+   * insert-side total survives.
+   */
+  onInsertPhaseComplete?: (rowsWritten: number) => Promise<void>;
+
+  /**
+   * Called after each delete PAGE, once that page's deletes are durably
+   * flushed. `lastCommittedRow` = DELETE_PROGRESS_BASE + deleteCursor
+   * (owned here so it stays strictly increasing for FC). The workflow
+   * persists all three: `delete_cursor`, `last_committed_row`, and the
+   * running `rows_deleted`.
+   */
+  onDeleteProgress?: (p: {
+    deleteCursor: number;
+    lastCommittedRow: number;
+    rowsDeleted: number;
+  }) => Promise<void>;
+
+  /**
+   * Cumulative `rows_deleted` persisted by PRIOR attempts of this run,
+   * read from `geo_ip_refresh_log.rows_deleted` at the top of each
+   * attempt. Seeds the running delete counter so a multi-attempt delete
+   * resume reports the true CUMULATIVE total. Without it, each attempt's
+   * per-call count (which resets to 0) would OVERWRITE the prior
+   * attempt's persisted total via onDeleteProgress — an undercount.
+   * 0 (default) on a fresh run. Unlike `resumeFromRow`/`resumeDeleteCursor`
+   * this seeds a counter, not a skip point, so it applies on both fresh
+   * and delete-resuming attempts.
+   */
+  resumeRowsDeleted?: number;
+}
+
 interface DiffRow {
   startIp: number;
   endIp: number;
@@ -427,9 +496,28 @@ function sortedHas(keys: Uint32Array, target: number): boolean {
 export async function runGeoipDiffImport(
   db: D1Database,
   zip: ZipReaderLike,
-  options: GeoipImportOptions = {},
+  options: GeoipDiffImportOptions = {},
 ): Promise<GeoipDiffResult> {
   const onProgress = options.onProgress;
+
+  // Resume mode: a non-null cursor means the insert/update phase already
+  // completed in a prior attempt (delete_cursor was stamped -1 or a >=0
+  // mid-delete value), so we skip the idempotent insert/update writes and
+  // resume the delete keyset scan. When null, this is a fresh attempt that
+  // does the full insert/update pass first.
+  const resumeDeleteCursor = options.resumeDeleteCursor ?? null;
+  const resuming = resumeDeleteCursor != null;
+
+  // Insert-phase resume — mirror of the full path's `resumeFromRow`
+  // (runGeoipBlocksImport). Only meaningful on a NON-resuming attempt
+  // (insert/update phase active): Blocks rows whose 1-based parsed index
+  // is <= resumeFromRow were already upserted into the live table by a
+  // prior attempt, so we skip their existence-check + upsert D1 work —
+  // but STILL collect their key, because the delete pass needs the
+  // COMPLETE incoming-key set in ascending order (identical to a fresh
+  // run's). Irrelevant when resumeDeleteCursor is set: the whole insert
+  // pass is skipped anyway, so force it to 0 there.
+  const resumeFromRow = resuming ? 0 : (options.resumeFromRow ?? 0);
 
   const locEntry = zip.findEntry(LOCATIONS_FILENAME);
   if (!locEntry) {
@@ -449,7 +537,9 @@ export async function runGeoipDiffImport(
   let rowsInserted = 0;
   let rowsUpdated = 0;
   let rowsUnchanged = 0;
-  let rowsDeleted = 0;
+  // Seed from prior attempts so onDeleteProgress + the return struct carry
+  // the true CUMULATIVE delete total across a multi-attempt delete resume.
+  let rowsDeleted = options.resumeRowsDeleted ?? 0;
   let rowsProcessed = 0;
 
   // Every incoming key, collected for the delete pass. MaxMind sorts the
@@ -475,6 +565,15 @@ export async function runGeoipDiffImport(
 
   const processChunk = async () => {
     if (buffer.length === 0) return;
+    if (resuming) {
+      // Insert/update phase already applied in a prior attempt. Only
+      // rebuild the in-memory incoming-key set (needed for the delete
+      // decision) — SKIP the existence-check SELECTs, the upserts, and
+      // the insert-phase onProgress call. Costs zero D1 reads/writes.
+      for (const r of buffer) pushKey(r.startIp);
+      buffer = [];
+      return;
+    }
     const keys = buffer.map((r) => r.startIp);
     // The existence check is a SINGLE statement, so its `?` count is
     // bound by D1's per-statement variable cap (100) — NOT the
@@ -528,6 +627,19 @@ export async function runGeoipDiffImport(
     rowsProcessed++;
     const range = cidrToIntRange(row.network);
     if (!range) return;
+    // Insert-phase resume: this row's upsert was already applied by a
+    // prior attempt. Still collect its key — in ascending stream order,
+    // so keysAscending stays true and the final newKeys set is identical
+    // to a fresh run's — but skip the DiffRow build + existence-check +
+    // upsert. No batch fills during the skip region (buffer stays empty),
+    // so onProgress never fires below the persisted checkpoint and
+    // last_committed_row can't regress below the resumed high-water.
+    // (resumeFromRow is 0 on a fresh run and on any delete-resuming
+    // attempt, so this branch is a no-op in both cases.)
+    if (rowsProcessed <= resumeFromRow) {
+      pushKey(range.start);
+      return;
+    }
     const loc = row.geonameId
       ? locations.get(row.geonameId)
       : row.registeredCountryGeonameId
@@ -553,13 +665,30 @@ export async function runGeoipDiffImport(
   });
   await processChunk();
 
+  // ── Insert→delete transition ──
+  // On a fresh run, signal that the insert/update phase is complete so
+  // the caller can persist `delete_cursor = -1` (a later retry then
+  // skips the already-applied insert phase). The delete scan starts at
+  // -1 (WHERE start_ip_int > -1 = the whole table). On a resuming run,
+  // pick up the persisted cursor: a >=0 value continues mid-scan, the
+  // -1 sentinel starts the delete scan from the beginning.
+  if (!resuming) {
+    await options.onInsertPhaseComplete?.(rowsInserted + rowsUpdated);
+  }
+  const deleteStartCursor =
+    resumeDeleteCursor != null && resumeDeleteCursor >= 0 ? resumeDeleteCursor : -1;
+
   // ── Delete pass ──
   // Keyset-paginate the live table by PRIMARY KEY (efficient on the
   // rowid) and delete any key not present in the incoming set. Handles
-  // ranges MaxMind removed since the last load.
+  // ranges MaxMind removed since the last load. Progress is persisted
+  // AFTER each page's deletes are flushed, so when delete_cursor=X is
+  // durable, all deletions for keys <= X are committed and a resume at
+  // `> X` is correct (re-deleting an already-deleted key is a harmless
+  // no-op, so exact batch boundaries don't affect correctness).
   const newKeys = keyBuf.subarray(0, keyCount);
   if (!keysAscending) newKeys.sort();
-  let cursor = -1;
+  let cursor = deleteStartCursor;
   let deleteBatch: D1PreparedStatement[] = [];
   const flushDeletes = async () => {
     if (deleteBatch.length === 0) return;
@@ -586,10 +715,40 @@ export async function runGeoipDiffImport(
         if (deleteBatch.length >= D1_BATCH_LIMIT) await flushDeletes();
       }
     }
+    // Flush this page's remaining deletes, THEN persist the cursor —
+    // guarantees the persist-after-durable invariant above.
+    await flushDeletes();
+    if (options.onDeleteProgress) {
+      try {
+        await options.onDeleteProgress({
+          deleteCursor: cursor,
+          lastCommittedRow: DELETE_PROGRESS_BASE + cursor,
+          rowsDeleted,
+        });
+      } catch (err) {
+        console.warn(
+          `[geoip-diff] onDeleteProgress failed at cursor ${cursor}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     if (page.results.length < PAGE) break;
   }
-  await flushDeletes();
+  // No trailing flushDeletes() here: every loop exit is preceded by a
+  // per-page flushDeletes() (the empty-page break follows the prior
+  // iteration's flush; the `< PAGE` break follows this iteration's), so
+  // deleteBatch is always empty at loop exit — a post-loop flush would be
+  // dead. The per-page ordering (collect → advance cursor → flush →
+  // onDeleteProgress persists cursor) is the durability invariant.
 
+  // On a resumed run rowsInserted/rowsUpdated/rowsUnchanged are naturally
+  // 0 (the insert phase was skipped) and rowsParsed is still accurate
+  // (the CSV is re-parsed to rebuild the incoming-key set); rowsDeleted is
+  // the CUMULATIVE total (seeded from resumeRowsDeleted) so it and every
+  // onDeleteProgress report stay correct across a multi-attempt delete
+  // resume. The workflow reads the authoritative rows_written/rows_deleted
+  // totals from the persisted log row, so the per-attempt insert breakdown
+  // being partial on resume is fine.
   return {
     rowsParsed,
     rowsInserted,
