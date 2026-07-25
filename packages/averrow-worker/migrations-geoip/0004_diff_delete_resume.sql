@@ -1,0 +1,47 @@
+-- Checkpoint/resume support for the diff import's DELETE pass
+-- (MaxMind refresh reliability, 2026-07-25).
+--
+-- The weekly refresh's diff path (runGeoipDiffImport in
+-- lib/geoip-import.ts) runs in two phases: an INSERT/UPDATE pass that
+-- streams the MaxMind Blocks CSV and upserts changed rows, then a
+-- DELETE pass that keyset-paginates the live geo_ip_ranges table and
+-- deletes keys MaxMind dropped. The insert pass persisted progress to
+-- geo_ip_refresh_log.last_committed_row (migration 0002), but the
+-- delete pass emitted NO progress — so under the account's D1
+-- read-throttle it ran 3+ hours with last_committed_row frozen at the
+-- insert-pass value, and Flight Control's evaluateGeoipStall
+-- (lib/geoip-stall.ts) reaped it as "no import progress", discarding
+-- all the delete work (the workflow's finalize-diff step never ran).
+-- Prod 2026-07-25: reaped with "last_committed_row stuck at 3555000".
+--
+-- delete_cursor makes the delete pass both progress-emitting (so FC
+-- never falsely reaps it) and resumable across step retries. Its
+-- semantics track the diff phase for a single refresh run:
+--
+--   NULL (default) — the insert/update phase has NOT yet completed for
+--                    this run. On (re)start, do the FULL insert/update
+--                    pass (existence-check + upsert every Blocks row).
+--
+--   -1             — the insert/update phase completed, but the delete
+--                    pass has NOT started. On resume, SKIP the
+--                    insert/update writes (they're idempotent and
+--                    already applied — the workflow only re-streams the
+--                    CSV to rebuild the in-memory incoming-key set,
+--                    which costs zero D1 reads) and begin the delete
+--                    keyset scan from the start.
+--
+--   >= 0           — the delete pass is in progress; this is the
+--                    highest start_ip_int whose page of deletes has been
+--                    durably flushed. On resume, SKIP the insert/update
+--                    writes and continue the keyset scan from
+--                    WHERE start_ip_int > delete_cursor. Because deletes
+--                    for every key <= delete_cursor are already
+--                    committed when the cursor is persisted, resuming at
+--                    the strict > boundary is correct (and re-deleting an
+--                    already-deleted key would be a harmless no-op
+--                    anyway).
+--
+-- Cleared back to NULL by the workflow's finalize-diff step once the
+-- refresh succeeds.
+
+ALTER TABLE geo_ip_refresh_log ADD COLUMN delete_cursor INTEGER;

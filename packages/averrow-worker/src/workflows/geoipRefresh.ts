@@ -82,6 +82,7 @@ import {
   runGeoipDiffImport,
   prepareShadowTable as prepareShadowTableHelper,
   atomicSwap as atomicSwapHelper,
+  DELETE_PROGRESS_BASE,
 } from '../lib/geoip-import';
 
 interface GeoipRefreshParams {
@@ -480,13 +481,78 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         'diff-apply',
         { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '2 hours' },
         async () => {
+          // Re-read the full resume state at the top of each attempt
+          // (mirrors the full path's `import` step re-reading
+          // last_committed_row). Three columns drive three resume points:
+          //
+          //   delete_cursor: null → insert/update phase not yet complete →
+          //     do the full insert pass. A number (incl. the -1 sentinel)
+          //     → insert phase already applied in a prior attempt → skip it
+          //     and resume the delete keyset scan from the cursor.
+          //
+          //   last_committed_row → the insert-phase checkpoint. When the
+          //     insert phase did NOT complete (delete_cursor null), resume
+          //     the insert stream from it so a retry doesn't reprocess from
+          //     row 0 and REGRESS the high-water FC watches (the same
+          //     failure class the full path fixed via resumeFromRow). Once
+          //     delete_cursor is set the value holds DELETE_PROGRESS_BASE +
+          //     cursor (a delete-phase signal, not a Blocks index), so
+          //     guard with `< DELETE_PROGRESS_BASE` — and it's unused on the
+          //     delete-resume path regardless. Never regresses: onProgress
+          //     only writes indices >= this resume point.
+          //
+          //   rows_deleted → cumulative delete total from prior attempts,
+          //     seeded back so a multi-attempt delete resume reports the
+          //     true total instead of overwriting it with this attempt's
+          //     local count.
+          const chk = await this.env.GEOIP_DB.prepare(
+            `SELECT delete_cursor, last_committed_row, rows_deleted
+               FROM geo_ip_refresh_log WHERE id = ?`,
+          ).bind(refreshLogId).first<{
+            delete_cursor: number | null;
+            last_committed_row: number | null;
+            rows_deleted: number | null;
+          }>();
+          const resumeDeleteCursor = chk?.delete_cursor ?? null;
+          const persistedRow = chk?.last_committed_row ?? 0;
+          const resumeFromRow =
+            resumeDeleteCursor == null &&
+            persistedRow > 0 &&
+            persistedRow < DELETE_PROGRESS_BASE
+              ? persistedRow
+              : 0;
+          const resumeRowsDeleted = chk?.rows_deleted ?? 0;
+
           const zip = new R2ZipReader(this.env.GEOIP_STAGING!, stagingKey);
           await zip.open();
           return await runGeoipDiffImport(this.env.GEOIP_DB, zip, {
+            resumeDeleteCursor,
+            resumeFromRow,
+            resumeRowsDeleted,
             onProgress: async (rowsProcessed) => {
               await this.env.GEOIP_DB.prepare(`
                 UPDATE geo_ip_refresh_log SET last_committed_row = ? WHERE id = ?
               `).bind(rowsProcessed, refreshLogId).run();
+            },
+            onInsertPhaseComplete: async (rowsWritten) => {
+              // Insert/update phase durable → stamp the -1 sentinel so a
+              // retry skips it, and persist the authoritative insert-side
+              // total (survives the re-count-as-0 on a resumed attempt).
+              await this.env.GEOIP_DB.prepare(`
+                UPDATE geo_ip_refresh_log
+                   SET delete_cursor = -1, rows_written = ?
+                 WHERE id = ?
+              `).bind(rowsWritten, refreshLogId).run();
+            },
+            onDeleteProgress: async ({ deleteCursor, lastCommittedRow, rowsDeleted }) => {
+              // Advance the FC progress signal (last_committed_row) and
+              // persist the resume cursor + running delete total after
+              // each durably-flushed delete page.
+              await this.env.GEOIP_DB.prepare(`
+                UPDATE geo_ip_refresh_log
+                   SET delete_cursor = ?, last_committed_row = ?, rows_deleted = ?
+                 WHERE id = ?
+              `).bind(deleteCursor, lastCommittedRow, rowsDeleted, refreshLogId).run();
             },
           });
         },
@@ -499,7 +565,24 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
         return r?.n ?? 0;
       });
 
-      const changed = diffResult.rowsInserted + diffResult.rowsUpdated;
+      // Authoritative totals come from the persisted log row, not from
+      // diffResult: on a RESUMED attempt the insert side was skipped so
+      // diffResult.rowsInserted/rowsUpdated are 0, but onInsertPhaseComplete
+      // persisted rows_written on the fresh attempt and onDeleteProgress
+      // persisted rows_deleted as it went. Fall back to diffResult only if
+      // the row is somehow unreadable (fresh-run values are equivalent).
+      const persisted = await this.env.GEOIP_DB.prepare(
+        `SELECT rows_written, rows_deleted FROM geo_ip_refresh_log WHERE id = ?`,
+      ).bind(refreshLogId).first<{ rows_written: number; rows_deleted: number }>();
+      const changed = persisted?.rows_written ?? (diffResult.rowsInserted + diffResult.rowsUpdated);
+      const deleted = persisted?.rows_deleted ?? diffResult.rowsDeleted;
+
+      // summaryMessage is still built from diffResult's per-attempt
+      // breakdown. On a resumed attempt the insert-side numbers (+/~/
+      // unchanged) reflect only the re-counted work (0 for insert/update),
+      // while rows_written/rows_deleted above are authoritative from
+      // persisted state — a known cosmetic limitation, not worth extra
+      // columns to reconstruct the exact prior-attempt breakdown.
       summaryMessage =
         `Diff vs MaxMind ${probe.sha256First12}: +${diffResult.rowsInserted} ` +
         `~${diffResult.rowsUpdated} -${diffResult.rowsDeleted} ` +
@@ -514,10 +597,11 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
               rows_written = ?,
               rows_deleted = ?,
               mode = 'diff',
+              delete_cursor = NULL,
               source_version = ?,
               error_message = ?
           WHERE id = ?
-        `).bind(changed, diffResult.rowsDeleted, probe.full, summaryMessage, refreshLogId).run();
+        `).bind(changed, deleted, probe.full, summaryMessage, refreshLogId).run();
       });
 
       liveRowCount = liveCount;
