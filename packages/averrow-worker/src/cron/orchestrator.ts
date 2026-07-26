@@ -1059,8 +1059,8 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
           const scanResult = await runEmailSecurityScan(brand.domain);
           await saveEmailSecurityScan(env.DB, brand.id, scanResult);
           await env.DB.prepare(
-            "UPDATE brands SET email_security_score = ?, email_security_grade = ?, email_security_scanned_at = datetime('now') WHERE id = ?"
-          ).bind(scanResult.score, scanResult.grade, brand.id).run();
+            "UPDATE brands SET email_security_score = ?, email_security_grade = ?, email_security_dmarc_policy = ?, email_security_scanned_at = datetime('now') WHERE id = ?"
+          ).bind(scanResult.score, scanResult.grade, scanResult.dmarc.policy, brand.id).run();
           scanned++;
         } catch (e) {
           logger.error('threat_feed_scan_email_security_brand_error', { domain: brand.domain, error: e instanceof Error ? e.message : String(e) });
