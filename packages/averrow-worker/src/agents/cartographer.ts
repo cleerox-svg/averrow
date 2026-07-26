@@ -912,9 +912,9 @@ export const cartographerAgent: AgentModule = {
           await saveEmailSecurityScan(env.DB, brand.id, result);
           await env.DB.prepare(`
             UPDATE brands
-            SET email_security_score = ?, email_security_grade = ?, email_security_scanned_at = datetime('now')
+            SET email_security_score = ?, email_security_grade = ?, email_security_dmarc_policy = ?, email_security_scanned_at = datetime('now')
             WHERE id = ?
-          `).bind(result.score, result.grade, brand.id).run();
+          `).bind(result.score, result.grade, result.dmarc.policy, brand.id).run();
 
           // Detect grade changes and notify — boundary-crossing only.
           // Per NOTIFICATIONS_AUDIT.md Q4: classify grades into bands
@@ -1032,7 +1032,22 @@ export const cartographerAgent: AgentModule = {
     }
 
     // ─── Phase 5: Aggregate provider threat stats across time periods ───
-    const statsCreated = await aggregateProviderStats(env);
+    // KV self-throttle (Fix #5): Phase 5 runs on EVERY cartographer
+    // instance — the dedicated `9 * * * *` maintenance cron AND the 1-3
+    // backlog-drain instances Flight Control fires per hour via scaleAgents
+    // (trigger='flight_control'). The provider rollup is identical work
+    // regardless of which instance runs it, so re-running it on each
+    // backlog instance was ~2x redundant (~28M reads/24h). Gate on a KV
+    // stamp with a <hourly window so exactly one run per hour lands. We do
+    // NOT hard-skip on trigger==='flight_control': if the maintenance cron
+    // instance itself fails/delays, a backlog instance still refreshes
+    // provider_threat_stats and it never goes stale.
+    let statsCreated = 0;
+    const lastProviderStatsRun = await env.CACHE.get(PROVIDER_STATS_LAST_RUN_KEY);
+    if (shouldRunProviderStats(lastProviderStatsRun, Date.now(), PROVIDER_STATS_THROTTLE_MS)) {
+      statsCreated = await aggregateProviderStats(env);
+      await env.CACHE.put(PROVIDER_STATS_LAST_RUN_KEY, String(Date.now()), { expirationTtl: 3600 });
+    }
     itemsCreated += statsCreated;
 
     // Emit diagnostic output so cartographer never shows 0 outputs silently
@@ -1190,6 +1205,30 @@ function buildGeopoliticalEscalationStatements(
  * Merged from the hosting-provider-analysis agent — computes stats for
  * today, 7d, 30d, and all-time, writing to provider_threat_stats table.
  */
+// KV key + window for the Phase 5 provider-stats self-throttle (Fix #5).
+// `cc:` matches the platform's KV cache namespace convention (lib/cached-count.ts);
+// this is a raw last-run stamp, distinct from any cachedCount-managed `cc:count.*` key.
+export const PROVIDER_STATS_LAST_RUN_KEY = "cc:cartographer.provider_stats.last_run";
+// 50 min — comfortably under the ~hourly `9 * * * *` maintenance-cron cadence,
+// so exactly one Phase 5 run lands per hour even with 1-3 backlog instances.
+export const PROVIDER_STATS_THROTTLE_MS = 50 * 60_000;
+
+/**
+ * Pure decision for the Phase 5 provider-stats KV self-throttle.
+ * Runs the aggregation when there is no prior stamp, when the stamp is
+ * unparseable/garbage, or when the throttle window has elapsed.
+ */
+export function shouldRunProviderStats(
+  lastRun: string | null,
+  now: number,
+  intervalMs: number,
+): boolean {
+  if (!lastRun) return true;
+  const last = Number(lastRun);
+  if (!Number.isFinite(last)) return true;
+  return now - last > intervalMs;
+}
+
 async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> {
   const db = env.DB;
   let totalEntries = 0;

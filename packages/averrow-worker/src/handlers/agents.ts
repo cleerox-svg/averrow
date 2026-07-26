@@ -80,24 +80,45 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     // Latest run per agent (of ANY age — deriveStatus depends on the
     // absolute most-recent run so a long-dormant agent whose last run
     // FAILED still reads as 'error', not a falsely-'idle' online agent).
-    // The prior shape used a correlated subquery (WHERE id IN (SELECT ...
-    // WHERE r2.agent_id = agent_runs.agent_id ORDER BY started_at DESC
-    // LIMIT 1)) which EXPLAIN'd to a full unbounded SCAN of agent_runs
-    // plus a per-row correlated subquery (~100ms / 117K rows). Replaced
-    // with a single ROW_NUMBER pass — no time bound (must not hide an
-    // agent's latest run) — which the idx_agent_runs_agent (agent_id,
-    // started_at DESC) composite serves as an index-ordered scan
-    // (EXPLAIN: SCAN agent_runs USING INDEX idx_agent_runs_agent), with
-    // exactly one row per agent_id and no correlated per-row lookup.
-    env.DB.prepare(
-      `SELECT agent_id, status, started_at, completed_at, duration_ms, error_message
-       FROM (
-         SELECT agent_id, status, started_at, completed_at, duration_ms, error_message,
-                ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY started_at DESC) AS rn
-         FROM agent_runs
-       )
-       WHERE rn = 1`
-    ).all<{ agent_id: string; status: string; started_at: string; completed_at: string | null; duration_ms: number | null; error_message: string | null }>(),
+    //
+    // History: this started as a correlated subquery (full SCAN + per-row
+    // subquery), then a single ROW_NUMBER() OVER (PARTITION BY agent_id)
+    // pass. The window-function pass still forces SQLite to materialize
+    // EVERY agent_runs row (~142K) just to keep the rn=1 row per agent —
+    // ~142K rows read to return ~20. Replaced (platform-audit-2026-07-26,
+    // D1 read-spend) with a batched point-lookup per KNOWN agent id: one
+    // `WHERE agent_id = ? ORDER BY started_at DESC LIMIT 1` per agent,
+    // each served by idx_agent_runs_agent (agent_id, started_at DESC) as
+    // a single index-ordered row read. Total reads collapse from ~142K to
+    // ~one-per-agent. The set of agent ids we look up downstream is fixed
+    // (getAgentDefinitions() names + NAVIGATOR_IDS); ids outside that set
+    // were never read from the resulting map, so restricting the query to
+    // them changes nothing observable. Returned as { results, meta } so
+    // the destructured `latestRuns` keeps the same D1Result-ish shape the
+    // rest of the handler consumes (latestRuns.results / latestRuns.meta).
+    (async (): Promise<{
+      results: Array<{ agent_id: string; status: string; started_at: string; completed_at: string | null; duration_ms: number | null; error_message: string | null }>;
+      meta: { rows_read: number; rows_written: number };
+    }> => {
+      const agentIds = [...new Set<string>([...getAgentDefinitions().map((d) => d.name), ...NAVIGATOR_IDS])];
+      const batched = await env.DB.batch<{ agent_id: string; status: string; started_at: string; completed_at: string | null; duration_ms: number | null; error_message: string | null }>(
+        agentIds.map((id) =>
+          env.DB.prepare(
+            `SELECT agent_id, status, started_at, completed_at, duration_ms, error_message
+             FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC LIMIT 1`
+          ).bind(id)
+        )
+      );
+      const results = batched.flatMap((r) => r.results);
+      const meta = batched.reduce(
+        (acc, r) => ({
+          rows_read: acc.rows_read + (r.meta?.rows_read ?? 0),
+          rows_written: acc.rows_written + (r.meta?.rows_written ?? 0),
+        }),
+        { rows_read: 0, rows_written: 0 }
+      );
+      return { results, meta };
+    })(),
 
     env.DB.prepare(
       `SELECT agent_id,

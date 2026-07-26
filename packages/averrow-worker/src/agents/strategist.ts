@@ -12,6 +12,33 @@ import { createNotification } from "../lib/notifications";
 import { evaluateCampaignSignificance } from "../lib/campaign-significance";
 import { createBrandAlertsForCampaign } from "../lib/alert-fanout";
 
+/**
+ * Per-run wall-clock budget guard.
+ *
+ * Strategist issues up to ~36 SEQUENTIAL Haiku calls per run (20 IP-cluster
+ * names + 10 registrar-cluster names + 5 retroactive renames + 1 coordination
+ * detection), each with a multi-second gateway round-trip, on top of heavy
+ * GROUP BY scans over the active-threats table. On slow-gateway ticks the
+ * cumulative run exceeded the Worker's ~300s cpu_ms budget (wrangler.toml
+ * cpu_ms=300000), so CF killed the invocation BEFORE agentRunner's completion
+ * write could land — leaving `agent_runs` at status='partial',
+ * completed_at=NULL, later reaped by flight_control as an orphan.
+ *
+ * This is the same failure class documented for greynoise/seclookup, which got
+ * a per-run wall-clock guard (see src/feeds/greynoise.ts `BUDGET_MS`). Strategist
+ * never got one. 210s (~3.5 min) sits safely under the ~300s cpu budget and the
+ * 45-min orphan-reap floor (flightControl.ts:2140-2143). When the guard trips,
+ * the AI-driven loops stop cleanly and the cheap tail SQL still runs so the run
+ * finishes and writes completion; residual clusters (unlinked threats stay
+ * `campaign_id IS NULL`) are naturally picked up on the next tick.
+ */
+export const RUN_BUDGET_MS = 210_000;
+
+/** Pure, testable wall-clock budget predicate used by every AI-loop guard. */
+export function isOverRunBudget(runStart: number, now: number, budgetMs: number = RUN_BUDGET_MS): boolean {
+  return now - runStart > budgetMs;
+}
+
 export const strategistAgent: AgentModule = {
   name: "strategist",
   displayName: "Strategist",
@@ -19,6 +46,13 @@ export const strategistAgent: AgentModule = {
   color: "#8A8F9C",
   trigger: "scheduled",
   requiresApproval: false,
+  // NOT a per-run runtime ceiling. A CF Worker can't run 8h — the real
+  // wall-clock ceiling is the ~300s cpu_ms budget, enforced in-run by the
+  // RUN_BUDGET_MS guard above; a killed run is reaped by flight_control at
+  // the fixed 45-min orphan floor (flightControl.ts:2140-2143) regardless of
+  // this value, and by agent-runs-reaper at stallThresholdMinutes + buffer.
+  // Kept high (like geoip-refresh/observer) purely so the age-based stall
+  // path never races a legitimately slow tick; the guard is the real fix.
   stallThresholdMinutes: 480,
   parallelMax: 1,
   costGuard: "enforced",
@@ -42,6 +76,12 @@ export const strategistAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, runId } = ctx;
     const callCtx = { agentId: "strategist", runId };
+
+    // Per-run wall-clock budget (see RUN_BUDGET_MS above). Every AI-driven loop
+    // checks `isOverRunBudget(runStart, Date.now())` at its top and breaks when
+    // over budget so the run finishes cleanly instead of being worker-killed.
+    const runStart = Date.now();
+    let budgetHit = false;
 
     // Cost guard: strategist naming is non-critical
     const blocked = await checkCostGuard(env, false);
@@ -120,6 +160,8 @@ export const strategistAgent: AgentModule = {
     }
 
     for (const cluster of ipClusters.results) {
+      // Budget guard: stop the AI-driven IP loop before the run can be killed.
+      if (isOverRunBudget(runStart, Date.now())) { budgetHit = true; break; }
       itemsProcessed++;
 
       // Check if a campaign already exists for this IP
@@ -359,84 +401,117 @@ export const strategistAgent: AgentModule = {
     }
 
     for (const cluster of registrarClusters.results) {
+      // Budget guard: stop the AI-driven registrar loop before the run can be killed.
+      if (isOverRunBudget(runStart, Date.now())) { budgetHit = true; break; }
       itemsProcessed++;
 
-      const campaignId = crypto.randomUUID();
-      const fallbackName = `Registrar-cluster-${cluster.registrar.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 30)}`;
+      // Dedup: mirror the IP path — check for an existing campaign for this
+      // registrar BEFORE spending a Haiku call + INSERTing a duplicate. Before
+      // this, the registrar path unconditionally created a new campaign and
+      // burned an AI name every run, unlike the IP path. The attack_pattern
+      // JSON for a registrar cluster is
+      // {"type":"shared_registrar","registrar":"..."}, so anchor the probe to
+      // the "registrar":"<value>" key/value (not a bare substring) to avoid
+      // merging distinct registrars that share a prefix — e.g. "Gname" must
+      // not collide with a "Gname.com Pte. Ltd." campaign. The shared_registrar
+      // type guard keeps it from matching a shared_ip pattern that happens to
+      // contain the word "registrar".
+      const existing = await env.DB.prepare(
+        `SELECT id FROM campaigns WHERE attack_pattern LIKE '%shared_registrar%' AND attack_pattern LIKE ?`
+      ).bind(`%"registrar":"${cluster.registrar}"%`).first<{ id: string }>();
 
-      // Use pre-fetched context maps (no per-registrar DB calls)
-      const regDomainsList = (regDomainsMap.get(cluster.registrar) ?? []).slice(0, 10);
-      const regBrandsList  = (regBrandsMap.get(cluster.registrar) ?? []).slice(0, 5);
+      let campaignId: string;
 
-      let name = fallbackName;
-      const nameResult = await generateCampaignName(env, callCtx, {
-        domains: regDomainsList,
-        target_brands: regBrandsList,
-        threat_types: [],
-        providers: [cluster.registrar],
-        threat_count: cluster.threat_count,
-      });
-      if (nameResult.success && nameResult.data?.name) {
-        name = nameResult.data.name;
+      if (existing) {
+        campaignId = existing.id;
+        // Refresh the existing campaign — no new INSERT, no wasted AI call.
+        await env.DB.prepare(
+          `UPDATE campaigns SET
+             last_seen = datetime('now'),
+             threat_count = (SELECT COUNT(*) FROM threats WHERE campaign_id = ?),
+             status = 'active'
+           WHERE id = ?`
+        ).bind(campaignId, campaignId).run();
+        itemsUpdated++;
+      } else {
+        campaignId = crypto.randomUUID();
+        const fallbackName = `Registrar-cluster-${cluster.registrar.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 30)}`;
+
+        // Use pre-fetched context maps (no per-registrar DB calls)
+        const regDomainsList = (regDomainsMap.get(cluster.registrar) ?? []).slice(0, 10);
+        const regBrandsList  = (regBrandsMap.get(cluster.registrar) ?? []).slice(0, 5);
+
+        let name = fallbackName;
+        const nameResult = await generateCampaignName(env, callCtx, {
+          domains: regDomainsList,
+          target_brands: regBrandsList,
+          threat_types: [],
+          providers: [cluster.registrar],
+          threat_count: cluster.threat_count,
+        });
+        if (nameResult.success && nameResult.data?.name) {
+          name = nameResult.data.name;
+        }
+
+        // NX4: snapshot brand_count_at_first_detection for the
+        // significance rule. Counts distinct brands among threats
+        // sharing this registrar — same scope as the threats-table
+        // assignment immediately below.
+        const regBrandCountRow = await env.DB.prepare(`
+          SELECT COUNT(DISTINCT target_brand_id) AS n
+            FROM threats
+           WHERE registrar = ?
+             AND target_brand_id IS NOT NULL
+             AND status = 'active'
+             AND created_at >= datetime('now', '-7 days')
+        `).bind(cluster.registrar).first<{ n: number }>();
+        const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
+
+        await env.DB.prepare(
+          `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
+           VALUES (?, ?, ?, ?, ?, 'active', ?)`
+        ).bind(
+          campaignId, name, fallbackName, cluster.threat_count,
+          JSON.stringify({ type: "shared_registrar", registrar: cluster.registrar }),
+          regBrandCountAtFirst,
+        ).run();
+
+        itemsCreated++;
+
+        outputs.push({
+          type: "correlation",
+          summary: `Registrar campaign: "${name}" — ${cluster.threat_count} threats via ${cluster.registrar}`,
+          severity: "medium",
+          details: { registrar: cluster.registrar, count: cluster.threat_count, ai_name: name },
+        });
+
+        // NX4: tenant fan-out for new registrar-cluster campaigns —
+        // same gating as the IP-cluster path above.
+        const regSig = evaluateCampaignSignificance({
+          threat_count: cluster.threat_count,
+          threat_count_24h_ago: 0,
+          brand_count_at_first_detection: regBrandCountAtFirst,
+        });
+        if (regSig.significant) {
+          try {
+            await createBrandAlertsForCampaign(env, {
+              campaign_id: campaignId,
+              campaign_name: name,
+              threat_count: cluster.threat_count,
+              reasons: regSig.reasons,
+            });
+          } catch (e) {
+            console.error('[strategist] registrar-campaign fanout error:', e);
+          }
+        }
       }
 
-      // NX4: snapshot brand_count_at_first_detection for the
-      // significance rule. Counts distinct brands among threats
-      // sharing this registrar — same scope as the threats-table
-      // assignment immediately below.
-      const regBrandCountRow = await env.DB.prepare(`
-        SELECT COUNT(DISTINCT target_brand_id) AS n
-          FROM threats
-         WHERE registrar = ?
-           AND target_brand_id IS NOT NULL
-           AND status = 'active'
-           AND created_at >= datetime('now', '-7 days')
-      `).bind(cluster.registrar).first<{ n: number }>();
-      const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
-
-      await env.DB.prepare(
-        `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
-         VALUES (?, ?, ?, ?, ?, 'active', ?)`
-      ).bind(
-        campaignId, name, fallbackName, cluster.threat_count,
-        JSON.stringify({ type: "shared_registrar", registrar: cluster.registrar }),
-        regBrandCountAtFirst,
-      ).run();
-
+      // Assign unlinked threats to this campaign (new or existing).
       await env.DB.prepare(
         `UPDATE threats SET campaign_id = ?
          WHERE registrar = ? AND campaign_id IS NULL AND status = 'active'
            AND created_at >= datetime('now', '-7 days')`
       ).bind(campaignId, cluster.registrar).run();
-
-      itemsCreated++;
-
-      outputs.push({
-        type: "correlation",
-        summary: `Registrar campaign: "${name}" — ${cluster.threat_count} threats via ${cluster.registrar}`,
-        severity: "medium",
-        details: { registrar: cluster.registrar, count: cluster.threat_count, ai_name: name },
-      });
-
-      // NX4: tenant fan-out for new registrar-cluster campaigns —
-      // same gating as the IP-cluster path above.
-      const regSig = evaluateCampaignSignificance({
-        threat_count: cluster.threat_count,
-        threat_count_24h_ago: 0,
-        brand_count_at_first_detection: regBrandCountAtFirst,
-      });
-      if (regSig.significant) {
-        try {
-          await createBrandAlertsForCampaign(env, {
-            campaign_id: campaignId,
-            campaign_name: name,
-            threat_count: cluster.threat_count,
-            reasons: regSig.reasons,
-          });
-        } catch (e) {
-          console.error('[strategist] registrar-campaign fanout error:', e);
-        }
-      }
     }
 
     // ─── Update campaign brand/provider counts ──────────────────
@@ -523,6 +598,8 @@ export const strategistAgent: AgentModule = {
     let firstRenameResult: { campaign: string; success: boolean; newName?: string; error?: string } | null = null;
 
     for (const camp of technicalCampaigns.results) {
+      // Budget guard: stop the AI-driven rename loop before the run can be killed.
+      if (isOverRunBudget(runStart, Date.now())) { budgetHit = true; break; }
       const campDomains = (techCampDomainsMap.get(camp.id) ?? []).slice(0, 10);
       const campBrands = (techCampBrandsMap.get(camp.id) ?? []).slice(0, 5);
       const campProviders = (techCampProvidersMap.get(camp.id) ?? []).slice(0, 3);
@@ -567,6 +644,7 @@ export const strategistAgent: AgentModule = {
         rename_success: renameSuccessCount,
         rename_failed: renameFailCount,
         first_rename_attempt: firstRenameResult,
+        budget_truncated: budgetHit,
       },
     });
 
@@ -600,7 +678,11 @@ export const strategistAgent: AgentModule = {
     }
 
     // ─── Coordination detection via Haiku ─────────────────────────
+    // Skip entirely when the run is already over budget — this is the single
+    // most expensive Haiku call (up to 20 campaigns of context + a 512-token
+    // completion) and must not push a slow run past the worker kill window.
     let coordinationFound = 0;
+    if (!budgetHit && !isOverRunBudget(runStart, Date.now())) {
     try {
       const activeCampaigns = await env.DB.prepare(
         `SELECT c.id, c.name, c.threat_count,
@@ -665,6 +747,7 @@ export const strategistAgent: AgentModule = {
     } catch (coordErr) {
       console.error("[strategist] coordination detection error:", coordErr);
     }
+    }
 
     return {
       itemsProcessed,
@@ -675,6 +758,9 @@ export const strategistAgent: AgentModule = {
         registrarClusters: registrarClusters.results.length,
         campaignsCreated: itemsCreated,
         campaignsUpdated: itemsUpdated,
+        // Surface truncated runs so operators can tell "processed everything"
+        // from "hit the wall-clock guard"; residual clusters roll to next tick.
+        budget_truncated: budgetHit,
       },
       agentOutputs: outputs,
     };

@@ -152,6 +152,7 @@ export async function handleScanBrandEmailSecurity(
       UPDATE brands
       SET email_security_score = ?,
           email_security_grade = ?,
+          email_security_dmarc_policy = ?,
           email_security_scanned_at = datetime('now'),
           bimi_record = ?,
           bimi_svg_url = ?,
@@ -162,7 +163,7 @@ export async function handleScanBrandEmailSecurity(
           bimi_last_checked = datetime('now')
       WHERE id = ?
     `).bind(
-      result.score, result.grade,
+      result.score, result.grade, result.dmarc.policy,
       result.bimi.record,
       result.bimi.svg_url,
       result.bimi.vmc_url,
@@ -222,6 +223,7 @@ export async function handleScanAllEmailSecurity(
           UPDATE brands
           SET email_security_score = ?,
               email_security_grade = ?,
+              email_security_dmarc_policy = ?,
               email_security_scanned_at = datetime('now'),
               bimi_record = ?,
               bimi_svg_url = ?,
@@ -232,7 +234,7 @@ export async function handleScanAllEmailSecurity(
               bimi_last_checked = datetime('now')
           WHERE id = ?
         `).bind(
-          result.score, result.grade,
+          result.score, result.grade, result.dmarc.policy,
           result.bimi.record,
           result.bimi.svg_url,
           result.bimi.vmc_url,
@@ -313,6 +315,7 @@ export async function handlePublicEmailSecurity(
         UPDATE brands
         SET email_security_score = ?,
             email_security_grade = ?,
+            email_security_dmarc_policy = ?,
             email_security_scanned_at = datetime('now'),
             bimi_record = ?,
             bimi_svg_url = ?,
@@ -323,7 +326,7 @@ export async function handlePublicEmailSecurity(
             bimi_last_checked = datetime('now')
         WHERE id = ?
       `).bind(
-        result.score, result.grade,
+        result.score, result.grade, result.dmarc.policy,
         result.bimi.record,
         result.bimi.svg_url,
         result.bimi.vmc_url,
@@ -351,15 +354,17 @@ export async function handleEmailSecurityStats(
   const origin = request.headers.get('Origin');
   try {
     // D1 spend fix: this stats page is prewarmed by Navigator every
-    // 5 min (Phase C "Email Auth") and every one of its subqueries
-    // scans brands or email_security_scans — the DMARC distribution
-    // in particular runs a correlated `id IN (SELECT MAX(id) ...
-    // GROUP BY brand_id)` over the full scan history (25.6M rows/24h
-    // in the 2026-07 budget blowout). Wrap the whole computed payload
-    // in cachedValue (300s, the §8 page-load TTL): the response is
-    // deterministic given DB state and a 5-min lag on a posture panel
-    // is invisible. KV reads don't count against the D1 budget, so
-    // every hit removes all of these scans from plan.
+    // 5 min (Phase C "Email Auth"). Its subqueries now read pre-computed
+    // columns on `brands` — the DMARC distribution reads the denormalized
+    // email_security_dmarc_policy column (migration 0255, Fix #4) instead
+    // of the old correlated `id IN (SELECT MAX(id) ... GROUP BY brand_id)`
+    // over the unbounded email_security_scans history (~43.8M reads/24h
+    // in the 2026-07 budget blowout). Wrap the whole computed payload in
+    // cachedValue: the response is deterministic given DB state and a
+    // few-min lag on a posture panel is invisible. KV reads don't count
+    // against the D1 budget, so every hit removes all of these scans from
+    // plan. TTL is 420s (not the 300s §8 default) so it doesn't land on
+    // Navigator's 5-min prewarm boundary — the observatory_arcs precedent.
     const data = await cachedValue<{
       grade_distribution: Array<{ grade: string; count: number }>;
       dmarc_distribution: Array<{ dmarc_policy: string | null; count: number }>;
@@ -371,7 +376,7 @@ export async function handleEmailSecurityStats(
         email_security_score: number; email_security_grade: string;
         active_threats: number;
       }>;
-    }>(env, 'email_security_stats', 300, async () => {
+    }>(env, 'email_security_stats', 420, async () => {
       const [gradeRows, totalRow, unscannedRow, worstBrands] = await Promise.all([
         // Grade distribution
         env.DB.prepare(`
@@ -409,14 +414,17 @@ export async function handleEmailSecurityStats(
         }>(),
       ]);
 
-      // DMARC policy distribution (from latest scans)
+      // DMARC policy distribution — reads the denormalized latest-scan
+      // column on `brands` (email_security_dmarc_policy, migration 0255)
+      // instead of the correlated MAX(id)-per-brand scan over the
+      // unbounded, insert-only email_security_scans history (Fix #4 —
+      // that scan was ~43.8M reads/24h). Same output shape: NULL policy
+      // stays its own GROUP BY bucket, aliased back to `dmarc_policy`.
       const dmarcRows = await env.DB.prepare(`
-        SELECT dmarc_policy, COUNT(*) AS count
-        FROM email_security_scans ess
-        WHERE ess.id IN (
-          SELECT MAX(id) FROM email_security_scans GROUP BY brand_id
-        )
-        GROUP BY dmarc_policy
+        SELECT email_security_dmarc_policy AS dmarc_policy, COUNT(*) AS count
+        FROM brands
+        WHERE email_security_score IS NOT NULL
+        GROUP BY email_security_dmarc_policy
       `).all<{ dmarc_policy: string | null; count: number }>();
 
       const avgRow = await env.DB.prepare(

@@ -121,9 +121,9 @@ export const curatorAgent: AgentModule = {
         await saveEmailSecurityScan(db, brand.id, scanResult);
         await db.prepare(`
           UPDATE brands
-          SET email_security_score = ?, email_security_grade = ?, email_security_scanned_at = datetime('now')
+          SET email_security_score = ?, email_security_grade = ?, email_security_dmarc_policy = ?, email_security_scanned_at = datetime('now')
           WHERE id = ?
-        `).bind(scanResult.score, scanResult.grade, brand.id).run();
+        `).bind(scanResult.score, scanResult.grade, scanResult.dmarc.policy, brand.id).run();
 
         results.emailScansCompleted++;
       } catch {
