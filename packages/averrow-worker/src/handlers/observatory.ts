@@ -369,7 +369,18 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     // 1h TTL drops the prewarm-driven miss count from ~50/day to ~24/day
     // = ~7M rows saved. Globe freshness: arcs are aggregated over a
     // 7-day window so a 1h cache lag is invisible to the user.
-    let cacheTtlSeconds = 3600;
+    //
+    // D1 spend reduction (platform-audit-2026-07-26): bumped 3600s → 7200s.
+    // The endpoint was STILL ~13.8M reads/24h because the cache key carries
+    // the `source_feed` query param but Navigator only prewarms the
+    // no-source_feed ("all") variant — every feed-filtered request is a
+    // guaranteed miss that pays the full cube scan, and no TTL clears a
+    // never-prewarmed key. Doubling the TTL to 2h keeps a feed-filtered
+    // key warm across ~24 prewarm ticks instead of ~12, roughly halving
+    // the organic-miss recompute rate on those variants. A 7-day aggregate
+    // tolerates 2h staleness. (Adding source_feed variants to the Navigator
+    // prewarm set is the real fix but is deliberately out of scope here.)
+    let cacheTtlSeconds = 7200;
     let usedFallback = false;
 
     // Fallback: cube empty for the requested window — defensive path back

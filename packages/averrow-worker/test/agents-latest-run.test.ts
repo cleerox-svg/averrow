@@ -2,33 +2,35 @@
  * Regression tests for handlers/agents.ts handleListAgents — the
  * "latest run per agent" query.
  *
- * The prior shape was a correlated subquery:
- *   WHERE id IN (SELECT id FROM agent_runs r2
- *                WHERE r2.agent_id = agent_runs.agent_id
- *                ORDER BY r2.started_at DESC LIMIT 1)
- * which EXPLAIN'd to a full unbounded SCAN of agent_runs plus a
- * per-row correlated subquery. It's now a single ROW_NUMBER() OVER
- * (PARTITION BY agent_id ORDER BY started_at DESC) pass, WHERE rn = 1,
- * served index-ordered by idx_agent_runs_agent. Output columns are
- * unchanged.
+ * Shape history:
+ *   1. Correlated subquery (full SCAN + per-row subquery).
+ *   2. Single ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY
+ *      started_at DESC) pass, WHERE rn = 1 — still materialized EVERY
+ *      agent_runs row (~142K) to return ~20.
+ *   3. (current, platform-audit-2026-07-26) env.DB.batch() of one
+ *      indexed point-lookup per KNOWN agent id:
+ *        SELECT ... FROM agent_runs WHERE agent_id = ?
+ *        ORDER BY started_at DESC LIMIT 1
+ *      each served by idx_agent_runs_agent (agent_id, started_at DESC)
+ *      as a single index-ordered row read. Output columns and the
+ *      downstream latestRunMap shape are unchanged.
  *
- * CRITICAL: the query is deliberately UNBOUNDED by age. deriveStatus
+ * CRITICAL: the lookup is deliberately UNBOUNDED by age. deriveStatus
  * keys off the absolute most-recent run of each agent — a long-dormant
- * agent whose last run FAILED must still read as 'error'. An earlier
- * revision added a `started_at >= datetime('now','-30 days')` bound for
- * efficiency; that silently flipped such an agent to 'idle' (and thus
- * counted-as-online), hiding a failure. Per code-review Finding 1 the
- * bound was removed; the product query is correct as unbounded and
- * these tests lock it that way.
+ * agent whose last run FAILED must still read as 'error'. A time bound
+ * would silently flip such an agent to 'idle' (counted-as-online),
+ * hiding a failure. The per-agent `LIMIT 1` returns that latest row
+ * regardless of age; these tests lock that behavior.
  *
- * This repo has no live-D1 test harness (see search.test.ts), so D1
- * is faked at the .prepare(sql).all() level: each of handleListAgents'
- * 9 parallel queries is routed to a canned result by matching a
- * distinguishing substring in its SQL text. What we lock down is
- * (a) the latestRuns query carries the ROW_NUMBER/PARTITION shape with
- * NO time bound, not the old correlated-subquery shape, (b) a dormant
- * agent whose latest run failed surfaces as 'error' (regression guard
- * for the removed 30-day bound), and (c) the handler degrades to
+ * This repo has no live-D1 test harness (see search.test.ts), so D1 is
+ * faked at the .prepare(sql)/.batch() level: handleListAgents' parallel
+ * queries are routed to canned results by matching a distinguishing SQL
+ * substring; the latest-run point-lookups run through a fake
+ * env.DB.batch that filters the seeded rows by each statement's bound
+ * agent_id. What we lock down is (a) the latest-run lookup runs via
+ * batch()'d per-agent point-lookups with NO time bound (not a
+ * whole-table window/correlated scan), (b) a dormant agent whose latest
+ * run failed surfaces as 'error', and (c) the handler degrades to
  * idle/null when an agent has no runs at all.
  */
 
@@ -49,7 +51,8 @@ interface Rows {
 }
 
 function classify(sql: string): string {
-  if (/ROW_NUMBER\(\) OVER/.test(sql)) return "latestRuns";
+  // Latest-run point-lookup — one per agent id, run via env.DB.batch().
+  if (/FROM agent_runs\s+WHERE agent_id = \?\s+ORDER BY started_at DESC\s+LIMIT 1/.test(sql)) return "latestRuns";
   if (/FROM agent_activity_log/.test(sql)) return "workflowStats";
   if (/FROM agent_configs/.test(sql)) return "agentConfigs";
   if (/jobs_24h/.test(sql)) return "runStats24h";
@@ -62,39 +65,65 @@ function classify(sql: string): string {
   throw new Error(`unclassified SQL in fake DB: ${sql}`);
 }
 
-function makeEnv(rows: Rows = {}): { env: Env; calls: Captured[] } {
-  const calls: Captured[] = [];
+interface FakeStmt {
+  __sql: string;
+  __binds: unknown[];
+  all: () => Promise<{ results: Array<Record<string, unknown>>; meta: { rows_read: number; rows_written: number } }>;
+}
 
-  const resultFor = (kind: string): { results: Array<Record<string, unknown>>; meta: { rows_read: number; rows_written: number } } => {
-    const data =
-      kind === "latestRuns" ? (rows.latestRuns ?? []) :
-      kind === "agentConfigs" ? (rows.agentConfigs ?? []) :
-      kind === "workflowStats" ? [] : // no workflow-dispatched agents in these tests
-      [];
+function makeEnv(rows: Rows = {}): { env: Env; calls: Captured[]; batchCalls: Captured[][] } {
+  const calls: Captured[] = [];
+  const batchCalls: Captured[][] = [];
+
+  const resultFor = (
+    kind: string,
+    binds: unknown[],
+  ): { results: Array<Record<string, unknown>>; meta: { rows_read: number; rows_written: number } } => {
+    let data: Array<Record<string, unknown>>;
+    if (kind === "latestRuns") {
+      // Point-lookup semantics: WHERE agent_id = ? ... LIMIT 1. Filter
+      // the seeded rows to the bound agent_id and return at most one —
+      // exactly what the indexed per-agent lookup yields in prod.
+      const agentId = binds[0];
+      data = (rows.latestRuns ?? []).filter((r) => r.agent_id === agentId).slice(0, 1);
+    } else if (kind === "agentConfigs") {
+      data = rows.agentConfigs ?? [];
+    } else {
+      data = []; // workflowStats + all other aggregates: empty in these tests
+    }
     return { results: data, meta: { rows_read: data.length, rows_written: 0 } };
   };
 
   const prepare = (sql: string) => {
     const kind = classify(sql);
-    const all = async (...binds: unknown[]) => {
+    const run = async (binds: unknown[]) => {
       calls.push({ sql, binds });
-      return resultFor(kind);
+      return resultFor(kind, binds);
     };
     return {
-      all,
-      bind: (...binds: unknown[]) => ({ all: () => all(...binds) }),
+      all: (...binds: unknown[]) => run(binds),
+      bind: (...binds: unknown[]): FakeStmt => ({
+        __sql: sql,
+        __binds: binds,
+        all: () => run(binds),
+      }),
     };
   };
 
+  const batch = async (statements: FakeStmt[]) => {
+    batchCalls.push(statements.map((s) => ({ sql: s.__sql, binds: s.__binds })));
+    return Promise.all(statements.map((s) => s.all()));
+  };
+
   const env = {
-    DB: { prepare } as unknown as D1Database,
+    DB: { prepare, batch } as unknown as D1Database,
     CACHE: {
       get: async () => null, // always cold — exercise the compute path
       put: async () => undefined,
     },
   } as unknown as Env;
 
-  return { env, calls };
+  return { env, calls, batchCalls };
 }
 
 function req(): Request {
@@ -111,28 +140,44 @@ async function bodyOf(res: Response) {
 // ─── Tests ─────────────────────────────────────────────────────────
 
 describe("handleListAgents — latest-run query shape", () => {
-  it("uses ROW_NUMBER/PARTITION with NO age bound, not the old correlated subquery", async () => {
-    const { env, calls } = makeEnv();
+  it("runs the latest-run lookup as a batch of per-agent point-lookups with NO age bound (not a whole-table scan)", async () => {
+    const { env, batchCalls } = makeEnv();
     await handleListAgents(req(), env);
 
-    const latestRunsCall = calls.find((c) => /ROW_NUMBER\(\) OVER/.test(c.sql));
-    expect(latestRunsCall).toBeDefined();
-    expect(latestRunsCall!.sql).toMatch(/PARTITION BY agent_id ORDER BY started_at DESC/);
-    expect(latestRunsCall!.sql).toMatch(/WHERE rn = 1/);
-    // The latestRuns query MUST carry no time bound — a bound would
-    // hide the latest run of a dormant agent (see file header). Scoped
-    // to this call only; the OTHER handler queries legitimately use
-    // datetime('now', ...) windows.
-    expect(latestRunsCall!.sql).not.toMatch(/datetime\('now'/);
-    // The old shape is fully gone.
-    expect(latestRunsCall!.sql).not.toMatch(/WHERE id IN \(\s*SELECT id FROM agent_runs r2/);
+    // The latest-run reads go through exactly one env.DB.batch() call.
+    expect(batchCalls.length).toBe(1);
+    const batch = batchCalls[0];
+    expect(batch.length).toBeGreaterThan(0);
+
+    for (const stmt of batch) {
+      // Each statement is an indexed point-lookup: WHERE agent_id = ?
+      // ORDER BY started_at DESC LIMIT 1, served by idx_agent_runs_agent.
+      expect(stmt.sql).toMatch(/FROM agent_runs\s+WHERE agent_id = \?\s+ORDER BY started_at DESC\s+LIMIT 1/);
+      // Exactly one bound param: the agent id.
+      expect(stmt.binds.length).toBe(1);
+      expect(typeof stmt.binds[0]).toBe("string");
+      // MUST carry no time bound — a bound would hide the latest run of
+      // a dormant agent (see file header).
+      expect(stmt.sql).not.toMatch(/datetime\('now'/);
+      // The old whole-table shapes are fully gone from this lookup.
+      expect(stmt.sql).not.toMatch(/ROW_NUMBER\(\) OVER/);
+      expect(stmt.sql).not.toMatch(/WHERE id IN \(\s*SELECT id FROM agent_runs r2/);
+    }
   });
 
-  it("has no '?' placeholders on the latest-run query (pure inline date arithmetic)", async () => {
-    const { env, calls } = makeEnv();
+  it("covers every known agent id (agent modules + navigator legacy ids) in the batch, deduped", async () => {
+    const { env, batchCalls } = makeEnv();
     await handleListAgents(req(), env);
-    const latestRunsCall = calls.find((c) => /ROW_NUMBER\(\) OVER/.test(c.sql));
-    expect((latestRunsCall!.sql.match(/\?/g) ?? []).length).toBe(0);
+
+    const ids = batchCalls[0].map((s) => s.binds[0] as string);
+    // No duplicates — the handler dedupes via a Set before batching.
+    expect(new Set(ids).size).toBe(ids.length);
+    // Navigator's current + legacy ids are both looked up so its
+    // synthesized row can pick whichever ran most recently.
+    expect(ids).toContain("navigator");
+    expect(ids).toContain("fast_tick");
+    // A representative first-class agent is present.
+    expect(ids).toContain("sentinel");
   });
 });
 
