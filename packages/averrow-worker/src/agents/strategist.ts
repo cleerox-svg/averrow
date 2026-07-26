@@ -21,7 +21,7 @@ import { createBrandAlertsForCampaign } from "../lib/alert-fanout";
  * GROUP BY scans over the active-threats table. On slow-gateway ticks the
  * cumulative run exceeded the Worker's ~300s cpu_ms budget (wrangler.toml
  * cpu_ms=300000), so CF killed the invocation BEFORE agentRunner's completion
- * UPDATE could land — leaving `agent_runs` at status='partial',
+ * write could land — leaving `agent_runs` at status='partial',
  * completed_at=NULL, later reaped by flight_control as an orphan.
  *
  * This is the same failure class documented for greynoise/seclookup, which got
@@ -409,12 +409,16 @@ export const strategistAgent: AgentModule = {
       // registrar BEFORE spending a Haiku call + INSERTing a duplicate. Before
       // this, the registrar path unconditionally created a new campaign and
       // burned an AI name every run, unlike the IP path. The attack_pattern
-      // JSON for a registrar cluster embeds the registrar string
-      // ({"type":"shared_registrar","registrar":"..."}), so the same LIKE probe
-      // the IP path uses on attack_pattern applies here.
+      // JSON for a registrar cluster is
+      // {"type":"shared_registrar","registrar":"..."}, so anchor the probe to
+      // the "registrar":"<value>" key/value (not a bare substring) to avoid
+      // merging distinct registrars that share a prefix — e.g. "Gname" must
+      // not collide with a "Gname.com Pte. Ltd." campaign. The shared_registrar
+      // type guard keeps it from matching a shared_ip pattern that happens to
+      // contain the word "registrar".
       const existing = await env.DB.prepare(
-        `SELECT id FROM campaigns WHERE attack_pattern LIKE ?`
-      ).bind(`%${cluster.registrar}%`).first<{ id: string }>();
+        `SELECT id FROM campaigns WHERE attack_pattern LIKE '%shared_registrar%' AND attack_pattern LIKE ?`
+      ).bind(`%"registrar":"${cluster.registrar}"%`).first<{ id: string }>();
 
       let campaignId: string;
 
