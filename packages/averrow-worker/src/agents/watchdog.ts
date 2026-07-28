@@ -15,6 +15,7 @@ import { extractDomain } from "../lib/domain-utils";
 import { callAnthropicJSON } from "../lib/anthropic";
 import type { Env } from "../types";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
+import { incrementBrandThreatCount } from "../db/brands";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -156,6 +157,19 @@ export const watchdogAgent: AgentModule = {
             UPDATE social_mentions SET escalated_to_threat_id = ?, status = 'escalated', updated_at = datetime('now')
             WHERE id = ?
           `).bind(threatId, mention.id).run();
+
+          // Keep brands.threat_count in step with the new brand-linked threat
+          // at the write site. The INSERT above is a plain (non-IGNORE) insert
+          // with a random id, so reaching here means a genuinely new row — no
+          // dedup no-op to over-count. Best-effort: a bump failure must not
+          // abort classification (the reconciler is the backstop).
+          if (mention.brand_id) {
+            try {
+              await incrementBrandThreatCount(env, mention.brand_id);
+            } catch (bumpErr) {
+              console.error(`[watchdog] brand threat_count bump failed for ${mention.brand_id}:`, bumpErr instanceof Error ? bumpErr.message : String(bumpErr));
+            }
+          }
 
           escalated++;
         }

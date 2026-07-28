@@ -971,7 +971,7 @@ export const analystAgent: AgentModule = {
       // Find threats not yet checked for subdomain spoofing — no time window
       // to ensure backfill of older threats. Batch in 500 at a time.
       const uncheckedThreats = await env.DB.prepare(`
-        SELECT id, malicious_domain, country_code
+        SELECT id, malicious_domain, country_code, target_brand_id
         FROM threats
         WHERE malicious_domain IS NOT NULL
           AND threat_type != 'subdomain_brand_spoofing'
@@ -979,7 +979,15 @@ export const analystAgent: AgentModule = {
           AND malicious_domain LIKE '%.%.%'
         ORDER BY created_at DESC
         LIMIT 500
-      `).all<{ id: string; malicious_domain: string; country_code: string | null }>();
+      `).all<{ id: string; malicious_domain: string; country_code: string | null; target_brand_id: string | null }>();
+
+      // Accumulate per-brand counter bumps for threats this phase actually
+      // LINKS (target_brand_id was NULL → now set via COALESCE). The UPDATE
+      // below always changes threat_type, so meta.changes can't tell us
+      // whether the brand link was new — the pre-update value can, so we key
+      // the bump off `threat.target_brand_id` being null. Flushed after the
+      // loop so the counter moves with the link (see brand-count-reconciler).
+      const subdomainSpoofBrandCounts = new Map<string, number>();
 
       for (const threat of uncheckedThreats.results) {
         // Wall-clock guard — leave the rest of the subdomain-spoof backlog
@@ -1033,6 +1041,13 @@ export const analystAgent: AgentModule = {
               WHERE id = ?
             `).bind(brand.id, campaignLink, threat.id).run();
 
+            // Only a NULL → brand.id transition is a new link worth counting;
+            // if the threat already had a brand, COALESCE kept it and bumping
+            // would double-count.
+            if (!threat.target_brand_id) {
+              subdomainSpoofBrandCounts.set(brand.id, (subdomainSpoofBrandCounts.get(brand.id) ?? 0) + 1);
+            }
+
             outputs.push({
               type: 'insight',
               summary: `**Subdomain Brand Spoofing** — ${brand.name} impersonated in ${brandInSubdomain ? 'subdomain' : 'domain'} of ${apex}: ${domain}`,
@@ -1051,6 +1066,20 @@ export const analystAgent: AgentModule = {
 
             break; // One brand match per threat is sufficient
           }
+        }
+      }
+
+      // Flush per-brand counter bumps for the newly-linked spoof threats in
+      // one batch (mirrors the keyword/AI-match flush earlier in this agent).
+      if (subdomainSpoofBrandCounts.size > 0) {
+        try {
+          await env.DB.batch(
+            [...subdomainSpoofBrandCounts].map(([brandId, n]) =>
+              bumpBrandThreatCountStmt(env, brandId, n)
+            )
+          );
+        } catch (bumpErr) {
+          console.error('[analyst] subdomain-spoof brand count bump failed:', bumpErr);
         }
       }
 

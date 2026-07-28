@@ -113,7 +113,38 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
   // skip a separate pre-dedup SELECT — D1 reports it via
   // meta.changes on INSERT OR IGNORE.
   const result = await buildThreatInsertStmt(db, threat).run();
-  return (result.meta?.changes ?? 0) > 0;
+  const inserted = (result.meta?.changes ?? 0) > 0;
+
+  // Keep brands.threat_count moving WITH the link at the write site so the
+  // cube_healer reconciler (lib/brand-count-reconciler.ts) stops having to
+  // sweep ~429 brands every 6h. Only bump on a genuinely new row: an
+  // INSERT OR IGNORE conflict no-op reports meta.changes=0, so a duplicate
+  // can never over-count — this is exactly why "+1 after insert" was never
+  // safe to add naively on a dedup insert. Best-effort: a bump failure must
+  // never break ingestion or corrupt feed accounting (the reconciler remains
+  // the safety net), so it's swallowed.
+  if (inserted && threat.target_brand_id) {
+    await bumpBrandThreatCount(db, threat.target_brand_id, 1);
+  }
+  return inserted;
+}
+
+/**
+ * Increment brands.threat_count by `n` for a single brand, keyed off a
+ * threats-write that actually landed. Prepared statement, same shape as
+ * db/brands.ts `bumpBrandThreatCountStmt` (kept inline here because the
+ * feed path holds a raw `D1Database`, not an `Env`). Never throws — the
+ * cube_healer reconciler is the backstop, so a transient bump failure must
+ * not surface as a feed error.
+ */
+async function bumpBrandThreatCount(db: D1Database, brandId: string, n: number): Promise<void> {
+  try {
+    await db.prepare(
+      "UPDATE brands SET threat_count = threat_count + ?, last_threat_seen = datetime('now') WHERE id = ?"
+    ).bind(n, brandId).run();
+  } catch (err) {
+    console.error(`[feedRunner] brand threat_count bump failed for ${brandId}:`, err instanceof Error ? err.message : String(err));
+  }
 }
 
 /** Default chunk size for bulk threat inserts — one D1 transaction per chunk. */
@@ -142,16 +173,49 @@ export async function bulkInsertThreats(
   const stmts = rows.map((r) => buildThreatInsertStmt(db, r));
   let itemsNew = 0;
   let itemsError = 0;
+  // Accumulate per-brand counts for rows that were ACTUALLY inserted this
+  // batch (meta.changes>0), keyed back to rows[] by position within the
+  // chunk. A conflict no-op contributes 0, so a re-pulled duplicate never
+  // over-counts. Flushed as one targeted UPDATE per distinct brand after
+  // all chunks — bounded by the number of distinct brands in the payload,
+  // never a full-table scan. See insertThreat for the same rationale.
+  const brandBumps = new Map<string, number>();
   for (let i = 0; i < stmts.length; i += chunkSize) {
     const chunk = stmts.slice(i, i + chunkSize);
     try {
       const results = await db.batch(chunk);
-      for (const r of results) itemsNew += r.meta?.changes ?? 0;
+      for (let k = 0; k < results.length; k++) {
+        const changed = results[k]?.meta?.changes ?? 0;
+        itemsNew += changed;
+        if (changed > 0) {
+          const brandId = rows[i + k]?.target_brand_id;
+          if (brandId) brandBumps.set(brandId, (brandBumps.get(brandId) ?? 0) + changed);
+        }
+      }
     } catch (err) {
       itemsError += chunk.length;
       console.error(`[bulkInsertThreats] chunk ${i}-${i + chunk.length} failed:`, err);
     }
   }
+
+  // Best-effort brand-counter flush — same write-site discipline as
+  // insertThreat, batched. Never throws: the cube_healer reconciler stays
+  // the safety net, so a bump failure must not turn a successful ingest
+  // into a feed error.
+  if (brandBumps.size > 0) {
+    try {
+      await db.batch(
+        [...brandBumps].map(([brandId, n]) =>
+          db.prepare(
+            "UPDATE brands SET threat_count = threat_count + ?, last_threat_seen = datetime('now') WHERE id = ?"
+          ).bind(n, brandId)
+        )
+      );
+    } catch (err) {
+      console.error(`[bulkInsertThreats] brand threat_count flush failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const itemsDuplicate = rows.length - itemsNew - itemsError;
   return { itemsNew, itemsDuplicate, itemsError };
 }
