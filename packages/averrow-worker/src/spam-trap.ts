@@ -13,6 +13,7 @@ import type { Env } from "./types";
 import type { EmailMessage } from "./dmarc-receiver";
 import { extractDomain } from "./lib/domain-utils";
 import { createNotification } from "./lib/notifications";
+import { bumpBrandThreatCountStmt } from "./db/brands";
 
 // ─── Interfaces ────────────────────────────────────────────────────
 
@@ -349,11 +350,17 @@ async function createThreatFromCapture(env: Env, data: {
       data.fromDomain
     ).run();
 
-    // Create threat records for additional phishing URLs
+    // Create threat records for additional phishing URLs. Each of these
+    // ALSO carries target_brand_id when the capture matched a brand, but the
+    // old code only bumped brands.threat_count by 1 (for the primary insert)
+    // and never counted these — a per-capture under-count that the reconciler
+    // had to sweep. Count the ones that actually inserted (INSERT OR IGNORE
+    // → meta.changes>0) so a re-seen URL doesn't over-count.
+    let extraBrandThreats = 0;
     for (const url of data.urls.slice(1, 5)) {
       const urlThreatId = `st_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const urlDomain = extractDomain(url);
-      await env.DB.prepare(`
+      const urlInsert = await env.DB.prepare(`
         INSERT OR IGNORE INTO threats (id, source_feed, threat_type, malicious_url, malicious_domain,
           target_brand_id, ip_address, severity, confidence_score, ioc_value, status)
         VALUES (?, 'spam_trap', 'phishing', ?, ?, ?, ?, ?, 80, ?, 'active')
@@ -362,13 +369,14 @@ async function createThreatFromCapture(env: Env, data: {
         data.brandMatch?.brandId || null, data.sendingIp || null,
         data.severity, urlDomain
       ).run();
+      if (data.brandMatch?.brandId && (urlInsert.meta?.changes ?? 0) > 0) extraBrandThreats++;
     }
 
-    // Update brand threat count
+    // Update brand threat count once — primary insert (always new here, plain
+    // INSERT with a random id) plus every extra URL-threat that actually
+    // landed for the same brand.
     if (data.brandMatch?.brandId) {
-      await env.DB.prepare(
-        "UPDATE brands SET threat_count = threat_count + 1, last_threat_seen = datetime('now') WHERE id = ?"
-      ).bind(data.brandMatch.brandId).run();
+      await bumpBrandThreatCountStmt(env, data.brandMatch.brandId, 1 + extraBrandThreats).run();
     }
 
     return threatId;
