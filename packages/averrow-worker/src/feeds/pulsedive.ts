@@ -33,41 +33,88 @@ const FETCH_TIMEOUT_MS = 10_000;
 type PulsediveRisk = "unknown" | "none" | "low" | "medium" | "high" | "critical" | "retired";
 const VALID_RISK = new Set<PulsediveRisk>(["unknown", "none", "low", "medium", "high", "critical", "retired"]);
 
-/** Look up one indicator; null on error/rate-limit. Cached 48h in KV. */
-export async function checkPulsedive(indicator: string, env: Env): Promise<PulsediveRisk | null> {
-  if (!env.PULSEDIVE_API_KEY) return null;
+/**
+ * Failure taxonomy for a single lookup — the whole point of the refactor.
+ * The old code collapsed every failure into `null`, so a rejected key and a
+ * transient upstream blip produced the identical non-actionable
+ * "all lookups failed — check KEY / upstream" alert. Now the caller can tell
+ * "rotate the secret" from "wait out the outage".
+ *
+ *   auth       — key rejected / expired / over-plan (HTTP 401/403, or a
+ *                key/quota `{error}` body Pulsedive returns as HTTP 200).
+ *                Definitive: it will reject every remaining indicator too.
+ *   ratelimit  — HTTP 429; back off, don't rotate.
+ *   upstream   — other non-2xx, or an unparseable 200 body.
+ *   network    — fetch threw (DNS/TLS/timeout/abort).
+ */
+type LookupFailKind = "auth" | "ratelimit" | "upstream" | "network";
+type LookupResult =
+  | { ok: true; risk: PulsediveRisk }
+  | { ok: false; kind: LookupFailKind; detail: string };
+
+/** True if a Pulsedive HTTP-200 `{error}` body signals a key/quota problem. */
+function isAuthLikeError(msg: string): boolean {
+  return /key|api|auth|unauthor|invalid|forbidden|quota|credit|limit|upgrade|plan/i.test(msg);
+}
+
+/**
+ * Look up one indicator, returning a classified result. Cached 48h in KV.
+ * Never throws — network/timeout is caught and returned as `kind:'network'`
+ * so the caller's accounting stays accurate.
+ */
+async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResult> {
+  if (!env.PULSEDIVE_API_KEY) return { ok: false, kind: "auth", detail: "PULSEDIVE_API_KEY not set" };
 
   const cacheKey = `pulsedive:${indicator}`;
   const cached = await env.CACHE.get(cacheKey);
-  if (cached !== null) return cached as PulsediveRisk;
+  if (cached !== null && VALID_RISK.has(cached as PulsediveRisk)) {
+    return { ok: true, risk: cached as PulsediveRisk };
+  }
 
   const url = `https://pulsedive.com/api/info.php?indicator=${encodeURIComponent(indicator)}&key=${encodeURIComponent(env.PULSEDIVE_API_KEY)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { Accept: "application/json" } });
 
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { Accept: "application/json" } });
+  } catch (err) {
+    return { ok: false, kind: "network", detail: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Auth rejection — distinct, actionable on-call signal (rotate the key).
+  if (res.status === 401 || res.status === 403) {
+    logger.error("pulsedive_auth_rejected", { indicator, status: res.status });
+    return { ok: false, kind: "auth", detail: `HTTP ${res.status}` };
+  }
   if (res.status === 429) {
     logger.error("pulsedive_rate_limit", { indicator, status: 429 });
-    return null;
+    return { ok: false, kind: "ratelimit", detail: "HTTP 429" };
   }
   if (!res.ok) {
     logger.error("pulsedive_api_error", { indicator, status: res.status });
-    return null;
+    return { ok: false, kind: "upstream", detail: `HTTP ${res.status}` };
   }
 
-  const body = (await res.json()) as { risk?: string; error?: string };
+  let body: { risk?: string; error?: string };
+  try {
+    body = (await res.json()) as { risk?: string; error?: string };
+  } catch (err) {
+    return { ok: false, kind: "upstream", detail: `unparseable body: ${err instanceof Error ? err.message : String(err)}` };
+  }
 
   if (body.error) {
     // Only "Indicator not found." is a valid "no risk data" answer → cache
-    // it as unknown. ANY OTHER error (invalid key, quota exhausted, etc.,
-    // which Pulsedive can return as HTTP 200 + {error}) is a real failure:
-    // return null so it is retryable, uncached, and does NOT stamp the
-    // threat checked — otherwise a bad key silently marks a whole day's
-    // batch checked=unknown with no operator signal.
+    // it as unknown. Pulsedive returns key/quota problems as HTTP 200 +
+    // {error}; classify those as `auth` so a bad key surfaces the rotate
+    // signal instead of masquerading as a generic upstream error. Any other
+    // {error} is a real, retryable upstream failure (uncached, does NOT
+    // stamp the threat checked).
     if (/not\s*found/i.test(body.error)) {
       await env.CACHE.put(cacheKey, "unknown", { expirationTtl: 172800 });
-      return "unknown";
+      return { ok: true, risk: "unknown" };
     }
-    logger.error("pulsedive_error_body", { indicator, error: body.error });
-    return null;
+    const kind: LookupFailKind = isAuthLikeError(body.error) ? "auth" : "upstream";
+    logger.error("pulsedive_error_body", { indicator, error: body.error, classifiedAs: kind });
+    return { ok: false, kind, detail: body.error };
   }
 
   const risk: PulsediveRisk = VALID_RISK.has((body.risk ?? "") as PulsediveRisk)
@@ -75,7 +122,16 @@ export async function checkPulsedive(indicator: string, env: Env): Promise<Pulse
     : "unknown";
 
   await env.CACHE.put(cacheKey, risk, { expirationTtl: 172800 });
-  return risk;
+  return { ok: true, risk };
+}
+
+/**
+ * Back-compat wrapper preserving the original exported contract: the risk
+ * level, or null on any failure/rate-limit. Cached 48h in KV.
+ */
+export async function checkPulsedive(indicator: string, env: Env): Promise<PulsediveRisk | null> {
+  const r = await lookupPulsedive(indicator, env);
+  return r.ok ? r.risk : null;
 }
 
 async function getDailyCount(env: Env): Promise<number> {
@@ -142,6 +198,8 @@ export const pulsedive: FeedModule = {
     let itemsError = 0;
 
     const loopStart = Date.now();
+    const failKinds: Record<LookupFailKind, number> = { auth: 0, ratelimit: 0, upstream: 0, network: 0 };
+
     for (const threat of threats) {
       if (Date.now() - loopStart > BUDGET_MS) {
         logger.info("pulsedive_budget_reached", { processed: itemsFetched, remaining: threats.length - itemsFetched });
@@ -151,8 +209,21 @@ export const pulsedive: FeedModule = {
       itemsFetched++;
 
       try {
-        const risk = await checkPulsedive(threat.indicator, env);
-        if (risk === null) { itemsError++; continue; }
+        const result = await lookupPulsedive(threat.indicator, env);
+        if (!result.ok) {
+          itemsError++;
+          failKinds[result.kind]++;
+          // A rejected key rejects every remaining indicator too — stop
+          // burning the daily/monthly quota + wall-clock budget on a
+          // known-bad key and let the run end with an actionable error.
+          if (result.kind === "auth") {
+            logger.error("pulsedive_auth_abort", { detail: result.detail, attempted: itemsFetched });
+            break;
+          }
+          if (itemsFetched < threats.length) await sleep(DELAY_MS);
+          continue;
+        }
+        const risk = result.risk;
 
         if (risk === "critical" || risk === "high") {
           // Corroborated as risky — nudge confidence up.
@@ -200,8 +271,12 @@ export const pulsedive: FeedModule = {
 
         if (itemsFetched < threats.length) await sleep(DELAY_MS);
       } catch (err) {
+        // A throw here is a D1 UPDATE failure (lookupPulsedive itself never
+        // throws) — count it, but as `upstream`, never `auth`, so a DB blip
+        // can't trigger a spurious "rotate the key" alert.
         logger.error("pulsedive_check_error", { indicator: threat.indicator, error: err instanceof Error ? err.message : String(err) });
         itemsError++;
+        failKinds.upstream++;
       }
     }
 
@@ -214,9 +289,26 @@ export const pulsedive: FeedModule = {
     // If EVERY lookup failed (invalid key / sustained upstream outage),
     // throw so runFeed marks the pull failed and the per-feed circuit
     // breaker backs off — instead of reporting success and re-hammering
-    // the full budget every run with no signal.
+    // the full budget every run with no signal. The message names the
+    // DOMINANT failure class so on-call knows whether to rotate the secret
+    // or wait out an upstream outage.
     if (itemsFetched > 0 && itemsError === itemsFetched) {
-      throw new Error(`pulsedive: all ${itemsFetched} lookups failed — check PULSEDIVE_API_KEY / upstream`);
+      const dominant = (Object.entries(failKinds) as [LookupFailKind, number][])
+        .filter(([, n]) => n > 0)
+        .sort((a, b) => b[1] - a[1])[0];
+      const dominantKind: LookupFailKind = dominant ? dominant[0] : "upstream";
+      const detailMsg =
+        dominantKind === "auth"
+          ? "auth rejected (HTTP 401/403 or invalid-key body) — rotate PULSEDIVE_API_KEY"
+          : dominantKind === "ratelimit"
+            ? "rate-limited (HTTP 429) — over the free-tier quota, back off"
+            : dominantKind === "network"
+              ? "network/timeout reaching pulsedive.com — likely a transient upstream outage"
+              : "upstream errors from pulsedive.com — check API status";
+      throw new Error(
+        `pulsedive: all ${itemsFetched} lookups failed — ${detailMsg} ` +
+          `(auth=${failKinds.auth} ratelimit=${failKinds.ratelimit} upstream=${failKinds.upstream} network=${failKinds.network})`,
+      );
     }
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };

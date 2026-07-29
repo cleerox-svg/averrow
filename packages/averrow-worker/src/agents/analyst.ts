@@ -468,11 +468,19 @@ export const analystAgent: AgentModule = {
     // single-query OR-over-six-columns that forces a full active-table scan.
     // See docs/runbooks/analyst-d1-diagnosis.md for EXPLAIN plans.
     //
-    // KV-cached for 25 min. Analyst's natural cadence is hourly but
-    // navigator pre-warming + retries had it running ~7×/hour
-    // (diagnostics 2026-05-12 query #5: dbl_listed slice alone burned
-    // 924k rows/hour). The 6 signals are all active-status snapshots,
-    // not real-time — a stale 25-min reading is acceptable.
+    // KV-cached. Analyst is dispatched once per hourly orchestrator
+    // tick (ctx.waitUntil, ~3600s inter-run gap). The prior 1500s
+    // (25-min) TTL was SHORTER than that gap, so every scheduled run
+    // found the entry already expired → miss → the whole 7-query
+    // active-scan batch ran every hour. That is why the two heaviest
+    // slices still dominated the D1 top-queries report despite being
+    // "cached": dbl_listed GROUP BY = 73.2M reads/24h, vt_malicious
+    // AVG = 24.6M (surbl/vt/gsb/greynoise/seclookup add more on top).
+    // PR-BU fix: TTL raised to 3h so consecutive hourly runs reuse a
+    // warmed entry (~1 miss per 3 runs instead of every run). All 7
+    // signals are active-status snapshots feeding narrative insight
+    // generation — a few hours' staleness is well within tolerance,
+    // consistent with the original "not real-time" note.
     const baseCond = "status = 'active' AND target_brand_id IS NOT NULL";
     const enrichmentBatch = await cachedValue<{
       surbl: Array<{ target_brand_id: string; cnt: number }>;
@@ -482,7 +490,7 @@ export const analystAgent: AgentModule = {
       dbl: Array<{ target_brand_id: string; cnt: number }>;
       greynoise: Array<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>;
       seclookup: Array<{ target_brand_id: string; high_risk: number }>;
-    }>(env, "analyst.enrichment_by_brand", 1500, async () => {
+    }>(env, "analyst.enrichment_by_brand", 10800, async () => {
       const [surblRows, vtRows, vtAvgRows, gsbRows, dblRows, greynoiseRows, seclookupRows] = await Promise.all([
         env.DB.prepare(
           `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND surbl_listed = 1 GROUP BY target_brand_id`

@@ -99,8 +99,14 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .bind(...threatScope.params)
           .first<{ n: number }>();
 
+    // TTL 21600 (6h): shared `count.threats.active` key. Diagnostics
+    // attributed ~41.6M rows/24h to this normalized count — the fleet was
+    // recomputing it ~hourly because callers disagreed on TTL (cartographer
+    // already at 6h). Aligning every frequent caller to 6h collapses the
+    // recompute cadence to ~4/day. `active` (~801K, slow-moving) tolerates
+    // 6h staleness on a staff headline stat; `total` above stays at 1h.
     const threatActiveP = useGlobalCache
-      ? cachedCount(env, 'count.threats.active', 3600, async () => {
+      ? cachedCount(env, 'count.threats.active', 21600, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats WHERE status = 'active'`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))

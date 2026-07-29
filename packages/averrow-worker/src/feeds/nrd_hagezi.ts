@@ -2,6 +2,12 @@ import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
 import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
 import { logger } from "../lib/logger";
+import {
+  findEocdOffset,
+  parseCentralDirectory,
+  parseLocalHeaderLength,
+  readUint32LE,
+} from "../lib/zip-internals";
 
 const WHOISDS_BASE_URL = "https://whoisds.com/whois-database/newly-registered-domains/";
 
@@ -25,50 +31,135 @@ function getYesterdayDate(): string {
 }
 
 /**
- * Extract text content from a ZIP archive using native DecompressionStream.
- * Reuses the same ZIP parsing pattern as admin.ts extractCsvFromZip.
+ * Decompress an entire in-memory buffer via the Workers-native
+ * DecompressionStream. `deflate-raw` = a bare DEFLATE stream (what ZIP
+ * entries hold); `gzip` = a gzip container.
  */
-async function extractTextFromZip(buffer: ArrayBuffer): Promise<string | null> {
+async function inflateAll(bytes: Uint8Array<ArrayBuffer>, format: "deflate-raw" | "gzip"): Promise<Uint8Array> {
+  const ds = new DecompressionStream(format);
+  const writer = ds.writable.getWriter();
+  // Do NOT await write() before reading: for multi-MB inputs the writable
+  // applies backpressure until the readable is drained, so awaiting here
+  // would deadlock. Kick off write+close, then pull the output.
+  void writer.write(bytes);
+  void writer.close();
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) { chunks.push(value); total += value.length; }
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  return out;
+}
+
+/** True if the buffer's first non-whitespace byte is '<' (HTML/XML error page). */
+function looksLikeHtml(bytes: Uint8Array): boolean {
+  let i = 0;
+  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  return bytes[i] === 0x3c;
+}
+
+/**
+ * Extract the domain-list text from a WhoisDS NRD download.
+ *
+ * The archive is parsed via its END-OF-CENTRAL-DIRECTORY record, not the
+ * local file header. This is the fix for the production
+ * "unsupported compression" death-loop: WhoisDS writes the ZIP in a
+ * streaming mode that sets general-purpose bit 3 (data descriptor), so the
+ * LOCAL header reports compressedSize=0 and can misframe the method byte —
+ * the old local-header reader either sliced zero bytes (silent empty pull)
+ * or read a bogus method and bailed with "unsupported compression". The
+ * central directory always carries the authoritative method + compressed
+ * size, so we read from there.
+ *
+ * Throws a PRECISE error on any genuine failure (unknown container, HTML
+ * error page, unsupported ZIP method, ZIP64, truncation) so runFeed stamps
+ * the circuit breaker instead of the feed silently succeeding with 0 rows.
+ */
+async function extractTextFromZip(buffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buffer);
-
-  // Verify ZIP magic bytes (PK\x03\x04)
-  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
-    // Not a ZIP — try reading as plain text
-    return new TextDecoder().decode(buffer);
+  if (bytes.length === 0) {
+    throw new Error("NRD WhoisDS: empty response body (0 bytes)");
   }
 
-  const compressionMethod = bytes[8]! | (bytes[9]! << 8);
-  const compressedSize = bytes[18]! | (bytes[19]! << 8) | (bytes[20]! << 16) | (bytes[21]! << 24);
-  const fileNameLen = bytes[26]! | (bytes[27]! << 8);
-  const extraLen = bytes[28]! | (bytes[29]! << 8);
-  const dataOffset = 30 + fileNameLen + extraLen;
-
-  if (compressionMethod === 0) {
-    // Stored (no compression)
-    return new TextDecoder().decode(bytes.slice(dataOffset, dataOffset + compressedSize));
-  }
-  if (compressionMethod === 8) {
-    // Deflate-raw
-    const compressed = bytes.slice(dataOffset, dataOffset + compressedSize);
-    const ds = new DecompressionStream("deflate-raw");
-    const writer = ds.writable.getWriter();
-    writer.write(compressed);
-    writer.close();
-    const reader = ds.readable.getReader();
-    const chunks: Uint8Array[] = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-    const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
-    const result = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) { result.set(c, offset); offset += c.length; }
-    return new TextDecoder().decode(result);
+  // gzip container — upstream occasionally serves a .gz, or a proxy hands
+  // back a gzip body the runtime didn't transparently decode.
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    return new TextDecoder().decode(await inflateAll(bytes, "gzip"));
   }
 
-  return null;
+  // ZIP container (PK\x03\x04).
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+    return await extractFromZipBuffer(bytes);
+  }
+
+  // Not a known binary container. An HTML/error page must fail loudly —
+  // otherwise `.includes(".")` mines fake domains out of markup.
+  if (looksLikeHtml(bytes)) {
+    const snippet = new TextDecoder().decode(bytes.slice(0, 200)).replace(/\s+/g, " ").trim();
+    throw new Error(`NRD WhoisDS: expected ZIP, got HTML/error page — "${snippet}"`);
+  }
+
+  // Otherwise treat it as a plain-text domain list.
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Parse a whole-buffer ZIP via its central directory and return the
+ * decompressed text of its largest file entry (NRD archives hold a single
+ * domain-list .txt).
+ */
+async function extractFromZipBuffer(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const eocd = findEocdOffset(bytes);
+  if (eocd === -1) {
+    throw new Error("NRD WhoisDS: ZIP end-of-central-directory not found (truncated or ZIP64 archive)");
+  }
+  const cdirSize = readUint32LE(bytes, eocd + 12);
+  const cdirOffset = readUint32LE(bytes, eocd + 16);
+  // 0xFFFFFFFF sentinels mean the real values live in a ZIP64 EOCD, which
+  // DecompressionStream + this reader don't handle — fail precisely.
+  if (cdirOffset === 0xffffffff || cdirSize === 0 || cdirOffset + cdirSize > bytes.length) {
+    throw new Error(
+      `NRD WhoisDS: invalid or ZIP64 central directory (offset=${cdirOffset}, size=${cdirSize}, total=${bytes.length})`,
+    );
+  }
+
+  const entries = parseCentralDirectory(bytes.subarray(cdirOffset, cdirOffset + cdirSize));
+  const files = entries.filter((e) => !e.name.endsWith("/") && e.uncompressedSize > 0);
+  if (files.length === 0) {
+    throw new Error("NRD WhoisDS: ZIP contained no non-empty file entries");
+  }
+  const entry = files.reduce((a, b) => (b.uncompressedSize > a.uncompressedSize ? b : a));
+
+  if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) {
+    throw new Error(
+      `NRD WhoisDS: entry "${entry.name}" uses unsupported ZIP compression method ${entry.compressionMethod} (only 0=stored / 8=deflate supported)`,
+    );
+  }
+
+  // Re-read the LOCAL header to compute the true data offset — its
+  // filename/extra lengths can differ from the central directory's.
+  const probeEnd = Math.min(bytes.length, entry.localHeaderOffset + 30 + 65535);
+  const lfh = bytes.subarray(entry.localHeaderOffset, probeEnd);
+  const headerLen = parseLocalHeaderLength(lfh, entry.name, lfh.length);
+  const dataStart = entry.localHeaderOffset + headerLen;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > bytes.length) {
+    throw new Error(
+      `NRD WhoisDS: entry "${entry.name}" data runs past archive end (start=${dataStart}, size=${entry.compressedSize}, total=${bytes.length})`,
+    );
+  }
+  const data = bytes.subarray(dataStart, dataEnd);
+
+  if (entry.compressionMethod === 0) {
+    return new TextDecoder().decode(data);
+  }
+  return new TextDecoder().decode(await inflateAll(data, "deflate-raw"));
 }
 
 /**
@@ -116,10 +207,10 @@ export const nrd_hagezi: FeedModule = {
 
 async function processZip(res: Response, ctx: FeedContext, date: string): Promise<FeedResult> {
   const buffer = await res.arrayBuffer();
+  // extractTextFromZip throws a precise Error on any genuine failure
+  // (unknown container, HTML error page, unsupported/ZIP64 method,
+  // truncation), which runFeed catches to stamp the circuit breaker.
   const text = await extractTextFromZip(buffer);
-  if (!text) {
-    throw new Error("NRD WhoisDS: failed to extract domains from ZIP (unsupported compression)");
-  }
 
   const domains = text
     .split("\n")
