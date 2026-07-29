@@ -358,6 +358,20 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   // boost is idempotent and the corpus doesn't shift faster than
   // that on production. Was running every hour from
   // runEnrichmentPipeline (1× orchestrator + agent calls).
+  //
+  // PR-BU: the stamp is now CLAIMED BEFORE the heavy scan runs, not
+  // after. Previously the `CACHE.put(stamp)` landed only at the very
+  // end, AFTER the full GROUP-BY-ip scan (~821K rows) and the entire
+  // batched-UPDATE loop. runEnrichmentPipeline fires from several
+  // near-simultaneous contexts (hourly orchestrator inline + the
+  // dedicated `8 * * * *` enricher cron + FC recovery), so every
+  // invocation in that multi-second window saw a stale/absent stamp,
+  // passed the gate, and ran its own full scan — the 6h throttle was
+  // effectively a no-op (diagnostics: 43.4M reads/24h ≈ ~53 scans/day,
+  // not the ~4 the throttle intends). Claiming the stamp optimistically
+  // up front collapses the herd to a single scan per 6h window; the
+  // boost being idempotent means a claimed-but-failed run simply
+  // re-runs next window with no correctness loss.
   try {
     const STAMP_KEY = "enrich:corroboration_boost:last";
     const lastRun = await env.CACHE.get(STAMP_KEY);
@@ -366,6 +380,15 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
     if (Date.now() - lastRunMs < SIX_HOURS_MS) {
       // Throttled — skip this cycle.
     } else {
+      // Claim the 6h window BEFORE the heavy scan so concurrent
+      // enricher invocations racing through the gate don't each run
+      // their own full-table scan.
+      try {
+        await env.CACHE.put(STAMP_KEY, String(Date.now()), {
+          expirationTtl: SIX_HOURS_MS / 1000 + 60,
+        });
+      } catch { /* non-fatal — worst case a concurrent run also proceeds */ }
+
       const corroborated = await env.DB.prepare(`
         SELECT ip_address, COUNT(DISTINCT source_feed) AS feed_count
           FROM threats
@@ -402,11 +425,8 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
         }
       }
       result.corroborationBoosted = totalBoosted;
-      try {
-        await env.CACHE.put(STAMP_KEY, String(Date.now()), {
-          expirationTtl: SIX_HOURS_MS / 1000 + 60,
-        });
-      } catch { /* non-fatal */ }
+      // Stamp was already claimed up front (before the scan) so the 6h
+      // window holds even if this run threw partway through the batch loop.
     }
   } catch (err) {
     console.error("[enrich] Stage 4c corroboration boost failed:", err);

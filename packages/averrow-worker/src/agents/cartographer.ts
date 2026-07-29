@@ -660,33 +660,49 @@ export const cartographerAgent: AgentModule = {
     }>();
 
     // Diagnostic counts — used for cartographer's per-run summary
-    // logging only, never to drive logic. Wrap in cachedCount (30
-    // min TTL) so we don't full-scan threats every cartographer
-    // tick. PR-BL bumped from 300s → 1800s because the 5-min TTL
-    // was too tight: cartographer runs hourly via dedicated cron +
-    // ad-hoc scaleAgents instances, so consecutive ticks were
-    // always missing the cache. With 30-min freshness the count
-    // values are still well within "log-line tolerable" drift.
-    // Hosting-providers count gets the same treatment for parity
-    // even though that table is small.
-    const totalProviders = { n: await cachedCount(env, 'count.hosting_providers.total', 1800, async () => {
+    // logging only (see the summary line + agent_outputs details
+    // below), never to drive logic. Wrapped in cachedCount, but the
+    // TTL MUST exceed the caller's true inter-run gap or the cache
+    // can never land.
+    //
+    // PR-BU root-cause fix: the prior 1800s (30-min) TTL was SHORTER
+    // than cartographer's cadence. Cartographer runs hourly via its
+    // dedicated `9 * * * *` cron, so the scheduled run at :09 finds
+    // the previous run's entry already 3600s old > 1800s TTL → miss →
+    // full 821K-row scan EVERY run. FC scaleAgents backlog instances
+    // fire additional near-simultaneous runs whose KV read-after-write
+    // lag makes them all miss together (thundering herd), so these
+    // three cartographer-only keys were scanning ~70×/day
+    // (diagnostics: count.threats.with_provider = 60.1M reads/24h)
+    // despite "being cached". Because the values are pure log-line
+    // data with wide drift tolerance, we set the TTL to 6h — longer
+    // than the hourly cadence + any scaleAgents burst window — so a
+    // scheduled run reuses the entry warmed up to 6 runs earlier and
+    // only ~4 expiry-misses/day remain.
+    const DIAG_COUNT_TTL = 21600; // 6h — log-line drift-tolerant, must exceed hourly+burst cadence
+    const totalProviders = { n: await cachedCount(env, 'count.hosting_providers.total', DIAG_COUNT_TTL, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM hosting_providers").first<{ n: number }>();
       return row?.n ?? 0;
     }) };
-    const threatsWithProvider = { n: await cachedCount(env, 'count.threats.with_provider', 1800, async () => {
+    const threatsWithProvider = { n: await cachedCount(env, 'count.threats.with_provider', DIAG_COUNT_TTL, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NOT NULL").first<{ n: number }>();
       return row?.n ?? 0;
     }) };
-    const threatsWithoutProvider = { n: await cachedCount(env, 'count.threats.without_provider', 1800, async () => {
+    const threatsWithoutProvider = { n: await cachedCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
       return row?.n ?? 0;
     }) };
-    // count.threats.active is a SHARED key (dashboard.ts, admin.ts also
-    // read it) — pinned to 3600s across every caller so no caller's
-    // shorter TTL forces a full-scan recompute of an entry another caller
-    // already warmed. The three cartographer-only count.* keys above keep
-    // their 1800s budget since nothing else reads them.
-    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', 3600, async () => {
+    // count.threats.active is a SHARED key (dashboard.ts:104,
+    // admin/stats.ts:80 also read it). Its fleet-wide recompute cadence
+    // is governed by those page-load callers' 3600s TTL — navigator
+    // pre-warms the dashboard every 5 min, so this entry is almost
+    // always fresh and cartographer's read here is essentially free.
+    // We pass the same 6h freshness budget: a LONGER TTL never forces
+    // another caller to recompute (cachedCount stores no per-entry TTL;
+    // the reader's TTL only decides whether IT accepts the warmed
+    // value), it only removes cartographer's own boundary-miss
+    // contribution. Log-line usage tolerates the extra staleness.
+    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', DIAG_COUNT_TTL, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE status = 'active'").first<{ n: number }>();
       return row?.n ?? 0;
     }) };

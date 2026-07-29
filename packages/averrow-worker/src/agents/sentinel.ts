@@ -248,7 +248,19 @@ export const sentinelAgent: AgentModule = {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats").first<{ n: number }>();
       return row?.n ?? 0;
     }) };
-    const nullCount = { n: await cachedCount(env, 'count.threats.null_confidence', 900, async () => {
+    // PR-BU: TTL 900s → 7200s. Sentinel is dispatched from the hourly
+    // orchestrator tick (after feed ingestion when totalNew > 0), so
+    // its inter-run gap is ~1-2h. A 15-min TTL is far shorter than
+    // that gap → the entry always expired before the next run → this
+    // full-table `confidence_score IS NULL` scan ran every dispatch
+    // (diagnostics: 29.5M reads/24h). A 2h TTL exceeds the inter-run
+    // gap so consecutive runs reuse the warmed entry. This count is
+    // diagnostic-only (per-run summary logging); a stale reading is
+    // acceptable even though sentinel itself drains the null-confidence
+    // backlog. (No cube/pre-computed column covers this predicate; a
+    // partial index on confidence_score IS NULL would make the scan
+    // cheap but requires a migration, out of scope here.)
+    const nullCount = { n: await cachedCount(env, 'count.threats.null_confidence', 7200, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE confidence_score IS NULL").first<{ n: number }>();
       return row?.n ?? 0;
     }) };

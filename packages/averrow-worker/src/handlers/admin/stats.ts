@@ -72,12 +72,13 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
     // admin dashboard whichever value is freshest across all callers
     // and eliminates one compute path per TTL window.
     adminCachedCount('count.threats.total', 3600, "SELECT COUNT(*) AS n FROM threats"),
-    // TTL aligned to 3600s to match every other caller of this shared
-    // key (dashboard.ts, cartographer.ts). A shorter TTL here rejected
-    // entries the 3600s callers had warmed, forcing a ~488K-row recompute
-    // on each admin load and dragging the global cached_count hit_rate
-    // below the 70% target. Same fix already applied to count.threats.total above.
-    adminCachedCount('count.threats.active', 3600, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
+    // TTL aligned to 21600s (6h) to match every other frequent caller of
+    // this shared key (dashboard.ts, cartographer.ts). A shorter TTL here
+    // rejected entries the 6h callers had warmed, forcing a ~801K-row
+    // recompute on each admin load and re-stamping the key at 1h — which
+    // is what kept diagnostics attributing ~41.6M rows/24h to this count.
+    // `active` is slow-moving; a 6h-stale headline is acceptable.
+    adminCachedCount('count.threats.active', 21600, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active'"),
     env.DB.prepare(
       "SELECT COUNT(*) AS active_sessions FROM sessions WHERE expires_at > datetime('now') AND revoked_at IS NULL",
     ).first<{ active_sessions: number }>(),
