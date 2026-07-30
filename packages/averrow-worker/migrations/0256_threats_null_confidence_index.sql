@@ -1,0 +1,46 @@
+-- Partial index for the null-confidence enrichment work-queue.
+--
+-- Context (D1 spend blowout, 2026-07 — PR #1702 follow-up): four sites
+-- filter `threats WHERE confidence_score IS NULL`, none of them matched
+-- by an index, so each ran a full-table scan over ~821K rows:
+--
+--   * src/agents/sentinel.ts   COUNT(*) diagnostic (29.5M reads/24h)
+--   * src/agents/sentinel.ts   SELECT ... ORDER BY created_at DESC LIMIT 50
+--   * src/handlers/admin/backfills.ts  COUNT(*) for the backfill total
+--   * src/handlers/admin/backfills.ts  SELECT ... ORDER BY created_at DESC LIMIT ?
+--
+-- PR #1702 raised the two COUNT TTLs so a warm cache absorbs most of the
+-- read cost, but a COUNT can't be cached forever and the two work-queue
+-- SELECTs (sentinel's re-classify batch, the admin backfill drain) must
+-- see fresh rows — they can't be cached at all. The durable fix is an
+-- index.
+--
+-- Why this is selective where migration 0095 warned partial indexes are
+-- pointless for a >50%-of-table predicate: `confidence_score IS NULL` is
+-- a drainable backlog, not a static majority. Sentinel actively
+-- re-classifies null-confidence rows every run and the admin backfill
+-- drains the rest, so at steady state the null set is a small fraction of
+-- the table. Even before it drains, the two SELECTs carry
+-- `ORDER BY created_at DESC LIMIT N`, which this index satisfies by
+-- reading only the top N rows regardless of backlog size — the LIMIT is
+-- served from the head of the index, never the tail.
+--
+-- Column choice: both callers scan/order on created_at DESC (NOT
+-- first_seen, unlike the *_pending enrichment indexes 0251/0254 whose
+-- queries are time-bounded on first_seen), so created_at DESC is the
+-- correct indexed key here.
+--
+-- EXPLAIN QUERY PLAN (expected):
+--   SELECT: SEARCH threats USING INDEX idx_threats_null_confidence
+--           (with ORDER BY created_at DESC satisfied by the index order)
+--   COUNT:  COUNT via the partial index, proportional to the null-set
+--           size, not the full ~821K-row table.
+--
+-- Write amplification: each threats INSERT/UPDATE that leaves
+-- confidence_score NULL (or clears it) writes one index row; once a row
+-- is scored (the common terminal state) it drops out of the partial
+-- index. Same negligible profile as the other *_pending partial indexes.
+
+CREATE INDEX IF NOT EXISTS idx_threats_null_confidence
+  ON threats(created_at DESC)
+  WHERE confidence_score IS NULL;

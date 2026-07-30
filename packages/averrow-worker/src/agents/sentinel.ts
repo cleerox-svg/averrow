@@ -257,9 +257,12 @@ export const sentinelAgent: AgentModule = {
     // gap so consecutive runs reuse the warmed entry. This count is
     // diagnostic-only (per-run summary logging); a stale reading is
     // acceptable even though sentinel itself drains the null-confidence
-    // backlog. (No cube/pre-computed column covers this predicate; a
-    // partial index on confidence_score IS NULL would make the scan
-    // cheap but requires a migration, out of scope here.)
+    // backlog. (No cube/pre-computed column covers this predicate;
+    // migration 0256 adds a partial index idx_threats_null_confidence
+    // ON threats(created_at DESC) WHERE confidence_score IS NULL so both
+    // this COUNT and the re-classify SELECT above are served from the
+    // index instead of a full-table scan — the raised TTL now just
+    // absorbs the residual index-count cost.)
     const nullCount = { n: await cachedCount(env, 'count.threats.null_confidence', 7200, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE confidence_score IS NULL").first<{ n: number }>();
       return row?.n ?? 0;
