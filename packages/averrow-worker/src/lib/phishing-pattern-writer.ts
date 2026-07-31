@@ -36,9 +36,15 @@ import {
   computeTemplateDetected,
   measureCapture,
   deriveCampaignKey,
+  aggregateCampaign,
+  buildSlotContext,
+  slottedSubjectHash,
   type CaptureInput,
   type PerCaptureSignals,
   type CampaignKeyKind,
+  type CampaignMemberSignal,
+  type CampaignPatternStats,
+  type PolymorphismRegime,
 } from './phishing-pattern-signals';
 
 /** Anything with a `.prepare()` — both `D1Database` and `D1DatabaseSession`
@@ -514,4 +520,346 @@ export async function runPhishingSignalWriter(
     skipped_below_floor: skippedBelowFloor,
     by_key_kind: byKeyKind,
   };
+}
+
+// ─── Campaign-grain rollup (W1.6, spec §8) ───────────────────────────────
+//
+// Second, separable pass over the per-capture writer's output. Reads
+// `phishing_pattern_signals` grouped by `campaign_key` (non-NULL keys only),
+// assembles the CampaignMemberSignal[] the pure `aggregateCampaign` needs —
+// the measured stats + infra columns live on the signals row; `captured_at`,
+// `from_domain`, and `subject` are joined back from `spam_trap_captures`, and
+// `subject_slot_hash` is computed HERE via the identical Stage-A slotting the
+// per-capture writer used (spec §8.3 boundary note) — then upserts one
+// `campaign_pattern_stats` row per group via `ON CONFLICT(campaign_key)`.
+//
+// Grain note: pagination is over campaign GROUPS, not captures — distinct from
+// the per-capture writer's capture-window pagination, which is why this is a
+// sibling entry point rather than an inline tail of `runPhishingSignalWriter`.
+//
+// Two writes, both through `env.DB`:
+//   1. Upsert `campaign_pattern_stats` (recompute-from-scratch idempotent;
+//      groups below MIN_CAMPAIGN_MEMBERS produce NO row — never a junk row).
+//   2. Re-stamp the AUTHORITATIVE `template_detected` on every member of every
+//      processed group (spec §3.6 req 1 / §8.6 req 2) — the per-capture seed is
+//      best-effort; this pass is the source of truth.
+
+/** Distinct-key page: campaign_key + kind + its full member count. */
+interface CampaignGroupRow {
+  campaign_key: string;
+  campaign_key_kind: string;
+  member_count: number;
+}
+
+/** One member row: signals columns + the capture join-backs the core needs. */
+interface RollupMemberRow {
+  capture_id: number;
+  campaign_key: string;
+  template_hash: string | null;
+  vocabulary_complexity: number | null;
+  sentence_structure_variance: number | null;
+  fluency_score: number | null;
+  sender_ip: string | null;
+  sender_asn: string | null;
+  mail_server_fingerprint: string | null;
+  // Join-backs from spam_trap_captures (+ brands) — captured_at/from_domain are
+  // core inputs; the rest build the slot context for subject_slot_hash.
+  captured_at: string | null;
+  from_domain: string | null;
+  subject: string | null;
+  from_address: string | null;
+  trap_address: string | null;
+  spoofed_brand_id: string | null;
+  spoofed_domain: string | null;
+  brand_name: string | null;
+}
+
+/** Distinct non-NULL campaign keys with their member counts, one page. */
+const CAMPAIGN_GROUP_SELECT = `
+  SELECT campaign_key                 AS campaign_key,
+         MAX(campaign_key_kind)       AS campaign_key_kind,
+         COUNT(*)                     AS member_count
+  FROM phishing_pattern_signals
+  WHERE campaign_key IS NOT NULL
+  GROUP BY campaign_key
+  ORDER BY campaign_key
+  LIMIT ? OFFSET ?
+`;
+
+/** How many campaign keys per member-load IN() query — bounds statement size. */
+const MEMBER_KEY_CHUNK = 50;
+
+/** All valid `campaign_key_kind` literals (defensive narrowing to the union). */
+const VALID_CAMPAIGN_KINDS: ReadonlySet<string> = new Set<CampaignKeyKind>([
+  'campaign',
+  'brand_domain',
+  'sending_ip',
+  'from_domain',
+]);
+
+function asCampaignKind(s: string | null): CampaignKeyKind | null {
+  return s != null && VALID_CAMPAIGN_KINDS.has(s) ? (s as CampaignKeyKind) : null;
+}
+
+/** UTC-day bucket embedded as the last `|`-segment of every campaign_key. */
+function bucketFromKey(campaignKey: string): string {
+  const bar = campaignKey.lastIndexOf('|');
+  return bar >= 0 ? campaignKey.slice(bar + 1) : campaignKey;
+}
+
+/** Assemble the CampaignMemberSignal the pure core reads, computing
+ *  subject_slot_hash via the identical Stage-A slotting (spec §8.3). */
+function toMemberSignal(row: RollupMemberRow): CampaignMemberSignal {
+  const ctx = buildSlotContext({
+    captureId: row.capture_id,
+    subject: row.subject,
+    bodyPreview: null,
+    rawHeaders: null,
+    urlsFound: null,
+    sendingIp: row.sender_ip,
+    fromAddress: row.from_address,
+    fromDomain: row.from_domain,
+    heloHostname: null,
+    xMailer: null,
+    trapAddress: row.trap_address,
+    spoofedBrandId: row.spoofed_brand_id,
+    spoofedDomain: row.spoofed_domain,
+    brandMatchMethod: null,
+    brandName: row.brand_name,
+    threatId: null,
+    threatCampaignId: null,
+    capturedAt: row.captured_at,
+  });
+  return {
+    capture_id: row.capture_id,
+    captured_at: row.captured_at,
+    template_hash: row.template_hash,
+    vocabulary_complexity: row.vocabulary_complexity,
+    sentence_structure_variance: row.sentence_structure_variance,
+    fluency_score: row.fluency_score,
+    sending_ip: row.sender_ip,
+    from_domain: row.from_domain,
+    sender_asn: row.sender_asn,
+    mail_server_fingerprint: row.mail_server_fingerprint,
+    subject_slot_hash: slottedSubjectHash(row.subject, ctx),
+  };
+}
+
+export interface PhishingRollupResult {
+  dry_run: boolean;
+  limit: number;
+  offset: number;
+  /** Distinct campaign keys examined in this page. */
+  groups_scanned: number;
+  /** campaign_pattern_stats rows upserted (0 in dry_run — the would-be count). */
+  stats_written: number;
+  /** Groups below MIN_CAMPAIGN_MEMBERS — no row produced (spec §8.2). */
+  groups_skipped_below_floor: number;
+  /** phishing_pattern_signals rows whose template_detected was re-stamped
+   *  (all members of every processed group; spec §3.6/§8.6). */
+  members_restamped: number;
+  /** The rollup floor this page was measured against. */
+  min_campaign_members: number;
+  /** Written stats rows split by polymorphism_regime. */
+  by_regime: Record<string, number>;
+}
+
+/**
+ * §8 campaign-grain rollup. Reads a page of campaign groups off the read
+ * replica, aggregates each qualifying group with the pure `aggregateCampaign`,
+ * and (when `dryRun` is false) upserts `campaign_pattern_stats` + re-stamps the
+ * authoritative `template_detected` — both through `env.DB`. Idempotent:
+ * recompute-from-scratch on `ON CONFLICT(campaign_key)`, so a re-run over the
+ * same groups reproduces byte-identical statistics (only `computed_at` advances).
+ */
+export async function runPhishingCampaignRollup(
+  env: Env,
+  read: Queryable,
+  limit: number,
+  offset: number,
+  dryRun: boolean,
+): Promise<PhishingRollupResult> {
+  const minMembers = PHISHING_SIGNAL_CALIBRATION.MIN_CAMPAIGN_MEMBERS;
+
+  const groupPage = await read
+    .prepare(CAMPAIGN_GROUP_SELECT)
+    .bind(limit, offset)
+    .all<CampaignGroupRow>();
+
+  const qualifying: CampaignGroupRow[] = [];
+  let groupsSkippedBelowFloor = 0;
+  for (const g of groupPage.results) {
+    if (g.member_count >= minMembers) qualifying.push(g);
+    else groupsSkippedBelowFloor++;
+  }
+
+  // Load every member of the qualifying keys, chunked to bound IN() size.
+  const membersByKey = new Map<string, CampaignMemberSignal[]>();
+  for (let i = 0; i < qualifying.length; i += MEMBER_KEY_CHUNK) {
+    const keys = qualifying.slice(i, i + MEMBER_KEY_CHUNK).map((g) => g.campaign_key);
+    const placeholders = keys.map(() => '?').join(', ');
+    const memberSql = `
+      SELECT p.capture_id                    AS capture_id,
+             p.campaign_key                  AS campaign_key,
+             p.template_hash                 AS template_hash,
+             p.vocabulary_complexity         AS vocabulary_complexity,
+             p.sentence_structure_variance   AS sentence_structure_variance,
+             p.fluency_score                 AS fluency_score,
+             p.sender_ip                     AS sender_ip,
+             p.sender_asn                    AS sender_asn,
+             p.mail_server_fingerprint       AS mail_server_fingerprint,
+             stc.captured_at                 AS captured_at,
+             stc.from_domain                 AS from_domain,
+             stc.subject                     AS subject,
+             stc.from_address                AS from_address,
+             stc.trap_address                AS trap_address,
+             stc.spoofed_brand_id            AS spoofed_brand_id,
+             stc.spoofed_domain              AS spoofed_domain,
+             b.name                          AS brand_name
+      FROM phishing_pattern_signals p
+      JOIN spam_trap_captures stc ON stc.id = p.capture_id
+      LEFT JOIN brands b          ON b.id = stc.spoofed_brand_id
+      WHERE p.campaign_key IN (${placeholders})
+      ORDER BY p.campaign_key, p.capture_id
+    `;
+    const res = await read.prepare(memberSql).bind(...keys).all<RollupMemberRow>();
+    for (const row of res.results) {
+      const list = membersByKey.get(row.campaign_key) ?? [];
+      list.push(toMemberSignal(row));
+      membersByKey.set(row.campaign_key, list);
+    }
+  }
+
+  // Aggregate each qualifying group with the pure core.
+  const statsRows: CampaignPatternStats[] = [];
+  const restamp: Array<{ capture_id: number; template_detected: 0 | 1 }> = [];
+  const byRegime: Record<string, number> = {};
+  for (const g of qualifying) {
+    const kind = asCampaignKind(g.campaign_key_kind);
+    if (kind == null) continue; // malformed kind — skip, don't write a junk row
+    const members = membersByKey.get(g.campaign_key) ?? [];
+    const bucket = bucketFromKey(g.campaign_key);
+    const result = aggregateCampaign(g.campaign_key, kind, bucket, members);
+    if (result == null) continue; // below floor — no row (defensive; pre-filtered)
+    statsRows.push(result.stats);
+    const regime: PolymorphismRegime = result.stats.polymorphism_regime;
+    byRegime[regime] = (byRegime[regime] ?? 0) + 1;
+    for (const [captureId, detected] of result.templateDetectedByCapture) {
+      restamp.push({ capture_id: captureId, template_detected: detected });
+    }
+  }
+
+  if (!dryRun) {
+    await upsertCampaignStats(env.DB, statsRows);
+    await restampTemplateDetectedRows(env.DB, restamp);
+  }
+
+  return {
+    dry_run: dryRun,
+    limit,
+    offset,
+    groups_scanned: groupPage.results.length,
+    stats_written: statsRows.length,
+    groups_skipped_below_floor: groupsSkippedBelowFloor,
+    members_restamped: restamp.length,
+    min_campaign_members: minMembers,
+    by_regime: byRegime,
+  };
+}
+
+// `campaign_pattern_stats` upsert. `id` (random default) and `computed_at`
+// (datetime('now')) are NOT bound; every statistical column is recomputed from
+// scratch on conflict, so the row is idempotent for identical member inputs.
+// There is deliberately NO ai_generated_probability column (spec §0.2 rule 1).
+const CAMPAIGN_STATS_UPSERT = `
+  INSERT INTO campaign_pattern_stats (
+    campaign_key, campaign_key_kind, window_bucket, window_start, window_end,
+    time_window_seconds, member_count, hashed_member_count, stats_member_count,
+    distinct_template_hashes, distinct_template_ratio, largest_template_share,
+    mean_pairwise_hamming, sd_pairwise_hamming, near_dup_pair_rate,
+    pairwise_sample_size, distinct_sending_ips, distinct_from_domains,
+    distinct_asns, distinct_mail_fingerprints, distinct_subject_hashes,
+    mean_vocabulary_complexity, mean_sentence_structure_variance,
+    mean_fluency_score, polymorphism_regime, computed_at
+  ) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    datetime('now')
+  )
+  ON CONFLICT(campaign_key) DO UPDATE SET
+    campaign_key_kind                = excluded.campaign_key_kind,
+    window_bucket                    = excluded.window_bucket,
+    window_start                     = excluded.window_start,
+    window_end                       = excluded.window_end,
+    time_window_seconds              = excluded.time_window_seconds,
+    member_count                     = excluded.member_count,
+    hashed_member_count              = excluded.hashed_member_count,
+    stats_member_count               = excluded.stats_member_count,
+    distinct_template_hashes         = excluded.distinct_template_hashes,
+    distinct_template_ratio          = excluded.distinct_template_ratio,
+    largest_template_share           = excluded.largest_template_share,
+    mean_pairwise_hamming            = excluded.mean_pairwise_hamming,
+    sd_pairwise_hamming              = excluded.sd_pairwise_hamming,
+    near_dup_pair_rate               = excluded.near_dup_pair_rate,
+    pairwise_sample_size             = excluded.pairwise_sample_size,
+    distinct_sending_ips             = excluded.distinct_sending_ips,
+    distinct_from_domains            = excluded.distinct_from_domains,
+    distinct_asns                    = excluded.distinct_asns,
+    distinct_mail_fingerprints       = excluded.distinct_mail_fingerprints,
+    distinct_subject_hashes          = excluded.distinct_subject_hashes,
+    mean_vocabulary_complexity       = excluded.mean_vocabulary_complexity,
+    mean_sentence_structure_variance = excluded.mean_sentence_structure_variance,
+    mean_fluency_score               = excluded.mean_fluency_score,
+    polymorphism_regime              = excluded.polymorphism_regime,
+    computed_at                      = datetime('now')
+`;
+
+async function upsertCampaignStats(db: D1Database, rows: CampaignPatternStats[]): Promise<void> {
+  if (rows.length === 0) return;
+  const stmt = db.prepare(CAMPAIGN_STATS_UPSERT);
+  const statements = rows.map((s) =>
+    stmt.bind(
+      s.campaign_key,
+      s.campaign_key_kind,
+      s.window_bucket,
+      s.window_start,
+      s.window_end,
+      s.time_window_seconds,
+      s.member_count,
+      s.hashed_member_count,
+      s.stats_member_count,
+      s.distinct_template_hashes,
+      s.distinct_template_ratio,
+      s.largest_template_share,
+      s.mean_pairwise_hamming,
+      s.sd_pairwise_hamming,
+      s.near_dup_pair_rate,
+      s.pairwise_sample_size,
+      s.distinct_sending_ips,
+      s.distinct_from_domains,
+      s.distinct_asns,
+      s.distinct_mail_fingerprints,
+      s.distinct_subject_hashes,
+      s.mean_vocabulary_complexity,
+      s.mean_sentence_structure_variance,
+      s.mean_fluency_score,
+      s.polymorphism_regime,
+    ),
+  );
+  for (let i = 0; i < statements.length; i += WRITE_CHUNK) {
+    await db.batch(statements.slice(i, i + WRITE_CHUNK));
+  }
+}
+
+const RESTAMP_SQL = `UPDATE phishing_pattern_signals SET template_detected = ? WHERE capture_id = ?`;
+
+async function restampTemplateDetectedRows(
+  db: D1Database,
+  rows: Array<{ capture_id: number; template_detected: 0 | 1 }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const stmt = db.prepare(RESTAMP_SQL);
+  const statements = rows.map((r) => stmt.bind(r.template_detected, r.capture_id));
+  for (let i = 0; i < statements.length; i += WRITE_CHUNK) {
+    await db.batch(statements.slice(i, i + WRITE_CHUNK));
+  }
 }

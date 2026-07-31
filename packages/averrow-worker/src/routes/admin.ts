@@ -1130,6 +1130,42 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       });
     }
   });
+  router.post("/api/admin/phishing-signals/rollup", async (request: Request, env: Env) => {
+    const authCtx = await requireAdmin(request, env);
+    if (!isAuthContext(authCtx)) return authCtx;
+
+    const url = new URL(request.url);
+    const dryRunParam = url.searchParams.get('dry_run');
+    // Dry-run is the DEFAULT — an explicit dry_run=0/false requests the real
+    // write (campaign_pattern_stats upsert + authoritative template_detected
+    // re-stamp). Mirrors the per-capture backfill's safety default.
+    const dryRun = dryRunParam == null || !['0', 'false', 'no'].includes(dryRunParam.toLowerCase());
+
+    try {
+      const { clampLimit, clampOffset, runPhishingCampaignRollup } = await import(
+        "../lib/phishing-pattern-writer"
+      );
+      const { getDbContext, getReadSession } = await import("../lib/db");
+
+      // limit/offset paginate over campaign GROUPS (not captures).
+      const limit = clampLimit(Number(url.searchParams.get('limit')));
+      const offset = clampOffset(Number(url.searchParams.get('offset')));
+      const read = getReadSession(env, getDbContext(request));
+
+      const data = await runPhishingCampaignRollup(env, read, limit, offset, dryRun);
+
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
   router.post("/api/admin/backfill-brand-enrichment", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
