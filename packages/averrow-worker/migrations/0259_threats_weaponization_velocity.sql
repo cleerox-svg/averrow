@@ -1,0 +1,41 @@
+-- 0259_threats_weaponization_velocity.sql
+-- T5.2/T5.3 (rec 5, v1) — Weaponization-velocity signature.
+--
+-- Doctrine: docs/AI_PHISHING_DETECTION_RESEARCH_2026-07.md §3.4 (rec 5) —
+-- "infrastructure velocity & discontinuity signatures, GOOD FIT, PURE SQL".
+-- Semantics spec: T5.1 weaponization-velocity spec §4.1.
+--
+-- The two inputs are ALREADY on every threats row:
+--   * threats.domain_created_at (TEXT, ISO-8601 WHOIS creation_date; 0239)
+--   * threats.first_seen        (TEXT NOT NULL, datetime('now'); 0001)
+-- v1 measures how fast an operator turned a registered domain into a live
+-- threat: the whole-hours delta first_seen − domain_created_at, bucketed into
+-- a low-cardinality band. Per-row arithmetic only — no JOIN, no GROUP BY.
+--
+--   weaponization_hours — whole hours between registration and first-live
+--                         (static snapshot at detection; both inputs are
+--                         immutable, so the delta is compute-once). NULL when
+--                         not computable: domain_created_at missing/unparseable,
+--                         a negative delta, or a pre-1985 sentinel created date
+--                         (epoch/FILETIME-0). NULL ≠ normal.
+--   weaponization_flag  — very_fast (≤24h) | fast (≤72h) | normal (>72h) | NULL.
+--                         A large delta from a valid post-1985 created date is
+--                         REAL (a purchased-aged domain) and lands in `normal`,
+--                         NOT NULL — the sentinel guard keys on the absolute
+--                         created date, never on delta magnitude.
+--
+-- Metadata/evidence ONLY (spec §3, doctrine §3.1): these columns MUST NEVER
+-- gate lib/alert-triage.ts dismissals or lib/alert-ai-judge.ts auto-dismissals.
+--
+-- ADD COLUMN only (never alter/drop existing columns). Naming mirrors
+-- domain_created_at / domain_age_days (0239).
+--
+-- No index: weaponization_flag is low-cardinality (3 values + NULL), so a
+-- plain index is non-selective; v1's only readers are single-row detail reads
+-- and the cached diagnostics GROUP BY (at most once per TTL). Adding an index
+-- would only add write amplification on the hot threats table (identical
+-- reasoning to 0239's "no index" note). Add one later only if a
+-- flag-filtered range query appears.
+
+ALTER TABLE threats ADD COLUMN weaponization_hours INTEGER;
+ALTER TABLE threats ADD COLUMN weaponization_flag TEXT;
