@@ -9,6 +9,7 @@ import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
@@ -384,6 +385,99 @@ export function buildDnsQueueParity(opts: {
 export function clampHoursBack(raw: string | null): number {
   const hoursParsed = parseInt(raw ?? "6");
   return Math.min(Math.max(1, Number.isFinite(hoursParsed) ? hoursParsed : 6), 168);
+}
+
+// ── Cloaking blind-spot rate (Wave 3, rec 4) ────────────────────────
+// Crawler blind-spot metric over the ANALYZED lookalike population.
+// lib/page-fetch.ts is a plain HTTP fetcher (no JS, no headless
+// browser), so a hostile lookalike behind a Turnstile / reCAPTCHA /
+// hCaptcha / managed-challenge wall blinds the deterministic scorer —
+// the credential-harvest payload sits behind the wall. On the already-
+// gated lookalike set, the PRESENCE of a wall is itself evasion
+// evidence. This surfaces walls_observed / fetched_ok (the blind-spot
+// rate) plus a per-family breakdown, reading the authoritative
+// `page_anti_bot_wall` column (migration 0260) — no JSON parsing.
+interface PageAnalysisDiag {
+  /** Rows that have been page-analyzed (page_fetched_at IS NOT NULL). */
+  fetched_ok: number;
+  /** Analyzed rows on which an anti-bot wall was observed. */
+  walls_observed: number;
+  /** walls_observed / fetched_ok as a percentage, or null when none analyzed. */
+  wall_rate_pct: number | null;
+  /** Per-wall-family counts (GROUP BY page_anti_bot_wall, NULL excluded). */
+  by_family: Array<{ family: string; n: number }>;
+}
+
+/** Build the `page_analysis` diagnostics block. cachedValue-wrapped so
+ *  repeated diagnostics calls don't re-scan; the LIKE/GROUP BY full scan
+ *  is acceptable ONLY because lookalike_domains is a small bounded table
+ *  (unlike threats). Key `diag.page_analysis.cloaking`, TTL 600s. */
+async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
+  return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking', 600, async () => {
+    // lookalike_domains is a small bounded table, so a full scan here is
+    // fine — this would be a red flag on the 217K-row threats table.
+    const [counts, byFamily] = await Promise.all([
+      env.DB.prepare(`
+        SELECT
+          SUM(CASE WHEN page_fetched_at IS NOT NULL THEN 1 ELSE 0 END)    AS fetched_ok,
+          SUM(CASE WHEN page_anti_bot_wall IS NOT NULL THEN 1 ELSE 0 END) AS walls_observed
+        FROM lookalike_domains
+      `).first<{ fetched_ok: number | null; walls_observed: number | null }>(),
+      env.DB.prepare(`
+        SELECT page_anti_bot_wall AS family, COUNT(*) AS n
+        FROM lookalike_domains
+        WHERE page_anti_bot_wall IS NOT NULL
+        GROUP BY page_anti_bot_wall
+        ORDER BY n DESC
+      `).all<{ family: string; n: number }>(),
+    ]);
+    const fetchedOk = counts?.fetched_ok ?? 0;
+    const wallsObserved = counts?.walls_observed ?? 0;
+    return {
+      fetched_ok: fetchedOk,
+      walls_observed: wallsObserved,
+      wall_rate_pct: fetchedOk > 0 ? Math.round((wallsObserved / fetchedOk) * 1000) / 10 : null,
+      by_family: byFamily.results.map((r) => ({ family: r.family, n: r.n })),
+    };
+  });
+}
+
+// ── Weaponization velocity distribution (Wave 3, rec 5) ─────────────
+// Distribution over the STORED threats.weaponization_flag column
+// (migration 0259) — the whole-hours registration→first-live band,
+// bucketed very_fast (≤24h) | fast (≤72h) | normal (>72h) | NULL. NULL
+// is compute-time not-computable (missing/unparseable WHOIS created
+// date, negative delta, pre-1985 sentinel), kept DISTINCT from `normal`.
+// This reads the pre-computed column only — never a live per-row
+// julianday(first_seen - domain_created_at) scan. Migration 0259
+// explicitly sanctions this cached diagnostics GROUP BY (at most once
+// per TTL) as the reason no index is warranted on the low-cardinality
+// column.
+interface VelocityDiag {
+  /** Counts per flag band, ordered very_fast → fast → normal → not_computable. */
+  by_flag: Array<{ flag: string; n: number }>;
+  /** Sum across all bands (= total threats rows). */
+  total: number;
+}
+
+/** Build the `velocity` diagnostics block. cachedValue-wrapped (KV) so
+ *  the low-cardinality GROUP BY over threats runs at most once per TTL,
+ *  never a live full scan per diagnostics call. Key
+ *  `diag.weaponization.distribution`, TTL 900s. */
+async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
+  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution', 900, async () => {
+    const res = await env.DB.prepare(`
+      SELECT weaponization_flag AS flag, COUNT(*) AS n
+      FROM threats
+      GROUP BY weaponization_flag
+    `).all<{ flag: string | null; n: number }>();
+    const order = ['very_fast', 'fast', 'normal', 'not_computable'];
+    const byFlag = res.results
+      .map((r) => ({ flag: r.flag ?? 'not_computable', n: r.n }))
+      .sort((a, b) => order.indexOf(a.flag) - order.indexOf(b.flag));
+    const total = byFlag.reduce((s, r) => s + r.n, 0);
+    return { by_flag: byFlag, total };
+  });
 }
 
 /** GET /api/admin/platform-diagnostics  (JWT admin auth)
@@ -1054,6 +1148,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       suspended_orgs: number;
     }>();
 
+    // Wave 3 signals — cloaking blind-spot rate (rec 4) + weaponization
+    // velocity distribution (rec 5). Both cachedValue-wrapped inside their
+    // builders (KV-cached, bounded per TTL) so they don't re-scan on every
+    // diagnostics call — hit/miss feeds the same cached_count.hit_rate ring.
+    const pageAnalysisP = buildPageAnalysisDiag(env);
+    const velocityP = buildVelocityDiag(env);
+
     // ── Execute all in parallel ─────────────────────────────────────
     const [
       clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
@@ -1068,6 +1169,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       dnsQueueSize,
       dnsCandidatesInThreats,
       dnsQueueStability,
+      pageAnalysis,
+      velocity,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -1081,6 +1184,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       dnsQueueSizeP,
       dnsCandidatesInThreatsP,
       dnsQueueStabilityP,
+      pageAnalysisP,
+      velocityP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -1447,6 +1552,24 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // `docs/PLATFORM_DATA_DEPENDENCIES.md` and the script's
         // header comment.
         dns_queue_stability: dnsQueueStability,
+
+        // Cloaking blind-spot rate (Wave 3, rec 4). walls_observed /
+        // fetched_ok over the analyzed lookalike population, plus the
+        // per-family breakdown. A rising wall_rate_pct means more
+        // lookalikes are hiding their payload behind an anti-bot wall
+        // that the plain-HTTP fetcher can't see through. cachedValue-
+        // wrapped (diag.page_analysis.cloaking, 600s); the full scan is
+        // safe only because lookalike_domains is a small bounded table.
+        page_analysis: pageAnalysis,
+
+        // Weaponization velocity distribution (Wave 3, rec 5). Counts of
+        // threats per registration→first-live band from the STORED
+        // threats.weaponization_flag column (migration 0259), NULL mapped
+        // to `not_computable` (kept distinct from `normal`). cachedValue-
+        // wrapped (diag.weaponization.distribution, 900s) so the low-
+        // cardinality GROUP BY over threats runs at most once per TTL,
+        // never a live per-row julianday scan.
+        velocity: velocity,
 
         alerts: {
           // NX2 tier-gate visibility. `tracked` should trend to 0 (or
