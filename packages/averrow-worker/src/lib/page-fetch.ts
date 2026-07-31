@@ -391,6 +391,26 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     if (val && arr.length < max) arr.push(val);
   };
 
+  // Whole-class-token match without regex (SSRF/ReDoS contract): the vendor
+  // class must appear delimited by HTML whitespace or a string end, so a
+  // benign fragment like `search-captcha` does NOT match `h-captcha`, and
+  // `flag-recaptcha` does NOT match `g-recaptcha`. Operates on a single
+  // (already length-bounded) class attribute value.
+  const isClassBoundary = (c: string): boolean =>
+    c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+  const hasClassToken = (classAttr: string, token: string): boolean => {
+    let from = 0;
+    for (;;) {
+      const idx = classAttr.indexOf(token, from);
+      if (idx === -1) return false;
+      const before = idx === 0 ? ' ' : classAttr[idx - 1]!;
+      const afterIdx = idx + token.length;
+      const after = afterIdx >= classAttr.length ? ' ' : classAttr[afterIdx]!;
+      if (isClassBoundary(before) && isClassBoundary(after)) return true;
+      from = idx + 1;
+    }
+  };
+
   const rewriter = new HTMLRewriter()
     .on('input', {
       element(el) {
@@ -412,9 +432,9 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
         if (antiBotWall !== null && wallRank(antiBotWall) === 1) return;
         const cls = (el.getAttribute('class') ?? '').toLowerCase();
         let candidate: string | null = null;
-        if (cls.includes('cf-turnstile')) candidate = 'turnstile';
-        else if (cls.includes('g-recaptcha')) candidate = 'recaptcha';
-        else if (cls.includes('h-captcha')) candidate = 'hcaptcha';
+        if (hasClassToken(cls, 'cf-turnstile')) candidate = 'turnstile';
+        else if (hasClassToken(cls, 'g-recaptcha')) candidate = 'recaptcha';
+        else if (hasClassToken(cls, 'h-captcha')) candidate = 'hcaptcha';
         // Rank-aware upgrade (mirrors the script hook): a widget (ranks 1-3)
         // always beats a cf_challenge (4) recorded earlier in document order,
         // and a higher-rank widget upgrades a lower-rank one.

@@ -165,6 +165,24 @@ describe("parseSuspectHtml — antiBotWall marker extraction per fetcher family"
     expect(s.antiBotWall).toBe("turnstile");
   });
 
+  it("class matching is whole-token: a widget class among other classes still matches", async () => {
+    const html = `<html><body><div class="row g-recaptcha mt-2"></div></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.antiBotWall).toBe("recaptcha");
+  });
+
+  it("class matching is whole-token: benign fragments do NOT collide (search-captcha, flag-recaptcha)", async () => {
+    // Bare substring matching would falsely fire here — the vendor token must
+    // be a whole class token delimited by whitespace/ends.
+    const html = `<html><body>
+      <div class="search-captcha-widget"></div>
+      <div class="flag-recaptcha-badge"></div>
+      <div class="xcf-turnstile-thing"></div>
+    </body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.antiBotWall).toBeNull();
+  });
+
   it("recaptcha: detected via g-recaptcha class", async () => {
     const html = `<html><body><div class="g-recaptcha" data-sitekey="y"></div></body></html>`;
     const s = await parseSuspectHtml(bytes(html));

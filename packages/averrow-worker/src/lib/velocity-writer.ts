@@ -17,13 +17,15 @@
 //   * Single-row PK `UPDATE threats SET ... WHERE id = ?` — the row already
 //     exists, so no `ON CONFLICT` is needed (contrast the 0257 capture writer,
 //     which INSERTs new rows). Chunked `db.batch()` (WRITE_CHUNK = 50).
-//   * IDEMPOTENT / re-run stable: the candidate set is `domain_created_at IS
-//     NOT NULL` (immutable input ⇒ a stable page for a given offset), and both
-//     timestamps are immutable, so re-running the same offset reproduces
-//     byte-identical values. Only computable rows are written; not-computable
+//   * IDEMPOTENT / re-run stable: the candidate inputs (domain_created_at,
+//     first_seen) are immutable, so re-running any offset reproduces
+//     byte-identical values. Because `threats.id` is a content hash (not a
+//     monotonic key), a threat ingested mid-sweep can shift the ORDER BY id
+//     window and cause a one-row skip/re-visit at a page boundary — harmless:
+//     re-visits are idempotent no-ops and a skipped row is caught by the next
+//     sweep from offset 0. Only computable rows are written; not-computable
 //     rows are left NULL (spec: NULL = "velocity not measurable", distinct from
-//     `normal`) — since the SELECT set is stable, skipping their write does not
-//     shift pagination. A sweep terminates when `scanned < limit`.
+//     `normal`). A sweep terminates when `scanned < limit`.
 //
 // Metadata/evidence ONLY (spec §3, doctrine §3.1): the stamped columns MUST
 // NEVER gate alert-triage / alert-ai-judge. This writer only persists the
