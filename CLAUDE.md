@@ -1118,7 +1118,14 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd` |
 | `platform_totals` | `brands`, `providers`, `campaigns`, `clusters`, `feeds_enabled`, `feeds_disabled` |
 | `brand_count_drift` | Last cube_healer reconciliation of `brands.threat_count` AND `brands.active_threat_count` in one pass (`brandsChecked`, `drifted`, `fixed`, `checked_at`). Persistent large `drifted` = a brand-link writer is skipping the counter bump — see `lib/brand-count-reconciler.ts`. |
+| `page_analysis` | Cloaking blind-spot rate (Wave 3, rec 4) over the analyzed `lookalike_domains` population: `fetched_ok`, `walls_observed`, `wall_rate_pct`, `by_family[]` (GROUP BY `page_anti_bot_wall`, migration 0260). Rising `wall_rate_pct` = growing crawler blind spot — see `lib/page-fetch.ts` / `lib/page-phishing-scorer.ts`. |
+| `velocity` | Weaponization-velocity distribution (Wave 3, rec 5) over `threats.weaponization_flag` (migration 0259): `by_flag[]` (`very_fast`/`fast`/`normal`/`not_computable`), `total`. Metadata/evidence only — never gates alert-triage/alert-ai-judge. |
 | `_meta` | `db_clock_utc` (verify timezone), `window_hours`, `generated_at` |
+
+This table is a curated subset for common health-check reading, not an
+exhaustive schema of the endpoint's response — several other blocks exist
+(`dns_queue_parity`, `dns_queue_stability`, `alerts.by_tier`, etc.); read
+`handlers/diagnostics.ts` for the full shape.
 
 ### When the user asks for a health check
 

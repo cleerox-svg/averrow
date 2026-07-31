@@ -431,7 +431,28 @@ The raw material and half the plumbing exist today:
 > /api/admin/phantom-domains/match` / `POST
 > /api/internal/phantom-domains/match` — see `docs/API_REFERENCE.md`,
 > `docs/AI_AGENTS.md` (Phantom), and `docs/PLATFORM_DATA_DEPENDENCIES.md`
-> §1 (`phantom_domains` row).
+> §1 (`phantom_domains` row). **Items 4 (cloaking-as-signal) and 5
+> (velocity, v1) are now IMPLEMENTED (Wave 3)** on this branch: migration
+> `0260_lookalike_anti_bot_wall.sql` adds `lookalike_domains.page_anti_bot_wall`;
+> `lib/page-fetch.ts` detects anti-bot walls (families: `turnstile`/
+> `recaptcha`/`hcaptcha`/`cf_challenge`/`js_challenge`) into
+> `ParsedPageSignals.antiBotWall`; `lib/page-phishing-scorer.ts` adds an
+> `anti_bot_wall` signal (weight 20) plus a monotonic MEDIUM threat-level
+> floor and the persisted `antiBotWallFamily`; `scanners/lookalike-page-
+> analysis.ts` writes the column. Migration
+> `0259_threats_weaponization_velocity.sql` adds
+> `threats.weaponization_hours`/`weaponization_flag`; the pure decide-fn
+> `lib/velocity-signatures.ts` (bands `very_fast` ≤24h / `fast` ≤72h /
+> `normal` >72h, NULL = not-computable) is applied by the bounded backfill
+> writer `lib/velocity-writer.ts` via `POST /api/admin/velocity/backfill`
+> (endpoint-dispatched, no cron, no `agent_runs`/`agent_events` — same
+> precedent as the phase-1 phishing-signals writer). Both diagnostics
+> surfaces (`page_analysis`, `velocity` blocks in `handlers/diagnostics.ts`)
+> are live — see `CLAUDE.md` §10 and `docs/PLATFORM_DATA_DEPENDENCIES.md`
+> §1. **Rec 5's phase-2 legs — single-domain fingerprint discontinuity
+> (aged domain suddenly re-certed/re-hosted) and cert-issuance-timing
+> deltas — remain UNBUILT**; v1 only measures the registration→first-live
+> delta, not discontinuity on previously-stable infrastructure.
 
 1. **Fix the three dead-read schema bugs** (§7.1) — trivial, and a
    prerequisite: without it, no future writer lights up the existing risk
@@ -452,9 +473,13 @@ The raw material and half the plumbing exist today:
 4. **Cloaking-as-signal** (§3.5) — small deterministic extension to
    `page-fetch`/`page-phishing-scorer`; converts today's silent false
    negatives into evidence and gives an instrumented blind-spot rate.
+   **IMPLEMENTED (Wave 3)** — see the implementation-status note above.
 5. **Velocity/discontinuity deltas** (§3.4) — pure SQL over captured
    timestamps (registration→cert→first_seen); extend the D5b discontinuity
-   idea toward aged-domain repurposing.
+   idea toward aged-domain repurposing. **Registration→first-live delta
+   (v1) IMPLEMENTED (Wave 3)** — see the implementation-status note above.
+   Single-domain fingerprint discontinuity and cert-issuance-timing legs
+   remain unbuilt (phase 2).
 6. **Campaign-scoped Haiku generation-mode judge** (§3.6) — only after (2)
    provides structure; metadata + narrative only; never a triage gate;
    threshold recalibration on a small labeled slice as the maintenance
@@ -505,14 +530,20 @@ so have silently returned zeros since they shipped:
 `ai_phishing_detected` score row can never fire. Not fixed in this
 research branch per scope; first item in §6.
 
-### 7.2 Lookalike page-analysis blind spot
+### 7.2 Lookalike page-analysis blind spot — ADDRESSED (Wave 3)
 
-`lib/page-fetch.ts` has no detection for anti-bot walls
-(CAPTCHA/Turnstile/challenge interstitials). Given the industry consensus
-that hostile pages now front-load these walls specifically against crawlers,
-a growing fraction of the lookalike page-analysis lane's "clean" verdicts
-are unmeasured false negatives. §6 item 4 addresses it; until then, treat
-low `page_phishing_score` on active lookalikes as weak evidence.
+`lib/page-fetch.ts` had no detection for anti-bot walls
+(CAPTCHA/Turnstile/challenge interstitials), so a growing fraction of the
+lookalike page-analysis lane's "clean" verdicts were unmeasured false
+negatives. §6 item 4 now addresses it: `lib/page-fetch.ts` detects five
+wall families (`turnstile`/`recaptcha`/`hcaptcha`/`cf_challenge`/
+`js_challenge`), `lib/page-phishing-scorer.ts` fires an `anti_bot_wall`
+signal (weight 20) with a monotonic MEDIUM floor, and
+`scanners/lookalike-page-analysis.ts` persists the authoritative family to
+`lookalike_domains.page_anti_bot_wall` (migration 0260). The blind-spot
+rate itself is now instrumented: `handlers/diagnostics.ts`'s
+`page_analysis` block reports `wall_rate_pct` (walls_observed /
+fetched_ok) plus a per-family breakdown — see `CLAUDE.md` §10.
 
 ---
 
