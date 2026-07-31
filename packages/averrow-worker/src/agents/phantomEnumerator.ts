@@ -193,11 +193,21 @@ export const phantomEnumeratorAgent: AgentModule = {
     // use; NEVER the ~76K tier='tracked' catalog). Brands not enumerated
     // in ≥90d first (rotation), oldest / never-enumerated ahead, customers
     // prioritised. Hard cap 500/run so one run's spend is deterministic.
+    //
+    // Rotation keyed on MAX(updated_at), NOT MAX(first_enumerated_at):
+    // first_enumerated_at is set once at INSERT and never moves, so a
+    // saturated brand (all ~50 Haiku domains already stored → zero new
+    // inserts on re-enumeration) would keep re-qualifying every run and pay
+    // a Haiku call every run. updated_at is bumped on every enumeration pass
+    // (the brand-wide touch below), so MAX(updated_at) reflects the last
+    // time enumeration actually RAN for the brand. NULLs-first protection is
+    // preserved: a never-enumerated brand has no phantom_domains row, so the
+    // left join produces last_enum = NULL and it still sorts/qualifies first.
     const brandRows = await env.DB.prepare(
       `SELECT b.id, b.name, b.canonical_domain
          FROM brands b
          LEFT JOIN (
-           SELECT brand_id, MAX(first_enumerated_at) AS last_enum
+           SELECT brand_id, MAX(updated_at) AS last_enum
              FROM phantom_domains
             GROUP BY brand_id
          ) pe ON pe.brand_id = b.id
@@ -248,17 +258,20 @@ export const phantomEnumeratorAgent: AgentModule = {
           MAX_DOMAINS_PER_BRAND,
         );
 
-        for (const cand of survivors) {
-          // status='predicted' ONLY. ON CONFLICT(brand_id, domain) DO
-          // NOTHING makes re-enumeration idempotent. Writes go through
-          // env.DB directly (never a read session).
-          const res = await env.DB.prepare(
-            `INSERT INTO phantom_domains
-               (id, brand_id, domain, enumeration_run_id, source_model, kind, confidence, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'predicted')
-             ON CONFLICT(brand_id, domain) DO NOTHING`,
-          )
-            .bind(
+        // status='predicted' ONLY. Batched via env.DB.batch (sibling
+        // scanners/lookalike-domains.ts pattern) instead of one .run() per
+        // survivor. ON CONFLICT(brand_id, domain) DO UPDATE SET updated_at
+        // 'touches' any colliding row so the rotation clock (now keyed on
+        // MAX(updated_at)) advances even on a conflict. Writes go through
+        // env.DB directly (never a read session).
+        if (survivors.length > 0) {
+          const stmts = survivors.map((cand) =>
+            env.DB.prepare(
+              `INSERT INTO phantom_domains
+                 (id, brand_id, domain, enumeration_run_id, source_model, kind, confidence, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'predicted')
+               ON CONFLICT(brand_id, domain) DO UPDATE SET updated_at = datetime('now')`,
+            ).bind(
               crypto.randomUUID(),
               brand.id,
               cand.domain,
@@ -266,11 +279,31 @@ export const phantomEnumeratorAgent: AgentModule = {
               HOT_PATH_HAIKU,
               cand.kind ?? null,
               cand.confidence ?? null,
-            )
-            .run();
-          // D1 reports affected rows via meta.changes; a conflict yields 0.
-          if (res.meta?.changes && res.meta.changes > 0) phantomsWritten++;
+            ),
+          );
+          const results = await env.DB.batch(stmts);
+          for (const r of results) {
+            if ((r.meta?.changes ?? 0) > 0) phantomsWritten++;
+          }
         }
+
+        // Advance the 90-day rotation clock for THIS brand regardless of
+        // whether any new domain was found. A saturated brand yields ZERO
+        // survivors — all ~50 Haiku domains were dropped by the §3.4
+        // cross-brand existing-phantom filter before reaching the insert, so
+        // the ON CONFLICT upsert above never runs for it. Without this
+        // brand-wide touch its MAX(updated_at) would never move and it would
+        // pay a Haiku call every run, defeating the rotation. Additive,
+        // no-migration. (Residual edge: a brand that has produced ZERO stored
+        // phantoms ever — every hallucinated domain collided with another
+        // brand's — has no row to touch and re-qualifies next run; an extreme,
+        // pre-existing corner that would need a dedicated marker column to
+        // close.)
+        await env.DB.prepare(
+          `UPDATE phantom_domains SET updated_at = datetime('now') WHERE brand_id = ?`,
+        )
+          .bind(brand.id)
+          .run();
 
         brandsEnumerated++;
       } catch (err) {

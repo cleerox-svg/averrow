@@ -105,8 +105,14 @@ describe("phantom_enumerator never creates alerts or threats (spec §0/§6 gover
     expect(insertMatch![0]).not.toMatch(/'registered'|'resolved'|'dismissed'/);
   });
 
-  it("uses ON CONFLICT(brand_id, domain) DO NOTHING for idempotent re-enumeration (never SELECT-then-INSERT)", () => {
-    expect(enumeratorSrc).toMatch(/ON CONFLICT\(brand_id, domain\) DO NOTHING/);
+  it("uses ON CONFLICT(brand_id, domain) DO UPDATE SET updated_at for idempotent re-enumeration (never SELECT-then-INSERT)", () => {
+    // Rotation-clock fix: DO UPDATE SET updated_at 'touches' a colliding row
+    // so MAX(updated_at) advances on re-enumeration (was DO NOTHING, which
+    // left a saturated brand's clock frozen — budget leak).
+    expect(enumeratorSrc).toMatch(
+      /ON CONFLICT\(brand_id, domain\) DO UPDATE SET updated_at = datetime\('now'\)/,
+    );
+    expect(enumeratorSrc).not.toMatch(/ON CONFLICT\(brand_id, domain\) DO NOTHING/);
   });
 
   it("only actively-monitored brands are selected — the tier filter excludes the tracked catalog", () => {
@@ -117,6 +123,42 @@ describe("phantom_enumerator never creates alerts or threats (spec §0/§6 gover
     // The query itself must never gate on the 76K tracked tier (comments
     // are free to name it descriptively; the SQL predicate must not).
     expect(query).not.toMatch(/tier\s*=\s*'tracked'/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Rotation-clock budget-leak fix (review Finding 3) — the 90-day rotation
+// must key on MAX(updated_at) (bumped every enumeration pass), NOT
+// MAX(first_enumerated_at) (frozen at first insert), and every enumeration
+// pass must touch the brand's rows so a saturated brand's clock advances.
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("rotation clock keyed on updated_at, not first_enumerated_at (Finding 3)", () => {
+  it("the brand-selection subquery aggregates MAX(updated_at), never MAX(first_enumerated_at)", () => {
+    const selectMatch = enumeratorSrc.match(/SELECT b\.id, b\.name, b\.canonical_domain[\s\S]*?LIMIT \?`/);
+    expect(selectMatch, "brand-selection SELECT not found").toBeTruthy();
+    const query = selectMatch![0];
+    expect(query).toMatch(/MAX\(updated_at\)\s+AS last_enum/);
+    expect(query).not.toMatch(/MAX\(first_enumerated_at\)/);
+  });
+
+  it("preserves NULLs-first rotation (never-enumerated brands still qualify via pe.last_enum IS NULL)", () => {
+    const selectMatch = enumeratorSrc.match(/SELECT b\.id, b\.name, b\.canonical_domain[\s\S]*?LIMIT \?`/);
+    const query = selectMatch![0];
+    expect(query).toMatch(/pe\.last_enum IS NULL/);
+    expect(query).toMatch(/ORDER BY[\s\S]*pe\.last_enum ASC/);
+  });
+
+  it("touches the brand's phantom_domains rows every pass so a saturated brand's clock still advances", () => {
+    // The brand-wide UPDATE runs regardless of survivor count, so a saturated
+    // brand (zero survivors → the DO UPDATE never fires) still advances.
+    expect(enumeratorSrc).toMatch(
+      /UPDATE phantom_domains SET updated_at = datetime\('now'\) WHERE brand_id = \?/,
+    );
+  });
+
+  it("batches the per-brand inserts via env.DB.batch (sibling lookalike-scanner pattern), not per-row .run()", () => {
+    expect(enumeratorSrc).toMatch(/env\.DB\.batch\(stmts\)/);
   });
 });
 

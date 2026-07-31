@@ -200,4 +200,67 @@ describe("set-based join shape (spec §7 post-pass constraint)", () => {
     const block = matcherSrc.match(/const sources: PhantomMatchSource\[\] =[\s\S]*?;/)?.[0] ?? "";
     expect(block).toMatch(/\["nrd", "ct", "lookalike"\]/);
   });
+
+  it("pins SQLite join order with CROSS JOIN so the small phantom side drives the scan (code-review #5)", () => {
+    // CROSS JOIN forces phantom_domains p as the OUTER/driver table; a plain
+    // JOIN would let the planner reorder and scan the millions-row source.
+    expect(matcherSrc).toContain("CROSS JOIN ${cfg.table} t ON t.domain = p.domain");
+    // The FROM must be phantom_domains (the small side) and there must be no
+    // un-pinned inner `JOIN ${cfg.table}`.
+    expect(matcherSrc).toContain("FROM phantom_domains p");
+    expect(matcherSrc).not.toMatch(/(?<!CROSS )JOIN \$\{cfg\.table\} t ON/);
+  });
+
+  it("appends the per-source residual (cfg.extraWhere) into the join WHERE", () => {
+    expect(matcherSrc).toContain("cfg.extraWhere");
+    expect(matcherSrc).toContain("AND t.${cfg.cursorCol} >= ?");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Finding 1 (ship-blocker): the lookalike source must gate on registered=1
+// so a predicted phantom only fires on a REAL registration, not on an
+// unregistered permutation candidate. nrd/ct are genuine observations and
+// carry NO such gate.
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("lookalike source gates on registered=1 (Finding 1 ship-blocker)", () => {
+  it("the lookalike SOURCE_CONFIG entry sets extraWhere to ' AND t.registered = 1 '", () => {
+    const lookalikeBlock = matcherSrc.match(/lookalike:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    expect(lookalikeBlock).toMatch(/extraWhere:\s*" AND t\.registered = 1 "/);
+  });
+
+  it("neither nrd nor ct carries a registered/status gate — they are genuine observations", () => {
+    const nrdBlock = matcherSrc.match(/nrd:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    const ctBlock = matcherSrc.match(/ct:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    expect(nrdBlock).toMatch(/extraWhere:\s*""/);
+    expect(ctBlock).toMatch(/extraWhere:\s*""/);
+    // No SQL `registered = 1` gate on the genuine-observation sources (the
+    // word "registered" may still appear in prose, e.g. "registered_date").
+    expect(nrdBlock).not.toMatch(/registered\s*=\s*1/);
+    expect(ctBlock).not.toMatch(/registered\s*=\s*1/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Finding 2 (ship-blocker): the incremental cursor must key on an
+// INGESTION-time column (created_at, monotonic), NOT the row's intrinsic
+// date (registered_date / not_before, which are backdated / non-monotonic
+// and would exclude late-ingested rows forever).
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("cursor keyed on ingestion-time created_at, not intrinsic date (Finding 2 ship-blocker)", () => {
+  it("all three sources cursor on created_at", () => {
+    const nrdBlock = matcherSrc.match(/nrd:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    const ctBlock = matcherSrc.match(/ct:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    const lookalikeBlock = matcherSrc.match(/lookalike:\s*\{[\s\S]*?\},/)?.[0] ?? "";
+    expect(nrdBlock).toMatch(/cursorCol:\s*"created_at"/);
+    expect(ctBlock).toMatch(/cursorCol:\s*"created_at"/);
+    expect(lookalikeBlock).toMatch(/cursorCol:\s*"created_at"/);
+  });
+
+  it("no source cursors on the non-monotonic intrinsic dates registered_date / not_before", () => {
+    expect(matcherSrc).not.toMatch(/cursorCol:\s*"registered_date"/);
+    expect(matcherSrc).not.toMatch(/cursorCol:\s*"not_before"/);
+  });
 });

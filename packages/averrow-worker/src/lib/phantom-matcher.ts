@@ -33,9 +33,15 @@
  * lost-claim never leaves an orphan alert.
  *
  * Read budget (spec §7): each source keeps an incremental KV cursor keyed
- * on its natural time column (registered_date / not_before / created_at)
+ * on its INGESTION-time column (`created_at` on all three source tables)
  * so a normal run scans only rows newer than the last run — same
- * discipline as the dns-queue reconciler. `full` ignores + does not
+ * discipline as the dns-queue reconciler. It deliberately does NOT cursor
+ * on a row's intrinsic date (nrd `registered_date` / ct `not_before`):
+ * those are NOT monotonic with ingestion — crt.sh serves historical certs
+ * and CAs backdate `not_before`, so a row ingested later but dated earlier
+ * than the advanced cursor would be `WHERE col >= cursor`-excluded FOREVER.
+ * `created_at` defaults to datetime('now') at insert time, so it is
+ * monotonic with ingestion and never backdated. `full` ignores + does not
  * advance the cursor, for an operator's catch-up sweep (e.g. right after a
  * fresh enumeration, to match phantoms enumerated AFTER their source row
  * was ingested).
@@ -78,32 +84,67 @@ export interface PhantomMatchResult {
 interface SourceConfig {
   /** Physical table joined against phantom_domains.domain. Compile-time literal. */
   table: "nrd_domains" | "ct_certificates" | "lookalike_domains";
-  /** Natural time column used as the incremental cursor. Compile-time literal. */
-  cursorCol: "registered_date" | "not_before" | "created_at";
+  /**
+   * INGESTION-time column used as the incremental cursor. Compile-time
+   * literal. `created_at` on every source table (monotonic with ingestion,
+   * never backdated) — NOT the intrinsic registered_date / not_before, which
+   * are non-monotonic on backfill and would exclude late-ingested rows
+   * forever. See module header.
+   */
+  cursorCol: "created_at";
   /** KV cursor key. */
   kvKey: string;
   /** Reused alert type (spec §6.1) — no new type introduced. */
   alertType: AlertTypeKey;
+  /**
+   * Extra per-source residual appended to the join's WHERE. Compile-time
+   * literal, never interpolated input. Empty for genuine-observation sources
+   * (nrd = a real NRD listing, ct = an issued cert); the lookalike source
+   * uses it to gate on `registered = 1` (see below).
+   */
+  extraWhere: string;
 }
 
 const SOURCE_CONFIG: Record<PhantomMatchSource, SourceConfig> = {
   nrd: {
     table: "nrd_domains",
-    cursorCol: "registered_date",
+    // nrd_domains.created_at defaults to datetime('now') at INSERT OR IGNORE
+    // time (feeds/nrd_hagezi.ts storeNrdReference) — the monotonic ingestion
+    // stamp. registered_date is the domain's intrinsic registration date and
+    // is non-monotonic on backfill, so it is NOT used as the cursor.
+    cursorCol: "created_at",
     kvKey: "phantom_matcher:nrd:cursor",
     alertType: "lookalike_domain_active",
+    extraWhere: "",
   },
   ct: {
     table: "ct_certificates",
-    cursorCol: "not_before",
+    // created_at (idx_ct_created, migration 0032) is the monotonic ingestion
+    // stamp — NOT not_before, which CAs backdate and crt.sh serves
+    // historically (a later-ingested/earlier-dated cert would be excluded
+    // forever under a not_before cursor).
+    // KNOWN COVERAGE LIMIT: the join matches ct_certificates.domain (subject
+    // CN) only — SAN entries in the san_domains JSON column are not joined,
+    // so a phantom that appears only as a SAN on a cert won't match here.
+    cursorCol: "created_at",
     kvKey: "phantom_matcher:ct:cursor",
     alertType: "ct_certificate_issued",
+    extraWhere: "",
   },
   lookalike: {
     table: "lookalike_domains",
     cursorCol: "created_at",
     kvKey: "phantom_matcher:lookalike:cursor",
     alertType: "lookalike_domain_active",
+    // SHIP-BLOCKER GATE: lookalike_domains is the scanner's FULL permutation
+    // CANDIDATE set — every generated permutation is inserted with
+    // `registered` DEFAULT 0 (migration 0031); only a later probe flips
+    // registered=1 on a real registration. Without this gate a predicted
+    // phantom would flip to 'registered' + alert on an UNREGISTERED
+    // permutation candidate — a false positive that breaks the "fire only on
+    // a real observation" invariant. `registered = 1` (partial index
+    // idx_lookalike_registered) is the "actually registered/active" gate.
+    extraWhere: " AND t.registered = 1 ",
   },
 };
 
@@ -151,24 +192,30 @@ async function matchSource(
 
   // Cursor floor. Empty string sorts below every real date string and, via
   // `>= ''`, still excludes rows whose cursor column is NULL (NULL >= '' is
-  // NULL, not true) — a cert with no not_before simply isn't cursorable.
+  // NULL, not true) — a row with no created_at simply isn't cursorable.
   const cursorBefore = full ? null : await env.CACHE.get(cfg.kvKey);
   const cursorFloor = cursorBefore ?? "";
 
-  // Set-based join, driven from the small phantom_domains side
-  // (idx_phantom_domain). Table + cursor column are compile-time literals
-  // from SOURCE_CONFIG — never interpolated user input; the cursor floor
-  // and limit are bound parameters.
+  // Set-based join, driven from the small phantom_domains side. The CROSS
+  // JOIN pins SQLite's join order so phantom_domains p is always the OUTER
+  // (driver) table and each of the few predicted phantoms probes the source
+  // table by its PK/indexed `domain` — SQLite honors CROSS JOIN order and
+  // will not reorder to scan the millions-of-rows source table first. Cost
+  // stays bounded by the predicted-phantom count (code-review #5). Table,
+  // cursor column, and per-source residual are compile-time literals from
+  // SOURCE_CONFIG — never interpolated user input; the cursor floor and
+  // limit are bound parameters.
   const sql =
     `SELECT p.id AS phantom_id, p.brand_id AS brand_id, p.domain AS domain, ` +
     `       p.enumeration_run_id AS enumeration_run_id, p.kind AS kind, ` +
     `       p.confidence AS confidence, b.name AS brand_name, ` +
     `       t.${cfg.cursorCol} AS cursor_val ` +
     `  FROM phantom_domains p ` +
-    `  JOIN ${cfg.table} t ON t.domain = p.domain ` +
+    `  CROSS JOIN ${cfg.table} t ON t.domain = p.domain ` +
     `  LEFT JOIN brands b ON b.id = p.brand_id ` +
     ` WHERE p.status = 'predicted' ` +
     `   AND t.${cfg.cursorCol} >= ? ` +
+    cfg.extraWhere +
     ` ORDER BY t.${cfg.cursorCol} ASC ` +
     ` LIMIT ?`;
 

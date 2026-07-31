@@ -58,6 +58,13 @@ export function normalizePhantomDomain(raw: unknown): string | null {
   // Reject obvious non-registrable shapes up front (paths, userinfo,
   // whitespace) rather than letting sanitizeDomain silently reshape them.
   if (/[\s@]/.test(trimmed) || trimmed.includes("/")) return null;
+  // Explicit >253 REJECT (spec §3.1). sanitizeDomain enforces the length
+  // bound by silently .slice(0,253)-ing rather than rejecting, so an
+  // overlong candidate would truncate-then-validate (e.g. a trailing
+  // `.com` lopped off, leaving an all-alpha last label that still passes
+  // the TLD gate). Reject before sanitizeDomain so overlong input never
+  // normalizes to a corrupted-but-valid domain.
+  if (trimmed.length > 253) return null;
 
   const base = sanitizeDomain(trimmed);
   if (!base) return null;

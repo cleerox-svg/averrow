@@ -583,8 +583,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "phantom_domains"
       ],
       "ai_models_referenced": [],
-      "loc": 345,
-      "last_modified": "2026-07-31T12:55:14.048Z"
+      "loc": 378,
+      "last_modified": "2026-07-31T13:36:02.569Z"
     },
     {
       "name": "public-trust-check",

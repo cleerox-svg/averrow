@@ -159,36 +159,36 @@ describe("normalizePhantomDomain — disallowed characters", () => {
 });
 
 describe("normalizePhantomDomain — total-length (≤253) boundary", () => {
-  it("rejects the common over-limit shape (truncation corrupts the TLD to 1 char)", () => {
-    // 251 'a' + '.' + 'co' = 254 raw chars. The underlying sanitizeDomain
-    // truncates (not rejects) at 253, which here chops the TLD down to a
-    // single char ('c') — correctly failing the ≥2-alpha-char TLD gate.
+  it("rejects a 254-char candidate outright (explicit >253 guard, spec §3.1)", () => {
+    // 251 'a' + '.' + 'co' = 254 raw chars — one over the limit. Rejected by
+    // the explicit `trimmed.length > 253 → return null` guard, ahead of
+    // sanitizeDomain (no truncate-then-validate).
     const raw = `${"a".repeat(251)}.co`;
     expect(raw.length).toBe(254);
     expect(normalizePhantomDomain(raw)).toBeNull();
   });
 
-  it("KNOWN QUIRK: a grossly over-limit domain CAN still validate if truncation happens to land on an all-alpha boundary", () => {
-    // sanitizeDomain (lib/sanitize.ts) enforces the length bound by
-    // *silently truncating* to 253 chars rather than rejecting overlong
-    // input outright. Spec §3.1 calls for rejecting anything over 253
-    // chars; in practice a raw candidate can be well over that (308 chars
-    // here — 5 labels of 60 'a's + '.com') and still normalize, because the
-    // truncation lops off the trailing '.com' entirely and leaves a
-    // same-looking last label of bare 'a's, which happens to satisfy the
-    // `^[a-z]{2,}$` TLD check. This is a pre-existing latent gap inherited
-    // from the shared `sanitizeDomain` truncate-not-reject behavior, not
-    // something introduced by this module — locking in the OBSERVED
-    // behavior here as a regression fence and flagging it for
-    // backend-engineer follow-up (real over-limit rejection would need an
-    // explicit `raw.length > 253` guard ahead of the sanitizeDomain call).
+  it("rejects a grossly over-limit domain instead of truncate-then-validating it (spec §3.1)", () => {
+    // Previously a KNOWN QUIRK: sanitizeDomain (lib/sanitize.ts) enforced the
+    // length bound by *silently truncating* to 253 chars, so this 308-char
+    // input (5 labels of 60 'a's + '.com') normalized — truncation lopped off
+    // the trailing '.com' and left an all-alpha last label that passed the
+    // `^[a-z]{2,}$` TLD check. The explicit `raw.length > 253` reject in
+    // normalizePhantomDomain now closes that gap: overlong input returns null
+    // and never reaches sanitizeDomain.
     const label60 = "a".repeat(60);
     const raw = `${[label60, label60, label60, label60, label60].join(".")}.com`;
     expect(raw.length).toBe(308);
-    const result = normalizePhantomDomain(raw);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBe(253);
-    expect(result).not.toMatch(/\.com$/); // the intended TLD was truncated away
+    expect(normalizePhantomDomain(raw)).toBeNull();
+  });
+
+  it("still accepts an exactly-253-char valid domain (boundary, not over)", () => {
+    // Exactly 253 chars with every label ≤63 (63+1+63+1+63+1+61 = 253) — the
+    // guard is `> 253`, so 253 passes and normalizes intact.
+    const label63 = "a".repeat(63);
+    const raw = `${label63}.${label63}.${label63}.${"a".repeat(61)}`;
+    expect(raw.length).toBe(253);
+    expect(normalizePhantomDomain(raw)).toBe(raw);
   });
 });
 
