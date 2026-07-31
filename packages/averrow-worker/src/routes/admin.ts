@@ -1110,8 +1110,15 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       } = await import("../lib/phishing-pattern-writer");
       const { getDbContext, getReadSession } = await import("../lib/db");
 
-      const limit = clampLimit(Number(url.searchParams.get('limit')));
-      const offset = clampOffset(Number(url.searchParams.get('offset')));
+      // Pass undefined (not Number(null)===0) when the param is ABSENT so
+      // clampLimit/clampOffset hit their default branch — otherwise an omitted
+      // limit would clamp to 1 (process one row), not the documented 500.
+      const limit = clampLimit(
+        url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      );
+      const offset = clampOffset(
+        url.searchParams.has('offset') ? Number(url.searchParams.get('offset')) : undefined,
+      );
       const read = getReadSession(env, getDbContext(request));
 
       const data = dryRun
@@ -1147,9 +1154,15 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       );
       const { getDbContext, getReadSession } = await import("../lib/db");
 
-      // limit/offset paginate over campaign GROUPS (not captures).
-      const limit = clampLimit(Number(url.searchParams.get('limit')));
-      const offset = clampOffset(Number(url.searchParams.get('offset')));
+      // limit/offset paginate over campaign GROUPS (not captures). Pass
+      // undefined when the param is ABSENT so clampLimit/clampOffset hit their
+      // default branch — otherwise an omitted limit would clamp to 1, not 500.
+      const limit = clampLimit(
+        url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      );
+      const offset = clampOffset(
+        url.searchParams.has('offset') ? Number(url.searchParams.get('offset')) : undefined,
+      );
       const read = getReadSession(env, getDbContext(request));
 
       const data = await runPhishingCampaignRollup(env, read, limit, offset, dryRun);

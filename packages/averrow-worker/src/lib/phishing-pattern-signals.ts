@@ -71,6 +71,12 @@ export const PHISHING_SIGNAL_CALIBRATION = {
   CAMPAIGN_WINDOW_HOURS: 24,
   MIN_CAMPAIGN_MEMBERS: 5,
   PAIRWISE_MAX_MEMBERS: 60,
+  // Bound on the DISTINCT-hash representative set the authoritative
+  // template_detected re-stamp (§8.6) compares each member against. Caps the
+  // re-stamp at O(members × REP_MAX) so a pathological all-distinct-template
+  // group can't blow up into O(members²) popcounts. A few hundred distinct
+  // templates covers every realistic campaign fully.
+  REP_MAX: 256,
   REGIME_KIT_REUSE_RATE: 0.6,
   REGIME_MAIL_MERGE_RATE: 0.15,
   REGIME_HIGH_VAR_HAMMING: 20,
@@ -397,6 +403,11 @@ export interface NormalizedCorpus {
 /** §2 full pipeline: corpus assembly → Stage A → Stage B → Stage C. */
 export function normalizeCorpus(input: CaptureInput, ctx: SlotContext): NormalizedCorpus {
   const body = input.bodyPreview ?? '';
+  // Boundary heuristic: bodyPreview is capped at 500 chars upstream, so a body
+  // of exactly 500 is treated as truncated (tokenize drops the final partial
+  // token). A genuinely-complete 500-char body is a rare false-positive we
+  // accept to stay consistent with the 500-char preview cap — not worth a
+  // separate "was truncated" flag on the capture.
   const bodyTruncated = body.length === 500;
   const raw = `${input.subject ?? ''}\n${body}`;
 
@@ -1107,46 +1118,70 @@ function parseUtcSeconds(s: string | null): number | null {
 }
 
 /**
- * §8.6 / §3.6 authoritative `template_detected`: 1 iff another hashed
- * member shares a template within the threshold. Exact-hash duplicates are
- * resolved in O(h); only exact-hash singletons need pairwise Hamming, so
- * the cost is O(k²) over the (small) distinct-hash set, not O(h²).
+ * §8.6 / §3.6 authoritative `template_detected`: 1 iff another hashed member
+ * shares a template within the threshold. Exact-hash duplicates are resolved
+ * in O(h). Every remaining still-0 member is then compared against a BOUNDED
+ * set of distinct-hash representatives (one per exact-hash group), so a
+ * singleton whose nearest neighbor lives in a *different* exact-duplicate
+ * cluster (distinct hash, Hamming ≤ max) is still detected — the common
+ * mail-merge shape — while the cost stays O(members × REP_MAX) instead of the
+ * old uncapped O(singletons²) that an all-distinct-template flood could weaponize.
+ *
+ * This pass only ever UPGRADES 0→1: a member starts at 0 and is set to 1 iff it
+ * is an exact duplicate or within `max` of a representative. It never downgrades,
+ * so a correct insert-time seed of 1 is only ever re-affirmed, not regressed —
+ * every real qualifying peer is either an exact duplicate (handled here) or has
+ * its distinct hash present in the (deterministically-ordered, lowest-capture_id-
+ * first) representative set for any realistically-sized group.
  */
 function restampTemplateDetected(
   members: CampaignMemberSignal[],
   max: number,
+  repMax: number,
 ): Map<number, 0 | 1> {
   const result = new Map<number, 0 | 1>();
   // Default every member to 0 (null-hash members stay 0 permanently).
   for (const m of members) result.set(m.capture_id, 0);
 
+  // Group by exact hash; null-hash members are never peers and never detected.
   const byExact = new Map<string, CampaignMemberSignal[]>();
   for (const m of members) {
-    const bh = parseTemplateHash(m.template_hash);
-    if (bh === null) continue;
+    if (parseTemplateHash(m.template_hash) === null) continue;
     const list = byExact.get(m.template_hash!) ?? [];
     list.push(m);
     byExact.set(m.template_hash!, list);
   }
 
-  const singletons: Array<{ id: number; hash: bigint }> = [];
-  for (const [hashStr, group] of byExact) {
-    if (group.length >= 2) {
-      for (const m of group) result.set(m.capture_id, 1); // exact duplicate
-    } else {
-      const only = group[0]!;
-      singletons.push({ id: only.capture_id, hash: parseTemplateHash(hashStr)! });
-    }
+  // Exact-duplicate clusters (≥2 members sharing one hash): every member is 1.
+  for (const group of byExact.values()) {
+    if (group.length >= 2) for (const m of group) result.set(m.capture_id, 1);
   }
 
-  for (let i = 0; i < singletons.length; i++) {
-    const a = singletons[i]!;
-    if (result.get(a.id) === 1) continue;
-    for (let j = 0; j < singletons.length; j++) {
-      if (i === j) continue;
-      const b = singletons[j]!;
-      if (hamming64(a.hash, b.hash) <= max) {
-        result.set(a.id, 1);
+  // One representative per distinct hash — its lowest-capture_id member — ordered
+  // by that capture_id and capped at repMax. Lowest-capture_id selection matches
+  // the pairwise sampler's convention (aggregateCampaign), keeping the whole pass
+  // deterministic under member reordering.
+  const reps: Array<{ hashStr: string; hash: bigint; minId: number }> = [];
+  for (const [hashStr, group] of byExact) {
+    let minId = group[0]!.capture_id;
+    for (const m of group) if (m.capture_id < minId) minId = m.capture_id;
+    reps.push({ hashStr, hash: parseTemplateHash(hashStr)!, minId });
+  }
+  reps.sort((a, b) => a.minId - b.minId);
+  const boundedReps = reps.slice(0, repMax);
+
+  // Upgrade any still-0 hashed member within `max` of a DIFFERENT-hash
+  // representative. Same-hash representatives are skipped: a same-hash peer is
+  // an exact duplicate (already stamped above), and for a genuine singleton the
+  // same-hash representative IS the member itself, so it must not self-match.
+  for (const m of members) {
+    if (result.get(m.capture_id) === 1) continue;
+    const self = parseTemplateHash(m.template_hash);
+    if (self === null) continue;
+    for (const rep of boundedReps) {
+      if (rep.hashStr === m.template_hash) continue;
+      if (hamming64(self, rep.hash) <= max) {
+        result.set(m.capture_id, 1);
         break;
       }
     }
@@ -1177,7 +1212,11 @@ export function aggregateCampaign(
   const memberCount = members.length;
   if (memberCount < cal.MIN_CAMPAIGN_MEMBERS) return null;
 
-  const templateDetectedByCapture = restampTemplateDetected(members, cal.TEMPLATE_HAMMING_MAX);
+  const templateDetectedByCapture = restampTemplateDetected(
+    members,
+    cal.TEMPLATE_HAMMING_MAX,
+    cal.REP_MAX,
+  );
 
   const hashed = members.filter((m) => parseTemplateHash(m.template_hash) !== null);
   const hashedMemberCount = hashed.length;
@@ -1282,11 +1321,9 @@ export function classifyRegime(
   if (hashedMemberCount < 2 || nearDupPairRate === null) return 'insufficient';
   if (nearDupPairRate >= cal.REGIME_KIT_REUSE_RATE) return 'kit_reuse';
   if (nearDupPairRate >= cal.REGIME_MAIL_MERGE_RATE) return 'mail_merge';
-  if (
-    nearDupPairRate < cal.REGIME_MAIL_MERGE_RATE &&
-    meanPairwiseHamming !== null &&
-    meanPairwiseHamming >= cal.REGIME_HIGH_VAR_HAMMING
-  ) {
+  // nearDupPairRate < REGIME_MAIL_MERGE_RATE is guaranteed here (the >= case
+  // returned above), so the only remaining discriminator is the mean distance.
+  if (meanPairwiseHamming !== null && meanPairwiseHamming >= cal.REGIME_HIGH_VAR_HAMMING) {
     return 'high_variance';
   }
   return 'mixed';

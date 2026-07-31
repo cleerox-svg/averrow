@@ -589,6 +589,20 @@ const CAMPAIGN_GROUP_SELECT = `
 /** How many campaign keys per member-load IN() query — bounds statement size. */
 const MEMBER_KEY_CHUNK = 50;
 
+/**
+ * Per-campaign_key member-load cap. A single pathological campaign_key (an
+ * attacker flooding one sending_ip/from_domain bucket in a day) could otherwise
+ * pull unbounded rows into memory and hand the rollup an O(members²) all-distinct
+ * template group. The member load bounds EACH key to its lowest-capture_id
+ * MEMBER_LOAD_MAX_PER_KEY rows (deterministic, matching the pairwise/re-stamp
+ * sampling convention). Trade-off: for a group larger than this cap, the stats
+ * row's member_count reflects the sampled page (not the true COUNT(*)) and
+ * members beyond the cap are not re-stamped — they retain their insert-time
+ * template_detected seed. A few hundred rows covers every realistic campaign
+ * fully; only genuinely abusive floods are sampled.
+ */
+const MEMBER_LOAD_MAX_PER_KEY = 500;
+
 /** All valid `campaign_key_kind` literals (defensive narrowing to the union). */
 const VALID_CAMPAIGN_KINDS: ReadonlySet<string> = new Set<CampaignKeyKind>([
   'campaign',
@@ -698,31 +712,47 @@ export async function runPhishingCampaignRollup(
   for (let i = 0; i < qualifying.length; i += MEMBER_KEY_CHUNK) {
     const keys = qualifying.slice(i, i + MEMBER_KEY_CHUNK).map((g) => g.campaign_key);
     const placeholders = keys.map(() => '?').join(', ');
+    // Per-key bound via ROW_NUMBER(): each campaign_key contributes at most
+    // MEMBER_LOAD_MAX_PER_KEY rows (its lowest capture_ids), so one abusive key
+    // can't pull unbounded rows into memory. Prepared statement, bound LIMIT.
     const memberSql = `
-      SELECT p.capture_id                    AS capture_id,
-             p.campaign_key                  AS campaign_key,
-             p.template_hash                 AS template_hash,
-             p.vocabulary_complexity         AS vocabulary_complexity,
-             p.sentence_structure_variance   AS sentence_structure_variance,
-             p.fluency_score                 AS fluency_score,
-             p.sender_ip                     AS sender_ip,
-             p.sender_asn                    AS sender_asn,
-             p.mail_server_fingerprint       AS mail_server_fingerprint,
-             stc.captured_at                 AS captured_at,
-             stc.from_domain                 AS from_domain,
-             stc.subject                     AS subject,
-             stc.from_address                AS from_address,
-             stc.trap_address                AS trap_address,
-             stc.spoofed_brand_id            AS spoofed_brand_id,
-             stc.spoofed_domain              AS spoofed_domain,
-             b.name                          AS brand_name
-      FROM phishing_pattern_signals p
-      JOIN spam_trap_captures stc ON stc.id = p.capture_id
-      LEFT JOIN brands b          ON b.id = stc.spoofed_brand_id
-      WHERE p.campaign_key IN (${placeholders})
-      ORDER BY p.campaign_key, p.capture_id
+      SELECT capture_id, campaign_key, template_hash, vocabulary_complexity,
+             sentence_structure_variance, fluency_score, sender_ip, sender_asn,
+             mail_server_fingerprint, captured_at, from_domain, subject,
+             from_address, trap_address, spoofed_brand_id, spoofed_domain, brand_name
+      FROM (
+        SELECT p.capture_id                    AS capture_id,
+               p.campaign_key                  AS campaign_key,
+               p.template_hash                 AS template_hash,
+               p.vocabulary_complexity         AS vocabulary_complexity,
+               p.sentence_structure_variance   AS sentence_structure_variance,
+               p.fluency_score                 AS fluency_score,
+               p.sender_ip                     AS sender_ip,
+               p.sender_asn                    AS sender_asn,
+               p.mail_server_fingerprint       AS mail_server_fingerprint,
+               stc.captured_at                 AS captured_at,
+               stc.from_domain                 AS from_domain,
+               stc.subject                     AS subject,
+               stc.from_address                AS from_address,
+               stc.trap_address                AS trap_address,
+               stc.spoofed_brand_id            AS spoofed_brand_id,
+               stc.spoofed_domain              AS spoofed_domain,
+               b.name                          AS brand_name,
+               ROW_NUMBER() OVER (
+                 PARTITION BY p.campaign_key ORDER BY p.capture_id
+               )                               AS rn
+        FROM phishing_pattern_signals p
+        JOIN spam_trap_captures stc ON stc.id = p.capture_id
+        LEFT JOIN brands b          ON b.id = stc.spoofed_brand_id
+        WHERE p.campaign_key IN (${placeholders})
+      ) ranked
+      WHERE rn <= ?
+      ORDER BY campaign_key, capture_id
     `;
-    const res = await read.prepare(memberSql).bind(...keys).all<RollupMemberRow>();
+    const res = await read
+      .prepare(memberSql)
+      .bind(...keys, MEMBER_LOAD_MAX_PER_KEY)
+      .all<RollupMemberRow>();
     for (const row of res.results) {
       const list = membersByKey.get(row.campaign_key) ?? [];
       list.push(toMemberSignal(row));

@@ -676,6 +676,93 @@ describe("aggregateCampaign — template_detected re-stamp fixes seed-0 members 
     expect(result!.templateDetectedByCapture.get(5)).toBe(0);
     expect(result!.templateDetectedByCapture.get(1)).toBe(1);
   });
+
+  it("a near-dup singleton whose only neighbor is a distinct-hash exact-dup CLUSTER is re-stamped 1 (cross-cluster mail-merge shape — was 0)", () => {
+    // The common mail-merge shape: a normalized-skeleton EXACT-duplicate cluster
+    // (H, caps 1/2/4/5) plus a single near-variant (H', cap 3, Hamming 1 ≤ 3).
+    // The old restamp compared singletons only against other singletons, so the
+    // lone near-variant — whose nearest neighbor lives in the H CLUSTER, not
+    // another singleton — stayed 0. It must now be 1.
+    const H = hashOf(0n);
+    const Hp = hashOf(1n); // Hamming(H, H') = 1 ≤ TEMPLATE_HAMMING_MAX (3), H' ≠ H
+    expect(hamming64(0n, 1n)).toBe(1);
+    const members = [
+      member(1, H),
+      member(2, H),
+      member(3, Hp), // the lone near-dup singleton, no other singletons present
+      member(4, H),
+      member(5, H),
+    ];
+    const result = aggregateCampaign("k:test|2026-07-31", "sending_ip", "2026-07-31", members);
+    expect(result).not.toBeNull();
+    // The cross-cluster fix: cap3 is now detected against the H cluster.
+    expect(result!.templateDetectedByCapture.get(3)).toBe(1);
+    // And no genuinely-detected member is ever regressed 0←1: every member of
+    // this fully-templated group stays 1.
+    for (const m of members) {
+      expect(result!.templateDetectedByCapture.get(m.capture_id)).toBe(1);
+    }
+  });
+
+  it("the DISTINCT-hash representative set is bounded by REP_MAX — a near-dup pair whose reps fall beyond a tiny cap is not stamped, but the same pair IS detected under the default cap", () => {
+    // Ten mutually-distant low-id templates (all pairwise Hamming ≥ 8 > 3),
+    // plus one high-id near-dup pair G/G' (Hamming 1) that is far from all ten.
+    const farHashes = [
+      0x0000000000000000n,
+      0x00000000000000ffn,
+      0x000000000000ff00n,
+      0x0000000000ff0000n,
+      0x00000000ff000000n,
+      0x000000ff00000000n,
+      0x0000ff0000000000n,
+      0x00ff000000000000n,
+      0xff00000000000000n,
+      0xffff000000000000n,
+    ];
+    const G = 0x00000000ffffffffn;
+    const Gp = 0x00000000fffffffen; // Hamming(G, G') = 1
+    expect(hamming64(G, Gp)).toBe(1);
+    const members = [
+      ...farHashes.map((h, i) => member(i + 1, hashOf(h))),
+      member(11, hashOf(G)),
+      member(12, hashOf(Gp)),
+    ];
+
+    // Tiny cap: only the 3 lowest-capture_id distinct-hash reps are considered,
+    // so the high-id G/G' pair (reps at ids 11/12) is excluded → not detected.
+    const tightCal = { ...PHISHING_SIGNAL_CALIBRATION, REP_MAX: 3 };
+    const bounded = aggregateCampaign("i:test|2026-07-31", "sending_ip", "2026-07-31", members, tightCal);
+    expect(bounded).not.toBeNull();
+    expect(bounded!.templateDetectedByCapture.get(11)).toBe(0);
+    expect(bounded!.templateDetectedByCapture.get(12)).toBe(0);
+
+    // Default cap (256) includes every rep → the G/G' near-dup pair is detected.
+    const full = aggregateCampaign("i:test|2026-07-31", "sending_ip", "2026-07-31", members);
+    expect(full).not.toBeNull();
+    expect(full!.templateDetectedByCapture.get(11)).toBe(1);
+    expect(full!.templateDetectedByCapture.get(12)).toBe(1);
+  });
+
+  it("a large all-distinct-hash group completes and stays deterministic under member reordering (no O(n²) blow-up)", () => {
+    // 80 distinct, mutually-distant templates from one bucket — the pathological
+    // all-singleton shape the old uncapped pairwise loop would have made
+    // O(n²). Bounded now; assert it completes and is order-independent.
+    const members = Array.from({ length: 80 }, (_, i) =>
+      member(i + 1, hashOf((BigInt(i) << 24n) | 0x1n)),
+    );
+    const shuffled = [...members].reverse();
+    const a = aggregateCampaign("i:test|2026-07-31", "sending_ip", "2026-07-31", members);
+    const b = aggregateCampaign("i:test|2026-07-31", "sending_ip", "2026-07-31", shuffled);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a!.templateDetectedByCapture.size).toBe(80);
+    // Determinism: every member's stamp is identical regardless of input order.
+    for (const m of members) {
+      expect(b!.templateDetectedByCapture.get(m.capture_id)).toBe(
+        a!.templateDetectedByCapture.get(m.capture_id),
+      );
+    }
+  });
 });
 
 describe("aggregateCampaign — deterministic re-run produces identical stats (pure-level idempotency)", () => {

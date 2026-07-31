@@ -128,6 +128,48 @@ describe("clampOffset", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// Endpoint limit/offset derivation — an ABSENT ?limit must default to 500,
+// NOT 1 (regression: Number(null)===0 → clampLimit(0)===1 processed one row).
+// Mirrors the parse expression in routes/admin.ts for both phishing-signals
+// endpoints (/backfill and /rollup).
+// ═══════════════════════════════════════════════════════════════════════
+
+// The exact derivation both endpoints use: presence-gate the param so an
+// omitted value passes `undefined` (default branch) instead of Number(null)===0.
+const deriveLimit = (url: URL): number =>
+  clampLimit(url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined);
+const deriveOffset = (url: URL): number =>
+  clampOffset(url.searchParams.has("offset") ? Number(url.searchParams.get("offset")) : undefined);
+
+describe("endpoint limit/offset derivation (routes/admin.ts phishing-signals)", () => {
+  it("an ABSENT ?limit defaults to 500, not 1", () => {
+    const url = new URL("https://x/api/admin/phishing-signals/backfill");
+    expect(url.searchParams.has("limit")).toBe(false);
+    expect(deriveLimit(url)).toBe(500);
+  });
+
+  it("an explicit in-range ?limit passes through", () => {
+    expect(deriveLimit(new URL("https://x/api?limit=200"))).toBe(200);
+  });
+
+  it("an explicit ?limit=0 still clamps up to 1 (explicit floor, not the default)", () => {
+    expect(deriveLimit(new URL("https://x/api?limit=0"))).toBe(1);
+  });
+
+  it("a non-numeric ?limit=abc falls back to the 500 default", () => {
+    expect(deriveLimit(new URL("https://x/api?limit=abc"))).toBe(500);
+  });
+
+  it("an ABSENT ?offset defaults to 0", () => {
+    expect(deriveOffset(new URL("https://x/api"))).toBe(0);
+  });
+
+  it("an explicit ?offset passes through", () => {
+    expect(deriveOffset(new URL("https://x/api?offset=250"))).toBe(250);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // §0.3 guard: the writer's INSERT/UPDATE column lists never mention
 // ai_generated_probability
 // ═══════════════════════════════════════════════════════════════════════
