@@ -1220,6 +1220,52 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       });
     }
   });
+  router.post("/api/admin/velocity/backfill", async (request: Request, env: Env) => {
+    const authCtx = await requireAdmin(request, env);
+    if (!isAuthContext(authCtx)) return authCtx;
+
+    const url = new URL(request.url);
+    const dryRunParam = url.searchParams.get('dry_run');
+    // Dry-run is the DEFAULT — a real stamp must be requested explicitly
+    // (dry_run=0/false). Dry-run writes nothing (spec §4.3 reality-check).
+    const dryRun = dryRunParam == null || !['0', 'false', 'no'].includes(dryRunParam.toLowerCase());
+
+    try {
+      const {
+        clampLimit,
+        clampOffset,
+        computeVelocityDryRun,
+        runVelocityBackfill,
+      } = await import("../lib/velocity-writer");
+      const { getDbContext, getReadSession } = await import("../lib/db");
+
+      // Pass undefined (not Number(null)===0) when the param is ABSENT so
+      // clampLimit/clampOffset hit their default branch — otherwise an omitted
+      // limit would clamp to 1 (process one row), not the documented 500.
+      const limit = clampLimit(
+        url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      );
+      const offset = clampOffset(
+        url.searchParams.has('offset') ? Number(url.searchParams.get('offset')) : undefined,
+      );
+      const read = getReadSession(env, getDbContext(request));
+
+      const data = dryRun
+        ? await computeVelocityDryRun(read, limit, offset)
+        : await runVelocityBackfill(env, read, limit, offset);
+
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
   router.post("/api/admin/backfill-brand-enrichment", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

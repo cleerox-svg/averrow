@@ -17,6 +17,7 @@ const emptySignals: ParsedPageSignals = {
   scriptRedirectTargets: [],
   title: "",
   bodyTextSample: "",
+  antiBotWall: null,
 };
 
 const ctx: PageScoreContext = {
@@ -170,6 +171,7 @@ describe("scorePagePhishing — credential harvest + scoring", () => {
         scriptRedirectTargets: ["https://acme.com/x"],
         title: "Acme Login",
         bodyTextSample: "acme acme acme",
+        antiBotWall: "turnstile",
       },
       ctx,
     );
@@ -186,32 +188,178 @@ describe("scorePagePhishing — credential harvest + scoring", () => {
   });
 });
 
+describe("anti_bot_wall — cloaking-as-signal (rec 4)", () => {
+  it("anti_bot_wall fires with weight 20 when the fetcher recorded a wall family", () => {
+    const r = scorePagePhishing({ ...emptySignals, antiBotWall: "turnstile" }, ctx);
+    expect(r.signals).toContain("anti_bot_wall");
+    expect(r.score).toBe(SIGNAL_WEIGHTS.anti_bot_wall);
+    expect(r.score).toBe(20);
+  });
+
+  it("antiBotWallFamily echoes the fetcher's family when no js_challenge overlap", () => {
+    const r = scorePagePhishing({ ...emptySignals, antiBotWall: "recaptcha" }, ctx);
+    expect(r.antiBotWallFamily).toBe("recaptcha");
+  });
+
+  it("antiBotWallFamily is null and anti_bot_wall does not fire on a clean page", () => {
+    const r = scorePagePhishing(emptySignals, ctx);
+    expect(r.antiBotWallFamily).toBeNull();
+    expect(r.signals).not.toContain("anti_bot_wall");
+  });
+
+  it("js_challenge fires: a JS redirect to a NON-brand domain + a challenge phrase, with brand context", () => {
+    const r = scorePagePhishing(
+      {
+        ...emptySignals,
+        scriptRedirectTargets: ["https://not-acme-at-all.ru/gate"],
+        bodyTextSample: "checking your browser before continuing",
+      },
+      ctx,
+    );
+    expect(r.signals).toContain("anti_bot_wall");
+    expect(r.antiBotWallFamily).toBe("js_challenge");
+  });
+
+  it("js_challenge does NOT fire without brand context (brandReg null gates condition 1)", () => {
+    const r = scorePagePhishing(
+      {
+        ...emptySignals,
+        scriptRedirectTargets: ["https://not-acme-at-all.ru/gate"],
+        bodyTextSample: "checking your browser before continuing",
+      },
+      { suspectDomain: "acme-secure-login.com", brandDomain: null, brandName: null },
+    );
+    expect(r.signals).not.toContain("anti_bot_wall");
+    expect(r.antiBotWallFamily).toBeNull();
+  });
+
+  it("js_challenge does NOT fire on a redirect target WITHOUT a challenge phrase (redirect alone is cloaking_redirect's inverse, not this signal)", () => {
+    const r = scorePagePhishing(
+      { ...emptySignals, scriptRedirectTargets: ["https://not-acme-at-all.ru/gate"] },
+      ctx,
+    );
+    expect(r.signals).not.toContain("anti_bot_wall");
+  });
+
+  it("js_challenge does NOT fire on a challenge phrase alone without an off-brand JS redirect", () => {
+    const r = scorePagePhishing(
+      { ...emptySignals, bodyTextSample: "just a moment while we verify" },
+      ctx,
+    );
+    expect(r.signals).not.toContain("anti_bot_wall");
+  });
+
+  it("js_challenge (brand-relative) overrides the fetcher's cf_challenge family in the overlap", () => {
+    const r = scorePagePhishing(
+      {
+        ...emptySignals,
+        antiBotWall: "cf_challenge",
+        scriptRedirectTargets: ["https://not-acme-at-all.ru/gate"],
+        bodyTextSample: "checking your browser before continuing",
+      },
+      ctx,
+    );
+    expect(r.signals).toContain("anti_bot_wall");
+    expect(r.antiBotWallFamily).toBe("js_challenge");
+  });
+
+  it("anti_bot_wall fires exactly once even when both the fetcher wall AND js_challenge are present (no double weight)", () => {
+    const r = scorePagePhishing(
+      {
+        ...emptySignals,
+        antiBotWall: "cf_challenge",
+        scriptRedirectTargets: ["https://not-acme-at-all.ru/gate"],
+        bodyTextSample: "checking your browser before continuing",
+      },
+      ctx,
+    );
+    expect(r.signals.filter((s) => s === "anti_bot_wall")).toHaveLength(1);
+    expect(r.score).toBe(SIGNAL_WEIGHTS.anti_bot_wall);
+  });
+});
+
 describe("escalateThreatLevelForPage — monotonic", () => {
   it("credential harvest escalates MEDIUM to CRITICAL", () => {
-    expect(escalateThreatLevelForPage("MEDIUM", { score: 75, credentialHarvest: true })).toBe("CRITICAL");
+    expect(escalateThreatLevelForPage("MEDIUM", { score: 75, credentialHarvest: true, antiBotWall: false })).toBe("CRITICAL");
   });
 
   it("credential harvest escalates LOW to CRITICAL", () => {
-    expect(escalateThreatLevelForPage("LOW", { score: 75, credentialHarvest: true })).toBe("CRITICAL");
+    expect(escalateThreatLevelForPage("LOW", { score: 75, credentialHarvest: true, antiBotWall: false })).toBe("CRITICAL");
   });
 
   it("strong score (>=60) escalates MEDIUM to HIGH", () => {
-    expect(escalateThreatLevelForPage("MEDIUM", { score: 60, credentialHarvest: false })).toBe("HIGH");
+    expect(escalateThreatLevelForPage("MEDIUM", { score: 60, credentialHarvest: false, antiBotWall: false })).toBe("HIGH");
   });
 
   it("moderate score (>=30) escalates LOW to MEDIUM", () => {
-    expect(escalateThreatLevelForPage("LOW", { score: 45, credentialHarvest: false })).toBe("MEDIUM");
+    expect(escalateThreatLevelForPage("LOW", { score: 45, credentialHarvest: false, antiBotWall: false })).toBe("MEDIUM");
   });
 
   it("never downgrades an existing CRITICAL", () => {
-    expect(escalateThreatLevelForPage("CRITICAL", { score: 10, credentialHarvest: false })).toBe("CRITICAL");
+    expect(escalateThreatLevelForPage("CRITICAL", { score: 10, credentialHarvest: false, antiBotWall: false })).toBe("CRITICAL");
   });
 
   it("never downgrades HIGH to MEDIUM", () => {
-    expect(escalateThreatLevelForPage("HIGH", { score: 35, credentialHarvest: false })).toBe("HIGH");
+    expect(escalateThreatLevelForPage("HIGH", { score: 35, credentialHarvest: false, antiBotWall: false })).toBe("HIGH");
   });
 
   it("leaves level unchanged on a zero score", () => {
-    expect(escalateThreatLevelForPage("LOW", { score: 0, credentialHarvest: false })).toBe("LOW");
+    expect(escalateThreatLevelForPage("LOW", { score: 0, credentialHarvest: false, antiBotWall: false })).toBe("LOW");
+  });
+});
+
+describe("escalateThreatLevelForPage — bare anti-bot-wall MEDIUM floor (rec 4)", () => {
+  it("a bare wall (score 20, < 30) escalates LOW to MEDIUM", () => {
+    expect(
+      escalateThreatLevelForPage("LOW", { score: 20, credentialHarvest: false, antiBotWall: true }),
+    ).toBe("MEDIUM");
+  });
+
+  it("no wall at the same sub-30 score leaves LOW unchanged (the floor is wall-gated, not score-gated alone)", () => {
+    expect(
+      escalateThreatLevelForPage("LOW", { score: 20, credentialHarvest: false, antiBotWall: false }),
+    ).toBe("LOW");
+  });
+
+  it("a wall is the LAST branch — a score already >= 30 reaches MEDIUM via the score branch regardless of the wall flag", () => {
+    expect(
+      escalateThreatLevelForPage("LOW", { score: 30, credentialHarvest: false, antiBotWall: false }),
+    ).toBe("MEDIUM");
+  });
+
+  it("CRITICALLY: a wall on an already-HIGH page is NOT downgraded to MEDIUM", () => {
+    expect(
+      escalateThreatLevelForPage("HIGH", { score: 20, credentialHarvest: false, antiBotWall: true }),
+    ).toBe("HIGH");
+  });
+
+  it("CRITICALLY: a wall on an already-CRITICAL page is NOT downgraded to MEDIUM", () => {
+    expect(
+      escalateThreatLevelForPage("CRITICAL", { score: 20, credentialHarvest: false, antiBotWall: true }),
+    ).toBe("CRITICAL");
+  });
+
+  it("end-to-end: a credential-harvest page (HIGH/CRITICAL-bound) that ALSO carries a wall still lands on CRITICAL, not MEDIUM", () => {
+    // Assemble a real scorer result — password input + off-domain form exfil
+    // (credentialHarvest) plus a wall — and feed it straight into the
+    // escalation fn, exactly as the real caller would.
+    const r = scorePagePhishing(
+      {
+        ...emptySignals,
+        hasPasswordInput: true,
+        formActions: ["https://evil-collector.ru/steal"],
+        antiBotWall: "turnstile",
+      },
+      ctx,
+    );
+    expect(r.credentialHarvest).toBe(true);
+    expect(r.signals).toContain("anti_bot_wall");
+
+    const level = escalateThreatLevelForPage("LOW", {
+      score: r.score,
+      credentialHarvest: r.credentialHarvest,
+      antiBotWall: r.signals.includes("anti_bot_wall"),
+    });
+    expect(level).toBe("CRITICAL");
   });
 });
