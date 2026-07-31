@@ -101,6 +101,33 @@ function parseCreateTableColumns(rawSql: string, table: string): string[] {
   return columns;
 }
 
+/**
+ * Additive columns a later migration adds to `tableName` via
+ * `ALTER TABLE <tableName> ADD COLUMN <col>`. CLAUDE.md §8 permits only
+ * additive column changes (never DROP/ALTER of existing columns), so folding
+ * these into the base CREATE TABLE set keeps the authoritative schema current
+ * without freezing the parser to 0022/0023. Scans every migration except the
+ * two base files.
+ */
+function parseAddedColumns(tableName: string): string[] {
+  const added: string[] = [];
+  const files = readdirSync(migrationsDirPath).filter(
+    (f) =>
+      f.endsWith(".sql") &&
+      f !== "0022_spam_trap_system.sql" &&
+      f !== "0023_seed_campaign_v1_and_phishing_signals.sql",
+  );
+  const re = new RegExp(
+    `ALTER\\s+TABLE\\s+${tableName}\\s+ADD\\s+COLUMN\\s+([A-Za-z_]\\w*)`,
+    "gi",
+  );
+  for (const file of files) {
+    const content = readFileSync(migrationPath(file), "utf8");
+    for (const m of content.matchAll(re)) added.push(m[1]);
+  }
+  return added;
+}
+
 // ─── Minimal SQL column-reference extractor ─────────────────────────
 
 const SQL_KEYWORDS = new Set([
@@ -157,8 +184,16 @@ const migration0023 = readFileSync(
 );
 const correlatorSrc = readFileSync(correlatorPath, "utf8");
 
-const spamTrapColumns = parseCreateTableColumns(migration0022, "spam_trap_captures");
-const phishingSignalColumns = parseCreateTableColumns(migration0023, "phishing_pattern_signals");
+// Authoritative schema = base CREATE TABLE columns + additive columns folded
+// in from any later migration's ALTER TABLE ... ADD COLUMN (CLAUDE.md §8).
+const spamTrapColumns = [
+  ...parseCreateTableColumns(migration0022, "spam_trap_captures"),
+  ...parseAddedColumns("spam_trap_captures"),
+];
+const phishingSignalColumns = [
+  ...parseCreateTableColumns(migration0023, "phishing_pattern_signals"),
+  ...parseAddedColumns("phishing_pattern_signals"),
+];
 
 // The two queries under test, pulled directly out of the source file by
 // content (not by line number, so the test survives reformatting).
@@ -251,27 +286,21 @@ describe("brand-threat-correlator SQL column contract (regression for a2f511a)",
     });
   });
 
-  it("no later migration ALTERs spam_trap_captures or phishing_pattern_signals (schema parsed above stays authoritative)", () => {
-    // Regression guard for the parser's own assumption: if a future
-    // migration adds/renames a column on either table via ALTER TABLE,
-    // this suite's schema (frozen to 0022/0023) would silently miss it
-    // and a legitimately-new column would look like a phantom reference.
-    // Re-run this grep whenever this test starts failing for a column
-    // that looks legitimate, and fold the new column into the fixture.
-    const migrationFiles = readdirSync(migrationsDirPath).filter(
-      (f) =>
-        f.endsWith(".sql") &&
-        f !== "0022_spam_trap_system.sql" &&
-        f !== "0023_seed_campaign_v1_and_phishing_signals.sql",
-    );
-
-    for (const file of migrationFiles) {
-      const content = readFileSync(migrationPath(file), "utf8");
-      const alterTrap = /ALTER\s+TABLE\s+spam_trap_captures\s+ADD\s+COLUMN/i.exec(content);
-      const alterSignals = /ALTER\s+TABLE\s+phishing_pattern_signals\s+ADD\s+COLUMN/i.exec(content);
-      expect(alterTrap, `${file} adds a column to spam_trap_captures — update this test's fixture`).toBeNull();
-      expect(alterSignals, `${file} adds a column to phishing_pattern_signals — update this test's fixture`).toBeNull();
-    }
+  it("folds additive ALTER TABLE columns into the authoritative schema (parser stays current, not frozen to 0022/0023)", () => {
+    // The authoritative column sets union the base CREATE TABLE with any
+    // later migration's ADD COLUMN, so an additive migration (CLAUDE.md §8)
+    // can't make a legitimate new column look like a phantom reference. This
+    // pins that the fold-in actually ran: migration 0257 adds campaign_key /
+    // campaign_key_kind to phishing_pattern_signals. If a future migration
+    // additively extends either table, the fold picks it up automatically —
+    // only a DROP/rename of an existing column (which §8 forbids) would break
+    // the contract, and that would surface as a phantom-column failure above.
+    expect(phishingSignalColumns).toContain("campaign_key");
+    expect(phishingSignalColumns).toContain("campaign_key_kind");
+    // Base columns still present (union didn't clobber the CREATE TABLE set).
+    expect(phishingSignalColumns).toContain("ai_generated_probability");
+    expect(spamTrapColumns).toContain("category");
+    expect(spamTrapColumns).toContain("from_address");
   });
 });
 
