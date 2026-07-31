@@ -7,6 +7,7 @@
  */
 
 import type { Env } from "./types";
+import { AI_GENERATION_PROBABILITY_THRESHOLD } from "./lib/phishing-signals";
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -102,8 +103,8 @@ export async function correlateBrandThreats(
   const trapStats = await env.DB.prepare(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN classification = 'phishing' THEN 1 ELSE 0 END) as phishing,
-      COUNT(DISTINCT sender_email) as unique_senders,
+      SUM(CASE WHEN category = 'phishing' THEN 1 ELSE 0 END) as phishing,
+      COUNT(DISTINCT from_address) as unique_senders,
       COUNT(DISTINCT sending_ip) as unique_ips,
       MAX(captured_at) as latest
     FROM spam_trap_captures
@@ -115,15 +116,20 @@ export async function correlateBrandThreats(
     total: 0, phishing: 0, unique_senders: 0, unique_ips: 0, latest: null,
   }));
 
-  // 4. Query phishing_pattern_signals for AI detection markers
+  // 4. Query phishing_pattern_signals for AI detection markers.
+  // ai_generated_probability is currently NULL for every row — nothing writes it
+  // yet — so this count stays 0 by design until the campaign-level judge lands and
+  // starts scoring captures. NULL >= threshold evaluates to NULL, so unscored rows
+  // are excluded without an explicit IS NOT NULL guard.
   const aiPhishing = await env.DB.prepare(`
     SELECT COUNT(*) as count
     FROM phishing_pattern_signals pps
     JOIN spam_trap_captures stc ON stc.id = pps.capture_id
     WHERE stc.spoofed_brand_id = ?
       AND pps.created_at >= datetime('now', '-30 days')
-      AND pps.ai_generated = 1
-  `).bind(brandId).first<{ count: number }>().catch(() => ({ count: 0 }));
+      AND pps.ai_generated_probability >= ?
+  `).bind(brandId, AI_GENERATION_PROBABILITY_THRESHOLD)
+    .first<{ count: number }>().catch(() => ({ count: 0 }));
 
   // 5. Query threat_signals for external signals
   const externalSignals = await env.DB.prepare(`

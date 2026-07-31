@@ -21,6 +21,7 @@ import { getBrandSocialIntel } from "../lib/social-intel";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { createLead, getUnenrichedLead, enrichLead, rejectLead } from "../db/sales-leads";
 import { callAnthropicJSON, AnthropicError } from "../lib/anthropic";
+import { AI_GENERATION_PROBABILITY_THRESHOLD } from "../lib/phishing-signals";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -332,11 +333,12 @@ export async function identifyAndCreate(env: Env): Promise<{
       env.DB.prepare(`
         SELECT brand_targeted, COUNT(*) as ai_count
         FROM phishing_pattern_signals
-        WHERE ai_generated_probability > 0.7
+        WHERE ai_generated_probability >= ?
           AND created_at >= datetime('now', '-30 days')
           AND brand_targeted IS NOT NULL
         GROUP BY brand_targeted
-      `).all<{ brand_targeted: string; ai_count: number }>(),
+      `).bind(AI_GENERATION_PROBABILITY_THRESHOLD)
+        .all<{ brand_targeted: string; ai_count: number }>(),
 
       env.DB.prepare(`
         SELECT target_brand_id as brand_id, COUNT(DISTINCT campaign_id) as campaign_count
