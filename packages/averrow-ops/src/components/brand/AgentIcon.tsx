@@ -261,6 +261,19 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <path d="M6.5 30C6.5 24.5 10.5 21.5 15 21.5C19.5 21.5 23.5 24.5 23.5 30" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="currentColor" fillOpacity="0.08"/>
     </svg>
   ),
+  // Phantom — Phantom Enumerator. A ghost silhouette over a dashed (not-yet-real)
+  // domain baseline; the predicted-but-unregistered hallucinated domain.
+  phantom_enumerator: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      {/* ghost body */}
+      <path d="M10 24V15C10 10.6 13.6 7 18 7C22.4 7 26 10.6 26 15V24L23.5 22L21 24L18 22L15 24L12.5 22L10 24Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" fill="currentColor" fillOpacity="0.08"/>
+      {/* eyes */}
+      <circle cx="15" cy="15" r="1.3" fill="currentColor"/>
+      <circle cx="21" cy="15" r="1.3" fill="currentColor"/>
+      {/* dashed domain baseline — predicted, not yet registered */}
+      <path d="M8 29H28" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="2 2.5" opacity="0.6"/>
+    </svg>
+  ),
   // Mockingbird — Social Monitor. Songbird with sound waves; mimicry detector.
   social_monitor: (s) => (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
