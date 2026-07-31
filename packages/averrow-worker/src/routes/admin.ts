@@ -1091,6 +1091,45 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       });
     }
   });
+  router.post("/api/admin/phishing-signals/backfill", async (request: Request, env: Env) => {
+    const authCtx = await requireAdmin(request, env);
+    if (!isAuthContext(authCtx)) return authCtx;
+
+    const url = new URL(request.url);
+    const dryRunParam = url.searchParams.get('dry_run');
+    // Dry-run is the DEFAULT — a real write must be requested explicitly
+    // (dry_run=0/false). Corpus stats write nothing (spec §8 reality-check).
+    const dryRun = dryRunParam == null || !['0', 'false', 'no'].includes(dryRunParam.toLowerCase());
+
+    try {
+      const {
+        clampLimit,
+        clampOffset,
+        computePhishingCorpusStats,
+        runPhishingSignalWriter,
+      } = await import("../lib/phishing-pattern-writer");
+      const { getDbContext, getReadSession } = await import("../lib/db");
+
+      const limit = clampLimit(Number(url.searchParams.get('limit')));
+      const offset = clampOffset(Number(url.searchParams.get('offset')));
+      const read = getReadSession(env, getDbContext(request));
+
+      const data = dryRun
+        ? await computePhishingCorpusStats(read, limit, offset)
+        : await runPhishingSignalWriter(env, read, limit, offset);
+
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
   router.post("/api/admin/backfill-brand-enrichment", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
