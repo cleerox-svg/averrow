@@ -407,15 +407,35 @@ The raw material and half the plumbing exist today:
 
 ## 6. Recommendations (ranked; research conclusions, not commitments)
 
+> **Implementation status (2026-07-31, wave W1.11):** Items 1 and 2 below are
+> now IMPLEMENTED on `claude/ai-phishing-detection-research-2f1blu`. Item 1 —
+> the three §7.1 dead-read bugs are fixed in `src/brand-threat-correlator.ts`
+> (`classification`→`category`, `sender_email`→`from_address`,
+> `ai_generated=1`→`ai_generated_probability >= AI_GENERATION_PROBABILITY_THRESHOLD`,
+> the shared constant now living in `src/lib/phishing-signals.ts` and also
+> consumed by `src/agents/pathfinder.ts`). Item 2 — the deterministic
+> (zero-AI) phase-1 campaign-polymorphism pipeline is built: migration
+> `0257_phishing_pattern_signals_phase1.sql`, pure core
+> `src/lib/phishing-pattern-signals.ts`, D1 writer
+> `src/lib/phishing-pattern-writer.ts`, and the two admin endpoints
+> (`POST /api/admin/phishing-signals/backfill`, `/rollup` — see
+> `docs/API_REFERENCE.md`). The writer is endpoint-dispatched only (no cron,
+> no `agent_runs`/`agent_events`), matching the alert-triage backfill
+> precedent. `ai_generated_probability` is still never written — see the
+> nuance in `docs/PLATFORM_DATA_DEPENDENCIES.md` §9. Item 3 (phantom-squat
+> watchlist) is queued as the Wave 2 follow-up — not started.
+
 1. **Fix the three dead-read schema bugs** (§7.1) — trivial, and a
    prerequisite: without it, no future writer lights up the existing risk
-   score, insight, and UI label.
+   score, insight, and UI label. **IMPLEMENTED W1.11.**
 2. **Campaign polymorphism measurement** (§3.2) — the flagship. Phase it:
    deterministic first (normalize → SimHash/MinHash → `template_hash` +
    lexical-variance stats per campaign, pure SQL + code, zero AI spend),
    validate the semantic-vs-lexical ratio on historical spam-trap/abuse
    corpora, and only then decide the embedding question. Writer populates
-   `phishing_pattern_signals`; consumers already exist.
+   `phishing_pattern_signals`; consumers already exist. **Phase 1
+   (deterministic writer) IMPLEMENTED W1.11**; semantic/embedding decision
+   still open (§8).
 3. **Phantom-squat watchlist** (§3.3) — bounded Haiku enumeration per brand,
    joined against NRD/CT/lookalike flows already running. Predictive lead
    time, differentiated data asset, publishable methodology (Unit 42
@@ -447,6 +467,18 @@ product surface).
 ## 7. Platform findings surfaced by this research (report-only)
 
 ### 7.1 Dead-read bugs in the existing AI-phishing plumbing
+
+**IMPLEMENTATION STATUS (2026-07-31, W1.11): FIXED.** All three bugs below
+are corrected in `src/brand-threat-correlator.ts` on
+`claude/ai-phishing-detection-research-2f1blu`. The `ai_generated_probability`
+threshold comparison now reads the shared
+`AI_GENERATION_PROBABILITY_THRESHOLD` constant (`src/lib/phishing-signals.ts`,
+`>= 0.7`). Downstream, `analyst.ts`'s "AI-Generated Threat Detected" insight
+and the `ai_phishing_detected` score row are now reachable by SQL — but the
+count they read (`ai_generated_probability`) is still always 0 until a future
+campaign-level judge writes it (phase-1 deliberately never does; see
+`docs/PLATFORM_DATA_DEPENDENCIES.md` §9). Original research findings kept
+below for the historical record.
 
 Verified against migrations 0022/0023. In `src/brand-threat-correlator.ts`,
 both relevant queries are wrapped in `.catch(() => ({count/total: 0}))` and
