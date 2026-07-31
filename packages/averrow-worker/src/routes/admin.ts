@@ -1091,6 +1091,47 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
       });
     }
   });
+  router.post("/api/admin/phantom-domains/match", async (request: Request, env: Env) => {
+    // W2.3 phantom-squat MATCHER post-pass (spec §7). Idempotent, bounded,
+    // super_admin-gated. Detects when a predicted phantom domain actually
+    // appears (NRD / CT / lookalike), flips it predicted→registered, and
+    // raises at most one 'low' alert. NEVER inline in a feed pull. NEVER
+    // inserts threats.
+    const authCtx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(authCtx)) return authCtx;
+
+    const url = new URL(request.url);
+    const sourceParam = url.searchParams.get('source');
+    const source =
+      sourceParam === 'nrd' || sourceParam === 'ct' || sourceParam === 'lookalike'
+        ? sourceParam
+        : 'all';
+    const full = ['1', 'true', 'yes'].includes(
+      (url.searchParams.get('full') ?? '').toLowerCase(),
+    );
+
+    try {
+      const { runPhantomMatch, clampMatchLimit } = await import("../lib/phantom-matcher");
+      const { getDbContext, getReadSession } = await import("../lib/db");
+
+      const limit = clampMatchLimit(
+        url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      );
+      const read = getReadSession(env, getDbContext(request));
+
+      const data = await runPhantomMatch(env, read, { limit, source, full });
+      return new Response(JSON.stringify({ success: true, data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return new Response(JSON.stringify({ success: false, error: message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  });
   router.post("/api/admin/phishing-signals/backfill", async (request: Request, env: Env) => {
     const authCtx = await requireAdmin(request, env);
     if (!isAuthContext(authCtx)) return authCtx;

@@ -4,6 +4,94 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-31
+
+AI-phishing-detection research follow-through (`docs/AI_PHISHING_DETECTION_RESEARCH_2026-07.md`,
+a research-only assessment — no per-message "was this AI-written?" detector was
+or will be built, per its §3.1 rejection). Two build waves off that doc's
+recommendations, both on `claude/ai-phishing-detection-research-2f1blu`.
+Internal/staff register only this cycle — see the scope note at the end for
+why there's no public/tenant entry.
+
+### Campaign-polymorphism measurement pipeline (Wave 1 / W1.11, PR #1705, merged)
+- **Fixed three dead-read bugs** in `src/brand-threat-correlator.ts` that had
+  silently zeroed the existing (pre-this-work) "AI-generated phishing" risk
+  signal since it shipped (migrations 0022/0023): both queries were wrapped in
+  `.catch(() => ({count/total: 0}))`, so the schema mismatches never surfaced
+  as errors. `pps.ai_generated = 1` → `ai_generated_probability >=
+  AI_GENERATION_PROBABILITY_THRESHOLD` (0.7, new shared constant in
+  `src/lib/phishing-signals.ts`, also consumed by `src/agents/pathfinder.ts`);
+  `classification = 'phishing'` → `category = 'phishing'` on
+  `spam_trap_captures`; `COUNT(DISTINCT sender_email)` → `COUNT(DISTINCT
+  from_address)`. Downstream consumers (`analyst.ts`'s "AI-Generated Threat
+  Detected" insight, the ops `ScoreBreakdownCard.tsx` label) are now reachable
+  by SQL — but see the caveat below, the count they read is still always 0.
+- **Deterministic (zero-AI) campaign-polymorphism writer** — migration
+  `0257_phishing_pattern_signals_phase1.sql`, pure core
+  `src/lib/phishing-pattern-signals.ts`, D1 writer
+  `src/lib/phishing-pattern-writer.ts`. Two admin endpoints: `POST
+  /api/admin/phishing-signals/backfill` (populates per-message
+  `phishing_pattern_signals` rows — `template_hash`, `sentence_structure_
+  variance`, lexical stats, no AI call) and `POST
+  /api/admin/phishing-signals/rollup` (`runPhishingCampaignRollup`, writes
+  `campaign_pattern_stats`: `polymorphism_regime`, pairwise-Hamming stats,
+  distinct-sender/domain/ASN counts per `campaign_key`). Both are
+  endpoint-dispatched only — no cron, no `agent_runs`/`agent_events` row,
+  matching the existing alert-triage-backfill precedent. Pure SQL + hashing;
+  zero AI spend.
+- **`ai_generated_probability` is still never written.** Phase 1 is
+  measurement-only (lexical/structural variance, no semantic/embedding
+  comparison, no Haiku judge). The dead-read fix above makes the pipe
+  reachable; it does not make it non-zero. See
+  `docs/PLATFORM_DATA_DEPENDENCIES.md` §9 and research-doc §6/§8 for the open
+  semantic-similarity decision gating any future campaign-level AI-generation
+  verdict — still explicitly deferred, not part of this wave.
+
+### Phantom-squat watchlist (Wave 2, W2.0–W2.3, PR opening)
+- **New `phantom_domains` table** (migration `0258_phantom_domains.sql`) — a
+  per-brand watchlist of domains LLMs *hallucinate* for that brand (per Unit
+  42's phantom-squatting research: models deterministically converge on the
+  same fake names from shared linguistic priors; attackers register them
+  18–51 days later). Dedicated table, not folded into `lookalike_domains`
+  (unregistered predictions must stay out of the lookalike scanner's active
+  DNS/HEAD probe set — a cost containment, not just a schema choice).
+- **`phantom_enumerator` agent** (codename **Phantom**,
+  `agents/phantomEnumerator.ts`) — one bounded Haiku enumeration pass per
+  monitored brand, writing predicted domains at `status='predicted'`. No
+  cron; manual/on-demand only via `POST
+  /api/internal/agents/phantom_enumerator/run`. Enumeration alone never
+  creates a threat or an alert — a phantom is a prediction, not a finding.
+- **W2.3 matcher post-pass** (`lib/phantom-matcher.ts`) — idempotent,
+  set-based join of `phantom_domains.domain` (`status='predicted'`) against
+  the NRD feed, CT stream, and lookalike scanner already running. On a hit,
+  flips `predicted`→`registered` (at most once) and raises at most one
+  low-severity alert, reusing the **existing** `lookalike_domain_active` /
+  `ct_certificate_issued` alert types — no new `alert_type`, no CHECK
+  migration. Never inserts a `threats` row inline. Admin endpoint `POST
+  /api/admin/phantom-domains/match`; internal-secret variant `POST
+  /api/internal/phantom-domains/match?limit=500&source=all&full=0` for
+  MCP/cron dispatch.
+
+### Scope note — no version bump, no public/tenant changelog entry this cycle
+Both waves are admin/internal surfaces: the phishing-signals backfill/rollup
+endpoints are an internal measurement pipeline with no reads/UI yet
+(`campaign_pattern_stats` has zero consumers as of phase 1); the phantom
+enumerator trigger is internal-secret-gated and the matcher's admin endpoint
+is super_admin-only. The only artifact a customer could ever see from either
+wave is a `low`-severity alert from the Wave-2 matcher — and that alert reuses
+alert types (`lookalike_domain_active`, `ct_certificate_issued`) that already
+ship and already carry public/tenant-safe copy; the matcher is just an
+additional detection source feeding a pathway that pre-dates this work, not a
+new customer-facing feature or claim. No new endpoint, UI, or notification
+copy is exposed to tenants. Per CLAUDE.md §9b (PATCH = `fix`/`perf`/
+`refactor` that customers can observe), there's nothing here to attach a
+PATCH to — same precedent as the two prior `[Unreleased]` internal-only
+entries below (2026-07-11, 2026-04-01). No `/platform-version.json` bump, no
+public (`packages/averrow-marketing/src/data/changelog-entries.ts`) or tenant
+entry this cycle. If Wave 2's matcher volume becomes customer-visible enough
+to warrant its own line in the public/tenant registers, that's a follow-up
+call once real hit-rate data exists — not before.
+
 ## [v4.2.2] — 2026-07-22
 
 Follow-on light-theme ("lite mode") polish pass for the staff ops app,

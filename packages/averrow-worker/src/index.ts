@@ -357,6 +357,37 @@ export default {
         });
       }
 
+      // POST /api/internal/phantom-domains/match
+      // W2.3 phantom-squat MATCHER post-pass (spec §7) — internal-secret
+      // variant of POST /api/admin/phantom-domains/match, for MCP / cron
+      // dispatch. Idempotent, bounded. Detects when a predicted phantom
+      // domain actually appears (NRD / CT / lookalike), flips it
+      // predicted→registered, raises at most one 'low' alert. NEVER inline
+      // in a feed pull. NEVER inserts threats.
+      if (url.pathname === '/api/internal/phantom-domains/match' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { runPhantomMatch, clampMatchLimit } = await import('./lib/phantom-matcher');
+        const { getDbContext, getReadSession } = await import('./lib/db');
+        const sourceParam = url.searchParams.get('source');
+        const source =
+          sourceParam === 'nrd' || sourceParam === 'ct' || sourceParam === 'lookalike'
+            ? sourceParam
+            : 'all';
+        const full = ['1', 'true', 'yes'].includes(
+          (url.searchParams.get('full') ?? '').toLowerCase(),
+        );
+        const limit = clampMatchLimit(
+          url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+        );
+        const read = getReadSession(env, getDbContext(request));
+        const data = await runPhantomMatch(env, read, { limit, source, full });
+        return Response.json({ success: true, data });
+      }
+
       // GET /api/internal/geoip-status
       // MCP-callable read of getGeoMmdbStatus(): row count, shadow
       // table progress, recent_attempts, oldest running refresh
@@ -543,6 +574,18 @@ export default {
           const mod = agentModules["executive_monitor"];
           if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
           return Response.json({ triggered: true, agent: 'executive_monitor' });
+        }
+
+        // Phantom-domain enumerator — manual / on-demand trigger (no cron
+        // in this PR; spec §5). Predicts each monitored brand's LLM-
+        // hallucination domain surface and writes phantom_domains rows at
+        // status='predicted' only — never creates threats or alerts.
+        if (url.pathname === '/api/internal/agents/phantom_enumerator/run') {
+          const { agentModules } = await import('./agents/index');
+          const { executeAgent } = await import('./lib/agentRunner');
+          const mod = agentModules["phantom_enumerator"];
+          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
+          return Response.json({ triggered: true, agent: 'phantom_enumerator' });
         }
 
         if (url.pathname === '/api/internal/agents/cartographer/backfill') {

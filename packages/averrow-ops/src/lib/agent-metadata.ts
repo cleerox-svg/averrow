@@ -50,7 +50,8 @@ export type AgentId =
   | 'evidence_assembler'
   | 'campaign_hunter'
   | 'abuse_mailbox_classifier'
-  | 'executive_monitor';
+  | 'executive_monitor'
+  | 'phantom_enumerator';
 
 export interface AgentMetadata {
   id: AgentId;
@@ -459,6 +460,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#C83C3C',
     category: 'intelligence',
     pipelinePosition: 43,
+  },
+  phantom_enumerator: {
+    id: 'phantom_enumerator',
+    displayName: 'Phantom',
+    codename: 'phantom_enumerator',
+    subtitle: 'Phantom-squat watchlist — enumerates the LLM-hallucinated domains attackers register against a brand, then flags real registrations against NRD/CT/lookalike feeds before they weaponize',
+    color: '#0A8AB5',
+    category: 'intelligence',
+    pipelinePosition: 44,
   },
 };
 

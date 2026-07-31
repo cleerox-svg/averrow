@@ -422,8 +422,16 @@ The raw material and half the plumbing exist today:
 > `docs/API_REFERENCE.md`). The writer is endpoint-dispatched only (no cron,
 > no `agent_runs`/`agent_events`), matching the alert-triage backfill
 > precedent. `ai_generated_probability` is still never written — see the
-> nuance in `docs/PLATFORM_DATA_DEPENDENCIES.md` §9. Item 3 (phantom-squat
-> watchlist) is queued as the Wave 2 follow-up — not started.
+> nuance in `docs/PLATFORM_DATA_DEPENDENCIES.md` §9. **Item 3 (phantom-squat
+> watchlist) is now IMPLEMENTED (Wave 2, W2.0-W2.3)** on this branch:
+> migration `0258_phantom_domains.sql`, the `phantom_enumerator` AgentModule
+> (Phantom, `src/agents/phantomEnumerator.ts`, Haiku, manual trigger only —
+> no cron), pure validator `src/lib/phantom-domains.ts`, and the
+> `lib/phantom-matcher.ts` post-pass exposed at `POST
+> /api/admin/phantom-domains/match` / `POST
+> /api/internal/phantom-domains/match` — see `docs/API_REFERENCE.md`,
+> `docs/AI_AGENTS.md` (Phantom), and `docs/PLATFORM_DATA_DEPENDENCIES.md`
+> §1 (`phantom_domains` row).
 
 1. **Fix the three dead-read schema bugs** (§7.1) — trivial, and a
    prerequisite: without it, no future writer lights up the existing risk
@@ -439,7 +447,8 @@ The raw material and half the plumbing exist today:
 3. **Phantom-squat watchlist** (§3.3) — bounded Haiku enumeration per brand,
    joined against NRD/CT/lookalike flows already running. Predictive lead
    time, differentiated data asset, publishable methodology (Unit 42
-   precedent).
+   precedent). **IMPLEMENTED (Wave 2)** — see the implementation-status
+   note above.
 4. **Cloaking-as-signal** (§3.5) — small deterministic extension to
    `page-fetch`/`page-phishing-scorer`; converts today's silent false
    negatives into evidence and gives an instrumented blind-spot rate.
