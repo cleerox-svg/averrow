@@ -545,6 +545,18 @@ export default {
           return Response.json({ triggered: true, agent: 'executive_monitor' });
         }
 
+        // Phantom-domain enumerator — manual / on-demand trigger (no cron
+        // in this PR; spec §5). Predicts each monitored brand's LLM-
+        // hallucination domain surface and writes phantom_domains rows at
+        // status='predicted' only — never creates threats or alerts.
+        if (url.pathname === '/api/internal/agents/phantom_enumerator/run') {
+          const { agentModules } = await import('./agents/index');
+          const { executeAgent } = await import('./lib/agentRunner');
+          const mod = agentModules["phantom_enumerator"];
+          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
+          return Response.json({ triggered: true, agent: 'phantom_enumerator' });
+        }
+
         if (url.pathname === '/api/internal/agents/cartographer/backfill') {
           const { agentModules } = await import('./agents/index');
           const { executeAgent } = await import('./lib/agentRunner');
