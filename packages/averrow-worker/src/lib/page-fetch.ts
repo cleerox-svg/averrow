@@ -407,11 +407,18 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     // only — NO regex over attacker HTML (SSRF contract).
     .on('[class]', {
       element(el) {
-        if (antiBotWall) return; // already set → skip (precedence guard)
+        // Early-out once the top-rank family (turnstile) is recorded —
+        // nothing outranks it, so the remaining `[class]` work stays bounded.
+        if (antiBotWall !== null && wallRank(antiBotWall) === 1) return;
         const cls = (el.getAttribute('class') ?? '').toLowerCase();
-        if (cls.includes('cf-turnstile')) antiBotWall = 'turnstile';
-        else if (cls.includes('g-recaptcha')) antiBotWall = 'recaptcha';
-        else if (cls.includes('h-captcha')) antiBotWall = 'hcaptcha';
+        let candidate: string | null = null;
+        if (cls.includes('cf-turnstile')) candidate = 'turnstile';
+        else if (cls.includes('g-recaptcha')) candidate = 'recaptcha';
+        else if (cls.includes('h-captcha')) candidate = 'hcaptcha';
+        // Rank-aware upgrade (mirrors the script hook): a widget (ranks 1-3)
+        // always beats a cf_challenge (4) recorded earlier in document order,
+        // and a higher-rank widget upgrades a lower-rank one.
+        if (candidate && wallRank(candidate) < wallRank(antiBotWall)) antiBotWall = candidate;
       },
     })
     .on('form', {
