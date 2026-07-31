@@ -69,6 +69,21 @@ const FETCH_HEADERS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml',
 };
 
+/**
+ * Interstitial phrases that mark a Cloudflare managed-challenge / generic
+ * "checking your browser" wall (cloaking-as-signal, rec 4). All lowercase,
+ * matched case-insensitively via bounded `.includes` on lowercased text —
+ * NO regex over attacker HTML (SSRF contract). Consumed in two places:
+ * the fetcher's `cf_challenge` phrase scan (parseSuspectHtml) and the
+ * scorer's brand-relative `js_challenge` co-signal (page-phishing-scorer).
+ */
+export const CHALLENGE_PHRASES: readonly string[] = [
+  'just a moment',
+  'attention required',
+  'verifying you are human',
+  'checking your browser',
+];
+
 // ── Injected dependencies (real by default; overridden in tests) ────
 export interface FetchDeps {
   /** Resolve a hostname to its A + AAAA IP strings (DoH). */
@@ -88,6 +103,12 @@ export interface SuspectPageResult {
   truncated?: boolean;
   /** SHA-256 hex of the (capped) HTML bytes. */
   contentHash?: string;
+  /**
+   * Raw `cf-mitigated` response-header value (lowercased), when present —
+   * forensic instrumentation for the anti-bot-wall signal (rec 4). The
+   * one response header this module surfaces.
+   */
+  cfMitigated?: string;
   signals?: ParsedPageSignals;
 }
 
@@ -345,6 +366,26 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
   let title = '';
   let bodyTextSample = '';
   let scriptText = '';
+  // Anti-bot-wall family recorded by the fetcher (brand-agnostic tiers
+  // only — the brand-relative `js_challenge` is resolved in the scorer).
+  // First match wins by rank (widget families 1-3 outrank cf_challenge);
+  // the "already set → skip" guard on every hook enforces precedence so a
+  // later loose marker never downgrades a stronger structural one.
+  let antiBotWall: string | null = null;
+
+  // Rank precedence: lower number = higher priority. Used by the script
+  // hook so a lower-rank script marker (cf_challenge) can never overwrite
+  // a higher-rank family already recorded, and a higher-rank marker
+  // upgrades a lower-rank one. null / unset ranks last.
+  const wallRank = (fam: string | null): number => {
+    switch (fam) {
+      case 'turnstile': return 1;
+      case 'recaptcha': return 2;
+      case 'hcaptcha': return 3;
+      case 'cf_challenge': return 4;
+      default: return 99;
+    }
+  };
 
   const pushBounded = (arr: string[], val: string | null, max: number) => {
     if (val && arr.length < max) arr.push(val);
@@ -356,6 +397,21 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
         if (hasPasswordInput) return;
         const type = el.getAttribute('type');
         if (type && type.toLowerCase() === 'password') hasPasswordInput = true;
+      },
+    })
+    // Anti-bot-wall widget detection (rec 4) — brand-agnostic tiers 1-3.
+    // Widgets render into any tag (div/span/custom element), so match on
+    // the `class` attribute, not a tag whitelist. O(1) with an early exit
+    // once a family is recorded; body is already MAX_BYTES-capped so the
+    // work over the many `[class]` elements is bounded. Bounded `.includes`
+    // only — NO regex over attacker HTML (SSRF contract).
+    .on('[class]', {
+      element(el) {
+        if (antiBotWall) return; // already set → skip (precedence guard)
+        const cls = (el.getAttribute('class') ?? '').toLowerCase();
+        if (cls.includes('cf-turnstile')) antiBotWall = 'turnstile';
+        else if (cls.includes('g-recaptcha')) antiBotWall = 'recaptcha';
+        else if (cls.includes('h-captcha')) antiBotWall = 'hcaptcha';
       },
     })
     .on('form', {
@@ -370,7 +426,21 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     })
     .on('script', {
       element(el) {
-        pushBounded(resourceUrls, el.getAttribute('src'), MAX_RESOURCE_URLS);
+        const src = el.getAttribute('src');
+        pushBounded(resourceUrls, src, MAX_RESOURCE_URLS);
+        // Anti-bot-wall script-host detection (rec 4). Bounded `.includes`
+        // on the lowercased `src` only — NO regex. Respect rank precedence:
+        // only overwrite when the candidate is strictly higher priority, so
+        // a rank-4 cf_challenge script never downgrades a widget family.
+        if (src) {
+          const s = src.toLowerCase();
+          let candidate: string | null = null;
+          if (s.includes('challenges.cloudflare.com')) candidate = 'turnstile';
+          else if (s.includes('www.google.com/recaptcha') || s.includes('gstatic.com/recaptcha')) candidate = 'recaptcha';
+          else if (s.includes('hcaptcha.com')) candidate = 'hcaptcha';
+          else if (s.includes('/cdn-cgi/challenge-platform/')) candidate = 'cf_challenge';
+          if (candidate && wallRank(candidate) < wallRank(antiBotWall)) antiBotWall = candidate;
+        }
       },
       text(t) {
         if (scriptText.length < MAX_SCRIPT_SAMPLE) {
@@ -417,6 +487,18 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
   // all handlers fire before we read the accumulators.
   await rewriter.transform(new Response(toArrayBuffer(bytes))).arrayBuffer();
 
+  // Post-transform cf_challenge phrase scan (rec 4, rank 4 — loosest
+  // marker, evaluated last). Only fills an empty slot, so a rank-1..3
+  // widget family already recorded from HTML is never downgraded.
+  // Bounded `.includes` on already-accumulated (bounded) text — NO regex.
+  if (antiBotWall === null) {
+    const t = title.toLowerCase();
+    const b = bodyTextSample.toLowerCase();
+    for (const phrase of CHALLENGE_PHRASES) {
+      if (t.includes(phrase) || b.includes(phrase)) { antiBotWall = 'cf_challenge'; break; }
+    }
+  }
+
   return {
     hasPasswordInput,
     formActions,
@@ -426,6 +508,7 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     scriptRedirectTargets: extractJsRedirectTargets(scriptText),
     title,
     bodyTextSample,
+    antiBotWall,
   };
 }
 
@@ -503,12 +586,21 @@ export async function fetchSuspectPage(
   const contentHash = await sha256Hex(limits.bytes);
   const signals = await parseSuspectHtml(limits.bytes);
 
+  // Anti-bot-wall cf_challenge header tier (rec 4). The `cf-mitigated`
+  // header can only FILL an empty slot — a widget family already recorded
+  // from HTML wins. Bounded `.includes`, no regex.
+  const mit = (response.headers.get('cf-mitigated') ?? '').toLowerCase();
+  if (signals.antiBotWall === null && mit.includes('challenge')) {
+    signals.antiBotWall = 'cf_challenge';
+  }
+
   return {
     ok: true,
     httpStatus,
     contentType: limits.contentType,
     truncated: limits.truncated,
     contentHash,
+    cfMitigated: mit || undefined,
     signals,
   };
 }

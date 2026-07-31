@@ -88,6 +88,7 @@ export async function runPageAnalysisForDomain(
            page_phishing_score = ?,
            page_signals = ?,
            page_content_hash = ?,
+           page_anti_bot_wall = ?,
            updated_at = datetime('now')
        WHERE id = ?`,
     ).bind(
@@ -95,6 +96,11 @@ export async function runPageAnalysisForDomain(
       phishing.score,
       JSON.stringify(phishing.signals),
       result.contentHash ?? null,
+      // Authoritative 5-family label (or null) for the crawler blind-spot
+      // metric — cheap `GROUP BY page_anti_bot_wall`. The `anti_bot_wall`
+      // fired key also lands in page_signals above for fired-signal
+      // dashboards (T4.1 spec §5).
+      phishing.antiBotWallFamily,
       row.id,
     ).run();
   } else {
@@ -125,7 +131,13 @@ export async function applyEscalation(
   phishing: PagePhishingResult,
 ): Promise<boolean> {
   const current = normalizeLevel(row.threat_level);
-  const next = escalateThreatLevelForPage(current, phishing);
+  // Derive the bare-wall floor flag caller-side from the fired set so the
+  // escalation function stays pure value-in / value-out (T4.1 spec §3).
+  const next = escalateThreatLevelForPage(current, {
+    score: phishing.score,
+    credentialHarvest: phishing.credentialHarvest,
+    antiBotWall: phishing.signals.includes('anti_bot_wall'),
+  });
   if (LEVEL_ORDER[next] <= LEVEL_ORDER[current]) return false;
 
   await env.DB.prepare(

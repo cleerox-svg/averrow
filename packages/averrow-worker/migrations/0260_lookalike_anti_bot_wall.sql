@@ -1,0 +1,30 @@
+-- 0260_lookalike_anti_bot_wall.sql
+-- Cloaking-as-signal (rec 4). Spec: T4.1 cloaking-signal spec §5
+-- (instrumentation) + docs/AI_PHISHING_DETECTION_RESEARCH_2026-07.md §3.5.
+--
+-- The plain HTTP fetcher (lib/page-fetch.ts) executes no JS and drives no
+-- headless browser, so a hostile lookalike that front-loads a Cloudflare
+-- Turnstile / reCAPTCHA / hCaptcha / managed-challenge wall blinds the
+-- crawler: the real credential-harvest payload sits behind the wall and
+-- the deterministic scorer fires zero high-value keys. On the already-
+-- gated lookalike population, the PRESENCE of the wall is itself evidence
+-- of evasion — the scorer now fires an `anti_bot_wall` signal and records
+-- the authoritative 5-family label (turnstile|recaptcha|hcaptcha|
+-- cf_challenge|js_challenge, or NULL).
+--
+-- This column persists that authoritative family (scorer's
+-- PagePhishingResult.antiBotWallFamily) so the crawler blind-spot metric
+-- — walled pages / total pages fetched, sliced by family — is a cheap
+-- `GROUP BY page_anti_bot_wall` with no JSON parsing. The fired
+-- `anti_bot_wall` key still lands in the existing page_signals JSON array
+-- for fired-signal dashboards.
+--
+-- Additive only — ADD COLUMN, never DROP/ALTER (CLAUDE.md §8). NULL for
+-- every existing row until the page-analysis pass first touches it, and
+-- NULL for any analyzed row on which no wall was seen.
+--   page_anti_bot_wall  authoritative anti-bot-wall family for the last
+--                       successful page analysis, or NULL when no wall
+--                       was detected. One of: turnstile, recaptcha,
+--                       hcaptcha, cf_challenge, js_challenge.
+
+ALTER TABLE lookalike_domains ADD COLUMN page_anti_bot_wall TEXT;

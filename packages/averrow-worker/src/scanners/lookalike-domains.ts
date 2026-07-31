@@ -278,7 +278,13 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
               Date.now() + DEFAULT_DEADLINE_MS,
             );
             if (phishing) {
-              threatLevel = escalateThreatLevelForPage(threatLevel, phishing);
+              // Derive the bare-wall MEDIUM floor flag caller-side from the
+              // fired set (T4.1 spec §3) so the escalation fn stays pure.
+              threatLevel = escalateThreatLevelForPage(threatLevel, {
+                score: phishing.score,
+                credentialHarvest: phishing.credentialHarvest,
+                antiBotWall: phishing.signals.includes('anti_bot_wall'),
+              });
             }
           } catch (err) {
             logger.error('lookalike_inline_page_error', {

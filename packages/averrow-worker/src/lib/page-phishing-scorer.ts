@@ -18,6 +18,7 @@
  */
 
 import { registrableDomain } from './domain-utils';
+import { CHALLENGE_PHRASES } from './page-fetch';
 
 /**
  * Raw signals extracted from the fetched HTML. The fetcher populates
@@ -40,6 +41,13 @@ export interface ParsedPageSignals {
   title: string;
   /** Bounded sample of body text for keyword-density scoring. */
   bodyTextSample: string;
+  /**
+   * Brand-agnostic anti-bot-wall family the fetcher detected
+   * (`turnstile|recaptcha|hcaptcha|cf_challenge`), or null when none. The
+   * brand-relative `js_challenge` family is NOT set here — it is resolved
+   * in the scorer (needs brand context). See T4.1 spec §0.2 / §1.
+   */
+  antiBotWall: string | null;
 }
 
 /** Context describing the impersonated brand + the suspect's own host. */
@@ -63,6 +71,18 @@ export interface PagePhishingResult {
    * flag the alert-triage guard consumes to withhold auto-dismissal.
    */
   credentialHarvest: boolean;
+  /**
+   * Authoritative anti-bot-wall family (cloaking-as-signal, rec 4), or
+   * null when no wall was detected. One of
+   * `turnstile|recaptcha|hcaptcha|cf_challenge|js_challenge`. Reconciles
+   * the fetcher's brand-agnostic `parsed.antiBotWall` with the
+   * brand-relative `js_challenge` resolved here (js_challenge overrides a
+   * fetcher cf_challenge in the overlap — T4.1 spec §1.5). Instrumentation
+   * only: the single `anti_bot_wall` fired key scores identically for any
+   * family. Persisted to lookalike_domains.page_anti_bot_wall for the
+   * crawler blind-spot metric.
+   */
+  antiBotWallFamily: string | null;
 }
 
 /** Signal weights. Sum can exceed 100; final score is capped. */
@@ -72,6 +92,10 @@ export const SIGNAL_WEIGHTS = {
   offdomain_form_exfil: 45,
   /** A live password input exists. */
   credential_form: 30,
+  /** Anti-bot wall gating a plain crawler (cloaking-as-signal, rec 4) —
+   *  inferred evasion intent. Same evidentiary class/weight as
+   *  cloaking_redirect (both hide the real payload). */
+  anti_bot_wall: 20,
   /** Cloaking redirect to the real brand (meta-refresh or JS). */
   cloaking_redirect: 20,
   /** Real-brand assets hotlinked (logo/CSS/JS served from brand domain). */
@@ -202,6 +226,38 @@ export function scorePagePhishing(
     if (cloaking) fired.add('cloaking_redirect');
   }
 
+  // 7. Anti-bot wall (cloaking-as-signal, rec 4). Two surfaces reconcile
+  //    into one authoritative 5-family label:
+  //    (a) the fetcher's brand-agnostic `parsed.antiBotWall`
+  //        (turnstile|recaptcha|hcaptcha|cf_challenge, or null), and
+  //    (b) the brand-relative `js_challenge`, resolved here because it
+  //        needs `brandReg`.
+  //    `js_challenge` is the exact inverse of `cloaking_redirect`: a
+  //    trivially-detectable JS redirect to a NON-brand domain (vs
+  //    cloaking_redirect's bounce TO the brand) — mutually exclusive on a
+  //    given target — combined with a challenge phrase. When brandReg is
+  //    null, condition 1 can never hold, so jsChallenge is false.
+  const jsRedirectToNonBrand =
+    brandReg !== null &&
+    parsed.scriptRedirectTargets.some((t) => {
+      const reg = refRegistrableDomain(t, suspectHost);
+      return reg !== null && reg !== brandReg;
+    });
+  const challengePhrasePresent = (() => {
+    const title = parsed.title.toLowerCase();
+    const body = parsed.bodyTextSample.toLowerCase();
+    return CHALLENGE_PHRASES.some((p) => title.includes(p) || body.includes(p));
+  })();
+  const jsChallenge = jsRedirectToNonBrand && challengePhrasePresent;
+
+  if (parsed.antiBotWall !== null || jsChallenge) fired.add('anti_bot_wall');
+
+  // Family reconciliation (§1.5): js_challenge overrides a fetcher
+  // cf_challenge in the overlap — the non-brand-redirect mechanism is the
+  // higher-value forensic marker (it tells us WHERE the wall bounces). This
+  // does not change scoring; the single fired key scores identically.
+  const antiBotWallFamily: string | null = jsChallenge ? 'js_challenge' : parsed.antiBotWall;
+
   let score = 0;
   for (const key of fired) score += SIGNAL_WEIGHTS[key];
   score = Math.min(100, score);
@@ -212,6 +268,7 @@ export function scorePagePhishing(
     score,
     signals: Array.from(fired),
     credentialHarvest,
+    antiBotWallFamily,
   };
 }
 
@@ -227,14 +284,26 @@ const LEVEL_ORDER: Record<PageThreatLevel, number> = { LOW: 0, MEDIUM: 1, HIGH: 
  *   - credential-harvest page (password + off-domain exfil) -> CRITICAL
  *   - strong page score (>= 60)                             -> HIGH
  *   - moderate page score (>= 30)                           -> MEDIUM
+ *   - bare anti-bot wall (score 20, < 30)                   -> MEDIUM floor
+ *
+ * The `antiBotWall` flag is derived caller-side from the fired set
+ * (`result.signals.includes('anti_bot_wall')`) so this stays a pure
+ * value-in / value-out function. The bare-wall floor is the LAST branch
+ * in the else-chain, so it only bites when score < 30 (the isolated-wall
+ * case) — any wall that combines with another >= 10 signal already reaches
+ * MEDIUM via the >= 30 branch. The terminal
+ * `LEVEL_ORDER[target] > LEVEL_ORDER[current]` guard is retained
+ * unchanged, so the floor can lift LOW -> MEDIUM but can NEVER downgrade an
+ * already-HIGH/CRITICAL page.
  */
 export function escalateThreatLevelForPage(
   current: PageThreatLevel,
-  result: Pick<PagePhishingResult, 'score' | 'credentialHarvest'>,
+  result: Pick<PagePhishingResult, 'score' | 'credentialHarvest'> & { antiBotWall: boolean },
 ): PageThreatLevel {
   let target: PageThreatLevel = current;
   if (result.credentialHarvest) target = 'CRITICAL';
   else if (result.score >= 60) target = 'HIGH';
   else if (result.score >= 30) target = 'MEDIUM';
+  else if (result.antiBotWall) target = 'MEDIUM';
   return LEVEL_ORDER[target] > LEVEL_ORDER[current] ? target : current;
 }
