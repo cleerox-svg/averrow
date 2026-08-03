@@ -122,10 +122,15 @@ describe("GeoipRefreshWorkflow — 1 MiB step-output invariant", () => {
     expect(source).not.toMatch(/status = 'success' AND mode = 'full'/);
     expect(source).not.toMatch(/FULL_REBUILD_MAX_AGE_DAYS/);
     // decide-mode now returns diff for any non-empty live table; full is
-    // reserved for force / manual-R2 / empty-table bootstrap.
+    // reserved for force / manual-R2 / empty-table bootstrap. The gate is
+    // an emptiness probe (SELECT 1 ... LIMIT 1), NOT a full COUNT(*) scan
+    // over the ~3.76M-row table — an absent row means empty → full.
     const idx = source.search(/step\.do\(\s*['"]decide-mode['"]/);
     expect(idx).toBeGreaterThanOrEqual(0);
-    const body = source.slice(idx, idx + 800);
-    expect(body).toMatch(/=== 0 \? 'full' : 'diff'/);
+    const body = source.slice(idx, idx + 1400);
+    // The positive probe assertion below pins the LIMIT-1 emptiness check,
+    // which by construction is not a full-table COUNT(*) scan.
+    expect(body).toMatch(/SELECT 1 AS present FROM geo_ip_ranges LIMIT 1/);
+    expect(body).toMatch(/== null \? 'full' : 'diff'/);
   });
 });

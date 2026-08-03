@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cachedCount, getCachedCountStats } from "../src/lib/cached-count";
+import { cachedCount, getCachedCountStats, seedCount } from "../src/lib/cached-count";
 import type { Env } from "../src/types";
 
 // ─── Minimal in-memory KV mock ────────────────────────────────────
@@ -153,6 +153,84 @@ describe("cachedCount", () => {
     await expect(
       cachedCount(env, "test.compute.throws", 60, throwingCompute),
     ).rejects.toThrow("d1 outage");
+  });
+});
+
+describe("seedCount", () => {
+  let kv: MockKV;
+  let env: Env;
+
+  beforeEach(() => {
+    kv = new MockKV();
+    env = makeEnv(kv);
+  });
+
+  it("round-trip: a seeded value is served as a cachedCount hit without calling compute", async () => {
+    await seedCount(env, "test.seed.hit", 42, 3600);
+
+    const failCompute = vi.fn(() => {
+      throw new Error("compute should not have been called — seeded value should hit");
+    });
+
+    const v = await cachedCount(env, "test.seed.hit", 3600, failCompute);
+    expect(v).toBe(42);
+    expect(failCompute).not.toHaveBeenCalled();
+  });
+
+  it("stores the identical envelope shape/prefix/TTL padding as cachedCount's own PUT", async () => {
+    await seedCount(env, "test.seed.envelope", 7, 300);
+
+    const stored = kv.store.get("cc:test.seed.envelope");
+    expect(stored).toBeDefined();
+    const parsed = JSON.parse(stored!);
+    expect(parsed.v).toBe(7);
+    expect(typeof parsed.t).toBe("number");
+  });
+
+  it("freshness respected: a seeded value older than its TTL is a miss (compute IS called)", async () => {
+    await seedCount(env, "test.seed.stale", 42, 60);
+
+    // Manually backdate the seeded entry past its TTL — same technique
+    // used by cachedCount's own "recomputes when cached entry is stale" test.
+    const raw = kv.store.get("cc:test.seed.stale")!;
+    const parsed = JSON.parse(raw);
+    parsed.t = Date.now() - 120_000; // 120s ago, beyond 60s TTL
+    kv.store.set("cc:test.seed.stale", JSON.stringify(parsed));
+
+    const compute = vi.fn().mockResolvedValue(99);
+    const v = await cachedCount(env, "test.seed.stale", 60, compute);
+    expect(v).toBe(99);
+    expect(compute).toHaveBeenCalledOnce();
+  });
+
+  it("no-ops without throwing when env has no CACHE binding", async () => {
+    await expect(seedCount({}, "test.seed.nocache", 1, 3600)).resolves.toBeUndefined();
+  });
+
+  it("does not write when ttlSeconds <= 0 (subsequent cachedCount misses and computes)", async () => {
+    await seedCount(env, "test.seed.zerottl", 42, 0);
+    expect(kv.store.has("cc:test.seed.zerottl")).toBe(false);
+
+    await seedCount(env, "test.seed.negttl", 42, -5);
+    expect(kv.store.has("cc:test.seed.negttl")).toBe(false);
+
+    const compute = vi.fn().mockResolvedValue(7);
+    const v = await cachedCount(env, "test.seed.zerottl", 60, compute);
+    expect(v).toBe(7);
+    expect(compute).toHaveBeenCalledOnce();
+  });
+
+  it("swallows a throwing KV.put and still resolves", async () => {
+    const throwingKv = {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockRejectedValue(new Error("kv put outage")),
+    };
+    const throwingEnv = { CACHE: throwingKv } as unknown as { CACHE?: KVNamespace };
+
+    await expect(
+      seedCount(throwingEnv, "test.seed.putthrows", 42, 3600),
+    ).resolves.toBeUndefined();
+    expect(throwingKv.put).toHaveBeenCalledOnce();
   });
 });
 

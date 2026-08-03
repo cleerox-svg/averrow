@@ -77,6 +77,7 @@
 import { WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { R2ZipReader } from '../lib/r2-zip-reader';
+import { seedCount } from '../lib/cached-count';
 import {
   runGeoipBlocksImport,
   runGeoipDiffImport,
@@ -328,10 +329,17 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
     // a truly empty table (first-ever bootstrap).
     const mode = await step.do('decide-mode', async (): Promise<'full' | 'diff'> => {
       if (forceReload || isManualR2Import) return 'full';
+      // Emptiness probe ONLY — this gate needs to know whether the live
+      // table has ANY rows, not how many. A `SELECT COUNT(*)` here scanned
+      // all ~3.76M rows every refresh (and re-scanned on FC recoveries) —
+      // ~41.5M reads/24h, the platform's single biggest uncached read. A
+      // `LIMIT 1` existence probe reads at most one row. Behaviour is
+      // preserved exactly: an absent/null result means the table is empty →
+      // 'full' (first-ever bootstrap); any row present → 'diff'.
       const live = await this.env.GEOIP_DB
-        .prepare(`SELECT COUNT(*) AS n FROM geo_ip_ranges`)
-        .first<{ n: number }>();
-      return (live?.n ?? 0) === 0 ? 'full' : 'diff';
+        .prepare(`SELECT 1 AS present FROM geo_ip_ranges LIMIT 1`)
+        .first<{ present: number }>();
+      return live == null ? 'full' : 'diff';
     });
 
     // ── Step 3: prepare-shadow-table (FULL path only) ────────
@@ -713,6 +721,17 @@ export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, Ge
       rowsWritten = importResult.rowsWritten;
       rowsParsed = importResult.rowsParsed;
     }
+
+    // Seed the shared counter cache with the authoritative post-refresh
+    // live row count so downstream readers (getGeoMmdbStatus, platform
+    // diagnostics) hit KV instead of re-running COUNT(*) over the full
+    // ~3.76M-row table. Uses the exact same key + 24h TTL that
+    // lib/geoip-mmdb.ts passes to cachedCount, so its next read is a hit.
+    // Placed after the branch merge (not inside the diff-only count-live
+    // step) so a FULL rebuild — which changes the row count the most —
+    // seeds too; `liveRowCount` is authoritative for whichever path ran.
+    // Best-effort + idempotent, safe to re-run on a Workflow replay.
+    await seedCount(this.env, 'count.geo_ip_ranges.total', liveRowCount, 24 * 60 * 60);
 
     // ── Step 7.5: cleanup auto-staged archive ────────────────
     // The auto-poll path staged ~80MB to R2 in step 3.7; once the
