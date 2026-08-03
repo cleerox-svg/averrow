@@ -15,6 +15,7 @@ import { runEmailSecurityScan, saveEmailSecurityScan } from '../email-security';
 import type { BIMIResult } from '../email-security';
 import { createAlert } from '../lib/alerts';
 import { cachedValue } from '../lib/cached-value';
+import { cachedCount } from '../lib/cached-count';
 import type { EmailSecurityScan, Env } from '../types';
 
 // ─── GET /api/email-security/:brandId ─────────────────────────────────────
@@ -377,7 +378,7 @@ export async function handleEmailSecurityStats(
         active_threats: number;
       }>;
     }>(env, 'email_security_stats', 420, async () => {
-      const [gradeRows, totalRow, unscannedRow, worstBrands] = await Promise.all([
+      const [gradeRows, totalScanned, totalUnscanned, worstBrands] = await Promise.all([
         // Grade distribution
         env.DB.prepare(`
           SELECT email_security_grade AS grade, COUNT(*) AS count
@@ -389,15 +390,20 @@ export async function handleEmailSecurityStats(
             WHEN 'C' THEN 4 WHEN 'D' THEN 5 WHEN 'F' THEN 6 ELSE 7 END
         `).all<{ grade: string; count: number }>(),
 
-        // Scanned total
-        env.DB.prepare(
-          "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NOT NULL"
-        ).first<{ n: number }>(),
+        // Scanned total — 15-min cachedCount. This whole payload already
+        // sits behind the 420s cachedValue above, so these COUNTs only run
+        // on an outer-cache miss; the inner cache trims those residual
+        // full-table scans over brands (~9.6K rows) further.
+        cachedCount(env, 'count.brands.email_scored', 900, () =>
+          env.DB.prepare(
+            "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NOT NULL"
+          ).first<{ n: number }>().then((r) => r?.n ?? 0)),
 
-        // Unscanned count
-        env.DB.prepare(
-          "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NULL"
-        ).first<{ n: number }>(),
+        // Unscanned count — same cache treatment.
+        cachedCount(env, 'count.brands.email_unscored', 900, () =>
+          env.DB.prepare(
+            "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NULL"
+          ).first<{ n: number }>().then((r) => r?.n ?? 0)),
 
         // Worst-protected brands (all F/D/C grades, up to 200)
         env.DB.prepare(`
@@ -434,8 +440,8 @@ export async function handleEmailSecurityStats(
       return {
         grade_distribution: gradeRows.results,
         dmarc_distribution: dmarcRows.results,
-        total_scanned: totalRow?.n ?? 0,
-        total_unscanned: unscannedRow?.n ?? 0,
+        total_scanned: totalScanned,
+        total_unscanned: totalUnscanned,
         average_score: Math.round(avgRow?.avg ?? 0),
         worst_brands: worstBrands.results,
       };

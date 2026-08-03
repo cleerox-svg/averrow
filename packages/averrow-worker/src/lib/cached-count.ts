@@ -113,6 +113,44 @@ export async function cachedCount(
 }
 
 /**
+ * Prime the counter cache with a value that was already computed by an
+ * authoritative write path, so the next `cachedCount` read of the same
+ * key is a hit instead of re-running the expensive scan.
+ *
+ * Use when a caller has JUST produced the true count as a side effect of
+ * doing real work (e.g. the geoip refresh workflow's post-import live-row
+ * count) and wants to save downstream readers — diagnostics,
+ * `getGeoMmdbStatus` — from re-scanning the same table.
+ *
+ * The stored envelope shape + KV key prefix + padded `expirationTtl` are
+ * IDENTICAL to the PUT path in `cachedCount`, so a subsequent
+ * `cachedCount(env, key, ttlSeconds, …)` parses this as a fresh hit.
+ * Keep the `ttlSeconds` passed here equal to the reader's TTL. Best-effort:
+ * a missing `CACHE` binding or a KV failure is swallowed, exactly like
+ * `cachedCount`'s own PUT — priming the cache must never break the caller.
+ *
+ * Typed against a minimal `{ CACHE?: KVNamespace }` (rather than the full
+ * `Env`) so narrow Workflow env shapes with an optional CACHE binding can
+ * seed too.
+ */
+export async function seedCount(
+  env: { CACHE?: KVNamespace },
+  key: string,
+  value: number,
+  ttlSeconds: number,
+): Promise<void> {
+  if (ttlSeconds <= 0 || !env.CACHE) return;
+  try {
+    const entry: CachedEntry = { v: value, t: Date.now() };
+    await env.CACHE.put(CACHE_PREFIX + key, JSON.stringify(entry), {
+      expirationTtl: Math.max(ttlSeconds * 2, 60),
+    });
+  } catch {
+    // Non-fatal — same contract as cachedCount's PUT.
+  }
+}
+
+/**
  * Snapshot of cache hit/miss stats over the recent ring window. Used
  * by `/api/internal/platform-diagnostics` to verify the cache is
  * doing meaningful work after deploy.
