@@ -28,6 +28,7 @@ import { D1Budget }         from './metrics/D1Budget';
 import { AiSpend }          from './metrics/AiSpend';
 import { GeoCoverage }      from './metrics/GeoCoverage';
 import { FeedFailures }     from './metrics/FeedFailures';
+import { MarketingVisibility } from './metrics/MarketingVisibility';
 
 /* ─── Tabs (Tier 3 — /admin + /admin/metrics merge) ────────────────────── */
 // Single tabbed surface. VerdictBand renders above the tabs and never
@@ -42,6 +43,7 @@ type AdminTabId =
   | 'cost'
   | 'geo'
   | 'email'
+  | 'market'
   | 'system'
   | 'briefing';
 
@@ -58,6 +60,7 @@ const ADMIN_TABS: ReadonlyArray<{ id: AdminTabId; label: string }> = [
   { id: 'cost',       label: 'Cost & Budget' },
   { id: 'geo',        label: 'Geo Coverage' },
   { id: 'email',      label: 'Email Security' },
+  { id: 'market',     label: 'Marketing' },
   { id: 'system',     label: 'System' },
   { id: 'briefing',   label: 'Briefing' },
 ];
@@ -1044,6 +1047,16 @@ export function AdminDashboard() {
         style={activeTab === 'email' ? { display: 'flex', flexDirection: 'column', gap: 28 } : { display: 'none' }}
       >
         {activeTab === 'email' && <EmailSecuritySection />}
+      </div>
+
+      <div
+        role="tabpanel"
+        id="tabpanel-market"
+        aria-labelledby="tab-market"
+        hidden={activeTab !== 'market'}
+        style={activeTab === 'market' ? { display: 'flex', flexDirection: 'column', gap: 28 } : { display: 'none' }}
+      >
+        {activeTab === 'market' && <MarketingVisibility />}
       </div>
 
       {/* SYSTEM — static/rarely-changing + action content, off the glance

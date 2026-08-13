@@ -305,3 +305,49 @@ export function useFeedFailures() {
     staleTime: 60_000,
   });
 }
+
+// ─── Marketing & AI Visibility ───────────────────────────────────
+
+export interface MarketingTopPage {
+  page: string;
+  views: number;
+}
+
+export interface MarketingAiCrawlerRow {
+  crawler_name: string;
+  hits: number;
+}
+
+export interface MarketingAiReferralRow {
+  ai_source: string;
+  sessions: number;
+}
+
+export interface MarketingVisibility {
+  windowHours: number;
+  humanViews: number;
+  aiCrawlerViews: number;
+  otherBotViews: number;
+  aiReferralSessions: number;
+  ctaClicks: number;
+  contactSubs: number;
+  topPages: MarketingTopPage[];
+  aiCrawlerBreakdown: MarketingAiCrawlerRow[];
+  aiReferralBySource: MarketingAiReferralRow[];
+}
+
+export function useMarketingAnalytics(hours = 24) {
+  return useQuery({
+    queryKey: ['metrics-marketing-analytics', hours],
+    queryFn: async () => {
+      const res = await api.get<MarketingVisibility>(`/api/admin/marketing-analytics?hours=${hours}`);
+      return res.data ?? null;
+    },
+    placeholderData: keepPreviousData,
+    // No documented backend cache for this endpoint yet; match the other
+    // metrics-page hooks' 60s cadence so the tab feels live without
+    // hammering the backend on every render.
+    refetchInterval: 60_000,
+    staleTime: 60_000,
+  });
+}
