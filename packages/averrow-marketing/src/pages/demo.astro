@@ -74,7 +74,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
               <label for="message">Message</label>
               <textarea id="message" name="message" rows="5" placeholder="What brand or domain would you like us to walk through? Anything specific you want to see?"></textarea>
             </div>
-            <button type="submit" class="form-submit-btn" id="submitBtn">Request Demo</button>
+            <button type="submit" class="form-submit-btn" id="submitBtn" data-cta="request-demo">Request Demo</button>
           </form>
           <div class="form-message" id="formMessage"></div>
         </div>
@@ -116,7 +116,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="demo-sidebar-card demo-alt-card">
             <h2>Don&rsquo;t want to wait for a call?</h2>
             <p class="demo-alt-copy">Run the free Brand Exposure scan right now &mdash; no signup, no credit card, results in minutes.</p>
-            <a href={`${base}/`} class="btn btn-outline demo-alt-btn">Run Free Scan Instead</a>
+            <a href={`${base}/`} class="btn btn-outline demo-alt-btn" data-cta="run-scan">Run Free Scan Instead</a>
           </div>
 
           <div class="demo-sidebar-card">

@@ -95,7 +95,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Exposure score</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;">Run Free Scan</a>
+          <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-free">Run Free Scan</a>
         </div>
       </div>
 
@@ -126,7 +126,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>API access</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;">Get Started</a>
+          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-professional">Get Started</a>
         </div>
       </div>
 
@@ -157,7 +157,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Advanced API access</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;">Contact Sales</a>
+          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-business">Contact Sales</a>
         </div>
       </div>
 
@@ -178,7 +178,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Onboarding &amp; training</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;">Contact Sales</a>
+          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
         </div>
       </div>
     </div>
@@ -263,8 +263,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2>Ready to protect your brand?</h2>
       <p>Start with a free scan or talk to our team about the right plan for you.</p>
       <div class="cta-actions">
-        <a href={`${base}/scan`} class="btn btn-primary">Start Free Scan</a>
-        <a href={`${base}/contact`} class="btn btn-outline">Contact Sales</a>
+        <a href={`${base}/scan`} class="btn btn-primary" data-cta="run-scan">Start Free Scan</a>
+        <a href={`${base}/contact`} class="btn btn-outline" data-cta="contact-sales">Contact Sales</a>
       </div>
     </div>
   </section>
