@@ -68,6 +68,7 @@ import {
   handleApproveAgent, handleRejectAgent, handleRequestChangesAgent,
 } from "../handlers/agent-approvals";
 import { handleAgentModuleMetadata } from "../handlers/agent-module-metadata";
+import { fetchMarketingVisibility } from "../lib/marketing-analytics";
 
 export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // ─── Admin Stats & Health ─────────────────────────────────────────
@@ -129,6 +130,19 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleMetricsFeedFailures(request, env);
+  });
+  // Marketing page analytics + AI visibility (page views/clicks, AI-crawler
+  // hits, AI-chat referrals). Shares fetchMarketingVisibility with the daily
+  // briefing so both surfaces agree. ?hours= clamps to 1..168 (default 24).
+  router.get("/api/admin/marketing-analytics", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const origin = request.headers.get("Origin");
+    const hoursParam = Math.min(
+      168,
+      Math.max(1, Math.trunc(Number(new URL(request.url).searchParams.get("hours")) || 24)),
+    );
+    return json({ success: true, data: await fetchMarketingVisibility(env, hoursParam) }, 200, origin);
   });
   router.get("/api/admin/health", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);

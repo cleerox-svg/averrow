@@ -13,6 +13,9 @@
 //   cost-optimization  -> cost
 //   geo-coverage       -> geo
 //   feed-failures      -> feeds
+//   marketing          -> market  (no prior legacy route ever used this id;
+//                                  added for completeness alongside the
+//                                  Marketing & AI Visibility tab)
 // No `?tab` (or an unrecognized id) -> overview.
 
 import { Navigate, useSearchParams } from 'react-router-dom';
@@ -25,6 +28,7 @@ const LEGACY_TAB_MAP: Record<string, string> = {
   'cost-optimization': 'cost',
   'geo-coverage':       'geo',
   'feed-failures':      'feeds',
+  'marketing':          'market',
 };
 
 const DEFAULT_TARGET_TAB = 'overview';

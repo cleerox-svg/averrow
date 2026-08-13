@@ -126,6 +126,49 @@ const orgJsonLd = {
       <slot />
     </main>
     <Footer />
+    <script is:inline>
+      // Tiny privacy-safe analytics beacon. No cookies, no PII, no
+      // third-party libs, no batching/queueing/localStorage — fire and
+      // forget via sendBeacon (fetch keepalive fallback). Sends a
+      // pageview on load + a "cta" event on clicks of tagged elements.
+      (function () {
+        if (!("sendBeacon" in navigator) && !("fetch" in window)) return;
+
+        function send(payload) {
+          try {
+            const json = JSON.stringify(payload);
+            if (navigator.sendBeacon) {
+              navigator.sendBeacon("/api/track", new Blob([json], { type: "application/json" }));
+            } else {
+              fetch("/api/track", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: json,
+                keepalive: true,
+              }).catch(() => {});
+            }
+          } catch (e) {}
+        }
+
+        try {
+          send({ type: "pageview", page: location.pathname, ref: document.referrer || "" });
+        } catch (e) {}
+
+        try {
+          document.addEventListener(
+            "click",
+            function (event) {
+              try {
+                const el = event.target && event.target.closest ? event.target.closest("a[data-cta], button[data-cta]") : null;
+                if (!el) return;
+                send({ type: "cta", page: location.pathname, ctaId: el.dataset.cta || "" });
+              } catch (e) {}
+            },
+            true
+          );
+        } catch (e) {}
+      })();
+    </script>
   </body>
 </html>
 

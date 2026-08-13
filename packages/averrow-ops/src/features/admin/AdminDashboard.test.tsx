@@ -191,9 +191,9 @@ describe('AdminDashboard', () => {
     expect(screen.getByText('OPERATIONAL')).toBeInTheDocument();
   });
 
-  it('renders all 8 tabs', () => {
+  it('renders all 9 tabs', () => {
     renderWithProviders(<AdminDashboard />);
-    const labels = ['Overview', 'Pipelines', 'Feeds', 'Cost & Budget', 'Geo Coverage', 'Email Security', 'System', 'Briefing'];
+    const labels = ['Overview', 'Pipelines', 'Feeds', 'Cost & Budget', 'Geo Coverage', 'Email Security', 'Marketing', 'System', 'Briefing'];
     for (const label of labels) {
       expect(screen.getByRole('tab', { name: label })).toBeInTheDocument();
     }
@@ -454,14 +454,14 @@ describe('AdminDashboard', () => {
   // Tabs.tsx's own doc-comment warns that `linkedPanels` must only be used
   // when a matching `role="tabpanel" id="tabpanel-<id>"` exists for EVERY
   // tab, not just the active one — an unmatched `aria-controls` is invalid
-  // ARIA. AdminDashboard renders all 8 persistently (hidden via
+  // ARIA. AdminDashboard renders all 9 persistently (hidden via
   // `hidden`/`display:none` when inactive) so every tab's `aria-controls`
   // resolves, even though the inner content stays lazy.
   describe('linkedPanels ARIA correctness', () => {
     it('every tab\'s aria-controls target exists in the DOM, even for inactive tabs', () => {
       renderWithProviders(<AdminDashboard />);
       const tabs = screen.getAllByRole('tab');
-      expect(tabs.length).toBe(8);
+      expect(tabs.length).toBe(9);
       for (const tab of tabs) {
         const controls = tab.getAttribute('aria-controls');
         expect(controls).toBeTruthy();

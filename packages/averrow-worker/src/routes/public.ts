@@ -21,6 +21,8 @@ import { renderNotFoundPage } from "../templates/not-found";
 import { renderAdminPortalPage, renderInternalStaffPage } from "../templates/honeypot-pages";
 import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
 import { handleContactSubmission } from "../handlers/contact";
+import { handleTrackEvent } from "../handlers/track";
+import { logMarketingEdgeView } from "../lib/marketing-event-logger";
 import { handleScanPage } from "../handlers/scanPage";
 import { handlePublicBrandScan } from "../handlers/brandScan";
 import {
@@ -29,6 +31,15 @@ import {
 } from "../handlers/public";
 import { handlePublicStats as handlePublicStatsV2 } from "../handlers/stats";
 import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
+
+// Public marketing HTML routes eligible for edge analytics logging.
+const MARKETING_PATHS = new Set([
+  "/", "/platform", "/about", "/pricing", "/security",
+  "/contact", "/report-abuse", "/changelog", "/blog",
+]);
+function isMarketingPath(pathname: string): boolean {
+  return MARKETING_PATHS.has(pathname) || pathname.startsWith("/blog/");
+}
 
 const htmlPage = (render: () => string) => () =>
   new Response(render(), {
@@ -315,6 +326,9 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.post("/api/v1/public/assess", (request: Request, env: Env) => handlePublicAssess(request, env));
   router.post("/api/v1/public/leads", (request: Request, env: Env) => handlePublicLeadCapture(request, env));
   router.post("/api/v1/public/monitor", (request: Request, env: Env) => handlePublicMonitor(request, env));
+  // Marketing analytics beacon (unauthenticated, 204 fast-path). ctx is
+  // threaded as the 3rd arg by itty-router (index.ts router.fetch(request, env, ctx)).
+  router.post("/api/track", (request: Request, env: Env, ctx: ExecutionContext) => handleTrackEvent(request, env, ctx));
   router.get("/api/v1/public/email-security/:domain", async (request: Request & { params: Record<string, string> }, env: Env) =>
     handlePublicEmailSecurity(request, env, request.params["domain"] ?? "")
   );
@@ -382,13 +396,25 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // catch-all would route every /tenant/<slug> refresh into the
   // legacy /dashboard.html shell, which renders its own "Page not
   // found" (the bug the user just hit).
-  router.all("*", async (request: Request, env: Env) => {
+  router.all("*", async (request: Request, env: Env, ctx: ExecutionContext) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
       return json({ success: false, error: "Not found" }, 404, request.headers.get("Origin"));
     }
     const assetResponse = await env.ASSETS.fetch(request);
     if (assetResponse.status !== 404) {
+      // Non-blocking marketing edge logging: only successful HTML GETs on
+      // the public marketing allowlist. Bots/crawlers are recorded here;
+      // human views come via the /api/track beacon. logMarketingEdgeView
+      // self-gates on bot/crawler UA and swallows all errors.
+      if (
+        request.method === "GET" &&
+        assetResponse.status === 200 &&
+        (assetResponse.headers.get("content-type") || "").startsWith("text/html") &&
+        isMarketingPath(url.pathname)
+      ) {
+        ctx.waitUntil(logMarketingEdgeView(env, request, url.pathname));
+      }
       return assetResponse;
     }
 

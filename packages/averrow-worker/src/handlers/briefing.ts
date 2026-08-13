@@ -3,6 +3,8 @@ import { json } from "../lib/cors";
 import { sendBriefingEmail } from "../lib/briefing-email";
 import { createAgentRun, completeAgentRun, failAgentRun } from "../db/agent-runs";
 import { logger } from "../lib/logger";
+import { fetchMarketingVisibility } from "../lib/marketing-analytics";
+import type { MarketingVisibility } from "../lib/marketing-analytics";
 import type { Env } from "../types";
 
 // ─── Agent-run contract wrapper ─────────────────────────────────
@@ -209,6 +211,7 @@ export interface ComprehensiveBriefing {
       reason: "bait" | "probe";
     }>;
   };
+  marketingVisibility: MarketingVisibility;
   topTargetedBrands: Array<{ name: string; threats_24h: number }>;
   brandCoverage: Array<{ sector: string; brands: number }>;
   geopoliticalCampaigns: Array<{
@@ -673,6 +676,10 @@ export async function fetchComprehensiveBriefing(
   const hasDegraded =
     failedCount > 0 || unhealthyCount / totalFeeds > 0.5;
 
+  // Marketing & AI visibility — internally safe (per-query fallback),
+  // won't throw out of here even if the table is missing.
+  const marketingVisibility = await fetchMarketingVisibility(env, 24);
+
   return {
     platformOverview: {
       totalThreats: Number(overview.total_threats) || 0,
@@ -743,6 +750,7 @@ export async function fetchComprehensiveBriefing(
       recentBots: honeypotBots,
       suspiciousHumans: honeypotHumans,
     },
+    marketingVisibility,
     topTargetedBrands,
     brandCoverage,
     geopoliticalCampaigns,
