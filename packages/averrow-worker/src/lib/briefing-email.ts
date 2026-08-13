@@ -480,6 +480,43 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
     </div>
   </td></tr>`;
 
+  // 12) Marketing & AI visibility (last 24h)
+  const mv = b.marketingVisibility;
+  const marketingActivity = mv.humanViews + mv.aiCrawlerViews + mv.otherBotViews + mv.ctaClicks;
+  const marketingBlock = section(
+    "Marketing & AI Visibility",
+    marketingActivity === 0
+      ? `<div style="font-size:12px;color:${COLOR.textMuted};font-family:${FONT_MONO};">No marketing traffic recorded in the last 24h.</div>`
+      : `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;">
+        <tr>
+          <td width="20%" style="padding:0 4px 0 0;">${statTile(fmt(mv.humanViews), "Human Views")}</td>
+          <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.aiCrawlerViews), "AI Crawler Hits", COLOR.blue)}</td>
+          <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.aiReferralSessions), "AI Referrals", COLOR.green)}</td>
+          <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.ctaClicks), "CTA Clicks")}</td>
+          <td width="20%" style="padding:0 0 0 4px;">${statTile(fmt(mv.contactSubs), "Contact Subs", COLOR.amber)}</td>
+        </tr>
+      </table>
+      ${mv.aiCrawlerBreakdown.length === 0 ? "" : `
+        <div style="margin-bottom:10px;">${mv.aiCrawlerBreakdown.map(c =>
+          `<span style="display:inline-block;margin:0 6px 6px 0;">${pillBadge(`${c.crawler_name} ${fmt(c.hits)}`, COLOR.blue)}</span>`
+        ).join("")}</div>`}
+      ${mv.topPages.length === 0 ? "" : card(`
+        ${thead([{ text: "Top Page" }, { text: "Views", align: "right", width: "80px" }])}
+        ${mv.topPages.map(pg => tr([
+          { html: escapeHtml(pg.page), mono: true },
+          { html: fmt(pg.views), align: "right", mono: true, color: COLOR.amber, bold: true },
+        ])).join("")}
+      `)}
+      ${mv.aiReferralBySource.length === 0 ? "" : `
+        <div style="margin-top:10px;font-family:${FONT_MONO};font-size:11px;color:${COLOR.textDim};line-height:1.7;">
+          <span style="color:${COLOR.text};">AI referrals by source:</span>
+          ${mv.aiReferralBySource.map(s => `<span style="color:${COLOR.text};">${escapeHtml(s.ai_source)}</span> <span style="color:${COLOR.textDim};">(${fmt(s.sessions)})</span>`).join(" · ")}
+        </div>`}
+      <div style="height:8px;"></div>`,
+    { eyebrow: "Section 9" }
+  );
+
   // CTA back to dashboard
   const ctaBlock = `
   <tr><td style="padding:10px 28px 24px;">
@@ -501,6 +538,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
     topBrandsBlock,
     anomaliesBlock,
     brandCoverageBlock,
+    marketingBlock,
     ctaBlock,
   ].join("");
 }

@@ -10,15 +10,43 @@
  */
 
 export function renderRobotsTxt(): string {
+  // Shared disallow list — kept identical across the wildcard block and
+  // every explicit AI-crawler block below.
+  const disallow = [
+    "/v2/",
+    "/api/",
+    "/admin-portal/",
+    "/internal-staff/",
+    "/internal-docs/",
+    "/team-directory/",
+    "/staff-contacts/",
+  ];
+
+  // Explicitly welcome AI crawlers (they get Allow: / plus the same
+  // disallow rules as everyone else).
+  const aiCrawlers = [
+    "GPTBot",
+    "OAI-SearchBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "PerplexityBot",
+    "Google-Extended",
+    "CCBot",
+    "Amazonbot",
+    "Applebot-Extended",
+  ];
+
+  const disallowLines = disallow.map((p) => `Disallow: ${p}`).join("\n");
+
+  const aiBlocks = aiCrawlers
+    .map((name) => `User-agent: ${name}\nAllow: /\n${disallowLines}`)
+    .join("\n\n");
+
   return `User-agent: *
 Allow: /
-Disallow: /v2/
-Disallow: /api/
-Disallow: /admin-portal/
-Disallow: /internal-staff/
-Disallow: /internal-docs/
-Disallow: /team-directory/
-Disallow: /staff-contacts/
+${disallowLines}
+
+${aiBlocks}
 
 # Sitemap
 Sitemap: https://averrow.com/sitemap.xml
