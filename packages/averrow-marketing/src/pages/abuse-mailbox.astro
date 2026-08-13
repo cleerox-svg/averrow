@@ -174,6 +174,11 @@ import Layout from "../layouts/Layout.astro";
       <form id="amLeadForm" class="am-lead-form" novalidate>
         <input type="text" id="amName" name="name" placeholder="Your name" autocomplete="name" aria-label="Your name" required />
         <input type="email" id="amEmail" name="email" placeholder="Work email" autocomplete="email" aria-label="Work email" required />
+        <!-- Honeypot: hidden from real users; bots fill it and get silently dropped server-side. -->
+        <div class="hp-field" aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;">
+          <label for="amCompanyWebsite">Company Website</label>
+          <input type="text" id="amCompanyWebsite" name="company_website" tabindex="-1" autocomplete="off" />
+        </div>
         <button type="submit" class="btn btn-primary" id="amLeadBtn">Request a callback</button>
       </form>
       <div class="am-lead-msg" id="amLeadMsg" role="status" aria-live="polite"></div>
@@ -521,6 +526,7 @@ import Layout from "../layouts/Layout.astro";
 
       const name = (form.elements.namedItem("name") as HTMLInputElement)?.value.trim() ?? "";
       const email = (form.elements.namedItem("email") as HTMLInputElement)?.value.trim() ?? "";
+      const company_website = (form.elements.namedItem("company_website") as HTMLInputElement)?.value ?? "";
 
       if (!name || !email) {
         msg.textContent = "Please enter your name and work email.";
@@ -544,6 +550,7 @@ import Layout from "../layouts/Layout.astro";
             email,
             interest: "abuse-mailbox",
             message: "Requested a callback about the Abuse Mailbox from the /abuse-mailbox page.",
+            company_website,
           }),
         });
         if (res.ok) {

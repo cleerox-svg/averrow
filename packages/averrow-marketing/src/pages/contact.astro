@@ -70,6 +70,11 @@ import Layout from "../layouts/Layout.astro";
               <label for="message">Message</label>
               <textarea id="message" name="message" rows="5" placeholder="Tell us how we can help..."></textarea>
             </div>
+            <!-- Honeypot: hidden from real users; bots fill it and get silently dropped server-side. -->
+            <div class="hp-field" aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;">
+              <label for="company_website">Company Website</label>
+              <input type="text" id="company_website" name="company_website" tabindex="-1" autocomplete="off" />
+            </div>
             <button type="submit" class="form-submit-btn" id="submitBtn" data-cta="contact-submit">Send Message</button>
           </form>
           <div class="form-message" id="formMessage"></div>
@@ -332,6 +337,7 @@ import Layout from "../layouts/Layout.astro";
       const companySize = (form.elements.namedItem("companySize") as HTMLSelectElement)?.value ?? "";
       const interest = (form.elements.namedItem("interest") as HTMLSelectElement)?.value ?? "";
       const message = (form.elements.namedItem("message") as HTMLTextAreaElement)?.value.trim() ?? "";
+      const company_website = (form.elements.namedItem("company_website") as HTMLInputElement)?.value ?? "";
 
       if (!name || !email) {
         msg.textContent = "Please fill in all required fields.";
@@ -353,7 +359,7 @@ import Layout from "../layouts/Layout.astro";
         const res = await fetch("/api/contact", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, email, company, companySize, interest, message }),
+          body: JSON.stringify({ name, email, company, companySize, interest, message, company_website }),
         });
         if (res.ok) {
           msg.textContent =

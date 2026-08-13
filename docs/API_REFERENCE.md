@@ -65,7 +65,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/brand-scan/public` | Public brand exposure scan |
 | GET | `/api/brand-scan/public/:id` | Get public scan results |
 | GET | `/api/stats/public` | Public platform statistics |
-| POST | `/api/contact` | Contact form submission |
+| POST | `/api/contact` | Contact form submission (unauthenticated). JSON body `{ name, email, message` (all required)`, company?, companySize?, interest?, company_website? }`. `company_website` is a **honeypot** — real users never fill it; a non-empty value is silently accepted (200) but never persisted. Per-IP rate-limited (5/hr → 429). `companySize` persists to `contact_submissions.company_size` (migration 0262). |
 | POST | `/api/track` | Marketing analytics beacon (unauthenticated). JSON body `{ type: 'pageview'\|'click'\|'cta', page: string (starts with `/`, ≤255), ref?: string, ctaId?: string (≤64) }`. Referrer is classified server-side for AI-chat referral detection. Rate-limited per-IP (120/hr). Always responds **204** (invalid body → 400); insert runs via `ctx.waitUntil`. Raw IP is never stored (salted, truncated SHA-256 visitor hash). |
 | POST | `/api/leads` | Lead capture (rate-limited) |
 | POST | `/api/abuse-mailbox/unsubscribe` | RFC 8058 one-click unsubscribe target for abuse-mailbox responder emails. Token is an HMAC of the email address — no auth, no body |
