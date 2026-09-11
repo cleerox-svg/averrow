@@ -11,6 +11,9 @@ import {
 
 const WHOISDS_BASE_URL = "https://whoisds.com/whois-database/newly-registered-domains/";
 
+/** Per-request timeout for the (multi-MB) NRD archive download. */
+const FETCH_TIMEOUT_MS = 30_000;
+
 /** Common homoglyph substitutions for brand matching */
 const HOMOGLYPHS: Record<string, string[]> = {
   l: ["1", "i"],
@@ -21,13 +24,43 @@ const HOMOGLYPHS: Record<string, string[]> = {
   s: ["5", "$"],
 };
 
-/**
- * Get yesterday's date formatted as YYYY-MM-DD for WhoisDS download URL.
- */
-function getYesterdayDate(): string {
+/** YYYY-MM-DD for `n` days before today, in UTC. */
+function utcDaysAgo(n: number): string {
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Build the WhoisDS free-tier NRD download URL for a given day.
+ *
+ * PRODUCTION FIX (2026-09-11): the path segment is NOT the plain
+ * `YYYY-MM-DD.zip` filename. WhoisDS keys the free download on
+ * base64("YYYY-MM-DD.zip") with the '=' padding stripped, followed by the
+ * literal `/nrd` segment:
+ *
+ *   https://whoisds.com/whois-database/newly-registered-domains/MjAyNi0wOS0xMC56aXA/nrd
+ *
+ * The old `.../2026-09-10.zip` form still resolves (the route matches the
+ * date segment) but WhoisDS answers it with HTTP 200 and a ZERO-BYTE body —
+ * which is exactly the production symptom: `res.ok` was true so the
+ * day-before fallback never fired, and every pull died in
+ * extractTextFromZip with "empty response body (0 bytes)" until the
+ * circuit breaker auto-paused the feed.
+ *
+ * The encoding matches WhoisDS's own free-download links and the public
+ * downloader scripts built against them; it could NOT be verified from the
+ * repair session itself (whoisds.com is blocked by that session's egress
+ * policy), so the first post-deploy pull is the confirmation — if it still
+ * reports zero bytes, the source itself is gone and the feed parks as
+ * `auto:upstream_dead` (see the throw at the end of `ingest`).
+ *
+ * Exported for unit tests — the encoding is the whole bug, so it is
+ * asserted directly rather than through a fetch mock.
+ */
+export function nrdDownloadUrl(date: string): string {
+  const infix = btoa(`${date}.zip`).replace(/=+$/, "");
+  return `${WHOISDS_BASE_URL}${infix}/nrd`;
 }
 
 /**
@@ -166,7 +199,9 @@ async function extractFromZipBuffer(bytes: Uint8Array<ArrayBuffer>): Promise<str
  * NRD Feed — Newly Registered Domains via WhoisDS.com.
  *
  * Replaced xRuffKez/Hagezi (EOL Dec 2025) with WhoisDS daily NRD download.
- * Downloads yesterday's .zip, extracts domain list, matches against monitored brands.
+ * Downloads yesterday's archive (see nrdDownloadUrl for the URL shape),
+ * falling back to the day before, extracts the domain list, and matches it
+ * against monitored brands.
  * Brand-matched domains are inserted as typosquatting threats.
  * All NRDs are stored in nrd_domains reference table for later analysis.
  *
@@ -175,38 +210,68 @@ async function extractFromZipBuffer(bytes: Uint8Array<ArrayBuffer>): Promise<str
  */
 export const nrd_hagezi: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    const yesterday = getYesterdayDate();
-    const url = `${WHOISDS_BASE_URL}${yesterday}.zip`;
-    logger.info("nrd_whoisds_fetch", { url, date: yesterday });
+    // WhoisDS publishes a day's archive some hours after UTC midnight, so a
+    // pull near the rollover legitimately finds yesterday missing. Walk back
+    // one more day before giving up.
+    //
+    // A zero-byte 200 is treated exactly like a non-2xx here: the previous
+    // code only fell back on `!res.ok`, so an empty-but-successful response
+    // (the symptom of the wrong URL shape above) short-circuited straight
+    // into a hard failure with no second attempt.
+    const attempts: Array<{ date: string; problem: string }> = [];
 
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(30_000), headers: { "User-Agent": "Averrow-ThreatIntel/1.0" },
-    });
+    for (const daysAgo of [1, 2]) {
+      const date = utcDaysAgo(daysAgo);
+      const url = nrdDownloadUrl(date);
+      logger.info("nrd_whoisds_fetch", { url, date, daysAgo });
 
-    if (!res.ok) {
-      // WhoisDS may not have yesterday's file yet — try day before yesterday
-      const dayBefore = new Date();
-      dayBefore.setUTCDate(dayBefore.getUTCDate() - 2);
-      const fallbackDate = dayBefore.toISOString().slice(0, 10);
-      const fallbackUrl = `${WHOISDS_BASE_URL}${fallbackDate}.zip`;
-      logger.info("nrd_whoisds_fallback", { fallbackUrl, originalStatus: res.status });
-
-      const fallbackRes = await fetch(fallbackUrl, {
-        signal: AbortSignal.timeout(30_000), headers: { "User-Agent": "Averrow-ThreatIntel/1.0" },
-      });
-      if (!fallbackRes.ok) {
-        throw new Error(`NRD WhoisDS HTTP ${res.status} (yesterday) / ${fallbackRes.status} (day-before)`);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          headers: { "User-Agent": "Averrow-ThreatIntel/1.0" },
+        });
+      } catch (err) {
+        attempts.push({ date, problem: `fetch failed: ${err instanceof Error ? err.message : String(err)}` });
+        continue;
       }
 
-      return await processZip(fallbackRes, ctx, fallbackDate);
+      if (!res.ok) {
+        attempts.push({ date, problem: `HTTP ${res.status}` });
+        continue;
+      }
+
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength === 0) {
+        attempts.push({ date, problem: "empty response body (0 bytes)" });
+        continue;
+      }
+
+      return await processArchive(buffer, ctx, date);
     }
 
-    return await processZip(res, ctx, yesterday);
+    const detail = attempts.map((a) => `${a.date}: ${a.problem}`).join("; ");
+
+    // Every attempt came back 200-but-empty. That is not a transient blip:
+    // the route resolves and the upstream simply has nothing behind it. Say
+    // so in the wording autoPauseFeed's permanent-error taxonomy recognises
+    // (lib/feedRunner.ts) so the breaker parks the feed as
+    // `auto:upstream_dead` — sticky, operator-resumed — instead of
+    // `auto:consecutive_failures`, which the 4-hour auto-recovery sweep
+    // revives into an endless pause → 5 failures → pause loop. That loop is
+    // what produced 6 critical auto-pause alerts and 9 feed-silent alerts in
+    // a single day for a feed that had been dead for months.
+    if (attempts.every((a) => a.problem.startsWith("empty response body"))) {
+      throw new Error(
+        `NRD WhoisDS: upstream served no data on ${attempts.length} consecutive days — ${detail}`,
+      );
+    }
+
+    throw new Error(`NRD WhoisDS: no usable archive — ${detail}`);
   },
 };
 
-async function processZip(res: Response, ctx: FeedContext, date: string): Promise<FeedResult> {
-  const buffer = await res.arrayBuffer();
+async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: string): Promise<FeedResult> {
   // extractTextFromZip throws a precise Error on any genuine failure
   // (unknown container, HTML error page, unsupported/ZIP64 method,
   // truncation), which runFeed catches to stamp the circuit breaker.

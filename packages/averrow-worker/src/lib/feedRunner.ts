@@ -670,9 +670,18 @@ async function autoPauseFeed(
   // Symptom this fixes: c2_tracker / phishtank cycling pause → recover →
   // fail every 4h on a 404 / archived upstream, spamming feed_health
   // notifications.
+  //
+  // "served no data on N consecutive days" is the same class stated by a
+  // feed that already probed more than one upstream window itself (nrd
+  // walks yesterday AND the day before). A feed that reports every window
+  // as 200-but-zero-bytes is not having a bad minute — its source is gone,
+  // so it gets the sticky reason rather than the 4-hourly revive loop.
+  // Transient shapes stay transient: an HTTP 5xx surfaces as "HTTP 503",
+  // which matches none of these patterns.
   const isPermanentError =
     /\b(404|410)\b/.test(lastError) ||
-    /upstream archived|no longer publishes|\bGone\b/i.test(lastError);
+    /upstream archived|no longer publishes|\bGone\b/i.test(lastError) ||
+    /served no data on \d+ consecutive days/i.test(lastError);
   const pausedReason = isAuthError
     ? 'auto:auth_failure'
     : isPermanentError

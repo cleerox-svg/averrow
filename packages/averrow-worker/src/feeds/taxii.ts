@@ -54,10 +54,24 @@ const INGEST_BUDGET_MS = 9 * 60_000;
 // 30s × 1.5 = 45s of budget remains.
 const PAGE_DURATION_SAFETY = 1.5;
 
+// Per-page HTTP timeout, passed explicitly to fetchTaxiiObjects.
+//
+// PRODUCTION FIX (2026-09-11): this was never passed, so every page used
+// the client's 30s default (lib/taxii-client.ts:119) — badly mismatched
+// with the 9-min ingest budget and the 12-min outer guard. AlienVault OTX
+// regularly takes longer than 30s to assemble the first page of a large
+// added_after window, and a FIRST-page timeout is rethrown below (page
+// N>0 breaks out with partial success), so the whole pull failed with the
+// bare DOMException text "The operation was aborted due to timeout" —
+// 4 of 19 pulls in the 24h window ending 2026-09-11 18:35 UTC. 120s is
+// still comfortably inside the budget for a retry + at least one page.
+const PAGE_FETCH_TIMEOUT_MS = 120_000;
+
 // Floor for "next page might take this long" estimate. Used until
-// we've observed actual page durations. 30s matches the per-fetch
-// timeout in the TAXII client.
-const INITIAL_PAGE_ESTIMATE_MS = 60_000;
+// we've observed actual page durations; matched to the per-page HTTP
+// timeout so the budget check reflects the true worst case (an
+// underestimate here is what lets a page start that cannot finish).
+const INITIAL_PAGE_ESTIMATE_MS = PAGE_FETCH_TIMEOUT_MS;
 
 function resolveAuth(
   env: Env,
@@ -124,6 +138,41 @@ function buildThreatRow(
     status: "active",
   };
   return row;
+}
+
+/**
+ * True for the abort/timeout shape `AbortSignal.timeout` produces. The
+ * runtime raises a DOMException named "TimeoutError" whose message is the
+ * bare "The operation was aborted due to timeout" — the exact string that
+ * showed up in feed_pull_history with no feed, URL, or budget context.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  if (name === "TimeoutError" || name === "AbortError") return true;
+  const msg = (err as { message?: unknown }).message;
+  return typeof msg === "string" && /abort|timed?\s*out/i.test(msg);
+}
+
+/**
+ * Re-wrap a first-page fetch failure so the pull-history row names the
+ * feed, the timeout it blew, and whether the retry was already spent.
+ * The raw DOMException message alone is not diagnosable.
+ */
+function enrichTaxiiFetchError(
+  err: unknown,
+  feedName: string,
+  timeoutMs: number,
+  afterRetry = false,
+): Error {
+  const base = err instanceof Error ? err.message : String(err);
+  if (!isTimeoutError(err)) {
+    return new Error(`taxii: ${feedName} first page failed — ${base}`);
+  }
+  return new Error(
+    `taxii: ${feedName} first page timed out after ${timeoutMs}ms` +
+      `${afterRetry ? " (retry also timed out)" : ""} — upstream slower than the per-page budget (${base})`,
+  );
 }
 
 export const taxii: FeedModule = {
@@ -217,6 +266,9 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
     }
 
     const pageStart = now;
+    // Never let the HTTP timeout outlive the remaining ingest budget —
+    // the budget check above guarantees `remaining` >= estimate × 1.5.
+    const pageTimeoutMs = Math.max(15_000, Math.min(PAGE_FETCH_TIMEOUT_MS, remaining));
     let fetched;
     try {
       fetched = await fetchTaxiiObjects({
@@ -225,6 +277,7 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
         auth,
         addedAfter: cursor,
         limit: cfg.batch_size,
+        timeoutMs: pageTimeoutMs,
       });
     } catch (err) {
       // Fetch failure on page N>0 isn't fatal — we already
@@ -237,7 +290,29 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
         );
         break;
       }
-      throw err;
+
+      // First page: one retry for a timeout/abort before failing the whole
+      // pull. A slow first page is the dominant OTX failure mode and it is
+      // usually transient, so burning the entire tick (and a circuit-breaker
+      // failure count) on a single slow response is a bad trade when minutes
+      // of budget remain.
+      const retryDeadline = deadline - (Date.now() + pageTimeoutMs);
+      if (!isTimeoutError(err) || retryDeadline <= 0) {
+        throw enrichTaxiiFetchError(err, feedName, pageTimeoutMs);
+      }
+      console.warn(`[taxii:${feedName}] first page timed out after ${pageTimeoutMs}ms — retrying once`);
+      try {
+        fetched = await fetchTaxiiObjects({
+          rootUrl: cfg.taxii_root_url,
+          collectionId: cfg.taxii_collection_id,
+          auth,
+          addedAfter: cursor,
+          limit: cfg.batch_size,
+          timeoutMs: Math.max(15_000, Math.min(PAGE_FETCH_TIMEOUT_MS, deadline - Date.now())),
+        });
+      } catch (retryErr) {
+        throw enrichTaxiiFetchError(retryErr, feedName, pageTimeoutMs, true);
+      }
     }
 
     pageCount++;
