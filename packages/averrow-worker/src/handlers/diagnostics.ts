@@ -458,25 +458,104 @@ interface VelocityDiag {
   by_flag: Array<{ flag: string; n: number }>;
   /** Sum across all bands (= total threats rows). */
   total: number;
+  /**
+   * Writer-coverage split (VELOCITY_DARK_2026-09). `by_flag`'s
+   * `not_computable` bucket is NULL-derived and therefore CONFLATES two
+   * states that need different responses:
+   *
+   *   * "inherently not computable" — the row carries no WHOIS
+   *     registration date at all (`domain_created_at IS NULL`), so
+   *     `decideWeaponizationVelocity` could never produce a band. Nothing
+   *     to run; this is the permanent floor.
+   *   * "never computed" — the row DOES carry a registration date but
+   *     `runVelocityBackfill` has not swept it yet (`lib/velocity-writer.ts`
+   *     is admin-endpoint-dispatched; there is no cron, so a fresh
+   *     deployment sits at 100% unstamped and looks identical to the case
+   *     above in `by_flag`).
+   *
+   * That conflation is exactly what let the feature ship 100% dark and go
+   * unnoticed. `unstamped_candidates` is the actionable number: while it is
+   * large, `POST /api/admin/velocity/backfill?dry_run=0` has real work to do.
+   * It never reaches 0 — rows whose registration date fails a decide-fn
+   * guard (negative delta, pre-1985 sentinel, unparseable) are deliberately
+   * left NULL — so after a completed sweep the residual IS the guard-rejected
+   * set, not a backlog.
+   *
+   * Free: derived from the SAME single GROUP BY scan as `by_flag` (one extra
+   * low-cardinality grouping key, ≤8 groups), not additional COUNT(*) passes.
+   */
+  coverage: {
+    /** Rows in the writer's candidate set (`domain_created_at IS NOT NULL`).
+     *  Mirrors `computeVelocityDryRun`'s `candidates_total` predicate exactly. */
+    candidates_total: number;
+    /** Rows carrying a non-NULL `weaponization_flag` (the writer ran on them). */
+    stamped: number;
+    /** candidates_total − stamped: never-computed backlog + guard-rejected residual. */
+    unstamped_candidates: number;
+    /** total − candidates_total: no registration date, inherently not computable. */
+    no_registration_date: number;
+    /** candidates_total as a % of total — the feature's ceiling on this corpus. */
+    candidate_pct: number;
+    /** stamped as a % of candidates_total — sweep progress. 0 = never run. */
+    stamped_pct_of_candidates: number;
+  };
+}
+
+function pct(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 0;
+  return Math.round((numerator / denominator) * 1000) / 10;
 }
 
 /** Build the `velocity` diagnostics block. cachedValue-wrapped (KV) so
  *  the low-cardinality GROUP BY over threats runs at most once per TTL,
  *  never a live full scan per diagnostics call. Key
- *  `diag.weaponization.distribution`, TTL 900s. */
+ *  `diag.weaponization.distribution.v2`, TTL 900s. (Key bumped to `.v2`
+ *  alongside the added `coverage` block — an old cached payload would
+ *  deserialize without it and silently serve a `coverage`-less response
+ *  for a full TTL.) */
 async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
-  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution', 900, async () => {
+  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution.v2', 900, async () => {
+    // ONE scan, two grouping keys. `has_reg` uses a bare `IS NULL` test —
+    // not TRIM() — so `candidates_total` is byte-identical to the writer's
+    // CANDIDATE_SELECT / dry-run predicate (`domain_created_at IS NOT NULL`).
+    // Cardinality is (3 bands + NULL) × 2 = 8 groups max.
     const res = await env.DB.prepare(`
-      SELECT weaponization_flag AS flag, COUNT(*) AS n
+      SELECT weaponization_flag AS flag,
+             CASE WHEN domain_created_at IS NULL THEN 0 ELSE 1 END AS has_reg,
+             COUNT(*) AS n
       FROM threats
-      GROUP BY weaponization_flag
-    `).all<{ flag: string | null; n: number }>();
+      GROUP BY weaponization_flag, has_reg
+    `).all<{ flag: string | null; has_reg: number; n: number }>();
+
+    const flagTotals = new Map<string, number>();
+    let total = 0;
+    let candidatesTotal = 0;
+    let stamped = 0;
+    for (const r of res.results) {
+      const label = r.flag ?? 'not_computable';
+      flagTotals.set(label, (flagTotals.get(label) ?? 0) + r.n);
+      total += r.n;
+      if (r.has_reg === 1) candidatesTotal += r.n;
+      if (r.flag !== null) stamped += r.n;
+    }
+
     const order = ['very_fast', 'fast', 'normal', 'not_computable'];
-    const byFlag = res.results
-      .map((r) => ({ flag: r.flag ?? 'not_computable', n: r.n }))
+    const byFlag = [...flagTotals.entries()]
+      .map(([flag, n]) => ({ flag, n }))
       .sort((a, b) => order.indexOf(a.flag) - order.indexOf(b.flag));
-    const total = byFlag.reduce((s, r) => s + r.n, 0);
-    return { by_flag: byFlag, total };
+
+    return {
+      by_flag: byFlag,
+      total,
+      coverage: {
+        candidates_total: candidatesTotal,
+        stamped,
+        unstamped_candidates: Math.max(0, candidatesTotal - stamped),
+        no_registration_date: Math.max(0, total - candidatesTotal),
+        candidate_pct: pct(candidatesTotal, total),
+        stamped_pct_of_candidates: pct(stamped, candidatesTotal),
+      },
+    };
   });
 }
 
@@ -1480,7 +1559,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 9,
+          // 10: additive `velocity.coverage` block (VELOCITY_DARK_2026-09) —
+          // splits the NULL-derived `not_computable` bucket into
+          // never-computed vs inherently-not-computable. No field removed.
+          endpoint_version: 10,
         },
 
         brand_count_drift: brandCountDrift,
@@ -1566,9 +1648,17 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // threats per registration→first-live band from the STORED
         // threats.weaponization_flag column (migration 0259), NULL mapped
         // to `not_computable` (kept distinct from `normal`). cachedValue-
-        // wrapped (diag.weaponization.distribution, 900s) so the low-
+        // wrapped (diag.weaponization.distribution.v2, 900s) so the low-
         // cardinality GROUP BY over threats runs at most once per TTL,
         // never a live per-row julianday scan.
+        //
+        // `velocity.coverage` (VELOCITY_DARK_2026-09) splits the NULL bucket
+        // into "no registration date" (inherently not computable — the
+        // permanent floor) vs `unstamped_candidates` (rows that DO carry a
+        // registration date but the admin-dispatched writer hasn't swept).
+        // `stamped_pct_of_candidates === 0` means the backfill has never run
+        // — the signal that was invisible while `by_flag` alone conflated
+        // the two states. Same single scan; no extra COUNT(*) passes.
         velocity: velocity,
 
         alerts: {
