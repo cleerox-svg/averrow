@@ -11,6 +11,11 @@ import { callAnthropicJSON } from "../../lib/anthropic";
 import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
+import {
+  GEO_UNMAPPED_POPULATION_SQL,
+  GEO_TERMINAL_SQL,
+  GEO_AWAITING_MMDB_SQL,
+} from "../../lib/geo-exhaustion";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
@@ -552,10 +557,12 @@ export async function handleMetricsGeoCoverage(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  // v2: `exhausted.total` changed meaning (>= 5 → >= 8) and gained
-  // `retrying_mmdb`. Bumped so operators don't read a stale v1 payload
-  // under the old semantics for up to 5 minutes after deploy.
-  const cacheKey = "metrics_geo_coverage:v2";
+  // v3: `exhausted.total` changed meaning again — see the query below
+  // and lib/geo-exhaustion.ts. v2's `>= 8` predicate was unreachable
+  // and `retrying_mmdb` was unpopulatable; both are gone. Bumped so
+  // operators don't read a stale payload under the old semantics for up
+  // to 5 minutes after deploy.
+  const cacheKey = "metrics_geo_coverage:v3";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -635,35 +642,38 @@ export async function handleMetricsGeoCoverage(
        ORDER BY s.day ASC
     `).all<{ day: string; mapped: number; total: number; coverage_pct: number | null }>(),
 
-    // Exhausted pile — `threats.enrichment_attempts` is a SHARED counter
-    // with two consumers and two caps:
-    //   cartographer Phase 0   (ip-api batch) selects `< 5`
-    //   cartographer Phase 0.5 (GeoLite2 MMDB) selects `< 8`
-    // so 8, not 5, is the absorbing state. The old `>= 5` predicate
-    // counted the 5..7 band — rows Phase 0 has given up on but Phase 0.5
-    // is still actively re-trying every run — as terminally exhausted,
-    // inflating the pile and making a transient state look permanent.
+    // Exhausted pile. Predicate + population come from
+    // lib/geo-exhaustion.ts so this panel, `/api/internal/platform-
+    // diagnostics` (cartographer_exhausted + _by_feed) and
+    // `/api/*/cartographer-health` all measure the same rows — see that
+    // module for why terminality is a conjunction of both phases giving
+    // up rather than a threshold on `enrichment_attempts`.
     //
-    // `exhausted` now means "no cartographer phase will select this row
-    // again" (>= 8); `retrying_mmdb` surfaces the in-flight 5..7 band
-    // separately. Same single scan as before (conditional SUMs over one
-    // predicate) — no extra D1 reads.
+    // Two things were wrong here before:
+    //  1. `>= 8` was unreachable. Phase 0 caps at 5 and (since 0ee677e)
+    //     Phase 0.5 never writes the column, so `exhausted` was frozen
+    //     at the historical pile and this panel would read "cartographer
+    //     is keeping up" through a total ip-api outage.
+    //  2. No `ip_address` predicate, so the `= 8` DNS-dead sentinel
+    //     written by lib/dns-backfill.ts:399 — rows with no IP that the
+    //     geo pipeline never touched — was counted as geo exhaustion.
+    //
+    // Still one scan with conditional SUMs over one predicate; the
+    // `>= 5` outer filter keeps the scanned row-set bounded.
     env.DB.prepare(`
       SELECT
-        SUM(CASE WHEN enrichment_attempts >= 8 THEN 1 ELSE 0 END) AS exhausted,
-        SUM(CASE WHEN enrichment_attempts >= 5 AND enrichment_attempts < 8 THEN 1 ELSE 0 END) AS retrying_mmdb
+        SUM(CASE WHEN ${GEO_TERMINAL_SQL} THEN 1 ELSE 0 END) AS exhausted,
+        SUM(CASE WHEN ${GEO_AWAITING_MMDB_SQL} THEN 1 ELSE 0 END) AS awaiting_mmdb
         FROM threats
-       WHERE status = 'active'
-         AND enriched_at IS NULL
+       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
          AND enrichment_attempts >= 5
-    `).first<{ exhausted: number; retrying_mmdb: number }>(),
+    `).first<{ exhausted: number; awaiting_mmdb: number }>(),
 
     env.DB.prepare(`
       SELECT source_feed, threat_type, COUNT(*) AS n
         FROM threats
-       WHERE status = 'active'
-         AND enriched_at IS NULL
-         AND enrichment_attempts >= 8
+       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
+         AND ${GEO_TERMINAL_SQL}
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 10
@@ -674,14 +684,15 @@ export async function handleMetricsGeoCoverage(
     windows,
     daily_30d: daily.results,
     exhausted: {
-      // Terminal only (>= 8). `by_feed` uses the same predicate so the
-      // list and the headline agree.
+      // Terminal only. `by_feed` uses the same predicate AND the same
+      // population, so the list sums to the headline.
       total: exhausted?.exhausted ?? 0,
       by_feed: exhaustedByFeed.results,
-      // Additive: rows at 5..7 — ip-api budget spent, MMDB still retrying.
-      // Not part of `total`; a rising value means Phase 0.5 is spending
-      // the shared counter on IPs GeoLite2 will never cover.
-      retrying_mmdb: exhausted?.retrying_mmdb ?? 0,
+      // Additive, NOT part of `total`: ip-api budget spent, MMDB not
+      // consulted yet. Replaces the old `retrying_mmdb` band, which
+      // nothing could populate. A rising value here means the MMDB
+      // phase is starved, not that coverage is terminal.
+      awaiting_mmdb: exhausted?.awaiting_mmdb ?? 0,
     },
     generated_at: new Date().toISOString(),
   };

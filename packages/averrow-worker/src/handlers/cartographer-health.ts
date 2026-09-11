@@ -5,7 +5,12 @@
 // is too coarse and a wrangler shell is too heavy. All queries are read-only.
 
 import { json } from "../lib/cors";
-import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
+import {
+  GEO_UNMAPPED_POPULATION_SQL,
+  GEO_TERMINAL_SQL,
+  GEO_AWAITING_MMDB_SQL,
+  GEO_PHASE0_ELIGIBLE_SQL,
+} from "../lib/geo-exhaustion";
 import type { Env } from "../types";
 
 /** GET /api/admin/cartographer-health    (JWT super-admin auth)
@@ -21,6 +26,14 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     const columnP = env.DB.prepare(
       "SELECT name, type, [notnull] AS not_null, dflt_value FROM pragma_table_info('threats') WHERE name = 'enrichment_attempts'"
     ).first<{ name: string; type: string; not_null: number; dflt_value: string | null }>();
+
+    // Migration 0263 sanity. The queue split's terminality predicate
+    // reads `geo_mmdb_checked_at`; if 0263 hasn't applied, the split
+    // query throws and this endpoint 500s. Surface the gap alongside
+    // the 0110 flag so the consumer knows which migration to chase.
+    const mmdbColumnP = env.DB.prepare(
+      "SELECT name FROM pragma_table_info('threats') WHERE name = 'geo_mmdb_checked_at'"
+    ).first<{ name: string }>();
 
     const indexP = env.DB.prepare(
       "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_threats_carto_phase0'"
@@ -47,20 +60,26 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     ).all<{ id: string; asn: string; name: string }>();
 
     // ─── Attempts distribution ────────────────────────────────────
-    // Histogram across the full 0..9 range so the consumer can see the
-    // shape of the queue: heavy at 0 = fresh ingest dominating, heavy at
-    // higher buckets = ip-api yield is poor and most threats are spinning.
+    // Histogram across the full range so the consumer can see the shape
+    // of the queue: heavy at 0 = fresh ingest dominating, heavy at 5 =
+    // ip-api yield is poor and Phase 0 is timing rows out.
     //
-    // The range is 0..9, NOT 0..5: `threats.enrichment_attempts` is a
-    // SHARED counter read by two different cartographer phases with two
-    // different caps —
-    //   Phase 0   (ip-api batch)  selects `enrichment_attempts < 5`
-    //   Phase 0.5 (GeoLite2 MMDB) selects `enrichment_attempts < 8`
-    // — so 8 (not 5) is the real absorbing state, and buckets 5/6/7 hold
-    // rows Phase 0 has given up on while Phase 0.5 is still working them.
-    // Buckets >8 exist because FC `scaleAgents` runs parallel cartographer
-    // instances that can both select a row at 7 and both increment it.
-    // Read the three-way split below rather than eyeballing the histogram.
+    // Do NOT read this histogram as a geo-progress curve.
+    // `threats.enrichment_attempts` is a shared column, and as of
+    // 0ee677e only ONE geo writer touches it:
+    //   Phase 0   (ip-api batch) selects `< 5` and increments — so 5 is
+    //             the maximum value the geo pipeline can produce.
+    //   Phase 0.5 (GeoLite2 MMDB) no longer reads or writes it at all;
+    //             its give-up marker is `geo_mmdb_checked_at`
+    //             (migration 0263).
+    // Buckets 6/7/8 therefore do NOT mean "deeply retried geo". They are
+    // almost entirely the DNS pipeline's: lib/dns-backfill.ts:399 writes
+    // the hard-coded sentinel `enrichment_attempts = 8` for DNS-confirmed-
+    // dead domains, and its legacy no-DNS_QUEUE_DB path increments toward
+    // 8 — both only for rows with a NULL/empty ip_address. This histogram
+    // is unfiltered on ip_address (deliberately, to keep the DNS
+    // population visible); the three-way split below is not.
+    // Read the split, not the histogram.
     const attemptsHistP = env.DB.prepare(`
       SELECT enrichment_attempts AS attempts, COUNT(*) AS n
       FROM threats
@@ -70,34 +89,41 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
       ORDER BY enrichment_attempts ASC
     `).all<{ attempts: number; n: number }>();
 
-    // ─── Queue / retrying / exhausted three-way split ─────────────
+    // ─── Queue / awaiting-MMDB / exhausted three-way split ────────
     //
-    // The old two-way split (`< 5` active, `>= 5` exhausted) mirrored
-    // Phase 0's selector and the `idx_threats_carto_phase0` partial
-    // index, and therefore mis-labelled every row in the 5..7 band:
-    // those rows have exhausted their ip-api budget but Phase 0.5
-    // (MMDB, `enrichment_attempts < 8`) still selects and re-tries them
-    // every run. Reporting them as "exhausted" made the pile look
-    // terminal when part of it is still in flight, and reporting only
-    // `< 5` as the queue hid the work cartographer is actually doing.
+    // Bands and population both come from lib/geo-exhaustion.ts, so this
+    // endpoint, the GeoCoverage admin panel and platform-diagnostics'
+    // cartographer_exhausted all measure the same rows. See that module
+    // for why terminality is `attempts >= 5 AND geo_mmdb_checked_at IS
+    // NOT NULL` rather than a threshold.
     //
-    // Three bands, matching the two real selectors:
-    //   active          (<5)  — Phase 0 (ip-api) + Phase 0.5 both eligible
-    //   retrying_mmdb  (5-7)  — Phase 0 has given up; Phase 0.5 still retrying
-    //   exhausted      (>=8)  — no phase will ever select this row again
+    // The previous `>= 8` band was unreachable: Phase 0 caps at 5 and
+    // Phase 0.5 stopped writing the column in 0ee677e, so `exhausted`
+    // could only ever report the historical pile — it would have read
+    // zero-growth straight through a total ip-api outage. The companion
+    // 5..7 `retrying_mmdb` band had the mirror-image problem: nothing
+    // could populate it either, and nothing "retries" those rows.
+    //
+    // Three mutually-exclusive, exhaustive bands:
+    //   active         — Phase 0 (ip-api) still has budget (`< 5`)
+    //   awaiting_mmdb  — Phase 0 gave up, Phase 0.5 hasn't looked yet
+    //   exhausted      — both phases gave up (terminal)
+    //
+    // Note `active` mirrors `idx_threats_carto_phase0` / Phase 0's `< 5`
+    // selector but additionally requires `status='active'` (the shared
+    // population). Phase 0 itself does not filter on status, so this is
+    // the active-threat slice of its backlog, not the raw selector count.
     //
     // Same single scan as before (conditional SUMs over one predicate),
     // so this costs no extra D1 reads.
     const queueP = env.DB.prepare(`
       SELECT
-        SUM(CASE WHEN enrichment_attempts < 5 THEN 1 ELSE 0 END) AS queue_active,
-        SUM(CASE WHEN enrichment_attempts >= 5 AND enrichment_attempts < 8 THEN 1 ELSE 0 END) AS retrying_mmdb,
-        SUM(CASE WHEN enrichment_attempts >= 8 THEN 1 ELSE 0 END) AS exhausted
+        SUM(CASE WHEN ${GEO_PHASE0_ELIGIBLE_SQL} THEN 1 ELSE 0 END) AS queue_active,
+        SUM(CASE WHEN ${GEO_AWAITING_MMDB_SQL} THEN 1 ELSE 0 END) AS awaiting_mmdb,
+        SUM(CASE WHEN ${GEO_TERMINAL_SQL} THEN 1 ELSE 0 END) AS exhausted
       FROM threats
-      WHERE enriched_at IS NULL
-        AND ip_address IS NOT NULL AND ip_address != ''
-        ${PRIVATE_IP_SQL_FILTER}
-    `).first<{ queue_active: number; retrying_mmdb: number; exhausted: number }>();
+      WHERE ${GEO_UNMAPPED_POPULATION_SQL}
+    `).first<{ queue_active: number; awaiting_mmdb: number; exhausted: number }>();
 
     // ─── Stuck pile (pre-fix orphans) ─────────────────────────────
     // Threats with enriched_at stamped but no lat — partial-geo bug from
@@ -182,9 +208,9 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     }>();
 
     const [
-      column, indexRow, legacyHpIds, legacyHpSample, attemptsHist, queue, stuck, throughput, recentRuns, batchOutputs,
+      column, mmdbColumn, indexRow, legacyHpIds, legacyHpSample, attemptsHist, queue, stuck, throughput, recentRuns, batchOutputs,
     ] = await Promise.all([
-      columnP, indexP, legacyHpIdsP, legacyHpSampleP, attemptsHistP, queueP, stuckP, throughputP, recentRunsP, batchOutputsP,
+      columnP, mmdbColumnP, indexP, legacyHpIdsP, legacyHpSampleP, attemptsHistP, queueP, stuckP, throughputP, recentRunsP, batchOutputsP,
     ]);
 
     // ─── Compute ip-api yields from recent batches ────────────────
@@ -253,7 +279,11 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
       data: {
         _meta: {
           generated_at: new Date().toISOString(),
-          endpoint_version: 3,
+          // v4: `queue.retrying_mmdb` (5..7) replaced by
+          // `queue.awaiting_mmdb`, and `queue.exhausted` redefined from
+          // `>= 8` to the shared terminality predicate. See
+          // lib/geo-exhaustion.ts.
+          endpoint_version: 4,
         },
 
         migration: {
@@ -261,6 +291,10 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
           // diagnostic queries reference enrichment_attempts; if the column
           // is missing some of them throw and the response is incomplete.
           column_applied: migration0110Applied,
+          // Migration 0263 — `threats.geo_mmdb_checked_at`, Phase 0.5's
+          // own give-up marker. The queue split's terminality predicate
+          // depends on it; false means the split query threw.
+          mmdb_marker_column_applied: mmdbColumn != null,
           index_has_attempts_filter: indexHasAttemptsFilter,
           column_def: column,
           index_sql: indexRow?.sql ?? null,
@@ -273,13 +307,15 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
         },
 
         queue: {
-          // Phase 0 (ip-api) eligible — mirrors idx_threats_carto_phase0.
+          // Phase 0 (ip-api) eligible — mirrors idx_threats_carto_phase0,
+          // narrowed to status='active' (see the query comment).
           active: queue?.queue_active ?? 0,
-          // 5..7 — out of ip-api budget, still being re-tried by Phase 0.5
-          // (MMDB). A large and growing value here means Phase 0.5 is
-          // burning the shared counter on IPs GeoLite2 will never cover.
-          retrying_mmdb: queue?.retrying_mmdb ?? 0,
-          // >=8 — terminal. No cartographer phase selects these again.
+          // ip-api budget spent, GeoLite2 not consulted yet. Drainable.
+          // Large and persistently growing = the MMDB phase is starved
+          // (GEOIP_DB unbound, MMDB_BUDGET_MS hit every run, or
+          // cartographer not firing) — NOT terminal geo failure.
+          awaiting_mmdb: queue?.awaiting_mmdb ?? 0,
+          // Terminal — both phases gave up. See lib/geo-exhaustion.ts.
           exhausted: queue?.exhausted ?? 0,
           stuck_pile: stuck?.n ?? 0,
           attempts_histogram: attemptsHist.results,

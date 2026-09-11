@@ -52,7 +52,13 @@ export interface WorkflowAgentStats {
   /** ISO timestamp of the most recent failure of either kind
    *  (workflow_dispatch_failed or workflow_failed). */
   last_failure_at:    string | null;
-  /** Most recent failure message (truncated) — for last_run_error. */
+  /** The failure message belonging to `last_failure_at` — for
+   *  last_run_error. Correlated, NOT `MAX(message)`: with two failure
+   *  classes now folded in (workflow_dispatch_failed = platform, and
+   *  workflow_failed = body), the lexicographic max routinely belongs to
+   *  a different event than the timestamp beside it, so an operator can
+   *  be shown a dispatch error while `last_failure_at` points at a body
+   *  failure — exactly the confusion this rollup exists to end. */
   last_error:         string | null;
   /** Most recent event of any kind in the 24h window — for staleness
    *  / status-derivation. */
@@ -73,13 +79,23 @@ export async function getWorkflowAgentStats(
               SUM(CASE WHEN event_type = 'workflow_failed' THEN 1 ELSE 0 END) AS run_failed,
               MAX(CASE WHEN event_type = 'batch_complete' THEN created_at END) AS last_completed_at,
               MAX(CASE WHEN event_type IN ('workflow_dispatch_failed','workflow_failed') THEN created_at END) AS last_failure_at,
-              MAX(CASE WHEN event_type IN ('workflow_dispatch_failed','workflow_failed') THEN message END) AS last_error,
+              -- Correlated, not MAX(message): see the last_error doc
+              -- comment. Costs one indexed point-lookup per agent group
+              -- (idx_activity_agent is (agent_id, created_at DESC)), and
+              -- the group count here is 1-2 agents.
+              (SELECT f.message
+                 FROM agent_activity_log f
+                WHERE f.agent_id = a.agent_id
+                  AND f.created_at >= datetime('now', '-' || ? || ' hours')
+                  AND f.event_type IN ('workflow_dispatch_failed','workflow_failed')
+                ORDER BY f.created_at DESC, f.id DESC
+                LIMIT 1) AS last_error,
               MAX(created_at) AS last_event_at
-       FROM agent_activity_log
+       FROM agent_activity_log a
        WHERE created_at >= datetime('now', '-' || ? || ' hours')
          AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
        GROUP BY agent_id`,
-    ).bind(windowHours).all<WorkflowAgentStats>();
+    ).bind(windowHours, windowHours).all<WorkflowAgentStats>();
     return new Map(rows.results.map((r) => [r.agent_id, r]));
   } catch {
     // Failing the helper must not break the caller — return empty

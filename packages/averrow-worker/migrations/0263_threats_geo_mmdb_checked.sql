@@ -1,12 +1,18 @@
 -- GeoLite2 (MMDB) consultation marker on threats.
 --
--- Companion to the cartographer Phase 0.5 fix. Phase 0.5 currently
--- has no marker of its own, so it borrows `threats.enrichment_attempts`
--- as its give-up counter (`enrichment_attempts < 8`, +1 on every miss).
+-- Companion to the cartographer Phase 0.5 fix. HISTORICAL CONTEXT
+-- BELOW — the behavior described in the next four paragraphs is what
+-- this migration REMOVED, not what the code does now. As of commit
+-- 0ee677e, Phase 0.5 keys on the `geo_mmdb_checked_at` column added
+-- here and never reads or writes `enrichment_attempts`.
+--
+-- Before this migration, Phase 0.5 had no marker of its own, so it
+-- borrowed `threats.enrichment_attempts` as its give-up counter
+-- (`enrichment_attempts < 8`, +1 on every miss).
 -- That column is ALSO cartographer Phase 0's ip-api budget
 -- (`enrichment_attempts < 5`, the predicate baked into the partial
 -- index `idx_threats_carto_phase0`). Two pipelines, two caps, one
--- counter — so every MMDB miss silently spends ip-api's retry budget:
+-- counter — so every MMDB miss silently spent ip-api's retry budget:
 --
 --   run N   : Phase 0 (ip-api, no answer) +1, Phase 0.5 (MMDB miss) +1
 --   run N+2 : row is at ~5, Phase 0 stops selecting it forever
@@ -20,12 +26,14 @@
 -- and can therefore never have passed through the DNS pipeline: those
 -- attempts were spent by cartographer on itself.
 --
--- Re-asking GeoLite2 is also zero-information by construction: the
+-- Re-asking GeoLite2 was also zero-information by construction: the
 -- table refreshes weekly, and lib/geoip-mmdb.ts already KV-caches
 -- negative answers for 24 h behind a NULL_SENTINEL. Attempts 2..8
--- against the same IP read the same cached miss and learn nothing,
+-- against the same IP read the same cached miss and learned nothing,
 -- while burning a budget that belongs to a provider (ip-api) whose
 -- answers ARE worth retrying.
+--
+-- END HISTORICAL CONTEXT.
 --
 -- This marker gives Phase 0.5 its own state, mirroring the
 -- `dns_exhausted_at` precedent from migration 0209:
@@ -33,6 +41,17 @@
 --   <ts>     = consulted, no usable lat/lng — do not ask again
 -- and lets the Phase 0.5 selector drop `enrichment_attempts` entirely,
 -- so the geo pipeline stops spending the ip-api pipeline's budget.
+--
+-- DOWNSTREAM CONSEQUENCE for anyone reading `enrichment_attempts`:
+-- with Phase 0.5 no longer incrementing it, Phase 0's `< 5` selector
+-- makes 5 the maximum value the GEO pipeline can produce. Values 6/7/8
+-- now come only from the DNS pipeline (lib/dns-backfill.ts — the
+-- hard-coded `= 8` dead-domain sentinel and the legacy transient
+-- increments, both for rows with no ip_address). Any "geo exhausted"
+-- metric built on a threshold like `>= 8` is therefore unreachable and
+-- frozen; terminality is the conjunction `enrichment_attempts >= 5 AND
+-- geo_mmdb_checked_at IS NOT NULL`. That predicate lives in
+-- src/lib/geo-exhaustion.ts and is shared by every reporting surface.
 --
 -- To re-try after a GeoLite2 coverage improvement (e.g. following a
 -- geoip_refresh that adds ranges), clear the marker:
