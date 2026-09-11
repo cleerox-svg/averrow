@@ -552,7 +552,10 @@ export async function handleMetricsGeoCoverage(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_geo_coverage:v1";
+  // v2: `exhausted.total` changed meaning (>= 5 → >= 8) and gained
+  // `retrying_mmdb`. Bumped so operators don't read a stale v1 payload
+  // under the old semantics for up to 5 minutes after deploy.
+  const cacheKey = "metrics_geo_coverage:v2";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -562,6 +565,26 @@ export async function handleMetricsGeoCoverage(
     { key: '30d', offset: "datetime('now', '-30 days')" },
   ];
 
+  // Reading these windows: `coverage_pct` is NOT a clean coverage ratio
+  // and a lower recent number is not by itself a regression. Two known
+  // biases, both structural:
+  //
+  //  1. Settle lag. Both cubes are keyed on `threats.created_at`, but a
+  //     threat only enters threat_cube_geo once it HAS lat/lng — which
+  //     happens minutes-to-days after ingest (DNS resolution, then
+  //     cartographer). The geo cube row for a past hour is only corrected
+  //     when that hour is rebuilt: Navigator rebuilds current + previous
+  //     hour every 5 min, cube_healer rebuilds 30 days every 6 h. So the
+  //     most recent hours are always structurally under-counted, which
+  //     makes 24h < 7d < 30d the EXPECTED shape even in a healthy system.
+  //  2. Numerator/denominator asymmetry. threat_cube_geo filters
+  //     `status='active'`; threat_cube_status does not. Threats that go
+  //     inactive stay in the denominator and leave the numerator, which
+  //     drags the older windows down.
+  //
+  // A real regression shows up as the 30d number falling over time, or
+  // as the settled part of the daily series (see `daily_30d`, excluding
+  // roughly the last 24 h) stepping down — not as the 24h/30d gap alone.
   const [windows, daily, exhausted, exhaustedByFeed] = await Promise.all([
     Promise.all(windowDefs.map(async (w) => {
       const [mapped, total] = await Promise.all([
@@ -612,20 +635,35 @@ export async function handleMetricsGeoCoverage(
        ORDER BY s.day ASC
     `).all<{ day: string; mapped: number; total: number; coverage_pct: number | null }>(),
 
+    // Exhausted pile — `threats.enrichment_attempts` is a SHARED counter
+    // with two consumers and two caps:
+    //   cartographer Phase 0   (ip-api batch) selects `< 5`
+    //   cartographer Phase 0.5 (GeoLite2 MMDB) selects `< 8`
+    // so 8, not 5, is the absorbing state. The old `>= 5` predicate
+    // counted the 5..7 band — rows Phase 0 has given up on but Phase 0.5
+    // is still actively re-trying every run — as terminally exhausted,
+    // inflating the pile and making a transient state look permanent.
+    //
+    // `exhausted` now means "no cartographer phase will select this row
+    // again" (>= 8); `retrying_mmdb` surfaces the in-flight 5..7 band
+    // separately. Same single scan as before (conditional SUMs over one
+    // predicate) — no extra D1 reads.
     env.DB.prepare(`
-      SELECT COUNT(*) AS n
+      SELECT
+        SUM(CASE WHEN enrichment_attempts >= 8 THEN 1 ELSE 0 END) AS exhausted,
+        SUM(CASE WHEN enrichment_attempts >= 5 AND enrichment_attempts < 8 THEN 1 ELSE 0 END) AS retrying_mmdb
         FROM threats
        WHERE status = 'active'
          AND enriched_at IS NULL
          AND enrichment_attempts >= 5
-    `).first<{ n: number }>(),
+    `).first<{ exhausted: number; retrying_mmdb: number }>(),
 
     env.DB.prepare(`
       SELECT source_feed, threat_type, COUNT(*) AS n
         FROM threats
        WHERE status = 'active'
          AND enriched_at IS NULL
-         AND enrichment_attempts >= 5
+         AND enrichment_attempts >= 8
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 10
@@ -636,8 +674,14 @@ export async function handleMetricsGeoCoverage(
     windows,
     daily_30d: daily.results,
     exhausted: {
-      total: exhausted?.n ?? 0,
+      // Terminal only (>= 8). `by_feed` uses the same predicate so the
+      // list and the headline agree.
+      total: exhausted?.exhausted ?? 0,
       by_feed: exhaustedByFeed.results,
+      // Additive: rows at 5..7 — ip-api budget spent, MMDB still retrying.
+      // Not part of `total`; a rising value means Phase 0.5 is spending
+      // the shared counter on IPs GeoLite2 will never cover.
+      retrying_mmdb: exhausted?.retrying_mmdb ?? 0,
     },
     generated_at: new Date().toISOString(),
   };

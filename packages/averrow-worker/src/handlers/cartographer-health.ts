@@ -47,9 +47,20 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     ).all<{ id: string; asn: string; name: string }>();
 
     // ─── Attempts distribution ────────────────────────────────────
-    // Histogram across the full 0..5 range so the consumer can see the
+    // Histogram across the full 0..9 range so the consumer can see the
     // shape of the queue: heavy at 0 = fresh ingest dominating, heavy at
     // higher buckets = ip-api yield is poor and most threats are spinning.
+    //
+    // The range is 0..9, NOT 0..5: `threats.enrichment_attempts` is a
+    // SHARED counter read by two different cartographer phases with two
+    // different caps —
+    //   Phase 0   (ip-api batch)  selects `enrichment_attempts < 5`
+    //   Phase 0.5 (GeoLite2 MMDB) selects `enrichment_attempts < 8`
+    // — so 8 (not 5) is the real absorbing state, and buckets 5/6/7 hold
+    // rows Phase 0 has given up on while Phase 0.5 is still working them.
+    // Buckets >8 exist because FC `scaleAgents` runs parallel cartographer
+    // instances that can both select a row at 7 and both increment it.
+    // Read the three-way split below rather than eyeballing the histogram.
     const attemptsHistP = env.DB.prepare(`
       SELECT enrichment_attempts AS attempts, COUNT(*) AS n
       FROM threats
@@ -59,16 +70,34 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
       ORDER BY enrichment_attempts ASC
     `).all<{ attempts: number; n: number }>();
 
-    // ─── Queue / exhausted split (matches platform-diagnostics) ───
+    // ─── Queue / retrying / exhausted three-way split ─────────────
+    //
+    // The old two-way split (`< 5` active, `>= 5` exhausted) mirrored
+    // Phase 0's selector and the `idx_threats_carto_phase0` partial
+    // index, and therefore mis-labelled every row in the 5..7 band:
+    // those rows have exhausted their ip-api budget but Phase 0.5
+    // (MMDB, `enrichment_attempts < 8`) still selects and re-tries them
+    // every run. Reporting them as "exhausted" made the pile look
+    // terminal when part of it is still in flight, and reporting only
+    // `< 5` as the queue hid the work cartographer is actually doing.
+    //
+    // Three bands, matching the two real selectors:
+    //   active          (<5)  — Phase 0 (ip-api) + Phase 0.5 both eligible
+    //   retrying_mmdb  (5-7)  — Phase 0 has given up; Phase 0.5 still retrying
+    //   exhausted      (>=8)  — no phase will ever select this row again
+    //
+    // Same single scan as before (conditional SUMs over one predicate),
+    // so this costs no extra D1 reads.
     const queueP = env.DB.prepare(`
       SELECT
         SUM(CASE WHEN enrichment_attempts < 5 THEN 1 ELSE 0 END) AS queue_active,
-        SUM(CASE WHEN enrichment_attempts >= 5 THEN 1 ELSE 0 END) AS exhausted
+        SUM(CASE WHEN enrichment_attempts >= 5 AND enrichment_attempts < 8 THEN 1 ELSE 0 END) AS retrying_mmdb,
+        SUM(CASE WHEN enrichment_attempts >= 8 THEN 1 ELSE 0 END) AS exhausted
       FROM threats
       WHERE enriched_at IS NULL
         AND ip_address IS NOT NULL AND ip_address != ''
         ${PRIVATE_IP_SQL_FILTER}
-    `).first<{ queue_active: number; exhausted: number }>();
+    `).first<{ queue_active: number; retrying_mmdb: number; exhausted: number }>();
 
     // ─── Stuck pile (pre-fix orphans) ─────────────────────────────
     // Threats with enriched_at stamped but no lat — partial-geo bug from
@@ -244,7 +273,13 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
         },
 
         queue: {
+          // Phase 0 (ip-api) eligible — mirrors idx_threats_carto_phase0.
           active: queue?.queue_active ?? 0,
+          // 5..7 — out of ip-api budget, still being re-tried by Phase 0.5
+          // (MMDB). A large and growing value here means Phase 0.5 is
+          // burning the shared counter on IPs GeoLite2 will never cover.
+          retrying_mmdb: queue?.retrying_mmdb ?? 0,
+          // >=8 — terminal. No cartographer phase selects these again.
           exhausted: queue?.exhausted ?? 0,
           stuck_pile: stuck?.n ?? 0,
           attempts_histogram: attemptsHist.results,
