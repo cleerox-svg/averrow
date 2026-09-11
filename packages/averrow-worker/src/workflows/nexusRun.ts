@@ -24,7 +24,47 @@ function slugifyKey(value: string | null | undefined): string {
 }
 
 export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> {
+  /**
+   * Workflow entrypoint. Delegates to `execute()` and records any terminal
+   * failure to `agent_activity_log` before rethrowing (rethrow preserved so
+   * Cloudflare still marks the instance `errored`).
+   *
+   * Why this wrapper exists: the Workflow path deliberately does NOT write
+   * `agent_runs` (lib/workflow-dispatch.ts header), so a run that threw left
+   * NO trace anywhere. `agent_mesh.stalled[]` only covers `agent_runs` rows
+   * stuck in 'running', and platform-diagnostics infers a workflow agent's
+   * health from `workflow_dispatched` vs `batch_complete` counts — so a run
+   * that started and died read as "dispatched / running / 0 failed / no
+   * last_error" indefinitely. That structural blind spot is how the
+   * 2026-09 tail outage went unnoticed. This row is the missing surface.
+   *
+   * NOTE: `handlers/diagnostics.ts` filters its workflow rollup on
+   * event_type IN ('workflow_dispatched','batch_complete',
+   * 'workflow_dispatch_failed','workflow_cooldown_skip') — add
+   * 'workflow_failed' there so it lands in `agent_mesh.per_agent.last_error`.
+   */
   async run(event: WorkflowEvent<NexusWorkflowParams>, step: WorkflowStep) {
+    try {
+      return await this.execute(event, step);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        await this.env.DB.prepare(`
+          INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
+          VALUES (?, 'nexus', 'workflow_failed', ?, ?, 'critical')
+        `).bind(
+          crypto.randomUUID(),
+          `NEXUS Workflow terminated before completion: ${message.slice(0, 400)}`,
+          JSON.stringify({ error: message.slice(0, 1000), triggered_by: 'workflow' }),
+        ).run();
+      } catch {
+        // The audit write must never mask the original failure.
+      }
+      throw err;
+    }
+  }
+
+  private async execute(event: WorkflowEvent<NexusWorkflowParams>, step: WorkflowStep) {
     // Step 1: Count clusters before run
     const before = await step.do('count-before', async () => {
       const result = await this.env.DB.prepare(
@@ -639,9 +679,21 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
           campaigns * 10 + brands * 5 + (threats > 100 ? 20 : threats > 50 ? 10 : 5)
         );
 
-        const clusterId = crypto.randomUUID();
+        // Deterministic id derived from the cluster's natural key (asn +
+        // threat_type — the GROUP BY of the SELECT above). Byte-identical
+        // to agents/nexus.ts:1017 so the workflow and the manual-fallback
+        // agent path upsert the SAME row.
+        //
+        // This lane previously minted `crypto.randomUUID()`, which never
+        // collides, so `ON CONFLICT DO NOTHING` never fired and every run
+        // inserted up to 100 BRAND-NEW infrastructure_clusters rows. That
+        // is exactly the defect audit C3 (2026-05-06) fixed in the agent
+        // path — but the fix was never ported here, and the WORKFLOW is
+        // the live 4-hourly path. ~100 rows x 6 runs/day grew the table to
+        // ~77K rows by 2026-09, which starved the unbounded tail reads in
+        // steps 2b/2c below and killed every run before `log-complete`.
+        const clusterId = `cluster_asn_${slugifyKey(asn)}_${slugifyKey(threatType)}`;
         const asnParts = (asn ?? '').split(' ');
-        const asnNum = asnParts[0] ?? asn;
         const orgName = asnParts.slice(1).join(' ') || asn;
         const clusterName = `${orgName} ${threatType} cluster`;
 
@@ -652,7 +704,16 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
               campaign_ids, hosting_provider_ids, threat_count, confidence_score,
               first_detected, last_seen, status, agent_notes
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO NOTHING
+            ON CONFLICT(id) DO UPDATE SET
+              cluster_name = excluded.cluster_name,
+              countries = excluded.countries,
+              brand_ids = excluded.brand_ids,
+              hosting_provider_ids = excluded.hosting_provider_ids,
+              threat_count = excluded.threat_count,
+              confidence_score = excluded.confidence_score,
+              last_seen = excluded.last_seen,
+              status = excluded.status,
+              agent_notes = excluded.agent_notes
           `).bind(
             clusterId, clusterName,
             JSON.stringify([asn]),
@@ -761,6 +822,10 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       subnets_analyzed: subnetLane.subnetsAnalyzed,
       registrar_clusters: registrarLane.clustersWritten,
       registrars_analyzed: registrarLane.registrarsAnalyzed,
+      // Surfaced so every batch_complete records the infrastructure_clusters
+      // row count the tail steps had to read — the leading indicator for the
+      // unbounded-growth failure this run used to die of.
+      component_clusters_read: components.clustersRead,
       components_formed: components.componentsFormed,
       component_clusters_grouped: components.clustersGrouped,
       component_ids_written: components.componentIdsWritten,

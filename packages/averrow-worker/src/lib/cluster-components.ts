@@ -369,7 +369,12 @@ const MAX_BRIDGE_SEEKS = 500;
 
 interface ClusterRow {
   id: string;
-  brand_ids: string | null;
+  /** Brand fan-out computed SQL-side via json_array_length(brand_ids) —
+   *  see the projection note on the SELECT in groupClusterComponents. */
+  brand_fanout: number;
+  /** Only the JSON-OBJECT form of agent_notes; plain-string notes (per-IP
+   *  / ASN lanes) are nulled SQL-side because parseNotesObject() discards
+   *  them anyway. */
   agent_notes: string | null;
   component_id: string | null;
 }
@@ -403,8 +408,35 @@ export async function groupClusterComponents(
   const hubThreshold = options.hubFanoutThreshold ?? DEFAULT_HUB_FANOUT_THRESHOLD;
 
   // 1. Read all cluster rows (bounded by cluster-row count).
+  //
+  // PROJECTION DISCIPLINE (2026-09 NEXUS tail outage). This read has no
+  // LIMIT by design — the diff-write below must see every row so stale
+  // component_ids get cleared — so the only lever on its size is WHAT we
+  // pull per row, and two columns here are unbounded:
+  //
+  //   * brand_ids is a JSON array of every brand in the cluster. The ASN
+  //     lane writes GROUP_CONCAT(DISTINCT target_brand_id) over its whole
+  //     group, so a top ASN row can carry thousands of ids (tens to
+  //     hundreds of KB). We only ever need its LENGTH (hub fan-out), so
+  //     json_array_length() computes it SQL-side and we transfer 4 bytes.
+  //   * agent_notes is a small JSON object on the cert / subnet /
+  //     registrar lanes but a plain human string on the per-IP and ASN
+  //     lanes. parseNotesObject() already discards anything not starting
+  //     with '{', so the plain-string form is nulled SQL-side too.
+  //
+  // Materialising the raw columns over a large infrastructure_clusters
+  // table blew the Workflow step's memory/time budget, which terminated
+  // every NEXUS run between the six lanes and the `batch_complete` event
+  // (silent partial success — the lanes landed, the tail never ran).
+  // json_valid() guards json_array_length() so a malformed value returns
+  // 0 instead of raising "malformed JSON" and failing the whole query.
   const rows = (await db.prepare(
-    `SELECT id, brand_ids, agent_notes, component_id
+    `SELECT id,
+            CASE WHEN json_valid(brand_ids)
+                 THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout,
+            CASE WHEN substr(ltrim(agent_notes), 1, 1) = '{'
+                 THEN agent_notes END                         AS agent_notes,
+            component_id
        FROM infrastructure_clusters`,
   ).all<ClusterRow>()).results ?? [];
 
@@ -420,7 +452,7 @@ export async function groupClusterComponents(
   }> = [];
 
   for (const row of rows) {
-    const fanout = safeArrayLength(row.brand_ids);
+    const fanout = row.brand_fanout ?? 0;
     const kind = classifyClusterKind(row.id, row.agent_notes);
     clusters.push({ id: row.id, kind, brandFanout: fanout });
     currentComponent.set(row.id, row.component_id ?? null);
@@ -561,12 +593,6 @@ function parseNotesObject(agentNotes: string | null): Record<string, unknown> | 
   }
 }
 
-function safeArrayLength(json: string | null): number {
-  if (!json) return 0;
-  try {
-    const v = JSON.parse(json);
-    return Array.isArray(v) ? v.length : 0;
-  } catch {
-    return 0;
-  }
-}
+// NOTE: brand fan-out is no longer parsed from the brand_ids JSON in JS —
+// json_array_length() computes it SQL-side so the unbounded column never
+// crosses the wire. See the projection note in groupClusterComponents.
