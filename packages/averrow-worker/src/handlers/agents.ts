@@ -394,8 +394,13 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     const lastWfFailureMs = wf?.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
     const lastWfSuccessMs = wf?.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
     const wfLastRunAt = wf?.last_event_at ?? null;
+    // NEXUS_DARK_2026-09: `run_failed` (body started, then threw) counts
+    // as a failure here exactly like `dispatch_failed` (never started).
+    // Gating on dispatch_failed alone meant an agent whose workflow died
+    // on every run fell through to `dispatched > 0 ? 'partial'` and
+    // rendered as partial rather than failed.
     const wfLastRunStatus = wf
-      ? (lastWfFailureMs > lastWfSuccessMs && wf.dispatch_failed > 0 ? 'failed' :
+      ? (lastWfFailureMs > lastWfSuccessMs && (wf.dispatch_failed > 0 || wf.run_failed > 0) ? 'failed' :
          wf.completed > 0 ? 'success' :
          wf.dispatched > 0 ? 'partial' : null)
       : null;

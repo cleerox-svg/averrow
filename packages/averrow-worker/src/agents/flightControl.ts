@@ -2349,8 +2349,13 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
     const wfLastFailureMs = wf?.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
     const wfLastSuccessMs = wf?.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
     const wfLastEventMs = wf?.last_event_at ? new Date(wf.last_event_at).getTime() : 0;
+    // NEXUS_DARK_2026-09: `run_failed` (body started, then threw) is a
+    // failure here exactly like `dispatch_failed` (never started). This
+    // feeds stall detection and the platform_agent_stalled gate, so
+    // gating on dispatch_failed alone meant an agent dying on every run
+    // reported 'partial' and never tripped the alert.
     const wfLastRunStatus = wf
-      ? (wfLastFailureMs > wfLastSuccessMs && wf.dispatch_failed > 0 ? 'failed' :
+      ? (wfLastFailureMs > wfLastSuccessMs && (wf.dispatch_failed > 0 || wf.run_failed > 0) ? 'failed' :
          wf.completed > 0 ? 'success' :
          wf.dispatched > 0 ? 'partial' : null)
       : null;
