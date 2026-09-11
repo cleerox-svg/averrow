@@ -3,25 +3,14 @@ import type { Env } from '../types';
 import { updateProviderTrends } from '../lib/provider-trends';
 import { groupClusterComponents } from '../lib/cluster-components';
 import { detectClusterInfraMovement } from '../lib/cluster-infra-movement';
+// Shared with agents/nexus.ts — both paths upsert the same
+// `infrastructure_clusters` rows, so id slug AND display name must be
+// computed by the same code. See lib/cluster-naming.ts.
+import { slugifyKey, generateClusterName } from '../lib/cluster-naming';
 
 type NexusWorkflowParams = {
   forceRefresh?: boolean;
 };
-
-// Sanitize a natural-key part for use inside a deterministic cluster id.
-// Kept in lockstep with the identical helper in agents/nexus.ts so the
-// /24 + registrar lanes here upsert the same rows as the manual-fallback
-// agent path. Keeps lowercase alphanumerics + dashes; collapses the rest
-// to underscores; bounds length.
-function slugifyKey(value: string | null | undefined): string {
-  if (!value) return 'unknown';
-  return value
-    .toString()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80) || 'unknown';
-}
 
 export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> {
   /**
@@ -680,9 +669,9 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         );
 
         // Deterministic id derived from the cluster's natural key (asn +
-        // threat_type — the GROUP BY of the SELECT above). Byte-identical
-        // to agents/nexus.ts:1017 so the workflow and the manual-fallback
-        // agent path upsert the SAME row.
+        // threat_type — the GROUP BY of the SELECT above), built from the
+        // same `slugifyKey` the agent path uses (lib/cluster-naming.ts) so
+        // the workflow and the manual-fallback agent upsert the SAME row.
         //
         // This lane previously minted `crypto.randomUUID()`, which never
         // collides, so `ON CONFLICT DO NOTHING` never fired and every run
@@ -693,9 +682,17 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         // ~77K rows by 2026-09, which starved the unbounded tail reads in
         // steps 2b/2c below and killed every run before `log-complete`.
         const clusterId = `cluster_asn_${slugifyKey(asn)}_${slugifyKey(threatType)}`;
-        const asnParts = (asn ?? '').split(' ');
-        const orgName = asnParts.slice(1).join(' ') || asn;
-        const clusterName = `${orgName} ${threatType} cluster`;
+        // `cluster_name` is in this lane's DO UPDATE SET list, so sharing the
+        // row is only half the fix: both paths must also NAME it identically.
+        // This used to be a local `${orgName} ${threatType} cluster`, which
+        // dropped the country prefix and left the underscores in the threat
+        // type — so an operator manual run and the next scheduled workflow
+        // run overwrote each other's name on a 4h cycle.
+        const clusterName = generateClusterName({
+          countries,
+          threat_type: threatType,
+          asn,
+        });
 
         try {
           await this.env.DB.prepare(`

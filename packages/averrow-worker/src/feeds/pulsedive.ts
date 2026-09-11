@@ -53,20 +53,34 @@ type LookupResult =
   // provider's daily/monthly quota was not spent. The caller meters on
   // this, not on the number of indicators it walked.
   | { ok: true; risk: PulsediveRisk; cached: boolean }
-  | { ok: false; kind: LookupFailKind; detail: string };
+  // `spentQuota` is the failure-arm mirror of `cached`: true when the
+  // failure happened AFTER an HTTP request left the process, so the
+  // provider's 15/day + 480/month budget was charged for it. False only
+  // for failures decided locally (no key configured), which must never be
+  // metered. The caller reads this flag — NOT the `detail` string, which
+  // is free-form human text: a reword of a log message must not silently
+  // start charging a never-left-the-process failure against the quota.
+  | { ok: false; kind: LookupFailKind; detail: string; spentQuota: boolean };
 
 /**
- * Consecutive upstream/network failures that end the run early.
+ * Consecutive NON-AUTH failures that end the run early.
  *
- * Same rationale as the `auth` abort below, one step softer: when
- * pulsedive.com is down, every remaining indicator will fail too, and each
- * attempt is a real HTTP request that burns the 15/day + 480/month budget.
- * Production 2026-09-11: two runs failed 7/7 and 8/8 with upstream errors,
- * which spent the whole day's quota on failures — the four later pulls that
- * day reported "success" with zero records only because the daily counter
- * was already exhausted before they selected any work.
+ * Deliberately covers all three transient kinds — `upstream`, `network`
+ * AND `ratelimit`. A sustained 429 streak is the same economic problem as
+ * an outage: each further attempt is a real HTTP request that burns the
+ * 15/day + 480/month budget to learn nothing. (The constant was originally
+ * named for `upstream` alone, which under-described it; `auth` is absent
+ * from the list only because it aborts on the FIRST occurrence, before the
+ * streak counter is ever consulted.)
+ *
+ * Same rationale as that `auth` abort, one step softer: when pulsedive.com
+ * is down, every remaining indicator will fail too. Production 2026-09-11:
+ * two runs failed 7/7 and 8/8 with upstream errors, which spent the whole
+ * day's quota on failures — the four later pulls that day reported
+ * "success" with zero records only because the daily counter was already
+ * exhausted before they selected any work.
  */
-const UPSTREAM_ABORT_STREAK = 3;
+const TRANSIENT_FAIL_ABORT_STREAK = 3;
 
 /** True if a Pulsedive HTTP-200 `{error}` body signals a key/quota problem. */
 function isAuthLikeError(msg: string): boolean {
@@ -79,7 +93,10 @@ function isAuthLikeError(msg: string): boolean {
  * so the caller's accounting stays accurate.
  */
 async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResult> {
-  if (!env.PULSEDIVE_API_KEY) return { ok: false, kind: "auth", detail: "PULSEDIVE_API_KEY not set" };
+  // Decided locally — no HTTP request, so no provider quota spent.
+  if (!env.PULSEDIVE_API_KEY) {
+    return { ok: false, kind: "auth", detail: "PULSEDIVE_API_KEY not set", spentQuota: false };
+  }
 
   const cacheKey = `pulsedive:${indicator}`;
   const cached = await env.CACHE.get(cacheKey);
@@ -93,17 +110,17 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { Accept: "application/json" } });
   } catch (err) {
-    return { ok: false, kind: "network", detail: err instanceof Error ? err.message : String(err) };
+    return { ok: false, kind: "network", detail: err instanceof Error ? err.message : String(err), spentQuota: true };
   }
 
   // Auth rejection — distinct, actionable on-call signal (rotate the key).
   if (res.status === 401 || res.status === 403) {
     logger.error("pulsedive_auth_rejected", { indicator, status: res.status });
-    return { ok: false, kind: "auth", detail: `HTTP ${res.status}` };
+    return { ok: false, kind: "auth", detail: `HTTP ${res.status}`, spentQuota: true };
   }
   if (res.status === 429) {
     logger.error("pulsedive_rate_limit", { indicator, status: 429 });
-    return { ok: false, kind: "ratelimit", detail: "HTTP 429" };
+    return { ok: false, kind: "ratelimit", detail: "HTTP 429", spentQuota: true };
   }
   if (!res.ok) {
     logger.error("pulsedive_api_error", { indicator, status: res.status });
@@ -111,6 +128,7 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
       ok: false,
       kind: "upstream",
       detail: `HTTP ${res.status} ${res.statusText || ""}`.trim(),
+      spentQuota: true,
     };
   }
 
@@ -129,6 +147,7 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
       ok: false,
       kind: "upstream",
       detail: `HTTP 200 with non-JSON body (content-type=${res.headers.get("content-type") ?? "none"}): "${snippet}"`,
+      spentQuota: true,
     };
   }
 
@@ -145,7 +164,7 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
     }
     const kind: LookupFailKind = isAuthLikeError(body.error) ? "auth" : "upstream";
     logger.error("pulsedive_error_body", { indicator, error: body.error, classifiedAs: kind });
-    return { ok: false, kind, detail: body.error };
+    return { ok: false, kind, detail: body.error, spentQuota: true };
   }
 
   const risk: PulsediveRisk = VALID_RISK.has((body.risk ?? "") as PulsediveRisk)
@@ -252,9 +271,10 @@ export const pulsedive: FeedModule = {
       try {
         const result = await lookupPulsedive(threat.indicator, env);
         if (!result.ok) {
-          // Every failure class except "PULSEDIVE_API_KEY not set" reached
-          // the network, so it spent quota.
-          if (result.detail !== "PULSEDIVE_API_KEY not set") apiCalls++;
+          // Meter on the lookup's own flag, not on its message text: a
+          // failure only charges the provider budget when an HTTP request
+          // actually left the process.
+          if (result.spentQuota) apiCalls++;
           itemsError++;
           failStreak++;
           failKinds[result.kind]++;
@@ -266,11 +286,11 @@ export const pulsedive: FeedModule = {
             logger.error("pulsedive_auth_abort", { detail: result.detail, attempted: itemsFetched });
             break;
           }
-          // A sustained upstream/rate-limit outage will reject the rest of
-          // the batch too — bail instead of spending the whole day's quota
-          // proving it. The run still ends in a throw below, so the circuit
-          // breaker backs off exactly as before.
-          if (failStreak >= UPSTREAM_ABORT_STREAK) {
+          // A sustained upstream / rate-limit / network failure will reject
+          // the rest of the batch too — bail instead of spending the whole
+          // day's quota proving it. The run still ends in a throw below, so
+          // the circuit breaker backs off exactly as before.
+          if (failStreak >= TRANSIENT_FAIL_ABORT_STREAK) {
             logger.error("pulsedive_upstream_abort", {
               kind: result.kind,
               detail: result.detail,

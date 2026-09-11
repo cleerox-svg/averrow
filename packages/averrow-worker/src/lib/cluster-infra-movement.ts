@@ -393,13 +393,22 @@ export async function detectClusterInfraMovement(
   // outage): brand_ids is an unbounded JSON array (the ASN lane writes
   // GROUP_CONCAT over its whole group) and we only need its LENGTH, while
   // agent_notes is a plain human string on the per-IP / ASN lanes that
-  // classifyClusterKind() discards. Both are reduced SQL-side so this
-  // whole-table read stays small as infrastructure_clusters grows.
+  // classifyClusterKind() discards. Both are reduced SQL-side so the bytes
+  // per row stay bounded — this makes the whole-table read NARROW, not
+  // small: the row count is unchanged and still grows linearly with
+  // infrastructure_clusters.
+  //
+  // ltrim() takes an explicit character set because single-argument
+  // ltrim() in SQLite strips ONLY U+0020, whereas the JS-side
+  // parseNotesObject()/classifyClusterKind() path uses .trim(), which also
+  // strips \t \n \r. Mismatched trimming would null a notes value that JS
+  // parses fine and silently reclassify a cluster_cert_* row (cert_san →
+  // cert_serial), changing which threats the bridge seek finds.
   const rows = (await db.prepare(
     `SELECT id, cluster_name,
             CASE WHEN json_valid(brand_ids)
                  THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout,
-            CASE WHEN substr(ltrim(agent_notes), 1, 1) = '{'
+            CASE WHEN substr(ltrim(agent_notes, ' ' || char(9) || char(10) || char(13)), 1, 1) = '{'
                  THEN agent_notes END                         AS agent_notes,
             confidence_score, infra_fingerprint, last_movement_pivot_at
        FROM infrastructure_clusters`,

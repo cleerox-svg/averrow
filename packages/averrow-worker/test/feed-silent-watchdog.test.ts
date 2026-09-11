@@ -15,12 +15,18 @@
  *
  * The fix: a recent `last_failure` means the dispatcher IS reaching the
  * feed, so it is failing loudly, not silently.
+ *
+ * Second cut (F6): "recent" is measured against the feed's OWN interval,
+ * not a fixed 3 h window. The fixed window could never close the hole it
+ * existed for — `autoRecoverStalePausedFeeds` un-pauses a feed only once
+ * its last failure is ≥4 h old, i.e. already outside a 3 h window — and it
+ * regressed for any feed coarser than hourly, which is not re-dispatched
+ * (and so cannot fail again) for hours after being un-paused.
  */
 
 import { describe, it, expect } from "vitest";
 import {
   computeSilentFeedRatio,
-  RECENT_FAILURE_WINDOW_MS,
   SILENT_RATIO_THRESHOLD,
   DISPATCHER_CADENCE_MS,
 } from "../src/agents/flightControl";
@@ -69,7 +75,7 @@ describe("computeSilentFeedRatio", () => {
   it("resumes reporting once failures stop arriving (dispatch really did stop)", () => {
     const ratio = computeSilentFeedRatio({
       lastSuccessfulPull: sqlTs(22 * DAY),
-      lastFailure: sqlTs(RECENT_FAILURE_WINDOW_MS + 60_000),
+      lastFailure: sqlTs(SILENT_RATIO_THRESHOLD * HOUR + 60_000),
       effectiveIntervalMs: DISPATCHER_CADENCE_MS,
       nowMs: NOW,
     });
@@ -94,6 +100,64 @@ describe("computeSilentFeedRatio", () => {
       effectiveIntervalMs: 6 * HOUR,
       nowMs: NOW,
     })).toBeNull();
+  });
+
+  // ── F6: the auto-recovery window is LONGER than any fixed
+  // recent-failure window can be, so "recent" has to be per-feed.
+  //
+  // Scenario: a `0 */6 * * *` feed auto-paused at 02:00 and auto-recovered
+  // at 06:07 (autoRecoverStalePausedFeeds fires at last_failure + 4 h). It
+  // is enabled=1 / paused_reason IS NULL again but `runAllFeeds` will not
+  // select it until its next cron slot at 12:00, so it CANNOT fail again
+  // in between. Under the old fixed 3 h window every FC tick from 07:07 to
+  // 11:07 saw a 5-9 h-old failure, declared the feed silent, and re-fired
+  // the alert the window was added to suppress.
+  describe("6h-cadence feed inside the auto-recovery gap", () => {
+    const SIX_HOURS = 6 * HOUR;
+
+    // FC ticks at :07 every hour; the feed is not due again until 12:00.
+    for (const [tick, hoursSinceFailure] of [
+      ["07:07", 5],
+      ["08:07", 6],
+      ["09:07", 7],
+      ["10:07", 8],
+      ["11:07", 9],
+    ] as const) {
+      it(`stays quiet at ${tick} (${hoursSinceFailure}h after the last failure)`, () => {
+        expect(computeSilentFeedRatio({
+          lastSuccessfulPull: sqlTs(22 * DAY),
+          lastFailure: sqlTs(hoursSinceFailure * HOUR),
+          effectiveIntervalMs: SIX_HOURS,
+          nowMs: NOW,
+        })).toBeNull();
+      });
+    }
+
+    it("reports once contact ages past 3× the feed's own interval", () => {
+      // 18 h with no dispatch of any kind on a 6 h feed — the dispatcher
+      // really has stopped, which is what the watchdog is for.
+      const ratio = computeSilentFeedRatio({
+        lastSuccessfulPull: sqlTs(22 * DAY),
+        lastFailure: sqlTs(18 * HOUR + 60_000),
+        effectiveIntervalMs: SIX_HOURS,
+        nowMs: NOW,
+      });
+      expect(ratio).not.toBeNull();
+      expect(ratio!).toBeGreaterThan(SILENT_RATIO_THRESHOLD);
+    });
+
+    it("still quotes the ratio from the last successful pull, not last contact", () => {
+      // Operator-facing text says "has not PULLED in N× its interval", so
+      // the number must stay anchored to last_successful_pull even though
+      // the silent/loud gate uses the contact clock.
+      const ratio = computeSilentFeedRatio({
+        lastSuccessfulPull: sqlTs(10 * DAY),
+        lastFailure: sqlTs(19 * HOUR),
+        effectiveIntervalMs: SIX_HOURS,
+        nowMs: NOW,
+      });
+      expect(ratio).toBeCloseTo((10 * DAY) / SIX_HOURS, 5);
+    });
   });
 
   it("accepts ISO timestamps as well as SQLite's space-separated form", () => {

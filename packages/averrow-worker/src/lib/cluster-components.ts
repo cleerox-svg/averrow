@@ -423,6 +423,16 @@ export async function groupClusterComponents(
   //     registrar lanes but a plain human string on the per-IP and ASN
   //     lanes. parseNotesObject() already discards anything not starting
   //     with '{', so the plain-string form is nulled SQL-side too.
+  //     The explicit ltrim() character set matters: single-argument
+  //     ltrim() in SQLite strips ONLY U+0020, while parseNotesObject()
+  //     uses JS .trim(), which also strips \t \n \r. Without the wider
+  //     set a notes value with a leading newline before '{' would parse
+  //     in JS but be nulled here — silently downgrading a cluster_cert_*
+  //     row from cert_san to cert_serial in classifyClusterKind(), which
+  //     changes BRIDGE_KEY_COLUMN and therefore which threats the bridge
+  //     seek finds. No current writer emits leading whitespace (cert-lane
+  //     notes all go through JSON.stringify), so this is hardening, not
+  //     a live fix — but it is free.
   //
   // Materialising the raw columns over a large infrastructure_clusters
   // table blew the Workflow step's memory/time budget, which terminated
@@ -430,11 +440,18 @@ export async function groupClusterComponents(
   // (silent partial success — the lanes landed, the tail never ran).
   // json_valid() guards json_array_length() so a malformed value returns
   // 0 instead of raising "malformed JSON" and failing the whole query.
+  //
+  // To be precise about what this buys: the projection makes the read
+  // NARROW, not small. The row COUNT is unchanged — it is still one row
+  // per infrastructure_clusters row, and still grows linearly with the
+  // table. What is bounded is the bytes per row. Row-count growth stays a
+  // separate problem, owned by the deterministic-id work that stopped the
+  // lanes minting a fresh row per run.
   const rows = (await db.prepare(
     `SELECT id,
             CASE WHEN json_valid(brand_ids)
                  THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout,
-            CASE WHEN substr(ltrim(agent_notes), 1, 1) = '{'
+            CASE WHEN substr(ltrim(agent_notes, ' ' || char(9) || char(10) || char(13)), 1, 1) = '{'
                  THEN agent_notes END                         AS agent_notes,
             component_id
        FROM infrastructure_clusters`,

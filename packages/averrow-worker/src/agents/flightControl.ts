@@ -156,15 +156,6 @@ interface SilentFeedCandidate {
   last_failure: string | null;
 }
 
-/**
- * A feed whose last failure is younger than this is being DISPATCHED —
- * it is failing loudly, not silently — so the silent watchdog leaves it
- * to the degraded / at-risk / auto-paused alert stages. Sized above the
- * hourly dispatcher cadence so one ordinary tick of noise can't flip a
- * genuinely-stalled feed out of the silent bucket.
- */
-export const RECENT_FAILURE_WINDOW_MS = 3 * 60 * 60 * 1000;
-
 /** Ratio of (elapsed since last successful pull) / interval that counts as silent. */
 export const SILENT_RATIO_THRESHOLD = 3;
 
@@ -181,22 +172,45 @@ export const DISPATCHER_CADENCE_MS = 60 * 60 * 1000;
  * Two independent reasons a feed is NOT silent:
  *
  *  1. It pulled successfully recently enough (ratio below threshold).
- *  2. It FAILED recently. A failure proves the dispatcher reached the
- *     feed, which is exactly what this watchdog exists to detect the
- *     absence of. Such a feed already owns three alert stages
- *     (feed_health degraded → platform_feed_at_risk →
- *     platform_feed_auto_paused), so reporting it as silent as well is
- *     a duplicate — and, worse, a contradictory one.
+ *  2. The dispatcher REACHED it recently — whether that contact succeeded
+ *     or failed. A failure proves dispatch is happening, which is exactly
+ *     what this watchdog exists to detect the absence of. Such a feed
+ *     already owns three alert stages (feed_health degraded →
+ *     platform_feed_at_risk → platform_feed_auto_paused), so reporting it
+ *     as silent as well is a duplicate — and, worse, a contradictory one.
  *
  * Reason 2 is the 2026-09-11 production bug: `autoRecoverStalePausedFeeds`
- * (lib/feedRunner.ts:585) un-pauses any `auto:consecutive_failures` feed
- * 4 h after its last failure, so a permanently-broken upstream ping-pongs
+ * (lib/feedRunner.ts) un-pauses any `auto:consecutive_failures` feed 4 h
+ * after its last failure, so a permanently-broken upstream ping-pongs
  * enabled → 5 failures → auto-paused → enabled every ~4 h. During each
  * enabled window it satisfied enabled=1 + paused_reason IS NULL while its
  * last_successful_pull was ~22 days old, so this watchdog fired
  * "nrd_hagezi is 528.5× overdue" 9 times in a day against a feed whose
  * diagnostics row read `enabled: false, paused_reason:
  * auto:consecutive_failures`.
+ *
+ * Reason 2 is therefore measured on the feed's OWN interval — "no contact
+ * of any kind in 3× the interval" — not against a fixed recent-failure
+ * window. A fixed window was the first cut and it was structurally unable
+ * to close the hole: it has to stay ahead of `autoRecoverStalePausedFeeds`'
+ * unrelated 4 h constant in a different file, and a feed is un-paused
+ * exactly when its last failure is ALREADY ≥4 h old. It happened to work
+ * for hourly feeds (re-dispatched, and failing again, before FC's next
+ * tick) and regressed silently for anything coarser: a six-hourly feed
+ * auto-paused 02:00 and recovered 06:07 is not due again until 12:00, so
+ * every FC tick from 07:07 to 11:07 saw a 5-9 h-old failure, called it
+ * silent, and re-fired the same false alert five times per cycle.
+ *
+ * Deriving the exclusion from `max(last_successful_pull, last_failure)`
+ * removes the cross-file constant entirely: contact within 3× the feed's
+ * own cadence is loud, and a dispatcher that genuinely STOPS after a
+ * failure still surfaces once that contact ages past the same 3× window.
+ *
+ * The returned ratio is still measured from `last_successful_pull` — that
+ * is the number the operator alert quotes ("has not pulled in N× its
+ * interval"). Only the silent/loud decision uses the contact clock. Since
+ * the contact timestamp is never older than the last successful pull, a
+ * feed that clears the contact gate always clears the ratio threshold too.
  */
 export function computeSilentFeedRatio(input: {
   lastSuccessfulPull: string;
@@ -207,9 +221,15 @@ export function computeSilentFeedRatio(input: {
   const lastMs = parseSqlUtc(input.lastSuccessfulPull);
   if (!Number.isFinite(lastMs)) return null;
 
+  // Last time the dispatcher demonstrably reached this feed, success or
+  // failure. An unparseable last_failure is treated as "no failure" so a
+  // malformed timestamp can never SUPPRESS an alert.
   const failureMs = input.lastFailure != null ? parseSqlUtc(input.lastFailure) : NaN;
-  if (Number.isFinite(failureMs) && input.nowMs - failureMs < RECENT_FAILURE_WINDOW_MS) {
-    return null; // dispatched and failing — loud, not silent
+  const lastContactMs = Number.isFinite(failureMs) ? Math.max(lastMs, failureMs) : lastMs;
+
+  const silentAfterMs = input.effectiveIntervalMs * SILENT_RATIO_THRESHOLD;
+  if (input.nowMs - lastContactMs < silentAfterMs) {
+    return null; // dispatched within its own cadence — loud (or fine), not silent
   }
 
   const ratio = (input.nowMs - lastMs) / input.effectiveIntervalMs;

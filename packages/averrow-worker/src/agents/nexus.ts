@@ -31,6 +31,10 @@ import {
 import { updateProviderTrends } from "../lib/provider-trends";
 import { groupClusterComponents } from "../lib/cluster-components";
 import { detectClusterInfraMovement } from "../lib/cluster-infra-movement";
+// Shared with workflows/nexusRun.ts — both paths upsert the same
+// `infrastructure_clusters` rows, so id slug AND display name must be
+// computed by the same code. See lib/cluster-naming.ts.
+import { slugifyKey, generateClusterName } from "../lib/cluster-naming";
 
 // ─── NEXUS core correlation logic ─────────────────────────────────
 
@@ -1254,26 +1258,10 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   return { clustersWritten, providersUpdated, pivotsDetected, outputs };
 }
 
-function generateClusterName(cluster: { countries?: string | null; threat_type?: string | null; asn?: string | null }): string {
-  const country = cluster.countries?.split(',')?.[0] ?? 'Unknown';
-  const type = cluster.threat_type?.replace(/_/g, ' ') ?? 'threat';
-  const asnRaw = cluster.asn ?? '';
-  const asn = asnRaw.replace(/^AS\d+\s*/, '').trim() || asnRaw;
-  return `${country} ${asn} ${type} cluster`.trim();
-}
-
-// Sanitize a natural-key part for use inside a deterministic cluster
-// id. Keeps lowercase alphanumerics + dashes; collapses everything
-// else to underscores; bounds length to keep id strings reasonable.
-function slugifyKey(value: string | null | undefined): string {
-  if (!value) return 'unknown';
-  return value
-    .toString()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80) || 'unknown';
-}
+// `generateClusterName` + `slugifyKey` moved to lib/cluster-naming.ts so
+// workflows/nexusRun.ts computes the SAME id and the SAME cluster_name for
+// the ASN lane — they share one upsert row and both list `cluster_name` in
+// their `ON CONFLICT DO UPDATE SET`.
 
 // ─── Agent Module Definition ──────────────────────────────────────
 
