@@ -575,59 +575,116 @@ export const cartographerAgent: AgentModule = {
     // provisioned the dedicated D1 yet) — call short-circuits in
     // lookupGeoMmdb. Costs zero D1 reads on the main DB; the
     // SELECT runs against GEOIP_DB.
+    // Give-up state is `geo_mmdb_checked_at` (migration 0263), NOT
+    // `enrichment_attempts`. That column is Phase 0's ip-api budget and
+    // is baked into the partial index `idx_threats_carto_phase0`
+    // (`enrichment_attempts < 5`). Borrowing it here meant every MMDB
+    // miss spent one of ip-api's five retries, cutting Phase 0's real
+    // budget to ~2 and marching un-geolocated rows to the `< 8` cap in
+    // ~2h — the 4,740-row pile at exactly attempts=8 observed
+    // 2026-09-11, 65% of it dataplane/scanning (a feed that inserts
+    // malicious_domain=NULL and so never touched the DNS pipeline).
+    //
+    // One consultation per threat is also all that is informative:
+    // geo_ip_ranges refreshes weekly and lib/geoip-mmdb.ts KV-caches
+    // negative answers behind NULL_SENTINEL, so attempts 2..8 re-read
+    // the same cached miss and learn nothing.
     let mmdbAttempted = 0;
     let mmdbResolved = 0;
+    let mmdbPartial = 0;
+    let mmdbBudgetHit = false;
     try {
       const { lookupGeoMmdb } = await import("../lib/geoip-mmdb");
       // Fetch threats that came out of Phase 0 with an IP but no
-      // lat/lng. Bounded by MMDB_MAX_PER_RUN so a deep backlog
-      // doesn't blow our CPU budget — Phase 1 (ipinfo) and the
-      // next cartographer tick continue draining.
+      // lat/lng and that GeoLite2 hasn't been asked about yet.
+      // Bounded by MMDB_MAX_PER_RUN so a deep backlog doesn't blow our
+      // CPU budget — Phase 1 (ipinfo) and the next cartographer tick
+      // continue draining. Served by idx_threats_mmdb_pending.
       const MMDB_MAX_PER_RUN = 500;
+      // Wall-clock guard. This loop is the only unbounded sequential
+      // await chain left in the agent (cross-DB range scan + write per
+      // row); without a budget it is the long tail that puts ~9% of
+      // runs past the 180-min reap ceiling while the median run is
+      // ~6 min. Same pattern as enrichIpBatch's LOOP_CEILING_MS.
+      const MMDB_BUDGET_MS = 90_000;
+      const mmdbStart = Date.now();
       const stuckRows = await env.DB.prepare(`
         SELECT id, ip_address FROM threats
         WHERE ip_address IS NOT NULL AND ip_address != ''
           AND lat IS NULL
-          AND enrichment_attempts < 8
+          AND geo_mmdb_checked_at IS NULL
         ORDER BY created_at DESC
         LIMIT ?
       `).bind(MMDB_MAX_PER_RUN).all<{ id: string; ip_address: string }>();
 
+      // Marker writes are batched rather than issued one .run() per
+      // row — up to 500 sequential single-row UPDATEs was both the
+      // slowest part of the loop and a needless writer hold.
+      const mmdbWrites: D1PreparedStatement[] = [];
+
       for (const row of stuckRows.results) {
+        if (Date.now() - mmdbStart > MMDB_BUDGET_MS) {
+          mmdbBudgetHit = true;
+          break;
+        }
         mmdbAttempted++;
         const geo = await lookupGeoMmdb(env, row.ip_address);
-        if (!geo || geo.lat == null || geo.lng == null) {
-          // Increment the attempt counter even on miss so this IP
-          // eventually drops out of the queue via the < 8 bound.
-          // Without this, GeoLite2-uncovered IPs (sinkholes, CDN,
-          // anycast) get re-selected by the LIMIT 500 selector every
-          // cartographer tick and re-hit D1 forever — see geoip-mmdb
-          // null-cache fix in the same PR.
-          try {
-            await env.DB.prepare(`
-              UPDATE threats
-                 SET enrichment_attempts = COALESCE(enrichment_attempts, 0) + 1
-               WHERE id = ?
-            `).bind(row.id).run();
-          } catch (err) {
-            console.error('[cartographer] mmdb attempt-increment failed:', err instanceof Error ? err.message : err);
-          }
-          continue;
-        }
-        try {
-          await env.DB.prepare(`
+
+        if (geo && geo.lat != null && geo.lng != null) {
+          // Full hit — coordinates available.
+          mmdbWrites.push(env.DB.prepare(`
             UPDATE threats SET
               lat = COALESCE(lat, ?),
               lng = COALESCE(lng, ?),
               country_code = COALESCE(country_code, ?),
               asn = COALESCE(asn, ?),
+              geo_mmdb_checked_at = datetime('now'),
               enriched_at = CASE WHEN enriched_at IS NULL THEN datetime('now') ELSE enriched_at END
             WHERE id = ?
-          `).bind(geo.lat, geo.lng, geo.countryCode, geo.asn, row.id).run();
+          `).bind(geo.lat, geo.lng, geo.countryCode, geo.asn, row.id));
           mmdbResolved++;
           itemsUpdated++;
-        } catch (err) {
-          console.error('[cartographer] mmdb update failed:', err instanceof Error ? err.message : err);
+          continue;
+        }
+
+        if (geo && (geo.countryCode != null || geo.asn != null)) {
+          // Partial hit — GeoLite2 covers the range at country/ASN
+          // level but ships no coordinates (common for allocated-but-
+          // unmapped scanner ranges, i.e. exactly the dataplane
+          // population). Previously discarded wholesale. It doesn't
+          // reach threat_cube_geo (that needs lat/lng) but it does fix
+          // country_code and ASN-based provider attribution, which we
+          // already paid the lookup to obtain. enriched_at stays NULL —
+          // the row has no coordinates, so it must not graduate to the
+          // stuck pile (see the Phase 0 note above).
+          mmdbWrites.push(env.DB.prepare(`
+            UPDATE threats SET
+              country_code = COALESCE(country_code, ?),
+              asn = COALESCE(asn, ?),
+              geo_mmdb_checked_at = datetime('now')
+            WHERE id = ?
+          `).bind(geo.countryCode, geo.asn, row.id));
+          mmdbPartial++;
+          itemsUpdated++;
+          continue;
+        }
+
+        // True miss — GeoLite2 doesn't cover this IP. Stamp the marker
+        // so we never ask again, and leave enrichment_attempts alone so
+        // Phase 0 keeps its full ip-api budget.
+        mmdbWrites.push(env.DB.prepare(`
+          UPDATE threats SET geo_mmdb_checked_at = datetime('now') WHERE id = ?
+        `).bind(row.id));
+      }
+
+      if (mmdbWrites.length > 0) {
+        const MMDB_FLUSH_CHUNK = 100;
+        for (let i = 0; i < mmdbWrites.length; i += MMDB_FLUSH_CHUNK) {
+          try {
+            await env.DB.batch(mmdbWrites.slice(i, i + MMDB_FLUSH_CHUNK));
+          } catch (err) {
+            console.error('[cartographer] mmdb flush failed:', err instanceof Error ? err.message : err);
+          }
         }
       }
     } catch (err) {
@@ -637,9 +694,14 @@ export const cartographerAgent: AgentModule = {
     if (mmdbAttempted > 0) {
       outputs.push({
         type: 'insight',
-        summary: `mmdb lookup: ${mmdbResolved}/${mmdbAttempted} threats geo-located via local GeoIP DB`,
+        summary: `mmdb lookup: ${mmdbResolved}/${mmdbAttempted} threats geo-located via local GeoIP DB (${mmdbPartial} country/ASN only)${mmdbBudgetHit ? ' — wall-clock budget hit, truncated' : ''}`,
         severity: 'info',
-        details: { attempted: mmdbAttempted, resolved: mmdbResolved },
+        details: {
+          attempted: mmdbAttempted,
+          resolved: mmdbResolved,
+          partial: mmdbPartial,
+          budget_hit: mmdbBudgetHit,
+        },
       });
     }
 
