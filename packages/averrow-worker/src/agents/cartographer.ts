@@ -25,7 +25,8 @@ import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
-import { cachedCount } from "../lib/cached-count";
+import { cachedCount, peekCount } from "../lib/cached-count";
+import { cachedValue } from "../lib/cached-value";
 // Alert-type registry — single source of truth for alert_type column
 // values. Importing the key here means any future rename of the
 // 'geopolitical_threat' string changes in one place; the CHECK
@@ -68,6 +69,16 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+/**
+ * Render a Phase 2 diagnostic counter for the per-run summary line.
+ * `null` means "no instance has warmed this counter yet" — render it as
+ * `?` rather than `0`, so an operator reading the summary can't mistake
+ * an un-warmed cache for a collapsed count.
+ */
+function fmtDiagCount(n: number | null): string {
+  return n === null ? "?" : String(n);
 }
 
 // ─── ip-api.com batch enrichment ──────────────────────────────────
@@ -661,51 +672,94 @@ export const cartographerAgent: AgentModule = {
 
     // Diagnostic counts — used for cartographer's per-run summary
     // logging only (see the summary line + agent_outputs details
-    // below), never to drive logic. Wrapped in cachedCount, but the
-    // TTL MUST exceed the caller's true inter-run gap or the cache
-    // can never land.
+    // below), never to drive logic.
     //
-    // PR-BU root-cause fix: the prior 1800s (30-min) TTL was SHORTER
-    // than cartographer's cadence. Cartographer runs hourly via its
-    // dedicated `9 * * * *` cron, so the scheduled run at :09 finds
-    // the previous run's entry already 3600s old > 1800s TTL → miss →
-    // full 821K-row scan EVERY run. FC scaleAgents backlog instances
-    // fire additional near-simultaneous runs whose KV read-after-write
-    // lag makes them all miss together (thundering herd), so these
-    // three cartographer-only keys were scanning ~70×/day
-    // (diagnostics: count.threats.with_provider = 60.1M reads/24h)
-    // despite "being cached". Because the values are pure log-line
-    // data with wide drift tolerance, we set the TTL to 6h — longer
-    // than the hourly cadence + any scaleAgents burst window — so a
-    // scheduled run reuses the entry warmed up to 6 runs earlier and
-    // only ~4 expiry-misses/day remain.
-    const DIAG_COUNT_TTL = 21600; // 6h — log-line drift-tolerant, must exceed hourly+burst cadence
-    const totalProviders = { n: await cachedCount(env, 'count.hosting_providers.total', DIAG_COUNT_TTL, async () => {
-      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM hosting_providers").first<{ n: number }>();
-      return row?.n ?? 0;
-    }) };
-    const threatsWithProvider = { n: await cachedCount(env, 'count.threats.with_provider', DIAG_COUNT_TTL, async () => {
-      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NOT NULL").first<{ n: number }>();
-      return row?.n ?? 0;
-    }) };
-    const threatsWithoutProvider = { n: await cachedCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL, async () => {
-      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
-      return row?.n ?? 0;
-    }) };
-    // count.threats.active is a SHARED key (dashboard.ts:104,
-    // admin/stats.ts:80 also read it). Its fleet-wide recompute cadence
-    // is governed by those page-load callers' 3600s TTL — navigator
-    // pre-warms the dashboard every 5 min, so this entry is almost
-    // always fresh and cartographer's read here is essentially free.
-    // We pass the same 6h freshness budget: a LONGER TTL never forces
-    // another caller to recompute (cachedCount stores no per-entry TTL;
-    // the reader's TTL only decides whether IT accepts the warmed
-    // value), it only removes cartographer's own boundary-miss
-    // contribution. Log-line usage tolerates the extra staleness.
-    const threatsTotal = { n: await cachedCount(env, 'count.threats.active', DIAG_COUNT_TTL, async () => {
-      const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE status = 'active'").first<{ n: number }>();
-      return row?.n ?? 0;
-    }) };
+    // PR-BV root cause — SUPERSEDES the PR-BU "TTL was too short"
+    // theory. The misses were never TTL expiry:
+    //
+    //   * PR-BU raised the TTL 1800s → 21600s (12×) on 2026-07-29. The
+    //     diagnostics attribution for
+    //     `SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id
+    //      IS NOT NULL` did not move: 60.1M → 62.3M rows/24h. A
+    //     12× TTL increase cannot leave an expiry-driven miss pattern
+    //     unchanged, so expiry was not the driver.
+    //   * The observed 100 executions/24h tracks cartographer's
+    //     INVOCATION count (~3-4/h — see the agent_outputs timeline via
+    //     /api/internal/cartographer-health), not the TTL-boundary
+    //     count (~4/day at 6h). Every invocation recomputes.
+    //
+    // The mechanism is the herd, and it is structural: `cachedCount` is
+    // a read-through cache with NO single-flight. Phase 2 runs on every
+    // cartographer instance — the dedicated `9 * * * *` maintenance
+    // cron, the 1-3 FC scaleAgents backlog instances, and the
+    // geo_backlog instance — and they overlap, so each one reads the key
+    // before any of them has written it. No TTL suppresses that.
+    //
+    // Two-part fix, neither of which depends on out-TTL-ing the herd:
+    //
+    //   1. Stop issuing the 622K-row threats scan at all. "threats with
+    //      a provider" is exactly SUM(hosting_providers.total_threat_count)
+    //      — a maintained pre-computed column (lib/provider-counts.ts,
+    //      CLAUDE.md §8 "Pre-computed columns"). One 11.6K-row pass over
+    //      hosting_providers yields the provider count AND the
+    //      with-provider total, so it stays correct even when every
+    //      instance misses. (Orphan guard: cartographer-health reports
+    //      legacy_hosting_provider_ids = 0, i.e. no threat points at a
+    //      deleted provider row, so the SUM and the COUNT agree.)
+    //   2. For the counters with no pre-computed source, only ONE
+    //      designated instance may compute. The scheduled maintenance
+    //      run (triggeredBy 'cron' / manual) computes; FC's backlog
+    //      instances peek at KV and log `null` rather than racing.
+    //
+    // Rule of thumb for future counters here: a raw `threats` scan in
+    // this block is only ever allowed on the maintenance instance.
+    const DIAG_COUNT_TTL = 21600; // 6h — log-line drift-tolerant
+    // FC dispatches backlog/geo-backlog instances with triggeredBy
+    // 'flight_control' (agents/flightControl.ts scaleAgents); the
+    // dedicated `9 * * * *` cron dispatches with 'cron'
+    // (cron/orchestrator.ts). Anything that is not an FC backlog
+    // instance is the single designated computer for this tick.
+    const isMaintenanceRun = ctx.triggeredBy !== 'flight_control';
+
+    // Providers rollup: COUNT + SUM in one 11.6K-row pass over
+    // hosting_providers, replacing the 622K-row threats scan. Cheap
+    // enough that it stays ungated — even a full herd miss costs
+    // ~1.2M rows/day instead of 62.3M.
+    const providerRollup = await cachedValue<{ providers: number; with_provider: number }>(
+      env, 'count.hosting_providers.rollup', DIAG_COUNT_TTL, async () => {
+        const row = await env.DB.prepare(
+          `SELECT COUNT(*) AS providers,
+                  COALESCE(SUM(total_threat_count), 0) AS with_provider
+           FROM hosting_providers`
+        ).first<{ providers: number; with_provider: number }>();
+        return { providers: row?.providers ?? 0, with_provider: row?.with_provider ?? 0 };
+      });
+    const totalProviders: { n: number | null } = { n: providerRollup.providers };
+    const threatsWithProvider: { n: number | null } = { n: providerRollup.with_provider };
+
+    // No pre-computed source for "has an IP but no provider yet", so it
+    // stays a raw threats index scan — restricted to the maintenance
+    // instance. Backlog instances peek (never compute).
+    const threatsWithoutProvider: { n: number | null } = {
+      n: isMaintenanceRun
+        ? await cachedCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL, async () => {
+            const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
+            return row?.n ?? 0;
+          })
+        : await peekCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL),
+    };
+
+    // count.threats.active is a SHARED key — handlers/dashboard.ts and
+    // handlers/admin/stats.ts both read AND write it at the same 21600s
+    // TTL, and navigator pre-warms the dashboard every 5 min. Those are
+    // the callers that own it. Cartographer now only PEEKS: it never
+    // computes, so it can never add a 1.1M-row scan of its own, and the
+    // owners' behaviour is untouched (same key, same envelope, same
+    // TTL — peekCount only reads). When nothing has warmed it the log
+    // line shows `null`, which is honest; it is a log line.
+    const threatsTotal: { n: number | null } = {
+      n: await peekCount(env, 'count.threats.active', DIAG_COUNT_TTL),
+    };
 
     let haikuSuccessCount = 0;
     let haikuFailCount = 0;
@@ -1058,9 +1112,29 @@ export const cartographerAgent: AgentModule = {
     // NOT hard-skip on trigger==='flight_control': if the maintenance cron
     // instance itself fails/delays, a backlog instance still refreshes
     // provider_threat_stats and it never goes stale.
+    //
+    // PR-BV: the single 50-min window was not enough, for the same
+    // reason Phase 2's cachedCount wasn't (see that block). A
+    // read-then-write KV stamp is not a lock: the overlapping instances
+    // all read the stale stamp before any of them writes the new one, so
+    // they all proceed. Diagnostics showed the 'all'-period country
+    // rollup running 99×/24h against a 50-min throttle — one run per
+    // INSTANCE, not one per window (41.5M rows/24h, the #2 read query
+    // on the platform).
+    //
+    // Fix without losing the failover: make the window depend on who is
+    // asking. The maintenance instance keeps the 50-min window and is
+    // the normal writer. An FC backlog instance only takes over once the
+    // stamp is BACKLOG-stale (2.5h), i.e. the maintenance path has
+    // genuinely missed two consecutive hours. Steady state is one
+    // Phase 5 run per hour; the failover the original comment protects
+    // still fires, just two hours later instead of two minutes.
     let statsCreated = 0;
+    const providerStatsWindowMs = isMaintenanceRun
+      ? PROVIDER_STATS_THROTTLE_MS
+      : PROVIDER_STATS_BACKLOG_THROTTLE_MS;
     const lastProviderStatsRun = await env.CACHE.get(PROVIDER_STATS_LAST_RUN_KEY);
-    if (shouldRunProviderStats(lastProviderStatsRun, Date.now(), PROVIDER_STATS_THROTTLE_MS)) {
+    if (shouldRunProviderStats(lastProviderStatsRun, Date.now(), providerStatsWindowMs)) {
       statsCreated = await aggregateProviderStats(env);
       await env.CACHE.put(PROVIDER_STATS_LAST_RUN_KEY, String(Date.now()), { expirationTtl: 3600 });
     }
@@ -1069,23 +1143,27 @@ export const cartographerAgent: AgentModule = {
     // Emit diagnostic output so cartographer never shows 0 outputs silently
     outputs.push({
       type: "diagnostic",
-      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (${haikuSuccessCount} AI, ${haikuFailCount} heuristic), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${threatsWithProvider?.n ?? 0}/${threatsTotal?.n ?? 0} threats have provider`,
+      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (${haikuSuccessCount} AI, ${haikuFailCount} heuristic), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
       severity: providers.results.length === 0 ? "medium" : "info",
       details: {
         ip_api_enriched: batchGeoResponded,
         ip_api_geo_located: batchGeoLocated,
         rdap_enriched: rdapEnriched,
         providers_with_threats: providers.results.length,
-        total_providers: totalProviders?.n ?? 0,
+        total_providers: totalProviders.n,
         haiku_scored: haikuSuccessCount,
         heuristic_scored: haikuFailCount,
         stats_entries: statsCreated,
         email_security_scanned: emailScanned,
         email_security_errors: emailErrors,
         dmarc_geo_enriched: dmarcGeoEnriched,
-        threats_total_active: threatsTotal?.n ?? 0,
-        threats_with_provider: threatsWithProvider?.n ?? 0,
-        threats_without_provider_but_with_ip: threatsWithoutProvider?.n ?? 0,
+        // `null` here means "no instance has warmed this counter yet" —
+        // deliberately NOT coerced to 0, which would read as "the count
+        // really is zero" on a diagnostic panel. See the Phase 2 block.
+        threats_total_active: threatsTotal.n,
+        threats_with_provider: threatsWithProvider.n,
+        threats_without_provider_but_with_ip: threatsWithoutProvider.n,
+        diag_counts_computed_here: isMaintenanceRun,
         // Lever #6: batches API metrics
         batch_poll: batchPollSummary,
         batch_submit: batchSubmitSummary,
@@ -1225,9 +1303,17 @@ function buildGeopoliticalEscalationStatements(
 // `cc:` matches the platform's KV cache namespace convention (lib/cached-count.ts);
 // this is a raw last-run stamp, distinct from any cachedCount-managed `cc:count.*` key.
 export const PROVIDER_STATS_LAST_RUN_KEY = "cc:cartographer.provider_stats.last_run";
-// 50 min — comfortably under the ~hourly `9 * * * *` maintenance-cron cadence,
-// so exactly one Phase 5 run lands per hour even with 1-3 backlog instances.
+// 50 min — comfortably under the ~hourly `9 * * * *` maintenance-cron cadence.
+// Applies to the MAINTENANCE instance, which is the designated writer.
 export const PROVIDER_STATS_THROTTLE_MS = 50 * 60_000;
+// 150 min — the window an FC backlog instance must see elapse before it
+// takes over Phase 5. A read-then-write KV stamp is not a lock, so
+// overlapping instances sharing one window all read it stale and all run
+// (observed: 99 runs/24h against a 50-min window). Giving backlog
+// instances a 3× window means they only fire when the maintenance cron
+// has genuinely missed two consecutive hours — preserving the failover
+// the single-window design was protecting, without the herd.
+export const PROVIDER_STATS_BACKLOG_THROTTLE_MS = 150 * 60_000;
 
 /**
  * Pure decision for the Phase 5 provider-stats KV self-throttle.
