@@ -153,6 +153,79 @@ interface SilentFeedCandidate {
   display_name: string | null;
   schedule_cron: string;
   last_successful_pull: string;
+  last_failure: string | null;
+}
+
+/**
+ * A feed whose last failure is younger than this is being DISPATCHED —
+ * it is failing loudly, not silently — so the silent watchdog leaves it
+ * to the degraded / at-risk / auto-paused alert stages. Sized above the
+ * hourly dispatcher cadence so one ordinary tick of noise can't flip a
+ * genuinely-stalled feed out of the silent bucket.
+ */
+export const RECENT_FAILURE_WINDOW_MS = 3 * 60 * 60 * 1000;
+
+/** Ratio of (elapsed since last successful pull) / interval that counts as silent. */
+export const SILENT_RATIO_THRESHOLD = 3;
+
+/** Orchestrator dispatch cadence — the floor for any feed's effective interval. */
+export const DISPATCHER_CADENCE_MS = 60 * 60 * 1000;
+
+/**
+ * Pure decision helper for the silent-ingest watchdog: is this feed
+ * SILENT (not being dispatched at all), as opposed to merely failing?
+ *
+ * Returns the overdue ratio when the feed is silent, or `null` when it
+ * is not — so callers get the number they report without recomputing it.
+ *
+ * Two independent reasons a feed is NOT silent:
+ *
+ *  1. It pulled successfully recently enough (ratio below threshold).
+ *  2. It FAILED recently. A failure proves the dispatcher reached the
+ *     feed, which is exactly what this watchdog exists to detect the
+ *     absence of. Such a feed already owns three alert stages
+ *     (feed_health degraded → platform_feed_at_risk →
+ *     platform_feed_auto_paused), so reporting it as silent as well is
+ *     a duplicate — and, worse, a contradictory one.
+ *
+ * Reason 2 is the 2026-09-11 production bug: `autoRecoverStalePausedFeeds`
+ * (lib/feedRunner.ts:585) un-pauses any `auto:consecutive_failures` feed
+ * 4 h after its last failure, so a permanently-broken upstream ping-pongs
+ * enabled → 5 failures → auto-paused → enabled every ~4 h. During each
+ * enabled window it satisfied enabled=1 + paused_reason IS NULL while its
+ * last_successful_pull was ~22 days old, so this watchdog fired
+ * "nrd_hagezi is 528.5× overdue" 9 times in a day against a feed whose
+ * diagnostics row read `enabled: false, paused_reason:
+ * auto:consecutive_failures`.
+ */
+export function computeSilentFeedRatio(input: {
+  lastSuccessfulPull: string;
+  lastFailure: string | null;
+  effectiveIntervalMs: number;
+  nowMs: number;
+}): number | null {
+  const lastMs = parseSqlUtc(input.lastSuccessfulPull);
+  if (!Number.isFinite(lastMs)) return null;
+
+  const failureMs = input.lastFailure != null ? parseSqlUtc(input.lastFailure) : NaN;
+  if (Number.isFinite(failureMs) && input.nowMs - failureMs < RECENT_FAILURE_WINDOW_MS) {
+    return null; // dispatched and failing — loud, not silent
+  }
+
+  const ratio = (input.nowMs - lastMs) / input.effectiveIntervalMs;
+  return ratio >= SILENT_RATIO_THRESHOLD ? ratio : null;
+}
+
+/**
+ * Parse a timestamp written by D1 as either `datetime('now')`
+ * ("YYYY-MM-DD HH:MM:SS", implicitly UTC) or an ISO string. SQLite's
+ * form has no zone marker, so it must be stamped as UTC explicitly or
+ * the runtime reads it as local time.
+ */
+function parseSqlUtc(ts: string): number {
+  const s = ts.trim();
+  if (s.includes('Z') || s.includes('+')) return Date.parse(s);
+  return Date.parse(s.replace(' ', 'T') + 'Z');
 }
 
 /**
@@ -383,11 +456,16 @@ export const flightControlAgent: AgentModule = {
       // missing or last_successful_pull NULL) to keep first-run noise
       // out, and excludes anything paused/disabled — those have their
       // own platform_feed_auto_paused alerts.
+      //
+      // `last_failure` comes back with the row so computeSilentFeedRatio
+      // can exclude feeds that are being dispatched and failing (loud, not
+      // silent) — see that helper for the 2026-09-11 nrd_hagezi receipts.
       db.prepare(`
         SELECT fc.feed_name,
                fc.display_name,
                fc.schedule_cron,
-               fs.last_successful_pull
+               fs.last_successful_pull,
+               fs.last_failure
           FROM feed_configs fc
           INNER JOIN feed_status fs ON fs.feed_name = fc.feed_name
           WHERE fc.enabled = 1
@@ -1148,28 +1226,24 @@ export const flightControlAgent: AgentModule = {
     // group_key in the renderer is day-keyed so the operator gets at
     // most one alert per day even if 20 feeds go silent at once.
     {
-      const SILENT_RATIO_THRESHOLD = 3;
-      const DISPATCHER_CADENCE_MS = 60 * 60 * 1000; // 60 min — orchestrator runs hourly
       const nowMs = Date.now();
       const overdue: Array<{ feed_name: string; ratio: number; hours_since: number }> = [];
 
       for (const cand of silentFeedCandidates.results) {
         const cronInterval = parseCronIntervalMs(cand.schedule_cron);
         const effectiveIntervalMs = Math.max(cronInterval, DISPATCHER_CADENCE_MS);
-        const lastPullStr = cand.last_successful_pull;
-        const lastMs = Date.parse(
-          lastPullStr.includes('Z') || lastPullStr.includes('+') ? lastPullStr : lastPullStr + 'Z'
-        );
-        if (!Number.isFinite(lastMs)) continue;
-        const elapsedMs = nowMs - lastMs;
-        const ratio = elapsedMs / effectiveIntervalMs;
-        if (ratio >= SILENT_RATIO_THRESHOLD) {
-          overdue.push({
-            feed_name: cand.feed_name,
-            ratio,
-            hours_since: Math.round(elapsedMs / 3_600_000),
-          });
-        }
+        const ratio = computeSilentFeedRatio({
+          lastSuccessfulPull: cand.last_successful_pull,
+          lastFailure: cand.last_failure,
+          effectiveIntervalMs,
+          nowMs,
+        });
+        if (ratio === null) continue;
+        overdue.push({
+          feed_name: cand.feed_name,
+          ratio,
+          hours_since: Math.round((ratio * effectiveIntervalMs) / 3_600_000),
+        });
       }
 
       if (overdue.length > 0) {
@@ -1892,10 +1966,38 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     brandEnrichResult,
   ] = await Promise.all([
     // Live counters — used for scaling decisions, kept fresh every tick.
-    cacheCount('backlog.cartographer', BACKLOG_TTL_LIVE_S, `
+    //
+    // `enrichment_attempts < 5` is REQUIRED here, for two independent
+    // reasons (PR-BV):
+    //
+    //  1. Correctness. This number drives scaleAgents' instance count,
+    //     so it must measure the DRAINABLE backlog. Cartographer's
+    //     Phase 0 selector only picks up rows with attempts < 5, so
+    //     attempt-exhausted rows (4.9K of them as of 2026-09-11, vs a
+    //     423-row live queue) are work no instance can ever do.
+    //     Counting them inflated the backlog past SCALING.cartographer
+    //     thresholds and made FC fire 2-3 backlog instances an hour to
+    //     drain nothing — which is also what created the Phase 2
+    //     recompute herd this PR fixes on the cartographer side.
+    //     handlers/diagnostics.ts already defines the canonical
+    //     `cartographer_queue` with this predicate (the unfiltered
+    //     variant is explicitly labelled `_raw`, "for comparison");
+    //     FC was the one call site that disagreed.
+    //
+    //  2. Cost. `idx_threats_carto_phase0` is a PARTIAL index whose
+    //     WHERE includes `enrichment_attempts < 5`. SQLite can only use
+    //     a partial index when the query's WHERE implies the index's,
+    //     so omitting this predicate made the index dead and forced a
+    //     full scan: 800,974 rows read per call × 37 calls/24h = 29.6M
+    //     rows/day to return a number in the hundreds.
+    //
+    // Key renamed alongside the predicate change so the cutover doesn't
+    // serve up to 65 min of the old, differently-scoped value.
+    cacheCount('backlog.cartographer.drainable', BACKLOG_TTL_LIVE_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE enriched_at IS NULL
         AND ip_address IS NOT NULL AND ip_address != ''
+        AND enrichment_attempts < 5
         ${PRIVATE_IP_SQL_FILTER}
     `),
     cacheCount('backlog.analyst', BACKLOG_TTL_LIVE_S, `
