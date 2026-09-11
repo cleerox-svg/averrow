@@ -40,9 +40,17 @@ export interface WorkflowAgentStats {
   /** Count of workflow_cooldown_skip events — PR-A's cooldown
    *  short-circuiting due to a recent platform error. */
   cooldown_skipped:   number;
+  /** Count of workflow_failed events — the workflow body STARTED and
+   *  then threw (NEXUS_DARK_2026-09). Distinct from dispatch_failed,
+   *  which is a platform-side failure to start it at all. Without this
+   *  a run that starts and dies is indistinguishable from one still in
+   *  flight, forever — which is how NEXUS sat at 0 completions for
+   *  ~7 weeks while the UI showed it active. */
+  run_failed:         number;
   /** ISO timestamp of the most recent batch_complete event. */
   last_completed_at:  string | null;
-  /** ISO timestamp of the most recent workflow_dispatch_failed. */
+  /** ISO timestamp of the most recent failure of either kind
+   *  (workflow_dispatch_failed or workflow_failed). */
   last_failure_at:    string | null;
   /** Most recent failure message (truncated) — for last_run_error. */
   last_error:         string | null;
@@ -62,13 +70,14 @@ export async function getWorkflowAgentStats(
               SUM(CASE WHEN event_type = 'batch_complete' THEN 1 ELSE 0 END) AS completed,
               SUM(CASE WHEN event_type = 'workflow_dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed,
               SUM(CASE WHEN event_type = 'workflow_cooldown_skip' THEN 1 ELSE 0 END) AS cooldown_skipped,
+              SUM(CASE WHEN event_type = 'workflow_failed' THEN 1 ELSE 0 END) AS run_failed,
               MAX(CASE WHEN event_type = 'batch_complete' THEN created_at END) AS last_completed_at,
-              MAX(CASE WHEN event_type = 'workflow_dispatch_failed' THEN created_at END) AS last_failure_at,
-              MAX(CASE WHEN event_type = 'workflow_dispatch_failed' THEN message END) AS last_error,
+              MAX(CASE WHEN event_type IN ('workflow_dispatch_failed','workflow_failed') THEN created_at END) AS last_failure_at,
+              MAX(CASE WHEN event_type IN ('workflow_dispatch_failed','workflow_failed') THEN message END) AS last_error,
               MAX(created_at) AS last_event_at
        FROM agent_activity_log
        WHERE created_at >= datetime('now', '-' || ? || ' hours')
-         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip')
+         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
        GROUP BY agent_id`,
     ).bind(windowHours).all<WorkflowAgentStats>();
     return new Map(rows.results.map((r) => [r.agent_id, r]));

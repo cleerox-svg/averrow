@@ -1070,11 +1070,18 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         SUM(CASE WHEN event_type = 'batch_complete' THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN event_type = 'workflow_dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed,
         SUM(CASE WHEN event_type = 'workflow_cooldown_skip' THEN 1 ELSE 0 END) AS cooldown_skipped,
+        -- run_failed: the workflow body STARTED and then threw
+        -- (NEXUS_DARK_2026-09). Distinct from dispatch_failed, which is
+        -- a platform-side failure to start it at all. Without this a run
+        -- that starts and dies looks identical to one still in flight —
+        -- which is why nexus reported running=6 / completed=0 for weeks
+        -- with last_error NULL and nothing in agent_mesh.stalled[].
+        SUM(CASE WHEN event_type = 'workflow_failed' THEN 1 ELSE 0 END) AS run_failed,
         MAX(CASE WHEN event_type = 'batch_complete' THEN created_at END) AS last_completed_at,
-        MAX(CASE WHEN event_type = 'workflow_dispatch_failed' THEN message END) AS last_error
+        MAX(CASE WHEN event_type IN ('workflow_dispatch_failed','workflow_failed') THEN message END) AS last_error
       FROM agent_activity_log
       WHERE created_at >= datetime('now', '-' || ? || ' hours')
-        AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip')
+        AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
       GROUP BY agent_id
     `).bind(hoursBack).all<{
       agent_id: string;
@@ -1082,6 +1089,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       completed: number;
       dispatch_failed: number;
       cooldown_skipped: number;
+      run_failed: number;
       last_completed_at: string | null;
       last_error: string | null;
     }>();
@@ -1280,6 +1288,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     type AgentMeshRow = typeof agentMesh.results[number] & {
       dispatch_source?: 'agent_runs' | 'workflow';
       cooldown_skipped?: number;
+      run_failed?: number;
       legacy_inline?: {
         total_runs: number;
         success: number;
@@ -1301,14 +1310,20 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           success: wf.completed,
           partial: 0,
           killed_runs: 0,
-          failed: wf.dispatch_failed,
-          running: Math.max(0, wf.dispatched - wf.completed - wf.dispatch_failed),
+          // A workflow that started and threw is FAILED, not running.
+          // Counting only dispatch_failed here is what let nexus report
+          // running=6 / failed=0 / last_error=null for ~7 weeks: the body
+          // died every time, but `running` absorbed it and no surface
+          // ever contradicted that (NEXUS_DARK_2026-09).
+          failed: wf.dispatch_failed + wf.run_failed,
+          running: Math.max(0, wf.dispatched - wf.completed - wf.dispatch_failed - wf.run_failed),
           last_completed_at: wf.last_completed_at,
           last_error: wf.last_error,
           total_records_processed: 0, // workflows don't write records_processed
           avg_duration_ms: null,
           dispatch_source: 'workflow',
           cooldown_skipped: wf.cooldown_skipped,
+          run_failed: wf.run_failed,
           ...(inlineLegacy ? { legacy_inline: {
             total_runs: inlineLegacy.total_runs,
             success: inlineLegacy.success,

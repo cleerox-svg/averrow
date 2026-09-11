@@ -345,15 +345,22 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   function deriveStatus(agentName: string): string {
     // Workflow-dispatched agents (nexus + future): canonical status
     // lives in agent_activity_log. Use the most recent batch_complete
-    // (success) or workflow_dispatch_failed (error) event over the
-    // 24h window; fall back to agent_runs only when no workflow
-    // events exist.
+    // (success) or failure event (workflow_dispatch_failed = never
+    // started; workflow_failed = started then threw) over the 24h
+    // window; fall back to agent_runs only when no workflow events
+    // exist.
     const wf = workflowAgentMap.get(agentName);
     if (wf && wf.last_event_at) {
       // Most recent failure newer than most recent success → error
       const lastSuccess = wf.last_completed_at ? new Date(wf.last_completed_at).getTime() : 0;
       const lastFailure = wf.last_failure_at ? new Date(wf.last_failure_at).getTime() : 0;
-      if (lastFailure > lastSuccess && wf.dispatch_failed > 0) return "error";
+      // NEXUS_DARK_2026-09: this previously required dispatch_failed > 0,
+      // so an agent whose workflow body threw on every run still fell
+      // through to the freshness check below and rendered as "active" —
+      // the dispatch event itself kept last_event_at fresh. nexus showed
+      // active for ~7 weeks while completing zero runs. A run_failed
+      // event is just as much an error as a dispatch failure.
+      if (lastFailure > lastSuccess && (wf.dispatch_failed > 0 || wf.run_failed > 0)) return "error";
       const lastEvent = new Date(wf.last_event_at).getTime();
       const ageMs = Date.now() - lastEvent;
       const sixHours = 6 * 60 * 60 * 1000;
