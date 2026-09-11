@@ -11,6 +11,11 @@ import { callAnthropicJSON } from "../../lib/anthropic";
 import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
+import {
+  GEO_UNMAPPED_POPULATION_SQL,
+  GEO_TERMINAL_SQL,
+  GEO_AWAITING_MMDB_SQL,
+} from "../../lib/geo-exhaustion";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
@@ -552,7 +557,12 @@ export async function handleMetricsGeoCoverage(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const cacheKey = "metrics_geo_coverage:v1";
+  // v3: `exhausted.total` changed meaning again — see the query below
+  // and lib/geo-exhaustion.ts. v2's `>= 8` predicate was unreachable
+  // and `retrying_mmdb` was unpopulatable; both are gone. Bumped so
+  // operators don't read a stale payload under the old semantics for up
+  // to 5 minutes after deploy.
+  const cacheKey = "metrics_geo_coverage:v3";
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -562,6 +572,26 @@ export async function handleMetricsGeoCoverage(
     { key: '30d', offset: "datetime('now', '-30 days')" },
   ];
 
+  // Reading these windows: `coverage_pct` is NOT a clean coverage ratio
+  // and a lower recent number is not by itself a regression. Two known
+  // biases, both structural:
+  //
+  //  1. Settle lag. Both cubes are keyed on `threats.created_at`, but a
+  //     threat only enters threat_cube_geo once it HAS lat/lng — which
+  //     happens minutes-to-days after ingest (DNS resolution, then
+  //     cartographer). The geo cube row for a past hour is only corrected
+  //     when that hour is rebuilt: Navigator rebuilds current + previous
+  //     hour every 5 min, cube_healer rebuilds 30 days every 6 h. So the
+  //     most recent hours are always structurally under-counted, which
+  //     makes 24h < 7d < 30d the EXPECTED shape even in a healthy system.
+  //  2. Numerator/denominator asymmetry. threat_cube_geo filters
+  //     `status='active'`; threat_cube_status does not. Threats that go
+  //     inactive stay in the denominator and leave the numerator, which
+  //     drags the older windows down.
+  //
+  // A real regression shows up as the 30d number falling over time, or
+  // as the settled part of the daily series (see `daily_30d`, excluding
+  // roughly the last 24 h) stepping down — not as the 24h/30d gap alone.
   const [windows, daily, exhausted, exhaustedByFeed] = await Promise.all([
     Promise.all(windowDefs.map(async (w) => {
       const [mapped, total] = await Promise.all([
@@ -612,20 +642,38 @@ export async function handleMetricsGeoCoverage(
        ORDER BY s.day ASC
     `).all<{ day: string; mapped: number; total: number; coverage_pct: number | null }>(),
 
+    // Exhausted pile. Predicate + population come from
+    // lib/geo-exhaustion.ts so this panel, `/api/internal/platform-
+    // diagnostics` (cartographer_exhausted + _by_feed) and
+    // `/api/*/cartographer-health` all measure the same rows — see that
+    // module for why terminality is a conjunction of both phases giving
+    // up rather than a threshold on `enrichment_attempts`.
+    //
+    // Two things were wrong here before:
+    //  1. `>= 8` was unreachable. Phase 0 caps at 5 and (since 0ee677e)
+    //     Phase 0.5 never writes the column, so `exhausted` was frozen
+    //     at the historical pile and this panel would read "cartographer
+    //     is keeping up" through a total ip-api outage.
+    //  2. No `ip_address` predicate, so the `= 8` DNS-dead sentinel
+    //     written by lib/dns-backfill.ts:399 — rows with no IP that the
+    //     geo pipeline never touched — was counted as geo exhaustion.
+    //
+    // Still one scan with conditional SUMs over one predicate; the
+    // `>= 5` outer filter keeps the scanned row-set bounded.
     env.DB.prepare(`
-      SELECT COUNT(*) AS n
+      SELECT
+        SUM(CASE WHEN ${GEO_TERMINAL_SQL} THEN 1 ELSE 0 END) AS exhausted,
+        SUM(CASE WHEN ${GEO_AWAITING_MMDB_SQL} THEN 1 ELSE 0 END) AS awaiting_mmdb
         FROM threats
-       WHERE status = 'active'
-         AND enriched_at IS NULL
+       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
          AND enrichment_attempts >= 5
-    `).first<{ n: number }>(),
+    `).first<{ exhausted: number; awaiting_mmdb: number }>(),
 
     env.DB.prepare(`
       SELECT source_feed, threat_type, COUNT(*) AS n
         FROM threats
-       WHERE status = 'active'
-         AND enriched_at IS NULL
-         AND enrichment_attempts >= 5
+       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
+         AND ${GEO_TERMINAL_SQL}
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 10
@@ -636,8 +684,15 @@ export async function handleMetricsGeoCoverage(
     windows,
     daily_30d: daily.results,
     exhausted: {
-      total: exhausted?.n ?? 0,
+      // Terminal only. `by_feed` uses the same predicate AND the same
+      // population, so the list sums to the headline.
+      total: exhausted?.exhausted ?? 0,
       by_feed: exhaustedByFeed.results,
+      // Additive, NOT part of `total`: ip-api budget spent, MMDB not
+      // consulted yet. Replaces the old `retrying_mmdb` band, which
+      // nothing could populate. A rising value here means the MMDB
+      // phase is starved, not that coverage is terminal.
+      awaiting_mmdb: exhausted?.awaiting_mmdb ?? 0,
     },
     generated_at: new Date().toISOString(),
   };

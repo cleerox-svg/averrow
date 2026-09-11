@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   shouldRunProviderStats,
   PROVIDER_STATS_THROTTLE_MS,
+  PROVIDER_STATS_BACKLOG_THROTTLE_MS,
   PROVIDER_STATS_LAST_RUN_KEY,
 } from "../src/agents/cartographer";
 
@@ -53,5 +54,46 @@ describe("shouldRunProviderStats", () => {
 
   it("namespaces the KV key under the platform cc: cache convention", () => {
     expect(PROVIDER_STATS_LAST_RUN_KEY.startsWith("cc:")).toBe(true);
+  });
+});
+
+// PR-BV — the single 50-min window did not actually produce one run per
+// hour: a read-then-write KV stamp is not a lock, so the overlapping
+// instances all read it stale before any of them wrote, and the
+// 'all'-period rollup ran 99×/24h (41.5M rows read). The window is now
+// asymmetric: the maintenance instance owns the normal cadence, backlog
+// instances only take over after a genuine multi-hour maintenance gap.
+describe("asymmetric backlog throttle window", () => {
+  const NOW = 1_800_000_000_000;
+
+  it("gives backlog instances a strictly wider window than maintenance", () => {
+    expect(PROVIDER_STATS_BACKLOG_THROTTLE_MS).toBeGreaterThan(PROVIDER_STATS_THROTTLE_MS);
+  });
+
+  it("lets a backlog instance skip a rollup the maintenance run just did", () => {
+    // The exact herd case: maintenance ran this hour, an FC backlog
+    // instance arrives minutes later. Under the old shared 50-min window
+    // it still ran whenever it beat the stamp; now it defers.
+    const lastRun = String(NOW - 10 * 60_000);
+    expect(shouldRunProviderStats(lastRun, NOW, PROVIDER_STATS_THROTTLE_MS)).toBe(false);
+    expect(shouldRunProviderStats(lastRun, NOW, PROVIDER_STATS_BACKLOG_THROTTLE_MS)).toBe(false);
+  });
+
+  it("still defers a backlog instance when maintenance missed a single hour", () => {
+    const lastRun = String(NOW - 70 * 60_000); // maintenance stale by one hour
+    expect(shouldRunProviderStats(lastRun, NOW, PROVIDER_STATS_BACKLOG_THROTTLE_MS)).toBe(false);
+    // ...while the maintenance instance itself would happily re-run.
+    expect(shouldRunProviderStats(lastRun, NOW, PROVIDER_STATS_THROTTLE_MS)).toBe(true);
+  });
+
+  it("fails over to a backlog instance once maintenance has missed two hours", () => {
+    const lastRun = String(NOW - 160 * 60_000);
+    expect(shouldRunProviderStats(lastRun, NOW, PROVIDER_STATS_BACKLOG_THROTTLE_MS)).toBe(true);
+  });
+
+  it("keeps the backlog window under the staleness a stats consumer would notice", () => {
+    // provider_threat_stats backs operator-facing provider rollups; the
+    // failover must still land well inside a working day.
+    expect(PROVIDER_STATS_BACKLOG_THROTTLE_MS).toBeLessThan(6 * 60 * 60_000);
   });
 });

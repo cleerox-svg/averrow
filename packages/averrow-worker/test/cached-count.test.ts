@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cachedCount, getCachedCountStats, seedCount } from "../src/lib/cached-count";
+import { cachedCount, getCachedCountStats, peekCount, seedCount } from "../src/lib/cached-count";
 import type { Env } from "../src/types";
 
 // ─── Minimal in-memory KV mock ────────────────────────────────────
@@ -297,5 +297,75 @@ describe("cachedCount stats integration", () => {
     const s = await getCachedCountStats(env);
     expect(s.misses).toBeGreaterThanOrEqual(1);
     expect(s.hits).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("peekCount", () => {
+  let kv: MockKV;
+  let env: Env;
+
+  beforeEach(() => {
+    kv = new MockKV();
+    env = makeEnv(kv);
+  });
+
+  it("returns null for a cold key and never computes", async () => {
+    expect(await peekCount(env, "test.peek.cold", 60)).toBeNull();
+    expect(kv.putCalls).toBe(0);
+  });
+
+  it("returns the value a cachedCount writer warmed", async () => {
+    await cachedCount(env, "test.peek.warm", 60, async () => 42);
+    expect(await peekCount(env, "test.peek.warm", 60)).toBe(42);
+  });
+
+  it("returns the value seedCount warmed", async () => {
+    await seedCount(env, "test.peek.seed", 99, 60);
+    expect(await peekCount(env, "test.peek.seed", 60)).toBe(99);
+  });
+
+  it("returns null once the entry is older than the caller's TTL", async () => {
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    await cachedCount(env, "test.peek.stale", 60, async () => 5);
+    vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
+    expect(await peekCount(env, "test.peek.stale", 60)).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it("never writes — a peek cannot warm, overwrite, or re-stamp the key", async () => {
+    await cachedCount(env, "test.peek.readonly", 60, async () => 11);
+    const putsAfterWarm = kv.putCalls;
+    await peekCount(env, "test.peek.readonly", 60);
+    await peekCount(env, "test.peek.readonly", 60);
+    expect(kv.putCalls).toBe(putsAfterWarm);
+  });
+
+  it("leaves the hit/miss ring untouched so hit_rate still measures real compute suppression", async () => {
+    const before = await getCachedCountStats(env);
+    await peekCount(env, "test.peek.nostats", 60);
+    await peekCount(env, "test.peek.nostats", 60);
+    const after = await getCachedCountStats(env);
+    expect(after.hits).toBe(before.hits);
+    expect(after.misses).toBe(before.misses);
+  });
+
+  it("returns null on a corrupt envelope rather than a bogus number", async () => {
+    kv.store.set("cc:test.peek.corrupt", "not json");
+    expect(await peekCount(env, "test.peek.corrupt", 60)).toBeNull();
+    kv.store.set("cc:test.peek.badshape", JSON.stringify({ v: "x", t: Date.now() }));
+    expect(await peekCount(env, "test.peek.badshape", 60)).toBeNull();
+  });
+
+  it("returns null when the TTL is a 0 kill-switch", async () => {
+    await cachedCount(env, "test.peek.killed", 60, async () => 3);
+    expect(await peekCount(env, "test.peek.killed", 0)).toBeNull();
+  });
+
+  it("returns null when KV throws instead of propagating", async () => {
+    const throwingEnv = {
+      CACHE: { get: async () => { throw new Error("kv down"); } },
+    } as unknown as Env;
+    expect(await peekCount(throwingEnv, "test.peek.throws", 60)).toBeNull();
   });
 });

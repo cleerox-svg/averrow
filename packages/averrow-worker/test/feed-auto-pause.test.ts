@@ -282,6 +282,9 @@ describe("runFeed auto-pause", () => {
     for (const errMsg of [
       "c2_tracker upstream archived (montysecurity/C2-Tracker no longer publishes data/)",
       "PhishTank HTTP 404: not found",
+      // nrd_hagezi 2026-09-11: every dated window answers 200 with a
+      // zero-byte body — the route resolves, the source is gone.
+      "NRD WhoisDS: upstream served no data on 2 consecutive days — 2026-09-10: empty response body (0 bytes); 2026-09-09: empty response body (0 bytes)",
     ]) {
       const state: MockState = {
         feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },

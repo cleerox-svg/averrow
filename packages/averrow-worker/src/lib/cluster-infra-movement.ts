@@ -317,7 +317,11 @@ function emptyNew(): NewElements {
 interface ClusterRow {
   id: string;
   cluster_name: string | null;
-  brand_ids: string | null;
+  /** Brand fan-out computed SQL-side via json_array_length(brand_ids) —
+   *  see the projection note on the SELECT in detectClusterInfraMovement. */
+  brand_fanout: number;
+  /** Only the JSON-OBJECT form of agent_notes; plain-string notes are
+   *  nulled SQL-side because classifyClusterKind() discards them anyway. */
   agent_notes: string | null;
   confidence_score: number | null;
   infra_fingerprint: string | null;
@@ -384,9 +388,29 @@ export async function detectClusterInfraMovement(
 
   // 1. Read cluster rows (bounded by cluster-row count) and keep only
   //    bridge-kind clusters within the hub fan-out threshold.
+  // PROJECTION DISCIPLINE — identical rationale to
+  // lib/cluster-components.groupClusterComponents (2026-09 NEXUS tail
+  // outage): brand_ids is an unbounded JSON array (the ASN lane writes
+  // GROUP_CONCAT over its whole group) and we only need its LENGTH, while
+  // agent_notes is a plain human string on the per-IP / ASN lanes that
+  // classifyClusterKind() discards. Both are reduced SQL-side so the bytes
+  // per row stay bounded — this makes the whole-table read NARROW, not
+  // small: the row count is unchanged and still grows linearly with
+  // infrastructure_clusters.
+  //
+  // ltrim() takes an explicit character set because single-argument
+  // ltrim() in SQLite strips ONLY U+0020, whereas the JS-side
+  // parseNotesObject()/classifyClusterKind() path uses .trim(), which also
+  // strips \t \n \r. Mismatched trimming would null a notes value that JS
+  // parses fine and silently reclassify a cluster_cert_* row (cert_san →
+  // cert_serial), changing which threats the bridge seek finds.
   const rows = (await db.prepare(
-    `SELECT id, cluster_name, brand_ids, agent_notes, confidence_score,
-            infra_fingerprint, last_movement_pivot_at
+    `SELECT id, cluster_name,
+            CASE WHEN json_valid(brand_ids)
+                 THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout,
+            CASE WHEN substr(ltrim(agent_notes, ' ' || char(9) || char(10) || char(13)), 1, 1) = '{'
+                 THEN agent_notes END                         AS agent_notes,
+            confidence_score, infra_fingerprint, last_movement_pivot_at
        FROM infrastructure_clusters`,
   ).all<ClusterRow>()).results ?? [];
   result.clustersRead = rows.length;
@@ -396,7 +420,7 @@ export async function detectClusterInfraMovement(
     const kind = classifyClusterKind(row.id, row.agent_notes);
     if (!isBridgeKind(kind)) continue;
     result.bridgeClustersConsidered++;
-    if (safeArrayLength(row.brand_ids) > hubThreshold) {
+    if ((row.brand_fanout ?? 0) > hubThreshold) {
       result.hubExcluded++;
       continue;
     }
@@ -545,12 +569,6 @@ function splitConcat(v: string | null | undefined): string[] {
   return v.split(',');
 }
 
-function safeArrayLength(json: string | null): number {
-  if (!json) return 0;
-  try {
-    const v = JSON.parse(json);
-    return Array.isArray(v) ? v.length : 0;
-  } catch {
-    return 0;
-  }
-}
+// NOTE: brand fan-out is no longer parsed from the brand_ids JSON in JS —
+// json_array_length() computes it SQL-side so the unbounded column never
+// crosses the wire. See the projection note in detectClusterInfraMovement.

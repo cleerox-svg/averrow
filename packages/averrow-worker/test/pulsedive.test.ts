@@ -12,25 +12,53 @@ interface Update { sql: string; args: unknown[] }
 function makeEnv(
   threats: Array<{ id: string; indicator: string }>,
   riskByIndicator: Record<string, string>, // value, or "ERROR" for {error:...}
-  opts?: { key?: string | undefined; dailyCount?: number; monthlyCount?: number },
-): { env: Env; updates: Update[]; fetchCount: () => number } {
+  opts?: {
+    key?: string | undefined;
+    dailyCount?: number;
+    monthlyCount?: number;
+    /** Pre-seeded KV risk cache entries, keyed by indicator. */
+    cached?: Record<string, string>;
+  },
+): { env: Env; updates: Update[]; fetchCount: () => number; dailyCount: () => number } {
   const updates: Update[] = [];
   const kv = new Map<string, string>();
-  if (opts?.dailyCount != null) kv.set(`pulsedive_daily_${new Date().toISOString().slice(0, 10)}`, String(opts.dailyCount));
+  const dailyKey = `pulsedive_daily_${new Date().toISOString().slice(0, 10)}`;
+  if (opts?.dailyCount != null) kv.set(dailyKey, String(opts.dailyCount));
   if (opts?.monthlyCount != null) kv.set(`pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`, String(opts.monthlyCount));
+  for (const [ind, risk] of Object.entries(opts?.cached ?? {})) kv.set(`pulsedive:${ind}`, risk);
   let fetches = 0;
+
+  // Minimal Response stand-in. The module reads the body as TEXT and parses
+  // it itself (so a non-JSON 200 — e.g. a Cloudflare HTML interstitial —
+  // can be reported with a snippet), so the mock must expose text() and
+  // headers.get() the way a real Response does.
+  const makeRes = (init: { ok: boolean; status: number; body: unknown; contentType?: string }): Response => {
+    const text = typeof init.body === "string" ? init.body : JSON.stringify(init.body);
+    return {
+      ok: init.ok,
+      status: init.status,
+      statusText: "",
+      headers: { get: (h: string) => (h.toLowerCase() === "content-type" ? init.contentType ?? "application/json" : null) },
+      async text() { return text; },
+      async json() { return JSON.parse(text) as unknown; },
+    } as unknown as Response;
+  };
 
   globalThis.fetch = vi.fn(async (url: string) => {
     fetches++;
     const m = url.match(/indicator=([^&]+)/);
     const ind = m ? decodeURIComponent(m[1]!) : "";
     const risk = riskByIndicator[ind];
-    if (risk === "HTTP429") return { ok: false, status: 429, async json() { return {}; } } as unknown as Response;
+    if (risk === "HTTP429") return makeRes({ ok: false, status: 429, body: {} });
+    if (risk === "HTML") {
+      // HTTP 200 carrying an HTML error/interstitial page.
+      return makeRes({ ok: true, status: 200, body: "<!DOCTYPE html><html><body>Just a moment...</body></html>", contentType: "text/html" });
+    }
     const body =
       risk === "ERROR" ? { error: "Indicator not found." } :        // valid "no data"
       risk === "ERROR_OTHER" ? { error: "Invalid API key." } :      // hard failure
       { risk };
-    return { ok: true, status: 200, async json() { return body; } } as unknown as Response;
+    return makeRes({ ok: true, status: 200, body });
   }) as unknown as typeof fetch;
 
   const env = {
@@ -55,7 +83,12 @@ function makeEnv(
     },
   } as unknown as Env;
 
-  return { env, updates, fetchCount: () => fetches };
+  return {
+    env,
+    updates,
+    fetchCount: () => fetches,
+    dailyCount: () => parseInt(kv.get(dailyKey) ?? "0", 10),
+  };
 }
 
 const CTX = { feedName: "pulsedive", feedUrl: "https://pulsedive.com/api/info.php" };
@@ -162,6 +195,43 @@ describe("pulsedive enrichment", () => {
     expect(r.itemsError).toBe(0);
     expect(r.itemsDuplicate).toBe(1); // checked, no actionable change
     expect(updates[0]!.args).toContain("unknown");
+  });
+
+  // ── Regression: 2026-09-11 "upstream=7/8, check API status" outage ──
+
+  it("names the HTTP-200-but-not-JSON body in the thrown error (Cloudflare-interstitial case)", async () => {
+    const { env } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "HTML" });
+    // The bare taxonomy line ("upstream errors ... check API status") is not
+    // diagnosable on its own — the detail must reach pull-history.
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/first upstream detail/);
+    await expect(
+      pulsedive.ingest({ env, ...CTX }),
+    ).rejects.toThrow(/non-JSON body \(content-type=text\/html\)/);
+  });
+
+  it("aborts after 3 consecutive upstream failures instead of spending the whole batch", async () => {
+    const threats = Array.from({ length: 8 }, (_, i) => ({ id: `t${i}`, indicator: `d${i}.com` }));
+    // HTML = HTTP 200 with a non-JSON body → classified `upstream`
+    // (an `auth` failure aborts on the first hit, by design).
+    const risks = Object.fromEntries(threats.map((t) => [t.indicator, "HTML"]));
+    const { env, fetchCount, dailyCount } = makeEnv(threats, risks);
+
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/all 3 lookups failed/);
+    // Only the streak's worth of quota is spent, not the whole 8-item batch.
+    expect(fetchCount()).toBe(3);
+    expect(dailyCount()).toBe(3);
+  });
+
+  it("does not charge the daily quota for KV cache hits", async () => {
+    const { env, fetchCount, dailyCount } = makeEnv(
+      [{ id: "t1", indicator: "known.com" }],
+      {},
+      { cached: { "known.com": "critical" } },
+    );
+    const r = await pulsedive.ingest({ env, ...CTX });
+    expect(r.itemsNew).toBe(1);
+    expect(fetchCount()).toBe(0);   // served from KV — no HTTP call
+    expect(dailyCount()).toBe(0);   // ...so no provider quota consumed
   });
 
   it("checkPulsedive caches by indicator (one fetch per value)", async () => {

@@ -113,6 +113,49 @@ export async function cachedCount(
 }
 
 /**
+ * Read a counter from KV WITHOUT ever computing it. Returns `null` when
+ * the key is absent, unparseable, or older than `ttlSeconds`.
+ *
+ * Use from a caller that wants the number for logging/telemetry but must
+ * not be the one that pays for it. Two cases in practice:
+ *
+ *   1. The caller runs as a HERD. `cachedCount` is a read-through cache
+ *      with no single-flight: when N instances of the same agent reach
+ *      the same key before any of them has written it, all N recompute.
+ *      No TTL can suppress that — the misses scale with the invocation
+ *      count, not the TTL boundary count. A herd member should peek; a
+ *      single designated instance should be the one to `cachedCount`.
+ *      (See agents/cartographer.ts Phase 2 for the worked example.)
+ *
+ *   2. The key is SHARED and owned by cheaper/more frequent callers
+ *      (e.g. `count.threats.active`, warmed by the navigator-pre-warmed
+ *      dashboard). A secondary reader that only wants to log the number
+ *      should never be the one to trigger the full-table scan.
+ *
+ * Deliberately records NO hit/miss stat: a peek never computes, so
+ * counting it would skew `cached_count.hit_rate`, whose whole purpose is
+ * to tell operators how many D1 recomputes the cache is suppressing.
+ */
+export async function peekCount(
+  env: Env,
+  key: string,
+  ttlSeconds: number,
+): Promise<number | null> {
+  if (ttlSeconds <= 0) return null;
+  try {
+    const raw = await env.CACHE.get(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CachedEntry>;
+    if (typeof parsed?.v !== "number" || typeof parsed?.t !== "number") return null;
+    return (Date.now() - parsed.t) / 1000 < ttlSeconds ? parsed.v : null;
+  } catch {
+    // KV transient / missing binding — the caller logs `null`, which is
+    // the correct answer for "nobody has warmed this yet".
+    return null;
+  }
+}
+
+/**
  * Prime the counter cache with a value that was already computed by an
  * authoritative write path, so the next `cachedCount` read of the same
  * key is a hit instead of re-running the expensive scan.

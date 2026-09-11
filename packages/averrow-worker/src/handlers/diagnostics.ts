@@ -7,6 +7,7 @@
 
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
+import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
@@ -458,26 +459,177 @@ interface VelocityDiag {
   by_flag: Array<{ flag: string; n: number }>;
   /** Sum across all bands (= total threats rows). */
   total: number;
+  /**
+   * Writer-coverage split (VELOCITY_DARK_2026-09). `by_flag`'s
+   * `not_computable` bucket is NULL-derived and therefore CONFLATES two
+   * states that need different responses:
+   *
+   *   * "inherently not computable" — the row carries no WHOIS
+   *     registration date at all (`domain_created_at IS NULL`), so
+   *     `decideWeaponizationVelocity` could never produce a band. Nothing
+   *     to run; this is the permanent floor.
+   *   * "never computed" — the row DOES carry a registration date but
+   *     `runVelocityBackfill` has not swept it yet (`lib/velocity-writer.ts`
+   *     is admin-endpoint-dispatched; there is no cron, so a fresh
+   *     deployment sits at 100% unstamped and looks identical to the case
+   *     above in `by_flag`).
+   *
+   * That conflation is exactly what let the feature ship 100% dark and go
+   * unnoticed. `unstamped_candidates` is the actionable number: while it is
+   * large, `POST /api/admin/velocity/backfill?dry_run=0` has real work to do.
+   * It never reaches 0 — rows whose registration date fails a decide-fn
+   * guard (negative delta, pre-1985 sentinel, unparseable) are deliberately
+   * left NULL — so after a completed sweep the residual IS the guard-rejected
+   * set, not a backlog.
+   *
+   * Free: derived from the SAME single GROUP BY scan as `by_flag` (one extra
+   * low-cardinality grouping key, ≤8 groups), not additional COUNT(*) passes.
+   */
+  coverage: {
+    /** Rows in the writer's candidate set (`domain_created_at IS NOT NULL`).
+     *  Mirrors `computeVelocityDryRun`'s `candidates_total` predicate exactly. */
+    candidates_total: number;
+    /** Rows carrying a non-NULL `weaponization_flag` AND in the candidate
+     *  set. Gating on `has_reg` is required: counting flagged non-candidates
+     *  here lets `stamped_pct_of_candidates` exceed 100 and clamps
+     *  `unstamped_candidates` to 0, reporting a completed sweep over a real
+     *  backlog. Those rows go to `stamped_orphans` instead. */
+    stamped: number;
+    /** candidates_total − stamped: never-computed backlog + guard-rejected residual. */
+    unstamped_candidates: number;
+    /** Rows with a non-NULL `weaponization_flag` but NULL `domain_created_at`
+     *  — flagged yet outside the candidate set. Counted in neither `stamped`
+     *  nor `candidates_total`. Expected 0; non-zero means the writer's
+     *  CANDIDATE_SELECT and this block's predicate have diverged. */
+    stamped_orphans: number;
+    /** total − candidates_total: no registration date, inherently not computable. */
+    no_registration_date: number;
+    /** candidates_total as a % of total — the feature's ceiling on this corpus. */
+    candidate_pct: number;
+    /** stamped as a % of candidates_total — sweep progress. 0 = never run. */
+    stamped_pct_of_candidates: number;
+  };
+}
+
+function pct(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 0;
+  return Math.round((numerator / denominator) * 1000) / 10;
 }
 
 /** Build the `velocity` diagnostics block. cachedValue-wrapped (KV) so
  *  the low-cardinality GROUP BY over threats runs at most once per TTL,
  *  never a live full scan per diagnostics call. Key
- *  `diag.weaponization.distribution`, TTL 900s. */
+ *  `diag.weaponization.distribution.v3`, TTL 900s. (Bumped to `.v2`
+ *  alongside the added `coverage` block, then to `.v3` when `stamped`
+ *  was gated on `has_reg` and `stamped_orphans` added — an old cached
+ *  payload deserializes into the new shape and would silently serve the
+ *  pre-fix numbers, and a missing field, for a full TTL.) */
 async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
-  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution', 900, async () => {
+  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution.v3', 900, async () => {
+    // ONE scan, two grouping keys. `has_reg` uses a bare `IS NULL` test —
+    // not TRIM() — so `candidates_total` is byte-identical to the writer's
+    // CANDIDATE_SELECT / dry-run predicate (`domain_created_at IS NOT NULL`).
+    // Cardinality is (3 bands + NULL) × 2 = 8 groups max.
     const res = await env.DB.prepare(`
-      SELECT weaponization_flag AS flag, COUNT(*) AS n
+      SELECT weaponization_flag AS flag,
+             CASE WHEN domain_created_at IS NULL THEN 0 ELSE 1 END AS has_reg,
+             COUNT(*) AS n
       FROM threats
-      GROUP BY weaponization_flag
-    `).all<{ flag: string | null; n: number }>();
-    const order = ['very_fast', 'fast', 'normal', 'not_computable'];
-    const byFlag = res.results
-      .map((r) => ({ flag: r.flag ?? 'not_computable', n: r.n }))
-      .sort((a, b) => order.indexOf(a.flag) - order.indexOf(b.flag));
-    const total = byFlag.reduce((s, r) => s + r.n, 0);
-    return { by_flag: byFlag, total };
+      GROUP BY weaponization_flag, has_reg
+    `).all<{ flag: string | null; has_reg: number; n: number }>();
+
+    return foldVelocityDistribution(res.results);
   });
+}
+
+/** Pure fold of the `(weaponization_flag, has_reg)` group rows into the
+ *  `velocity` diagnostics block. Extracted from `buildVelocityDiag` so
+ *  the coverage arithmetic is unit-testable without a D1 —
+ *  test/geo-exhaustion-and-diag-folds.test.ts. */
+export function foldVelocityDistribution(
+  rows: Array<{ flag: string | null; has_reg: number; n: number }>,
+): VelocityDiag {
+  const flagTotals = new Map<string, number>();
+  let total = 0;
+  let candidatesTotal = 0;
+  let stamped = 0;
+  let stampedOrphans = 0;
+  for (const r of rows) {
+    const label = r.flag ?? 'not_computable';
+    flagTotals.set(label, (flagTotals.get(label) ?? 0) + r.n);
+    total += r.n;
+    if (r.has_reg === 1) {
+      candidatesTotal += r.n;
+      // `stamped` MUST be gated on has_reg too, or it counts rows that
+      // never entered `candidatesTotal`. Ungated, a row with a flag but
+      // no domain_created_at subtracted from `unstamped_candidates`
+      // without adding to the denominator: enough of them and
+      // `stamped_pct_of_candidates` exceeds 100 while
+      // `unstamped_candidates` clamps to 0 — the block reports "sweep
+      // complete" over a real backlog, defeating its own purpose.
+      if (r.flag !== null) stamped += r.n;
+    } else if (r.flag !== null) {
+      // Flagged but not a candidate. Surfaced as its own field rather
+      // than silently dropped: a non-zero value means the writer's
+      // CANDIDATE_SELECT and this block's predicate have diverged, or
+      // domain_created_at was cleared after stamping.
+      stampedOrphans += r.n;
+    }
+  }
+
+  const order = ['very_fast', 'fast', 'normal', 'not_computable'];
+  const byFlag = [...flagTotals.entries()]
+    .map(([flag, n]) => ({ flag, n }))
+    .sort((a, b) => order.indexOf(a.flag) - order.indexOf(b.flag));
+
+  return {
+    by_flag: byFlag,
+    total,
+    coverage: {
+      candidates_total: candidatesTotal,
+      // Candidates only — see the has_reg gate above.
+      stamped,
+      unstamped_candidates: Math.max(0, candidatesTotal - stamped),
+      // Flagged rows with no domain_created_at. Not in `stamped`, not
+      // in `candidates_total`. Expected 0; non-zero = writer/reader
+      // predicate divergence.
+      stamped_orphans: stampedOrphans,
+      no_registration_date: Math.max(0, total - candidatesTotal),
+      candidate_pct: pct(candidatesTotal, total),
+      stamped_pct_of_candidates: pct(stamped, candidatesTotal),
+    },
+  };
+}
+
+/** Workflow-agent run counters, derived from the `agent_activity_log`
+ *  event rollup. Extracted so the disjointness rules are unit-testable —
+ *  test/geo-exhaustion-and-diag-folds.test.ts.
+ *
+ *  The rules, from lib/workflow-dispatch.ts:
+ *    `workflow_dispatched`, `workflow_dispatch_failed` and
+ *    `workflow_cooldown_skip` are MUTUALLY EXCLUSIVE outcomes of one
+ *    dispatch attempt (:144 on success, :165 in the catch, and the
+ *    cooldown short-circuit before either). Summing them = attempts.
+ *    `workflow_failed` is emitted by the workflow BODY, so it only ever
+ *    occurs on a run that already emitted `workflow_dispatched`. */
+export function deriveWorkflowRunTotals(wf: {
+  dispatched: number;
+  completed: number;
+  dispatch_failed: number;
+  cooldown_skipped: number;
+  run_failed: number;
+}): { total_runs: number; failed: number; running: number } {
+  return {
+    // Three disjoint dispatch outcomes. `run_failed` is deliberately
+    // absent — those runs are already counted inside `dispatched`.
+    total_runs: wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped,
+    failed: wf.dispatch_failed + wf.run_failed,
+    // Residual of the DISPATCHED cohort only, so it may subtract only
+    // terms that are inside `dispatched`. `dispatch_failed` never
+    // entered it — subtracting it was double-counting and under-reported
+    // in-flight runs. `run_failed` DID (body started, then threw).
+    running: Math.max(0, wf.dispatched - wf.completed - wf.run_failed),
+  };
 }
 
 /** GET /api/admin/platform-diagnostics  (JWT admin auth)
@@ -770,16 +922,25 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       return row?.n ?? 0;
     }).then((n) => ({ n }));
 
-    // Threats exhausted by cartographer — hit the attempts cap with no geo.
-    // These exit the active queue but stay in `threats`. A growing exhausted
-    // count means ip-api can't enrich a meaningful share of the new threat
-    // mix; consider adding a fallback geo source.
-    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted', 300, async () => {
+    // Threats exhausted by cartographer — BOTH geo phases gave up with no
+    // coordinates. These exit the active queue but stay in `threats`. A
+    // growing exhausted count means ip-api + GeoLite2 together can't
+    // enrich a meaningful share of the new threat mix; consider adding a
+    // fallback geo source.
+    //
+    // Predicate + population are shared with the `_by_feed` breakdown
+    // below, the GeoCoverage admin panel and cartographer-health — see
+    // lib/geo-exhaustion.ts. Previously this headline omitted
+    // `status='active'` while its own `_by_feed` breakdown required it,
+    // so the breakdown could never sum to the headline.
+    //
+    // Cache key bumped to .v2 alongside the semantic change so a stale
+    // payload can't serve the old definition for a TTL after deploy.
+    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted.v2', 300, async () => {
       const row = await env.DB.prepare(`
         SELECT COUNT(*) AS n FROM threats
-        WHERE enriched_at IS NULL
-          AND ip_address IS NOT NULL AND ip_address != ''
-          AND enrichment_attempts >= 5
+        WHERE ${GEO_UNMAPPED_POPULATION_SQL}
+          AND ${GEO_TERMINAL_SQL}
       `).first<{ n: number }>();
       return row?.n ?? 0;
     }).then((n) => ({ n }));
@@ -827,13 +988,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // un-resolvable IPs), a class of threats (e.g. botnet IPs from
     // sinkholes), or a geo-source coverage gap. Top 15 keeps the
     // payload bounded; the full distribution stays queryable in D1.
+    //
+    // Same predicate + population as the headline above, so this list
+    // sums to `cartographer_exhausted` (modulo the LIMIT 15 tail).
     const cartoExhaustedByFeedP = env.DB.prepare(`
       SELECT source_feed, threat_type, COUNT(*) AS n
         FROM threats
-       WHERE status = 'active'
-         AND enriched_at IS NULL
-         AND ip_address IS NOT NULL AND ip_address != ''
-         AND enrichment_attempts >= 5
+       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
+         AND ${GEO_TERMINAL_SQL}
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 15
@@ -991,18 +1153,41 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         SUM(CASE WHEN event_type = 'batch_complete' THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN event_type = 'workflow_dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed,
         SUM(CASE WHEN event_type = 'workflow_cooldown_skip' THEN 1 ELSE 0 END) AS cooldown_skipped,
+        -- run_failed: the workflow body STARTED and then threw
+        -- (NEXUS_DARK_2026-09). Distinct from dispatch_failed, which is
+        -- a platform-side failure to start it at all. Without this a run
+        -- that starts and dies looks identical to one still in flight —
+        -- which is why nexus reported running=6 / completed=0 for weeks
+        -- with last_error NULL and nothing in agent_mesh.stalled[].
+        SUM(CASE WHEN event_type = 'workflow_failed' THEN 1 ELSE 0 END) AS run_failed,
         MAX(CASE WHEN event_type = 'batch_complete' THEN created_at END) AS last_completed_at,
-        MAX(CASE WHEN event_type = 'workflow_dispatch_failed' THEN message END) AS last_error
-      FROM agent_activity_log
+        -- Correlated subquery, NOT MAX(message): MAX() returns the
+        -- lexicographically largest message, which with two failure
+        -- classes folded in (workflow_dispatch_failed = platform-side,
+        -- workflow_failed = body-side) routinely belongs to a different
+        -- event than the most recent failure. An operator would be shown
+        -- a dispatch error for a run that actually died in its body —
+        -- exactly the confusion this rollup exists to end. One indexed
+        -- point-lookup per agent group (idx_activity_agent is
+        -- (agent_id, created_at DESC)); the group count is 1-2 agents.
+        (SELECT f.message
+           FROM agent_activity_log f
+          WHERE f.agent_id = a.agent_id
+            AND f.created_at >= datetime('now', '-' || ? || ' hours')
+            AND f.event_type IN ('workflow_dispatch_failed','workflow_failed')
+          ORDER BY f.created_at DESC, f.id DESC
+          LIMIT 1) AS last_error
+      FROM agent_activity_log a
       WHERE created_at >= datetime('now', '-' || ? || ' hours')
-        AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip')
+        AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
       GROUP BY agent_id
-    `).bind(hoursBack).all<{
+    `).bind(hoursBack, hoursBack).all<{
       agent_id: string;
       dispatched: number;
       completed: number;
       dispatch_failed: number;
       cooldown_skipped: number;
+      run_failed: number;
       last_completed_at: string | null;
       last_error: string | null;
     }>();
@@ -1201,6 +1386,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     type AgentMeshRow = typeof agentMesh.results[number] & {
       dispatch_source?: 'agent_runs' | 'workflow';
       cooldown_skipped?: number;
+      run_failed?: number;
       legacy_inline?: {
         total_runs: number;
         success: number;
@@ -1216,20 +1402,28 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       }
       for (const wf of workflowAgentMesh.results) {
         const inlineLegacy = byAgent[wf.agent_id];
+        // Counter arithmetic lives in deriveWorkflowRunTotals so the
+        // disjointness rules are stated (and tested) in one place. A
+        // workflow that started and threw is FAILED, not running —
+        // counting only dispatch_failed as failed is what let nexus
+        // report running=6 / failed=0 / last_error=null for ~7 weeks
+        // (NEXUS_DARK_2026-09).
+        const totals = deriveWorkflowRunTotals(wf);
         byAgent[wf.agent_id] = {
           agent_id: wf.agent_id,
-          total_runs: wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped,
+          total_runs: totals.total_runs,
           success: wf.completed,
           partial: 0,
           killed_runs: 0,
-          failed: wf.dispatch_failed,
-          running: Math.max(0, wf.dispatched - wf.completed - wf.dispatch_failed),
+          failed: totals.failed,
+          running: totals.running,
           last_completed_at: wf.last_completed_at,
           last_error: wf.last_error,
           total_records_processed: 0, // workflows don't write records_processed
           avg_duration_ms: null,
           dispatch_source: 'workflow',
           cooldown_skipped: wf.cooldown_skipped,
+          run_failed: wf.run_failed,
           ...(inlineLegacy ? { legacy_inline: {
             total_runs: inlineLegacy.total_runs,
             success: inlineLegacy.success,
@@ -1480,7 +1674,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           generated_at: new Date().toISOString(),
           db_clock_utc: clock?.utc_now ?? null,
           window_hours: hoursBack,
-          endpoint_version: 9,
+          // 10: additive `velocity.coverage` block (VELOCITY_DARK_2026-09) —
+          // splits the NULL-derived `not_computable` bucket into
+          // never-computed vs inherently-not-computable. No field removed.
+          endpoint_version: 10,
         },
 
         brand_count_drift: brandCountDrift,
@@ -1566,9 +1763,17 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // threats per registration→first-live band from the STORED
         // threats.weaponization_flag column (migration 0259), NULL mapped
         // to `not_computable` (kept distinct from `normal`). cachedValue-
-        // wrapped (diag.weaponization.distribution, 900s) so the low-
+        // wrapped (diag.weaponization.distribution.v2, 900s) so the low-
         // cardinality GROUP BY over threats runs at most once per TTL,
         // never a live per-row julianday scan.
+        //
+        // `velocity.coverage` (VELOCITY_DARK_2026-09) splits the NULL bucket
+        // into "no registration date" (inherently not computable — the
+        // permanent floor) vs `unstamped_candidates` (rows that DO carry a
+        // registration date but the admin-dispatched writer hasn't swept).
+        // `stamped_pct_of_candidates === 0` means the backfill has never run
+        // — the signal that was invisible while `by_flag` alone conflated
+        // the two states. Same single scan; no extra COUNT(*) passes.
         velocity: velocity,
 
         alerts: {
