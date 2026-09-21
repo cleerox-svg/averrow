@@ -18,7 +18,16 @@ import {
   type MaliciousDomainRow,
 } from '@/lib/domainModule';
 import { THREAT_TYPE_LABELS } from '@/lib/threats';
-import { SortableTable, SEVERITY_RANK, type Column } from '@/components/SortableTable';
+import { SortableTable, SEVERITY_RANK, Pill, type Column } from '@/components/SortableTable';
+import {
+  PAGE_SIGNAL_WEIGHTS,
+  PAGE_SIGNAL_LABELS,
+  SHADOW_SIGNAL_WEIGHTS,
+  SHADOW_SIGNAL_LABELS,
+  pageSignalLabel,
+  parsePageSignalArray,
+  defangHost,
+} from '@/lib/pageSignals';
 
 export function BrandDomainFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -335,6 +344,8 @@ function TakedownStatusPill({ status, takedownId }: { status: string; takedownId
 }
 
 function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
+  const [detailRow, setDetailRow] = useState<LookalikeRow | null>(null);
+
   if (rows.length === 0) {
     return (
       <section>
@@ -356,11 +367,15 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
     { key: 'threat', header: 'Threat', sortAccessor: (r) => SEVERITY_RANK[(r.threat_level ?? '').toLowerCase()] ?? 0,
       render: (r) => <ThreatPill level={r.threat_level} /> },
     { key: 'status', header: 'Status', sortAccessor: (r) => r.status, render: (r) => <StatusPill status={r.status} /> },
+    // DNS/WHOIS facts (registered/web/mx) stay first — the page-content
+    // verdict (PageVerdictChip) is a separate evidence class appended
+    // after them, not merged into the same chip vocabulary.
     { key: 'signals', header: 'Signals', render: (r) => (
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {r.registered === 1 && <SignalChip>registered</SignalChip>}
         {r.has_web === 1 && <SignalChip>web</SignalChip>}
         {r.has_mx === 1 && <SignalChip>mx</SignalChip>}
+        <PageVerdictChip row={r} onOpenDetail={() => setDetailRow(r)} />
       </div>
     ) },
     { key: 'last_checked', header: 'Last seen', align: 'right', sortAccessor: (r) => r.last_checked ?? '',
@@ -373,7 +388,169 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
         Lookalike Domains <span className="text-white/30">({rows.length})</span>
       </h2>
       <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'threat', dir: 'desc' }} />
+      {detailRow && (
+        <PageAnalysisDialog row={detailRow} onClose={() => setDetailRow(null)} />
+      )}
     </section>
+  );
+}
+
+// ── Page-content verdict (Lane 3 Phase 3 step 15) ───────────────────
+//
+// `page_fetched_at === null` is the authoritative "never scanned"
+// marker (every other page_* field is null on an unscanned row too,
+// but this is the one to gate on). A non-null page_fetched_at with
+// empty signal arrays is "checked, nothing found" — a result, not an
+// absence — rendered distinctly (ok/green) from "not scanned"
+// (neutral/gray).
+function PageVerdictChip({ row, onOpenDetail }: { row: LookalikeRow; onOpenDetail: () => void }) {
+  if (!row.page_fetched_at) {
+    return <Pill tone="neutral">page: not scanned</Pill>;
+  }
+
+  const live = parsePageSignalArray(row.page_signals);
+  const shadow = parsePageSignalArray(row.page_ai_signals);
+
+  if (live.length === 0 && shadow.length === 0) {
+    return <Pill tone="ok">page: clean</Pill>;
+  }
+
+  // A live/scored signal is real evidence — crit tone. Shadow-only
+  // firings are Lane 3 measurement data, never scoring, so they get a
+  // distinct, lower-key warn tone and an explicit "shadow only" label
+  // rather than borrowing the scored chip's vocabulary.
+  const tone = live.length > 0 ? 'crit' : 'warn';
+  const label = live.length > 0 ? `page: ${row.page_phishing_score ?? 0}` : 'page: shadow only';
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenDetail}
+      className="inline-flex appearance-none bg-transparent border-0 p-0 m-0 cursor-pointer"
+      aria-label={`View page-analysis detail for ${row.domain}`}
+    >
+      <Pill tone={tone}>{label}</Pill>
+    </button>
+  );
+}
+
+function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () => void }) {
+  const live = parsePageSignalArray(row.page_signals);
+  const shadow = parsePageSignalArray(row.page_ai_signals);
+
+  // Defensive: a key belonging to the SHADOW weight table must never
+  // render inside the scoring group, even if it somehow arrived via
+  // page_signals.
+  const liveSorted = Array.from(new Set(live))
+    .filter((k) => !(k in SHADOW_SIGNAL_WEIGHTS))
+    .sort((a, b) => (PAGE_SIGNAL_WEIGHTS[b] ?? 0) - (PAGE_SIGNAL_WEIGHTS[a] ?? 0));
+  const shadowSorted = Array.from(new Set(shadow))
+    .sort((a, b) => (SHADOW_SIGNAL_WEIGHTS[b] ?? 0) - (SHADOW_SIGNAL_WEIGHTS[a] ?? 0));
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">Page analysis</div>
+            <div className="mt-1 text-sm text-white/90 font-mono">{row.domain}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-white/40 hover:text-white/70 transition-colors"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+            <Field label="Score" value={row.page_phishing_score !== null ? `${row.page_phishing_score} / 100` : '—'} />
+            <Field label="Checked" value={row.page_fetched_at ? new Date(row.page_fetched_at).toLocaleString() : 'Never'} />
+            {row.page_anti_bot_wall && <Field label="Anti-bot wall" value={row.page_anti_bot_wall.replace(/_/g, ' ')} />}
+            {row.page_generator && <Field label="Generator" value={row.page_generator} />}
+          </div>
+
+          {row.page_exfil_sink && (
+            <div className="rounded-lg border border-sev-critical/[0.25] bg-sev-critical/[0.06] px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest font-mono text-sev-critical mb-1">
+                Covert exfil sink
+              </div>
+              <div className="font-mono text-[12px] text-white/85">
+                {defangHost(row.page_exfil_sink)}
+                {row.page_exfil_sink_id ? ` · ${row.page_exfil_sink_id}` : ''}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[10px] uppercase tracking-widest font-mono text-white/45 mb-1.5">
+              Scored signals
+            </div>
+            {liveSorted.length === 0 ? (
+              <p className="text-[12px] text-white/40 italic">No scored signals fired on the last analysis.</p>
+            ) : (
+              <ul className="space-y-1" data-testid="tenant-scoring-signals">
+                {liveSorted.map((key) => {
+                  const weight = PAGE_SIGNAL_WEIGHTS[key];
+                  return (
+                    <li key={key} className="flex items-center justify-between text-[12px]">
+                      <span className="text-white/75">{pageSignalLabel(key, PAGE_SIGNAL_LABELS)}</span>
+                      <span className="font-mono text-amber">{weight !== undefined ? `+${weight}` : '—'}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {shadowSorted.length > 0 && (
+            <div className="pt-3 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
+                  Shadow signals — not scoring
+                </span>
+                {row.page_score_delta !== null && (
+                  <span className="font-mono text-[10px] text-white/40">would-be +{row.page_score_delta}</span>
+                )}
+              </div>
+              <p className="text-[10px] text-white/35 mb-1.5">
+                Computed and persisted for measurement only. None of these contribute to the
+                score above, to threat level, or to alert triage.
+              </p>
+              <ul className="space-y-1" data-testid="tenant-shadow-signals">
+                {shadowSorted.map((key) => (
+                  <li key={key} className="flex items-center justify-between text-[12px]">
+                    <span className="text-white/50">{pageSignalLabel(key, SHADOW_SIGNAL_LABELS)}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-white/35 border border-white/10 rounded px-1.5 py-0.5">
+                      shadow
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end border-t border-white/[0.06] px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[11px] uppercase tracking-widest font-mono text-white/55 hover:text-white/85 px-3 py-1.5 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
