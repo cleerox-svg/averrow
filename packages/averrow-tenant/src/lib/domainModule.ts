@@ -59,6 +59,44 @@ export interface LookalikeRow {
   ai_assessment:    string | null;
   status:           string;
   created_at:       string;
+
+  // ── Page-content analysis (Wave 3 + Lane 3 Phase 3, migrations 0243/
+  // 0260/0264) ─────────────────────────────────────────────────────────
+  // Read-only evidence from the deterministic page scorer
+  // (averrow-worker lib/page-phishing-scorer.ts). Surfacing only — none
+  // of the shadow fields (page_ai_signals / page_score_delta /
+  // page_generator / page_exfil_sink*) move page_phishing_score,
+  // threat_level, triage or escalation. See
+  // docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md §3.5.
+  //
+  // `page_evidence` is DELIBERATELY ABSENT from this interface — the
+  // tenant SELECT (handlers/tenantDomainModule.ts) omits it on purpose:
+  // it holds a matched literal lifted verbatim from attacker-controlled
+  // page content with no closed vocabulary, and stays staff-only.
+  /** ISO timestamp of the last fetch attempt; null = never scanned. */
+  page_fetched_at:     string | null;
+  page_http_status:    number | null;
+  /** 0-100 deterministic score from the LIVE (scored) signal set. Null when never scored. */
+  page_phishing_score: number | null;
+  /** JSON array (string, un-parsed) of fired LIVE/scored signal keys — parse before rendering. */
+  page_signals:        string | null;
+  /** `turnstile|recaptcha|hcaptcha|cf_challenge|js_challenge` or null. */
+  page_anti_bot_wall:  string | null;
+  /** JSON array (string, un-parsed) of fired Lane 3 SHADOW signal keys — computed but NEVER scored. */
+  page_ai_signals:     string | null;
+  /** Would-be shadow score contribution. NEVER added to page_phishing_score. */
+  page_score_delta:    number | null;
+  /** `<meta name="generator">` value — grouping dimension only, weight zero. */
+  page_generator:      string | null;
+  /**
+   * Host of a matched covert/relay exfil sink (attacker-controlled).
+   * SECURITY — MUST be defanged at every render site (e.g. `t[.]me/…`)
+   * and MUST NEVER be a clickable link or auto-linkified. Clicking it
+   * issues a live request to attacker C2 from the viewer's network.
+   */
+  page_exfil_sink:     string | null;
+  /** Telegram bot id / Discord webhook id from that sink — the pivot key. */
+  page_exfil_sink_id:  string | null;
 }
 
 export interface CertRow {

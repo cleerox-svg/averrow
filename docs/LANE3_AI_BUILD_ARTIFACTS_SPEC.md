@@ -1,6 +1,9 @@
 # Lane 3 — AI-Build Artifacts & Covert Exfil Sinks — Implementation Spec
 
-**Status:** Proposal / design — nothing built
+**Status:** **Phase 1 SHIPPED** (merged 2026-09-21, PR #1713 — migration `0264`,
+eight signals computing and persisting in shadow mode, diagnostics instrumented,
+99 new tests). Phases 2 and 3 are still proposal/design. See §9 for per-step
+state and §11 for what Phase 2 is blocked on.
 **Scope:** Extend the existing deterministic lookalike page scorer with two new
 evidence classes (synthetic-build artifacts; covert credential-exfil sinks),
 persist the resulting fired-signal set, and — for the first time — **render it
@@ -168,9 +171,34 @@ Trimmed lowercased `title` **exactly equals or starts with** a short closed list
 `svelte app`, `astro`, `streamlit`, `index`, `replit`, `webpage`, `new project`,
 `title`.
 
-**Exact/prefix only — never substring**, or "document management portal" trips
-it. Near-mutually-exclusive with `title_keyword_density` by construction (a
-default title contains no brand name), so no double-count path.
+**Never substring.** Near-mutually-exclusive with `title_keyword_density` by
+construction (a default title contains no brand name), so no double-count path.
+
+> **Amended 2026-09-21 — this rule was internally inconsistent as first
+> written.** It said "exact or prefix" and justified it with *"never substring,
+> or 'document management portal' trips it"* — but **prefix matching trips that
+> example too**, via the `document` entry. Code review caught it; Phase 1
+> implemented the rule as specified and pinned the real behaviour in a test
+> rather than papering over it.
+>
+> Other prefix-leg firings on legitimate sites: `title` → "Title Insurance
+> Services of Ohio"; `index` → "Index of /pub"; `astro` → "Astrology Today";
+> `home page` → "Home Page Design Co". §5.3 disqualifies any Class A signal
+> firing above 2–3% on brand-canonical homepages, so the likely outcome is that
+> A3 — one of the better-motivated signals — gets demoted for reasons that are
+> an artifact of the *rule*, not of the *signal*.
+>
+> **Resolution, to apply before promotion (Phase 2):** split the list in two.
+> **Exact-match only** for generic English words that occur naturally in real
+> titles — `document`, `index`, `title`, `astro`, `home page`, `webpage`,
+> `my site`, `my app`, `new project`, `untitled`. **Prefix-eligible** for
+> scaffold-branded strings that no legitimate business title begins with —
+> `create next app`, `vite + react`, `vite app`, `react app`, `nuxt app`,
+> `svelte app`, `streamlit`, `replit`.
+>
+> Shadow mode makes this cheap to settle empirically rather than by argument:
+> §5.3's negative control will show the actual firing rate of each leg against
+> `brands.canonical_domain` before anything scores.
 
 #### A4 `build_placeholder_text` — 8
 
@@ -474,6 +502,23 @@ old shape out of KV for a whole TTL).
 | `generator.by_token[]` | Builder-mix baseline | Also permanently falsifies any future proposal to score the generator tag |
 | `by_fetch_outcome[]` | **The current block's real gap** — `fetched_ok` has no denominator breakdown, so failures are invisible | See below |
 
+> **`by_fetch_outcome[]` is last-pass only for rows that have NEVER succeeded —
+> ever-succeeded otherwise.** Amended 2026-09-21; code review caught the
+> overclaim in the original text. Outcome is inferred from
+> `page_ai_signals IS NULL` plus `page_http_status`, and §3.4 deliberately has
+> the failure path preserve prior verdicts. So once a row has ever been scored
+> it reads `scored` forever: a lookalike analyzed successfully on day 1 that
+> then sits behind a Cloudflare challenge returning 403 for thirty days keeps
+> counting as `scored`, `not_scored_http_error` stays at 0, and its **stale**
+> signal set keeps feeding `ai_build.*` firing rates.
+>
+> As written the field therefore closes the gap only for never-succeeded rows.
+> Closing it properly needs a **per-pass marker** — a `page_last_outcome TEXT`
+> column stamped by *both* branches — which is a schema change, so it is a
+> Phase 2 item rather than a silent fix. Until then, read
+> `ai_build.by_signal[]` as "rates over rows last *successfully* scored at some
+> point", not "rates over rows fetched this cycle".
+
 > **`oversize_declared` deserves its own watch.** `MAX_BYTES` is 512 KB with an
 > early reject on declared `content-length`, and AI-builder output (inlined
 > Tailwind, hydration payloads, base64 assets) is systematically fatter than
@@ -488,23 +533,49 @@ toward collapsing them in the scorer.
 
 ---
 
-## 7. Two defects to fix en route
+## 7. Two defects found en route — one fixed, one re-scoped
 
-Both verified directly; both will be made worse by this change.
+**7.1 The test D1 mock dropped a bind. ✅ FIXED (Phase 1).**
+`lookalike-page-analysis.ts` bound **six** values to the success UPDATE;
+`test/lookalike-page-analysis.test.ts:61-62` destructured **five** —
+`[status, score, signals, hash, id]`. `id` therefore received
+`antiBotWallFamily`, the row lookup missed, and **the success-path write was a
+silent no-op in tests.** Masked because the only test exercising
+`runPageAnalysisForDomain` covered the *failure* path.
 
-**7.1 The test D1 mock drops a bind.** `lookalike-page-analysis.ts:94-104` binds
-**six** values to the success UPDATE; `test/lookalike-page-analysis.test.ts:61-62`
-destructures **five** — `[status, score, signals, hash, id]`. `id` therefore
-receives `antiBotWallFamily`, the row lookup misses, and **the success-path write
-silently no-ops in tests.** It goes unnoticed because the only test exercising
-that function covers the *failure* path. Adding six more columns widens the drift.
+Now destructured at the real arity (12 after `0264`), with a success-path test
+asserting each column lands on the right row, computing the expected
+`PagePhishingResult` independently via the real `scorePagePhishing` rather than
+against coincidental defaults. **Verified by mutation:** reintroducing the
+5-arg destructure makes the new test fail with `page_fetched_at` null. A test
+that cannot fail is worse than no test, so the mutation check — not the green
+run — is the evidence.
 
-**7.2 `test/` is never typechecked.** `tsconfig.json` `include` is
-`["src/**/*.ts", "scripts/**/*.ts"]`. A test fixture missing a required field on
-`PagePhishingResult` or `ParsedPageSignals` compiles fine — which is why
-`test/lookalike-page-analysis.test.ts:94` already constructs a
-`PagePhishingResult` without `antiBotWallFamily`. Any new required field
-inherits the same blind spot.
+**7.2 `test/` is never typechecked. ⬜ OPEN — re-scoped, deliberately not fixed
+here.** `tsconfig.json` `include` is `["src/**/*.ts", "scripts/**/*.ts"]`, so a
+fixture missing a required field on `PagePhishingResult` or `ParsedPageSignals`
+compiles fine.
+
+This spec originally framed it as "fix a couple of fixtures." **That was wrong.**
+Adding `test/**/*.ts` surfaces **174 errors across 46 files**, none of them in
+the Lane-3-relevant ones. Measured breakdown:
+
+- **~59% `TS2532`/`TS18048` possibly-undefined** — `noUncheckedIndexedAccess`
+  is on and working correctly; the test code simply predates a check that was
+  never run against it. A discipline gap, not a `strict`-setting problem.
+- **~22% `TS2741`/`TS2740`/`TS2739` missing properties** — fixtures that
+  silently rotted when interfaces gained required fields (`AuthContext` gained
+  `enrollOnly`; `AgentModule` gained six). **This is the same defect class as
+  7.1**: a real interface changed and test fixtures kept compiling because
+  nothing typechecked them.
+- Remainder: vitest `Mock` typing friction, a `ResourceDecl` property rename,
+  an `ArrayBuffer`/`SharedArrayBuffer` mismatch.
+
+None is `src/` drift. It is a real latent problem and worth doing — as its own
+scoped change across ~46 files, not bundled into a detection PR where it would
+bury the diff. **Consequence to remember:** while this stays open, the `??`
+fallbacks in `computeShadowPageSignals` are load-bearing, because legacy
+fixtures can still hand it `undefined`.
 
 Also note the **test HTMLRewriter shim** (`test/page-fetch-antibot-wall.test.ts`).
 It originally supported only tag selectors plus the literal `"[class]"` and had
@@ -550,41 +621,54 @@ In roughly the order these will be proposed in review:
 
 Per `CLAUDE.md` §1A each step runs the full pipeline. Owners in brackets.
 
-**Phase 1 — shadow mode**
-1. Migration `0264` (six columns, no index). *[backend-engineer]*
-2. Comment accumulator + `comments()` handler + `MAX_COMMENT_SAMPLE`;
-   script-literal sink extractor modelled on `extractJsRedirectTargets`.
-   *[backend-engineer]*
-3. New fields on `ParsedPageSignals`; signal blocks + Class A cap in the scorer,
-   **behind a shadow flag** so nothing escalates yet. *[backend-engineer +
-   threat-intel-analyst]*
-4. Persist `page_ai_signals`, `page_score_delta`, `page_evidence`, metadata
-   columns in the success UPDATE only. *[backend-engineer]*
-5. Fix defects 7.1 and 7.2; extend the HTMLRewriter shim for `comments()`.
-   *[test-engineer]*
-6. Scorer tests modelled on the `anti_bot_wall` describe
-   (`test/page-phishing-scorer.test.ts:191-279`), including cap arithmetic and
-   the two no-downgrade cases. *[test-engineer]*
-7. Diagnostics `ai_build.*` / `exfil.*` blocks + `by_fetch_outcome[]`.
-   *[backend-engineer]*
+**Phase 1 — shadow mode. ✅ COMPLETE (merged 2026-09-21, PR #1713).**
+1. ✅ Migration `0264` (six columns, no index).
+2. ✅ Comment accumulator + document-wide `onDocument({ comments })` +
+   `MAX_COMMENT_SAMPLE`; script-literal sink extractor.
+3. ✅ New `ParsedPageSignals` fields; eight signals + Class A cap, in a fenced
+   shadow section with its own `SHADOW_SIGNAL_WEIGHTS` / `ShadowSignalKey`.
+4. ✅ Six columns persisted in the success UPDATE only.
+5. ✅ Defect 7.1 fixed (7.2 re-scoped — see §7); shim extended for
+   `comments()`, `svg *` and `Element.attributes`.
+6. ✅ Scorer + extraction + helper tests. 2276 → 2375 green.
+7. ✅ Diagnostics `ai_build.*` / `exfil.*` / `generator.*` / `by_fetch_outcome[]`.
 
-**Phase 2 — promotion (after §5.2/§5.3 gates pass, per signal)**
-8. Remove the shadow flag for promoted signals; wire the Class A cap into the
-   live score. *[backend-engineer]*
+*Review round (code + appsec + qa-verify) also landed: the unbounded
+`page_exfil_sink` column, the four-branch escalation band, the guarded shadow
+call, `onDocument` comments, the real `on*` attribute walk, generator charset
+restriction, one-pass diagnostics, and the versioned cache key.*
+
+**Phase 2 — promotion. ⬜ BLOCKED — see §11 before starting.**
+8. Remove the shadow flag **per signal, as each clears its §5.2/§5.3 gate** —
+   not all at once. *[backend-engineer + threat-intel-analyst]*
 9. `credentialHarvest` extension + `covert_exfil_sink` HIGH floor, **with the
-   flag derived in both caller sites**. *[backend-engineer]*
-10. `appsec-reviewer` pass on the triage-direction argument (§3.3).
+   flag derived in both caller sites** (`lookalike-page-analysis.ts` and
+   `lookalike-domains.ts` — they diverge silently if only one is updated).
+   *[backend-engineer]*
+10. Apply the §3.1 A3 two-tier list resolution before `default_scaffold_title`
+    is promoted. *[threat-intel-analyst]*
+11. `page_last_outcome` column so `by_fetch_outcome[]` is per-pass (§6).
+    *[backend-engineer]*
+12. `appsec-reviewer` pass on the triage-direction argument (§3.3) — **which
+    requires §11.1 to be resolved first, or the argument is vacuous.**
     *[appsec-reviewer]*
 
-**Phase 3 — surface**
-11. `SignalBreakdownCard` under `components/ui/`; `LookalikeDomain` interface
-    widened. *[frontend-engineer]*
-12. Mount in `RiskTab`; empty states per §3.5. *[frontend-engineer +
-    design-reviewer]*
-13. Tenant SELECT + both `LookalikeRow` interfaces + the "Signals" column.
+**Phase 3 — surface. ⬜ Not started. Independent of Phase 2 — can run in
+parallel**, since rendering shadow columns does not require promoting them.
+13. `SignalBreakdownCard` under `components/ui/`; `LookalikeDomain` interface
+    widened (the staff API is already `SELECT *`, so no handler change).
+    *[frontend-engineer]*
+14. Mount in `RiskTab`; empty states per §3.5 — *checked and clean* must not
+    look like *never scanned*. *[frontend-engineer + design-reviewer]*
+15. Tenant SELECT + both `LookalikeRow` interfaces + the "Signals" column.
+    **Defang `page_exfil_sink` at every render site** — never a clickable link;
+    an operator clicking it requests live attacker C2 from a corporate network.
     *[backend-engineer + frontend-engineer]*
-14. Widen `lookalike_domain_active` alert `details`. *[backend-engineer]*
-15. Docs: `THREAT_FEEDS.md`, `API_REFERENCE.md` if endpoints change,
+16. Widen `lookalike_domain_active` alert `details` — the cheapest write-side
+    change available, since `phishing.signals` and `phishing.score` are already
+    in scope at the `createAlert` site and currently discarded.
+    *[backend-engineer]*
+17. Docs: `THREAT_FEEDS.md`, `API_REFERENCE.md` if endpoints change,
     `PLATFORM_DATA_DEPENDENCIES.md` §1, `CLAUDE.md` §10 diagnostics table.
     *[docs-maintainer]*
 
@@ -601,7 +685,78 @@ builds the weighted-evidence component the whole plan depends on, so it should
 not be deferred past this lane — deferring it is how `page_signals` became
 invisible in the first place.
 
+**Phase 2 cannot start on a schedule — it starts on evidence.** §5.1 requires
+two full cadence cycles (~2 weeks) of shadow data before any signal is promoted,
+and §5.2/§5.3 are per-signal gates, not a single go/no-go. The population
+ceiling is ~480 analyses/day, so the practical constraint is data volume, not
+engineering time. **Do not let "Phase 1 is done" read as "Phase 2 is ready."**
+
 **Coordinate the sink extractor with Lane 2** (plan §13.4 Tier 1): a sink
 extracted from a page and a sink extracted from a package payload are the same
 evidence and should share one extractor and one persistence shape. Building them
 twice is the avoidable mistake here.
+
+---
+
+## 11. What Phase 2 is blocked on
+
+Added 2026-09-21 after the Phase 1 review round. Work these in order; 11.1 is
+the one that changes an argument rather than a line of code.
+
+### 11.1 `page_credential_harvest` has no producer — the triage-safety argument is currently vacuous
+
+§3.3 justifies widening `credentialHarvest` with: *"its only triage consumer
+(`lib/alert-triage.ts:123`) reads `page_credential_harvest === 1` to return
+`{ action: 'keep' }`; `dismiss` is the fallthrough — so widening produces more
+human review, never more dismissals."* That reasoning is sound **and currently
+means nothing**, because the field is never populated.
+
+Verified: `page_credential_harvest` appears in exactly three places across all
+of `src/` — the optional field declaration (`alert-triage.ts:63`) and the guard
+(`:123-124`). `loadThreatSnapshotForAlert` selects from `threats`, and neither
+`lookalike-page-analysis.ts` nor `lookalike-domains.ts` ever writes it into a
+triage snapshot. **The guard never fires either way.**
+
+So Phase 2 as specified would ship a widened definition whose only claimed
+safety property is unobservable. **Wire the producer first, re-review, and only
+then make the §3.3 argument** — otherwise the `appsec-reviewer` sign-off in
+step 12 is approving a property nobody can test.
+
+### 11.2 The A3 rule needs its two-tier split before `default_scaffold_title` is promoted
+
+§3.1 A3, amended. The prefix leg fires on legitimate titles ("Title Insurance
+Services of Ohio", "Index of /pub"), and §5.3 would then demote a
+well-motivated signal for a rule artifact. Split the list — exact-only for
+generic English words, prefix-eligible for scaffold-branded strings — before
+the gate is run, not after it fails.
+
+### 11.3 `by_fetch_outcome[]` needs a per-pass marker before its rates are trusted
+
+§6, amended. Until `page_last_outcome` exists, a row that succeeded once and has
+403'd for a month still reads `scored` and still contributes its **stale** signal
+set to `ai_build.by_signal[]`. Those are the rates §5.2's lift measurement
+depends on. Land the column early in Phase 2 so the gate data is clean.
+
+### 11.4 `oversize_declared` is still not individually visible
+
+§6. `rejectedReason` is not persisted, so the outcome breakdown conflates
+non-HTML with oversize. `MAX_BYTES` is 512 KB and AI-builder output is
+systematically fatter than hand-written kits — **this signal family may be
+structurally biased against the exact population it targets, and the bias
+remains unmeasurable.** If it turns out material, raising `MAX_BYTES` for this
+pass is a bigger recall win than any individual signal in §3.1. Splitting it
+needs the same persisted-reason work as 11.3, so do them together.
+
+### 11.5 Evasion is expected and must not be misread as a dead signal
+
+Every bounded cap in §3.2 is evadable by padding: 32 decoy `fetch()` calls
+before the real one defeats `covert_exfil_sink`; 64 one-character comments
+exhaust `MAX_COMMENTS` before the real scaffold comment. These bounds are
+required by the ReDoS contract and every signal here is positive-only, so the
+consequence is **recall loss, not a safety inversion**.
+
+It matters for interpretation: when §5.2's lift measurement shows a signal
+at 0%, that is evidence of *either* death *or* evasion, and §5.6 says
+`agent_scaffold_comment` and `llm_refusal_leakage` are expected to decay
+anyway. Do not let an evaded signal be retired as a dead one without checking
+`page_evidence` on the rows that did fire.

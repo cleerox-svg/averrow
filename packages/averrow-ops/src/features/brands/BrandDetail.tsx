@@ -16,6 +16,7 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { ScanSearch, ShieldCheck } from 'lucide-react';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { SimpleStatCard } from '@/components/ui/StatCard';
 import { api } from '@/lib/api';
@@ -34,6 +35,7 @@ import {
   type BrandDomain, type BrandFirmographics, type BrandScoreSnapshot,
   type BrandNarrative, type EmailSecurityHistoryPoint,
 } from '@/hooks/useBrandSurface';
+import { useLookalikes, type LookalikeDomain } from '@/hooks/useLookalikes';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
 import { DeepCard } from '@/components/ui/DeepCard';
@@ -44,6 +46,7 @@ import { Badge } from '@/components/ui/Badge';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SignalBreakdownCard } from '@/components/ui/SignalBreakdownCard';
 import { timeAgo } from '@/lib/time';
 import {
   ExposureIndexCard,
@@ -752,6 +755,8 @@ function RiskTab({
 
       <TyposquatsSection threats={threats} />
 
+      <PageAnalysisSection brandId={brand.id} />
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <DimensionalButton variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
           {aiPending ? 'ANALYZING…' : 'AI DEEP SCAN'}
@@ -1088,6 +1093,165 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
         Customer-side takedown submission is in the tenant Domain Findings view.
       </div>
     </Card>
+  );
+}
+
+// ── PAGE ANALYSIS ────────────────────────────────────────────────────────
+// Surfaces the deterministic page-phishing scorer's output
+// (lookalike_domains.page_* — migrations 0243/0260/0264) for the first
+// time anywhere in the platform. See
+// docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md §3.5.
+//
+// Three empty states, visually distinct (spec §3.5 / plan §13.5):
+//   - Never scanned      — no lookalikes exist, or none has page_fetched_at
+//                           set yet. No conclusion can be drawn.
+//   - Checked, clean      — every fetched row has an empty signal set. A
+//                           RESULT, not an absence — says when + how many.
+//   - (locked/not-entitled is a tenant-only concern — see BrandDomainFindings)
+
+// Defang a bare exfil-sink host before it is ever rendered — this is a
+// live C2 host (Telegram bot / Discord webhook / tunnel relay), never a
+// clickable reference. See migration 0264's constraint comment.
+function defangExfilHost(host: string): string {
+  return host.replace(/\./g, '[.]');
+}
+
+function parsePageSignalArray(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function PageAnalysisSection({ brandId }: { brandId: string }) {
+  const { data, isLoading } = useLookalikes(brandId, { limit: 100 });
+  const rows = data?.data ?? [];
+
+  // page_fetched_at === null is the authoritative "never scanned" marker
+  // (every other page_* field is null on an unscanned row too, but this
+  // is the one to gate the empty state on — an empty page_signals array
+  // on a CHECKED row means "checked, nothing found", not "unknown").
+  const checked = useMemo(() => rows.filter((r) => r.page_fetched_at), [rows]);
+  const withFindings = useMemo(
+    () => checked.filter((r) => (
+      parsePageSignalArray(r.page_signals).length > 0
+      || parsePageSignalArray(r.page_ai_signals).length > 0
+    )),
+    [checked],
+  );
+
+  if (isLoading) {
+    return (
+      <Card hover={false}>
+        <SectionLabel>Page Analysis</SectionLabel>
+        <div className="mt-3 text-[12px] text-[var(--text-tertiary)] font-mono">Loading…</div>
+      </Card>
+    );
+  }
+
+  if (checked.length === 0) {
+    return (
+      <Card hover={false}>
+        <SectionLabel>Page Analysis</SectionLabel>
+        <div className="mt-3">
+          <EmptyState
+            variant="configure-me"
+            icon={<ScanSearch />}
+            title={rows.length === 0 ? 'No lookalike domains to analyze' : 'Never scanned'}
+            subtitle={
+              rows.length === 0
+                ? 'No lookalike permutations exist for this brand yet — generate lookalikes to enable live-page analysis.'
+                : `${rows.length} lookalike domain${rows.length === 1 ? '' : 's'} tracked, none fetched yet. The deterministic page-content scorer runs on registered + resolving + has_web lookalikes on a 24h cadence.`
+            }
+            compact
+          />
+        </div>
+      </Card>
+    );
+  }
+
+  if (withFindings.length === 0) {
+    const lastChecked = checked
+      .map((r) => r.page_fetched_at)
+      .filter((v): v is string => !!v)
+      .sort()
+      .at(-1);
+    return (
+      <Card hover={false}>
+        <SectionLabel>Page Analysis</SectionLabel>
+        <div className="mt-3">
+          <EmptyState
+            variant="clean"
+            icon={<ShieldCheck />}
+            title="Checked — nothing found"
+            subtitle={`${checked.length} lookalike page${checked.length === 1 ? '' : 's'} fetched and scored${lastChecked ? `, most recently ${timeAgo(lastChecked)}` : ''}. No phishing-page signals fired.`}
+            compact
+          />
+        </div>
+      </Card>
+    );
+  }
+
+  const sorted = [...withFindings].sort(
+    (a, b) => (b.page_phishing_score ?? 0) - (a.page_phishing_score ?? 0),
+  );
+
+  return (
+    <Card hover={false}>
+      <SectionLabel>
+        Page Analysis <span className="text-[var(--text-muted)]">({sorted.length})</span>
+      </SectionLabel>
+      <div className="mt-3 space-y-3">
+        {sorted.map((r) => (
+          <PageAnalysisRow key={r.id} row={r} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function PageAnalysisRow({ row }: { row: LookalikeDomain }) {
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <span className="font-mono text-[13px] text-[var(--text-primary)]">{row.domain}</span>
+        {row.page_anti_bot_wall && (
+          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--sev-medium-text)] bg-[var(--sev-medium-bg)] border border-[var(--sev-medium-border)] rounded px-1.5 py-0.5">
+            {row.page_anti_bot_wall.replace(/_/g, ' ')}
+          </span>
+        )}
+        {row.page_generator && (
+          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+            {row.page_generator}
+          </span>
+        )}
+        {row.page_exfil_sink && (
+          <span
+            className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border border-[var(--sev-critical-border)] rounded px-1.5 py-0.5"
+            title="Covert/relay exfil sink — host only. Never a live link."
+          >
+            sink: {defangExfilHost(row.page_exfil_sink)}
+            {row.page_exfil_sink_id ? ` · ${row.page_exfil_sink_id}` : ''}
+          </span>
+        )}
+        {row.page_fetched_at && (
+          <span className="text-[10px] font-mono text-[var(--text-secondary)]">
+            checked {timeAgo(row.page_fetched_at)}
+          </span>
+        )}
+      </div>
+      <SignalBreakdownCard
+        score={row.page_phishing_score}
+        signals={row.page_signals}
+        shadowSignals={row.page_ai_signals}
+        shadowScoreDelta={row.page_score_delta}
+        evidence={row.page_evidence}
+        compact
+      />
+    </div>
   );
 }
 

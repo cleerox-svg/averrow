@@ -451,6 +451,33 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 | POST | `/api/admin/phishing-signals/rollup?limit=500&offset=0&dry_run=1` | Admin | Phase-1 campaign-grain rollup (W1.6). Reads `phishing_pattern_signals` grouped by `campaign_key` (non-NULL only), joins `spam_trap_captures`/`brands` for `captured_at`/`from_domain`/`subject` (computes `subject_slot_hash` via the same Stage-A slotting as the per-capture writer), calls the pure `aggregateCampaign`, and upserts `campaign_pattern_stats` (`ON CONFLICT(campaign_key) DO UPDATE`, recompute-from-scratch idempotent). Also re-stamps the authoritative `template_detected` on every member of each processed group. Groups below `MIN_CAMPAIGN_MEMBERS` (5) produce **no row** (skipped, not a junk row). **`limit`/`offset` paginate over campaign GROUPS, not captures.** **`dry_run` defaults to on** — computes the would-be counts and writes nothing; pass `dry_run=0` for a real write. Returns `{dry_run, limit, offset, groups_scanned, stats_written, groups_skipped_below_floor, members_restamped, min_campaign_members, by_regime}`. `limit` capped at 1000. `campaign_pattern_stats` carries no `ai_generated_probability` column (spec §0.2 rule 1). |
 | POST | `/api/admin/velocity/backfill?limit=500&offset=0&dry_run=1` | Admin | Deterministic (zero-AI) weaponization-velocity backfill (rec 5, v1). Reads a bounded page of `threats` rows carrying `domain_created_at`, runs the pure `decideWeaponizationVelocity` (`lib/velocity-signatures.ts`) per row — the whole-hours `first_seen − domain_created_at` delta bucketed into `weaponization_flag` (`very_fast` ≤24h / `fast` ≤72h / `normal` >72h / NULL when not computable) — and stamps `threats.weaponization_hours` + `threats.weaponization_flag` via single-row PK `UPDATE` (no `ON CONFLICT`; immutable inputs ⇒ byte-identical re-runs). Per-row arithmetic only — no JOIN, no GROUP BY over `threats`. **Metadata/evidence ONLY — never gates alert-triage / alert-ai-judge (doctrine §3.1).** **`dry_run` defaults to on** — returns `{total_threats, candidates_total, already_stamped, scanned, would_write, by_flag}` and writes nothing; pass `dry_run=0` for a real write, which returns `{scanned, written, by_flag}`. Not-computable rows (missing/garbage/pre-1985-sentinel/negative-delta) are left NULL (distinct from `normal`). Idempotent — advance `offset` across calls until `scanned < limit`. `limit` capped at 1000. **Operator note (VELOCITY_DARK_2026-09): there is NO cron — this endpoint is the only dispatcher, so the columns stay 100% NULL until someone sweeps.** To check whether a sweep is owed without an admin JWT, read `velocity.coverage` on `GET /api/internal/platform-diagnostics`: `stamped_pct_of_candidates === 0` means it has never run, and `unstamped_candidates` is the remaining work. `candidate_pct` is the ceiling — only rows carrying `domain_created_at` are computable, and the sole producer of that column is the `virustotal` feed (free tier, ~240 domains/day), so the computable set is a low-single-digit % of `threats`. Cost note: `domain_created_at` is unindexed, so each `offset` page walks the threats PK; a full sweep at `limit=1000` costs roughly (candidates ÷ 1000) × `COUNT(*) threats` rows read — budget it against `d1_budget_state.pct_of_daily_budget` before starting. |
 
+#### `lookalike_domain_active` — `details` page evidence
+
+When the lookalike scanner's inline page analysis ran and scored the
+page, `alerts.details` (returned by `GET /api/alerts` and
+`GET /api/alerts/:id`) additionally carries the page evidence that
+produced the verdict (Lane 3 Phase 3, §9 step 16 — producer:
+`scanners/lookalike-domains.ts` `buildPageEvidenceDetails`):
+
+`page_signals` (`string[]`, fired scored-signal keys), `page_score`
+(`number`, 0-100), `page_anti_bot_wall` (`string | null`),
+`page_ai_signals` (`string[]`, fired **shadow** keys), `page_score_delta`
+(`number`, shadow-only — **never added to `page_score`**).
+
+**All five keys are absent** when page analysis did not run (domain has
+no web server, inline per-tick budget exhausted) or failed (SSRF block,
+non-HTML/oversize body, network error). Consumers must treat absence as
+*not analyzed*, distinct from an analyzed-and-clean page (`page_score: 0`
+with empty arrays).
+
+Keys only, by design: `page_evidence` (matched literals), `page_exfil_sink`
+and `page_exfil_sink_id` are **not** carried, because alert details reach
+customer surfaces and email digests and those three are attacker-controlled
+free text. They remain on `lookalike_domains` for staff
+(`GET /api/lookalikes/:brandId`). Descriptive only — the alert's
+`severity` is unchanged, and none of these fields is read by
+`createAlert`'s auto-triage dispatch.
+
 ## Notifications
 
 | Method | Path | Auth | Description |
@@ -850,7 +877,7 @@ Module reads are member-gated and additionally check the module is active on the
 |--------|------|------|-------------|
 | GET | `/api/orgs/:orgId/modules` | Member | List the org's modules + per-module monthly usage |
 | GET | `/api/orgs/:orgId/modules/domain` | Member | Domain module summary |
-| GET | `/api/orgs/:orgId/modules/domain/brands/:brandId` | Member | Domain module per-brand detail |
+| GET | `/api/orgs/:orgId/modules/domain/brands/:brandId` | Member | Domain module per-brand detail — lookalike rows (incl. page-analysis evidence, see below), CT certs, malicious-domain threats |
 | GET | `/api/orgs/:orgId/modules/social` | Member | Social module summary |
 | GET | `/api/orgs/:orgId/modules/social/brands/:brandId` | Member | Social module per-brand detail |
 | GET | `/api/orgs/:orgId/modules/app-store` | Member | App-store module summary |
@@ -870,6 +897,46 @@ Module reads are member-gated and additionally check the module is active on the
 | DELETE | `/api/orgs/:orgId/modules/trademark/assets/:assetId` | Org analyst+ | Retire an asset + delete its R2 object. |
 | GET | `/api/orgs/:orgId/modules/threat-actor` | Member | Threat-actor module summary |
 | GET | `/api/orgs/:orgId/modules/threat-actor/actors/:actorId` | Member | Threat-actor module actor detail |
+
+#### `GET /api/orgs/:orgId/modules/domain/brands/:brandId` — lookalike row shape
+
+Each element of `data.lookalikes` carries the registration fields
+(`id`, `brand_id`, `domain`, `permutation_type`, `registered`,
+`resolves_to`, `has_mx`, `has_web`, `first_seen`, `last_checked`,
+`threat_level`, `ai_assessment`, `status`, `created_at`) plus the
+deterministic page-content analysis evidence below (Lane 3 Phase 3,
+`docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md` §3.5 / §9 step 15). Producer:
+`scanners/lookalike-page-analysis.ts` via `lib/page-phishing-scorer.ts`
+— **zero AI**.
+
+| Field | Type | Notes |
+|---|---|---|
+| `page_fetched_at` | `string \| null` | Last fetch attempt. **`null` = never scanned** — the renderer must distinguish this from *checked and clean* (score `0`, empty `page_signals`). |
+| `page_http_status` | `number \| null` | Status of that fetch; set even when the fetch was blocked/non-HTML. |
+| `page_phishing_score` | `number \| null` | 0-100 deterministic score. |
+| `page_signals` | `string \| null` | JSON array of fired scored-signal keys (closed vocabulary — `SIGNAL_WEIGHTS`). |
+| `page_anti_bot_wall` | `string \| null` | `turnstile` \| `recaptcha` \| `hcaptcha` \| `cf_challenge` \| `js_challenge`. |
+| `page_ai_signals` | `string \| null` | JSON array of fired **shadow** signal keys (closed vocabulary — `ShadowSignalKey`). |
+| `page_score_delta` | `number \| null` | Shadow-only would-be contribution. **Never added to `page_phishing_score`**; it moves no verdict, triage or escalation. |
+| `page_generator` | `string \| null` | `<meta name="generator">` — grouping dimension, weight 0. |
+| `page_exfil_sink` | `string \| null` | Covert credential-exfil sink host. **Attacker-controlled** — see the security note below. |
+| `page_exfil_sink_id` | `string \| null` | Telegram bot id / Discord webhook id from that sink (pivot key). |
+
+**Security — `page_exfil_sink` must be defanged at every render site.**
+It is an attacker-controlled hostname (bounded to 253 chars at the
+extractor). Render it defanged (e.g. `api[.]telegram[.]org`) and
+**never as a clickable link or auto-linkified value**, in the SPA or in
+any CSV/email export: a click issues a live request to attacker C2 from
+the viewer's corporate network.
+
+**`page_evidence` is deliberately NOT exposed on this endpoint.** It
+stores a matched literal lifted verbatim from attacker-controlled page
+content — the one page field with no closed vocabulary — so it stays
+staff-only on `GET /api/lookalikes/:brandId` (already `SELECT *`).
+
+Phase 3 is **surfacing only**: it renders what Phase 1 already computes
+and persists (migration `0264`) and promotes nothing. The shadow fields
+remain excluded from scoring, alert triage and threat-level escalation.
 
 ## Internal Endpoints
 

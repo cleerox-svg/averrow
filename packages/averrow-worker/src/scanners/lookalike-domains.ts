@@ -14,6 +14,7 @@ import { checkDomain } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
 import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
 import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
+import type { PagePhishingResult } from '../lib/page-phishing-scorer';
 import { runPageAnalysisForDomain } from './lookalike-page-analysis';
 import type { Env } from '../types';
 
@@ -23,6 +24,60 @@ import type { Env } from '../types';
 // per tick so a backfill surge can't blow the tick's wall-clock budget.
 const INLINE_PAGE_FETCH_CAP = 10;
 const INLINE_PAGE_BUDGET_MS = 60_000;
+
+/**
+ * Page-analysis evidence carried on a `lookalike_domain_active` alert
+ * (Lane 3 Phase 3 step 16).
+ *
+ * Purely descriptive — the alert's severity is still `threatLevel` as
+ * computed by the existing compositor, and nothing here is read by
+ * `createAlert`'s auto-triage dispatch (that switches on
+ * `sourceType === 'threat'` or on the three impersonation alert types;
+ * `lookalike_domain_active` / `lookalike_scanner` matches none of them).
+ * The Lane 3 shadow fields remain shadow: `page_score` below is the
+ * pre-Lane-3 score and `page_score_delta` is NOT folded into it.
+ */
+export interface PageEvidenceDetails {
+  /** Fired scored-signal keys — closed vocabulary (`SIGNAL_WEIGHTS`). */
+  page_signals: string[];
+  /** 0-100 deterministic page score. */
+  page_score: number;
+  /** `turnstile|recaptcha|hcaptcha|cf_challenge|js_challenge`, or null. */
+  page_anti_bot_wall: string | null;
+  /** Fired Lane 3 shadow-signal keys — closed vocabulary (`ShadowSignalKey`). */
+  page_ai_signals: string[];
+  /** Shadow-only would-be contribution. NEVER added to `page_score`. */
+  page_score_delta: number;
+}
+
+/**
+ * Build the page-evidence slice of an alert's `details`.
+ *
+ * Returns an EMPTY object when page analysis didn't run (no web server,
+ * inline budget exhausted) or failed (SSRF block, non-HTML, network
+ * error) — `phishing` is null in all of those cases. Alert creation must
+ * never depend on this having fired, so the caller spreads the result.
+ *
+ * Deliberately carries KEYS ONLY. `phishing.evidence` (matched literals
+ * lifted verbatim from attacker-controlled page content), `exfilSink`
+ * (attacker-controlled hostname) and `exfilSinkId` are omitted: alert
+ * `details` fans out to customer-facing surfaces and email digests, and
+ * every field above has a closed vocabulary that those sinks can render
+ * without escaping concerns. The full evidence stays staff-only on
+ * `lookalike_domains` (see `handlers/tenantDomainModule.ts`).
+ */
+export function buildPageEvidenceDetails(
+  phishing: PagePhishingResult | null,
+): Partial<PageEvidenceDetails> {
+  if (!phishing) return {};
+  return {
+    page_signals:       phishing.signals,
+    page_score:         phishing.score,
+    page_anti_bot_wall: phishing.antiBotWallFamily,
+    page_ai_signals:    phishing.aiSignals,
+    page_score_delta:   phishing.scoreDelta,
+  };
+}
 
 // ─── Generate & Store ────────────────────────────────────────────
 
@@ -265,6 +320,12 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
         // registered has_web domains and capped per tick; the throttled
         // analyzeLookalikePages pass re-checks the broader registered set.
         // All fetches funnel through the SSRF-safe fetchSuspectPage.
+        //
+        // Hoisted out of the block below so the alert built at the tail of
+        // this iteration can carry the same evidence (Lane 3 Phase 3 step
+        // 16). Stays null when the branch is skipped or throws, which
+        // `buildPageEvidenceDetails` degrades to `{}`.
+        let pagePhishing: PagePhishingResult | null = null;
         if (
           result.hasWeb &&
           inlinePageBudget.remaining > 0 &&
@@ -277,6 +338,7 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
               { id: row.id, domain: row.domain, brand_name: brand.brand_name, brand_domain: brand.domain },
               Date.now() + DEFAULT_DEADLINE_MS,
             );
+            pagePhishing = phishing;
             if (phishing) {
               // Derive the bare-wall MEDIUM floor flag caller-side from the
               // fired set (T4.1 spec §3) so the escalation fn stays pure.
@@ -323,6 +385,12 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
             resolves_to: result.ip,
             has_mx: result.hasMx,
             has_web: result.hasWeb,
+            // Page-content evidence when the inline analysis ran and
+            // scored; spreads to nothing otherwise so alert creation is
+            // never regressed by a skipped/failed fetch. Descriptive
+            // only — does not influence `severity` above, which is the
+            // already-composited `threatLevel`.
+            ...buildPageEvidenceDetails(pagePhishing),
           },
           sourceType: 'lookalike_scanner',
           sourceId: row.id,
