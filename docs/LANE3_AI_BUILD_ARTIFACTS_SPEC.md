@@ -1,0 +1,550 @@
+# Lane 3 — AI-Build Artifacts & Covert Exfil Sinks — Implementation Spec
+
+**Status:** Proposal / design — nothing built
+**Scope:** Extend the existing deterministic lookalike page scorer with two new
+evidence classes (synthetic-build artifacts; covert credential-exfil sinks),
+persist the resulting fired-signal set, and — for the first time — **render it
+to an operator**.
+**Parent:** `docs/AI_THREAT_INTEL_FEEDS_PLAN_2026-09.md` §6 Lane 3, §12 step 2.
+**Doctrine:** `docs/AI_PHISHING_DETECTION_RESEARCH_2026-07.md` §3.1 (per-message
+MGT detection REJECTED) governs and is not reopened here.
+
+This is an additive extension to a shipped, pure, deterministic scorer. No new
+cron, no new agent, no AI call, no new dependency.
+
+---
+
+## 1. Why this lane, why now
+
+Three reasons, in descending order of how much they justify the work.
+
+**1. There is a live false negative in the scorer, today.**
+`offdomain_form_exfil` (weight 45, the strongest single signal) reads **only**
+`parsed.formActions` — verified at `lib/page-phishing-scorer.ts:174`. It cannot
+see `fetch()`, `XMLHttpRequest`, or `sendBeacon`. Modern AI-generated kits
+overwhelmingly exfiltrate from inline script, not a form action. Such a page
+scores `credential_form` 30 → **MEDIUM**, and a Telegram-exfiltrating credential
+harvester sits in the queue looking like a mild finding. This is the same shape
+of silent FN that Wave 3's anti-bot-wall work fixed, and **it justifies the lane
+on its own even if every AI-specific signal below is eventually retired.**
+
+**2. The detection evidence is published and specific.** Netcraft identified
+~100,000 AI-generated sites impersonating ~200 brands and states it detects them
+by looking for code patterns suggesting AI generation, "such as included to-do
+lists." That is a deterministic, implementable tell — not a model-scored one.
+
+**3. The presentation layer has to exist anyway.** Wave 3's `page_signals` and
+`page_anti_bot_wall` shipped with **no renderer at all**: `useLookalikes` has
+zero call sites, and no `page_*` field appears anywhere in either SPA. Lane 3 is
+the cheapest place to build the weighted-evidence component every later lane
+needs, and doing so retroactively surfaces work already shipped.
+
+---
+
+## 2. The reframe: three classes, not one family
+
+Lane 3 as originally written bundled five candidate families under one heading.
+They measure different things and must not share rules.
+
+| Class | Question it answers | Authority |
+|---|---|---|
+| **A — synthetic build** | "Was this page machine-built and shipped unreviewed?" | **Capped at 20 total. No floors. Never triage-visible.** |
+| **B — exfil sink** | "Does this page ship credentials to a covert channel?" | Real weight, one floor, triage-visible (keep-only) |
+| **C — payload structure** | "Does this page carry a malicious payload?" | Real weight, no floor |
+| **M — metadata** | Grouping dimensions for clustering | **Weight 0.** Never scored |
+
+**Why the split is load-bearing.** A Class A signal is a proxy for *disposable
+mass production*, not for malice — a legitimate small business using an AI site
+builder trips them. Give that family real weight and you have built an AI-ness
+scorer wearing a phishing scorer's clothes, which is the §3.1 doctrine violation
+arriving by the side door at page scope instead of message scope. Class B has
+nothing to do with AI at all; it co-occurs with AI-built kits only because the
+model writes the easiest exfil path it knows.
+
+---
+
+## 3. Architecture
+
+### 3.1 Signal set
+
+Existing anchors for weight calibration: `offdomain_form_exfil` 45,
+`credential_form` 30, `anti_bot_wall` 20, `cloaking_redirect` 20,
+`brand_asset_hotlink` 15, `favicon_clone` 12, `title_keyword_density` 10.
+Escalation: 30 → MEDIUM, 60 → HIGH, `credentialHarvest` → CRITICAL.
+
+| Key | Class | Weight | Floor | Triage | FP risk |
+|---|---|---|---|---|---|
+| `covert_exfil_sink` | B | **20** | **HIGH** | keep-only | very low |
+| `form_relay_sink` | B | 10 | no | no | high alone, low with `credential_form` |
+| `svg_script_payload` | C | 15 | no | no | very low |
+| `llm_refusal_leakage` | A | 15 | no | no | low precision risk, **high decay risk** |
+| `unrendered_template_token` | A | 12 | no | no | low |
+| `default_scaffold_title` | A | 12 | no | no | low–moderate |
+| `build_placeholder_text` | A | 8 | no | no | moderate |
+| `agent_scaffold_comment` | A | 8 | no | no | **high if implemented naively** |
+
+**Class A contribution is `Math.min(20, sum)`.** Individual weights express
+relative confidence *within* the family; the cap expresses confidence *in* the
+family. Both numbers are intentional — do not "fix" the fact that they sum past
+the cap.
+
+#### B1 `covert_exfil_sink` — 20, HIGH floor
+
+Literal host+path prefixes in a `formActions` entry **or** a quoted string in
+the already-captured 40 KB inline-script sample:
+`discord.com/api/webhooks/`, `discordapp.com/api/webhooks/`,
+`api.telegram.org/bot`, `hooks.slack.com/services/`. Plus two structural
+variants: a form action whose host is a bare IP literal, and a target on
+`*.ngrok.io` / `*.ngrok-free.app` / `*.trycloudflare.com` / `*.loca.lt`.
+
+The script-literal leg is the point. Extract it exactly as
+`extractJsRedirectTargets` already does (`lib/page-fetch.ts:321-353`) — marker
+literal, then the next quoted segment — with markers `fetch(`, `.open(`,
+`XMLHttpRequest`, `navigator.sendBeacon(`, `axios.post(`.
+
+*FP analysis.* Near-zero, and this is the one place to say so without hedging:
+reaching these endpoints from a browser page requires embedding the bot token or
+webhook secret in client-side JavaScript. No legitimate production site does
+this deliberately. Residual FP set is hobbyist Discord-ping widgets and CI
+dashboards — none of which live on a registered lookalike of a monitored brand.
+
+*Stacking with `offdomain_form_exfil` to 65 is deliberate*, not a double-count
+bug: two distinct facts (off-domain, and a *named covert channel*). 65 → HIGH
+for a form posting to a Telegram bot with no password field is correct — OTP,
+card and SSN fields are `type=text`.
+
+#### B2 `form_relay_sink` — 10, no floor
+
+`docs.google.com/forms/` + `/formResponse`, `formspree.io`, `formsubmit.co`,
+`getform.io`, `web3forms.com`, `staticforms.xyz`, `usebasin.com`, `herotofu.com`.
+
+*Near-useless alone* — these are the default contact-form backend for a large
+share of legitimate static sites. It earns 10 points only because in this
+population it nearly always co-occurs with `credential_form`, and "legitimate
+contact form" and "password input" do not co-occur. The additive math already
+handles the asymmetry (10 alone = LOW; 10 + 30 = 40 → MEDIUM). **No gate needed.**
+
+#### C1 `svg_script_payload` — 15, no floor
+
+Either an inline `<svg>` subtree containing `<script>`, `<foreignObject>`, or an
+`on*` attribute; **or** an `<a download="…">` whose `href` is a
+`data:image/svg+xml` URI while the download filename ends `.pdf`/`.docx`/`.xlsx`.
+Variant (b) has an FP population of approximately zero — a genuine PDF is not an
+SVG.
+
+#### A1 `llm_refusal_leakage` — 15
+
+Case-insensitive literal scan over `title` + `bodyTextSample` + script sample:
+`as an ai language model`, `as a large language model`, `i cannot assist with`,
+`i can't assist with`, `i'm sorry, but i can't`, `i cannot create content that`,
+`i'm unable to provide`, `my knowledge cutoff`, `i'm just an ai`.
+
+*The problem is recall, not precision.* This is a smoking gun the operator fixes
+in one pass, and builder tooling is adding output filtering. **Budget for
+retiring it** (§6). Its real value is evidentiary — it is the sentence you put
+in the takedown notice — which is why 15-capped-into-20 is right and 40 is wrong.
+
+#### A2 `unrendered_template_token` — 12
+
+In `bodyTextSample` **only** (rendered text, not attributes, not script):
+`{{` … `}}`, `{%` … `%}`, or `${` … `}` within 64 chars, where the enclosed run
+is an identifier (`[A-Za-z_][A-Za-z0-9_. ]*`, ≥3 chars). Best of the scaffolding
+family because it is a *structural build failure*, not a string an author chose,
+and harder to strip than a comment — the operator must notice the page is broken.
+
+#### A3 `default_scaffold_title` — 12
+
+Trimmed lowercased `title` **exactly equals or starts with** a short closed list:
+`create next app`, `vite + react`, `vite app`, `react app`, `document`,
+`untitled`, `untitled page`, `my site`, `my app`, `home page`, `nuxt app`,
+`svelte app`, `astro`, `streamlit`, `index`, `replit`, `webpage`, `new project`,
+`title`.
+
+**Exact/prefix only — never substring**, or "document management portal" trips
+it. Near-mutually-exclusive with `title_keyword_density` by construction (a
+default title contains no brand name), so no double-count path.
+
+#### A4 `build_placeholder_text` — 8
+
+Literal scan over `bodyTextSample` and comment text: `lorem ipsum`,
+`dolor sit amet`, `your company name`, `your brand here`, `your api key`,
+`your_api_key`, `api_key_here`, `replace_me`, `replace with your`,
+`insert your`, `placeholder text`, `your-domain.com`, `example@example.com`,
+`john@example.com`, `+1 (555) 123-4567`, `123-456-7890`.
+
+**Text nodes and comments only — never `placeholder=` attributes**, where these
+appear legitimately.
+
+#### A5 `agent_scaffold_comment` — 8
+
+Netcraft's literal stated tell, and the one needing sharpest discipline.
+Requires a new bounded comment accumulator (§3.2). Fires when a **single
+comment** contains any of: a markdown checkbox (`- [ ]`, `- [x]`, `* [ ]`);
+**two or more** `todo:` / `fixme:`; two or more `step <digit>:` or
+`<digit>. ` line-starts; or the literals `implementation plan`,
+`remaining tasks`, `next steps:`.
+
+> **A bare `TODO` substring match is disqualified.** `TODO` in HTML comments is
+> one of the most common strings on the unminified web; implemented naively this
+> fires on a large fraction of WordPress themes and is worse than nothing. **The
+> structure is the signal; the word is not.**
+
+#### M1 / M2 — metadata, weight 0
+
+- **`page_generator`** — capture `<meta name="generator">`, truncate to 64
+  chars, **do not score** (§8 item 5). Value is as a grouping dimension.
+- **`page_exfil_sink` / `page_exfil_sink_id`** — when B1/B2 fires, persist the
+  matched sink host and, for Telegram, the bot id from
+  `api.telegram.org/bot<id>:<token>/`.
+
+> **`page_exfil_sink_id` is the highest actor-intelligence artifact in this
+> spec.** One Telegram bot serves many kits across many brands; it is a C2
+> identifier in the ordinary IOC sense, published in client-side JavaScript by
+> the operator. **This is the same primitive as Lane 2's attribution Tier 1**
+> (plan §13.4) — a sink extracted from a page and a sink extracted from a
+> package payload are the same kind of evidence and should share one extractor
+> and one persistence shape. Design them together.
+
+### 3.2 Extraction — `lib/page-fetch.ts`
+
+**Hard constraint: no regex over attacker HTML.** The file's SSRF/ReDoS contract
+(`:394-412`) uses bounded `.includes` and hand-rolled token walks. Every signal
+above is implementable that way; the "regex shapes" in §3.1 are descriptive.
+**A reviewer must reject any regex in this path.**
+
+Accumulators are declared at `:361-374`, the HTMLRewriter chain at `:414-511`,
+post-transform text scan at `:521-527`, return literal at `:529-539`.
+
+**Three structural facts that shape the work:**
+
+1. **`ParsedPageSignals` lives in the scorer** (`page-phishing-scorer.ts:27-51`),
+   not the fetcher. Adding a field means editing the scorer file.
+2. **There is no `comments()` handler anywhere.** HTML comments — the carrier
+   for A5 and part of A4 — are currently *completely invisible*. This is a new
+   handler plus a new bounded accumulator (`MAX_COMMENT_SAMPLE = 8_192`,
+   following the `MAX_BODY_SAMPLE` idiom at `:313`).
+3. **The raw body is live only between `fetchSuspectPage:613` and `:624`.**
+   After that only sampled slices survive: 20 KB of `<body>` text, 40 KB of
+   `<script>` text, 300 chars of title — and nothing from `<head>`, attributes,
+   or comments. Every signal here is designed to work within the sampled slices
+   plus the new comment accumulator. **No signal in this spec requires the full
+   body**, which keeps the change out of `fetchSuspectPage` entirely.
+
+### 3.3 Scoring — `lib/page-phishing-scorer.ts`
+
+Module is **pure** — two pure imports, no `env`, no `fetch`, no `Date`. Keep it
+that way.
+
+- New weights into `SIGNAL_WEIGHTS` (`:89-107`). `PageSignalKey` is
+  `keyof typeof SIGNAL_WEIGHTS` (`:109`), so the union widens automatically.
+- New signal blocks slot between `:259` and `:261` — after the last signal,
+  before the score sum — the same place `anti_bot_wall` was added.
+- **Class A cap** applied to the Class A subtotal before the sum at `:261-263`.
+- **`credentialHarvest` (`:265`) extends to:**
+  `credential_form && (offdomain_form_exfil || covert_exfil_sink)`.
+
+> **The sentence that gets this past `appsec-reviewer`:** widening
+> `credentialHarvest` is safe *in the triage direction*. Its only triage
+> consumer (`lib/alert-triage.ts:123`) reads `page_credential_harvest === 1` to
+> return `{ action: 'keep' }`; `dismiss` is the fallthrough. Widening it
+> therefore produces **more human review, never more dismissals.**
+
+- **New HIGH floor for `covert_exfil_sink`** in `escalateThreatLevelForPage`
+  (`:299-309`), inserted after the `credentialHarvest` branch and before
+  `score >= 60`. The terminal monotonic guard at `:308` is untouched.
+
+> **Gotcha:** the wall flag is derived *caller-side* in **two** places —
+> `scanners/lookalike-page-analysis.ts:139` and
+> `scanners/lookalike-domains.ts:285`. A new floor flag must be derived in
+> **both**, or the inline live-scan path and the batch sweep will disagree.
+
+#### The cap arithmetic — why 20 and not 25
+
+| Scenario | Without Class A | With capped Class A |
+|---|---|---|
+| All five Class A fire, nothing else | 0 → LOW | 20 → **LOW** |
+| Brand name in title only | 10 → LOW | 30 → MEDIUM |
+| Hotlink + favicon + title | 37 → MEDIUM | 57 → **MEDIUM** |
+| Credential form only | 30 → MEDIUM | 50 → MEDIUM |
+| Credential + off-domain | CRITICAL | CRITICAL |
+
+Two properties must hold: **Class A can never reach MEDIUM alone**, and **Class
+A can never flip MEDIUM → HIGH.** At 25 the second breaks (37 + 25 = 62 → HIGH).
+Hence 20.
+
+### 3.4 Persistence — one migration
+
+Next free number is `0264`+ (verify against the directory). Template is
+`0260_lookalike_anti_bot_wall.sql`: prose rationale, explicit NULL semantics, an
+indented per-column data dictionary, `ADD COLUMN` only, **no index** (low
+cardinality, consumed by a cached diagnostics `GROUP BY`).
+
+Columns on `lookalike_domains`:
+
+| Column | Type | Purpose |
+|---|---|---|
+| `page_ai_signals` | TEXT | JSON array of fired Class A/B/C keys — **shadow mode**, §5 |
+| `page_score_delta` | INTEGER | Would-be score contribution — **shadow mode**, §5 |
+| `page_generator` | TEXT | M1 grouping dimension |
+| `page_exfil_sink` | TEXT | M2 matched sink host |
+| `page_exfil_sink_id` | TEXT | M2 bot/webhook id — the pivot key |
+| `page_evidence` | TEXT | JSON: matched literal per firing, truncated 64 chars (§5.5) |
+
+Written **only** in the success UPDATE (`lookalike-page-analysis.ts:92-104`).
+The failure path (`:111-117`) deliberately preserves prior verdicts and must
+leave every new column untouched.
+
+### 3.5 UI — the part that does not exist yet
+
+**Staff SPA: there is no mount point.** `useLookalikes`
+(`hooks/useLookalikes.ts:26`) has **zero call sites**; the Risk tab's
+`TyposquatsSection` (`BrandDetail.tsx:753`) reads `threats`, not
+`lookalike_domains`. We are *creating* a surface.
+
+- **Staff API needs no change.** `handleListLookalikes`
+  (`handlers/lookalikeDomains.ts:85`) is already `SELECT *`, so every `page_*`
+  column is already in the payload. Only the `LookalikeDomain` interface
+  (`useLookalikes.ts:4-16`) must gain the fields.
+- **Component: `SignalBreakdownCard`.** `ScoreBreakdownCard`
+  (`features/leads/components/ScoreBreakdownCard.tsx`) is the only
+  weighted-evidence component in the platform, has one call site, is
+  lead-specific, and — critically — **expects `{key: weight}` while
+  `page_signals` is an array of fired keys with no weights.** So this is a
+  sibling, not a reuse: move both under `components/ui/`, share the row/badge
+  presentation, and give the new one a `PageSignalKey → label` map plus the
+  weight table.
+- **Mount:** a new section in `RiskTab` (`BrandDetail.tsx:660-761`), alongside
+  `TyposquatsSection` at `:753`.
+- **Tenant** needs the SELECT widened — `tenantDomainModule.ts:267-269` is an
+  explicit column list — plus both `LookalikeRow` interfaces
+  (`tenantDomainModule.ts` server copy, `lib/domainModule.ts:47-63` client).
+  Render target is precise: the existing "Signals" column inside
+  `LookalikesSection` (`BrandDomainFindings.tsx:337`, columns at `:351-368`).
+- **Empty states** must distinguish *never scanned* from *checked and clean*
+  (plan §13.5). Mockups: https://claude.ai/artifact/NbEwoJWjbiR2Lbu3g4EgJY
+  *(private — needs sharing before reviewers can open it)*.
+
+**Alerts — the cheapest write-side change in the codebase.** The lookalike
+scanner already has `phishing.signals` and `phishing.score` in scope at
+`scanners/lookalike-domains.ts:281-288`, then discards them before `createAlert`
+at `:318-326`. Widening that `details` object is a few lines and makes every
+`lookalike_domain_active` alert carry its evidence.
+
+---
+
+## 4. Guardrails — non-negotiable
+
+1. **No regex over attacker HTML.** Bounded `.includes` / token walks only.
+2. **Positive-only.** No signal's absence means "human-authored" or "safe."
+   Netcraft's 100,000 is a *found* set with unknown denominator.
+3. **Never gate a dismissal.** These may raise a threat level, withhold a
+   dismissal, or annotate. They may never dismiss, never lower a score, never
+   enter `decideThreatAutoTriage`'s safe-path conditions, and never feed
+   `alert-ai-judge`'s auto-dismiss path. Same standing as `weaponization_flag`
+   and `page_anti_bot_wall`.
+4. **Nothing here writes `phishing_pattern_signals.ai_generated_probability`.**
+   It is pinned NULL at type and runtime level; writing it is a doctrine
+   reversal, not a code change (plan §3.1).
+5. **Class A never sets a floor and never enters triage.**
+6. **Every percentage in diagnostics carries its raw `n`; no rate is acted on
+   below n = 30.** The population ceiling is ~480 analyses/day (20/run, hourly,
+   24 h per-domain cadence, `EXISTS (org_brands)` gate).
+7. **No new cron.** Rides `22 * * * *` via the existing scanner, so the
+   cron-audit rule stays untriggered.
+8. **No page-HTML retention.** §5.5 captures bounded typed extracts instead.
+
+---
+
+## 5. Validation — shadow mode first
+
+You cannot measure precision without labels. So measure what needs no labels,
+manufacture the cheapest labels at the decision point, and report honest
+intervals.
+
+**5.1 Shadow mode for two full cadence cycles (~2 weeks).** Compute and persist
+`page_ai_signals` + `page_score_delta`, but **do not** let them touch
+`page_phishing_score`, `threat_level`, or `credentialHarvest`. Promote
+signal-by-signal, not all at once. This is the single most important step — it
+catches a "fires on 40% of pages" failure before an operator ever sees it.
+
+**5.2 Positive control, free.** Rows already carrying
+`page_phishing_score >= 60` or `credentialHarvest` are a high-confidence
+malicious label set built by signals the new ones don't depend on. Report **lift
+ratio** per signal: firing rate inside that set vs its complement. **Lift ≈ 1.0
+means the signal measures builder popularity, not phishing → demote to
+metadata.** This is the promotion gate out of shadow mode.
+
+**5.3 Negative control, also free.** Run the identical path against a stratified
+sample of `brands.canonical_domain` — known-legitimate sites, plenty on
+WordPress/Wix/Webflow. **Any Class A signal firing on >2–3% of brand-canonical
+homepages is disqualified as a scored signal.** Stratify toward the long tail of
+the 9,652-brand catalog, not the enterprise head. *Honest caveat:* brand
+homepages are not login pages, so this measures the builder-popularity FP mode
+well and the unfinished-page FP mode poorly.
+
+**5.4 One human adjudication round, N = 50, once.** ~2 analyst-hours. Report the
+precision estimate **with its actual interval** — at N = 50 that is roughly ±14
+points. Crude and honest beats precise and invented. Per July §2.3, this number
+probably should not appear in customer-facing material at all.
+
+**5.5 Capture evidence at fetch time.** Because only a SHA-256 is retained,
+retrospective validation is impossible and every method above is forward-looking.
+So during shadow mode persist the **matched literal, truncated to 64 chars**,
+per firing (`page_evidence`). Without it an analyst adjudicating
+"`llm_refusal_leakage` fired on acme-secure-login.com" has nothing to examine
+and §5.4 is impossible. Keep it after promotion — it is also the takedown line.
+
+**5.6 Schedule the decay re-measurement.** Every Class A signal is one minifier
+pass from zero recall. Re-run §5.2 quarterly. **Retirement is the planned end
+state for `agent_scaffold_comment` and `llm_refusal_leakage`** — name it here so
+their eventual death is an outcome, not an incident.
+
+---
+
+## 6. Measurability
+
+Extend the `page_analysis` block (`handlers/diagnostics.ts:391-444`,
+`cachedValue` key `diag.page_analysis.cloaking`, TTL 600 s).
+
+> **Do not add eight `LIKE '%"key"%'` scans** over the `page_signals` TEXT
+> column — that is the dead-index full-scan failure class, multiplied by eight.
+> Do one pass selecting `page_signals` where `page_fetched_at IS NOT NULL` and
+> aggregate in the Worker, as the existing block already does.
+
+| Field | Answers | Alarm |
+|---|---|---|
+| `ai_build.by_signal[]` | Is each signal alive? | **0.0% for 30 days → extractor broken or signal dead.** **>15% of fetched_ok → builder-popularity detector; demote** |
+| `ai_build.class_a_cap_hits` | Does the cap bind? | ~0 → cap is theatre; high → family noisier than modelled |
+| `ai_build.escalations_attributable` | **The one that matters** — escalations that would not have happened without Class A | Near-zero → Class A is decorative, make it metadata-only |
+| `exfil.by_sink_host[]` | Campaign mix | Actor intelligence, not health telemetry |
+| `exfil.distinct_sink_ids` | Distinct sink ids ÷ firings | Far below 1.0 → one operator running many kits — **the clustering finding this lane exists to produce** |
+| `generator.by_token[]` | Builder-mix baseline | Also permanently falsifies any future proposal to score the generator tag |
+| `by_fetch_outcome[]` | **The current block's real gap** — `fetched_ok` has no denominator breakdown, so failures are invisible | See below |
+
+> **`oversize_declared` deserves its own watch.** `MAX_BYTES` is 512 KB with an
+> early reject on declared `content-length`, and AI-builder output (inlined
+> Tailwind, hydration payloads, base64 assets) is systematically fatter than
+> hand-written kits. **This signal family may be structurally biased against the
+> exact population it targets, and right now that bias is unmeasurable.** If
+> `oversize_declared` turns out material, raising `MAX_BYTES` for this pass is a
+> bigger recall win than any individual signal above.
+
+Keep `ai_build.*` and `exfil.*` structurally separate in the JSON — different
+classes, different authority. Collapsing them in diagnostics is the first step
+toward collapsing them in the scorer.
+
+---
+
+## 7. Two defects to fix en route
+
+Both verified directly; both will be made worse by this change.
+
+**7.1 The test D1 mock drops a bind.** `lookalike-page-analysis.ts:94-104` binds
+**six** values to the success UPDATE; `test/lookalike-page-analysis.test.ts:61-62`
+destructures **five** — `[status, score, signals, hash, id]`. `id` therefore
+receives `antiBotWallFamily`, the row lookup misses, and **the success-path write
+silently no-ops in tests.** It goes unnoticed because the only test exercising
+that function covers the *failure* path. Adding six more columns widens the drift.
+
+**7.2 `test/` is never typechecked.** `tsconfig.json` `include` is
+`["src/**/*.ts", "scripts/**/*.ts"]`. A test fixture missing a required field on
+`PagePhishingResult` or `ParsedPageSignals` compiles fine — which is why
+`test/lookalike-page-analysis.test.ts:94` already constructs a
+`PagePhishingResult` without `antiBotWallFamily`. Any new required field
+inherits the same blind spot.
+
+Also note the **test HTMLRewriter shim** (`test/page-fetch-antibot-wall.test.ts:119-136`)
+supports only tag selectors plus the literal `"[class]"`, and **has no
+`comments()` support**. A5 cannot be tested until the shim is extended.
+
+---
+
+## 8. What this deliberately does NOT do
+
+In roughly the order these will be proposed in review:
+
+1. **Any per-page "AI-written probability"** — perplexity, burstiness,
+   sentence-length variance, em-dash density, LLM-slop vocabulary lists. This is
+   §3.1 MGT detection re-entering at page scope, inheriting the Liang et al.
+   ~61% FP profile against non-native-English authors — which at page scope makes
+   it a detector of *legitimate non-English-first-language businesses*. **Hard
+   reject.** Expect this to be proposed, because it is cheap.
+2. **"Business-jargon padding"** — item 1 with a different name, notwithstanding
+   that it appears in the Microsoft writeup (an analyst observation, not a
+   production detector).
+3. **Verbose-descriptive-plus-hex identifier morphology** — Webpack, CSS Modules
+   and styled-components emit exactly this shape. FP mode is "any site built this
+   decade."
+4. **Over-modularization / import-graph heuristics** — needs an AST and a bundle
+   crawl; we have neither and bundling destroys the structure anyway.
+5. **Scoring the `meta generator` tag** — WordPress alone is ~43% of the web.
+   Capture as metadata, score at zero, use for clustering.
+6. **Ephemeral-host scoring** (`*.vercel.app`, `*.pages.dev`) — item 5 one step
+   removed. A filter dimension, not evidence.
+7. **Fetching linked JS bundles** — blows the SSRF allowlist, the 512 KB cap, the
+   `text/html` contract and the 120 s run budget simultaneously. Design to the
+   40 KB inline sample.
+8. **Retaining page HTML "for later validation"** — §5.5 exists specifically to
+   avoid needing it.
+
+---
+
+## 9. Implementation checklist
+
+Per `CLAUDE.md` §1A each step runs the full pipeline. Owners in brackets.
+
+**Phase 1 — shadow mode**
+1. Migration `0264` (six columns, no index). *[backend-engineer]*
+2. Comment accumulator + `comments()` handler + `MAX_COMMENT_SAMPLE`;
+   script-literal sink extractor modelled on `extractJsRedirectTargets`.
+   *[backend-engineer]*
+3. New fields on `ParsedPageSignals`; signal blocks + Class A cap in the scorer,
+   **behind a shadow flag** so nothing escalates yet. *[backend-engineer +
+   threat-intel-analyst]*
+4. Persist `page_ai_signals`, `page_score_delta`, `page_evidence`, metadata
+   columns in the success UPDATE only. *[backend-engineer]*
+5. Fix defects 7.1 and 7.2; extend the HTMLRewriter shim for `comments()`.
+   *[test-engineer]*
+6. Scorer tests modelled on the `anti_bot_wall` describe
+   (`test/page-phishing-scorer.test.ts:191-279`), including cap arithmetic and
+   the two no-downgrade cases. *[test-engineer]*
+7. Diagnostics `ai_build.*` / `exfil.*` blocks + `by_fetch_outcome[]`.
+   *[backend-engineer]*
+
+**Phase 2 — promotion (after §5.2/§5.3 gates pass, per signal)**
+8. Remove the shadow flag for promoted signals; wire the Class A cap into the
+   live score. *[backend-engineer]*
+9. `credentialHarvest` extension + `covert_exfil_sink` HIGH floor, **with the
+   flag derived in both caller sites**. *[backend-engineer]*
+10. `appsec-reviewer` pass on the triage-direction argument (§3.3).
+    *[appsec-reviewer]*
+
+**Phase 3 — surface**
+11. `SignalBreakdownCard` under `components/ui/`; `LookalikeDomain` interface
+    widened. *[frontend-engineer]*
+12. Mount in `RiskTab`; empty states per §3.5. *[frontend-engineer +
+    design-reviewer]*
+13. Tenant SELECT + both `LookalikeRow` interfaces + the "Signals" column.
+    *[backend-engineer + frontend-engineer]*
+14. Widen `lookalike_domain_active` alert `details`. *[backend-engineer]*
+15. Docs: `THREAT_FEEDS.md`, `API_REFERENCE.md` if endpoints change,
+    `PLATFORM_DATA_DEPENDENCIES.md` §1, `CLAUDE.md` §10 diagnostics table.
+    *[docs-maintainer]*
+
+**Gate before each phase ships:** `npx tsc --noEmit` (worker + ops),
+`pnpm check:resource-drift`, `pnpm test`, plus `qa-verifier` driving the flow
+end-to-end. *[qa-verifier]*
+
+---
+
+## 10. Sequencing note
+
+Phase 1 is independent of every other lane and can start immediately. Phase 3
+builds the weighted-evidence component the whole plan depends on, so it should
+not be deferred past this lane — deferring it is how `page_signals` became
+invisible in the first place.
+
+**Coordinate the sink extractor with Lane 2** (plan §13.4 Tier 1): a sink
+extracted from a page and a sink extracted from a package payload are the same
+evidence and should share one extractor and one persistence shape. Building them
+twice is the avoidable mistake here.
