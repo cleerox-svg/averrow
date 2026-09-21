@@ -161,6 +161,50 @@ export interface LookalikeRow {
   ai_assessment:    string | null;
   status:           string;
   created_at:       string;
+
+  // ── Page-content analysis (Wave 3 + Lane 3 / migration 0264) ─────
+  // Read-only evidence produced by the deterministic page scorer
+  // (`lib/page-phishing-scorer.ts`) via `scanners/lookalike-page-analysis.ts`.
+  // Surfacing only — Lane 3 Phase 3 promotes nothing: the shadow fields
+  // (`page_ai_signals` / `page_score_delta` / `page_generator` /
+  // `page_exfil_sink*`) still do NOT move `page_phishing_score`,
+  // `threat_level`, triage or escalation.
+  //
+  // NOT exposed: `page_evidence`. It stores a matched literal lifted
+  // verbatim from attacker-controlled page content and is the one field
+  // with no closed vocabulary. It stays staff-only (the staff handler's
+  // `SELECT *` at `handlers/lookalikeDomains.ts:85` already carries it)
+  // because a customer surface fans out to non-React sinks — CSV export,
+  // email digests — where an unescaped attacker literal is a
+  // content-injection hazard.
+  /** ISO timestamp of the last fetch attempt; null = never scanned. */
+  page_fetched_at:     string | null;
+  page_http_status:    number | null;
+  /** 0-100 deterministic score. Null when the page was never scored. */
+  page_phishing_score: number | null;
+  /** JSON array of fired scored-signal keys (closed vocabulary). */
+  page_signals:        string | null;
+  /** `turnstile|recaptcha|hcaptcha|cf_challenge|js_challenge` or null. */
+  page_anti_bot_wall:  string | null;
+  /** JSON array of fired Lane 3 shadow-signal keys (closed vocabulary). */
+  page_ai_signals:     string | null;
+  /** Shadow-only would-be contribution. NEVER added to page_phishing_score. */
+  page_score_delta:    number | null;
+  /** `<meta name="generator">` value — grouping dimension, weight 0. */
+  page_generator:      string | null;
+  /**
+   * Host of the covert credential-exfil sink (attacker-controlled,
+   * bounded to 253 chars at the extractor).
+   *
+   * SECURITY — MUST be defanged at every render site (e.g.
+   * `t[.]me/…`) and MUST NEVER be rendered as a clickable link or
+   * auto-linkified. Clicking it issues a live request to attacker C2
+   * from an operator's or customer's corporate network. Same rule for
+   * any CSV/email export that carries this field.
+   */
+  page_exfil_sink:     string | null;
+  /** Telegram bot id / Discord webhook id from that sink — the pivot key. */
+  page_exfil_sink_id:  string | null;
 }
 
 export interface CertRow {
@@ -264,9 +308,27 @@ export async function handleGetBrandDomainFindings(
   const FINDINGS_LIMIT = 100;
   const [lookalikes, certs, maliciousDomains] = await Promise.all([
     env.DB.prepare(
+      // Page-analysis evidence columns are appended to the explicit list
+      // (Lane 3 Phase 3 step 15). Additive only — same WHERE, same
+      // brand-scoped predicate, so this gains no cross-org reach: the
+      // handler is already past verifyOrgAccess + requireModule + the
+      // org_brands ownership check above, and `brandId` is bound, not
+      // interpolated.
+      //
+      // `page_evidence` is DELIBERATELY ABSENT — attacker-controlled free
+      // text with no closed vocabulary; staff-only. See LookalikeRow.
+      //
+      // SECURITY — `page_exfil_sink` is an attacker-controlled hostname.
+      // It must be DEFANGED at every render site and MUST NEVER be a
+      // clickable link (or auto-linkified in a CSV/email export): a click
+      // requests live attacker C2 from the viewer's network.
       `SELECT id, brand_id, domain, permutation_type, registered, resolves_to,
               has_mx, has_web, first_seen, last_checked, threat_level,
-              ai_assessment, status, created_at
+              ai_assessment, status, created_at,
+              page_fetched_at, page_http_status, page_phishing_score,
+              page_signals, page_anti_bot_wall,
+              page_ai_signals, page_score_delta, page_generator,
+              page_exfil_sink, page_exfil_sink_id
        FROM lookalike_domains
        WHERE brand_id = ?
        ORDER BY registered DESC, threat_level DESC, created_at DESC
