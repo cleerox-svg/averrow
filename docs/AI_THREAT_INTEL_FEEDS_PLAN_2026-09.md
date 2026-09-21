@@ -3,6 +3,13 @@
 **Status:** Research and plan only. **Nothing in this document has been built.**
 No source file, migration, or config was changed in producing it.
 
+**Decisions (2026-09-21):** four of the eight gates in §11 are settled — Lane 2
+is in scope, the Workers AI binding is approved, the deepfake boundary's stated
+reason is retired, and actor attribution proceeds via the **tier ladder in
+§13.4** rather than the flat "no" an earlier draft proposed. §12's build order
+is therefore live. Four gates remain open, all attached to Lane 1 or to
+optional Tier-3 lanes.
+
 **Scope:** Survey external sources Averrow could ingest as a *new class of
 signal* — feeds that help identify AI-generated threats and AI-amplified brand
 threats — and turn that survey into a sequenced, costed plan with explicit
@@ -289,10 +296,21 @@ technical one; and the GEO-monitoring market tracks *visibility* — our angle i
 
 **Lane 2 — Registry brand-squatting.**
 
-MCP Registry first (free, documented, `updated_since` cursor, ~1k rows — fits
-`lib/feedRunner.ts` with no new concepts), then npm/PyPI, then HF
+**npm/PyPI first** — targeted `HEAD` existence checks over brand permutations
+(§5.1a: 0 bytes, clean 200/404, the lookalike scanner's own primitive) — then
+the MCP Registry once its checkpointed backfill is designed, then HF
 namespace-reuse. Landing: side table + classifier, the `social_mentions` →
 Watchdog pattern.
+
+**Ships with payload-sink extraction (attribution Tier 1, §13.4).** For every
+confirmed squat, extract the network sink from its install/runtime payload —
+webhook endpoint, bot API, or bare domain. The sink is an ordinary IOC: it
+lands in `threats`, acquires an IP and cert through normal enrichment, and
+bridges into NEXUS through machinery that already exists. That buys actor
+attribution for the subset of squats that have a network payload, with **no
+new axis, no new table, and no `threat_attributions.source` CHECK problem**.
+Nothing extracts sinks today (verified — `lib/page-fetch.ts` has no webhook
+extraction), so this is net-new capability.
 
 *Evidence:* Churilov 2026 — 199,845 responses across 5 frontier models; **127
 hallucinated package names shared by all five; 53 still registerable** `[V]`.
@@ -301,11 +319,10 @@ served to existing code references `[V]`. HF typosquat study over 1.02M models
 → 1,574 squatting models, 10.4% harmful `[S]`.
 
 *Note on scope:* July §3.3 dismissed slopsquatting as "out of Averrow's scope."
-**That call should be revisited.** It is the same primitive we already run
-(name permutation + registry diff + brand match), the harmed party is a company
-(so it passes `LRX_PRODUCT_BOUNDARIES.md`'s one-line test cleanly), and it is
-new sellable surface. Recommend reversing, with the decision recorded in the
-July doc.
+**Reversed 2026-09-21** (§11 decision 1). It is the same primitive we already
+run (name permutation + registry diff + brand match), the harmed party is a
+company (so it passes `LRX_PRODUCT_BOUNDARIES.md`'s one-line test cleanly), and
+it is new sellable surface. The reversal still needs recording in the July doc.
 
 **Lane 3 — AI-build artifacts in page source.**
 
@@ -474,42 +491,53 @@ from every migration and from `src/`. Cadence comes from
 
 ---
 
-## 11. Open decisions — these need a human, not an engineer
+## 11. Decisions
 
-| # | Decision | Why it's not an implementation detail |
+Settled 2026-09-21 unless marked open.
+
+| # | Decision | Status |
 |---|---|---|
-| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | Gates Lane 2 entirely. Recommend yes (§6) |
-| 2 | **Which assistants does Lane 1 cover, and at what cadence?** | Cost and customer-promise question. Per-model results don't generalize |
-| 3 | **Does Lane 1's output surface to tenants at launch, or run internal-only until calibrated?** | July §2.3's credibility bar. Same question July §8 left open for polymorphism |
-| 4 | **Add the Workers AI binding?** | New platform dependency + AI spend line. Unblocks existing stalled work (Lane 5) |
-| 5 | **Ratify or retire the deepfake boundary** (§10.1) | Currently inherited from a decommissioned product |
-| 6 | **Narrow the §2.1 text-detection doctrine?** | Only matters if Lane 7 is wanted. Cheap to defer |
-| 7 | **Legal review budget for §7.1/§7.6** | Two lanes have licensing gates ahead of code |
-| 8 | **Do these signals ever carry actor attribution?** (§13.4) | Recommend no for v1. Saying yes means building a second correlation axis, not extending NEXUS — a materially larger scope |
-| 9 | **Build the `alert_type` presentation registry?** (§13.3) | Without it every new alert family renders as a handle on "Social". It is shared infrastructure, so whichever lane ships first pays for it |
+| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | ✅ **YES.** Lane 2 is in scope. Record the reversal in the July doc |
+| 4 | **Add the Workers AI binding?** | ✅ **YES.** `@cf/google/embeddinggemma-300m`, no provider key; unblocks the stalled polymorphism semantic leg |
+| 5 | **Ratify or retire the deepfake boundary** (§10.1) | ✅ **RETIRE the stated reason.** The imprsn8 boundary is defunct. Deferring deepfake detection still stands on §5.3's volume/price/accuracy grounds — but on those grounds, not an inherited one |
+| 8 | **Do these signals ever carry actor attribution?** (§13.4) | ✅ **YES, via the tier ladder.** Tier 1 (payload-sink bridging) ships with Lane 2; Tier 2 (principal-identity axis) is designed for but gated on Tier 1's evidence. Not the flat "no" the first draft recommended |
+| 2 | **Which assistants does Lane 1 cover, and at what cadence?** | ⬜ Open — decide when Lane 1 is specced |
+| 3 | **Who pays for the `alert_type` presentation registry?** (§13.3) | ⬜ Open, but self-resolving: it is the same presentation work as Lane 3's `page_signals` renderer, so it lands there by default unless actively moved |
+| 6 | **Narrow the §2.1 text-detection doctrine?** | ⬜ Open — only matters if Lane 7 is wanted. Cheap to defer |
+| 7 | **Legal review budget for §7.1/§7.6** | ⬜ Open — decide with Lane 1 |
 
 ---
 
 ## 12. Suggested sequencing
 
-Nothing here is committed. If the plan is accepted, the natural order — small
-independent increments, each shippable alone, per the `delivery-lead` pattern:
+Decisions 1, 4, 5 and 8 are settled (§11), so the build order below is live.
+Small independent increments, each shippable alone, per the `delivery-lead`
+pattern:
 
-1. **Decisions 1, 4, 5** (§11) — cheap, unblock everything downstream.
+1. ~~Decisions 1, 4, 5~~ — **done 2026-09-21.**
 2. **Lane 3** (AI-build artifacts) — smallest, purely deterministic, exercises
    no new dependency, and proves the signal shape before anything bigger.
-   **Ship the `page_signals` renderer with it** (§13.4) — that retroactively
+   **Ship the `page_signals` renderer with it** (§13.5) — that retroactively
    surfaces the shipped-but-invisible Wave 3 work and builds the presentation
-   primitive every later lane needs.
+   primitive every later lane needs. Decision 3 (the `alert_type` registry)
+   lands here by default.
 3. **Lane 4** (C2PA/IPTC scan) — rides the same page-fetch change window.
 4. **Lane 2**, in two steps — **npm/PyPI first** (targeted `HEAD` checks, no
    bulk ingest, per §5.1a), then the MCP Registry once its ~1,100-page
    checkpointed backfill is designed. This reverses the original order: the
    registry was nominated first on a "~1k clean rows" claim that proved wrong.
-5. **Lane 1** (answer-engine monitoring) — largest payoff, gated on decisions
-   2, 3 and the §7.6 ToS review.
-6. **Lane 5** (Workers AI) → unblocks the stalled polymorphism semantic leg.
-7. Tier 3 only if a customer pulls it.
+   **Payload-sink extraction (attribution Tier 1, §13.4) ships in this lane**,
+   and the side-table schema is shaped so the Tier 2 principal axis drops in
+   without rework.
+5. **Lane 5** (Workers AI binding) — decision 4 is settled, and it unblocks the
+   already-half-built polymorphism semantic leg. Independent of Lanes 1–4, so
+   it can run in parallel with any of them.
+6. **Lane 1** (answer-engine monitoring) — largest payoff, gated on the still
+   -open decisions 2 and 7 (§7.6 ToS review).
+7. **Attribution Tier 2** (principal-identity axis, §13.4) — only once Tier 1
+   has shown that principal clustering finds multi-brand operators in real data.
+8. Lanes 7–8 (§6 Tier 3 — the slop/fake-review lane and kit corpora) only if a
+   customer pulls them.
 
 Per `CLAUDE.md` §1A, each lane runs the full pipeline —
 `delivery-lead` → engineer (+ `threat-intel-analyst`) → `test-engineer` →
@@ -585,12 +613,50 @@ same reason answer-engine output must be a rate over N samples, never a
 boolean. Register every new source explicitly in `SOURCE_BASELINE` rather than
 letting it fail open to 50.
 
-**Actor attribution — recommendation: don't, initially.** Nothing
-non-infrastructure has ever reached `threat_actors`. Forcing it means building
-a new axis, not extending one. The legitimate seam already exists and is
-narrow: if a squatted package's payload resolves to a domain that lands in
-`threats` with a cert or IP, *that domain* bridges normally. The registry row
-does not, and should not.
+**Actor attribution — a tier ladder, not a yes/no.** *(Revised 2026-09-21; an
+earlier draft of this section recommended a flat "no for v1". That was too
+blunt — see the distinction below.)*
+
+The over-merge trap §13.1 cites is about **commodity** keys. "GoDaddy" or a /24
+is shared by millions of unrelated customers. A *specific npm publisher
+account* is not commodity — in discriminating power it is closer to a cert
+serial. The codebase already implicitly agrees: `agents/nexus.ts:100-108`
+clusters app-store listings by `GROUP BY store, dev_key HAVING brands >= 2 AND
+rows_ >= 2`. That is principal-identity clustering, already shipped. Its
+problem is not the idea but the **table** — writing into
+`infrastructure_clusters` leaves it unable to bridge and unable to attribute,
+so it dead-ends and pollutes the Attribution Backlog (§13.2).
+
+| Tier | What it is | Cost | Verdict |
+|---|---|---|---|
+| **0** | Alerts only, dead-end | none | Superseded — this was the first draft's recommendation |
+| **1** | **Payload-sink bridging.** Extract the network sink (webhook, bot API, domain) from a squat's payload; it enters `threats` as an ordinary IOC and bridges into NEXUS unchanged | small; no new table, no CHECK change | ✅ **Ships with Lane 2** |
+| **2** | **Principal-identity axis.** A second correlation axis keyed on publisher / maintainer / org / namespace / developer account, in its own table, joined to the infra axis through shared sinks | new table + writer; the `threat_attributions.source` CHECK rebuild; its own admission gate | ✅ **Designed for, gated on Tier 1's evidence** |
+| **3** | Point Haiku at these signals to guess actor names directly | cheap to try | ❌ **Never.** Reproduces the app-store/dark-web failure: 1,325 of 1,330 calls returned "unknown" in the audit that produced the current gate (`agents/attributor.ts:61-68`) |
+
+**Why Tier 2 is tractable rather than speculative:**
+
+- **`computeComponents` is a pure function** (`lib/cluster-components.ts:217-220`
+  — takes `clusters`, `bridges`, `options`). The union-find core is reusable
+  verbatim with a different bridge-kind set. This is parameterising an existing
+  engine, not writing a new one.
+- **The two axes join through sinks.** Registry-operator cluster —(shared sink
+  domain)→ infrastructure cluster is an evidence-backed cross-surface pivot,
+  and it is exactly the "who moves where" question the platform exists to
+  answer. It would also give the currently-orphaned app-store and dark-web
+  clusters a home that can actually attribute.
+
+**Tier 2's three real costs**, none hidden: a new table and writer; the
+`threat_attributions.source` CHECK rebuild (or an explicit decision to
+masquerade as `manual`); and its own admission gate — the Attributor's is
+ASN/country-shaped and would never fire here, so a principal gate would be
+something like ≥2 brands across ≥2 registries.
+
+**Sequencing rationale:** Tier 1 gets real attribution immediately on the
+subset with a payload, proves the sink primitive, and defers the table rebuild
+until there is evidence that principal clustering finds multi-brand operators
+in Averrow's actual data. If it does, Tier 2 is a contained follow-on. If it
+doesn't, nothing was spent on it.
 
 **UI, cheapest to most expensive:**
 
