@@ -155,7 +155,7 @@ export function SignalBreakdownCard({
       </div>
 
       {liveSorted.length === 0 ? (
-        <p className="text-sm italic" style={{ color: 'var(--text-tertiary)' }}>
+        <p className="text-sm italic" style={{ color: 'var(--text-secondary)' }}>
           No scored signals fired on the last analysis.
         </p>
       ) : (
@@ -171,7 +171,7 @@ export function SignalBreakdownCard({
                   {evidenceMap[key] && (
                     <div
                       className="mt-0.5 font-mono text-[11px] truncate"
-                      style={{ color: 'var(--text-muted)' }}
+                      style={{ color: 'var(--text-secondary)' }}
                       title={evidenceMap[key]}
                     >
                       &ldquo;{evidenceMap[key]}&rdquo;
@@ -189,20 +189,24 @@ export function SignalBreakdownCard({
 
       {shadowSorted.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
+          {/* Small-text contrast: --text-muted (25%) and --text-tertiary
+              (40%) both fail 4.5:1 on --bg-page for real content — only
+              used here for a decorative border. Body/label text below
+              uses --text-secondary (60%), which meets the bar. */}
           <div className="flex items-center justify-between mb-2">
             <span
               className="text-[10px] uppercase tracking-widest font-mono font-bold"
-              style={{ color: 'var(--text-muted)' }}
+              style={{ color: 'var(--text-secondary)' }}
             >
               Shadow signals — not scoring
             </span>
             {shadowScoreDelta !== null && shadowScoreDelta !== undefined && (
-              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
                 would-be +{shadowScoreDelta}
               </span>
             )}
           </div>
-          <p className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+          <p className="text-[11px] mb-2" style={{ color: 'var(--text-secondary)' }}>
             Lane 3 shadow-mode evidence — computed and persisted for measurement only.
             None of these contribute to the score above, to threat level, or to alert triage.
           </p>
@@ -212,13 +216,13 @@ export function SignalBreakdownCard({
               return (
                 <li key={key} className="flex items-start justify-between gap-3 text-sm">
                   <div className="min-w-0">
-                    <span style={{ color: 'var(--text-tertiary)' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>
                       {humanLabel(key, SHADOW_SIGNAL_LABELS)}
                     </span>
                     {evidenceMap[key] && (
                       <div
                         className="mt-0.5 font-mono text-[11px] truncate"
-                        style={{ color: 'var(--text-muted)' }}
+                        style={{ color: 'var(--text-secondary)' }}
                         title={evidenceMap[key]}
                       >
                         &ldquo;{evidenceMap[key]}&rdquo;
@@ -227,7 +231,7 @@ export function SignalBreakdownCard({
                   </div>
                   <span
                     className="shrink-0 font-mono text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded"
-                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border-base)' }}
+                    style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }}
                     title={weight !== undefined ? `Would-be weight: ${weight} (not scored)` : 'Not scored'}
                   >
                     shadow

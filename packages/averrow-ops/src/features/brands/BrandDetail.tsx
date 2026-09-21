@@ -1224,7 +1224,7 @@ function PageAnalysisRow({ row }: { row: LookalikeDomain }) {
           </span>
         )}
         {row.page_generator && (
-          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-muted)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
             {row.page_generator}
           </span>
         )}
@@ -1238,7 +1238,7 @@ function PageAnalysisRow({ row }: { row: LookalikeDomain }) {
           </span>
         )}
         {row.page_fetched_at && (
-          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          <span className="text-[10px] font-mono text-[var(--text-secondary)]">
             checked {timeAgo(row.page_fetched_at)}
           </span>
         )}

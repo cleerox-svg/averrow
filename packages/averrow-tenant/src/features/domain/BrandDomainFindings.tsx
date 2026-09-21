@@ -515,22 +515,25 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
           {shadowSorted.length > 0 && (
             <div className="pt-3 border-t border-white/[0.06]">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
+                {/* Small-text contrast: white/40 and below fail 4.5:1 on
+                    --bg-page — white/60+ for anything that carries real
+                    information (the "not scoring" disclaimer matters). */}
+                <span className="text-[10px] uppercase tracking-widest font-mono text-white/60">
                   Shadow signals — not scoring
                 </span>
                 {row.page_score_delta !== null && (
-                  <span className="font-mono text-[10px] text-white/40">would-be +{row.page_score_delta}</span>
+                  <span className="font-mono text-[10px] text-white/60">would-be +{row.page_score_delta}</span>
                 )}
               </div>
-              <p className="text-[10px] text-white/35 mb-1.5">
+              <p className="text-[10px] text-white/60 mb-1.5">
                 Computed and persisted for measurement only. None of these contribute to the
                 score above, to threat level, or to alert triage.
               </p>
               <ul className="space-y-1" data-testid="tenant-shadow-signals">
                 {shadowSorted.map((key) => (
                   <li key={key} className="flex items-center justify-between text-[12px]">
-                    <span className="text-white/50">{pageSignalLabel(key, SHADOW_SIGNAL_LABELS)}</span>
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-white/35 border border-white/10 rounded px-1.5 py-0.5">
+                    <span className="text-white/70">{pageSignalLabel(key, SHADOW_SIGNAL_LABELS)}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-white/60 border border-white/10 rounded px-1.5 py-0.5">
                       shadow
                     </span>
                   </li>
