@@ -96,6 +96,37 @@ describe("verifyOrgAccess", () => {
   });
 });
 
+// Regression: `findBrandForCaller` (handlers/lookalikeDomains.ts) rolled
+// its own brand-scope check against a hardcoded `super_admin` literal,
+// so the S3.1 sweep that fixed `verifyOrgAccess` never reached it. An
+// auditor — which holds no org membership — fell through to the org
+// branch and got a bare 404 on every brand, contradicting CLAUDE.md §7.
+// These pin the predicate the helper now uses, on both sides: read reach
+// widens, write reach does not.
+describe("global-read brand scoping (findBrandForCaller regression)", () => {
+  it("admits auditor to the unscoped brand lookup, like super_admin", () => {
+    expect(hasGlobalReadScope("auditor")).toBe(true);
+    expect(hasGlobalReadScope("super_admin")).toBe(true);
+  });
+
+  it("still scopes every ordinary staff role to org_brands", () => {
+    // These roles must NOT take the unscoped branch — a widened read
+    // predicate that swept them in would be a cross-tenant leak.
+    const scoped: UserRole[] = ["admin", "analyst", "sales", "support", "billing", "client"];
+    for (const r of scoped) expect(hasGlobalReadScope(r)).toBe(false);
+  });
+
+  it("does not hand auditor a write path — it stays the read-only seat", () => {
+    // The two POST callers of findBrandForCaller sit behind
+    // requireStaffMutation, which denies exactly this role. If auditor
+    // ever stopped being read-only, widening the read predicate above
+    // would silently become a privilege escalation.
+    expect(isReadOnlyGlobalRole("auditor")).toBe(true);
+    expect(roleHasPermission("auditor", "manage_takedowns")).toBe(false);
+    expect(roleHasPermission("auditor", "edit_alerts")).toBe(false);
+  });
+});
+
 describe("isReadOnlyGlobalRole", () => {
   it("is true only for auditor", () => {
     expect(isReadOnlyGlobalRole("auditor")).toBe(true);
