@@ -57,6 +57,27 @@
 --   page_exfil_sink     Host of the covert / relay exfil sink matched by
 --                       covert_exfil_sink or form_relay_sink, e.g.
 --                       'api.telegram.org'. NULL when neither fired.
+--                       HOST ONLY, bounded to 253 chars (max legal DNS
+--                       name) at the extractor.
+--
+--   ** CONSTRAINT — THE FULL SINK URL MUST NEVER BE PERSISTED, HERE OR
+--   ** IN ANY COLUMN, LOG, EVIDENCE BLOB OR EXPORT.
+--   ** `api.telegram.org/bot<id>:<token>/…` and
+--   ** `discord.com/api/webhooks/<id>/<token>` are LIVE CREDENTIALS, not
+--   ** identifiers. Anyone holding one can post to the attacker's channel
+--   ** — and for Telegram, read from it — which means storing it turns
+--   ** this table into a credential store for third-party channels,
+--   ** exposes the platform to unauthorized-access liability, and tips
+--   ** off the operator the moment it is used. Store the HOST
+--   ** (page_exfil_sink) and the NON-SECRET LEADING ID
+--   ** (page_exfil_sink_id) and nothing else; the id alone is a
+--   ** sufficient pivot key for cross-brand kit clustering.
+--   ** lib/page-phishing-scorer.ts honours this today: the digit walk in
+--   ** digitsAfterMarker stops at the first non-digit, so it terminates
+--   ** at the ':' (Telegram) or '/' (Discord) that begins the token, and
+--   ** the 64-char evidence literal is the matched PREFIX, never the
+--   ** reference. Lane 2's shared extractor inherits this constraint —
+--   ** it may not widen the walk past the token boundary.
 --   page_exfil_sink_id  Bot or webhook id extracted from that sink —
 --                       the Telegram bot id from
 --                       api.telegram.org/bot<id>:<token>/ or the Discord

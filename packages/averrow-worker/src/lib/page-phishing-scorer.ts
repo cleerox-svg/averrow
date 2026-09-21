@@ -324,7 +324,29 @@ export function scorePagePhishing(
   // `parsed` and returns a separate bundle that is spread into new
   // result fields only. Phase 1 must not change a single existing
   // verdict; see spec §5.1.
-  const shadow = computeShadowPageSignals(parsed);
+  //
+  // GUARDED, unconditionally. "Phase 1 changes nothing" is the premise of
+  // this whole phase, and an unguarded call cannot honour it: the `??`
+  // reads inside computeShadowPageSignals cover `undefined`, but a
+  // non-array value on one of the new ParsedPageSignals fields makes
+  // `for…of` throw, which would propagate out of scorePagePhishing, out
+  // of runPageAnalysisForDomain BEFORE EITHER UPDATE, leave
+  // page_fetched_at unstamped, and re-select the domain into the
+  // `page_fetched_at IS NULL` batch every tick — burning one of 20 slots
+  // indefinitely. An empty bundle is the correct no-op.
+  let shadow: ShadowPageSignals;
+  try {
+    shadow = computeShadowPageSignals(parsed);
+  } catch {
+    shadow = {
+      aiSignals: [],
+      scoreDelta: 0,
+      evidence: {},
+      pageGenerator: null,
+      exfilSink: null,
+      exfilSinkId: null,
+    };
+  }
 
   return {
     score,
@@ -467,6 +489,33 @@ export const SHADOW_CLASS_A_CAP = 20;
 /** Max length of a persisted evidence literal (spec §5.5). */
 const MAX_EVIDENCE_LEN = 64;
 
+/**
+ * Max length of a persisted `page_exfil_sink` host — 253, the maximum
+ * legal length of a DNS name.
+ *
+ * EVERY other persisted Lane 3 column is bounded at its producer
+ * (evidence 64 via `fire`, generator 64 at capture, sink id 32 digits);
+ * this one was not, and its input is 100% attacker-controlled: the
+ * fetcher's `pushBounded` caps the NUMBER of `<form action>` entries at
+ * 64 but never the LENGTH of one, so
+ * `<form action="https://<400KB>.ngrok.io/c">` used to land verbatim in
+ * the column. Downstream that poisons the LIMIT-less diagnostics pass
+ * (every distinct host becomes a Map key — ~200 such rows is ~80 MB in
+ * the Worker and blows KV's 25 MB value ceiling, so the block fails
+ * every TTL), bloats the staff `SELECT *` page load, and can throw the
+ * SUCCESS UPDATE — which would lose the verdict entirely and re-queue
+ * the domain every tick.
+ *
+ * The bound lives on the EXTRACTOR (candidateHost / matchCovertSink /
+ * matchRelaySink) rather than on the call sites, so it travels with the
+ * value however it is consumed. A host longer than this cannot resolve,
+ * so nothing real is lost by rejecting it outright in candidateHost.
+ */
+const MAX_SINK_HOST_LEN = 253;
+
+/** Defence in depth: every SinkMatch host goes through this. */
+const boundHost = (host: string): string => host.slice(0, MAX_SINK_HOST_LEN);
+
 // ── Literal tables (all lowercase; matched via bounded .includes) ────
 
 /** B1 — host+path prefixes that only a covert exfil channel produces. */
@@ -562,21 +611,35 @@ function firstLiteralHit(haystack: string, needles: readonly string[]): string |
 }
 
 /**
- * Hostname of an absolute http(s) reference, lowercased. Null for
- * relative refs, non-http schemes, and unparseable junk. Uses the URL
- * parser, never a regex.
+ * Hostname + pathname of an absolute http(s) reference, both lowercased.
+ * Null for relative refs, non-http schemes, unparseable junk, and hosts
+ * longer than MAX_SINK_HOST_LEN (an absurd host is rejected here rather
+ * than propagated into a persisted column — see MAX_SINK_HOST_LEN).
+ * Uses the URL parser, never a regex.
+ *
+ * `hostPath` deliberately EXCLUDES the query string and fragment: it is
+ * the string a covert-sink prefix must match at position 0 for the
+ * prefix to describe THIS reference's sink rather than some URL riding
+ * in its query.
  */
-function candidateHost(ref: string): string | null {
+function candidateHostPath(ref: string): { host: string; hostPath: string } | null {
   const trimmed = ref.trim();
   if (!trimmed) return null;
   const candidate = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed;
   try {
     const u = new URL(candidate);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    return u.hostname.toLowerCase();
+    const host = u.hostname.toLowerCase();
+    if (host.length === 0 || host.length > MAX_SINK_HOST_LEN) return null;
+    return { host, hostPath: `${host}${u.pathname.toLowerCase()}` };
   } catch {
     return null;
   }
+}
+
+/** Hostname of an absolute http(s) reference, lowercased, or null. */
+function candidateHost(ref: string): string | null {
+  return candidateHostPath(ref)?.host ?? null;
 }
 
 /**
@@ -650,25 +713,46 @@ function matchCovertSink(ref: string, allowIpLiteral: boolean): SinkMatch | null
   const lowered = ref.trim().toLowerCase();
   if (!lowered) return null;
 
+  const parsed = candidateHostPath(ref);
+
   // Literal host+path prefixes. Checked on the raw lowered reference so a
   // scheme-less or protocol-relative literal still matches.
   const prefix = firstLiteralHit(lowered, COVERT_SINK_PREFIXES);
   if (prefix) {
-    const host = candidateHost(ref);
-    // Prefixes are `host/path`, so the leading segment IS the host when
-    // the reference did not parse as an absolute URL.
+    // Prefixes are `host/path`, so the leading segment IS the host of the
+    // sink the prefix names.
     const literalHost = prefix.slice(0, prefix.indexOf('/'));
-    return { host: host ?? literalHost, id: extractSinkId(lowered), evidence: prefix };
+
+    // The prefix only describes THIS reference's sink when it begins at
+    // position 0 of `host + pathname` (absolute/protocol-relative ref) or
+    // at position 0 of the raw reference (scheme-less literal). Testing
+    // it against the whole lowered string and then persisting
+    // `candidateHost(ref)` produced a CONTRADICTORY triple for a
+    // reference carrying an unencoded sink URL in its query string —
+    // host `relay.example`, evidence `api.telegram.org/bot`, id read out
+    // of the query — poisoning exactly the clustering columns §6 exists
+    // to produce. When the prefix is embedded, derive the host AND the id
+    // from the prefix occurrence itself so the triple stays internally
+    // consistent.
+    if (parsed !== null && parsed.hostPath.startsWith(prefix)) {
+      return { host: boundHost(parsed.host), id: extractSinkId(parsed.hostPath), evidence: prefix };
+    }
+    const from = lowered.startsWith(prefix) ? 0 : lowered.indexOf(prefix);
+    return {
+      host: boundHost(literalHost),
+      id: extractSinkId(lowered.slice(from)),
+      evidence: prefix,
+    };
   }
 
-  const host = candidateHost(ref);
+  const host = parsed?.host;
   if (!host) return null;
 
   const tunnel = EPHEMERAL_TUNNEL_SUFFIXES.find((s) => host.endsWith(s));
-  if (tunnel) return { host, id: null, evidence: host };
+  if (tunnel) return { host: boundHost(host), id: null, evidence: host };
 
   if (allowIpLiteral && isIpLiteralHost(host)) {
-    return { host, id: null, evidence: host };
+    return { host: boundHost(host), id: null, evidence: host };
   }
   return null;
 }
@@ -680,14 +764,14 @@ function matchRelaySink(ref: string): SinkMatch | null {
 
   if (lowered.includes('docs.google.com/forms/') && lowered.includes('/formresponse')) {
     return {
-      host: candidateHost(ref) ?? 'docs.google.com',
+      host: boundHost(candidateHost(ref) ?? 'docs.google.com'),
       id: null,
       evidence: 'docs.google.com/forms/…/formResponse',
     };
   }
   const lit = firstLiteralHit(lowered, RELAY_SINK_LITERALS);
   if (!lit) return null;
-  return { host: candidateHost(ref) ?? lit, id: null, evidence: lit };
+  return { host: boundHost(candidateHost(ref) ?? lit), id: null, evidence: lit };
 }
 
 /**

@@ -430,6 +430,112 @@ describe("computeShadowPageSignals — covert_exfil_sink (B1, weight 20)", () =>
     expect(shadow.aiSignals).not.toContain("covert_exfil_sink");
     expect(shadow.exfilSink).toBeNull();
   });
+
+  it("BOUNDS the persisted sink host: an absurd (> 253 char) host is rejected outright, never persisted", () => {
+    // `pushBounded` in the fetcher caps the NUMBER of form actions, never
+    // the LENGTH of one, so this reached the column verbatim and could
+    // blow the diagnostics Map / KV value ceiling / the success UPDATE.
+    // A host this long cannot resolve, so rejecting it loses nothing.
+    const absurd = "a".repeat(400_000);
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      formActions: [`https://${absurd}.ngrok.io/c`],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.exfilSink).toBeNull();
+    expect(shadow.aiSignals).not.toContain("covert_exfil_sink");
+  });
+
+  it("a legal-length tunnel host still fires and is persisted whole", () => {
+    const host = `${"a".repeat(200)}.ngrok.io`;
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      formActions: [`https://${host}/c`],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.aiSignals).toContain("covert_exfil_sink");
+    expect(shadow.exfilSink).toBe(host);
+    expect(shadow.exfilSink!.length).toBeLessThanOrEqual(253);
+  });
+
+  it("every persisted sink host stays within the DNS-name bound", () => {
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      formActions: [`https://${"b".repeat(300)}.ngrok.io/c`, "https://api.telegram.org/bot42:tok/x"],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.exfilSink).toBe("api.telegram.org");
+    expect(shadow.exfilSink!.length).toBeLessThanOrEqual(253);
+  });
+
+  it("a covert-sink prefix riding in the QUERY STRING does not attribute the sink to the surrounding host", () => {
+    // Previously the prefix was tested against the whole lowered
+    // reference but the HOST was read from the URL, producing a
+    // contradictory triple (host relay.example / evidence
+    // api.telegram.org/bot / id out of the query) straight into the
+    // clustering columns §6 exists to produce.
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      formActions: ["https://relay.example/x?next=https://api.telegram.org/bot777:AAtok/sendMessage"],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.aiSignals).toContain("covert_exfil_sink");
+    // host / evidence / id all describe the SAME endpoint.
+    expect(shadow.exfilSink).toBe("api.telegram.org");
+    expect(shadow.evidence.covert_exfil_sink).toBe("api.telegram.org/bot");
+    expect(shadow.exfilSinkId).toBe("777");
+  });
+
+  it("a scheme-less covert-sink literal at position 0 still resolves host + id from the literal", () => {
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      scriptSinkTargets: ["api.telegram.org/bot555:AAtok/sendMessage"],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.exfilSink).toBe("api.telegram.org");
+    expect(shadow.exfilSinkId).toBe("555");
+  });
+
+  it("the persisted sink id stops at the token boundary — the SECRET is never captured (migration 0264 constraint)", () => {
+    const parsed: ParsedPageSignals = {
+      ...emptySignals,
+      formActions: ["https://api.telegram.org/bot123456789:AAH-SuperSecretToken/sendMessage"],
+    };
+    const shadow = computeShadowPageSignals(parsed);
+    expect(shadow.exfilSinkId).toBe("123456789");
+    const persisted = JSON.stringify({
+      sink: shadow.exfilSink,
+      id: shadow.exfilSinkId,
+      evidence: shadow.evidence,
+    });
+    expect(persisted).not.toContain("SuperSecretToken");
+  });
+});
+
+describe("scorePagePhishing — Phase 1 shadow call is unconditionally guarded", () => {
+  it("a malformed (non-array) Lane 3 field cannot make the scorer throw — the live verdict still lands", () => {
+    // If this throws, runPageAnalysisForDomain throws BEFORE either
+    // UPDATE, page_fetched_at is never stamped, and the domain re-enters
+    // the `page_fetched_at IS NULL` batch every tick forever. "Changes
+    // nothing" is the premise of Phase 1.
+    const poisoned = {
+      ...emptySignals,
+      hasPasswordInput: true,
+      commentSamples: 42 as unknown as string[],
+      scriptSinkTargets: { nope: true } as unknown as string[],
+    } satisfies ParsedPageSignals;
+
+    const result = scorePagePhishing(poisoned, ctx);
+    expect(result.signals).toContain("credential_form");
+    expect(result.score).toBe(SIGNAL_WEIGHTS.credential_form);
+    // Shadow bundle degrades to an empty no-op.
+    expect(result.aiSignals).toEqual([]);
+    expect(result.scoreDelta).toBe(0);
+    expect(result.evidence).toEqual({});
+    expect(result.exfilSink).toBeNull();
+    expect(result.exfilSinkId).toBeNull();
+    expect(result.pageGenerator).toBeNull();
+  });
 });
 
 describe("computeShadowPageSignals — form_relay_sink (B2, weight 10)", () => {

@@ -400,14 +400,22 @@ export function clampHoursBack(raw: string | null): number {
 // rate) plus a per-family breakdown, reading the authoritative
 // `page_anti_bot_wall` column (migration 0260) — no JSON parsing.
 interface PageAnalysisDiag {
-  /** Rows that have been page-analyzed (page_fetched_at IS NOT NULL). */
+  /** Rows that have been page-analyzed (page_fetched_at IS NOT NULL),
+   *  capped at PAGE_DIAG_ROW_LIMIT — see `truncated`. */
   fetched_ok: number;
   /** Analyzed rows on which an anti-bot wall was observed. */
   walls_observed: number;
   /** walls_observed / fetched_ok as a percentage, or null when none analyzed. */
   wall_rate_pct: number | null;
-  /** Per-wall-family counts (GROUP BY page_anti_bot_wall, NULL excluded). */
+  /** Per-wall-family counts over the analyzed population (NULL excluded). */
   by_family: Array<{ family: string; n: number }>;
+  /**
+   * True when the analyzed population exceeded PAGE_DIAG_ROW_LIMIT and
+   * this block therefore describes only the first N rows. Every number
+   * above and below is then a LOWER BOUND. Explicit so the block
+   * degrades VISIBLY rather than silently under-reporting.
+   */
+  truncated: boolean;
   /**
    * Outcome breakdown of the analyzed population (Lane 3 §6). The
    * existing `fetched_ok` above is a MISNOMER retained for contract
@@ -458,6 +466,17 @@ interface PageAnalysisDiag {
     escalations_attributable: number;
     /** Rows whose band would rise from the full delta, Class A or not. */
     escalations_any: number;
+    /**
+     * Rows whose PERSISTED `page_score_delta` disagrees with the delta
+     * recomputed here from `page_ai_signals`. Non-zero means the weight
+     * table (SHADOW_SIGNAL_WEIGHTS / SHADOW_CLASS_A_CAP) changed after
+     * those rows were written, so their persisted delta — and any
+     * measurement taken from it — is stale. Self-heals on the 24 h
+     * per-domain re-analysis cadence; a value that does NOT decay is a
+     * writer bug. Rows written before migration 0264 are excluded
+     * (page_score_delta IS NULL).
+     */
+    persisted_delta_drift: number;
   };
   /**
    * Lane 3 Class B sink telemetry. Actor intelligence, not health.
@@ -491,66 +510,96 @@ interface PageAnalysisDiag {
 }
 
 /**
- * Threat band a page score lands in, mirroring
- * escalateThreatLevelForPage's non-credential thresholds (60 → HIGH,
- * 30 → MEDIUM). Used ONLY to answer the counterfactual "would this have
- * escalated?" in diagnostics — it escalates nothing.
+ * Threat band a page lands in, mirroring ALL FOUR branches of
+ * `escalateThreatLevelForPage` (lib/page-phishing-scorer.ts) as
+ * LOW 0 / MEDIUM 1 / HIGH 2 / CRITICAL 3. Used ONLY to answer the
+ * counterfactual "would this have escalated?" in diagnostics — it
+ * escalates nothing and writes nothing.
+ *
+ * Exported for the test that pins it against the real escalation
+ * function; the two must not drift, because `escalations_attributable`
+ * is the gate spec §6 uses to decide whether Class A is promoted or
+ * demoted to metadata-only.
  */
-function pageScoreBand(score: number): number {
-  if (score >= 60) return 2;
-  if (score >= 30) return 1;
-  return 0;
+export function pageScoreBand(
+  score: number,
+  credentialHarvest: boolean,
+  antiBotWall: boolean,
+): number {
+  // ALL FOUR branches of escalateThreatLevelForPage, in its order. The
+  // earlier two-branch model (>= 60, >= 30) was wrong in the direction
+  // that matters most: it omitted the credentialHarvest → CRITICAL
+  // branch and the bare-anti-bot-wall → MEDIUM floor, so a page already
+  // sitting at MEDIUM because of a wall was counted as a Class A
+  // escalation Class A did not cause. Anti-bot walls are the single most
+  // common finding on this population, and spec §6 names
+  // `escalations_attributable` as the gate that decides whether Class A
+  // is promoted or demoted to metadata-only — passing that gate on
+  // phantom escalations is the worst available failure.
+  if (credentialHarvest) return 3; // CRITICAL
+  if (score >= 60) return 2; // HIGH
+  if (score >= 30) return 1; // MEDIUM
+  if (antiBotWall) return 1; // MEDIUM — bare-wall floor
+  return 0; // LOW
 }
 
+/**
+ * Row cap for the single page-analysis pass. lookalike_domains is a
+ * small bounded table, so this is a guard rail, not a working limit —
+ * but an unbounded SELECT whose every distinct sink host becomes a
+ * Worker-side Map key is exactly the shape that fails silently as the
+ * table grows. One row over the cap sets `truncated`.
+ */
+const PAGE_DIAG_ROW_LIMIT = 20_000;
+
 /** Build the `page_analysis` diagnostics block. cachedValue-wrapped so
- *  repeated diagnostics calls don't re-scan; the LIKE/GROUP BY full scan
- *  is acceptable ONLY because lookalike_domains is a small bounded table
- *  (unlike threats). Key `diag.page_analysis.cloaking`, TTL 600s. */
+ *  repeated diagnostics calls don't re-scan; the full scan is acceptable
+ *  ONLY because lookalike_domains is a small bounded table (unlike
+ *  threats). Key `diag.page_analysis.cloaking.v2` — the `.v2` suffix is
+ *  load-bearing: the response SHAPE changed (ai_build / exfil /
+ *  generator / truncated), and without a new key a deploy keeps serving
+ *  the old shape from KV for a whole TTL. Bump it again on the next
+ *  shape change. TTL 600s. */
 async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
-  return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking', 600, async () => {
-    // lookalike_domains is a small bounded table, so a full scan here is
-    // fine — this would be a red flag on the 217K-row threats table.
-    const [counts, byFamily, shadowRows] = await Promise.all([
-      env.DB.prepare(`
-        SELECT
-          SUM(CASE WHEN page_fetched_at IS NOT NULL THEN 1 ELSE 0 END)    AS fetched_ok,
-          SUM(CASE WHEN page_anti_bot_wall IS NOT NULL THEN 1 ELSE 0 END) AS walls_observed
-        FROM lookalike_domains
-      `).first<{ fetched_ok: number | null; walls_observed: number | null }>(),
-      env.DB.prepare(`
-        SELECT page_anti_bot_wall AS family, COUNT(*) AS n
-        FROM lookalike_domains
-        WHERE page_anti_bot_wall IS NOT NULL
-        GROUP BY page_anti_bot_wall
-        ORDER BY n DESC
-      `).all<{ family: string; n: number }>(),
-      // ONE pass over the analyzed population, aggregated in the Worker
-      // (Lane 3 §6). Deliberately NOT eight `LIKE '%"key"%'` scans over
-      // the page_ai_signals TEXT column — that is the dead-index
-      // full-scan failure class, multiplied by eight. Bounded by
-      // lookalike_domains being a small table AND by the
-      // page_fetched_at IS NOT NULL predicate, and it runs at most once
-      // per 600 s TTL.
-      env.DB.prepare(`
-        SELECT page_ai_signals, page_score_delta, page_phishing_score,
-               page_generator, page_exfil_sink, page_exfil_sink_id,
-               page_http_status
-        FROM lookalike_domains
-        WHERE page_fetched_at IS NOT NULL
-      `).all<{
-        page_ai_signals: string | null;
-        page_score_delta: number | null;
-        page_phishing_score: number | null;
-        page_generator: string | null;
-        page_exfil_sink: string | null;
-        page_exfil_sink_id: string | null;
-        page_http_status: number | null;
-      }>(),
-    ]);
-    const fetchedOk = counts?.fetched_ok ?? 0;
-    const wallsObserved = counts?.walls_observed ?? 0;
+  return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking.v2', 600, async () => {
+    // ONE pass over the analyzed population, aggregated in the Worker
+    // (Lane 3 §6). This was three separate full scans of the SAME table
+    // under the SAME predicate (a SUM(CASE…), a GROUP BY
+    // page_anti_bot_wall, and this row SELECT); folding them into one
+    // pass costs two fewer scans and is what makes `page_anti_bot_wall`
+    // available per-row for the escalation counterfactual below.
+    //
+    // Deliberately NOT eight `LIKE '%"key"%'` scans over the
+    // page_ai_signals TEXT column — that is the dead-index full-scan
+    // failure class, multiplied by eight. Bounded by the
+    // page_fetched_at IS NOT NULL predicate AND by an explicit row cap;
+    // runs at most once per 600 s TTL.
+    const scan = await env.DB.prepare(`
+      SELECT page_ai_signals, page_score_delta, page_phishing_score,
+             page_signals, page_anti_bot_wall,
+             page_generator, page_exfil_sink, page_exfil_sink_id,
+             page_http_status
+      FROM lookalike_domains
+      WHERE page_fetched_at IS NOT NULL
+      LIMIT ?
+    `).bind(PAGE_DIAG_ROW_LIMIT + 1).all<{
+      page_ai_signals: string | null;
+      page_score_delta: number | null;
+      page_phishing_score: number | null;
+      page_signals: string | null;
+      page_anti_bot_wall: string | null;
+      page_generator: string | null;
+      page_exfil_sink: string | null;
+      page_exfil_sink_id: string | null;
+      page_http_status: number | null;
+    }>();
+
+    // One row over the cap is the sentinel; drop it and flag the block.
+    const truncated = scan.results.length > PAGE_DIAG_ROW_LIMIT;
+    const rows = truncated ? scan.results.slice(0, PAGE_DIAG_ROW_LIMIT) : scan.results;
 
     // ── Worker-side aggregation of the single pass ──────────────────
+    const byFamily = new Map<string, number>();
     const outcomes = new Map<string, number>();
     const bySignal = new Map<string, number>();
     const byGenerator = new Map<string, number>();
@@ -561,13 +610,32 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
     let capHits = 0;
     let escalationsAny = 0;
     let escalationsAttributable = 0;
+    let deltaDrift = 0;
     let exfilFirings = 0;
     let sinkIdFirings = 0;
     let generatorTagged = 0;
+    let wallsObserved = 0;
 
     const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 
-    for (const row of shadowRows.results) {
+    /** Did BOTH credential-harvest legs fire on the LIVE signal set? */
+    const parseJsonKeys = (raw: string | null): string[] => {
+      if (raw === null) return [];
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+      } catch {
+        return [];
+      }
+    };
+
+    for (const row of rows) {
+      // Wall family, folded in from what used to be two extra scans.
+      if (row.page_anti_bot_wall !== null) {
+        wallsObserved += 1;
+        bump(byFamily, row.page_anti_bot_wall);
+      }
+
       if (row.page_ai_signals === null) {
         // Failure branch (or a row last analyzed before migration 0264).
         const status = row.page_http_status;
@@ -579,15 +647,9 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
       bump(outcomes, 'scored');
       scored += 1;
 
-      let keys: string[] = [];
-      try {
-        const parsed: unknown = JSON.parse(row.page_ai_signals);
-        if (Array.isArray(parsed)) keys = parsed.filter((k): k is string => typeof k === 'string');
-      } catch {
-        // Unparseable JSON counts as "scored, nothing fired" rather than
-        // poisoning the whole block.
-        keys = [];
-      }
+      // Unparseable JSON counts as "scored, nothing fired" rather than
+      // poisoning the whole block.
+      const keys = parseJsonKeys(row.page_ai_signals);
 
       if (keys.length > 0) anyFired += 1;
       for (const k of keys) bump(bySignal, k);
@@ -595,13 +657,32 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
       const delta = shadowScoreDelta(keys);
       if (delta.capHit) capHits += 1;
 
+      // Shadow-mode drift detector: the delta persisted at analysis time
+      // vs the delta this weight table produces now. Divergence = the
+      // weight table moved under the stored rows.
+      if (row.page_score_delta !== null && row.page_score_delta !== delta.delta) {
+        deltaDrift += 1;
+      }
+
       // Counterfactual banding. Nothing is written; this only answers
       // "would the shadow delta have moved the band, and was Class A
-      // what moved it?".
+      // what moved it?". The two NON-score inputs to
+      // escalateThreatLevelForPage are held CONSTANT across all three
+      // bands (the shadow delta cannot create a credential-harvest page
+      // or an anti-bot wall) — which is precisely what stops a page
+      // already floored to MEDIUM by a bare wall, or already CRITICAL
+      // from credential harvest, being miscounted as a Class A
+      // escalation.
+      const liveSignals = parseJsonKeys(row.page_signals);
+      const credentialHarvest =
+        liveSignals.includes('credential_form') && liveSignals.includes('offdomain_form_exfil');
+      const wall = row.page_anti_bot_wall !== null;
+
       const base = row.page_phishing_score ?? 0;
-      const withAll = pageScoreBand(base + delta.delta);
-      const withoutClassA = pageScoreBand(base + delta.classBCSum);
-      if (withAll > pageScoreBand(base)) escalationsAny += 1;
+      const bandBase = pageScoreBand(base, credentialHarvest, wall);
+      const withAll = pageScoreBand(base + delta.delta, credentialHarvest, wall);
+      const withoutClassA = pageScoreBand(base + delta.classBCSum, credentialHarvest, wall);
+      if (withAll > bandBase) escalationsAny += 1;
       if (withAll > withoutClassA) escalationsAttributable += 1;
 
       if (row.page_generator) { generatorTagged += 1; bump(byGenerator, row.page_generator); }
@@ -620,11 +701,19 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
         .slice(0, limit)
         .map(([k, n]) => ({ [key]: k, n }) as Record<K, string> & { n: number });
 
+    const fetchedOk = rows.length;
+
     return {
       fetched_ok: fetchedOk,
       walls_observed: wallsObserved,
       wall_rate_pct: fetchedOk > 0 ? Math.round((wallsObserved / fetchedOk) * 1000) / 10 : null,
-      by_family: byFamily.results.map((r) => ({ family: r.family, n: r.n })),
+      // Was a dedicated `GROUP BY page_anti_bot_wall` scan; now folded
+      // into the single pass. Same shape, same ORDER BY n DESC. Not
+      // top-N-capped: the family set is a closed 5-value enum.
+      by_family: Array.from(byFamily.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([family, n]) => ({ family, n })),
+      truncated,
       by_fetch_outcome: Array.from(outcomes.entries())
         .sort((a, b) => b[1] - a[1])
         .map(([outcome, n]) => ({ outcome, n })),
@@ -641,6 +730,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
         class_a_cap_hits: capHits,
         escalations_attributable: escalationsAttributable,
         escalations_any: escalationsAny,
+        persisted_delta_drift: deltaDrift,
       },
       exfil: {
         firings: exfilFirings,
@@ -1893,7 +1983,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // 10: additive `velocity.coverage` block (VELOCITY_DARK_2026-09) —
           // splits the NULL-derived `not_computable` bucket into
           // never-computed vs inherently-not-computable. No field removed.
-          endpoint_version: 10,
+          // 11: additive `page_analysis.ai_build` / `.exfil` / `.generator`
+          // (Lane 3 Phase 1 shadow telemetry), plus `page_analysis.truncated`
+          // and `ai_build.persisted_delta_drift`. No field removed. The
+          // block's cachedValue key carries a matching `.v2` suffix so a
+          // deploy does not serve the old shape out of KV for a TTL.
+          endpoint_version: 11,
         },
 
         brand_count_drift: brandCountDrift,

@@ -321,23 +321,61 @@ const MAX_SCRIPT_SAMPLE = 40_000;
  * `agent_scaffold_comment` rule is scoped to a SINGLE comment — a
  * checklist split across two unrelated comments is not the signal.
  */
-const MAX_COMMENT_SAMPLE = 8_192;
+export const MAX_COMMENT_SAMPLE = 8_192;
 /** Hard cap on the number of comment slices retained. */
-const MAX_COMMENTS = 64;
+export const MAX_COMMENTS = 64;
 /** Cap on `<meta name="generator">` content (metadata, weight 0). */
 const MAX_GENERATOR_LEN = 64;
 
 /**
- * SVG event-handler attributes checked inside an inline `<svg>` subtree
- * for the `svg_script_payload` signal. A closed list, not a prefix scan:
- * HTMLRewriter exposes attributes by name only, and a closed list is the
- * bounded, reviewable form of "an `on*` attribute".
+ * Characters stripped from a captured `<meta name="generator">` value.
+ * The column is a GROUPING DIMENSION (weight 0) that spec §3.5 plans to
+ * render — and the likeliest sinks are NOT auto-escaping React: a CSV
+ * export, the briefing email, the §5.5 takedown-notice template. Markup
+ * and quote characters carry no grouping information whatsoever, so
+ * dropping them at capture costs nothing and removes the whole class of
+ * downstream injection from an attacker-controlled string.
+ * Control characters (< 0x20, and 0x7F) go for the same reason.
  */
-const SVG_EVENT_ATTRS: readonly string[] = [
-  'onload', 'onerror', 'onclick', 'onmouseover', 'onmouseenter',
-  'onbegin', 'onend', 'onrepeat', 'onfocus', 'onfocusin',
-  'onanimationstart', 'ontoggle',
-];
+const GENERATOR_BANNED_CHARS = '<>"\'`';
+
+/** Strip markup/quote/control characters from an attacker-supplied
+ *  generator token. No regex (SSRF/ReDoS contract) — a character walk. */
+function sanitizeGenerator(raw: string): string {
+  let out = '';
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) continue;
+    if (GENERATOR_BANNED_CHARS.includes(ch)) continue;
+    out += ch;
+    if (out.length >= MAX_GENERATOR_LEN) break;
+  }
+  return out.trim();
+}
+
+/**
+ * HTMLRewriter's `Element` exposes its attribute list as
+ * `attributes: IterableIterator<string[]>` — each entry a
+ * `[name, value]` pair (@cloudflare/workers-types
+ * `latest/index.d.ts:1753`). It is NOT "attributes by name only", which
+ * is what the old closed SVG-event-attribute list was justified by.
+ *
+ * The narrowing through `unknown` is needed because `lib.dom` is pulled
+ * into this project transitively, so the GLOBAL `Element` identifier is
+ * the merged lib.dom + workers-types interface and the DOM's
+ * `NamedNodeMap` wins the `attributes` slot in the type system while the
+ * runtime object is the Workers one. A structural runtime check is the
+ * honest narrowing here — no `any`, no `@ts-ignore`. Returns null when
+ * the shape isn't iterable, so the caller degrades to "no on* attribute"
+ * rather than throwing.
+ */
+function elementAttributes(el: unknown): IterableIterator<string[]> | null {
+  if (el === null || typeof el !== 'object') return null;
+  const attrs: unknown = (el as { attributes?: unknown }).attributes;
+  if (attrs === null || typeof attrs !== 'object') return null;
+  if (!(Symbol.iterator in attrs)) return null;
+  return attrs as IterableIterator<string[]>;
+}
 
 /** Download filename extensions that a data:image/svg+xml href disguises. */
 const DISGUISED_DOWNLOAD_EXTS: readonly string[] = ['.pdf', '.docx', '.xlsx'];
@@ -508,18 +546,52 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     }
   };
 
-  /** True when `el` carries any attribute from the closed SVG on* list. */
-  const hasSvgEventAttr = (el: { getAttribute(name: string): string | null }): boolean =>
-    SVG_EVENT_ATTRS.some((a) => el.getAttribute(a) !== null);
+  /**
+   * True when `el` carries ANY `on*` event-handler attribute.
+   *
+   * HTMLRewriter DOES expose the attribute list —
+   * `Element.attributes: IterableIterator<string[]>` — so this is a real
+   * prefix test over the element's actual attributes rather than a
+   * guessed closed list. The previous closed list silently missed
+   * `onmouseout`, `onpointerdown`, `onwheel`, `oninput`, `onauxclick`,
+   * `oncopy`, `onscroll` and the rest of the (open-ended, vendor-
+   * extensible) handler set, on a weight-15 signal whose false-positive
+   * population is near zero. No regex; the walk is bounded by the
+   * MAX_BYTES body cap.
+   */
+  const hasSvgEventAttr = (el: unknown): boolean => {
+    const attrs = elementAttributes(el);
+    if (!attrs) return false;
+    for (const attr of attrs) {
+      const name = attr[0];
+      if (name !== undefined && name.toLowerCase().startsWith('on')) return true;
+    }
+    return false;
+  };
 
   const rewriter = new HTMLRewriter()
-    // Lane 3 §3.2 — bounded HTML-comment capture. The universal selector
-    // carries ONLY a comments() handler (no element/text work), so the
-    // per-element cost is nil; the total retained text is capped by
-    // MAX_COMMENT_SAMPLE / MAX_COMMENTS. HTMLRewriter delivers a comment
-    // whole (unlike text(), which chunks), so each entry is one comment
-    // and the single-comment scoping the A5 rule requires holds.
-    .on('*', {
+    // Lane 3 §3.2 — bounded HTML-comment capture, DOCUMENT-WIDE.
+    //
+    // This was previously registered as `.on('*', { comments })`. The `*`
+    // selector matches ELEMENTS, so a comment with no open element
+    // ancestor — before `<!DOCTYPE html>`/`<html>`, or after `</html>` —
+    // was never delivered. That prologue/epilogue is exactly where
+    // builder banner comments live (`<!-- Generated by … -->`), which is
+    // intended recall for `agent_scaffold_comment` and for the comment
+    // leg of `build_placeholder_text`. `onDocument` fires document-wide
+    // and costs nothing per element, so it also removes the per-element
+    // selector match over up to MAX_BYTES of hostile input.
+    //
+    // (It is NOT a fix for duplicate dispatch: verified against the real
+    // Workers runtime, `.on('*')` delivered one whole comment per
+    // callback, not once per ancestor.)
+    //
+    // Both bounds and the single-comment scoping are preserved exactly:
+    // HTMLRewriter delivers a comment whole (unlike text(), which
+    // chunks), so each entry is one comment — which is what the A5 rule
+    // requires — and the retained total is capped by MAX_COMMENT_SAMPLE /
+    // MAX_COMMENTS.
+    .onDocument({
       comments(c) {
         if (commentBudget <= 0 || commentSamples.length >= MAX_COMMENTS) return;
         const raw = c.text;
@@ -653,8 +725,11 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
         if (metaGenerator === null) {
           const name = (el.getAttribute('name') ?? '').trim().toLowerCase();
           if (name === 'generator') {
-            const content = (el.getAttribute('content') ?? '').trim();
-            if (content) metaGenerator = content.slice(0, MAX_GENERATOR_LEN);
+            // Charset-restricted at CAPTURE (not at render): see
+            // sanitizeGenerator. Bounded to MAX_GENERATOR_LEN by the
+            // same walk.
+            const content = sanitizeGenerator((el.getAttribute('content') ?? '').trim());
+            if (content) metaGenerator = content;
           }
         }
       },

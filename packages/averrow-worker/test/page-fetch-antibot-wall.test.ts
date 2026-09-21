@@ -16,8 +16,9 @@
  * test-only `HTMLRewriter` polyfill scoped to exactly the selectors
  * `parseSuspectHtml` registers (`input`, `[class]`, `form`, `img`,
  * `script`, `link`, `meta`, `title`, `body`, plus — Lane 3 §3.2 — the
- * universal `comments()` handler on `*`, and the `svg` / `svg *` / `a`
- * element selectors the new C1 `svg_script_payload` extraction uses). It
+ * document-wide `onDocument({ comments })` handler, and the `svg` /
+ * `svg *` / `a` element selectors the C1 `svg_script_payload` extraction
+ * uses, whose `on*` test now walks the real `Element.attributes`). It
  * is a plain tag/attribute tokenizer over CONTROLLED fixture strings —
  * not a general HTML parser, and not subject to the SSRF-attacker-input
  * regex constraints that govern the real fetcher (this never runs on
@@ -51,18 +52,33 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   parseSuspectHtml,
   fetchSuspectPage,
+  MAX_COMMENT_SAMPLE,
+  MAX_COMMENTS,
   type FetchDeps,
 } from "../src/lib/page-fetch";
 
 // ─── Minimal HTMLRewriter test double ─────────────────────────────────────
 
-type ElementHandler = { tagName: string; getAttribute(name: string): string | null };
+type ElementHandler = {
+  tagName: string;
+  getAttribute(name: string): string | null;
+  /**
+   * Mirrors the real `Element.attributes: IterableIterator<string[]>`
+   * (@cloudflare/workers-types `index.d.ts`) — each entry is a
+   * `[name, value]` pair with the name lowercased, as the runtime
+   * delivers it. `parseSuspectHtml` walks this for the `on*` prefix test
+   * that replaced the guessed closed list of SVG event attributes.
+   */
+  readonly attributes: IterableIterator<string[]>;
+};
 type CommentHandler = { text: string };
 type Handler = {
   element?: (el: ElementHandler) => void;
   text?: (t: { text: string }) => void;
   comments?: (c: CommentHandler) => void;
 };
+/** `onDocument` handlers — document-wide, no selector. */
+type DocumentHandler = { comments?: (c: CommentHandler) => void };
 
 const VOID_TAGS = new Set(["input", "img", "link", "meta", "br", "hr"]);
 
@@ -85,7 +101,11 @@ function selectorMatches(
   return false;
 }
 
-function runFakeRewrite(html: string, regs: Array<{ selector: string; handler: Handler }>): void {
+function runFakeRewrite(
+  html: string,
+  regs: Array<{ selector: string; handler: Handler }>,
+  docRegs: DocumentHandler[],
+): void {
   const stack: string[] = [];
 
   const fireElement = (tagName: string, attrs: Record<string, string>) => {
@@ -94,6 +114,10 @@ function runFakeRewrite(html: string, regs: Array<{ selector: string; handler: H
       getAttribute: (name: string) => {
         const key = name.toLowerCase();
         return Object.prototype.hasOwnProperty.call(attrs, key) ? (attrs[key] ?? null) : null;
+      },
+      // A FRESH iterator per access, like the runtime's.
+      get attributes(): IterableIterator<string[]> {
+        return Object.entries(attrs).map(([k, v]): string[] => [k, v])[Symbol.iterator]();
       },
     };
     for (const { selector, handler } of regs) {
@@ -111,11 +135,15 @@ function runFakeRewrite(html: string, regs: Array<{ selector: string; handler: H
 
   // Lane 3 §3.2 — HTMLRewriter delivers a comment as ONE whole `c.text`
   // (never chunked like text()), which is exactly the delivery shape the
-  // A5 single-comment scoping rule depends on. Only the `*` universal
-  // selector carries a comments() handler in the real parser.
+  // A5 single-comment scoping rule depends on. The real parser registers
+  // its comments() handler via `onDocument`, NOT via a selector, so it
+  // fires document-wide — including for comments with no open element
+  // ancestor (before <!DOCTYPE>/<html>, after </html>), which is where
+  // builder banner comments live and which the old `.on('*')`
+  // registration could never reach.
   const fireComment = (text: string) => {
-    for (const { selector, handler } of regs) {
-      if (selector === "*" && handler.comments) handler.comments({ text });
+    for (const handler of docRegs) {
+      if (handler.comments) handler.comments({ text });
     }
   };
 
@@ -175,17 +203,23 @@ function runFakeRewrite(html: string, regs: Array<{ selector: string; handler: H
 
 class FakeHTMLRewriter {
   private regs: Array<{ selector: string; handler: Handler }> = [];
+  private docRegs: DocumentHandler[] = [];
   on(selector: string, handler: Handler): this {
     this.regs.push({ selector, handler });
     return this;
   }
+  onDocument(handler: DocumentHandler): this {
+    this.docRegs.push(handler);
+    return this;
+  }
   transform(response: Response): { arrayBuffer(): Promise<ArrayBuffer> } {
     const regs = this.regs;
+    const docRegs = this.docRegs;
     return {
       async arrayBuffer(): Promise<ArrayBuffer> {
         const buf = await response.arrayBuffer();
         const html = new TextDecoder().decode(buf);
-        runFakeRewrite(html, regs);
+        runFakeRewrite(html, regs, docRegs);
         return new ArrayBuffer(0);
       },
     };
@@ -409,19 +443,36 @@ describe("parseSuspectHtml — comment accumulator (Lane 3 §3.2)", () => {
     expect(s.commentSamples[1]).not.toContain("wire auth");
   });
 
-  it("truncates a single comment at the MAX_COMMENT_SAMPLE budget (8192 chars — mirrors the unexported constant in lib/page-fetch.ts; update this test if that constant moves)", async () => {
-    const long = "x".repeat(9000);
+  it("truncates a single comment at the MAX_COMMENT_SAMPLE budget", async () => {
+    const long = "x".repeat(MAX_COMMENT_SAMPLE + 808);
     const html = `<html><body><!--${long}--></body></html>`;
     const s = await parseSuspectHtml(bytes(html));
     expect(s.commentSamples).toHaveLength(1);
-    expect(s.commentSamples[0]!.length).toBe(8192);
+    expect(s.commentSamples[0]!.length).toBe(MAX_COMMENT_SAMPLE);
   });
 
-  it("caps the number of retained comment slices at MAX_COMMENTS (64 — mirrors the unexported constant)", async () => {
-    const comments = Array.from({ length: 70 }, (_, i) => `<!-- c${i} -->`).join("");
+  it("caps the number of retained comment slices at MAX_COMMENTS", async () => {
+    const comments = Array.from(
+      { length: MAX_COMMENTS + 6 },
+      (_, i) => `<!-- c${i} -->`,
+    ).join("");
     const html = `<html><body>${comments}</body></html>`;
     const s = await parseSuspectHtml(bytes(html));
-    expect(s.commentSamples).toHaveLength(64);
+    expect(s.commentSamples).toHaveLength(MAX_COMMENTS);
+  });
+
+  it("captures a comment in the document PROLOGUE (before <!DOCTYPE>/<html>) and EPILOGUE (after </html>)", async () => {
+    // The regression this pins: `.on('*', { comments })` matched ELEMENTS,
+    // so a comment with no open element ancestor was never delivered —
+    // and that is exactly where builder banner comments sit.
+    const html =
+      `<!-- Generated by ExampleBuilder 4.2 --><!DOCTYPE html>` +
+      `<html><body><p>hi</p></body></html>` +
+      `<!-- build id: 9f2 -->`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.commentSamples).toHaveLength(2);
+    expect(s.commentSamples[0]).toContain("Generated by ExampleBuilder 4.2");
+    expect(s.commentSamples[1]).toContain("build id: 9f2");
   });
 
   it("a page with no comments returns an empty commentSamples array", async () => {
@@ -470,6 +521,35 @@ describe("parseSuspectHtml — svg_script_payload extraction (Lane 3 §3.1 C1)",
     expect(s.svgScriptPayload).toBe(false);
   });
 
+  // The on* test is a REAL prefix walk over Element.attributes, not a
+  // guessed closed list. Each handler below was MISSING from the old
+  // 12-entry list, on a weight-15 signal with a near-zero FP population.
+  it.each([
+    "onmouseout",
+    "onpointerdown",
+    "onwheel",
+    "oninput",
+    "onauxclick",
+    "oncopy",
+    "onscroll",
+  ])("leg (a): %s inside an <svg> subtree sets svgScriptPayload", async (attr) => {
+    const html = `<html><body><svg><circle ${attr}="alert(1)" /></svg></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.svgScriptPayload).toBe(true);
+  });
+
+  it("the on* walk is case-insensitive on the attribute NAME", async () => {
+    const html = `<html><body><svg><circle OnPointerEnter="alert(1)" /></svg></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.svgScriptPayload).toBe(true);
+  });
+
+  it("an svg attribute that merely STARTS with a letter run is not mistaken for on* (opacity, origin)", async () => {
+    const html = `<html><body><svg><circle opacity="0.5" origin="0 0" /></svg></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.svgScriptPayload).toBe(false);
+  });
+
   it("leg (b): a[download] to a data:image/svg+xml URI disguised as a .pdf sets svgDownloadDisguise", async () => {
     const html = `<html><body><a download="invoice.pdf" href="data:image/svg+xml;base64,PHN2Zz4=">Download</a></body></html>`;
     const s = await parseSuspectHtml(bytes(html));
@@ -492,5 +572,40 @@ describe("parseSuspectHtml — svg_script_payload extraction (Lane 3 §3.1 C1)",
     const html = `<html><body><a href="data:image/svg+xml;base64,PHN2Zz4=">no download attr</a></body></html>`;
     const s = await parseSuspectHtml(bytes(html));
     expect(s.svgDownloadDisguise).toBe(false);
+  });
+});
+
+// ─── Lane 3 §3.1 M1 — <meta name="generator"> capture + charset guard ─────
+
+describe("parseSuspectHtml — metaGenerator capture", () => {
+  it("captures the generator token", async () => {
+    const html = `<html><head><meta name="generator" content="WordPress 6.5"></head><body></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.metaGenerator).toBe("WordPress 6.5");
+  });
+
+  it("strips markup/quote characters at CAPTURE — the column is a grouping dimension, and its render sinks (CSV export, briefing email, takedown-notice template) are not auto-escaping", async () => {
+    const html = `<html><head><meta name="generator" content="Kit<builder 'v1' \`beta\`"></head><body></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.metaGenerator).toBe("Kitbuilder v1 beta");
+  });
+
+  it("strips control characters", async () => {
+    const html = `<html><head><meta name="generator" content="Word\u0007Press\u0000"></head><body></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.metaGenerator).toBe("WordPress");
+  });
+
+  it("bounds the retained token at 64 chars", async () => {
+    const long = "g".repeat(200);
+    const html = `<html><head><meta name="generator" content="${long}"></head><body></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.metaGenerator!.length).toBe(64);
+  });
+
+  it("a generator made ENTIRELY of banned characters yields null, not an empty string", async () => {
+    const html = `<html><head><meta name="generator" content="'''"></head><body></body></html>`;
+    const s = await parseSuspectHtml(bytes(html));
+    expect(s.metaGenerator).toBeNull();
   });
 });
