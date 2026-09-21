@@ -11,6 +11,7 @@ import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaus
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
+import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import type { Env } from "../types";
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
@@ -407,6 +408,98 @@ interface PageAnalysisDiag {
   wall_rate_pct: number | null;
   /** Per-wall-family counts (GROUP BY page_anti_bot_wall, NULL excluded). */
   by_family: Array<{ family: string; n: number }>;
+  /**
+   * Outcome breakdown of the analyzed population (Lane 3 §6). The
+   * existing `fetched_ok` above is a MISNOMER retained for contract
+   * stability — it counts every row the pass has touched, successes and
+   * failures alike, which is exactly the gap this field closes.
+   *
+   * The outcome is INFERRED, because `SuspectPageResult.rejectedReason`
+   * is not persisted: the success UPDATE always writes
+   * `page_ai_signals`, the failure UPDATE never does, so non-NULL
+   * `page_ai_signals` means "reached the scorer". Two caveats worth
+   * knowing before acting on this: rows last analyzed BEFORE migration
+   * 0264 read as `not_scored_*` until their next pass (24 h per-domain
+   * cadence, so it self-heals within a day), and `not_scored_other`
+   * conflates non-HTML content-type with oversize — including
+   * `oversize_declared`, which spec §6 flags as possibly biased against
+   * exactly the fat AI-builder pages this lane targets. Separating
+   * those needs a persisted reject reason, which is not in Phase 1.
+   */
+  by_fetch_outcome: Array<{ outcome: string; n: number }>;
+  /**
+   * Lane 3 Class A/B/C shadow-signal telemetry. STRUCTURALLY SEPARATE
+   * from `exfil` below — different classes, different authority.
+   * Collapsing them here is the first step toward collapsing them in
+   * the scorer (spec §6).
+   */
+  ai_build: {
+    /** Rows with a shadow verdict (page_ai_signals IS NOT NULL) — the denominator. */
+    scored: number;
+    /** Rows on which at least one shadow signal fired. */
+    any_fired: number;
+    /**
+     * Per-signal firing counts + rate over `scored`.
+     * ALARMS: 0.0% for 30 days → the extractor is broken or the signal
+     * is dead (both Class A signals are expected to decay — retirement
+     * is the planned end state, spec §5.6). >15% of `scored` → it is a
+     * builder-popularity detector, not a phishing signal; demote it to
+     * metadata. No rate is actionable below n = 30 (spec §4.6).
+     */
+    by_signal: Array<{ signal: string; n: number; rate_pct: number | null }>;
+    /** Rows where the Class A cap actually bound (uncapped sum > 20). */
+    class_a_cap_hits: number;
+    /**
+     * THE ONE THAT MATTERS. Rows whose threat band WOULD rise because
+     * of Class A specifically — i.e. band(score + full delta) is above
+     * band(score + Class B/C only). Near-zero over a full cycle means
+     * Class A is decorative and should become metadata-only.
+     */
+    escalations_attributable: number;
+    /** Rows whose band would rise from the full delta, Class A or not. */
+    escalations_any: number;
+  };
+  /**
+   * Lane 3 Class B sink telemetry. Actor intelligence, not health.
+   */
+  exfil: {
+    /** Rows where covert_exfil_sink or form_relay_sink fired. */
+    firings: number;
+    /** Campaign mix by matched sink host. */
+    by_sink_host: Array<{ host: string; n: number }>;
+    /** Distinct bot/webhook ids seen. */
+    distinct_sink_ids: number;
+    /** Rows carrying an extractable sink id (denominator for the ratio). */
+    sink_id_firings: number;
+    /**
+     * distinct_sink_ids / sink_id_firings. FAR BELOW 1.0 means one
+     * operator is running many kits — the clustering finding this lane
+     * exists to produce.
+     */
+    sink_ids_per_firing: number | null;
+  };
+  /**
+   * M1 builder mix. WEIGHT ZERO by doctrine. This block also serves to
+   * permanently falsify any future proposal to score the generator tag
+   * (spec §8 item 5).
+   */
+  generator: {
+    /** Scored rows that declared a <meta name="generator">. */
+    tagged: number;
+    by_token: Array<{ token: string; n: number }>;
+  };
+}
+
+/**
+ * Threat band a page score lands in, mirroring
+ * escalateThreatLevelForPage's non-credential thresholds (60 → HIGH,
+ * 30 → MEDIUM). Used ONLY to answer the counterfactual "would this have
+ * escalated?" in diagnostics — it escalates nothing.
+ */
+function pageScoreBand(score: number): number {
+  if (score >= 60) return 2;
+  if (score >= 30) return 1;
+  return 0;
 }
 
 /** Build the `page_analysis` diagnostics block. cachedValue-wrapped so
@@ -417,7 +510,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
   return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking', 600, async () => {
     // lookalike_domains is a small bounded table, so a full scan here is
     // fine — this would be a red flag on the 217K-row threats table.
-    const [counts, byFamily] = await Promise.all([
+    const [counts, byFamily, shadowRows] = await Promise.all([
       env.DB.prepare(`
         SELECT
           SUM(CASE WHEN page_fetched_at IS NOT NULL THEN 1 ELSE 0 END)    AS fetched_ok,
@@ -431,14 +524,137 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
         GROUP BY page_anti_bot_wall
         ORDER BY n DESC
       `).all<{ family: string; n: number }>(),
+      // ONE pass over the analyzed population, aggregated in the Worker
+      // (Lane 3 §6). Deliberately NOT eight `LIKE '%"key"%'` scans over
+      // the page_ai_signals TEXT column — that is the dead-index
+      // full-scan failure class, multiplied by eight. Bounded by
+      // lookalike_domains being a small table AND by the
+      // page_fetched_at IS NOT NULL predicate, and it runs at most once
+      // per 600 s TTL.
+      env.DB.prepare(`
+        SELECT page_ai_signals, page_score_delta, page_phishing_score,
+               page_generator, page_exfil_sink, page_exfil_sink_id,
+               page_http_status
+        FROM lookalike_domains
+        WHERE page_fetched_at IS NOT NULL
+      `).all<{
+        page_ai_signals: string | null;
+        page_score_delta: number | null;
+        page_phishing_score: number | null;
+        page_generator: string | null;
+        page_exfil_sink: string | null;
+        page_exfil_sink_id: string | null;
+        page_http_status: number | null;
+      }>(),
     ]);
     const fetchedOk = counts?.fetched_ok ?? 0;
     const wallsObserved = counts?.walls_observed ?? 0;
+
+    // ── Worker-side aggregation of the single pass ──────────────────
+    const outcomes = new Map<string, number>();
+    const bySignal = new Map<string, number>();
+    const byGenerator = new Map<string, number>();
+    const bySinkHost = new Map<string, number>();
+    const sinkIds = new Set<string>();
+    let scored = 0;
+    let anyFired = 0;
+    let capHits = 0;
+    let escalationsAny = 0;
+    let escalationsAttributable = 0;
+    let exfilFirings = 0;
+    let sinkIdFirings = 0;
+    let generatorTagged = 0;
+
+    const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+
+    for (const row of shadowRows.results) {
+      if (row.page_ai_signals === null) {
+        // Failure branch (or a row last analyzed before migration 0264).
+        const status = row.page_http_status;
+        if (status !== null && status >= 400) bump(outcomes, 'not_scored_http_error');
+        else if (status === null) bump(outcomes, 'not_scored_no_status');
+        else bump(outcomes, 'not_scored_other');
+        continue;
+      }
+      bump(outcomes, 'scored');
+      scored += 1;
+
+      let keys: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.page_ai_signals);
+        if (Array.isArray(parsed)) keys = parsed.filter((k): k is string => typeof k === 'string');
+      } catch {
+        // Unparseable JSON counts as "scored, nothing fired" rather than
+        // poisoning the whole block.
+        keys = [];
+      }
+
+      if (keys.length > 0) anyFired += 1;
+      for (const k of keys) bump(bySignal, k);
+
+      const delta = shadowScoreDelta(keys);
+      if (delta.capHit) capHits += 1;
+
+      // Counterfactual banding. Nothing is written; this only answers
+      // "would the shadow delta have moved the band, and was Class A
+      // what moved it?".
+      const base = row.page_phishing_score ?? 0;
+      const withAll = pageScoreBand(base + delta.delta);
+      const withoutClassA = pageScoreBand(base + delta.classBCSum);
+      if (withAll > pageScoreBand(base)) escalationsAny += 1;
+      if (withAll > withoutClassA) escalationsAttributable += 1;
+
+      if (row.page_generator) { generatorTagged += 1; bump(byGenerator, row.page_generator); }
+      if (row.page_exfil_sink) {
+        exfilFirings += 1;
+        bump(bySinkHost, row.page_exfil_sink);
+        if (row.page_exfil_sink_id) { sinkIdFirings += 1; sinkIds.add(row.page_exfil_sink_id); }
+      }
+    }
+
+    const pct = (n: number, d: number): number | null =>
+      d > 0 ? Math.round((n / d) * 1000) / 10 : null;
+    const topN = <K extends string>(m: Map<string, number>, key: K, limit = 20) =>
+      Array.from(m.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit)
+        .map(([k, n]) => ({ [key]: k, n }) as Record<K, string> & { n: number });
+
     return {
       fetched_ok: fetchedOk,
       walls_observed: wallsObserved,
       wall_rate_pct: fetchedOk > 0 ? Math.round((wallsObserved / fetchedOk) * 1000) / 10 : null,
       by_family: byFamily.results.map((r) => ({ family: r.family, n: r.n })),
+      by_fetch_outcome: Array.from(outcomes.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([outcome, n]) => ({ outcome, n })),
+      ai_build: {
+        scored,
+        any_fired: anyFired,
+        // Every signal is listed even at n = 0: a signal that silently
+        // disappears from the list is indistinguishable from one that
+        // never fired, and "0.0% for 30 days" is itself the alarm.
+        by_signal: Object.keys(SHADOW_SIGNAL_WEIGHTS).map((signal) => {
+          const n = bySignal.get(signal) ?? 0;
+          return { signal, n, rate_pct: pct(n, scored) };
+        }).sort((a, b) => b.n - a.n),
+        class_a_cap_hits: capHits,
+        escalations_attributable: escalationsAttributable,
+        escalations_any: escalationsAny,
+      },
+      exfil: {
+        firings: exfilFirings,
+        by_sink_host: topN(bySinkHost, 'host'),
+        distinct_sink_ids: sinkIds.size,
+        sink_id_firings: sinkIdFirings,
+        sink_ids_per_firing: sinkIdFirings > 0
+          ? Math.round((sinkIds.size / sinkIdFirings) * 1000) / 1000
+          : null,
+      },
+      generator: {
+        tagged: generatorTagged,
+        by_token: topN(byGenerator, 'token'),
+      },
     };
   });
 }
@@ -1757,6 +1973,17 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // that the plain-HTTP fetcher can't see through. cachedValue-
         // wrapped (diag.page_analysis.cloaking, 600s); the full scan is
         // safe only because lookalike_domains is a small bounded table.
+        //
+        // Also carries the Lane 3 shadow-mode telemetry (migration 0264):
+        // `by_fetch_outcome[]` (the denominator breakdown `fetched_ok`
+        // never had), `ai_build.*` (Class A/B/C firing rates, Class A cap
+        // hits, and the counterfactual escalations Class A would have
+        // caused), `exfil.*` (sink host mix + distinct bot/webhook ids —
+        // the kit-clustering pivot) and `generator.by_token[]` (builder
+        // mix, weight 0). ai_build and exfil are STRUCTURALLY SEPARATE on
+        // purpose: different evidence classes, different authority.
+        // Every percentage carries its raw `n`; no rate is actionable
+        // below n = 30.
         page_analysis: pageAnalysis,
 
         // Weaponization velocity distribution (Wave 3, rec 5). Counts of

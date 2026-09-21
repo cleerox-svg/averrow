@@ -56,7 +56,7 @@ function normalizeLevel(raw: string | null): PageThreatLevel {
 }
 
 /**
- * Fetch + score a single suspect domain and persist the 5 page columns.
+ * Fetch + score a single suspect domain and persist the page columns.
  * ALWAYS stamps page_fetched_at (even on SSRF/network rejection) so a
  * domain that keeps failing isn't re-selected every tick. Writes go
  * through env.DB directly (never a read replica). Returns the phishing
@@ -89,6 +89,12 @@ export async function runPageAnalysisForDomain(
            page_signals = ?,
            page_content_hash = ?,
            page_anti_bot_wall = ?,
+           page_ai_signals = ?,
+           page_score_delta = ?,
+           page_generator = ?,
+           page_exfil_sink = ?,
+           page_exfil_sink_id = ?,
+           page_evidence = ?,
            updated_at = datetime('now')
        WHERE id = ?`,
     ).bind(
@@ -101,6 +107,23 @@ export async function runPageAnalysisForDomain(
       // fired key also lands in page_signals above for fired-signal
       // dashboards (T4.1 spec §5).
       phishing.antiBotWallFamily,
+      // ── Lane 3 SHADOW MODE (migration 0264) ─────────────────────
+      // Persisted for measurement ONLY. page_phishing_score above is
+      // the pre-Lane-3 score and page_score_delta is NOT added to it;
+      // threat_level escalation below reads neither. Promotion out of
+      // shadow mode is Phase 2 (spec §5.1-§5.2).
+      //
+      // page_ai_signals and page_score_delta are written on EVERY
+      // successful analysis (as '[]' / 0 when nothing fired), which is
+      // also what makes a non-NULL page_ai_signals the reliable marker
+      // that the last analysis reached the scorer — the failure branch
+      // below writes none of these columns.
+      JSON.stringify(phishing.aiSignals),
+      phishing.scoreDelta,
+      phishing.pageGenerator,
+      phishing.exfilSink,
+      phishing.exfilSinkId,
+      Object.keys(phishing.evidence).length > 0 ? JSON.stringify(phishing.evidence) : null,
       row.id,
     ).run();
   } else {
@@ -108,6 +131,11 @@ export async function runPageAnalysisForDomain(
     // cooldown (page_fetched_at) and record any status, but do NOT wipe a
     // prior successful verdict or its content-hash baseline — leave
     // page_phishing_score / page_signals / page_content_hash intact.
+    // Same rule for the Lane 3 shadow columns (migration 0264): this
+    // branch writes NONE of page_ai_signals / page_score_delta /
+    // page_generator / page_exfil_sink / page_exfil_sink_id /
+    // page_evidence, so a transient fetch failure never erases the
+    // evidence an analyst is adjudicating.
     await env.DB.prepare(
       `UPDATE lookalike_domains
        SET page_fetched_at = datetime('now'),
