@@ -312,6 +312,73 @@ const MAX_ICON_HREFS = 16;
 const MAX_TITLE_LEN = 300;
 const MAX_BODY_SAMPLE = 20_000;
 const MAX_SCRIPT_SAMPLE = 40_000;
+/**
+ * Total character budget across ALL captured HTML comments (Lane 3 §3.2).
+ * Same bounded-accumulator idiom as MAX_BODY_SAMPLE above: attacker
+ * content is never buffered past a fixed cap.
+ *
+ * Kept as an ARRAY of per-comment slices rather than one blob because the
+ * `agent_scaffold_comment` rule is scoped to a SINGLE comment — a
+ * checklist split across two unrelated comments is not the signal.
+ */
+export const MAX_COMMENT_SAMPLE = 8_192;
+/** Hard cap on the number of comment slices retained. */
+export const MAX_COMMENTS = 64;
+/** Cap on `<meta name="generator">` content (metadata, weight 0). */
+const MAX_GENERATOR_LEN = 64;
+
+/**
+ * Characters stripped from a captured `<meta name="generator">` value.
+ * The column is a GROUPING DIMENSION (weight 0) that spec §3.5 plans to
+ * render — and the likeliest sinks are NOT auto-escaping React: a CSV
+ * export, the briefing email, the §5.5 takedown-notice template. Markup
+ * and quote characters carry no grouping information whatsoever, so
+ * dropping them at capture costs nothing and removes the whole class of
+ * downstream injection from an attacker-controlled string.
+ * Control characters (< 0x20, and 0x7F) go for the same reason.
+ */
+const GENERATOR_BANNED_CHARS = '<>"\'`';
+
+/** Strip markup/quote/control characters from an attacker-supplied
+ *  generator token. No regex (SSRF/ReDoS contract) — a character walk. */
+function sanitizeGenerator(raw: string): string {
+  let out = '';
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) continue;
+    if (GENERATOR_BANNED_CHARS.includes(ch)) continue;
+    out += ch;
+    if (out.length >= MAX_GENERATOR_LEN) break;
+  }
+  return out.trim();
+}
+
+/**
+ * HTMLRewriter's `Element` exposes its attribute list as
+ * `attributes: IterableIterator<string[]>` — each entry a
+ * `[name, value]` pair (@cloudflare/workers-types
+ * `latest/index.d.ts:1753`). It is NOT "attributes by name only", which
+ * is what the old closed SVG-event-attribute list was justified by.
+ *
+ * The narrowing through `unknown` is needed because `lib.dom` is pulled
+ * into this project transitively, so the GLOBAL `Element` identifier is
+ * the merged lib.dom + workers-types interface and the DOM's
+ * `NamedNodeMap` wins the `attributes` slot in the type system while the
+ * runtime object is the Workers one. A structural runtime check is the
+ * honest narrowing here — no `any`, no `@ts-ignore`. Returns null when
+ * the shape isn't iterable, so the caller degrades to "no on* attribute"
+ * rather than throwing.
+ */
+function elementAttributes(el: unknown): IterableIterator<string[]> | null {
+  if (el === null || typeof el !== 'object') return null;
+  const attrs: unknown = (el as { attributes?: unknown }).attributes;
+  if (attrs === null || typeof attrs !== 'object') return null;
+  if (!(Symbol.iterator in attrs)) return null;
+  return attrs as IterableIterator<string[]>;
+}
+
+/** Download filename extensions that a data:image/svg+xml href disguises. */
+const DISGUISED_DOWNLOAD_EXTS: readonly string[] = ['.pdf', '.docx', '.xlsx'];
 
 /**
  * Extract JS-redirect targets from inline script text WITHOUT regex
@@ -323,6 +390,63 @@ export function extractJsRedirectTargets(script: string): string[] {
   const markers = [
     'location.href', 'location.replace', 'location.assign',
     'window.location', 'document.location', 'location=',
+  ];
+  const lower = script.toLowerCase();
+  const quotes = ['"', "'", '`'];
+
+  for (const marker of markers) {
+    let from = 0;
+    for (let i = 0; i < 32 && targets.length < 32; i++) {
+      const at = lower.indexOf(marker, from);
+      if (at === -1) break;
+      const segStart = at + marker.length;
+      const seg = script.slice(segStart, Math.min(script.length, segStart + 300));
+      // First quote char in the window.
+      let qi = -1;
+      let qc = '';
+      for (const q of quotes) {
+        const idx = seg.indexOf(q);
+        if (idx !== -1 && (qi === -1 || idx < qi)) { qi = idx; qc = q; }
+      }
+      if (qi !== -1) {
+        const rest = seg.slice(qi + 1);
+        const close = rest.indexOf(qc);
+        if (close > 0) targets.push(rest.slice(0, close));
+      }
+      from = segStart;
+    }
+  }
+  return targets;
+}
+
+/**
+ * Extract candidate EXFIL SINK targets from inline script text (Lane 3
+ * §3.1 B1). Structurally identical to extractJsRedirectTargets above —
+ * locate a small set of request-shaped markers and read the first quoted
+ * string that follows, bounded iterations, NO regex over attacker HTML
+ * (SSRF/ReDoS contract).
+ *
+ * This is the leg that closes the live false negative in
+ * `offdomain_form_exfil`, which reads `<form action>` ONLY and therefore
+ * cannot see a kit that POSTs credentials from script to a Telegram bot
+ * or a Discord webhook.
+ *
+ * Markers are lowercase because the scan runs over a lowercased copy, the
+ * same convention as extractJsRedirectTargets.
+ *
+ * Known limitation, deliberate: for `.open(` the FIRST quoted segment is
+ * the HTTP method (`xhr.open('POST', url)`), not the URL, so that marker
+ * contributes a useless 'post' token. It is kept because `.open(` is also
+ * written as `.open("https://…")` in generated one-liners, and because
+ * widening the walk to "the next N quoted segments" would deviate from
+ * the extractJsRedirectTargets shape this is specified to mirror. The
+ * `fetch(` / `sendBeacon(` / `axios.post(` markers carry the recall.
+ */
+export function extractScriptSinkTargets(script: string): string[] {
+  const targets: string[] = [];
+  const markers = [
+    'fetch(', '.open(', 'xmlhttprequest',
+    'navigator.sendbeacon(', 'axios.post(',
   ];
   const lower = script.toLowerCase();
   const quotes = ['"', "'", '`'];
@@ -366,6 +490,17 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
   let title = '';
   let bodyTextSample = '';
   let scriptText = '';
+  // ── Lane 3 accumulators (AI-build artifacts / exfil sinks) ────────
+  // HTML comments were previously COMPLETELY invisible to this parser —
+  // there was no comments() handler anywhere. They are the carrier for
+  // `agent_scaffold_comment` and part of `build_placeholder_text`.
+  const commentSamples: string[] = [];
+  let commentBudget = MAX_COMMENT_SAMPLE;
+  let metaGenerator: string | null = null;
+  /** Inline <svg> subtree carrying <script>/<foreignObject>/an on* attr. */
+  let svgScriptPayload = false;
+  /** <a download="invoice.pdf"> whose href is a data:image/svg+xml URI. */
+  let svgDownloadDisguise = false;
   // Anti-bot-wall family recorded by the fetcher (brand-agnostic tiers
   // only — the brand-relative `js_challenge` is resolved in the scorer).
   // First match wins by rank (widget families 1-3 outrank cf_challenge);
@@ -411,7 +546,96 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     }
   };
 
+  /**
+   * True when `el` carries ANY `on*` event-handler attribute.
+   *
+   * HTMLRewriter DOES expose the attribute list —
+   * `Element.attributes: IterableIterator<string[]>` — so this is a real
+   * prefix test over the element's actual attributes rather than a
+   * guessed closed list. The previous closed list silently missed
+   * `onmouseout`, `onpointerdown`, `onwheel`, `oninput`, `onauxclick`,
+   * `oncopy`, `onscroll` and the rest of the (open-ended, vendor-
+   * extensible) handler set, on a weight-15 signal whose false-positive
+   * population is near zero. No regex; the walk is bounded by the
+   * MAX_BYTES body cap.
+   */
+  const hasSvgEventAttr = (el: unknown): boolean => {
+    const attrs = elementAttributes(el);
+    if (!attrs) return false;
+    for (const attr of attrs) {
+      const name = attr[0];
+      if (name !== undefined && name.toLowerCase().startsWith('on')) return true;
+    }
+    return false;
+  };
+
   const rewriter = new HTMLRewriter()
+    // Lane 3 §3.2 — bounded HTML-comment capture, DOCUMENT-WIDE.
+    //
+    // This was previously registered as `.on('*', { comments })`. The `*`
+    // selector matches ELEMENTS, so a comment with no open element
+    // ancestor — before `<!DOCTYPE html>`/`<html>`, or after `</html>` —
+    // was never delivered. That prologue/epilogue is exactly where
+    // builder banner comments live (`<!-- Generated by … -->`), which is
+    // intended recall for `agent_scaffold_comment` and for the comment
+    // leg of `build_placeholder_text`. `onDocument` fires document-wide
+    // and costs nothing per element, so it also removes the per-element
+    // selector match over up to MAX_BYTES of hostile input.
+    //
+    // (It is NOT a fix for duplicate dispatch: verified against the real
+    // Workers runtime, `.on('*')` delivered one whole comment per
+    // callback, not once per ancestor.)
+    //
+    // Both bounds and the single-comment scoping are preserved exactly:
+    // HTMLRewriter delivers a comment whole (unlike text(), which
+    // chunks), so each entry is one comment — which is what the A5 rule
+    // requires — and the retained total is capped by MAX_COMMENT_SAMPLE /
+    // MAX_COMMENTS.
+    .onDocument({
+      comments(c) {
+        if (commentBudget <= 0 || commentSamples.length >= MAX_COMMENTS) return;
+        const raw = c.text;
+        if (!raw) return;
+        const slice = raw.slice(0, commentBudget);
+        commentSamples.push(slice);
+        commentBudget -= slice.length;
+      },
+    })
+    // Lane 3 §3.1 C1 leg (a) — an inline <svg> subtree containing
+    // <script>, <foreignObject>, or an on* event attribute. Two bounded
+    // registrations rather than depth tracking: the descendant selector
+    // does the subtree scoping for us, so there is no end-tag bookkeeping
+    // to get wrong on self-closing foreign content.
+    .on('svg', {
+      element(el) {
+        if (!svgScriptPayload && hasSvgEventAttr(el)) svgScriptPayload = true;
+      },
+    })
+    .on('svg *', {
+      element(el) {
+        if (svgScriptPayload) return;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'foreignobject' || hasSvgEventAttr(el)) {
+          svgScriptPayload = true;
+        }
+      },
+    })
+    // Lane 3 §3.1 C1 leg (b) — a download link that advertises a
+    // document but hands over an SVG. A genuine PDF is not an SVG, so the
+    // FP population here is approximately zero.
+    .on('a', {
+      element(el) {
+        if (svgDownloadDisguise) return;
+        const dl = el.getAttribute('download');
+        if (dl === null) return;
+        const href = (el.getAttribute('href') ?? '').trim().toLowerCase();
+        if (!href.startsWith('data:image/svg+xml')) return;
+        const name = dl.trim().toLowerCase();
+        if (DISGUISED_DOWNLOAD_EXTS.some((ext) => name.endsWith(ext))) {
+          svgDownloadDisguise = true;
+        }
+      },
+    })
     .on('input', {
       element(el) {
         if (hasPasswordInput) return;
@@ -495,6 +719,19 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
         if (equiv === 'refresh' && metaRefresh === null) {
           metaRefresh = el.getAttribute('content');
         }
+        // Lane 3 §3.1 M1 — <meta name="generator">, first one wins.
+        // METADATA ONLY, weight 0: this is a grouping dimension for
+        // builder mix, never a scored signal (spec §8 item 5).
+        if (metaGenerator === null) {
+          const name = (el.getAttribute('name') ?? '').trim().toLowerCase();
+          if (name === 'generator') {
+            // Charset-restricted at CAPTURE (not at render): see
+            // sanitizeGenerator. Bounded to MAX_GENERATOR_LEN by the
+            // same walk.
+            const content = sanitizeGenerator((el.getAttribute('content') ?? '').trim());
+            if (content) metaGenerator = content;
+          }
+        }
       },
     })
     .on('title', {
@@ -536,6 +773,13 @@ export async function parseSuspectHtml(bytes: Uint8Array): Promise<ParsedPageSig
     title,
     bodyTextSample,
     antiBotWall,
+    // ── Lane 3 (shadow mode) ──────────────────────────────────────
+    scriptTextSample: scriptText,
+    scriptSinkTargets: extractScriptSinkTargets(scriptText),
+    commentSamples,
+    metaGenerator,
+    svgScriptPayload,
+    svgDownloadDisguise,
   };
 }
 

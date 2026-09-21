@@ -3,6 +3,13 @@
 **Status:** Research and plan only. **Nothing in this document has been built.**
 No source file, migration, or config was changed in producing it.
 
+**Decisions (2026-09-21):** four of the eight gates in §11 are settled — Lane 2
+is in scope, the Workers AI binding is approved, the deepfake boundary's stated
+reason is retired, and actor attribution proceeds via the **tier ladder in
+§13.4** rather than the flat "no" an earlier draft proposed. §12's build order
+is therefore live. Four gates remain open, all attached to Lane 1 or to
+optional Tier-3 lanes.
+
 **Scope:** Survey external sources Averrow could ingest as a *new class of
 signal* — feeds that help identify AI-generated threats and AI-amplified brand
 threats — and turn that survey into a sequenced, costed plan with explicit
@@ -163,16 +170,63 @@ Access key: **F** free/open · **K** free w/ key · **C** commercial · **X** no
 
 ### 5.1 Worth ingesting
 
-| # | Source | Provides | Access | Signal vs noise |
-|---|---|---|---|---|
-| 1 | [Official MCP Registry](https://registry.modelcontextprotocol.io/) | Server names/namespaces; `updated_since` cursor — a near-exact match for `feedRunner` incremental-pull semantics | **F** | **High.** ~1k rows, no noise |
-| 2 | npm / PyPI registries | New publishes, names, metadata | **F** | **High** filtered to brand+permutation; very noisy raw |
-| 3 | Hugging Face Hub API | Model/dataset/org names; deleted-author namespaces | **F/K** | **Med-high** — namespace reuse + typosquat |
-| 4 | LLM answer-engine probing (self-generated) | Brand→URL/handle/phone answers across N models | **K** (own keys) | **Highest differentiation.** Non-deterministic — a *rate*, never a boolean |
-| 5 | C2PA / IPTC markers in fetched page assets | `trainedAlgorithmicMedia`, JUMBF box, EXIF generator tags | **F**, in-band | **Positive-only**, zero marginal cost |
-| 6 | Cloudflare Workers AI (EmbeddingGemma) | Embeddings for semantic clustering | **K** (binding) | Unblocks July §3.2's semantic leg |
-| 7 | DynaPD (6k kits / 2,059 families, de-weaponized) | Kit corpus | **F**, research licence | **Validation corpus** — answers July §8 directly. Internal only |
-| 8 | OECD.AI / AI Incident Database | AI incident records | **F** | Narrative enrichment only |
+> **Revalidated 2026-09-21 by direct probe** (see §5.1a). Egress opened partway
+> since the original sweep, so sources 1, 2 and 6 were verified against the
+> live APIs rather than search summaries. **Two claims did not survive.**
+
+| # | Source | Provides | Access | Verified? | Signal vs noise |
+|---|---|---|---|---|---|
+| 1 | [Official MCP Registry](https://registry.modelcontextprotocol.io/) | Server names/namespaces; `updated_since` cursor | **F** | ✅ **contract confirmed, volume was wrong** | **High**, but see §5.1a — 33,765 servers, not ~1k |
+| 2 | npm / PyPI registries | Existence checks on brand permutations | **F** | ✅ **confirmed, design corrected** | **High** via targeted `HEAD`; full-index ingestion infeasible |
+| 3 | Hugging Face Hub API | Model/dataset/org names; deleted-author namespaces | **F/K** | ⚠️ **unverified** — 403 policy denial from this session | **Med-high** — namespace reuse + typosquat |
+| 4 | LLM answer-engine probing (self-generated) | Brand→URL/handle/phone answers across N models | **K** (own keys) | n/a — self-generated | **Highest differentiation.** Non-deterministic — a *rate*, never a boolean |
+| 5 | C2PA / IPTC markers in fetched page assets | `trainedAlgorithmicMedia`, JUMBF box, EXIF generator tags | **F**, in-band | ⚠️ **unverified** — spec site unreachable | **Positive-only**, zero marginal cost |
+| 6 | Cloudflare Workers AI (EmbeddingGemma) | Embeddings for semantic clustering | **K** (binding) | ✅ **confirmed first-party** | Unblocks July §3.2's semantic leg — **512-token cap**, see §5.1a |
+| 7 | DynaPD (6k kits / 2,059 families, de-weaponized) | Kit corpus | **F**, research licence | ⚠️ **unverified** — 403 | **Validation corpus** — answers July §8 directly. Internal only |
+| 8 | OECD.AI / AI Incident Database | AI incident records | **F** | ⚠️ **unverified** — 403 | Narrative enrichment only |
+
+### 5.1a Revalidation findings (2026-09-21)
+
+**MCP Registry — volume was wrong by 34×.** Paginated to completion:
+**33,765 unique servers across 109,986 rows** (1,100 pages at `limit=100`), not
+"~1k". The claim that it "trivially fits `feedRunner`" — which is why it was
+nominated as the gentle first feed — does not hold as stated.
+
+What rescues it: `updated_since` **genuinely filters**, confirmed with a
+control (a far-future timestamp returns 0 servers, while an unknown param is
+silently ignored with a 200). Measured deltas: **24h = 655 unique servers /
+11 pages; 7d = 3,739 unique / 75 pages.** So:
+
+- Incremental pulls are comfortable and fit an existing tick.
+- **The initial backfill of ~1,100 sequential requests cannot be one Worker
+  invocation** and needs its own strategy (cursor checkpointed in KV, resumed
+  across invocations — the `dns_queue` reconciler's cursor pattern is the
+  in-house precedent).
+- Two contract details the research got wrong: the cursor is **`nextCursor`**
+  (camelCase, nested under `metadata`), and **~58% of rows are historical
+  versions** — dedupe on `_meta…isLatest`, not on rows.
+
+**npm / PyPI — the ingestion design was wrong, and the right one is cheaper.**
+Full-index diffing is infeasible: PyPI's simple index is **895,450 projects /
+43.9 MB**, npm's `/-/all` returns 404 and the replication `_changes` feed is
+unreachable. But **targeted `HEAD` existence checks return 0 bytes with a clean
+200/404** (`npm/express` → 200, `npm/reqeusts` → 404; same on PyPI). That is
+exactly the lookalike scanner's "is this permutation registered?" primitive, so
+Lane 2 gets *simpler*: generate permutations → check existence. No bulk ingest,
+no index storage.
+
+**EmbeddingGemma — confirmed, with a cap worth knowing.**
+`@cf/google/embeddinggemma-300m`, 768 dims, cosine, Cloudflare-hosted, no
+provider key. The research missed a **512 input-token limit**. Fine for the
+flagship use (lures at 30–80 words ≈ 40–110 tokens); for long-form,
+`@cf/qwen/qwen3-embedding-0.6b` offers 1,024 dims / 4,096 tokens.
+
+**Still unverified.** Hugging Face, OECD.AI, DynaPD and the C2PA spec are all
+403 policy denials from this session. Note the asymmetry: *our* inability to
+reach Hugging Face says nothing about whether the Worker can reach it from
+Cloudflare's network — that is an open question, not a negative finding. The
+Netcraft 34% figure underpinning Lane 1 also remains unverified, which matters
+because it is the headline number for the highest-ranked lane.
 
 ### 5.2 Real but blocked, deferred, or bad-access
 
@@ -242,10 +296,21 @@ technical one; and the GEO-monitoring market tracks *visibility* — our angle i
 
 **Lane 2 — Registry brand-squatting.**
 
-MCP Registry first (free, documented, `updated_since` cursor, ~1k rows — fits
-`lib/feedRunner.ts` with no new concepts), then npm/PyPI, then HF
+**npm/PyPI first** — targeted `HEAD` existence checks over brand permutations
+(§5.1a: 0 bytes, clean 200/404, the lookalike scanner's own primitive) — then
+the MCP Registry once its checkpointed backfill is designed, then HF
 namespace-reuse. Landing: side table + classifier, the `social_mentions` →
 Watchdog pattern.
+
+**Ships with payload-sink extraction (attribution Tier 1, §13.4).** For every
+confirmed squat, extract the network sink from its install/runtime payload —
+webhook endpoint, bot API, or bare domain. The sink is an ordinary IOC: it
+lands in `threats`, acquires an IP and cert through normal enrichment, and
+bridges into NEXUS through machinery that already exists. That buys actor
+attribution for the subset of squats that have a network payload, with **no
+new axis, no new table, and no `threat_attributions.source` CHECK problem**.
+Nothing extracts sinks today (verified — `lib/page-fetch.ts` has no webhook
+extraction), so this is net-new capability.
 
 *Evidence:* Churilov 2026 — 199,845 responses across 5 frontier models; **127
 hallucinated package names shared by all five; 53 still registerable** `[V]`.
@@ -254,11 +319,10 @@ served to existing code references `[V]`. HF typosquat study over 1.02M models
 → 1,574 squatting models, 10.4% harmful `[S]`.
 
 *Note on scope:* July §3.3 dismissed slopsquatting as "out of Averrow's scope."
-**That call should be revisited.** It is the same primitive we already run
-(name permutation + registry diff + brand match), the harmed party is a company
-(so it passes `LRX_PRODUCT_BOUNDARIES.md`'s one-line test cleanly), and it is
-new sellable surface. Recommend reversing, with the decision recorded in the
-July doc.
+**Reversed 2026-09-21** (§11 decision 1). It is the same primitive we already
+run (name permutation + registry diff + brand match), the harmed party is a
+company (so it passes `LRX_PRODUCT_BOUNDARIES.md`'s one-line test cleanly), and
+it is new sellable surface. The reversal still needs recording in the July doc.
 
 **Lane 3 — AI-build artifacts in page source.**
 
@@ -427,40 +491,213 @@ from every migration and from `src/`. Cadence comes from
 
 ---
 
-## 11. Open decisions — these need a human, not an engineer
+## 11. Decisions
 
-| # | Decision | Why it's not an implementation detail |
+Settled 2026-09-21 unless marked open.
+
+| # | Decision | Status |
 |---|---|---|
-| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | Gates Lane 2 entirely. Recommend yes (§6) |
-| 2 | **Which assistants does Lane 1 cover, and at what cadence?** | Cost and customer-promise question. Per-model results don't generalize |
-| 3 | **Does Lane 1's output surface to tenants at launch, or run internal-only until calibrated?** | July §2.3's credibility bar. Same question July §8 left open for polymorphism |
-| 4 | **Add the Workers AI binding?** | New platform dependency + AI spend line. Unblocks existing stalled work (Lane 5) |
-| 5 | **Ratify or retire the deepfake boundary** (§10.1) | Currently inherited from a decommissioned product |
-| 6 | **Narrow the §2.1 text-detection doctrine?** | Only matters if Lane 7 is wanted. Cheap to defer |
-| 7 | **Legal review budget for §7.1/§7.6** | Two lanes have licensing gates ahead of code |
+| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | ✅ **YES.** Lane 2 is in scope. Record the reversal in the July doc |
+| 4 | **Add the Workers AI binding?** | ✅ **YES.** `@cf/google/embeddinggemma-300m`, no provider key; unblocks the stalled polymorphism semantic leg |
+| 5 | **Ratify or retire the deepfake boundary** (§10.1) | ✅ **RETIRE the stated reason.** The imprsn8 boundary is defunct. Deferring deepfake detection still stands on §5.3's volume/price/accuracy grounds — but on those grounds, not an inherited one |
+| 8 | **Do these signals ever carry actor attribution?** (§13.4) | ✅ **YES, via the tier ladder.** Tier 1 (payload-sink bridging) ships with Lane 2; Tier 2 (principal-identity axis) is designed for but gated on Tier 1's evidence. Not the flat "no" the first draft recommended |
+| 2 | **Which assistants does Lane 1 cover, and at what cadence?** | ⬜ Open — decide when Lane 1 is specced |
+| 3 | **Who pays for the `alert_type` presentation registry?** (§13.3) | ⬜ Open, but self-resolving: it is the same presentation work as Lane 3's `page_signals` renderer, so it lands there by default unless actively moved |
+| 6 | **Narrow the §2.1 text-detection doctrine?** | ⬜ Open — only matters if Lane 7 is wanted. Cheap to defer |
+| 7 | **Legal review budget for §7.1/§7.6** | ⬜ Open — decide with Lane 1 |
 
 ---
 
 ## 12. Suggested sequencing
 
-Nothing here is committed. If the plan is accepted, the natural order — small
-independent increments, each shippable alone, per the `delivery-lead` pattern:
+Decisions 1, 4, 5 and 8 are settled (§11), so the build order below is live.
+Small independent increments, each shippable alone, per the `delivery-lead`
+pattern:
 
-1. **Decisions 1, 4, 5** (§11) — cheap, unblock everything downstream.
+1. ~~Decisions 1, 4, 5~~ — **done 2026-09-21.**
 2. **Lane 3** (AI-build artifacts) — smallest, purely deterministic, exercises
    no new dependency, and proves the signal shape before anything bigger.
+   **Ship the `page_signals` renderer with it** (§13.5) — that retroactively
+   surfaces the shipped-but-invisible Wave 3 work and builds the presentation
+   primitive every later lane needs. Decision 3 (the `alert_type` registry)
+   lands here by default.
 3. **Lane 4** (C2PA/IPTC scan) — rides the same page-fetch change window.
-4. **Lane 2** (MCP Registry only) — first genuinely new feed; validates the
-   side-table pattern on ~1k clean rows before npm/PyPI volume.
-5. **Lane 1** (answer-engine monitoring) — largest payoff, gated on decisions
-   2, 3 and the §7.6 ToS review.
-6. **Lane 5** (Workers AI) → unblocks the stalled polymorphism semantic leg.
-7. Tier 3 only if a customer pulls it.
+4. **Lane 2**, in two steps — **npm/PyPI first** (targeted `HEAD` checks, no
+   bulk ingest, per §5.1a), then the MCP Registry once its ~1,100-page
+   checkpointed backfill is designed. This reverses the original order: the
+   registry was nominated first on a "~1k clean rows" claim that proved wrong.
+   **Payload-sink extraction (attribution Tier 1, §13.4) ships in this lane**,
+   and the side-table schema is shaped so the Tier 2 principal axis drops in
+   without rework.
+5. **Lane 5** (Workers AI binding) — decision 4 is settled, and it unblocks the
+   already-half-built polymorphism semantic leg. Independent of Lanes 1–4, so
+   it can run in parallel with any of them.
+6. **Lane 1** (answer-engine monitoring) — largest payoff, gated on the still
+   -open decisions 2 and 7 (§7.6 ToS review).
+7. **Attribution Tier 2** (principal-identity axis, §13.4) — only once Tier 1
+   has shown that principal clustering finds multi-brand operators in real data.
+8. Lanes 7–8 (§6 Tier 3 — the slop/fake-review lane and kit corpora) only if a
+   customer pulls them.
 
 Per `CLAUDE.md` §1A, each lane runs the full pipeline —
 `delivery-lead` → engineer (+ `threat-intel-analyst`) → `test-engineer` →
 `qa-verifier` → `code-reviewer`/`appsec-reviewer` → ship — with
 `docs-maintainer` picking up §10's corrections.
+
+---
+
+## 13. Integration architecture — where these land, and how they're attributed
+
+Added 2026-09-21. Every claim below was verified against the tree; file:line
+citations are to the state of `master` at that date.
+
+### 13.1 The structural fact everything follows from
+
+Averrow has **two correlation axes**, and all four lanes land on the wrong
+side of the one you would want:
+
+- **Infrastructure axis** — `threats` → NEXUS clusters → Attributor →
+  `threat_actors`. This is where "WHO" lives. Bridging requires a shared
+  `ssl_cert_serial`, `ssl_san_hash` or `ip_address` on a `threats` row
+  (`lib/cluster-components.ts:86-90` — `BRIDGE_KINDS` is exactly those three).
+- **Everything else** — social, app-store, executive, dark-web. These produce
+  alerts and stop. `agents/socialMonitor.ts`, `appStoreMonitor.ts` and
+  `executiveMonitor.ts` all declare literally `reads: []`, `writes: []`.
+
+A squatted package name and a model's answer have no cert serial, no SAN hash,
+no IP. They are structurally in the second group.
+
+**This is correct, not a gap.** `cluster-components.ts` explicitly refuses to
+bridge on shared registrar or ASN, calling it the over-merge trap — gluing
+separate operators together through a shared /24 or "GoDaddy". A shared npm
+publisher account is exactly that shape. The honest framing: **these signals
+are evidence of the same *intent*, not of the same *hosting operator*.**
+
+### 13.2 The trap to avoid
+
+There is a tempting move — write `infrastructure_clusters` rows for registry
+squats, as the app-store and dark-web passes already do (`agents/nexus.ts:84-312`).
+**Don't.** Those rows carry `asns: []` and `countries: []`, so they can never
+pass the Attributor's footprint gate (`agents/attributor.ts:93-94`:
+`asns.length >= 3` or `countries.length >= 4`). They can only match if a known
+actor name happens to appear in the cluster name. In practice they are stamped
+`attribution_attempted_at`, counted as `gated`, cooled down for 7 days, and
+**accumulate in the admin Attribution Backlog as permanently unattributable
+rows.** Copying that pattern imports a known defect.
+
+### 13.3 Four verified blockers
+
+| Blocker | Location | Impact |
+|---|---|---|
+| `threat_attributions.source` CHECK is `otx\|nexus\|manual\|news` | `migrations/0135:36-38` | Closed, un-ALTERable in SQLite. A `registry` / `answer_engine` attribution source needs a table rebuild or must masquerade as `manual` |
+| `SOURCE_BASELINE[feed] ?? 50` | `lib/threatScoring.ts:45` | **Footgun.** Unregistered source + `impersonation` + brand hit = 50+5+10 = 65 → **`high` severity, silently.** A noisy new lane floods the queue at high severity by default |
+| `alert_type` has no presentation registry | `features/alerts/Alerts.tsx:592-621`, platform regex at `:91-101` | Every alert renders through hardcoded social vocabulary ("Platform", "Handle Detected", "Impersonation Score"); platform is scraped from the title with a fixed substring list, falling back to "Social" |
+| `threats.threat_type` closed CHECK | `migrations/0013:34-37` | Already known (§3.2) — forces side-table or the `technique` column |
+
+### 13.4 Layer-by-layer integration
+
+**Storage.** Lanes 1–2 use the `social_mentions` → Watchdog pattern
+(`agents/watchdog.ts:83-159`): side table, classifier agent, escalate only
+high-confidence rows to `threats`. **Do not copy Watchdog literally** — it does
+a raw `INSERT INTO threats` with a random UUID (`:134`), bypassing `threatId()`
+determinism, `calculateConfidence`, `calculateSeverity` and
+`reclassifyThreatType`. It is both the precedent and the sloppy one. Lanes 3–4
+need no new table: they are additive signals on the existing page scorer.
+
+**Provenance.** The `*_checked` / `*_flagged` idiom is exactly right and is
+already customer-facing (`handlers/tenantData.ts:420-424`). "We probed N
+answer engines; M returned a non-brand asset" maps onto it cleanly, and it
+enforces the discipline this plan already requires: **absence of a check is
+never evidence of innocence** (`lib/alert-triage.ts:79-128`), which is the
+same reason answer-engine output must be a rate over N samples, never a
+boolean. Register every new source explicitly in `SOURCE_BASELINE` rather than
+letting it fail open to 50.
+
+**Actor attribution — a tier ladder, not a yes/no.** *(Revised 2026-09-21; an
+earlier draft of this section recommended a flat "no for v1". That was too
+blunt — see the distinction below.)*
+
+The over-merge trap §13.1 cites is about **commodity** keys. "GoDaddy" or a /24
+is shared by millions of unrelated customers. A *specific npm publisher
+account* is not commodity — in discriminating power it is closer to a cert
+serial. The codebase already implicitly agrees: `agents/nexus.ts:100-108`
+clusters app-store listings by `GROUP BY store, dev_key HAVING brands >= 2 AND
+rows_ >= 2`. That is principal-identity clustering, already shipped. Its
+problem is not the idea but the **table** — writing into
+`infrastructure_clusters` leaves it unable to bridge and unable to attribute,
+so it dead-ends and pollutes the Attribution Backlog (§13.2).
+
+| Tier | What it is | Cost | Verdict |
+|---|---|---|---|
+| **0** | Alerts only, dead-end | none | Superseded — this was the first draft's recommendation |
+| **1** | **Payload-sink bridging.** Extract the network sink (webhook, bot API, domain) from a squat's payload; it enters `threats` as an ordinary IOC and bridges into NEXUS unchanged | small; no new table, no CHECK change | ✅ **Ships with Lane 2** |
+| **2** | **Principal-identity axis.** A second correlation axis keyed on publisher / maintainer / org / namespace / developer account, in its own table, joined to the infra axis through shared sinks | new table + writer; the `threat_attributions.source` CHECK rebuild; its own admission gate | ✅ **Designed for, gated on Tier 1's evidence** |
+| **3** | Point Haiku at these signals to guess actor names directly | cheap to try | ❌ **Never.** Reproduces the app-store/dark-web failure: 1,325 of 1,330 calls returned "unknown" in the audit that produced the current gate (`agents/attributor.ts:61-68`) |
+
+**Why Tier 2 is tractable rather than speculative:**
+
+- **`computeComponents` is a pure function** (`lib/cluster-components.ts:217-220`
+  — takes `clusters`, `bridges`, `options`). The union-find core is reusable
+  verbatim with a different bridge-kind set. This is parameterising an existing
+  engine, not writing a new one.
+- **The two axes join through sinks.** Registry-operator cluster —(shared sink
+  domain)→ infrastructure cluster is an evidence-backed cross-surface pivot,
+  and it is exactly the "who moves where" question the platform exists to
+  answer. It would also give the currently-orphaned app-store and dark-web
+  clusters a home that can actually attribute.
+
+**Tier 2's three real costs**, none hidden: a new table and writer; the
+`threat_attributions.source` CHECK rebuild (or an explicit decision to
+masquerade as `manual`); and its own admission gate — the Attributor's is
+ASN/country-shaped and would never fire here, so a principal gate would be
+something like ≥2 brands across ≥2 registries.
+
+**Sequencing rationale:** Tier 1 gets real attribution immediately on the
+subset with a payload, proves the sink primitive, and defers the table rebuild
+until there is evidence that principal clustering finds multi-brand operators
+in Averrow's actual data. If it does, Tier 2 is a contained follow-on. If it
+doesn't, nothing was spent on it.
+
+**UI, cheapest to most expensive:**
+
+1. A sixth `V3_TABS` entry on brand detail (`features/brands/BrandDetail.tsx:59-72`)
+   — ~3 lines; the union type is derived from the array, so `?tab=` deep-linking
+   works with no other change.
+2. A tenant module, per the checklist in `docs/TENANT_DATA_FLOW.md` §4.
+3. A new `alert_type` — needs a filter pill (`Alerts.tsx:1031-1053`) **plus** a
+   per-type presentation registry that does not exist yet.
+4. A new agent — three manual registries (`lib/agent-metadata.ts`,
+   `components/brand/AgentIcon.tsx`, and a hardcoded `{x,y}` in
+   `AgentNetworkView.tsx:89`), or it lands in the "meta" group with no icon.
+
+### 13.5 The orphaned-signal risk
+
+Two UI risks compound, and they are the reason UI work belongs *in* each lane
+rather than after it:
+
+- **`docs/TENANT_DATA_FLOW.md` exists because 17,605 threats rendered as empty
+  module pages.** A brand with no registry squats is *legitimately* empty, so
+  "checked and clean" must look different from "never ran".
+- **Wave 3's `page_signals` and `page_anti_bot_wall` shipped with no renderer
+  at all.** They are written by `scanners/lookalike-page-analysis.ts:89-91`,
+  are absent from `hooks/useLookalikes.ts:4-16`, and that hook has **zero call
+  sites** anywhere in `features/`. The only surface is an aggregate
+  `wall_rate_pct` in diagnostics.
+
+So the platform already has a pattern of backend signals landing and never
+surfacing. `ScoreBreakdownCard.tsx` is the **only** weighted-evidence component
+and has one call site; it is the pattern to clone.
+
+### 13.6 Mockups
+
+Proposed components are mocked in Averrow's real tokens (Plus Jakarta Sans /
+IBM Plex Mono, `--bg-page`, `--amber`, the `--sev-*` ramp):
+`SignalBreakdownCard`, `AnswerEngineProbeCard`, `RegistrySquatPanel`, the
+alert-type registry before/after, the brand-detail tab placement, and the three
+tenant empty states.
+
+→ https://claude.ai/artifact/NbEwoJWjbiR2Lbu3g4EgJY
+*(private artifact — the owner must share it before others can open the link)*
 
 ---
 
