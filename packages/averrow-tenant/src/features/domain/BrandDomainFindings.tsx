@@ -6,7 +6,7 @@
 // on the malicious-domains section feeds the existing
 // /api/orgs/:orgId/takedowns pipeline.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, X } from 'lucide-react';
 import {
@@ -447,18 +447,37 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
   const shadowSorted = Array.from(new Set(shadow))
     .sort((a, b) => (SHADOW_SIGNAL_WEIGHTS[b] ?? 0) - (SHADOW_SIGNAL_WEIGHTS[a] ?? 0));
 
+  // Escape to close, and move focus into the dialog on open. Without
+  // both, a keyboard-only user can open this from the verdict chip but
+  // has no way out except tabbing to the Close button, and a screen
+  // reader gets no dialog semantics at all.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    panelRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-bg-card shadow-2xl"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="page-analysis-title"
+        tabIndex={-1}
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-bg-card shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">Page analysis</div>
+            <div id="page-analysis-title" className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/60">Page analysis</div>
             <div className="mt-1 text-sm text-white/90 font-mono">{row.domain}</div>
           </div>
           <button
@@ -492,11 +511,11 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
           )}
 
           <div>
-            <div className="text-[10px] uppercase tracking-widest font-mono text-white/45 mb-1.5">
+            <div className="text-[10px] uppercase tracking-widest font-mono text-white/60 mb-1.5">
               Scored signals
             </div>
             {liveSorted.length === 0 ? (
-              <p className="text-[12px] text-white/40 italic">No scored signals fired on the last analysis.</p>
+              <p className="text-[12px] text-white/60 italic">No scored signals fired on the last analysis.</p>
             ) : (
               <ul className="space-y-1" data-testid="tenant-scoring-signals">
                 {liveSorted.map((key) => {
@@ -521,8 +540,11 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
                 <span className="text-[10px] uppercase tracking-widest font-mono text-white/60">
                   Shadow signals — not scoring
                 </span>
+                {/* No leading "+" — it reads as a scoring badge on a skim,
+                    which is the exact misreading this group exists to
+                    prevent. Mirrors ops SignalBreakdownCard. */}
                 {row.page_score_delta !== null && (
-                  <span className="font-mono text-[10px] text-white/60">would-be +{row.page_score_delta}</span>
+                  <span className="font-mono text-[10px] text-white/60">{row.page_score_delta} pts if scored</span>
                 )}
               </div>
               <p className="text-[10px] text-white/60 mb-1.5">

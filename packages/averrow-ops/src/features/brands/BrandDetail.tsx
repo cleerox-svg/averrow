@@ -1147,7 +1147,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
     return (
       <Card hover={false}>
         <SectionLabel>Page Analysis</SectionLabel>
-        <div className="mt-3 text-[12px] text-[var(--text-tertiary)] font-mono">Loading…</div>
+        <div className="mt-3 text-[12px] text-[var(--text-secondary)] font-mono">Loading…</div>
       </Card>
     );
   }
@@ -1158,7 +1158,16 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3">
           <EmptyState
-            variant="configure-me"
+            // `scanning` (amber), NOT `configure-me`. The name is
+            // tempting but wrong: EmptyState aliases `configure-me` onto
+            // `locked`, which renders the gray "you lack setup or
+            // permission" treatment. Nothing here needs configuring —
+            // the sweep just hasn't run yet, and it will on its own.
+            // Amber is also what every sibling surface uses for this
+            // state (ThreatActorDetail, Campaigns, Apps, Providers,
+            // DarkWeb, Trademarks, …), so gray would read as "gated"
+            // against a convention operators have already learned.
+            variant="scanning"
             icon={<ScanSearch />}
             title={rows.length === 0 ? 'No lookalike domains to analyze' : 'Never scanned'}
             subtitle={
@@ -1202,7 +1211,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
   return (
     <Card hover={false}>
       <SectionLabel>
-        Page Analysis <span className="text-[var(--text-muted)]">({sorted.length})</span>
+        Page Analysis <span className="text-[var(--text-secondary)]">({sorted.length})</span>
       </SectionLabel>
       <div className="mt-3 space-y-3">
         {sorted.map((r) => (
