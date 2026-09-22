@@ -8,18 +8,23 @@ export interface LookalikeDomain {
   registered: number;
   threat_level: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE' | 'CRITICAL' | null;
   status: string | null;
-  ip_address: string | null;
-  registrar: string | null;
-  bimi_record: string | null;
   created_at: string;
   updated_at: string;
+
+  // NOTE: `ip_address`, `registrar` and `bimi_record` used to be declared
+  // here and were removed — no such columns exist on `lookalike_domains`
+  // (the resolved IP lives in `resolves_to`), so they were always
+  // `undefined` at runtime while typed as `string | null`. Nothing read
+  // them. If you need the resolved IP, add `resolves_to` rather than
+  // re-adding `ip_address`.
 
   // ── Page analysis (migrations 0243, 0260, 0264) ──────────────────────
   // Deterministic page-content phishing scorer output + Lane 3 Phase 1
   // shadow-mode signals. See docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md §3.5.
-  // The staff API is already `SELECT *` (handlers/lookalikeDomains.ts) so
-  // these fields are already in the payload — only this interface was
-  // missing them.
+  // The staff API returns an explicit column allowlist
+  // (`LOOKALIKE_LIST_COLUMNS` in handlers/lookalikeDomains.ts) — it is no
+  // longer `SELECT *`. A field added to this interface must also be added
+  // there, or it will simply be absent from the payload.
   //
   // `page_fetched_at === null` is the authoritative "never scanned"
   // marker — every other page_* field is null on an unscanned row too,
