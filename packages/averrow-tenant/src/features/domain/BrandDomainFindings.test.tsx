@@ -177,6 +177,19 @@ describe('BrandDomainFindings — page-content Signals verdict chip', () => {
       await userEvent.click(screen.getByRole('button', { name: /view page-analysis detail/i }));
     }
 
+    it('exposes dialog semantics and closes on Escape', async () => {
+      await openDialog({
+        page_fetched_at: '2026-09-10T00:00:00Z',
+        page_phishing_score: 30,
+        page_signals: JSON.stringify(['credential_form']),
+      });
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-modal', 'true');
+      // Keyboard-only users need a way out that isn't "tab to Close".
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
     it('renders scored signals with their weight, sorted by weight descending', async () => {
       await openDialog({
         page_fetched_at: '2026-09-10T00:00:00Z',
@@ -203,7 +216,11 @@ describe('BrandDomainFindings — page-content Signals verdict chip', () => {
       const shadow = screen.getByTestId('tenant-shadow-signals');
       expect(within(shadow).getByText(/Covert exfil sink/)).toBeInTheDocument();
       expect(within(scoring).queryByText(/Covert exfil sink/)).not.toBeInTheDocument();
-      expect(screen.getByText('would-be +20')).toBeInTheDocument();
+      expect(screen.getByText('20 pts if scored')).toBeInTheDocument();
+      // No leading "+" on the shadow delta — see the ops mirror of this
+      // assertion. The live signal renders +30, so a "+20" here could
+      // only be the shadow row misrepresenting itself as scored.
+      expect(screen.queryByText('+20')).not.toBeInTheDocument();
     });
 
     it('a shadow key arriving via page_signals by mistake is filtered out of the scoring group', async () => {

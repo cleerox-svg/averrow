@@ -146,7 +146,11 @@ describe('SignalBreakdownCard', () => {
         shadowScoreDelta={12}
       />,
     );
-    expect(screen.getByText('would-be +12')).toBeInTheDocument();
+    expect(screen.getByText('12 pts if scored')).toBeInTheDocument();
+    // The shadow delta must never render with a leading "+" — that glyph
+    // is what makes a number read as scored at a glance. The live signal
+    // below is +30, so a stray "+12" could only come from the shadow row.
+    expect(screen.queryByText('+12')).not.toBeInTheDocument();
     // The live score badge stays exactly what was passed — the shadow
     // delta is never folded into it.
     expect(screen.getByText('30 / 100')).toBeInTheDocument();

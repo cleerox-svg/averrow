@@ -201,8 +201,14 @@ export function SignalBreakdownCard({
               Shadow signals — not scoring
             </span>
             {shadowScoreDelta !== null && shadowScoreDelta !== undefined && (
+              // No leading "+". The glyph is the most scannable token in
+              // a scoring UI, and this sits in the same label/value row
+              // shape as the real "{score} / 100" above — on a skim, "+20"
+              // reads as scored no matter what the adjacent label says.
+              // Spelling out "if scored" costs a few px and removes the
+              // one ambiguity this whole component exists to prevent.
               <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                would-be +{shadowScoreDelta}
+                {shadowScoreDelta} pts if scored
               </span>
             )}
           </div>
