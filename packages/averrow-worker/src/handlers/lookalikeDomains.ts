@@ -3,28 +3,48 @@
  * Lookalike Domain API Handlers — CRUD and trigger endpoints for
  * continuous lookalike domain monitoring.
  *
- * Ownership: super_admin sees any brand; org members see only brands
- * in their org_brands. Replaces the old user_id-via-brand_profiles
- * scoping (R2 of brand_profiles deprecation, 2026-05-07).
+ * Ownership: global-read roles (super_admin, auditor) see any brand;
+ * org members see only brands in their org_brands. Replaces the old
+ * user_id-via-brand_profiles scoping (R2 of brand_profiles
+ * deprecation, 2026-05-07). Writes stay super_admin-or-org-member —
+ * the read-only auditor seat is denied at the route layer by
+ * `requireStaffMutation`.
  */
 
 import { json } from "../lib/cors";
 import { generateAndStoreLookalikes, checkLookalikeBatch } from "../scanners/lookalike-domains";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
-import type { AuthContext } from "../middleware/auth";
+import { hasGlobalReadScope, type AuthContext } from "../middleware/auth";
 
 // ─── Brand-access helpers ─────────────────────────────────────────
-// Super_admin can touch any brand. Org members must have the brand
-// assigned in org_brands. Brand-existence + ownership rolled into one
-// query so we can return 404 vs 403 cleanly.
-
+// Global-read roles can touch any brand. Org members must have the
+// brand assigned in org_brands. Brand-existence + ownership rolled
+// into one query so we can return 404 vs 403 cleanly.
+//
+// Uses the canonical `hasGlobalReadScope` predicate (super_admin +
+// the read-only `auditor` seat) rather than a hardcoded super_admin
+// check. S3.1 collapsed the 14 copies of this exemption inside
+// `verifyOrgAccess`, but this helper rolls its own brand-scope check
+// and so was missed: `auditor` fell through to the org branch, and
+// since the seat holds no org membership (`ctx.orgId === null`) it
+// got a bare `null` → 404 "Brand not found" on every brand. That
+// contradicts CLAUDE.md §7, which defines auditor as seeing ALL
+// backend and tenant data.
+//
+// This widens READ reach only, and does not give auditor a write
+// path. Of the three callers, `handleListLookalikes` is a GET while
+// `handleGenerateLookalikes` and `handleScanLookalikes` are POSTs
+// mounted behind `requireStaffMutation` (routes/brands.ts:317,327),
+// which denies `auditor` by name before the handler runs. The
+// separate PATCH gate in `handleUpdateLookalike` below deliberately
+// keeps its narrower `super_admin` check as the inner net.
 async function findBrandForCaller(
   env:     Env,
   brandId: string,
   ctx:     AuthContext,
 ): Promise<{ id: string; canonical_domain: string } | null> {
-  if (ctx.role === "super_admin") {
+  if (hasGlobalReadScope(ctx.role)) {
     return env.DB.prepare(
       "SELECT id, canonical_domain FROM brands WHERE id = ?",
     ).bind(brandId).first<{ id: string; canonical_domain: string }>();
