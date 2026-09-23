@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { LOOKALIKE_LIST_COLUMNS } from "../src/handlers/lookalikeDomains";
@@ -40,11 +40,18 @@ function stripComments(src: string): string {
     .replace(/^\s*\/\/.*$/gm, "");
 }
 
-function migrationSql(name: string): string {
-  return readFileSync(
-    resolve(__dirname, "..", "migrations", name),
-    "utf8",
-  );
+/**
+ * Every migration file, read fresh. Deliberately a directory scan rather
+ * than a hand-listed set: a hardcoded list only guards the migrations
+ * someone remembered to add to it, which fails in exactly the case this
+ * test exists for — a NEW migration adding a column nobody wired up.
+ */
+function allMigrations(): Array<{ name: string; sql: string }> {
+  const dir = resolve(__dirname, "..", "migrations");
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((name) => ({ name, sql: readFileSync(resolve(dir, name), "utf8") }));
 }
 
 describe("staff lookalike list — explicit column allowlist", () => {
@@ -66,28 +73,45 @@ describe("staff lookalike list — explicit column allowlist", () => {
     }
   });
 
-  it("covers every column the migrations actually add to the table", () => {
+  it("covers every column ANY migration adds to the table", () => {
     // Drift guard in the other direction: if a migration adds a column
     // and nobody updates the allowlist, the staff payload silently loses
-    // a field. Parsed from the migration files so it tracks reality
-    // rather than a second hand-maintained copy.
-    const sources = [
-      "0227_lookalike_takedown_link.sql",
-      "0242_lookalike_unicode_domain.sql",
-      "0243_lookalike_page_analysis.sql",
-      "0258_phantom_domains.sql",
-      "0260_lookalike_anti_bot_wall.sql",
-      "0264_lookalike_ai_build_artifacts.sql",
-    ];
-    const added: string[] = [];
-    for (const file of sources) {
+    // a field. Scans the whole migrations directory, so a migration
+    // added next year is covered without anyone remembering this test.
+    const added: Array<{ col: string; file: string }> = [];
+    for (const { name, sql } of allMigrations()) {
       const re = /ALTER\s+TABLE\s+lookalike_domains\s+ADD\s+COLUMN\s+([a-z_][a-z0-9_]*)/gi;
-      for (const m of migrationSql(file).matchAll(re)) added.push(m[1]!.toLowerCase());
+      for (const m of sql.matchAll(re)) {
+        added.push({ col: m[1]!.toLowerCase(), file: name });
+      }
     }
-    // Sanity: the parse found something, so a silent regex failure can't
-    // make this assertion vacuously pass.
+    // Sanity: the scan found the columns we know exist, so a silent
+    // regex or path failure can't make this vacuously pass.
     expect(added.length).toBeGreaterThan(10);
-    for (const col of added) {
+    for (const { col, file } of added) {
+      // Name the migration in the failure — the next person to hit this
+      // needs to know which file added the column, not just its name.
+      expect(LOOKALIKE_LIST_COLUMNS, `${col} (added by ${file})`).toContain(col);
+    }
+  });
+
+  it("finds the base table's CREATE TABLE columns too", () => {
+    // The 0031 base columns arrive via CREATE TABLE, not ADD COLUMN, so
+    // the scan above cannot see them — this covers the other half.
+    const create = allMigrations().find((m) => m.name.startsWith("0031_"));
+    expect(create, "0031 base migration not found").toBeDefined();
+    const body = create!.sql.match(
+      /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?lookalike_domains\s*\(([\s\S]*?)\n\)/i,
+    );
+    expect(body, "could not parse the CREATE TABLE body").toBeTruthy();
+    const baseCols = body![1]!
+      .split("\n")
+      .map((l) => l.replace(/--.*$/, "").trim())
+      .filter(Boolean)
+      .map((l) => l.match(/^([a-z_][a-z0-9_]*)\s/i)?.[1]?.toLowerCase())
+      .filter((c): c is string => !!c && c !== "unique" && c !== "primary");
+    expect(baseCols.length).toBeGreaterThan(10);
+    for (const col of baseCols) {
       expect(LOOKALIKE_LIST_COLUMNS).toContain(col);
     }
   });
