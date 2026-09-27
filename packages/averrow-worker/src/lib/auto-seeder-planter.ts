@@ -125,9 +125,9 @@ export function localPartVariants(firstName: string, lastName: string, seed: num
  * honeypot handlers can query the right roster at render time.
  *
  * Uses INSERT OR IGNORE on the address column (UNIQUE in schema) so
- * collisions silently skip. On collision we walk localPartVariants()
- * (flast, first.l, first_last, …) and only then the cohort-suffixed
- * form. The 40×30 = 1,200 name pool is saturated in production, so
+ * collisions silently skip. Candidates are localPartVariants()
+ * (first.last, flast, first.l, first_last, …) then the cohort-suffixed
+ * form; one SELECT picks the first free one. The 40×30 = 1,200 name pool is saturated in production, so
  * collisions are the common case, not a rare one.
  *
  * Returns the rows that actually landed so the caller can report
@@ -159,38 +159,40 @@ export async function plantBatch(
       `${localPart(firstName, lastName, opts.cohortTag)}@${opts.domain}`,
     ];
 
-    let landed = false;
-    for (const address of tries) {
-      try {
-        const result = await env.DB.prepare(
-          `INSERT OR IGNORE INTO seed_addresses
-             (address, domain, channel, seeded_location, status)
-           VALUES (?, ?, 'employee', ?, 'active')`,
-        ).bind(address, opts.domain, opts.seedLocationKey).run();
+    // One read for all candidates, then one INSERT of the first free one:
+    // 2 round-trips per seed however saturated the pool gets. Walking the
+    // candidates with INSERT OR IGNORE would cost up to 9 per seed inside
+    // the orchestrator tick's shared D1 query budget.
+    try {
+      const placeholders = tries.map(() => '?').join(', ');
+      const taken = await env.DB.prepare(
+        `SELECT address FROM seed_addresses WHERE address IN (${placeholders})`,
+      ).bind(...tries).all<{ address: string }>();
+      const takenSet = new Set((taken.results ?? []).map((r) => r.address));
+      const address = tries.find((a) => !takenSet.has(a));
+      if (!address) continue;
 
-        const inserted = (result.meta?.changes ?? 0) > 0;
-        if (inserted) {
-          planted.push({
-            email: address,
-            name: `${firstName} ${lastName}`,
-            title,
-            id: result.meta?.last_row_id as number | undefined,
-          });
-          landed = true;
-          break;
-        }
-        // Silent collision (UNIQUE on address) — try the cohort-suffixed
-        // variant on the next loop iteration.
-      } catch (err) {
-        logger.warn('auto_seeder_plant_failed', {
-          address,
-          err: err instanceof Error ? err.message : String(err),
+      // OR IGNORE still guards the race with a concurrent planter.
+      const result = await env.DB.prepare(
+        `INSERT OR IGNORE INTO seed_addresses
+           (address, domain, channel, seeded_location, status)
+         VALUES (?, ?, 'employee', ?, 'active')`,
+      ).bind(address, opts.domain, opts.seedLocationKey).run();
+
+      if ((result.meta?.changes ?? 0) > 0) {
+        planted.push({
+          email: address,
+          name: `${firstName} ${lastName}`,
+          title,
+          id: result.meta?.last_row_id as number | undefined,
         });
-        // Bail on this entry, continue with the next i.
-        break;
       }
+    } catch (err) {
+      logger.warn('auto_seeder_plant_failed', {
+        candidate: tries[0],
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
-    void landed;
   }
 
   return planted;
@@ -252,14 +254,27 @@ export async function readRoster(
 
 /**
  * "sarah.chen" → "Sarah Chen", "s.chen" → "S. Chen", "sarah.c" →
- * "Sarah C.", "sarah_chen42" → "Sarah Chen". Separator-less variants
- * ("schen", "sarahchen") have no recoverable split and render as one
- * capitalized token, which is still a plausible directory entry.
+ * "Sarah C.", "sarah_chen42" → "Sarah Chen", "sarahchen" → "Sarah Chen",
+ * "schen" → "S. Chen". Unknown single tokens render capitalized.
  */
 export function displayNameFromLocalPart(local: string): string {
-  const [first = '', last = ''] = local.replace(/\d+$/, '').split(/[._]/);
+  const stripped = local.replace(/\d+$/, '');
   const part = (s: string) => (s.length === 1 ? `${s.toUpperCase()}.` : capitalize(s));
-  return part(first) + (last ? ` ${part(last)}` : '');
+  const [first = '', last = ''] = stripped.split(/[._]/);
+  if (last) return `${part(first)} ${part(last)}`;
+
+  // Separator-less shapes ("sarahchen", "schen"): recover the split from
+  // the same name pools the planter draws from.
+  const lasts = LAST_NAMES.map((n) => n.toLowerCase());
+  for (const f of FIRST_NAMES.map((n) => n.toLowerCase())) {
+    if (stripped.startsWith(f) && lasts.includes(stripped.slice(f.length))) {
+      return `${capitalize(f)} ${capitalize(stripped.slice(f.length))}`;
+    }
+  }
+  if (stripped.length > 1 && lasts.includes(stripped.slice(1))) {
+    return `${stripped[0]!.toUpperCase()}. ${capitalize(stripped.slice(1))}`;
+  }
+  return part(first);
 }
 
 function capitalize(s: string): string {

@@ -215,13 +215,17 @@ export default {
       ]);
       if (HONEYPOT_HOSTNAMES.has(url.hostname)) {
         const serveDomain = url.hostname.replace(/^www\./, "");
+        // honeypot_visits has no hostname column; lrxradar hits have always
+        // been logged as `lrxradar:<path>`, so keep that for its bait pages
+        // rather than merging them into the averrow.com counts.
+        const visitKey = (p: string) => (serveDomain === "lrxradar.com" ? `lrxradar:${p}` : p);
         const honeypotPages = ["/team", "/careers"];
         if (honeypotPages.includes(url.pathname)) {
           ctx.waitUntil(logHoneypotVisit(env, request, url.pathname));
           return applySecurityHeaders(serveHoneypotPage(url.pathname.slice(1), serveDomain));
         }
         if (url.pathname === "/admin-portal") {
-          ctx.waitUntil(logHoneypotVisit(env, request, "/admin-portal"));
+          ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/admin-portal")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
           const roster = await readRoster(env, `auto-seeder:${serveDomain}:/admin-portal`, 16);
           return applySecurityHeaders(new Response(renderAdminPortalPage(roster), {
@@ -229,7 +233,7 @@ export default {
           }));
         }
         if (url.pathname === "/internal-staff") {
-          ctx.waitUntil(logHoneypotVisit(env, request, "/internal-staff"));
+          ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/internal-staff")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
           const roster = await readRoster(env, `auto-seeder:${serveDomain}:/internal-staff`, 16);
           return applySecurityHeaders(new Response(renderInternalStaffPage(roster), {
@@ -237,7 +241,7 @@ export default {
           }));
         }
         if (url.pathname === "/team-directory") {
-          ctx.waitUntil(logHoneypotVisit(env, request, "/team-directory"));
+          ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/team-directory")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
           const roster = await readRoster(env, `auto-seeder:${serveDomain}:/team-directory`, 16);
           return applySecurityHeaders(new Response(renderTeamDirectoryPage(roster), {
@@ -245,7 +249,7 @@ export default {
           }));
         }
         if (url.pathname === "/staff-contacts") {
-          ctx.waitUntil(logHoneypotVisit(env, request, "/staff-contacts"));
+          ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/staff-contacts")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
           const roster = await readRoster(env, `auto-seeder:${serveDomain}:/staff-contacts`, 16);
           return applySecurityHeaders(new Response(renderStaffContactsPage(roster), {

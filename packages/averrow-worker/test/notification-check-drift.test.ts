@@ -58,18 +58,37 @@ describe("notifications.type CHECK ⊇ NOTIFICATION_EVENTS", () => {
   });
 });
 
-describe("notifications rebuilds preserve notification_deliveries", () => {
-  it("every migration from 0265 on that drops notifications snapshots deliveries first", () => {
+// Every table with an FK into notifications(id). Today only
+// notification_deliveries (0131); a future child is covered automatically.
+const childTables = [
+  ...new Set(
+    migrations.flatMap((m) =>
+      [...m.sql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\(([\s\S]*?)\n\);/gi)]
+        .filter((c) => /REFERENCES\s+notifications\s*\(/i.test(c[2]!))
+        .map((c) => c[1]!),
+    ),
+  ),
+];
+
+describe("notifications rebuilds preserve FK child tables", () => {
+  it("knows about notification_deliveries", () => {
+    expect(childTables).toContain("notification_deliveries");
+  });
+
+  it("every migration from 0265 on that drops notifications snapshots and restores each child", () => {
+    const dropRe = /DROP TABLE (?:IF EXISTS )?notifications\s*;/i;
     const offenders = migrations
-      .filter((m) => m.name >= "0265")
-      .filter((m) => /DROP TABLE (?:IF EXISTS )?notifications\s*;/i.test(m.sql))
-      .filter((m) => {
-        const drop = m.sql.search(/DROP TABLE (?:IF EXISTS )?notifications\s*;/i);
-        const snap = m.sql.search(/CREATE TABLE \w+ AS SELECT \* FROM notification_deliveries/i);
-        const restore = m.sql.search(/INSERT (?:OR IGNORE )?INTO notification_deliveries SELECT/i);
-        return !(snap !== -1 && snap < drop && restore > drop);
-      })
-      .map((m) => m.name);
-    expect(offenders).toEqual([]);
+      .filter((m) => m.name >= "0265" && dropRe.test(m.sql))
+      .flatMap((m) => {
+        const drop = m.sql.search(dropRe);
+        return childTables
+          .filter((t) => {
+            const snap = m.sql.search(new RegExp(`CREATE TABLE \\w+ AS SELECT \\* FROM ${t}\\b`, "i"));
+            const restore = m.sql.search(new RegExp(`INSERT (?:OR IGNORE )?INTO ${t} SELECT`, "i"));
+            return !(snap !== -1 && snap < drop && restore > drop);
+          })
+          .map((t) => `${m.name}: ${t}`);
+      });
+    expect(offenders, "ON DELETE CASCADE wipes these on DROP TABLE notifications").toEqual([]);
   });
 });

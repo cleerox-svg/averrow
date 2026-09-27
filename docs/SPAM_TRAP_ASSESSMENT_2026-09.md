@@ -75,7 +75,9 @@ applied at 2026-06-15 14:46:48, and the oldest surviving delivery row is from
   the one domain with real crawler traffic.
 - **Nothing links to the bait pages.** They appear only as `Disallow` lines in
   robots.txt, and have received 0 hits in six months. The "Disallow as bait"
-  theory did not hold.
+  theory did not hold. robots.txt also lists them with a trailing slash
+  (`/admin-portal/`) that the routes don't match, so a crawler that does
+  follow the Disallow list gets a different page.
 - **averrow.com seeds cannot receive mail.** Per `EMAIL_ROUTING_RUNBOOK.md`,
   averrow.com MX stays on Google Workspace, which answers 550 NoSuchUser. Its
   352 seeds bounce, and a bounce tells a list validator to drop the address.
@@ -101,7 +103,7 @@ no matter how well the seeds are placed.
 | CI guard: registry ⊆ CHECK, and any later notifications rebuild must preserve deliveries | `test/notification-check-drift.test.ts` (fails without 0265, naming the 3 keys) |
 | lrxradar.com serves its roster bait pages instead of swallowing them | `src/index.ts` |
 | lrxradar's hidden link block links to `/team-directory` and `/staff-contacts` so link-following harvesters reach rotated seeds | `src/templates/honeypot-lrx.ts` |
-| Collisions use real directory shapes (`flast`, `first.l`, `first_last`, …) instead of a date stamp | `src/lib/auto-seeder-planter.ts` + tests |
+| Collisions use real directory shapes (`flast`, `first.l`, `first_last`, …) instead of a date stamp, picked with one batched lookup per seed | `src/lib/auto-seeder-planter.ts` + tests |
 | Runbook: correct Worker name; warn that renames unbind rules | `docs/EMAIL_ROUTING_RUNBOOK.md` |
 
 Once 0265 applies, the capture-stale alert will fire on the next Flight
@@ -122,8 +124,9 @@ Control tick. That is correct: it has been true for ten weeks.
    the platform currently throws away.
 4. **Stop planting on averrow.com** (`UPDATE seed_domains SET status='paused'
    WHERE domain='averrow.com'`), or move a subdomain of it to Email Routing.
-   Point DMARC `rua` at a Worker-routed address, e.g. `dmarc_rua@averrow.ca`,
-   which the handler already expects.
+   Point DMARC `rua` at `dmarc_rua@trustradar.ca`, the Worker-routed address
+   the `email()` handler already dispatches to the DMARC parser (any other
+   address falls through to the spam-trap handler).
 
 ## Uplevel roadmap (from external research)
 
