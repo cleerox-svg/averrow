@@ -182,8 +182,13 @@ export default {
         }
       }
 
-      // lrxradar.com serves as a full honeypot site
-      if (url.hostname === "lrxradar.com") {
+      // lrxradar.com serves as a full honeypot site — except the four
+      // rotating-roster bait pages, which fall through to the shared
+      // handler below. Before this carve-out the catch-all swallowed them,
+      // so the auto-seeder's lrxradar.com rosters were planted but never
+      // published on the one domain that actually gets crawled.
+      const ROSTER_BAIT_PAGES = ["/admin-portal", "/internal-staff", "/team-directory", "/staff-contacts"];
+      if (url.hostname === "lrxradar.com" && !ROSTER_BAIT_PAGES.includes(url.pathname)) {
         ctx.waitUntil(logHoneypotVisit(env, request, `lrxradar:${url.pathname}`));
         return applySecurityHeaders(serveLrxRadarPage(url.pathname));
       }

@@ -96,15 +96,39 @@ function localPart(firstName: string, lastName: string, suffix?: string): string
 }
 
 /**
+ * Ordered local-part candidates for one synthetic name. The 40×30 name
+ * pool saturates after ~1,200 plants, and the old fallback was always
+ * `first.last.YYYYMMDD` — a machine-obvious date stamp that list-cleaning
+ * and harvester heuristics drop on sight. By 2026-09 most new seeds were
+ * that shape. These are the conventions real corporate directories use,
+ * so a collision lands on another plausible address instead.
+ */
+export function localPartVariants(firstName: string, lastName: string, seed: number): string[] {
+  const f = firstName.toLowerCase();
+  const l = lastName.toLowerCase();
+  const nn = String(modIndex(seed, 90) + 10); // 10–99, e.g. a hire-cohort number
+  return [
+    `${f}.${l}`,
+    `${f[0]}${l}`,
+    `${f}.${l[0]}`,
+    `${f}_${l}`,
+    `${f}${l}`,
+    `${f[0]}.${l}`,
+    `${f}.${l}${nn}`,
+    `${f[0]}${l}${nn}`,
+  ];
+}
+
+/**
  * Plant a batch of N synthetic employee-style addresses for the given
  * (domain, page) target. seeded_location is keyed on the page so the
  * honeypot handlers can query the right roster at render time.
  *
  * Uses INSERT OR IGNORE on the address column (UNIQUE in schema) so
- * collisions silently skip — important because we don't bind a
- * cohort suffix unless we have to retry. If a name pair collides we
- * try one cohort-suffixed retry; if that also collides we move on
- * (vanishingly unlikely with 40×30 = 1200 first/last pairs).
+ * collisions silently skip. On collision we walk localPartVariants()
+ * (flast, first.l, first_last, …) and only then the cohort-suffixed
+ * form. The 40×30 = 1,200 name pool is saturated in production, so
+ * collisions are the common case, not a rare one.
  *
  * Returns the rows that actually landed so the caller can report
  * itemsCreated honestly.
@@ -128,8 +152,10 @@ export async function plantBatch(
 
   for (let i = 0; i < opts.count; i++) {
     const { firstName, lastName, title } = synthName(baseSeed + i);
+    // Cohort-tagged form stays as the last resort so a fully saturated
+    // name still plants rather than silently dropping.
     const tries = [
-      `${localPart(firstName, lastName)}@${opts.domain}`,
+      ...localPartVariants(firstName, lastName, baseSeed + i).map(lp => `${lp}@${opts.domain}`),
       `${localPart(firstName, lastName, opts.cohortTag)}@${opts.domain}`,
     ];
 
@@ -206,13 +232,12 @@ export async function readRoster(
       // address as the seed so the same address always renders with
       // the same name/title — no flicker between renders.
       const local = row.address.split('@')[0] ?? row.address;
-      const [first = '', last = ''] = local.split('.');
       const titleSeed = hashString(local);
       const { title } = synthName(titleSeed);
       return {
         id: row.id,
         email: row.address,
-        name: capitalize(first) + (last ? ` ${capitalize(last)}` : ''),
+        name: displayNameFromLocalPart(local),
         title,
       };
     });
@@ -223,6 +248,18 @@ export async function readRoster(
     });
     return [];
   }
+}
+
+/**
+ * "sarah.chen" → "Sarah Chen", "s.chen" → "S. Chen", "sarah.c" →
+ * "Sarah C.", "sarah_chen42" → "Sarah Chen". Separator-less variants
+ * ("schen", "sarahchen") have no recoverable split and render as one
+ * capitalized token, which is still a plausible directory entry.
+ */
+export function displayNameFromLocalPart(local: string): string {
+  const [first = '', last = ''] = local.replace(/\d+$/, '').split(/[._]/);
+  const part = (s: string) => (s.length === 1 ? `${s.toUpperCase()}.` : capitalize(s));
+  return part(first) + (last ? ` ${part(last)}` : '');
 }
 
 function capitalize(s: string): string {
