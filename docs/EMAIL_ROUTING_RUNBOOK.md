@@ -42,16 +42,25 @@ Then add either a catch-all or individual routes. Catch-all is simplest:
 
 | Pattern | Action |
 |---|---|
-| `*@averrow.ca` | Send to Worker → averrow |
+| `*@averrow.ca` | Send to Worker → averrow-worker |
 
 Or individual rules (4):
 
 | Pattern | Action |
 |---|---|
-| `abuse@averrow.ca` | Send to Worker → averrow |
-| `phishing@averrow.ca` | Send to Worker → averrow |
-| `report@averrow.ca` | Send to Worker → averrow |
-| `security@averrow.ca` | Send to Worker → averrow |
+| `abuse@averrow.ca` | Send to Worker → averrow-worker |
+| `phishing@averrow.ca` | Send to Worker → averrow-worker |
+| `report@averrow.ca` | Send to Worker → averrow-worker |
+| `security@averrow.ca` | Send to Worker → averrow-worker |
+
+> ⚠ **Renaming the Worker silently unbinds every rule above.** Cloudflare:
+> "Renaming a Worker removes the binding between that Worker and any routes
+> that point to it." The in-place rename `trust-radar` → `averrow-worker` on
+> 2026-07-17 is the prime suspect for inbound mail stopping that evening
+> (last spam-trap capture and last abuse-mailbox message 2026-07-17 20:07 UTC,
+> none since). After any rename, re-point the rules on **every** zone —
+> averrow.ca, trustradar.ca, lrxradar.com — and send the canary in step 3.
+> See `docs/SPAM_TRAP_ASSESSMENT_2026-09.md`.
 
 ### 2. Confirm migrations applied
 
