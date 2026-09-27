@@ -106,3 +106,62 @@ jobs:
       - name: Type check
         working-directory: packages/averrow-ops
         run: pnpm typecheck
+
+  # ── averrow-tenant (customer-facing SPA) ──────────────────────────
+  #
+  # This package had NO CI coverage at all: the three jobs above gate
+  # averrow-worker and averrow-ops only, so the customer-facing SPA's
+  # tests and typecheck ran solely on a contributor's machine. Lane 3
+  # Phase 3 was the point that became untenable — it put real logic
+  # there (PageVerdictChip, lib/pageSignals.ts, PageAnalysisDialog)
+  # behind that ungated door, and three consecutive PRs (#1714, #1715,
+  # #1717) touched the package with nothing verifying them remotely.
+  #
+  # Deliberately two separate jobs mirroring the averrow-ops pair rather
+  # than adding averrow-tenant to a matrix on those jobs: a matrix would
+  # rename the existing checks ("Test React UI" → "Test React UI
+  # (averrow-ops)"), which silently breaks any branch-protection rule
+  # requiring the current name. Additive jobs cannot.
+  test-tenant-ui:
+    name: Test Tenant UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tenant UI tests
+        working-directory: packages/averrow-tenant
+        run: pnpm test
+
+  typecheck-tenant-ui:
+    name: TypeCheck Tenant UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: packages/averrow-tenant
+        run: pnpm typecheck
