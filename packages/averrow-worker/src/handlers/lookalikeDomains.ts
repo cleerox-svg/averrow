@@ -17,6 +17,58 @@ import { logger } from "../lib/logger";
 import type { Env } from "../types";
 import { hasGlobalReadScope, type AuthContext } from "../middleware/auth";
 
+/**
+ * Explicit column allowlist for the staff lookalike list payload.
+ *
+ * This endpoint was `SELECT *`, which is safe only by accident: every
+ * column added to `lookalike_domains` was published to every staff
+ * caller automatically, with no review step. That is how a sensitive
+ * column leaks — not by someone deciding to expose it, but by nobody
+ * having to decide. Lane 3 alone added six columns this way, two of
+ * them sensitive: `page_evidence` (a literal lifted verbatim from
+ * attacker page content) and `page_exfil_sink` (a live attacker C2
+ * host). Both belong on the staff surface, but they arrived here
+ * without anyone choosing to put them here.
+ *
+ * The tenant-side handler already works this way — `tenantDomainModule.ts`
+ * names its columns, which is precisely how `page_evidence` was kept off
+ * the customer surface. This brings the staff side to the same footing.
+ *
+ * The list below is the table's full current column set (migrations
+ * 0031 + 0227 + 0242 + 0243 + 0260 + 0264), so this change is
+ * behaviour-preserving: the payload is byte-identical today. What
+ * changes is the future — a new column is now opt-in, and the paired
+ * test fails until someone adds it here deliberately.
+ *
+ * Adding a column: add it here AND to the expected set in
+ * `test/lookalike-list-columns.test.ts`. If it is sensitive enough that
+ * the tenant surface must not see it, confirm it is also absent from
+ * the tenant SELECT in `handlers/tenantDomainModule.ts`.
+ */
+export const LOOKALIKE_LIST_COLUMNS = [
+  // ── 0031 base table ──
+  "id", "brand_id", "domain", "permutation_type", "registered",
+  "resolves_to", "has_mx", "has_web", "first_seen", "last_checked",
+  "threat_level", "ai_assessment", "alert_id", "status",
+  "created_at", "updated_at",
+  // ── 0227 / 0242 ──
+  "takedown_id", "unicode_domain",
+  // ── 0243 page analysis ──
+  "page_fetched_at", "page_http_status", "page_phishing_score",
+  "page_signals", "page_content_hash",
+  // ── 0260 anti-bot wall ──
+  "page_anti_bot_wall",
+  // ── 0264 Lane 3 AI build artifacts ──
+  "page_ai_signals", "page_score_delta", "page_generator",
+  "page_exfil_sink", "page_exfil_sink_id", "page_evidence",
+] as const;
+
+// Identifiers only — no user input reaches this string. Every value is
+// a compile-time literal from the frozen list above, so interpolating
+// it is not the SQL-injection hazard CLAUDE.md §8 warns about (the
+// filter VALUES below still go through bind parameters).
+const LOOKALIKE_LIST_COLUMNS_SQL = LOOKALIKE_LIST_COLUMNS.join(", ");
+
 // ─── Brand-access helpers ─────────────────────────────────────────
 // Global-read roles can touch any brand. Org members must have the
 // brand assigned in org_brands. Brand-existence + ownership rolled
@@ -102,7 +154,7 @@ export async function handleListLookalikes(
     const total = countRow?.n ?? 0;
 
     const rows = await env.DB.prepare(
-      `SELECT * FROM lookalike_domains ${where}
+      `SELECT ${LOOKALIKE_LIST_COLUMNS_SQL} FROM lookalike_domains ${where}
        ORDER BY registered DESC, threat_level DESC, created_at DESC
        LIMIT ? OFFSET ?`,
     ).bind(...params, limit, offset).all();
@@ -224,8 +276,11 @@ export async function handleUpdateLookalike(
       `UPDATE lookalike_domains SET ${updates.join(", ")} WHERE id = ?`,
     ).bind(...values).run();
 
+    // Same allowlist as the list endpoint — this response publishes the
+    // whole row back to the client, so it carries the identical
+    // every-future-column-by-default hazard.
     const updated = await env.DB.prepare(
-      "SELECT * FROM lookalike_domains WHERE id = ?",
+      `SELECT ${LOOKALIKE_LIST_COLUMNS_SQL} FROM lookalike_domains WHERE id = ?`,
     ).bind(id).first();
 
     return json({ success: true, data: updated }, 200, origin);
