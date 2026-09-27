@@ -89,6 +89,8 @@ function spiderAndHidden(page: string): string {
   <a href="mailto:${TRAPS.billing}">billing</a>
   <a href="mailto:${TRAPS.security}">security</a>
   <a href="mailto:${TRAPS.hr}">hr</a>
+  <a href="/team-directory">Team directory</a>
+  <a href="/staff-contacts">Staff contacts</a>
 </div>
 ${generateSpiderTraps(DOMAIN, "lrx-" + page)}`;
 }
