@@ -350,8 +350,21 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/lookalikes/:brandId/scan` | Staff | Scan lookalike domains |
 | PATCH | `/api/lookalikes/:id` | Staff | Update lookalike status |
 
+> **Response columns are an explicit allowlist, not `SELECT *`.** Both response
+> paths that return a whole `lookalike_domains` row — the `GET` list and the
+> `PATCH` echo — select the columns named in `LOOKALIKE_LIST_COLUMNS`
+> (`handlers/lookalikeDomains.ts`). **A new column on the table does NOT appear
+> in this payload until it is added there**, and `test/lookalike-list-columns.test.ts`
+> fails until it is. That is deliberate: under the previous `SELECT *` every
+> column reached every staff caller with no review step, which is how
+> `page_evidence` (verbatim attacker page content) and `page_exfil_sink` (a live
+> C2 host) became part of the payload without anyone choosing to publish them.
+> Adding a column means editing the allowlist AND the expected set in that test;
+> if the tenant surface must not see it, confirm it is also absent from the
+> tenant SELECT in `handlers/tenantDomainModule.ts`.
+
 > **Page-content analysis fields (S2.4 / D6, migration 0243, additive).** The
-> `GET /api/lookalikes/:brandId` rows (`SELECT *`) now also carry the
+> `GET /api/lookalikes/:brandId` rows now also carry the
 > deterministic page-phishing verdict written by the `lookalike_scanner` cron
 > (`22 * * * *`): `page_fetched_at`, `page_http_status`, `page_phishing_score`
 > (0–100), `page_signals` (JSON array of fired signal keys, e.g.
@@ -932,7 +945,10 @@ the viewer's corporate network.
 **`page_evidence` is deliberately NOT exposed on this endpoint.** It
 stores a matched literal lifted verbatim from attacker-controlled page
 content — the one page field with no closed vocabulary — so it stays
-staff-only on `GET /api/lookalikes/:brandId` (already `SELECT *`).
+staff-only, present in the staff endpoint's column allowlist
+(`LOOKALIKE_LIST_COLUMNS`) and absent from the tenant SELECT. A test
+pins that asymmetry from both sides
+(`test/lookalike-list-columns.test.ts`).
 
 Phase 3 is **surfacing only**: it renders what Phase 1 already computes
 and persists (migration `0264`) and promotes nothing. The shadow fields

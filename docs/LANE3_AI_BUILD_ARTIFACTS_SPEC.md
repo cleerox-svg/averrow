@@ -653,24 +653,45 @@ restriction, one-pass diagnostics, and the versioned cache key.*
     requires §11.1 to be resolved first, or the argument is vacuous.**
     *[appsec-reviewer]*
 
-**Phase 3 — surface. ⬜ Not started. Independent of Phase 2 — can run in
-parallel**, since rendering shadow columns does not require promoting them.
-13. `SignalBreakdownCard` under `components/ui/`; `LookalikeDomain` interface
-    widened (the staff API is already `SELECT *`, so no handler change).
-    *[frontend-engineer]*
-14. Mount in `RiskTab`; empty states per §3.5 — *checked and clean* must not
-    look like *never scanned*. *[frontend-engineer + design-reviewer]*
-15. Tenant SELECT + both `LookalikeRow` interfaces + the "Signals" column.
-    **Defang `page_exfil_sink` at every render site** — never a clickable link;
-    an operator clicking it requests live attacker C2 from a corporate network.
-    *[backend-engineer + frontend-engineer]*
-16. Widen `lookalike_domain_active` alert `details` — the cheapest write-side
-    change available, since `phishing.signals` and `phishing.score` are already
-    in scope at the `createAlert` site and currently discarded.
-    *[backend-engineer]*
-17. Docs: `THREAT_FEEDS.md`, `API_REFERENCE.md` if endpoints change,
-    `PLATFORM_DATA_DEPENDENCIES.md` §1, `CLAUDE.md` §10 diagnostics table.
-    *[docs-maintainer]*
+**Phase 3 — surface. ✅ COMPLETE (merged 2026-09-21 → 2026-09-27, PRs #1714,
+#1715, #1717, #1718).** Ran independently of Phase 2, as planned — rendering
+shadow columns never required promoting them.
+13. ✅ `SignalBreakdownCard` under `components/ui/`; `LookalikeDomain` interface
+    widened. **The "already `SELECT *`, so no handler change" premise no longer
+    holds** — #1717 replaced it with the explicit `LOOKALIKE_LIST_COLUMNS`
+    allowlist, so a future field needs the interface AND the allowlist updated.
+    Three fields that interface declared (`ip_address`, `registrar`,
+    `bimi_record`) turned out not to be columns at all and were removed.
+14. ✅ Mounted in `RiskTab`; three distinct empty states per §3.5. The first
+    attempt used `EmptyState variant="configure-me"`, which aliases onto
+    `locked` and rendered *never scanned* in the gray "no permission"
+    treatment — the exact confusion §3.5 exists to prevent. Fixed to
+    `scanning` (amber) in #1715; the call site now carries a comment, since
+    the variant name is misleading enough to invite the same mistake.
+15. ✅ Tenant SELECT + both `LookalikeRow` interfaces + the "Signals" column,
+    with `page_exfil_sink` defanged at every render site and no `href`
+    anywhere in either view. Independently verified at both sites.
+16. ✅ Widened `lookalike_domain_active` alert `details` via
+    `buildPageEvidenceDetails`. `{}` (never analyzed) stays distinguishable
+    from a zeroed object (analyzed clean) by key presence; the two sink fields
+    and `page_evidence` are excluded.
+17. ✅ Docs: `THREAT_FEEDS.md` (corrected a `feed_configs.interval_minutes`
+    claim — no such column; eligibility is `shouldRunNow` over
+    `schedule_cron` + `last_successful_pull` + the `next_retry_at` breaker),
+    `API_REFERENCE.md` (the allowlist contract; two stale `SELECT *` claims),
+    `PLATFORM_DATA_DEPENDENCIES.md` §1 (a row for the six 0264 columns; the
+    0260 row's cache key was stale at `.cloaking`, now `.cloaking.v2`),
+    `CLAUDE.md` §10 (the block had gained `by_fetch_outcome[]`, `truncated`,
+    `ai_build.*`, `exfil.*`, `generator.*`, and did not record that
+    `fetched_ok` is a misnomer counting failures too).
+
+*Also landed across those PRs, none of it planned here: a contrast pass
+(`--text-muted` at 2.14:1 and `--text-tertiary` at 3.77:1 both fail 4.5:1 on
+`--bg-page`), `role="dialog"`/`aria-modal`/Escape on the tenant dialog, the
+`auditor` global-read fix in `findBrandForCaller` (#1716 — unrelated to this
+lane, surfaced while verifying it), and the first CI gate for
+`averrow-tenant` (#1718 — the package had none, so three of these four PRs
+shipped its half unverified remotely).*
 
 **Gate before each phase ships:** `npx tsc --noEmit` (worker + ops),
 `pnpm check:resource-drift`, `pnpm test`, plus `qa-verifier` driving the flow

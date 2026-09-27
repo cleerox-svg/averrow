@@ -253,6 +253,24 @@ watchlist is one Haiku-tier enumeration pass per brand (bounded, cacheable,
 refreshed rarely) plus zero-cost joins against feeds already flowing. Note
 the adjacent supply-chain variant ("slopsquatting") is out of Averrow's scope.
 
+> **⚠️ REVERSED 2026-09-21 — slopsquatting IS in scope.** The sentence above
+> stands as the July reasoning, but the conclusion no longer holds. See
+> `docs/AI_THREAT_INTEL_FEEDS_PLAN_2026-09.md` §11 decision 1 (Lane 2).
+>
+> Three things changed the answer. It is **the same primitive already running
+> here** — name permutation + registry diff + brand match — not a new
+> capability, which is what "out of scope" implied. The **harmed party is a
+> company** (a developer installing `python-dateutils` instead of
+> `python-dateutil` damages the real package's owner), so it passes the
+> one-line test in `LRX_PRODUCT_BOUNDARIES.md` cleanly, where the July read
+> had it landing on individuals. And it is **new sellable surface** rather
+> than a defensive cost.
+>
+> Scope of the reversal: package-registry name-squatting only (npm, PyPI, and
+> the MCP registry). It does **not** extend to the per-message
+> machine-generated-text detection that §3.1 rejects on false-positive
+> grounds — that rejection stands and is unaffected.
+
 ### 3.4 Infrastructure velocity & discontinuity signatures — GOOD FIT, PURE SQL
 
 AI-scaled operations leave volumetric/temporal traces:

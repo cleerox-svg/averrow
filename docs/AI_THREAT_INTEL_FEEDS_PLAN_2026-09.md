@@ -322,7 +322,9 @@ served to existing code references `[V]`. HF typosquat study over 1.02M models
 **Reversed 2026-09-21** (§11 decision 1). It is the same primitive we already
 run (name permutation + registry diff + brand match), the harmed party is a
 company (so it passes `LRX_PRODUCT_BOUNDARIES.md`'s one-line test cleanly), and
-it is new sellable surface. The reversal still needs recording in the July doc.
+it is new sellable surface. ✅ Recorded in the July doc at §3.3 (2026-09-27),
+scoped to package-registry name-squatting only — §3.1's rejection of per-message
+MGT detection is unaffected and still stands.
 
 **Lane 3 — AI-build artifacts in page source.**
 
@@ -497,7 +499,7 @@ Settled 2026-09-21 unless marked open.
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | ✅ **YES.** Lane 2 is in scope. Record the reversal in the July doc |
+| 1 | **Reverse July §3.3's "slopsquatting out of scope"?** | ✅ **YES.** Lane 2 is in scope. Reversal recorded in the July doc at §3.3 (2026-09-27) — scoped to package-registry name-squatting; §3.1's MGT rejection unaffected |
 | 4 | **Add the Workers AI binding?** | ✅ **YES.** `@cf/google/embeddinggemma-300m`, no provider key; unblocks the stalled polymorphism semantic leg |
 | 5 | **Ratify or retire the deepfake boundary** (§10.1) | ✅ **RETIRE the stated reason.** The imprsn8 boundary is defunct. Deferring deepfake detection still stands on §5.3's volume/price/accuracy grounds — but on those grounds, not an inherited one |
 | 8 | **Do these signals ever carry actor attribution?** (§13.4) | ✅ **YES, via the tier ladder.** Tier 1 (payload-sink bridging) ships with Lane 2; Tier 2 (principal-identity axis) is designed for but gated on Tier 1's evidence. Not the flat "no" the first draft recommended |
