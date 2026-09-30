@@ -31,7 +31,6 @@ import { fileURLToPath } from "node:url";
 import {
   MONITORED_BRAND_PREDICATE_SQL,
   MONITORED_BRAND_TIERS,
-  MONITORED_BRAND_STATUS,
 } from "../src/lib/monitored-brands";
 
 type SqliteCtor = new (path: string) => {
@@ -131,22 +130,29 @@ const LOOKALIKE_DDL = `
  */
 const MATRIX: Array<{ id: string; tier: string | null; status: string | null; in: boolean; why: string }> = [
   // ── customer tier: unconditional ───────────────────────────────────
-  { id: "cust_active",   tier: "customer",  status: "active",   in: true,  why: "paying customer, scanning on" },
-  // THE regression guard. Two of three production customer brands look
-  // like this; requiring active here cut the analyzable set 36 → 17.
-  { id: "cust_inactive", tier: "customer",  status: "inactive", in: true,  why: "paying customer, scan scheduling off" },
-  { id: "cust_null",     tier: "customer",  status: null,       in: true,  why: "paying customer, status never stamped" },
-  { id: "cust_weird",    tier: "customer",  status: "paused",   in: true,  why: "paying customer, unknown status value" },
+  { id: "cust_active",   tier: "customer",  status: "active",   in: true,  why: "paying customer" },
+  { id: "cust_inactive", tier: "customer",  status: "inactive", in: true,  why: "2 of 3 production customer brands look like this" },
+  { id: "cust_null",     tier: "customer",  status: null,       in: true,  why: "status never stamped" },
+  { id: "cust_weird",    tier: "customer",  status: "paused",   in: true,  why: "unknown status value" },
 
-  // ── monitored tier: honours the flag ───────────────────────────────
-  { id: "mon_active",   tier: "monitored", status: "active",   in: true,  why: "the 359 brands this change adds" },
-  { id: "mon_inactive", tier: "monitored", status: "inactive", in: false, why: "inactive is what separates it from the catalog" },
-  { id: "mon_null",     tier: "monitored", status: null,       in: false, why: "NULL is not 'active'" },
-  { id: "mon_weird",    tier: "monitored", status: "paused",   in: false, why: "only the literal 'active' admits" },
+  // ── monitored tier: ALSO unconditional ─────────────────────────────
+  // `monitoring_status` is vestigial — nothing in the repo ever writes
+  // 'inactive', so its absence encodes no decision. These four rows are
+  // the standing stipulation: every monitored brand is covered. A change
+  // that flips any of them to `in: false` is re-adding a closed
+  // narrowing; see the constant's docstring before doing it.
+  { id: "mon_active",   tier: "monitored", status: "active",   in: true,  why: "the curated seed set" },
+  { id: "mon_inactive", tier: "monitored", status: "inactive", in: true,  why: "1,505 brands — the INSERT default, not a decision" },
+  { id: "mon_null",     tier: "monitored", status: null,       in: true,  why: "status is not consulted at all" },
+  { id: "mon_weird",    tier: "monitored", status: "paused",   in: true,  why: "'paused' has never existed in a single row" },
 
   // ── everything else: out ───────────────────────────────────────────
-  { id: "tracked_active", tier: "tracked", status: "active", in: false, why: "the 114K-brand catalog, not monitored" },
+  // `tracked` stays out on BOTH statuses. 631 catalog rows carry
+  // 'active', which is exactly why tier is the scope column and the
+  // status flag is not.
+  { id: "tracked_active", tier: "tracked", status: "active", in: false, why: "catalog — and 631 real rows look like this" },
   { id: "tracked_null",   tier: "tracked", status: null,     in: false, why: "catalog" },
+  { id: "tracked_inact",  tier: "tracked", status: "inactive", in: false, why: "catalog, 111,753 rows" },
   { id: "tier_null",      tier: null,      status: "active", in: false, why: "no tier = not monitored" },
   { id: "tier_unknown",   tier: "prospect", status: "active", in: false, why: "a tier added later must opt IN explicitly" },
 ];
@@ -187,15 +193,26 @@ describe.skipIf(!hasSqlite())("MONITORED_BRAND_PREDICATE_SQL — real SQLite", (
     });
   }
 
-  it("never filters the customer tier on monitoring_status", () => {
-    // Stated as a property rather than a row list: whatever the status
-    // column holds, every customer-tier brand is in. This is the
-    // invariant, and re-adding `AND monitoring_status='active'` to the
-    // whole predicate fails here even if someone updates the matrix.
-    const customers = MATRIX.filter((r) => r.tier === "customer");
-    expect(customers.length).toBeGreaterThan(1);
+  it("does not consult monitoring_status AT ALL — for any tier", () => {
+    // Stated as a property rather than a row list, so it fails even if
+    // someone "updates the matrix to match" after re-adding a status
+    // term. Within each admitted tier, the status column must make no
+    // difference whatsoever: group the matrix by tier and assert every
+    // row in that tier agrees. Re-adding `AND monitoring_status =
+    // 'active'` splits the monitored and customer groups and fails here.
     const got = admitted();
-    for (const c of customers) expect(got.has(c.id), c.id).toBe(true);
+    for (const tier of MONITORED_BRAND_TIERS) {
+      const rows = MATRIX.filter((r) => r.tier === tier);
+      expect(rows.length, `matrix must exercise several statuses for ${tier}`).toBeGreaterThan(1);
+      const statuses = new Set(rows.map((r) => String(r.status)));
+      expect(statuses.size, `${tier} rows must differ in status`).toBeGreaterThan(1);
+      for (const r of rows) expect(got.has(r.id), `${r.id} (${r.why})`).toBe(true);
+    }
+    // And the mirror: `tracked` is excluded regardless of status, so the
+    // exclusion is about tier and not about the flag either.
+    const tracked = MATRIX.filter((r) => r.tier === "tracked");
+    expect(new Set(tracked.map((r) => String(r.status))).size).toBeGreaterThan(1);
+    for (const r of tracked) expect(got.has(r.id), r.id).toBe(false);
   });
 
   it("runs inside the seeder's real query", () => {
@@ -207,7 +224,11 @@ describe.skipIf(!hasSqlite())("MONITORED_BRAND_PREDICATE_SQL — real SQLite", (
     ).run();
     const rows = raw.prepare(sql).all(50) as Array<{ brand_id: string }>;
     const ids = rows.map((r) => r.brand_id).sort();
-    expect(ids).toEqual(["cust_active", "cust_inactive", "cust_null", "cust_weird"].sort());
+    // Every admitted brand EXCEPT the one already holding a lookalike
+    // row — derived from the matrix rather than hardcoded, so widening
+    // the predicate doesn't silently leave a stale expectation behind.
+    const expected = MATRIX.filter((r) => r.in && r.id !== "mon_active").map((r) => r.id).sort();
+    expect(ids).toEqual(expected);
     expect(ids).not.toContain("mon_active");
   });
 
@@ -260,17 +281,24 @@ describe("both gates share one predicate", () => {
 
   it("carries no bind placeholder — it is interpolated, so it must be static", () => {
     expect(MONITORED_BRAND_PREDICATE_SQL).not.toContain("?");
-    // Only identifiers, quoted literals, parens, dots and boolean words.
-    expect(MONITORED_BRAND_PREDICATE_SQL).toMatch(/^[a-z_.'=\s()A-Z]+$/);
+    // Only identifiers, quoted literals, parens, dots, commas (the `IN`
+    // list separator) and boolean/operator words. A comma cannot carry
+    // SQL on its own, and the statement-breaking characters are excluded
+    // separately below — that assertion is the one doing the real work.
+    expect(MONITORED_BRAND_PREDICATE_SQL).toMatch(/^[a-z_.',=\s()A-Z]+$/);
     expect(MONITORED_BRAND_PREDICATE_SQL).not.toMatch(/[;-]{1,2}|\/\*/);
   });
 
   it("assumes the `b` alias both call sites provide", () => {
     // Every column reference must be qualified — an unqualified column
     // would resolve against whatever table the caller happens to JOIN.
+    // Exactly one reference now (`b.tier`); the count is asserted rather
+    // than bounded so that ADDING a second term is itself a failure here
+    // and not just in the matrix.
     const cols = [...MONITORED_BRAND_PREDICATE_SQL.matchAll(/([a-z_]+)\.([a-z_]+)/g)];
-    expect(cols.length).toBeGreaterThan(1);
+    expect(cols.length, "the predicate is `tier` alone — see the docstring").toBe(1);
     for (const m of cols) expect(m[1]).toBe("b");
+    expect(MONITORED_BRAND_PREDICATE_SQL).not.toMatch(/monitoring_status/);
   });
 
   it("keeps the exported constants in step with the SQL text", () => {
@@ -279,11 +307,13 @@ describe("both gates share one predicate", () => {
     for (const tier of MONITORED_BRAND_TIERS) {
       expect(MONITORED_BRAND_PREDICATE_SQL).toContain(`'${tier}'`);
     }
-    expect(MONITORED_BRAND_PREDICATE_SQL).toContain(`'${MONITORED_BRAND_STATUS}'`);
-    // And no tier appears in the SQL that isn't in the allowlist: pull
-    // every quoted literal back out and check it's accounted for.
+    // And nothing appears in the SQL that isn't in the allowlist: pull
+    // every quoted literal back out and check it's accounted for. Now
+    // that the predicate is tier-only, the tier list is the COMPLETE
+    // vocabulary, so this also catches a re-added status literal.
     const literals = [...MONITORED_BRAND_PREDICATE_SQL.matchAll(/'([^']*)'/g)].map((m) => m[1]!);
-    const known = new Set<string>([...MONITORED_BRAND_TIERS, MONITORED_BRAND_STATUS]);
+    const known = new Set<string>(MONITORED_BRAND_TIERS);
     for (const lit of literals) expect(known, `unlisted literal '${lit}'`).toContain(lit);
+    expect(literals.length).toBe(MONITORED_BRAND_TIERS.length);
   });
 });

@@ -30,25 +30,37 @@
  * promotion gate needed ~285 scored rows against 19 — arithmetically
  * unreachable rather than merely slow. See spec §5.1a.
  *
- * ── Why the `customer` tier is NOT filtered on monitoring_status ─────
+ * ── The predicate is `tier` ALONE. Do not add a second term. ─────────
  *
- * The obvious spelling of this predicate is
- * `tier IN ('monitored','customer') AND monitoring_status = 'active'`.
- * It is wrong, and measurably so. Two of the three `customer`-tier
- * brands in production carry `monitoring_status <> 'active'`, so that
- * form cut the analyzable population (registered + has_web + resolving)
- * from 36 rows to 17 — it would have HALVED the existing pipeline on
- * the same change that was meant to widen it.
+ * STANDING STIPULATION (user decision, 2026-09-30): every brand the
+ * platform monitors gets typosquat coverage, regardless of tenant
+ * assignment or `monitoring_status`. Mirrored in `CLAUDE.md` §8 ("Brand
+ * scope"), `docs/AI_AGENTS.md` (the lookalike_scanner row) and spec
+ * §5.1a. `phantom_enumerator` already selects on this same predicate, so
+ * it is the population a sibling agent has used in production all along.
  *
- * Measured against production the day this landed:
+ * Two narrowings have been tried and reverted. BOTH ARE CLOSED — a
+ * future change that re-adds either is reintroducing a known defect:
  *
- *   old `org_brands` membership gate  →   3 brands, 36 analyzable rows
- *   this predicate                    → 362 brands, 36 analyzable rows
- *   ...AND monitoring_status='active' → 360 brands, 17 analyzable rows
+ *   1. `EXISTS (org_brands …)` — the original gate. Admitted 3 brands of
+ *      114,251, which left the hourly seeder a no-op BY CONSTRUCTION for
+ *      four months (its `NOT EXISTS` is one-shot per brand, and those
+ *      three were seeded in March-May). Closed because a typosquat is
+ *      actor evidence, not a per-customer entitlement.
+ *   2. `AND monitoring_status = 'active'` — closed on evidence, not
+ *      preference. See the audit below. It is also the spelling that
+ *      LOOKS right, which is why the audit is kept in full.
  *
- * So `customer` is unconditional: a paying customer's brand is monitored
- * by definition, and `monitoring_status` on those rows tracks something
- * else, not whether we care about the brand.
+ * Measured against production across the three forms:
+ *
+ *   `EXISTS (org_brands …)`            →     3 brands,    36 analyzable
+ *   ...`AND monitoring_status='active'`→   360 brands,    17 analyzable
+ *   `tier IN ('monitored','customer')` → 1,867 brands, ~56,010 candidates
+ *
+ * Note the middle row: adding the flag to a widened tier predicate cut
+ * the analyzable population BELOW the narrow gate it replaced, because
+ * two of the three `customer`-tier brands are flagged `inactive`. It
+ * would have halved the pipeline on the change meant to widen it.
  *
  * ── `monitoring_status` is VESTIGIAL. Audited 2026-09-30. ────────────
  *
@@ -98,30 +110,19 @@
  *
  * Absence of `'active'` is therefore not the presence of a decision to
  * stop. (`'active'` does carry intent — it marks the curated seed set —
- * which is why it is a usable staging filter below, just not a
- * principled one.)
+ * but a curated subset is not the target population, and it was only
+ * ever a usable staging filter, never a principled one. It is now gone.)
  *
- * ── A THROTTLE sized to throughput, not a definition of the target ───
+ * ── THE POPULATION IS WIDE AND THE THROUGHPUT IS NOT. Read this. ─────
  *
- *   tier monitored + active, plus all customer →   362 brands, ~10,860 rows
- *   tier monitored + customer, any status      → 1,867 brands, ~56,010 rows
- *
- * Given the finding above, the second row is the honest target and this
- * predicate is a staging THROTTLE on the way to it. Read the `active`
- * term as "an arbitrary ~20% slice that happens to be addressable by an
- * existing indexed column", NOT as a statement about which brands
- * deserve coverage. It is retained only because its SIZE fits current
- * throughput, and it should be deleted — not re-justified — once the
- * caps below move.
- *
- * The 362-brand stage yields roughly 540 scored rows at observed rates,
- * comfortably past the ~285 §5.2 needs for n>=30 in its positive-control
- * arm, while staying inside existing throughput. The full 1,867 does not:
- * `checkLookalikeBatch` reads 50 rows/hour, so 56,010 rows take about 47
- * DAYS to DNS-check even once, against roughly 9 days for 10,860.
- *
- * Widening to all 1,867 is therefore gated on THREE things, none of them
- * this predicate:
+ * 1,867 brands is ~56,010 candidate rows against `checkLookalikeBatch`'s
+ * `LIMIT 50`/hour — about a 47-DAY cycle to DNS-check each row once. That
+ * is a known, ACCEPTED interim state, not an oversight, and not a bug to
+ * be fixed by raising the LIMIT on its own. The alert-volume half of the
+ * problem is already handled (first-contact baselining plus the
+ * HIGH/CRITICAL floor in `lookalike-alert-policy.ts`); the throughput
+ * half is not, and raising caps without the following would make things
+ * worse rather than better:
  *
  *   1. A wall-clock budget guard in `checkLookalikeBatch`. It has none
  *      (only a 60s sub-budget for inline page fetches), and it selects
@@ -158,7 +159,7 @@
  * aliased `b`, which both call sites do.
  */
 export const MONITORED_BRAND_PREDICATE_SQL =
-  `(b.tier = 'customer' OR (b.tier = 'monitored' AND b.monitoring_status = 'active'))`;
+  `b.tier IN ('monitored', 'customer')`;
 
 /**
  * Tier values the predicate admits. Exported for tests so the allowlist
@@ -166,6 +167,3 @@ export const MONITORED_BRAND_PREDICATE_SQL =
  * edit in one place.
  */
 export const MONITORED_BRAND_TIERS = ['monitored', 'customer'] as const;
-
-/** The `monitoring_status` the predicate requires. */
-export const MONITORED_BRAND_STATUS = 'active' as const;
