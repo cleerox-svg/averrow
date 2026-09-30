@@ -743,6 +743,42 @@ safety property is unobservable. **Wire the producer first, re-review, and only
 then make the §3.3 argument** — otherwise the `appsec-reviewer` sign-off in
 step 12 is approving a property nobody can test.
 
+> **⚠️ WORSE THAN WRITTEN — the named consumer cannot receive these alerts at
+> all (verified 2026-09-30).** Wiring a producer would not make §3.3's argument
+> true; it would make it testably false, because the guard is in the wrong
+> decider.
+>
+> `decideThreatAutoTriage` runs only behind a `source_type === 'threat'` gate —
+> on the real-time path (`lib/alerts.ts:147`) and on the backfill path
+> (`lib/alert-triage.ts:651`), both verified. Page analysis produces
+> `lookalike_domain_active` alerts, which the scanner creates with
+> `sourceType: 'lookalike_scanner'` and `sourceId: <lookalike_domains.id>`
+> (`scanners/lookalike-domains.ts:395-396`). So they match neither the threat
+> branch nor the social / app-store / executive branches, and fall through to
+> the default `{ action: 'keep', reason: 'unhandled_alert_type' }`.
+>
+> Two consequences, pulling opposite ways:
+>
+> 1. **§3.3's stated mechanism is wrong.** `page_credential_harvest` is not
+>    "unpopulated"; it is unreachable for this alert family. A producer would
+>    also have to widen `loadThreatSnapshotForAlert`'s 8-column SELECT (the
+>    field is not in it) and bridge `lookalike_domains` → `threats`, which is
+>    not a join the schema offers.
+> 2. **The safety property §3.3 wanted already holds, for a different
+>    reason.** These alerts have no auto-dismissal path whatsoever, so
+>    widening `credentialHarvest` genuinely cannot produce a dismissal. The
+>    conclusion survives; the argument for it does not.
+>
+> **This is now a design decision, not a wiring task**, and it should be made
+> before step 9 rather than discovered inside it. Three options, in rising
+> order of behavioural risk: (a) leave lookalike alerts un-auto-triaged and
+> rewrite §3.3 to claim the property that actually holds — zero risk, no code;
+> (b) add a lookalike-specific decider that can only ever `keep`, making the
+> guarantee explicit and testable; (c) route lookalike alerts through a
+> triage decider that can dismiss — the only option that could *introduce*
+> dismissals on a family that currently has none, and so the one needing
+> `appsec-reviewer` before anything is written, not after.
+
 ### 11.2 The A3 rule needs its two-tier split before `default_scaffold_title` is promoted
 
 §3.1 A3, amended. The prefix leg fires on legitimate titles ("Title Insurance
@@ -751,14 +787,14 @@ well-motivated signal for a rule artifact. Split the list — exact-only for
 generic English words, prefix-eligible for scaffold-branded strings — before
 the gate is run, not after it fails.
 
-### 11.3 `by_fetch_outcome[]` needs a per-pass marker before its rates are trusted
+### 11.3 `by_fetch_outcome[]` needs a per-pass marker before its rates are trusted — ✅ DONE (migration 0266)
 
 §6, amended. Until `page_last_outcome` exists, a row that succeeded once and has
 403'd for a month still reads `scored` and still contributes its **stale** signal
 set to `ai_build.by_signal[]`. Those are the rates §5.2's lift measurement
 depends on. Land the column early in Phase 2 so the gate data is clean.
 
-### 11.4 `oversize_declared` is still not individually visible
+### 11.4 `oversize_declared` is still not individually visible — ✅ DONE (same column)
 
 §6. `rejectedReason` is not persisted, so the outcome breakdown conflates
 non-HTML with oversize. `MAX_BYTES` is 512 KB and AI-builder output is
@@ -767,6 +803,28 @@ structurally biased against the exact population it targets, and the bias
 remains unmeasurable.** If it turns out material, raising `MAX_BYTES` for this
 pass is a bigger recall win than any individual signal in §3.1. Splitting it
 needs the same persisted-reason work as 11.3, so do them together.
+
+> **Both done together, as specified.** `page_last_outcome` (migration 0266)
+> is written on BOTH UPDATE branches — `'scored'` on success, a normalized
+> reject reason on failure — so it answers 11.3's per-pass question and
+> 11.4's granularity question with one field. `oversize_declared`,
+> `oversize` and `non_html_content_type` are now distinct buckets, so the
+> bias question is finally measurable; it is not yet answered, and answering
+> it is what decides whether `MAX_BYTES` moves.
+>
+> Normalized rather than raw, which was not in the original plan: three of
+> `rejectedReason`'s forms interpolate and one embeds an IP, so persisting
+> it verbatim would have given the `GROUP BY` unbounded cardinality and
+> written an attacker-influenced value into a new column. `PAGE_OUTCOMES` in
+> `lib/page-fetch.ts` is the bounded vocabulary, pinned by
+> `test/page-last-outcome.test.ts`.
+>
+> Rows not yet re-analyzed since 0266 fall back to the old inference in
+> `*_pre_0266` buckets and are counted by
+> `ai_build.unverified_denominator_rows`. **Read that before running the
+> §5.2 gate** — a lift ratio measured while it is a large fraction of
+> `scored` is computed over a population that still mixes live verdicts
+> with stale ones. It decays on the 24 h cadence.
 
 ### 11.5 Evasion is expected and must not be misread as a dead signal
 

@@ -61,6 +61,16 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // ── 0264 Lane 3 AI build artifacts ──
   "page_ai_signals", "page_score_delta", "page_generator",
   "page_exfil_sink", "page_exfil_sink_id", "page_evidence",
+  // ── 0266 per-pass outcome ──
+  // Included deliberately: it is what explains a stale verdict to an
+  // operator ("score 75, but the last pass was oversize"), and it is a
+  // bounded normalized label with no attacker-controlled content — the
+  // raw reject reason it replaces embedded an IP, which is why the
+  // writer normalizes. Absent from the TENANT select, but as a product
+  // call rather than a safety one: crawler-pipeline detail is not a
+  // customer-facing finding. That is a weaker reason than
+  // `page_evidence`'s, which is a content-injection constraint.
+  "page_last_outcome",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is

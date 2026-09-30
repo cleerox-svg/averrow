@@ -15,7 +15,12 @@
  * 15-min reap window (the greynoise/seclookup starvation lesson).
  */
 
-import { fetchSuspectPage, DEFAULT_DEADLINE_MS, type SuspectPageResult } from '../lib/page-fetch';
+import {
+  fetchSuspectPage,
+  normalizePageOutcome,
+  DEFAULT_DEADLINE_MS,
+  type SuspectPageResult,
+} from '../lib/page-fetch';
 import {
   scorePagePhishing,
   escalateThreatLevelForPage,
@@ -95,6 +100,7 @@ export async function runPageAnalysisForDomain(
            page_exfil_sink = ?,
            page_exfil_sink_id = ?,
            page_evidence = ?,
+           page_last_outcome = 'scored',
            updated_at = datetime('now')
        WHERE id = ?`,
     ).bind(
@@ -136,13 +142,26 @@ export async function runPageAnalysisForDomain(
     // page_generator / page_exfil_sink / page_exfil_sink_id /
     // page_evidence, so a transient fetch failure never erases the
     // evidence an analyst is adjudicating.
+    //
+    // page_last_outcome (migration 0266) is the ONE exception to that
+    // rule, and deliberately so: it must describe the LAST pass, not the
+    // last SUCCESSFUL one. Leaving a stale 'scored' here is exactly the
+    // §11.3 defect — a row that scored once and has 403'd for a month
+    // would keep contributing its stale signal set to the §5.2 lift
+    // measurement. Normalized rather than raw (§11.4 + the IP-leak note
+    // in normalizePageOutcome).
     await env.DB.prepare(
       `UPDATE lookalike_domains
        SET page_fetched_at = datetime('now'),
            page_http_status = ?,
+           page_last_outcome = ?,
            updated_at = datetime('now')
        WHERE id = ?`,
-    ).bind(result.httpStatus ?? null, row.id).run();
+    ).bind(
+      result.httpStatus ?? null,
+      normalizePageOutcome(result.rejectedReason),
+      row.id,
+    ).run();
   }
 
   return { result, phishing };

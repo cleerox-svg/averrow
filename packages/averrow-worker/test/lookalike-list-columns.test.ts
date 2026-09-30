@@ -31,6 +31,10 @@ const EXPECTED_COLUMNS = [
   // 0264 Lane 3 AI build artifacts
   "page_ai_signals", "page_score_delta", "page_generator",
   "page_exfil_sink", "page_exfil_sink_id", "page_evidence",
+  // 0266 per-pass outcome — bounded normalized label, staff-visible
+  // because it explains a stale verdict. Added by hand, which is the
+  // review step this file exists to force.
+  "page_last_outcome",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */
