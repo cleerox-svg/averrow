@@ -515,6 +515,31 @@ catches a "fires on 40% of pages" failure before an operator ever sees it.
 > patterns are the product); `org_brands` membership was the brand-protection
 > reading, and it is the narrower product.
 >
+> **STANDING STIPULATION (user decision, 2026-09-30). Do not re-litigate.**
+> The target population is **all 1,867 brands** at `tier IN
+> ('monitored','customer')` — every brand the platform monitors, regardless of
+> tenant assignment *or* `monitoring_status`. Two narrowings have now been
+> tried and reverted, and both are closed:
+>
+> 1. **`org_brands` membership** — the original gate. 3 brands of 114,251.
+>    Closed: a typosquat is actor evidence, not a per-customer entitlement.
+> 2. **`monitoring_status = 'active'`** — the 362-brand staging filter below.
+>    Closed on evidence, not preference: the column is vestigial (see the
+>    correction at the end of this section — nothing in the repo ever writes
+>    `'inactive'`, so its absence encodes no decision).
+>
+> A future session that re-adds either filter is reintroducing a known defect.
+> The single definition is `MONITORED_BRAND_PREDICATE_SQL` in
+> `lib/monitored-brands.ts`, shared by the seeder and the page-analysis pass so
+> the two cannot drift; that file carries the audit and the throughput
+> preconditions. Also mirrored in `CLAUDE.md` §8 under "Brand scope", which is
+> read at the start of every session.
+>
+> **What the stipulation does not license.** Widening the population is not
+> permission to widen the *caps*. The three preconditions below are unchanged,
+> and the 47-day re-check cycle they describe is an accepted interim state, not
+> a bug to be fixed by raising `LIMIT 50` without the wall-clock guard.
+>
 > Both gates — the seeder and the page-analysis pass — now share
 > `MONITORED_BRAND_PREDICATE_SQL` (`lib/monitored-brands.ts`), one definition
 > so they cannot drift:
