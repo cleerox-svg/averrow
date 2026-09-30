@@ -126,11 +126,18 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
        ORDER BY created_at DESC LIMIT 30`
     ).bind(brandId).all().catch(() => ({ results: [] })),
 
+    // `first_seen`, not `created_at`: the latter is when the SEEDER
+    // inserted the candidate, so with the monitored-brand seeder running
+    // (~300 rows/tick) a 7-day window on it measures our own crawl
+    // schedule rather than the brand's exposure. `first_seen` is stamped
+    // only on a `registered 0 -> 1` transition we observed — first
+    // contact with an already-registered squat leaves it NULL by design
+    // (migration 0267), so this counts appearances and nothing else.
     env.DB.prepare(
-      `SELECT domain, registered, dns_active, has_content, mx_records, created_at
+      `SELECT domain, registered, dns_active, has_content, mx_records, first_seen
        FROM lookalike_domains
-       WHERE brand_id = ? AND registered = 1 AND created_at >= datetime('now', '-7 days')
-       ORDER BY created_at DESC LIMIT 30`
+       WHERE brand_id = ? AND registered = 1 AND first_seen >= datetime('now', '-7 days')
+       ORDER BY first_seen DESC LIMIT 30`
     ).bind(brandId).all().catch(() => ({ results: [] })),
 
     env.DB.prepare(
@@ -328,7 +335,11 @@ export const narratorAgent: AgentModule = {
         (b.email_security_grade IN ('D','F')) as email_fail,
         (SELECT COUNT(*) FROM threats t WHERE t.target_brand_id = b.id AND t.created_at >= datetime('now', '-7 days')) as threat_count,
         (SELECT COUNT(*) FROM social_monitor_results smr WHERE smr.brand_id = b.id AND smr.created_at >= datetime('now', '-7 days')) as social_count,
-        (SELECT COUNT(*) FROM lookalike_domains ld WHERE ld.brand_id = b.id AND ld.registered = 1 AND ld.created_at >= datetime('now', '-7 days')) as lookalike_count,
+        -- first_seen, not created_at: see the per-brand query above. On
+        -- created_at this subquery would have counted seeder output, so
+        -- every freshly-seeded brand would have gained a phantom signal
+        -- type and cleared the signalTypes >= 2 gate on nothing.
+        (SELECT COUNT(*) FROM lookalike_domains ld WHERE ld.brand_id = b.id AND ld.registered = 1 AND ld.first_seen >= datetime('now', '-7 days')) as lookalike_count,
         (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.suspicious = 1 AND ct.not_before >= datetime('now', '-7 days')) as ct_count,
         (SELECT COUNT(*) FROM app_store_listings asl WHERE asl.brand_id = b.id AND asl.status = 'active'
            AND asl.classification IN ('impersonation','suspicious')

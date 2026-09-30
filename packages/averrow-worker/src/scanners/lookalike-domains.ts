@@ -31,6 +31,155 @@ import type { Env } from '../types';
 const INLINE_PAGE_FETCH_CAP = 10;
 const INLINE_PAGE_BUDGET_MS = 60_000;
 
+// ─── Per-run DNS budget, SPLIT between the two cohorts ────────────
+//
+// The total is unchanged at 50 rows/tick. What changed is that the two
+// populations no longer compete in one `ORDER BY last_checked ASC NULLS
+// FIRST` queue, where NULLs sort first UNCONDITIONALLY:
+//
+//   * FIRST CONTACT (`last_checked IS NULL`) — the seeder backlog.
+//     ~56,010 rows, growing by ~300/tick (10 brands x ~30 permutations)
+//     while the seeder drains its 1,864-brand stage. One-time.
+//   * RE-CHECK (`last_checked < -24 hours`) — everything we have already
+//     observed. Small today (the 120 pre-existing rows, all on
+//     `customer`-tier brands) and the ONLY path that can produce an
+//     observed `registered 0 -> 1` transition, a real `first_seen`, or a
+//     lapse/re-registration.
+//
+// With one query the first cohort starved the second for the whole
+// ~187-tick drain: no non-NULL row would have been selected at all, so
+// the observed-transition path would have stopped platform-wide and
+// every paying customer's rows would have gone unchecked for ~47 days.
+//
+// RATIO. `RECHECK_SLOTS` is a FLOOR, not a cap — the spill step in
+// `checkLookalikeBatch` hands unused slots to whichever cohort can use
+// them, in either direction. 20 re-check slots is 480 rows/day, four
+// times today's ENTIRE known population, so known rows keep a
+// better-than-24h cadence throughout the drain even in the worst case;
+// and once the drain finishes and the first-contact cohort empties, the
+// spill gives re-check the full 50. 30 first-contact slots is a 720/day
+// floor, but in practice the cohort takes ~45/tick (re-check is
+// undersupplied and spills to it), so the one-time drain costs ~52 days
+// instead of ~47 — a 10% slowdown on a backlog, in exchange for the
+// re-check path never stopping. Deliberately NOT a bigger total: see
+// `lib/monitored-brands.ts` for why raising the cap without a
+// wall-clock guard makes things worse, not better.
+const LOOKALIKE_BATCH_LIMIT = 50;
+const FIRST_CONTACT_SLOTS = 30;
+const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
+
+/** The columns `checkLookalikeBatch` needs per row. */
+interface LookalikeCheckRow {
+  id: string;
+  brand_id: string;
+  domain: string;
+  permutation_type: string;
+  registered: number;
+  unicode_domain: string | null;
+  last_checked: string | null;
+}
+
+/**
+ * Never-checked rows. `last_checked IS NULL` is an indexable range on
+ * `idx_lookalike_last_checked` (NULLs are the leading keys), so this is
+ * a bounded index seek rather than a scan of a table headed for ~56,010
+ * rows.
+ *
+ * NO `ORDER BY`: every row in this cohort has the same (NULL) sort key,
+ * so an ordering clause would buy nothing and cost a temp b-tree over
+ * the whole cohort. The `last_check_failed_at` term is the F6 failure
+ * cooldown (migration 0268) — a row whose resolver keeps timing out must
+ * not be re-selected every tick, and its `last_checked` stays NULL
+ * because no observation was made.
+ */
+function selectFirstContactRows(env: Env, limit: number) {
+  return env.DB.prepare(
+    `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
+            ld.unicode_domain, ld.last_checked
+     FROM lookalike_domains ld
+     WHERE ld.last_checked IS NULL
+       AND (ld.last_check_failed_at IS NULL
+            OR ld.last_check_failed_at < datetime('now', '-24 hours'))
+     LIMIT ?`,
+  ).bind(limit).all<LookalikeCheckRow>();
+}
+
+/**
+ * Rows we HAVE observed before, stalest first. `last_checked IS NOT
+ * NULL AND last_checked < ?` is a range on the same index and the
+ * `ORDER BY` is that index's own order, so there is no sort step.
+ *
+ * `offset` exists only for the spill step: when the first-contact cohort
+ * cannot fill its share (post-drain, or an empty table), the remaining
+ * slots come back here rather than going unused.
+ */
+function selectRecheckRows(env: Env, limit: number, offset: number) {
+  return env.DB.prepare(
+    `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
+            ld.unicode_domain, ld.last_checked
+     FROM lookalike_domains ld
+     WHERE ld.last_checked IS NOT NULL
+       AND ld.last_checked < datetime('now', '-24 hours')
+       AND (ld.last_check_failed_at IS NULL
+            OR ld.last_check_failed_at < datetime('now', '-24 hours'))
+     ORDER BY ld.last_checked ASC
+     LIMIT ? OFFSET ?`,
+  ).bind(limit, offset).all<LookalikeCheckRow>();
+}
+
+/**
+ * Brand context for an alert. Shared by the full-assessment path and the
+ * mail-only BIMI path so the two cannot drift, and so the file holds ONE
+ * `FROM brands` literal.
+ */
+function loadBrandContext(env: Env, brandId: string) {
+  // R7 (2026-05-07): brand_profiles retired. Pull brand context straight
+  // from `brands`. user_id-as-owner is dead; alerts attribute to
+  // 'system' (read-side scoping is via brand_id -> org_brands).
+  return env.DB.prepare(
+    `SELECT name AS brand_name, canonical_domain AS domain
+     FROM brands
+     WHERE id = ?`,
+  ).bind(brandId).first<{ brand_name: string; domain: string }>();
+}
+
+/**
+ * The fixed-HIGH `typosquat_bimi` alert — "this squat has published a
+ * BIMI record", which the scanner's own comments call the single most
+ * damning email signal it can find.
+ *
+ * Extracted because it now has TWO call sites: the full-assessment path
+ * and the mail-only first-contact path (B3). It is NOT subject to
+ * `LOOKALIKE_ALERT_SEVERITY_FLOOR` — that floor is scoped to
+ * `lookalike_domain_active`, and this is a different finding already at
+ * HIGH by construction.
+ */
+async function fileBimiAlert(
+  env: Env,
+  row: Pick<LookalikeCheckRow, 'id' | 'brand_id' | 'domain' | 'permutation_type' | 'unicode_domain'>,
+  brandDomain: string,
+  userId: string,
+): Promise<void> {
+  const displayDomain = row.unicode_domain ?? row.domain;
+  await createAlert(env.DB, {
+    brandId: row.brand_id,
+    userId,
+    alertType: 'typosquat_bimi',
+    severity: 'HIGH',
+    title: `Lookalike domain has BIMI record: ${displayDomain}`,
+    summary: `The lookalike domain ${displayDomain} has published a BIMI ` +
+      `record, suggesting it is attempting to display a trusted logo in email clients. ` +
+      `This indicates a sophisticated phishing operation.`,
+    details: {
+      domain: row.domain,
+      brand_domain: brandDomain,
+      permutation_type: row.permutation_type,
+    },
+    sourceType: 'lookalike_scanner',
+    sourceId: row.id,
+  });
+}
+
 // `buildPageEvidenceDetails` + `PageEvidenceDetails` moved to
 // `lib/lookalike-alert-policy.ts` (imported above): the page-analysis
 // pass is now an alert PRODUCER too and needs the same builder, and that
@@ -106,8 +255,17 @@ export async function seedLookalikesForOrgBrands(
   // Combined with the old three-brand org_brands gate that made the seeder
   // a no-op forever once those three were done in March–May; with the tier
   // predicate it becomes a self-draining backlog instead, `brandLimit`
-  // brands per hourly run (359 un-seeded brands at the default 10/tick =
-  // ~36 h to work through the 362-brand stage).
+  // brands per hourly run.
+  //
+  // The numbers here were stale from the intermediate
+  // `monitoring_status='active'` staging draft. The predicate is now
+  // `tier` ALONE, so the real figures are: 1,864 un-seeded brands of the
+  // 1,867 admitted (3 are already seeded), at the default 10/tick =
+  // ~187 h ≈ 8 days to work through the whole stage, producing ~56,010
+  // candidate rows in total. That inflow — ~300 rows/tick against the
+  // checker's 50/tick drain — is why `checkLookalikeBatch` below budgets
+  // its two cohorts separately instead of ordering one query
+  // `NULLS FIRST`; see its selection comment.
   const brands = await env.DB.prepare(
     `SELECT DISTINCT b.id AS brand_id, b.canonical_domain AS domain
      FROM brands b
@@ -155,8 +313,10 @@ export async function seedLookalikesForOrgBrands(
  * doesn't set it), which is why it joins the SELECT below. On a row we
  * have never checked, a squat registered in 2019 reads as a fresh
  * registration the first time we resolve it — and the monitored-brand
- * seeder is about to hand this function ~10,770 such rows, 10-35% of
- * which resolve. That is 1,080-3,770 permanent, un-triageable alerts
+ * seeder is about to hand this function ~56,010 such rows (1,867 brands
+ * x ~30 permutations; the 10,770 this comment used to cite was the
+ * intermediate `monitoring_status`-filtered draft), 10-35% of which
+ * resolve. That is 5,600-19,600 permanent, un-triageable alerts
  * against a queue with 8,941 already unworked (see
  * `lib/lookalike-alert-policy.ts` for the queue arithmetic and why none
  * of them can ever be auto-cleared).
@@ -166,33 +326,56 @@ export async function seedLookalikesForOrgBrands(
  * BASELINE ESTABLISHMENT: it records everything (registration, IP, MX,
  * web, and `baseline_established_at`), and alerts only when a real
  * signal is present. With no signal it spends NO Haiku tokens and files
- * NO alert — see the `firstContact` branch below, which is the
- * load-bearing cost control of this whole change rather than a nicety.
+ * NO `lookalike_domain_active` alert — see the `firstContact` branch
+ * below, which is the load-bearing cost control of this whole change
+ * rather than a nicety.
+ *
+ * The one signal that IS evaluated on a no-web first contact is BIMI: a
+ * single DNS lookup, no AI, and the only producer that can ever see a
+ * mail-only squat (`analyzeLookalikePages` requires `has_web = 1`). See
+ * the email lane inside that branch.
  */
 export async function checkLookalikeBatch(env: Env): Promise<void> {
+  // ── SELECTION: two cohorts, two budgets ─────────────────────────
+  //
   // `last_checked` is fetched, not just filtered on: it is the ONLY
   // column that can tell a never-looked-at row from an observed-absent
   // one, and the first-contact branch below turns on exactly that
-  // distinction. It was previously in the WHERE and not the SELECT.
-  const rows = await env.DB.prepare(
-    `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
-            ld.unicode_domain, ld.last_checked
-     FROM lookalike_domains ld
-     WHERE ld.last_checked IS NULL
-        OR ld.last_checked < datetime('now', '-24 hours')
-     ORDER BY ld.last_checked ASC NULLS FIRST
-     LIMIT 50`,
-  ).all<{
-    id: string;
-    brand_id: string;
-    domain: string;
-    permutation_type: string;
-    registered: number;
-    unicode_domain: string | null;
-    last_checked: string | null;
-  }>();
+  // distinction.
+  //
+  // This used to be ONE query ordered `last_checked ASC NULLS FIRST`.
+  // NULLs sort first unconditionally, so the seeder's ~300 never-checked
+  // rows per tick displaced every already-checked row for the whole
+  // ~187-tick drain — the re-check cohort would not have been sampled
+  // once. Two queries with independent LIMITs make the split explicit
+  // and auditable; see FIRST_CONTACT_SLOTS / RECHECK_SLOTS above for the
+  // ratio and why each is a floor rather than a cap.
+  //
+  // Re-check goes FIRST so its floor is taken from the budget before
+  // the large cohort can claim it, then first contact absorbs whatever
+  // re-check left, then the spill returns anything first contact could
+  // not use. Total is never more than LOOKALIKE_BATCH_LIMIT.
+  const recheck = await selectRecheckRows(env, RECHECK_SLOTS, 0);
+  const firstContactBudget = LOOKALIKE_BATCH_LIMIT - recheck.results.length;
+  const firstContacts = await selectFirstContactRows(env, firstContactBudget);
 
-  if (rows.results.length === 0) {
+  const spent = recheck.results.length + firstContacts.results.length;
+  // Spill back to re-check only when it was SATURATED (so there is
+  // plausibly more of it) and the first-contact cohort left room.
+  const spill = spent < LOOKALIKE_BATCH_LIMIT && recheck.results.length === RECHECK_SLOTS
+    ? (await selectRecheckRows(env, LOOKALIKE_BATCH_LIMIT - spent, RECHECK_SLOTS)).results
+    : [];
+
+  // Merge by id. The two cohorts are disjoint by construction
+  // (`IS NULL` vs `IS NOT NULL`), so this can only ever collapse a
+  // re-check row the spill's OFFSET re-served under a `last_checked`
+  // tie — cheap insurance against an unstable tie order, not a
+  // correctness crutch.
+  const byId = new Map<string, LookalikeCheckRow>();
+  for (const r of [...recheck.results, ...spill, ...firstContacts.results]) byId.set(r.id, r);
+  const selected = [...byId.values()];
+
+  if (selected.length === 0) {
     logger.info('lookalike_check', { message: 'no domains to check' });
     return;
   }
@@ -200,7 +383,9 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
   let newRegistrations = 0;
   let baselinesEstablished = 0;
   let baselinesSuppressed = 0;
+  let baselineBimiAlerts = 0;
   let alertsWithheldByFloor = 0;
+  let checksUnresolved = 0;
   let totalChecked = 0;
 
   // Shared inline page-fetch budget across the whole tick (JS is single-
@@ -210,8 +395,8 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
 
   // Process in batches of 5 concurrent checks
   const CONCURRENCY = 5;
-  for (let i = 0; i < rows.results.length; i += CONCURRENCY) {
-    const batch = rows.results.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < selected.length; i += CONCURRENCY) {
+    const batch = selected.slice(i, i + CONCURRENCY);
     const checks = batch.map(async (row) => {
       totalChecked++;
 
@@ -222,23 +407,71 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
 
       const result = await checkDomain(row.domain);
 
+      // ── THE CHECK FAILED — NOT "nothing found" ────────────────────
+      //
+      // `checkDomain` returns `registered: false` for a 3s DNS timeout
+      // exactly as it does for a clean NXDOMAIN. Writing that value over
+      // a stored `registered = 1` manufactures a lapse, and the next
+      // successful check then reads as a 0 -> 1 registration: a false
+      // `first_seen`, a Haiku call, and a permanent un-triageable alert,
+      // from a transient resolver blip. That used to be partly absorbed
+      // by the `AND first_seen IS NULL` guard on the stamp; baseline
+      // rows leave `first_seen` NULL by design, so every seeded row is
+      // now exposed to it.
+      //
+      // So an unresolved check writes NO registration state at all. Only
+      // the FAILURE cooldown advances (migration 0268) — `last_checked`
+      // must stay NULL on a never-observed row, because that NULL is the
+      // first-contact discriminator; writing it here would re-classify
+      // the row as "checked before" while `registered` still held the
+      // seeder's INSERT default, reproducing the same false transition
+      // one tick later. Same shape as the page pass's failure branch:
+      // the cooldown describes the last ATTEMPT, the verdict the last
+      // SUCCESS.
+      if (!result.resolved) {
+        checksUnresolved++;
+        await env.DB.prepare(
+          `UPDATE lookalike_domains
+           SET last_check_failed_at = datetime('now'),
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        ).bind(row.id).run();
+        logger.info('lookalike_check_unresolved', {
+          domain: row.domain,
+          first_contact: firstContact,
+          stored_registered: row.registered,
+        });
+        return;
+      }
+
       // Update the record. `baseline_established_at` is stamped here
       // rather than in the first-contact branch below on purpose: the
       // branch only runs for rows that RESOLVED, and a first contact
       // that found nothing is still a baseline we established — the
       // column records our coverage, not the domain's status. Bound as a
-      // flag rather than interpolated, and the CASE leaves the column
-      // untouched on every subsequent check so it can never be
-      // re-stamped (migration 0267).
+      // flag rather than interpolated.
+      //
+      // The CASE carries `AND baseline_established_at IS NULL` so the
+      // column is STRUCTURALLY single-write. The previous version
+      // asserted in a comment that it "can never be re-stamped" while
+      // relying entirely on `last_checked` being non-NULL — which the
+      // "Scan now" handler used to clear wholesale, making the assertion
+      // false on any rescanned brand. The guard now holds regardless of
+      // how `last_checked` is manipulated (migration 0267).
+      //
+      // `last_check_failed_at = NULL` closes the failure cooldown: a
+      // successful observation supersedes any run of failures.
       await env.DB.prepare(
         `UPDATE lookalike_domains
          SET registered = ?,
              resolves_to = ?,
              has_mx = ?,
              has_web = ?,
-             baseline_established_at = CASE WHEN ? = 1
-               THEN datetime('now') ELSE baseline_established_at END,
+             baseline_established_at = CASE
+               WHEN ? = 1 AND baseline_established_at IS NULL
+                 THEN datetime('now') ELSE baseline_established_at END,
              last_checked = datetime('now'),
+             last_check_failed_at = NULL,
              updated_at = datetime('now')
          WHERE id = ?`,
       ).bind(
@@ -264,10 +497,10 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           // schedule.
           baselinesEstablished++;
 
-          // The signal test. Mail AND web together is the cheap,
-          // deterministic statement that a domain existing only to be
-          // mistaken for someone else's is also OPERATIONAL — it can
-          // both serve a page and receive replies. Either alone is
+          // The FULL-ASSESSMENT signal test. Mail AND web together is
+          // the cheap, deterministic statement that a domain existing
+          // only to be mistaken for someone else's is also OPERATIONAL —
+          // it can both serve a page and receive replies. Either alone is
           // ordinary: parked squats serve registrar landers, and MX is
           // set by default by several registrars.
           //
@@ -275,7 +508,7 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           // — is deliberately NOT evaluated here. The inline fetch below
           // is capped at INLINE_PAGE_FETCH_CAP=10 against a LIMIT 50
           // batch, and spending that budget on baseline rows (which are
-          // about to be ~10,770 of them) would starve it for the genuine
+          // about to be ~56,010 of them) would starve it for the genuine
           // transitions it exists to composite. `analyzeLookalikePages`
           // owns that verdict, with its own per-run budget and a 24 h
           // cadence, and since this change it can also RAISE the alert
@@ -283,10 +516,46 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           // credential-harvest kit is caught there, one pass later,
           // instead of here at the cost of the compositor's budget.
           if (!(result.hasMx && result.hasWeb)) {
-            // NO HAIKU CALL AND NO ALERT. This early return is the cost
-            // control: at a 10-35% resolve rate over the seeder backlog
-            // it is the difference between ~1,080-3,770 Haiku calls plus
-            // the same number of permanent alerts, and zero of either.
+            // ── THE EMAIL LANE IS NOT GATED ON THE WEB CONDITION ──────
+            //
+            // This early return used to sit ABOVE the BIMI check, so a
+            // first-contact row that failed `hasMx && hasWeb` skipped
+            // BIMI entirely. The shape that suppressed was MX and NO web
+            // — a registered squat set up to RECEIVE MAIL and serve
+            // nothing, which is the BEC-precursor shape. It is also
+            // invisible to `analyzeLookalikePages` (that pass requires
+            // `has_web = 1`), so it was permanently unalertable by ANY
+            // producer, while this file's own comments call BIMI the
+            // single most damning email signal the scanner can find.
+            //
+            // Admitting it does NOT reopen the AI-spend problem the
+            // baseline branch exists to close: a BIMI check is one DNS
+            // lookup against a bounded cohort, not a Haiku call. No
+            // Haiku call is made here, and no
+            // `lookalike_domain_active` alert either.
+            if (result.hasMx) {
+              try {
+                if (await checkBIMIExists(row.domain)) {
+                  const bimiBrand = await loadBrandContext(env, row.brand_id);
+                  if (bimiBrand) {
+                    await fileBimiAlert(env, row, bimiBrand.domain, 'system');
+                    baselineBimiAlerts++;
+                  }
+                }
+              } catch (err) {
+                // Non-blocking, exactly as on the full path.
+                logger.error('lookalike_baseline_bimi_error', {
+                  domain: row.domain,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+
+            // NO HAIKU CALL AND NO `lookalike_domain_active` ALERT. This
+            // early return is the cost control: at a 10-35% resolve rate
+            // over the seeder backlog it is the difference between
+            // thousands of Haiku calls plus the same number of permanent
+            // alerts, and zero of either.
             baselinesSuppressed++;
             logger.info('lookalike_baseline_no_signal', {
               domain: row.domain,
@@ -312,18 +581,7 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           ).bind(row.id).run();
         }
 
-        // R7 (2026-05-07): brand_profiles retired. Pull brand context
-        // straight from `brands`. user_id-as-owner is dead; alerts
-        // attribute to 'system' (read-side scoping is via brand_id →
-        // org_brands, not user_id).
-        const brandRow = await env.DB.prepare(
-          `SELECT name AS brand_name, canonical_domain AS domain
-           FROM brands
-           WHERE id = ?`,
-        ).bind(row.brand_id).first<{
-          brand_name: string;
-          domain: string;
-        }>();
+        const brandRow = await loadBrandContext(env, row.brand_id);
 
         if (!brandRow) return;
         const brand = { ...brandRow, user_id: 'system' };
@@ -528,25 +786,10 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
           ).bind(alertId, row.id).run();
         }
 
-        // Additional alert if lookalike has BIMI
+        // Additional alert if lookalike has BIMI. Shared builder with
+        // the mail-only first-contact lane above.
         if (hasBIMI) {
-          await createAlert(env.DB, {
-            brandId: row.brand_id,
-            userId: brand.user_id,
-            alertType: 'typosquat_bimi',
-            severity: 'HIGH',
-            title: `Lookalike domain has BIMI record: ${displayDomain}`,
-            summary: `The lookalike domain ${displayDomain} has published a BIMI ` +
-              `record, suggesting it is attempting to display a trusted logo in email clients. ` +
-              `This indicates a sophisticated phishing operation.`,
-            details: {
-              domain: row.domain,
-              brand_domain: brand.domain,
-              permutation_type: row.permutation_type,
-            },
-            sourceType: 'lookalike_scanner',
-            sourceId: row.id,
-          });
+          await fileBimiAlert(env, row, brand.domain, brand.user_id);
         }
       }
     });
@@ -561,12 +804,26 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
     new_registrations: newRegistrations,
     // Rows resolved for the first time ever...
     baselines_established: baselinesEstablished,
-    // ...of which this many carried no signal, so cost NO Haiku call and
-    // produced NO alert. During the seeder backlog drain this is the
-    // number to watch: it is the suppression doing its job.
+    // ...of which this many carried no full-assessment signal, so cost
+    // NO Haiku call and produced NO `lookalike_domain_active` alert.
+    // During the seeder backlog drain this is the number to watch: it is
+    // the suppression doing its job.
     baselines_suppressed: baselinesSuppressed,
+    // Fixed-HIGH `typosquat_bimi` alerts filed from the mail-only
+    // first-contact lane — the BEC-precursor shape no other producer can
+    // see. A suppressed baseline is NOT a silent one when BIMI is there.
+    baseline_bimi_alerts: baselineBimiAlerts,
     // Assessed rows whose composed level sat below the severity floor.
     alerts_withheld_below_floor: alertsWithheldByFloor,
+    // Checks that produced NO answer (resolver timeout / non-ok DoH
+    // response). These wrote no registration state at all — only the
+    // failure cooldown. A rising number here is a resolver problem, and
+    // before migration 0268 it was silently minting false transitions.
+    checks_unresolved: checksUnresolved,
+    // The cohort split, so starvation is visible in the log rather than
+    // inferred from a stalled `new_registrations` count.
+    selected_first_contact: firstContacts.results.length,
+    selected_recheck: recheck.results.length + spill.length,
   });
 }
 

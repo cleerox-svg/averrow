@@ -125,23 +125,31 @@
  * worse rather than better:
  *
  *   1. A wall-clock budget guard in `checkLookalikeBatch`. It has none
- *      (only a 60s sub-budget for inline page fetches), and it selects
- *      `ORDER BY last_checked ASC NULLS FIRST` while stamping
- *      `last_checked` per row mid-run. Raise the LIMIT past what fits a
- *      15-minute invocation and the worker is killed with rows
- *      unstamped, so the next tick selects the same rows and dies the
- *      same way — head-of-line blocking that never self-clears, and no
- *      feed-style breaker applies here.
+ *      (only a 60s sub-budget for inline page fetches). Raise the LIMIT
+ *      past what fits a 15-minute invocation and the worker is killed
+ *      with rows unstamped, so the next tick selects the same rows and
+ *      dies the same way — head-of-line blocking that never
+ *      self-clears, and no feed-style breaker applies here.
  *   2. A TIERED re-check cadence. Uniform 24h over 56,010 rows needs
  *      ~2,335 rows/hour; at CONCURRENCY 5 a slice of 3s DNS timeouts
  *      costs 9s, so the worst case runs ~70 min against a 15-min
  *      ceiling. Subrequests are not the constraint (50,000 configured,
  *      ~7,000 needed) — wall clock is. Registered-daily plus
  *      unregistered-weekly lands at ~530-1,034 rows/hour, which fits.
- *      Budget the `last_checked IS NULL` cohort EXPLICITLY: during the
- *      initial drain every row is NULL, falls in neither tier, and
- *      would starve the re-check of already-known rows below today's
- *      cadence without anyone noticing.
+ *
+ *      The cohort-starvation half of this is DONE, and was a blocker
+ *      rather than a nice-to-have: `checkLookalikeBatch` and
+ *      `analyzeLookalikePages` both used to order one query
+ *      `<stamp> ASC NULLS FIRST`, and NULLs sort first
+ *      UNCONDITIONALLY — so for the whole ~187-tick drain neither pass
+ *      would have selected a single already-checked row. Both now split
+ *      their unchanged per-run budget between a first-contact cohort
+ *      and a re-check cohort with independent LIMITs and a
+ *      bidirectional spill (`FIRST_CONTACT_SLOTS` / `RECHECK_SLOTS` and
+ *      `FIRST_ANALYSIS_SLOTS` / `REANALYSIS_SLOTS`). What remains of
+ *      item 2 is the per-TIER cadence (registered-daily,
+ *      unregistered-weekly), which needs the wall-clock guard above
+ *      first.
  *   3. `PAGE_DIAG_ROW_LIMIT` (`handlers/diagnostics.ts`, 20,000). At the
  *      35% registration band the page-analyzed population is ~18,200 —
  *      just under. Cross it and `truncated` flips, and every

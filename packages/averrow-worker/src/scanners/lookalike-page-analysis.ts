@@ -9,10 +9,12 @@
  * alert's severity) when the page is phishing. ZERO AI.
  *
  * Runs inside the existing `22 * * * *` lookalike_scanner cron tick (no
- * new cron — the cron-audit rule is not triggered). Throttle: LIMIT 20
- * per run, 24h per-domain cadence, concurrency 4, and a per-run
- * wall-clock budget guard so a batch of slow hosts can't approach the
- * 15-min reap window (the greynoise/seclookup starvation lesson).
+ * new cron — the cron-audit rule is not triggered). Throttle: 20 rows
+ * per run SPLIT between the never-analyzed and already-scored cohorts
+ * (see FIRST_ANALYSIS_SLOTS), 24h per-domain cadence, concurrency 4, and
+ * a per-run wall-clock budget guard so a batch of slow hosts can't
+ * approach the 15-min reap window (the greynoise/seclookup starvation
+ * lesson).
  */
 
 import {
@@ -40,6 +42,32 @@ import { logger } from '../lib/logger';
 import type { Env } from '../types';
 
 const PAGE_ANALYSIS_LIMIT = 20;
+/**
+ * The same two-cohort split `checkLookalikeBatch` applies to its DNS
+ * budget, for the same reason and inside the same unchanged total.
+ *
+ *   * FIRST ANALYSIS (`page_fetched_at IS NULL`) — every row the seeder
+ *     produces that later resolves with a web server. ~18,200 at the 35%
+ *     registration band.
+ *   * RE-ANALYSIS (`page_fetched_at < -24 hours`) — rows we have already
+ *     scored. ~36 today. This is the ONLY cohort that can observe a page
+ *     CHANGE, which is what `applyEscalation` acts on, and the only way
+ *     a row whose alert was withheld at MEDIUM gets a second look once
+ *     its page turns into a credential-harvest kit.
+ *
+ * One query ordered `page_fetched_at ASC NULLS FIRST` gave the whole
+ * budget to the first cohort for ~38 days: re-analysis would not have
+ * run at all, so escalation and the withheld-alert recovery path would
+ * both have stopped platform-wide while the drain proceeded.
+ *
+ * 12/8 is the same 60/40 floor-plus-spill arrangement as the checker's
+ * 30/20: 8 re-analysis slots on the hourly tick is 192 rows/day against
+ * a ~36-row known population, and the spill hands re-analysis the full
+ * 20 once the first-analysis cohort empties. `PAGE_ALERT_CAP` bounds
+ * what either cohort can FILE, independently of this.
+ */
+const FIRST_ANALYSIS_SLOTS = 12;
+const REANALYSIS_SLOTS = PAGE_ANALYSIS_LIMIT - FIRST_ANALYSIS_SLOTS;
 const CONCURRENCY = 4;
 /** Whole-run wall-clock budget. Well under the 15-min reap window. */
 const RUN_BUDGET_MS = 120_000;
@@ -105,11 +133,74 @@ export interface PageAnalysisSummary {
   alerts_withheld_below_floor: number;
   /** True when PAGE_ALERT_CAP stopped at least one qualifying row. */
   alert_cap_hit: boolean;
+  /** Rows selected from the never-analyzed cohort this run. */
+  selected_first_analysis: number;
+  /**
+   * Rows selected from the already-scored cohort this run. A run of
+   * zeroes here while `selected_first_analysis` is saturated is the
+   * starvation the budget split exists to prevent, and it is now
+   * visible rather than inferred from a flat `escalated` count.
+   */
+  selected_reanalysis: number;
 }
 
 function normalizeLevel(raw: string | null): PageThreatLevel {
   const v = (raw ?? 'LOW').toUpperCase();
   return v === 'MEDIUM' || v === 'HIGH' || v === 'CRITICAL' ? (v as PageThreatLevel) : 'LOW';
+}
+
+/**
+ * Never-analyzed rows. No `ORDER BY`: every row in this cohort shares
+ * the same (NULL) key, so ordering buys nothing and would cost a sort
+ * over a cohort headed for ~18,200 rows.
+ *
+ * The brand gate is MONITORED_BRAND_PREDICATE_SQL, shared with the
+ * seeder so the two cannot drift; it reads `brands.tier` rather than
+ * `org_brands`, because a typosquat is actor intelligence whether or not
+ * a tenant pays for that brand. See its definition for the staging
+ * rationale and the throughput ceiling that caps how far it can widen.
+ * Not EXISTS/JOIN on org_brands any more, so there is also no row
+ * fan-out from a brand monitored by several orgs.
+ */
+function selectFirstAnalysisRows(env: Env, limit: number) {
+  return env.DB.prepare(
+    `SELECT ld.id, ld.brand_id, ld.domain, ld.threat_level, ld.alert_id,
+            ld.permutation_type, ld.unicode_domain, ld.has_mx, ld.has_web,
+            ld.resolves_to,
+            b.name AS brand_name, b.canonical_domain AS brand_domain
+     FROM lookalike_domains ld
+     JOIN brands b ON b.id = ld.brand_id
+     WHERE ld.registered = 1
+       AND ld.has_web = 1
+       AND ld.resolves_to IS NOT NULL
+       AND ld.page_fetched_at IS NULL
+       AND ${MONITORED_BRAND_PREDICATE_SQL}
+     LIMIT ?`,
+  ).bind(limit).all<PageAnalysisSelectRow>();
+}
+
+/**
+ * Rows already scored at least once, stalest first. `ORDER BY
+ * page_fetched_at ASC` is `idx_lookalike_page_due`'s own order, so
+ * there is no sort step. `offset` serves the spill only.
+ */
+function selectReanalysisRows(env: Env, limit: number, offset: number) {
+  return env.DB.prepare(
+    `SELECT ld.id, ld.brand_id, ld.domain, ld.threat_level, ld.alert_id,
+            ld.permutation_type, ld.unicode_domain, ld.has_mx, ld.has_web,
+            ld.resolves_to,
+            b.name AS brand_name, b.canonical_domain AS brand_domain
+     FROM lookalike_domains ld
+     JOIN brands b ON b.id = ld.brand_id
+     WHERE ld.registered = 1
+       AND ld.has_web = 1
+       AND ld.resolves_to IS NOT NULL
+       AND ld.page_fetched_at IS NOT NULL
+       AND ld.page_fetched_at < datetime('now', '-24 hours')
+       AND ${MONITORED_BRAND_PREDICATE_SQL}
+     ORDER BY ld.page_fetched_at ASC
+     LIMIT ? OFFSET ?`,
+  ).bind(limit, offset).all<PageAnalysisSelectRow>();
 }
 
 /**
@@ -443,6 +534,8 @@ export async function analyzeLookalikePages(env: Env): Promise<PageAnalysisSumma
     alerts_raised: 0,
     alerts_withheld_below_floor: 0,
     alert_cap_hit: false,
+    selected_first_analysis: 0,
+    selected_reanalysis: 0,
   };
 
   // Shared alert-creation budget for the whole run. Same shape and same
@@ -470,27 +563,43 @@ export async function analyzeLookalikePages(env: Env): Promise<PageAnalysisSumma
   // alert shape without a second round-trip per row. `has_web` is
   // already pinned to 1 by the predicate and is selected anyway so the
   // alert's `details` states the fact rather than assuming it.
-  const rows = await env.DB.prepare(
-    `SELECT ld.id, ld.brand_id, ld.domain, ld.threat_level, ld.alert_id,
-            ld.permutation_type, ld.unicode_domain, ld.has_mx, ld.has_web,
-            ld.resolves_to,
-            b.name AS brand_name, b.canonical_domain AS brand_domain
-     FROM lookalike_domains ld
-     JOIN brands b ON b.id = ld.brand_id
-     WHERE ld.registered = 1
-       AND ld.has_web = 1
-       AND ld.resolves_to IS NOT NULL
-       AND (ld.page_fetched_at IS NULL OR ld.page_fetched_at < datetime('now', '-24 hours'))
-       AND ${MONITORED_BRAND_PREDICATE_SQL}
-     ORDER BY ld.page_fetched_at ASC NULLS FIRST
-     LIMIT ?`,
-  ).bind(PAGE_ANALYSIS_LIMIT).all<PageAnalysisSelectRow>();
+  //
+  // Split into two explicitly budgeted cohorts — see
+  // FIRST_ANALYSIS_SLOTS above. Re-analysis goes first so its floor is
+  // taken before the large cohort can claim it; first analysis absorbs
+  // what re-analysis left; the spill returns the remainder. Both are
+  // served by `idx_lookalike_page_due` (migration 0268), a partial index
+  // on `page_fetched_at` over exactly this `registered = 1 AND has_web =
+  // 1` set, so each cohort is an index range scan in index order — no
+  // table scan, no sort.
+  const reanalysis = await selectReanalysisRows(env, REANALYSIS_SLOTS, 0);
+  const firstAnalysisBudget = PAGE_ANALYSIS_LIMIT - reanalysis.results.length;
+  const firstAnalysis = await selectFirstAnalysisRows(env, firstAnalysisBudget);
 
-  if (rows.results.length === 0) {
+  const spent = reanalysis.results.length + firstAnalysis.results.length;
+  const spill = spent < PAGE_ANALYSIS_LIMIT && reanalysis.results.length === REANALYSIS_SLOTS
+    ? (await selectReanalysisRows(env, PAGE_ANALYSIS_LIMIT - spent, REANALYSIS_SLOTS)).results
+    : [];
+
+  // Merge by id. The cohorts are disjoint by construction (`IS NULL` vs
+  // `IS NOT NULL`); this only collapses a row the spill's OFFSET could
+  // re-serve under a `page_fetched_at` tie. It also keeps
+  // `raiseUnalertedPhishingPageAlert`'s WITHIN-a-run idempotency
+  // argument intact: that argument rests on each id appearing at most
+  // once in the row set, which was previously guaranteed by there being
+  // one SELECT.
+  const byId = new Map<string, PageAnalysisSelectRow>();
+  for (const r of [...reanalysis.results, ...spill, ...firstAnalysis.results]) byId.set(r.id, r);
+  const selected = [...byId.values()];
+
+  summary.selected_first_analysis = firstAnalysis.results.length;
+  summary.selected_reanalysis = reanalysis.results.length + spill.length;
+
+  if (selected.length === 0) {
     return summary;
   }
 
-  for (let i = 0; i < rows.results.length; i += CONCURRENCY) {
+  for (let i = 0; i < selected.length; i += CONCURRENCY) {
     // Wall-clock budget guard — stop launching new fetches if we're
     // running long. Leaves remaining rows for the next tick (their
     // page_fetched_at stays stale, so they're re-selected).
@@ -499,7 +608,7 @@ export async function analyzeLookalikePages(env: Env): Promise<PageAnalysisSumma
       break;
     }
 
-    const batch = rows.results.slice(i, i + CONCURRENCY);
+    const batch = selected.slice(i, i + CONCURRENCY);
     await Promise.all(
       batch.map(async (row) => {
         summary.analyzed += 1;

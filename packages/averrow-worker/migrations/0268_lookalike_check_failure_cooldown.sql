@@ -1,0 +1,98 @@
+-- 0268_lookalike_check_failure_cooldown.sql
+--
+-- Two additive changes, both consequences of widening the typosquat
+-- population from 3 brands to all 1,867 `tier IN ('monitored','customer')`.
+--
+-- ── 1. last_check_failed_at — "the check FAILED", not "nothing found" ──
+--
+-- `lib/domain-checker.ts` returned `registered: false` for a DNS timeout
+-- exactly as it did for a clean NXDOMAIN, and `checkLookalikeBatch` wrote
+-- that value unconditionally. A registered row therefore flipped to 0 on
+-- a transient resolver failure, and the NEXT successful check read the
+-- resulting 0 -> 1 as a registration event: a false `first_seen`, a Haiku
+-- call, and a permanent un-triageable alert, from a 3-second timeout.
+--
+-- Before this change that was partly absorbed by `first_seen IS NULL` in
+-- the stamp's WHERE clause (a row that had already been stamped once
+-- could not be stamped again). First-contact baselining removes that
+-- accident: baseline rows leave `first_seen` NULL by design, so every
+-- one of the ~56,010 seeded rows is now permanently exposed to it.
+--
+-- (0267's header cites "359 un-seeded brands ... ~10,770 rows". Those
+-- were the intermediate `monitoring_status='active'` staging figures;
+-- the shipped predicate is `tier` alone, so the real numbers are 1,864
+-- un-seeded brands and ~56,010 rows. 0267 is left exactly as written —
+-- it is applied history — and the correction lives here.)
+--
+-- The fix needs a cooldown that is NOT `last_checked`, because
+-- `last_checked IS NULL` is the load-bearing discriminator for first
+-- contact (migration 0267). Writing `last_checked` on a failed check
+-- would destroy that distinction — the row would be re-classified as
+-- "checked before" while `registered` still held the seeder's INSERT
+-- default, which reproduces the same false-transition bug one tick
+-- later. Leaving it NULL and writing nothing at all re-selects the row
+-- every tick, head-of-line blocking the batch behind a dead resolver.
+--
+-- So failures get their own timestamp:
+--
+--   last_checked          when we last SUCCESSFULLY observed this row.
+--                         NULL still means, exactly, "never observed".
+--   last_check_failed_at  when the last attempt failed to produce an
+--                         answer. Advances the 24 h cooldown without
+--                         claiming an observation. Cleared on any
+--                         success (and by an operator-triggered rescan).
+--
+-- Same shape as the page pass's `page_fetched_at`-on-both-branches rule
+-- (0266): the cooldown must describe the last ATTEMPT, while the verdict
+-- describes the last SUCCESS.
+--
+-- No index. The column appears only as a residual filter term
+-- (`last_check_failed_at IS NULL OR < -24 hours`) in queries already
+-- driven by `idx_lookalike_last_checked`; it is never a leading key and
+-- never an ORDER BY, so an index here would be a pure write cost on a
+-- table growing ninety-fold.
+--
+-- ── 2. idx_lookalike_page_due — the page pass's split selectors ────────
+--
+-- `analyzeLookalikePages` selects `registered = 1 AND has_web = 1 AND
+-- resolves_to IS NOT NULL AND (page_fetched_at IS NULL OR < -24 hours)`,
+-- now as two explicitly budgeted cohorts (first analysis vs re-analysis)
+-- so neither can starve the other. Nothing indexed `page_fetched_at`:
+-- the only usable index was the partial `idx_lookalike_registered`, so
+-- each cohort's selection scanned the whole registered set and then
+-- SORTED it for `ORDER BY page_fetched_at`. At 120 rows that was free;
+-- at ~19,000 registered rows it is a full scan plus a temp b-tree,
+-- twice, every hour.
+--
+-- Partial on the two literal-valued predicates the query always carries,
+-- so the index is both usable (SQLite requires the query's WHERE to
+-- imply the index's) and small — it covers only the analyzable set, not
+-- the ~56,010-row candidate table.
+--
+-- `registered` and `has_web` ALSO appear as leading key columns even
+-- though the partial WHERE pins both to 1, which makes them constant
+-- within the index and therefore redundant as storage. They are there
+-- because of how SQLite COSTS a candidate index: with `page_fetched_at`
+-- alone as the key it sees one range constraint, prices that above
+-- `idx_lookalike_registered`'s single equality constraint, and picks the
+-- old partial index instead — scanning the whole registered set and then
+-- sorting it. Verified with EXPLAIN QUERY PLAN across four index shapes;
+-- this is the only one both cohorts actually use. With it, the
+-- never-analyzed cohort seeks straight to the NULL range
+-- (`page_fetched_at=?`) and the re-analysis cohort gets a range scan in
+-- index order — no table scan and no TEMP B-TREE in either. The plans
+-- are asserted in `test/lookalike-sql-statements.test.ts` so a future
+-- index edit that silently re-introduces the sort fails there.
+--
+-- `resolves_to IS NOT NULL` is left as a residual filter: it is implied
+-- by `registered = 1` in practice and adding it to the index WHERE would
+-- not narrow the index further.
+--
+-- Additive only — ADD COLUMN / CREATE INDEX, never DROP/ALTER
+-- (CLAUDE.md §8).
+
+ALTER TABLE lookalike_domains ADD COLUMN last_check_failed_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_lookalike_page_due
+  ON lookalike_domains(registered, has_web, page_fetched_at)
+  WHERE registered = 1 AND has_web = 1;

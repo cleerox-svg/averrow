@@ -232,8 +232,13 @@ describe.skipIf(!hasSqlite())("MONITORED_BRAND_PREDICATE_SQL — real SQLite", (
     expect(ids).not.toContain("mon_active");
   });
 
-  it("runs inside the page-analysis query, and gates it on the brand tier", () => {
-    const sql = sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at"]);
+  // The page pass now issues TWO selects — a never-analyzed cohort and
+  // an already-scored one, each with its own LIMIT so neither can starve
+  // the other (the `NULLS FIRST` defect). Both carry the brand gate, and
+  // both are exercised here: a gate present on one and missing from the
+  // other is the exact drift this file exists to catch.
+  it("runs inside the page-analysis FIRST-ANALYSIS query, and gates it on the brand tier", () => {
+    const sql = sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NULL"]);
     const ins = raw.prepare(
       `INSERT INTO lookalike_domains
          (id, brand_id, domain, registered, has_web, resolves_to, page_fetched_at)
@@ -243,6 +248,22 @@ describe.skipIf(!hasSqlite())("MONITORED_BRAND_PREDICATE_SQL — real SQLite", (
     // be decided purely by the brand gate.
     for (const row of MATRIX) ins.run(`pa_${row.id}`, row.id, `pa-${row.id}.example`, );
     const rows = raw.prepare(sql).all(100) as Array<{ brand_id: string }>;
+    const brands = new Set(rows.map((r) => r.brand_id));
+    for (const row of MATRIX) {
+      expect(brands.has(row.id), `${row.id} (${row.why})`).toBe(row.in);
+    }
+  });
+
+  it("runs inside the page-analysis RE-ANALYSIS query, and gates it on the brand tier", () => {
+    const sql = sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NOT NULL"]);
+    const ins = raw.prepare(
+      `INSERT INTO lookalike_domains
+         (id, brand_id, domain, registered, has_web, resolves_to, page_fetched_at)
+       VALUES (?, ?, ?, 1, 1, '1.2.3.4', datetime('now', '-48 hours'))`,
+    );
+    for (const row of MATRIX) ins.run(`ra_${row.id}`, row.id, `ra-${row.id}.example`);
+    // LIMIT ? OFFSET ? — the spill parameter.
+    const rows = raw.prepare(sql).all(100, 0) as Array<{ brand_id: string }>;
     const brands = new Set(rows.map((r) => r.brand_id));
     for (const row of MATRIX) {
       expect(brands.has(row.id), `${row.id} (${row.why})`).toBe(row.in);
@@ -273,7 +294,8 @@ describe("both gates share one predicate", () => {
     // and the seeder's log event name still carries the old word.
     for (const [label, sql] of [
       ["seeder", sqlContaining(seederSrc, ["FROM brands b", "NOT EXISTS"])],
-      ["analyzer", sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at"])],
+      ["analyzer:first", sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NULL"])],
+      ["analyzer:recheck", sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NOT NULL"])],
     ] as const) {
       expect(sql, label).not.toMatch(/\borg_brands\b/);
     }

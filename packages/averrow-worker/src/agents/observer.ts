@@ -350,6 +350,23 @@ export const observerAgent: AgentModule = {
     // ─── Lookalike domain changes ────────────────────────────────
     let lookalikeContext = "";
     try {
+      // ── "CHECKED" MEANS CHECKED, "NEW" MEANS OBSERVED TO APPEAR ────
+      //
+      // Both queries below keyed on `created_at`, i.e. when the SEEDER
+      // inserted the candidate row. That was survivable while the table
+      // grew by a handful of rows a month; the monitored-brand seeder
+      // inserts ~300/tick, so `created_at >= -24 hours` now counts ~7,200
+      // rows against a 50/tick (1,200/day) check rate — a briefing line
+      // reading "7,200 checked" when we checked 1,200, and a list
+      // labelled "Newly registered" made up of squats that may have been
+      // registered in 2019 and were simply resolved for the first time
+      // last night. That is the conflation migration 0267 exists to
+      // prevent, one layer out.
+      //
+      // `last_checked` is the honest predicate for "checked", and
+      // `first_seen` for "appeared": the latter is now stamped ONLY on a
+      // `registered 0 -> 1` transition we actually observed, never on
+      // first contact.
       const lookalikeSummary = await env.DB.prepare(`
         SELECT COUNT(*) as total,
           SUM(CASE WHEN registered = 1 THEN 1 ELSE 0 END) as registered,
@@ -357,7 +374,7 @@ export const observerAgent: AgentModule = {
           SUM(CASE WHEN mx_records IS NOT NULL AND mx_records != '' THEN 1 ELSE 0 END) as with_mx,
           COUNT(DISTINCT brand_id) as brands
         FROM lookalike_domains
-        WHERE created_at >= datetime('now', '-24 hours')
+        WHERE last_checked >= datetime('now', '-24 hours')
       `).first<{ total: number; registered: number; with_content: number; with_mx: number; brands: number }>();
 
       if (lookalikeSummary && lookalikeSummary.total > 0) {
@@ -365,8 +382,8 @@ export const observerAgent: AgentModule = {
           SELECT ld.domain, b.name AS brand_name
           FROM lookalike_domains ld
           JOIN brands b ON b.id = ld.brand_id
-          WHERE ld.created_at >= datetime('now', '-24 hours') AND ld.registered = 1
-          ORDER BY ld.created_at DESC
+          WHERE ld.first_seen >= datetime('now', '-24 hours') AND ld.registered = 1
+          ORDER BY ld.first_seen DESC
           LIMIT 10
         `).all<{ domain: string; brand_name: string }>();
 

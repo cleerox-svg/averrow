@@ -80,6 +80,14 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // not a registration event. OFF the tenant SELECT: our crawl coverage
   // is pipeline detail, the same product call made for page_last_outcome.
   "baseline_established_at",
+  // ── 0268 DNS-check failure cooldown ──
+  // When the last check FAILED to produce an answer, as opposed to
+  // `last_checked` (when one last succeeded). Staff-visible on the same
+  // reasoning as the two above: a bounded timestamp with no
+  // attacker-controlled content, and it is what explains a row that is
+  // neither baselined nor advancing — the resolver keeps timing out on
+  // it. OFF the tenant SELECT with the rest of the crawl-pipeline detail.
+  "last_check_failed_at",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is
@@ -323,10 +331,39 @@ export async function handleScanLookalikes(
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
 
-    // Reset last_checked for all this brand's domains so the batch checker picks them up
+    // ── MAKE THE ROWS DUE — WITHOUT FORGING FIRST CONTACT ───────────
+    //
+    // This used to write `last_checked = NULL`, which was harmless while
+    // NULL only meant "due now". Since migration 0267 it is the
+    // load-bearing discriminator: `checkLookalikeBatch` derives
+    // `firstContact` from `row.last_checked === null` alone, so nulling
+    // the column here CLAIMED we had never looked at these rows. On the
+    // next tick a genuine `registered 0 -> 1` registration on a rescanned
+    // brand was reclassified as BASELINE — no `first_seen`, no Haiku, and
+    // no alert unless MX and web happened to be present together — and
+    // `baseline_established_at` was re-stamped, contradicting both the
+    // checker's comment and migration 0267.
+    //
+    // A stale timestamp expresses the actual intent ("re-check this
+    // promptly") without erasing the fact that we have looked: 25 hours
+    // is past the checker's 24h cadence, so the row is due on the very
+    // next tick and lands in the RE-CHECK cohort, where it belongs.
+    //
+    // Rows that have genuinely never been checked keep their NULL — the
+    // CASE is what makes this operation lossless in both directions.
+    // Writing the stale stamp over them would have been the mirror-image
+    // bug: a real first contact demoted to a fake re-check, which is the
+    // one state that CAN mint a false `first_seen`.
+    //
+    // `last_check_failed_at` is cleared (migration 0268): an operator
+    // asking for a scan now should not wait out a DNS-failure cooldown.
     const resetResult = await env.DB.prepare(
       `UPDATE lookalike_domains
-       SET last_checked = NULL, updated_at = datetime('now')
+       SET last_checked = CASE
+             WHEN last_checked IS NULL THEN NULL
+             ELSE datetime('now', '-25 hours') END,
+           last_check_failed_at = NULL,
+           updated_at = datetime('now')
        WHERE brand_id = ?`,
     ).bind(brandId).run();
 

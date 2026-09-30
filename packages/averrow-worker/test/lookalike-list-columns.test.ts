@@ -40,6 +40,11 @@ const EXPECTED_COLUMNS = [
   // reason as page_last_outcome: it explains an absence (a registered
   // squat with no alert) that otherwise reads as a bug.
   "baseline_established_at",
+  // 0268 DNS-check failure cooldown — "the last check FAILED", as
+  // opposed to last_checked's "the last check SUCCEEDED". Staff-visible
+  // on the same reasoning: it explains a row that is neither baselined
+  // nor advancing, because its resolver keeps timing out.
+  "last_check_failed_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

@@ -2,9 +2,29 @@
  * Lookalike alert POLICY — when a `lookalike_domain_active` alert may
  * exist at all, and what it is allowed to carry.
  *
- * ONE definition, imported by BOTH producers:
+ * ONE definition, imported by ALL THREE producers:
  *   - `scanners/lookalike-domains.ts`      (the registration checker)
  *   - `scanners/lookalike-page-analysis.ts` (the page-verdict pass)
+ *   - `lib/alert-backfill.ts`               (claim-time backfill)
+ *
+ * The third one was the correction. This docstring previously said "ONE
+ * definition, imported by BOTH producers" and the floor's own text said
+ * "on either producer path" — and both were false: `alert-backfill.ts`
+ * filed `lookalike_domain_active` at a hardcoded `medium`, selected on
+ * `created_at` with no `registered` filter, up to 100 per claimed brand,
+ * with `bypassTierGate: true`. Widening the seeder to 1,867 brands
+ * turned that into a burst of MEDIUM alerts about domains that were not
+ * even registered, on the one surface a brand-new tenant sees first.
+ *
+ * It now imports `clearsLookalikeAlertFloor` and derives its severity
+ * from the row's already-composited `threat_level` rather than a
+ * constant. THERE IS NO BACKFILL EXEMPTION, deliberately — see the note
+ * at that call site for why a claim-time batch is the worst rather than
+ * the best case for one.
+ *
+ * A FOURTH producer is a contradiction in terms, not a possibility to
+ * plan for: whatever files this alert type imports from here. If you are
+ * adding one and it does not, that is the defect.
  *
  * ── Why lib/ and not beside either producer ─────────────────────────
  *
@@ -44,7 +64,8 @@ export const THREAT_LEVEL_RANK: Record<PageThreatLevel, number> = {
 /**
  * The severity floor for `lookalike_domain_active` alerts.
  *
- * Below this level NO alert row is created — on either producer path.
+ * Below this level NO alert row is created — on ANY of the three
+ * producer paths listed in this module's docstring.
  * Everything else is still persisted: `threat_level`, `ai_assessment`,
  * and the whole page-analysis column family. THE DATA IS THE
  * DELIVERABLE; THE ALERT IS THE NOTIFICATION, and the two had been
@@ -55,7 +76,9 @@ export const THREAT_LEVEL_RANK: Record<PageThreatLevel, number> = {
  * MEDIUM alerts on genuine `registered 0 -> 1` transitions stop being
  * created. That is not a side effect of widening the population, it is
  * the requested change, and it applies to the 3-brand legacy population
- * exactly as it does to the 362-brand one.
+ * exactly as it does to the widened 1,867-brand one. (This sentence
+ * previously said "362-brand", a figure from the intermediate
+ * `monitoring_status='active'` staging draft that never shipped.)
  *
  * The reason is queue arithmetic, not taste. Measured in production:
  * 8,941 alerts already unworked, platform-wide intake ~36/week, and
@@ -80,10 +103,11 @@ export const LOOKALIKE_ALERT_SEVERITY_FLOOR: PageThreatLevel = 'HIGH';
 /**
  * May a `lookalike_domain_active` alert be created at this severity?
  *
- * Both producers call THIS, never an inline comparison — a floor written
- * twice is a floor that drifts, and the failure mode of drift here is
- * silent (one path keeps filing MEDIUMs and nobody notices until the
- * queue does).
+ * All three producers call THIS, never an inline comparison — a floor
+ * written twice is a floor that drifts, and the failure mode of drift
+ * here is silent (one path keeps filing MEDIUMs and nobody notices until
+ * the queue does). That is not hypothetical: it is exactly what
+ * `alert-backfill.ts` did for the whole first draft of this change.
  *
  * Lane 3: this can only ever WITHHOLD an alert, never dismiss one. A
  * withheld row keeps its persisted verdict and stays eligible for the

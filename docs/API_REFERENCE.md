@@ -387,17 +387,43 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT (crawl coverage is
 > pipeline detail, same product call as `page_last_outcome`).
 
-> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and two producers.**
+> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and THREE producers.**
 > No alert row is created below HIGH — everything else is still persisted
 > (`threat_level`, `ai_assessment`, the page columns), so the row is unchanged
 > and only the notification is withheld. This *removed* previously-created
 > MEDIUM alerts on genuine `registered 0 → 1` transitions; the floor is defined
-> once in `lib/lookalike-alert-policy.ts` and shared. Two producers now file
-> this alert type: the registration checker (`scanners/lookalike-domains.ts`)
-> and the page-analysis pass (`scanners/lookalike-page-analysis.ts`), the latter
-> only for a registered row with NO linked alert whose page clears the phishing
-> bar — bounded per run and carrying `details.discovered_by = 'page_analysis'`
-> so the two are separable without a second `alert_type`.
+> once in `lib/lookalike-alert-policy.ts` and shared. Three producers file this
+> alert type: the registration checker (`scanners/lookalike-domains.ts`); the
+> page-analysis pass (`scanners/lookalike-page-analysis.ts`), only for a
+> registered row with NO linked alert whose page clears the phishing bar,
+> bounded per run and carrying `details.discovered_by = 'page_analysis'`; and
+> the claim-time backfill (`lib/alert-backfill.ts`, reached from brand claim /
+> lead conversion), which now also imports the floor, files only for
+> `registered = 1` rows, derives its severity from the row's already-composited
+> `threat_level` rather than a hardcoded `medium`, and marks its output
+> `details.discovered_by = 'claim_backfill'`. There is no backfill exemption
+> from the floor.
+
+> **`last_check_failed_at` (migration 0268, additive).** The DNS-check cooldown
+> for an attempt that produced NO answer (resolver timeout / non-ok DoH
+> response), as distinct from `last_checked`, which now means strictly "when a
+> check last SUCCEEDED". `checkDomain` (`lib/domain-checker.ts`) returns a
+> `resolved` flag for this, and an unresolved check writes no registration state
+> at all — a transient failure can no longer flip `registered` 1 → 0 and make
+> the next success read as a registration event. `last_checked` is deliberately
+> NOT advanced on failure, because `last_checked IS NULL` is the first-contact
+> discriminator above. Staff-visible via `LOOKALIKE_LIST_COLUMNS`; absent from
+> the tenant SELECT.
+
+> **`POST /api/lookalikes/:brandId/scan` no longer nulls `last_checked`.** It
+> stamps already-checked rows with `datetime('now','-25 hours')` — past the
+> checker's 24 h cadence, so they are due on the next tick — and leaves
+> never-checked rows NULL. Nulling the column claimed the rows had never been
+> looked at, which reclassified a genuine registration on a rescanned brand as a
+> first-contact BASELINE (no `first_seen`, no AI assessment, no alert) and
+> re-stamped `baseline_established_at`. The rescan also clears
+> `last_check_failed_at`. Response shape is unchanged; `domains_queued` still
+> counts the brand's rows.
 
 ## App Store Impersonation Monitoring
 

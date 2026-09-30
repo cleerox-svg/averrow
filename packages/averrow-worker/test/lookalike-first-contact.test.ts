@@ -65,6 +65,8 @@ interface StoredRow {
   // Written by the statements under test.
   first_seen: string | null;
   baseline_established_at: string | null;
+  /** Migration 0268 — the F6 failure cooldown. */
+  last_check_failed_at: string | null;
   threat_level: string | null;
   ai_assessment: string | null;
   alert_id: string | null;
@@ -86,6 +88,7 @@ function makeRow(over: Partial<StoredRow> = {}): StoredRow {
     last_checked: null,
     first_seen: null,
     baseline_established_at: null,
+    last_check_failed_at: null,
     threat_level: null,
     ai_assessment: null,
     alert_id: null,
@@ -129,14 +132,34 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
               row.has_mx = hasMx;
               row.has_web = hasWeb;
               row.last_checked = NOW;
-              // `CASE WHEN ? = 1 THEN datetime('now') ELSE <self> END` —
-              // never re-stamped on a later check.
-              if (firstContact === 1) row.baseline_established_at = NOW;
+              row.last_check_failed_at = null;
+              // `CASE WHEN ? = 1 AND baseline_established_at IS NULL
+              //   THEN datetime('now') ELSE <self> END`.
+              //
+              // NOTE: this is a RE-STATEMENT of the SQL, not a test of
+              // it — inverting the real CASE's arms would leave these
+              // assertions green. The statement itself is executed
+              // against real SQLite in
+              // `test/lookalike-sql-statements.test.ts`, which is what
+              // actually pins the single-write invariant; the branch
+              // here only exists so the surrounding behavioural
+              // assertions see a plausible row.
+              if (firstContact === 1 && row.baseline_established_at === null) {
+                row.baseline_established_at = NOW;
+              }
             }
+          } else if (sql.includes("SET last_check_failed_at = datetime('now')")) {
+            // The F6 unresolved-check branch: cooldown only, NO
+            // registration state, and `last_checked` deliberately
+            // untouched so a never-observed row stays first contact.
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row) row.last_check_failed_at = NOW;
           } else if (sql.includes("SET first_seen = datetime('now')")) {
             const [id] = args as [string];
             const row = store.get(id);
-            // `WHERE id = ? AND first_seen IS NULL`
+            // `WHERE id = ? AND first_seen IS NULL` — same caveat as
+            // above; the guard is pinned in the real-SQLite lane.
             if (row && row.first_seen === null) row.first_seen = NOW;
           } else if (sql.includes("SET threat_level = ?")) {
             const [level, assessment, id] = args as [string, string, string];
@@ -182,7 +205,7 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
   it("resolving with NO signal: no Haiku call, no alert, no first_seen", async () => {
     // The seeder-backlog shape: never checked, registered years ago,
     // parked. 1,080-3,770 rows look exactly like this.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true });
     const { env, store } = makeEnv([makeRow()]);
 
     await checkLookalikeBatch(env);
@@ -210,7 +233,7 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
   });
 
   it("mail AND web together IS a signal: full assessment runs and alerts", async () => {
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
     const { env, store } = makeEnv([makeRow()]);
 
     await checkLookalikeBatch(env);
@@ -237,7 +260,7 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
       { hasMx: false, hasWeb: false },
     ]) {
       vi.clearAllMocks();
-      checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", ...infra });
+      checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", ...infra });
       const { env } = makeEnv([makeRow()]);
       await checkLookalikeBatch(env);
       expect(analyzeWithHaikuSpy, JSON.stringify(infra)).not.toHaveBeenCalled();
@@ -249,7 +272,7 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
     // The column records OUR coverage, not the domain's status, so an
     // unregistered first contact is still a baseline. This is why it is
     // stamped in the per-check UPDATE rather than in the branch.
-    checkDomainSpy.mockResolvedValue({ registered: false, hasMx: false, hasWeb: false });
+    checkDomainSpy.mockResolvedValue({ registered: false, resolved: true, hasMx: false, hasWeb: false });
     const { env, store } = makeEnv([makeRow()]);
 
     await checkLookalikeBatch(env);
@@ -271,7 +294,7 @@ describe("checkLookalikeBatch — the first-contact boundary is last_checked, no
     // Identical DNS result to the suppressed case above — no MX, web
     // only. The ONLY difference is that `last_checked` is non-NULL, and
     // that is enough to make this a transition we witnessed.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true });
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     const { env, store } = makeEnv([makeRow(observedAbsent)]);
@@ -291,7 +314,7 @@ describe("checkLookalikeBatch — the first-contact boundary is last_checked, no
   });
 
   it("does not re-stamp baseline_established_at on a later check", async () => {
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     const { env, store } = makeEnv([
@@ -308,7 +331,7 @@ describe("checkLookalikeBatch — the first-contact boundary is last_checked, no
     // The squat was already registered when we first looked (baseline),
     // expired (registered flipped back to 0), and has now been
     // re-registered — a 0 -> 1 transition we genuinely observed.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "9.9.9.9", hasMx: true, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "9.9.9.9", hasMx: true, hasWeb: true });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     const { env, store } = makeEnv([
@@ -334,7 +357,7 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     // THE BEHAVIOUR CHANGE. Before the floor this produced a MEDIUM
     // `lookalike_domain_active` alert that no triage rule could ever
     // clear. It now produces a fully-populated row and no alert.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("MEDIUM"));
     const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
 
@@ -353,7 +376,7 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
   });
 
   it("withholds LOW too", async () => {
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
     const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
 
@@ -364,7 +387,7 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
   });
 
   it("lets CRITICAL through", async () => {
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("CRITICAL"));
     const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
 
@@ -379,7 +402,7 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     // row does NOT get the BIMI boost (that boost is MEDIUM-only), so an
     // early return on the floor would have swallowed a fixed-HIGH alert
     // about the single most damning email signal this scanner finds.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false });
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
     checkBIMISpy.mockResolvedValue(true);
     const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
@@ -398,7 +421,7 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     // now guarded on a non-null id, so the column stays NULL rather than
     // being overwritten with one — which is what makes "alert_id IS NULL"
     // a trustworthy precondition for the page-analysis producer.
-    checkDomainSpy.mockResolvedValue({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
+    checkDomainSpy.mockResolvedValue({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true });
     createAlertSpy.mockResolvedValue(null);
     const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
 
