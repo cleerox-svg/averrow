@@ -48,15 +48,71 @@
  *
  * So `customer` is unconditional: a paying customer's brand is monitored
  * by definition, and `monitoring_status` on those rows tracks something
- * else (scan scheduling state), not whether we care about the brand.
- * `monitored` tier — the 359 brands this change adds — does honour the
- * flag, because there `inactive` is the only thing distinguishing it
- * from the 114K-brand catalog.
+ * else, not whether we care about the brand.
  *
- * ── Why `monitored` + active is a stage, not the end state ───────────
+ * ── `monitoring_status` is VESTIGIAL. Audited 2026-09-30. ────────────
+ *
+ * An earlier version of this comment claimed the `monitored` tier
+ * "does honour the flag, because there `inactive` is the only thing
+ * distinguishing it from the 114K-brand catalog." That was an
+ * unverified assumption and it is FALSE. Corrected here rather than
+ * quietly deleted, because the wrong version is the intuitive one and
+ * the next reader will arrive at it again.
+ *
+ * NOTHING IN THE REPOSITORY EVER WRITES `'inactive'`. Grep it: the only
+ * occurrences beside a write are two schema DEFAULT clauses (migrations
+ * 0036 and 0042's table rebuild). Every other reference is a
+ * `WHERE monitoring_status = 'active'` read. So the value cannot express
+ * an operator decision to stop watching a brand — no code path can set
+ * it. `updateBrandField` (`db/brands.ts`) does list the column in its
+ * allowlist, and has zero call sites.
+ *
+ * The flag cross-cuts tier instead of refining it:
+ *
+ *   tier       status     count
+ *   tracked    inactive   111,753
+ *   monitored  inactive     1,505
+ *   tracked    active         631   ← catalog rows, flagged active
+ *   monitored  active         359
+ *   customer   inactive         2
+ *   customer   active           1
+ *
+ * `'paused'` — the third value migration 0036 documents — has never
+ * existed in a single row. What actually distinguishes a monitored-tier
+ * brand from the catalog is `tier` itself, set mechanically by migration
+ * 0156 from `threat_count > 0`, independent of this column.
+ *
+ * Three findings that settle it:
+ *   - `handleAddMonitoredBrand` (`handlers/brands.ts`) — the handler for
+ *     an operator explicitly adding a brand to monitoring — omits
+ *     `monitoring_status` from its INSERT, so a brand someone asked to
+ *     monitor is born `inactive`. That is why 2 of 3 customer brands are.
+ *   - 678 distinct `monitored` + `inactive` brands hold an ENABLED
+ *     `brand_monitor_schedule` row. The platform schedules monitors for
+ *     brands this column calls inactive.
+ *   - The real watchlist is the `monitored_brands` table, which has the
+ *     columns a decision needs (`added_by`, `added_at`, `removed_at`).
+ *     `monitoring_status='active'` is a denormalized copy of it from one
+ *     March 2026 seed run: 815 of 991 active rows are in it, and 0 of
+ *     113,258 inactive non-customer rows are.
+ *
+ * Absence of `'active'` is therefore not the presence of a decision to
+ * stop. (`'active'` does carry intent — it marks the curated seed set —
+ * which is why it is a usable staging filter below, just not a
+ * principled one.)
+ *
+ * ── A THROTTLE sized to throughput, not a definition of the target ───
  *
  *   tier monitored + active, plus all customer →   362 brands, ~10,860 rows
  *   tier monitored + customer, any status      → 1,867 brands, ~56,010 rows
+ *
+ * Given the finding above, the second row is the honest target and this
+ * predicate is a staging THROTTLE on the way to it. Read the `active`
+ * term as "an arbitrary ~20% slice that happens to be addressable by an
+ * existing indexed column", NOT as a statement about which brands
+ * deserve coverage. It is retained only because its SIZE fits current
+ * throughput, and it should be deleted — not re-justified — once the
+ * caps below move.
  *
  * The 362-brand stage yields roughly 540 scored rows at observed rates,
  * comfortably past the ~285 §5.2 needs for n>=30 in its positive-control
@@ -64,13 +120,37 @@
  * `checkLookalikeBatch` reads 50 rows/hour, so 56,010 rows take about 47
  * DAYS to DNS-check even once, against roughly 9 days for 10,860.
  *
- * So widening past this stage is gated on raising that limit and
- * `PAGE_ANALYSIS_LIMIT` first. Both were sized when this table held 120
- * rows and become the binding constraint as soon as population is no
- * longer the one that binds. Raise them in their own change, with their
- * own cost argument — a bigger population behind unchanged caps just
- * moves the starvation from "nothing to analyze" to "a 47-day cycle",
- * which is harder to notice.
+ * Widening to all 1,867 is therefore gated on THREE things, none of them
+ * this predicate:
+ *
+ *   1. A wall-clock budget guard in `checkLookalikeBatch`. It has none
+ *      (only a 60s sub-budget for inline page fetches), and it selects
+ *      `ORDER BY last_checked ASC NULLS FIRST` while stamping
+ *      `last_checked` per row mid-run. Raise the LIMIT past what fits a
+ *      15-minute invocation and the worker is killed with rows
+ *      unstamped, so the next tick selects the same rows and dies the
+ *      same way — head-of-line blocking that never self-clears, and no
+ *      feed-style breaker applies here.
+ *   2. A TIERED re-check cadence. Uniform 24h over 56,010 rows needs
+ *      ~2,335 rows/hour; at CONCURRENCY 5 a slice of 3s DNS timeouts
+ *      costs 9s, so the worst case runs ~70 min against a 15-min
+ *      ceiling. Subrequests are not the constraint (50,000 configured,
+ *      ~7,000 needed) — wall clock is. Registered-daily plus
+ *      unregistered-weekly lands at ~530-1,034 rows/hour, which fits.
+ *      Budget the `last_checked IS NULL` cohort EXPLICITLY: during the
+ *      initial drain every row is NULL, falls in neither tier, and
+ *      would starve the re-check of already-known rows below today's
+ *      cadence without anyone noticing.
+ *   3. `PAGE_DIAG_ROW_LIMIT` (`handlers/diagnostics.ts`, 20,000). At the
+ *      35% registration band the page-analyzed population is ~18,200 —
+ *      just under. Cross it and `truncated` flips, and every
+ *      `ai_build.*` rate becomes a lower bound. Those rates ARE §5.2's
+ *      promotion gate, so widening past that limit would break the
+ *      measurement the widening exists to enable.
+ *
+ * Raise them in their own change, with their own cost argument — a
+ * bigger population behind unchanged caps just moves the starvation from
+ * "nothing to analyze" to "a 47-day cycle", which is harder to notice.
  *
  * Interpolated into SQL as trusted static text: every token is a
  * compile-time literal in this file, no caller input reaches it, and the

@@ -545,6 +545,46 @@ catches a "fires on 40% of pages" failure before an operator ever sees it.
 > unchanged caps just moves the starvation from "nothing to analyze" to "a
 > 47-day cycle", which is harder to notice.
 >
+> #### ⚠️ Correction, same day — `monitoring_status` is vestigial
+>
+> The paragraph above says `monitored` tier "does honour the flag, because
+> there `inactive` is the only thing distinguishing it from the 114K-brand
+> catalog." **That was an unverified assumption and it is false.** Audited
+> against the repo and production:
+>
+> - **Nothing in the repository ever writes `'inactive'`.** The only
+>   occurrences beside a read are two schema `DEFAULT` clauses (migrations
+>   0036, 0042). Every other reference is `WHERE monitoring_status = 'active'`.
+>   So the value cannot express an operator decision to stop watching a brand
+>   — no code path can set it. (`updateBrandField` lists the column in its
+>   allowlist and has zero call sites.)
+> - **The flag cross-cuts tier rather than refining it.** 631 `tracked` brands
+>   are `active`; `'paused'`, the third documented value, has never existed in
+>   a single row. What distinguishes a monitored-tier brand is `tier` itself,
+>   set mechanically by migration 0156 from `threat_count > 0`.
+> - **`handleAddMonitoredBrand`** — the handler for an operator explicitly
+>   adding a brand to monitoring — omits `monitoring_status` from its INSERT,
+>   so a brand someone asked to monitor is born `inactive`. That is why 2 of 3
+>   customer brands are.
+> - **678 distinct `monitored` + `inactive` brands hold an *enabled*
+>   `brand_monitor_schedule` row.** The platform schedules monitors for brands
+>   this column calls inactive.
+> - The real watchlist is the `monitored_brands` table, which has the columns
+>   a decision needs (`added_by`, `added_at`, `removed_at`).
+>   `monitoring_status='active'` is a denormalized copy of it from one March
+>   2026 seed run: 815 of 991 active rows are in it, and **0 of 113,258**
+>   inactive non-customer rows are.
+>
+> Absence of `'active'` is not the presence of a decision to stop. The
+> predicate is therefore a **staging throttle**, not a definition of the
+> target: read its `active` term as "an arbitrary ~20% slice addressable by an
+> existing indexed column." The honest target is all 1,867, and the `active`
+> term should be **deleted rather than re-justified** once the caps move. See
+> `lib/monitored-brands.ts` for the full audit and the three specific
+> preconditions (wall-clock guard, tiered cadence with an explicit
+> `last_checked IS NULL` budget, and `PAGE_DIAG_ROW_LIMIT` — the third being
+> the one that would otherwise break §5.2's own measurement).
+>
 > **What this does and does not unblock.** It removes the arithmetic
 > impossibility: ~540 scored rows at observed rates against the ~285 §5.2
 > needs for n ≥ 30 in its positive-control arm. It does **not** make §5.2
