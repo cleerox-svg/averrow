@@ -428,6 +428,79 @@ intervals.
 signal-by-signal, not all at once. This is the single most important step — it
 catches a "fires on 40% of pages" failure before an operator ever sees it.
 
+> ### ⚠️ 5.1a — The gate is blocked on POPULATION, not elapsed time
+>
+> Measured against production 2026-09-30, day 9 of shadow mode. **Waiting to
+> day 14 changes nothing**, because the constraint is not accrual.
+>
+> | | |
+> |---|---|
+> | `lookalike_domains`, whole table | **120** |
+> | Eligible for page analysis | **35** |
+> | Ever analyzed | 38 |
+> | Reached the scorer | 19 |
+> | **§5.2 positive-control arm** (`page_phishing_score >= 60`) | **2** |
+> | Shadow signals fired, all eight | **0** |
+>
+> §5.2 is a lift ratio — firing rate inside the positive set against its
+> complement. That set holds **two rows**. Against §4.6's "no rate is
+> actionable below n = 30" the ratio is not failing, it is **undefined**, and
+> 35 is the whole eligible population rather than a draining backlog.
+>
+> **The zero is not evidence of dead signals.** §11.5 warns against reading a
+> 0% rate as death when it may be evasion; there is a third case it does not
+> list, and it is the one that applies here — **underpowered**. At n = 19 a
+> signal with a true 5% rate shows zero **38%** of the time; n >= 59 is needed
+> to be 95% confident such a signal would have fired even once. Nothing here
+> may trigger §5.6's retirement plan for `agent_scaffold_comment` or
+> `llm_refusal_leakage`.
+>
+> **Root cause, two independent links.** Both verified in production, not
+> inferred:
+>
+> 1. **`org_brands` holds 3 rows, across 1 org, against 114,251 brands.** The
+>    page-analysis predicate requires `EXISTS (org_brands …)`, so the
+>    addressable universe is the lookalikes of three customer-assigned brands.
+> 2. **Seeding is one-shot per brand.** `seedLookalikesForOrgBrands`
+>    (`scanners/lookalike-domains.ts:137`) selects brands
+>    `WHERE NOT EXISTS (SELECT 1 FROM lookalike_domains WHERE brand_id = b.id)`,
+>    so once a brand has any lookalike row it is excluded permanently. Those
+>    brands were seeded in March–May; **the newest row in the table is dated
+>    2026-05-25**, over four months old. The seeder runs hourly and finds
+>    nothing, by construction.
+>
+> The scanner itself is healthy — 168 runs in 7 days (exactly hourly, matching
+> its `22 * * * *` cron), `records_processed: 0`. It is starved of candidates,
+> not broken. Separately, **20 of 38 analyzed rows are HTTP errors**, halving
+> an already-tiny population.
+>
+> This was foreseeable from inside the repo: `CLAUDE.md` records PR-S
+> rerouting the Brands lookalikes card to query `threats` (27K+ attributed
+> typosquats) *because* `lookalike_domains` was empty. The table has been thin
+> for months, and Lane 3 built a measurement apparatus on top of it without
+> anyone checking it held enough rows to measure.
+>
+> **Three ways forward, none of them "wait".** All are scope decisions, not
+> bugs to fix:
+>
+> - **(a) Widen the eligibility predicate** beyond `org_brands` — e.g. include
+>   monitored or high-value brands. Biggest population gain; it also increases
+>   how much the platform fetches from the open internet, so it is a cost and
+>   exposure decision, not a one-line change.
+> - **(b) Grow the seeded set** — either add brands to `org_brands`, or relax
+>   the seeder's `NOT EXISTS` so improved permutation algorithms re-seed
+>   existing brands. `POST /api/lookalikes/:brandId/generate` already seeds one
+>   brand on demand and is the cheapest way to test whether more population
+>   actually produces firings.
+> - **(c) Park Lane 3's promotion explicitly** and say so here, rather than
+>   leaving §5.1 implying a two-week wait that will not arrive.
+>
+> Until one of those happens, **§5.2 cannot be run and no signal can be
+> promoted.** The shadow columns keep accumulating correctly; there is simply
+> not enough of them to measure. Phase 2's §11.3/§11.4 work (migration 0266)
+> was still worth landing — it makes the gate data trustworthy for whenever
+> the population question is answered.
+
 **5.2 Positive control, free.** Rows already carrying
 `page_phishing_score >= 60` or `credentialHarvest` are a high-confidence
 malicious label set built by signals the new ones don't depend on. Report **lift
@@ -638,7 +711,11 @@ Per `CLAUDE.md` §1A each step runs the full pipeline. Owners in brackets.
 call, `onDocument` comments, the real `on*` attribute walk, generator charset
 restriction, one-pass diagnostics, and the versioned cache key.*
 
-**Phase 2 — promotion. ⬜ BLOCKED — see §11 before starting.**
+**Phase 2 — promotion. ⬜ BLOCKED — see §5.1a first, then §11.**
+*§11.3/§11.4 shipped (migration 0266). Promotion itself is blocked on
+POPULATION, not elapsed time: 35 eligible rows, 2 in §5.2's positive-control
+arm, and the seeder cannot add more by construction. §5.1a has the numbers,
+the two-link root cause and the three ways forward.*
 8. Remove the shadow flag **per signal, as each clears its §5.2/§5.3 gate** —
    not all at once. *[backend-engineer + threat-intel-analyst]*
 9. `credentialHarvest` extension + `covert_exfil_sink` HIGH floor, **with the
