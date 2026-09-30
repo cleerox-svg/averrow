@@ -422,17 +422,28 @@ interface PageAnalysisDiag {
    * stability — it counts every row the pass has touched, successes and
    * failures alike, which is exactly the gap this field closes.
    *
-   * The outcome is INFERRED, because `SuspectPageResult.rejectedReason`
-   * is not persisted: the success UPDATE always writes
-   * `page_ai_signals`, the failure UPDATE never does, so non-NULL
-   * `page_ai_signals` means "reached the scorer". Two caveats worth
-   * knowing before acting on this: rows last analyzed BEFORE migration
-   * 0264 read as `not_scored_*` until their next pass (24 h per-domain
-   * cadence, so it self-heals within a day), and `not_scored_other`
-   * conflates non-HTML content-type with oversize — including
-   * `oversize_declared`, which spec §6 flags as possibly biased against
-   * exactly the fat AI-builder pages this lane targets. Separating
-   * those needs a persisted reject reason, which is not in Phase 1.
+   * AUTHORITATIVE since migration 0266 (spec §11.3/§11.4). The label is
+   * read from `page_last_outcome`, which the page-analysis pass writes on
+   * BOTH branches — `'scored'` on success, a normalized reject reason on
+   * failure — so it describes the LAST pass, not the last successful one.
+   * The vocabulary is `PAGE_OUTCOMES` in `lib/page-fetch.ts`; it is
+   * bounded on purpose, because three upstream reason strings interpolate
+   * (one of them an IP) and would otherwise give this `GROUP BY`
+   * unbounded cardinality.
+   *
+   * This replaced an inference from `page_ai_signals IS NOT NULL`, which
+   * answered "was this row EVER scored" while being read as "what did the
+   * last pass do" — so a row that scored once and had 403'd for a month
+   * still contributed its stale signal set to the §5.2 lift rates. It
+   * also folded `oversize_declared` in with `non_html_content_type`,
+   * hiding the possible bias against fat AI-builder pages that §11.4
+   * calls out as a bigger recall lever than any individual signal.
+   *
+   * Rows not yet re-analyzed since 0266 have no `page_last_outcome` and
+   * fall back to that old inference, in `*_pre_0266` buckets so they are
+   * never mistaken for measured values. See
+   * `ai_build.unverified_denominator_rows` for how much of the `ai_build`
+   * denominator that still accounts for. Both decay on the 24 h cadence.
    */
   by_fetch_outcome: Array<{ outcome: string; n: number }>;
   /**
@@ -455,6 +466,22 @@ interface PageAnalysisDiag {
      * metadata. No rate is actionable below n = 30 (spec §4.6).
      */
     by_signal: Array<{ signal: string; n: number; rate_pct: number | null }>;
+    /**
+     * How much of `scored` above is taken on trust. Rows last analyzed
+     * before migration 0266 have no `page_last_outcome`, so whether
+     * their LAST pass reached the scorer is inferred from
+     * `page_ai_signals` being non-NULL — the §11.3 defect. They are
+     * still counted (excluding them would empty the §5.2 denominator
+     * for the ~week the 24 h cadence takes to re-analyze everything),
+     * but this is the size of the un-verified remainder.
+     *
+     * Read it before running the §5.2 promotion gate: a lift ratio
+     * computed while this is a large fraction of `scored` is measured
+     * over a population that may mix live verdicts with stale ones. It
+     * should decay to 0; a value that does not decay means rows are not
+     * being re-analyzed, which is a cadence problem, not a data one.
+     */
+    unverified_denominator_rows: number;
     /** Rows where the Class A cap actually bound (uncapped sum > 20). */
     class_a_cap_hits: number;
     /**
@@ -555,13 +582,17 @@ const PAGE_DIAG_ROW_LIMIT = 20_000;
 /** Build the `page_analysis` diagnostics block. cachedValue-wrapped so
  *  repeated diagnostics calls don't re-scan; the full scan is acceptable
  *  ONLY because lookalike_domains is a small bounded table (unlike
- *  threats). Key `diag.page_analysis.cloaking.v2` — the `.v2` suffix is
- *  load-bearing: the response SHAPE changed (ai_build / exfil /
- *  generator / truncated), and without a new key a deploy keeps serving
- *  the old shape from KV for a whole TTL. Bump it again on the next
+ *  threats). Key `diag.page_analysis.cloaking.v3` — the version suffix is
+ *  load-bearing: without a new key a deploy keeps serving the OLD shape
+ *  from KV for a whole TTL (spec §6 requires the bump on every
+ *  shape change). `.v2` added ai_build / exfil / generator / truncated;
+ *  `.v3` reads the authoritative `page_last_outcome` (migration 0266)
+ *  instead of inferring the last outcome, which changes both the
+ *  `by_fetch_outcome[]` label set and the `ai_build` denominator, and
+ *  adds `ai_build.unverified_denominator_rows`. Bump again on the next
  *  shape change. TTL 600s. */
 async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
-  return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking.v2', 600, async () => {
+  return cachedValue<PageAnalysisDiag>(env, 'diag.page_analysis.cloaking.v3', 600, async () => {
     // ONE pass over the analyzed population, aggregated in the Worker
     // (Lane 3 §6). This was three separate full scans of the SAME table
     // under the SAME predicate (a SUM(CASE…), a GROUP BY
@@ -578,7 +609,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
       SELECT page_ai_signals, page_score_delta, page_phishing_score,
              page_signals, page_anti_bot_wall,
              page_generator, page_exfil_sink, page_exfil_sink_id,
-             page_http_status
+             page_http_status, page_last_outcome
       FROM lookalike_domains
       WHERE page_fetched_at IS NOT NULL
       LIMIT ?
@@ -592,6 +623,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
       page_exfil_sink: string | null;
       page_exfil_sink_id: string | null;
       page_http_status: number | null;
+      page_last_outcome: string | null;
     }>();
 
     // One row over the cap is the sentinel; drop it and flag the block.
@@ -606,6 +638,11 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
     const bySinkHost = new Map<string, number>();
     const sinkIds = new Set<string>();
     let scored = 0;
+    // Rows counted into the `ai_build` denominator on the pre-0266
+    // inference rather than an authoritative `page_last_outcome`. Decays
+    // to 0 as the 24 h cadence re-analyzes each row; a value that does
+    // NOT decay means rows are no longer being re-analyzed at all.
+    let unverifiedDenominatorRows = 0;
     let anyFired = 0;
     let capHits = 0;
     let escalationsAny = 0;
@@ -636,15 +673,41 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
         bump(byFamily, row.page_anti_bot_wall);
       }
 
-      if (row.page_ai_signals === null) {
-        // Failure branch (or a row last analyzed before migration 0264).
+      // Per-pass outcome, authoritative since migration 0266: written on
+      // BOTH branches of the page-analysis UPDATE, so it describes the
+      // LAST pass rather than the last successful one (spec §11.3), and
+      // carries a normalized reject reason that keeps `oversize_declared`
+      // separate from `non_html_content_type` (§11.4).
+      //
+      // NULL means the row has not been re-analyzed since 0266. Those
+      // fall back to the old inference — which is exactly the defect
+      // 0266 fixes, so they are counted into a clearly-labelled
+      // `*_pre_0266` bucket rather than the real ones, and their number
+      // is reported as `ai_build.unverified_denominator_rows` below.
+      // They self-heal on the 24 h per-domain cadence.
+      const authoritative = row.page_last_outcome;
+      let lastPassScored: boolean;
+      if (authoritative !== null) {
+        bump(outcomes, authoritative);
+        lastPassScored = authoritative === 'scored';
+      } else if (row.page_ai_signals === null) {
         const status = row.page_http_status;
-        if (status !== null && status >= 400) bump(outcomes, 'not_scored_http_error');
-        else if (status === null) bump(outcomes, 'not_scored_no_status');
-        else bump(outcomes, 'not_scored_other');
-        continue;
+        if (status !== null && status >= 400) bump(outcomes, 'not_scored_http_error_pre_0266');
+        else if (status === null) bump(outcomes, 'not_scored_no_status_pre_0266');
+        else bump(outcomes, 'not_scored_other_pre_0266');
+        lastPassScored = false;
+      } else {
+        bump(outcomes, 'scored_pre_0266');
+        unverifiedDenominatorRows += 1;
+        lastPassScored = true;
       }
-      bump(outcomes, 'scored');
+
+      // `ai_build` aggregates only over rows whose LAST pass reached the
+      // scorer. Pre-0266 rows are included on the inference above so the
+      // §5.2 denominator is not emptied for the ~week it takes them to
+      // self-heal; `unverified_denominator_rows` is how much of it is
+      // still taken on trust.
+      if (!lastPassScored) continue;
       scored += 1;
 
       // Unparseable JSON counts as "scored, nothing fired" rather than
@@ -727,6 +790,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
           const n = bySignal.get(signal) ?? 0;
           return { signal, n, rate_pct: pct(n, scored) };
         }).sort((a, b) => b.n - a.n),
+        unverified_denominator_rows: unverifiedDenominatorRows,
         class_a_cap_hits: capHits,
         escalations_attributable: escalationsAttributable,
         escalations_any: escalationsAny,

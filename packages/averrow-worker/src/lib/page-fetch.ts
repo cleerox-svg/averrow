@@ -813,6 +813,71 @@ export interface FetchSuspectOptions {
  * the residual-risk note, cannot fully eliminate SSRF, so the input set
  * must stay platform-controlled.
  */
+/**
+ * Bounded vocabulary for `lookalike_domains.page_last_outcome`
+ * (migration 0266, spec §11.3/§11.4). `'scored'` is written by the
+ * success branch; every other value is a normalized reject reason.
+ *
+ * Exported so the diagnostics block and its tests share ONE definition
+ * of the label set rather than each carrying a copy that can drift.
+ */
+export const PAGE_OUTCOMES = [
+  'scored',
+  // enforceResponseLimits — the three §11.4 cares about. `oversize` is
+  // measured-after-read, `oversize_declared` is a content-length the
+  // fetcher refused up front; keeping them apart is the point, since a
+  // declared-oversize skip never spent the bytes.
+  'non_html_content_type',
+  'oversize_declared',
+  'oversize',
+  // followToFinalResponse / fetchSuspectPage transient + policy misses
+  'unresolvable',
+  'unreachable',
+  'deadline_exceeded',
+  'fetch_error',
+  'too_many_redirects',
+  'redirect_without_location',
+  'bad_redirect_location',
+  'unparseable_host',
+  // Normalized from interpolating forms — see normalizePageOutcome.
+  'static_blocked',
+  'ip_blocked',
+  'disallowed_scheme',
+  // Anything the set above does not cover. A non-trivial count here
+  // means a new reason string was added upstream without a label; that
+  // is a prompt to extend this list, not to widen the bucket.
+  'other',
+] as const;
+
+export type PageOutcome = (typeof PAGE_OUTCOMES)[number];
+
+const CLOSED_OUTCOMES = new Set<string>(PAGE_OUTCOMES);
+
+/**
+ * Map a `SuspectPageResult.rejectedReason` onto the bounded set above.
+ *
+ * Three upstream forms interpolate and must NOT be persisted verbatim:
+ * `static: <reason>`, `resolved <ip> blocked: <reason>` and
+ * `disallowed_scheme: <protocol>`. Left raw they would give the
+ * diagnostics `GROUP BY` unbounded cardinality, and the middle one would
+ * write an attacker-influenced IP address into the column for no
+ * analytic gain — the fact that an IP was blocked is the finding; which
+ * IP is already in the SSRF logs.
+ *
+ * `undefined` maps to `'other'` rather than throwing: a reject with no
+ * reason is a upstream bug worth seeing in the breakdown, not a reason
+ * to fail the pass that was otherwise fine.
+ */
+export function normalizePageOutcome(rejectedReason: string | undefined): PageOutcome {
+  if (!rejectedReason) return 'other';
+  // Prefix forms first — these are the interpolating ones.
+  if (rejectedReason.startsWith('static: ')) return 'static_blocked';
+  if (rejectedReason.startsWith('resolved ')) return 'ip_blocked';
+  if (rejectedReason.startsWith('disallowed_scheme')) return 'disallowed_scheme';
+  // Closed literals pass through unchanged.
+  return CLOSED_OUTCOMES.has(rejectedReason) ? (rejectedReason as PageOutcome) : 'other';
+}
+
 export async function fetchSuspectPage(
   host: string,
   opts: FetchSuspectOptions = {},

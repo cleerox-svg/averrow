@@ -1,0 +1,62 @@
+-- 0266_lookalike_page_last_outcome.sql
+-- Per-pass page-analysis outcome (Lane 3 Phase 2, unblocking work).
+-- Spec: docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md §11.3 + §11.4, §6.
+--
+-- This column closes TWO Phase 2 blockers with one field, which is why
+-- §11.4 says to do them together.
+--
+-- §11.3 — `by_fetch_outcome[]` has no per-pass marker. The diagnostics
+-- block currently INFERS the last outcome from `page_ai_signals IS NOT
+-- NULL`, because the success UPDATE always writes that column and the
+-- failure UPDATE never does. That inference is right about "has this row
+-- EVER been scored" and wrong about "what did the LAST pass do": a row
+-- that scored once in September and has 403'd every day since still reads
+-- `scored`, and still contributes its stale signal set to
+-- `ai_build.by_signal[]`. Those are exactly the rates §5.2's lift
+-- measurement — the promotion gate out of shadow mode — depends on. So
+-- the gate would be computed over a population that silently mixes live
+-- verdicts with month-old ones.
+--
+-- §11.4 — `oversize_declared` is not individually visible. Because the
+-- reject reason was never persisted, the inferred breakdown collapses
+-- every non-success into one bucket, conflating non-HTML content-type
+-- with oversize. That matters more than a missing label: MAX_BYTES is
+-- 512 KB and AI-builder output is systematically fatter than a
+-- hand-written kit, so this whole signal family may be structurally
+-- biased against the exact population Lane 3 targets — and until the
+-- reason is persisted, that bias is unmeasurable. If it proves material,
+-- raising MAX_BYTES for this pass is a bigger recall win than any
+-- individual signal in §3.1.
+--
+-- Written on BOTH branches of the page-analysis UPDATE — 'scored' on
+-- success, the normalized reject reason on failure — so it is always
+-- about the LAST pass. That is the whole point; a column written on only
+-- one branch would reproduce the staleness it exists to fix.
+--
+-- NORMALIZED, not raw. `SuspectPageResult.rejectedReason` is not a closed
+-- set: three of its forms interpolate (`static: <reason>`,
+-- `resolved <ip> blocked: <reason>`, `disallowed_scheme: <protocol>`).
+-- Persisting those verbatim would give the diagnostics `GROUP BY`
+-- unbounded cardinality, and one of them would write an attacker-
+-- influenced IP address into a new column for no analytic gain. The
+-- writer maps them to stable labels instead — see
+-- `normalizePageOutcome` in lib/page-fetch.ts (the module that produces
+-- the reason strings), whose bounded vocabulary is pinned by test.
+--
+-- NULL means "never analyzed, or last analyzed before this migration".
+-- Rows in the second group self-heal on the 24 h per-domain cadence, so
+-- the column is trustworthy about a week after deploy; read
+-- `page_fetched_at IS NOT NULL AND page_last_outcome IS NULL` to size
+-- the not-yet-migrated remainder rather than assuming it is zero.
+--
+-- Additive only — ADD COLUMN, never DROP/ALTER (CLAUDE.md §8). No index:
+-- the diagnostics block reads this in the SAME single pass it already
+-- makes over `page_fetched_at IS NOT NULL` and aggregates in the Worker,
+-- so an index would be a dead write cost. Adding one later is a
+-- deliberate decision, not a default.
+--
+-- SHADOW MODE IS UNCHANGED. This column is measurement only. Nothing
+-- here feeds page_phishing_score, threat_level, credentialHarvest or
+-- alert triage, and no signal is promoted by this migration.
+
+ALTER TABLE lookalike_domains ADD COLUMN page_last_outcome TEXT;

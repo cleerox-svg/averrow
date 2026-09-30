@@ -50,6 +50,8 @@ interface LookalikeRow {
   page_exfil_sink?: string | null;
   page_exfil_sink_id?: string | null;
   page_evidence?: string | null;
+  // Migration 0266 — written by BOTH branches, unlike every field above.
+  page_last_outcome?: string | null;
 }
 interface AlertRow {
   id: string;
@@ -116,14 +118,26 @@ function makeMockEnv(lookalikes: LookalikeRow[], alerts: AlertRow[]): {
                   row.page_exfil_sink = exfilSink;
                   row.page_exfil_sink_id = exfilSinkId;
                   row.page_evidence = evidence;
+                  // Literal in the SQL, not a bind — the success branch
+                  // always writes 'scored' (migration 0266).
+                  row.page_last_outcome = 'scored';
                 }
               } else if (sql.includes("lookalike_domains") && sql.includes("page_http_status = ?")) {
-                // Failure update — cooldown + status only, verdict preserved.
-                const [status, id] = args as [number | null, string];
+                // Failure update — 3 binds since migration 0266:
+                // (status, lastOutcome, id). `page_last_outcome` is the
+                // ONE column this branch writes besides the cooldown,
+                // deliberately, so the outcome describes the LAST pass
+                // rather than the last successful one (spec §11.3).
+                // Keep this destructuring 1:1 with the real UPDATE — the
+                // Phase 1 defect 7.1 was exactly this drifting.
+                const [status, lastOutcome, id] = args as [
+                  number | null, string, string,
+                ];
                 const row = lMap.get(id);
                 if (row) {
                   row.page_fetched_at = NOW_MARKER;
                   row.page_http_status = status;
+                  row.page_last_outcome = lastOutcome;
                 }
               }
               return { meta: { changes: 1 } };
@@ -234,6 +248,19 @@ describe("runPageAnalysisForDomain — failed fetch keeps the last good verdict"
     expect(row.page_phishing_score).toBe(75);
     expect(row.page_signals).toBe(JSON.stringify(["credential_form", "offdomain_form_exfil"]));
     expect(row.page_content_hash).toBe("deadbeef");
+
+    // ...AND the per-pass outcome flips away from 'scored' (migration
+    // 0266, spec §11.3). This row carries a real prior verdict, so it is
+    // exactly the shape of the defect: before 0266 the diagnostics block
+    // inferred "scored" from page_ai_signals being non-NULL, so a row
+    // that succeeded once and then 403'd for a month kept contributing
+    // its STALE signal set to the §5.2 lift rates that gate promotion.
+    // The verdict is deliberately preserved above; the outcome is not.
+    expect(row.page_last_outcome).toBeDefined();
+    expect(row.page_last_outcome).not.toBe("scored");
+    // A static SSRF block, normalized — not the raw `static: <reason>`,
+    // which would be unbounded GROUP BY cardinality.
+    expect(row.page_last_outcome).toBe("static_blocked");
   });
 });
 
