@@ -428,7 +428,11 @@ intervals.
 signal-by-signal, not all at once. This is the single most important step — it
 catches a "fires on 40% of pages" failure before an operator ever sees it.
 
-> ### ⚠️ 5.1a — The gate is blocked on POPULATION, not elapsed time
+> ### ⚠️ 5.1a — The gate was blocked on POPULATION, not elapsed time
+>
+> **Resolved the same day — the finding is kept in full because the reasoning
+> is the reason the fix is shaped the way it is. Jump to "Resolved 2026-09-30"
+> at the end of this section for what actually shipped.**
 >
 > Measured against production 2026-09-30, day 9 of shadow mode. **Waiting to
 > day 14 changes nothing**, because the constraint is not accrual.
@@ -500,6 +504,58 @@ catches a "fires on 40% of pages" failure before an operator ever sees it.
 > not enough of them to measure. Phase 2's §11.3/§11.4 work (migration 0266)
 > was still worth landing — it makes the gate data trustworthy for whenever
 > the population question is answered.
+>
+> ---
+>
+> #### ✅ Resolved 2026-09-30 — (a), on a product position
+>
+> Route (a), decided on doctrine rather than on the measurement need: *every
+> brand the platform monitors should have typosquat coverage, whether or not a
+> tenant is assigned it.* That is the threat-ACTOR reading (`CLAUDE.md` §13 —
+> patterns are the product); `org_brands` membership was the brand-protection
+> reading, and it is the narrower product.
+>
+> Both gates — the seeder and the page-analysis pass — now share
+> `MONITORED_BRAND_PREDICATE_SQL` (`lib/monitored-brands.ts`), one definition
+> so they cannot drift:
+>
+> ```sql
+> (b.tier = 'customer' OR (b.tier = 'monitored' AND b.monitoring_status = 'active'))
+> ```
+>
+> | | brands | analyzable rows |
+> |---|---|---|
+> | old `org_brands` gate | 3 | 36 |
+> | this predicate | **362** | 36 → drains from a 359-brand backlog |
+> | `tier IN (…) AND status='active'` | 360 | **17** ← rejected |
+>
+> The third row is the obvious spelling and it is wrong: two of the three
+> `customer`-tier brands carry `monitoring_status <> 'active'`, so requiring
+> the flag uniformly would have **halved the existing pipeline** on the change
+> meant to widen it. `customer` is therefore unconditional. The matrix is
+> pinned cell-by-cell against real SQLite in
+> `test/monitored-brands-predicate.test.ts`, which runs the queries extracted
+> from source rather than retyped copies.
+>
+> **This is a stage, not the end state.** `monitored` + any status is 1,867
+> brands ≈ 56,010 rows, and `checkLookalikeBatch` reads 50/hour — a **47-day**
+> DNS cycle, against ~9 days for the 362-brand stage. Widening further is
+> gated on raising that limit and `PAGE_ANALYSIS_LIMIT` (20/run) first, in
+> their own change with their own cost argument. Bigger population behind
+> unchanged caps just moves the starvation from "nothing to analyze" to "a
+> 47-day cycle", which is harder to notice.
+>
+> **What this does and does not unblock.** It removes the arithmetic
+> impossibility: ~540 scored rows at observed rates against the ~285 §5.2
+> needs for n ≥ 30 in its positive-control arm. It does **not** make §5.2
+> runnable today — the backlog drains at 10 brands/hour (~36 h) and then DNS
+> at 50 rows/hour (~9 days), so the gate becomes answerable in roughly two
+> weeks *of accrual that is actually happening*, which is what §5.1 wrongly
+> assumed was already true. Re-run the §5.1a census before attempting §5.2.
+> Also unchanged: the exposure side of route (a) is real — the platform now
+> fetches more open-internet pages. The SSRF-safe fetcher, the 24h per-domain
+> cadence and the per-run wall-clock budget are the existing controls; nothing
+> about them was relaxed.
 
 **5.2 Positive control, free.** Rows already carrying
 `page_phishing_score >= 60` or `credentialHarvest` are a high-confidence
@@ -711,11 +767,15 @@ Per `CLAUDE.md` §1A each step runs the full pipeline. Owners in brackets.
 call, `onDocument` comments, the real `on*` attribute walk, generator charset
 restriction, one-pass diagnostics, and the versioned cache key.*
 
-**Phase 2 — promotion. ⬜ BLOCKED — see §5.1a first, then §11.**
-*§11.3/§11.4 shipped (migration 0266). Promotion itself is blocked on
-POPULATION, not elapsed time: 35 eligible rows, 2 in §5.2's positive-control
-arm, and the seeder cannot add more by construction. §5.1a has the numbers,
-the two-link root cause and the three ways forward.*
+**Phase 2 — promotion. ⬜ WAITING ON ACCRUAL — see §5.1a, then §11.**
+*§11.3/§11.4 shipped (migration 0266). The population block is RESOLVED
+(§5.1a "Resolved 2026-09-30"): both gates moved off `org_brands` onto
+`MONITORED_BRAND_PREDICATE_SQL`, 3 brands → 362, and the seeder now has a
+359-brand backlog to drain instead of being a no-op by construction. §5.2 is
+not runnable the same day — the backlog drains at 10 brands/h, then DNS at 50
+rows/h, so ~2 weeks of real accrual. Re-run the §5.1a census before
+attempting the gate; do not read a 0% rate as death before n ≥ 30 (§4.6,
+§11.5, and the underpowered third case in §5.1a).*
 8. Remove the shadow flag **per signal, as each clears its §5.2/§5.3 gate** —
    not all at once. *[backend-engineer + threat-intel-analyst]*
 9. `credentialHarvest` extension + `covert_exfil_sink` HIGH floor, **with the

@@ -16,6 +16,7 @@ import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
 import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
 import type { PagePhishingResult } from '../lib/page-phishing-scorer';
 import { runPageAnalysisForDomain } from './lookalike-page-analysis';
+import { MONITORED_BRAND_PREDICATE_SQL } from '../lib/monitored-brands';
 import type { Env } from '../types';
 
 // Inline page-analysis budget for the newly-registered compositor. The
@@ -125,24 +126,36 @@ export async function generateAndStoreLookalikes(
 }
 
 /**
- * Seed lookalike candidates for tenant-monitored brands that don't have
- * any yet. Without this, generateAndStoreLookalikes only ran via the
+ * Seed lookalike candidates for platform-monitored brands that don't
+ * have any yet. Without this, generateAndStoreLookalikes only ran via the
  * on-demand API handler, so the cron checker (checkLookalikeBatch) had an
  * empty candidate pool for nearly every brand and produced no findings.
  *
  * Generation is cheap (permutation inserts only — DNS/AI happens later in
- * the throttled checker), and org_brands is a small set, so we seed up to
- * `brandLimit` un-seeded brands per tick. Returns brands + candidates seeded.
+ * the throttled checker), so we seed up to `brandLimit` un-seeded brands
+ * per tick. Returns brands + candidates seeded.
+ *
+ * The population is `MONITORED_BRAND_PREDICATE_SQL`, NOT `org_brands` —
+ * see that constant for why, and for the throughput ceiling that decides
+ * how far it may widen. The function name is kept for its call site in
+ * agents/lookalike-scanner.ts; "OrgBrands" now overstates its scope.
  */
 export async function seedLookalikesForOrgBrands(
   env: Env,
   brandLimit = 10,
 ): Promise<{ brands_seeded: number; candidates_created: number }> {
+  // NOT EXISTS keeps this one-shot per brand: regenerating identical
+  // dnstwist permutations for an already-seeded brand is pure write cost.
+  // Combined with the old three-brand org_brands gate that made the seeder
+  // a no-op forever once those three were done in March–May; with the tier
+  // predicate it becomes a self-draining backlog instead, `brandLimit`
+  // brands per hourly run (359 un-seeded brands at the default 10/tick =
+  // ~36 h to work through the 362-brand stage).
   const brands = await env.DB.prepare(
     `SELECT DISTINCT b.id AS brand_id, b.canonical_domain AS domain
      FROM brands b
-     JOIN org_brands ob ON ob.brand_id = b.id
      WHERE b.canonical_domain IS NOT NULL
+       AND ${MONITORED_BRAND_PREDICATE_SQL}
        AND NOT EXISTS (SELECT 1 FROM lookalike_domains ld WHERE ld.brand_id = b.id)
      LIMIT ?`,
   ).bind(brandLimit).all<{ brand_id: string; domain: string }>();

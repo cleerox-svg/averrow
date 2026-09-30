@@ -27,6 +27,7 @@ import {
   type PagePhishingResult,
   type PageThreatLevel,
 } from '../lib/page-phishing-scorer';
+import { MONITORED_BRAND_PREDICATE_SQL } from '../lib/monitored-brands';
 import { logger } from '../lib/logger';
 import type { Env } from '../types';
 
@@ -234,10 +235,17 @@ export async function analyzeLookalikePages(env: Env): Promise<PageAnalysisSumma
     budget_hit: false,
   };
 
-  // Population: exactly the org-monitored, registered, resolving,
-  // has_web set — the domains checkLookalikeBatch already alerts on.
-  // EXISTS (not JOIN) so a brand monitored by multiple orgs doesn't
-  // fan the row out. Reads are fine off env.DB here (agent context);
+  // Population: the platform-monitored, registered, resolving, has_web
+  // set — the domains checkLookalikeBatch already alerts on. The brand
+  // gate is MONITORED_BRAND_PREDICATE_SQL, shared with the seeder so the
+  // two cannot drift; it reads `brands.tier` rather than `org_brands`,
+  // because a typosquat is actor intelligence whether or not a tenant
+  // pays for that brand. See its definition for the staging rationale
+  // and the throughput ceiling that caps how far it can widen.
+  //
+  // Predicate not EXISTS/JOIN on org_brands any more, so there is also no
+  // longer a row-fan-out concern from a brand monitored by several orgs.
+  // Reads are fine off env.DB here (agent context);
   // the volume is bounded to 20 rows/run.
   const rows = await env.DB.prepare(
     `SELECT ld.id, ld.brand_id, ld.domain, ld.threat_level, ld.alert_id,
@@ -248,7 +256,7 @@ export async function analyzeLookalikePages(env: Env): Promise<PageAnalysisSumma
        AND ld.has_web = 1
        AND ld.resolves_to IS NOT NULL
        AND (ld.page_fetched_at IS NULL OR ld.page_fetched_at < datetime('now', '-24 hours'))
-       AND EXISTS (SELECT 1 FROM org_brands ob WHERE ob.brand_id = ld.brand_id)
+       AND ${MONITORED_BRAND_PREDICATE_SQL}
      ORDER BY ld.page_fetched_at ASC NULLS FIRST
      LIMIT ?`,
   ).bind(PAGE_ANALYSIS_LIMIT).all<PageAnalysisRow>();
