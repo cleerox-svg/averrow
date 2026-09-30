@@ -113,7 +113,15 @@ const LOOKALIKE_DDL = `
     resolves_to TEXT,
     page_fetched_at TEXT,
     threat_level TEXT,
-    alert_id TEXT
+    alert_id TEXT,
+    -- Columns the page-analysis SELECT gained when that pass became an
+    -- alert PRODUCER (it reproduces the checker's alert shape from the
+    -- same row rather than making a second round-trip). Unused by the
+    -- brand gate this file is about, but the query is executed for real
+    -- against this DDL, so a missing column fails as a SQL error.
+    permutation_type TEXT,
+    unicode_domain TEXT,
+    has_mx INTEGER
   );
 `;
 

@@ -981,6 +981,26 @@ step 12 is approving a property nobody can test.
 > dismissals on a family that currently has none, and so the one needing
 > `appsec-reviewer` before anything is written, not after.
 
+> **Update 2026-09-30 — the family now has TWO producers and a severity floor,
+> and still zero dismissal paths.** `lookalike_domain_active` alerts are created
+> by the registration checker *and* by the page-analysis pass
+> (`raiseUnalertedPhishingPageAlert`), and both are gated on a HIGH/CRITICAL
+> floor defined once in `lib/lookalike-alert-policy.ts`. Neither producer, and
+> nothing downstream of them, can dismiss: `createAlert`'s triage dispatch still
+> matches no branch for `sourceType: 'lookalike_scanner'`, and the new page path
+> can only WITHHOLD (below the floor or below the phishing bar) or RAISE.
+>
+> This makes option **(a)** above the standing answer rather than one of three:
+> the safety property §3.3 wanted holds structurally, so widening
+> `credentialHarvest` still cannot produce a dismissal — but the *mechanism* is
+> "this family has no dismissal path at all", not the
+> `page_credential_harvest === 1` guard, which remains unreachable here. Do not
+> re-argue §3.3 from that guard. Note also that the page pass's alert gate reads
+> `score` / `credentialHarvest` / the fired `anti_bot_wall` key ONLY — no
+> `aiSignals`, no `scoreDelta` — so promoting a shadow signal would, for the
+> first time, put Lane 3 output on a path that CREATES operator work. That is a
+> §5.2 consideration to weigh at promotion time, not a blocker now.
+
 ### 11.2 The A3 rule needs its two-tier split before `default_scaffold_title` is promoted
 
 §3.1 A3, amended. The prefix leg fires on legitimate titles ("Title Insurance

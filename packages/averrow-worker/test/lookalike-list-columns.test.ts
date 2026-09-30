@@ -35,6 +35,11 @@ const EXPECTED_COLUMNS = [
   // because it explains a stale verdict. Added by hand, which is the
   // review step this file exists to force.
   "page_last_outcome",
+  // 0267 first-contact baseline — "when WE first looked", distinct from
+  // first_seen's "when the domain appeared". Staff-visible for the same
+  // reason as page_last_outcome: it explains an absence (a registered
+  // squat with no alert) that otherwise reads as a bug.
+  "baseline_established_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

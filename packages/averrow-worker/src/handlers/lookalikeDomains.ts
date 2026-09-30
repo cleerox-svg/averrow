@@ -71,6 +71,15 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // customer-facing finding. That is a weaker reason than
   // `page_evidence`'s, which is a content-injection constraint.
   "page_last_outcome",
+  // ── 0267 first-contact baseline ──
+  // When WE first established this row's registration baseline, as
+  // opposed to `first_seen` (when the domain was observed to APPEAR).
+  // Staff-visible: a bounded timestamp with no attacker-controlled
+  // content, and it is what explains to an operator why a registered
+  // squat carries no alert — first contact is baseline establishment,
+  // not a registration event. OFF the tenant SELECT: our crawl coverage
+  // is pipeline detail, the same product call made for page_last_outcome.
+  "baseline_established_at",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is

@@ -11,7 +11,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildPageEvidenceDetails } from "../src/scanners/lookalike-domains";
+// Moved out of `scanners/lookalike-domains.ts` into a neutral lib module
+// when the page-analysis pass became a second alert producer and needed
+// the same builder — see that module's docstring for the import-cycle
+// reason. Same function, same contract; only the home changed.
+import { buildPageEvidenceDetails } from "../src/lib/lookalike-alert-policy";
 import type { PagePhishingResult } from "../src/lib/page-phishing-scorer";
 
 function makePhishing(over: Partial<PagePhishingResult> = {}): PagePhishingResult {

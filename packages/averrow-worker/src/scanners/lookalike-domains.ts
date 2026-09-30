@@ -17,6 +17,11 @@ import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
 import type { PagePhishingResult } from '../lib/page-phishing-scorer';
 import { runPageAnalysisForDomain } from './lookalike-page-analysis';
 import { MONITORED_BRAND_PREDICATE_SQL } from '../lib/monitored-brands';
+import {
+  buildPageEvidenceDetails,
+  clearsLookalikeAlertFloor,
+  LOOKALIKE_ALERT_SEVERITY_FLOOR,
+} from '../lib/lookalike-alert-policy';
 import type { Env } from '../types';
 
 // Inline page-analysis budget for the newly-registered compositor. The
@@ -26,59 +31,11 @@ import type { Env } from '../types';
 const INLINE_PAGE_FETCH_CAP = 10;
 const INLINE_PAGE_BUDGET_MS = 60_000;
 
-/**
- * Page-analysis evidence carried on a `lookalike_domain_active` alert
- * (Lane 3 Phase 3 step 16).
- *
- * Purely descriptive — the alert's severity is still `threatLevel` as
- * computed by the existing compositor, and nothing here is read by
- * `createAlert`'s auto-triage dispatch (that switches on
- * `sourceType === 'threat'` or on the three impersonation alert types;
- * `lookalike_domain_active` / `lookalike_scanner` matches none of them).
- * The Lane 3 shadow fields remain shadow: `page_score` below is the
- * pre-Lane-3 score and `page_score_delta` is NOT folded into it.
- */
-export interface PageEvidenceDetails {
-  /** Fired scored-signal keys — closed vocabulary (`SIGNAL_WEIGHTS`). */
-  page_signals: string[];
-  /** 0-100 deterministic page score. */
-  page_score: number;
-  /** `turnstile|recaptcha|hcaptcha|cf_challenge|js_challenge`, or null. */
-  page_anti_bot_wall: string | null;
-  /** Fired Lane 3 shadow-signal keys — closed vocabulary (`ShadowSignalKey`). */
-  page_ai_signals: string[];
-  /** Shadow-only would-be contribution. NEVER added to `page_score`. */
-  page_score_delta: number;
-}
-
-/**
- * Build the page-evidence slice of an alert's `details`.
- *
- * Returns an EMPTY object when page analysis didn't run (no web server,
- * inline budget exhausted) or failed (SSRF block, non-HTML, network
- * error) — `phishing` is null in all of those cases. Alert creation must
- * never depend on this having fired, so the caller spreads the result.
- *
- * Deliberately carries KEYS ONLY. `phishing.evidence` (matched literals
- * lifted verbatim from attacker-controlled page content), `exfilSink`
- * (attacker-controlled hostname) and `exfilSinkId` are omitted: alert
- * `details` fans out to customer-facing surfaces and email digests, and
- * every field above has a closed vocabulary that those sinks can render
- * without escaping concerns. The full evidence stays staff-only on
- * `lookalike_domains` (see `handlers/tenantDomainModule.ts`).
- */
-export function buildPageEvidenceDetails(
-  phishing: PagePhishingResult | null,
-): Partial<PageEvidenceDetails> {
-  if (!phishing) return {};
-  return {
-    page_signals:       phishing.signals,
-    page_score:         phishing.score,
-    page_anti_bot_wall: phishing.antiBotWallFamily,
-    page_ai_signals:    phishing.aiSignals,
-    page_score_delta:   phishing.scoreDelta,
-  };
-}
+// `buildPageEvidenceDetails` + `PageEvidenceDetails` moved to
+// `lib/lookalike-alert-policy.ts` (imported above): the page-analysis
+// pass is now an alert PRODUCER too and needs the same builder, and that
+// module already imports from here, so a shared home in lib/ is the only
+// arrangement that isn't a cycle. See that module's docstring.
 
 // ─── Generate & Store ────────────────────────────────────────────
 
@@ -184,10 +141,42 @@ export async function seedLookalikesForOrgBrands(
  * 1. Queries domains that haven't been checked in 24 hours (LIMIT 50).
  * 2. For each, checks A record, MX record, and web availability.
  * 3. For newly registered domains, requests AI assessment and creates alerts.
+ *
+ * ── FIRST CONTACT IS NOT A REGISTRATION EVENT ───────────────────────
+ *
+ * Step 3's "newly registered" test is `result.registered && row.registered
+ * === 0`, and `registered = 0` is the seeder's INSERT default. So the
+ * column conflates two facts that are not the same:
+ *
+ *   "we checked, and it was not registered"   — a real observation
+ *   "we have never looked"                    — no observation at all
+ *
+ * `last_checked IS NULL` is what distinguishes them (the seeder's INSERT
+ * doesn't set it), which is why it joins the SELECT below. On a row we
+ * have never checked, a squat registered in 2019 reads as a fresh
+ * registration the first time we resolve it — and the monitored-brand
+ * seeder is about to hand this function ~10,770 such rows, 10-35% of
+ * which resolve. That is 1,080-3,770 permanent, un-triageable alerts
+ * against a queue with 8,941 already unworked (see
+ * `lib/lookalike-alert-policy.ts` for the queue arithmetic and why none
+ * of them can ever be auto-cleared).
+ *
+ * So the two cases get two paths. A transition WE OBSERVED keeps today's
+ * behaviour exactly, modulo the severity floor. FIRST CONTACT is
+ * BASELINE ESTABLISHMENT: it records everything (registration, IP, MX,
+ * web, and `baseline_established_at`), and alerts only when a real
+ * signal is present. With no signal it spends NO Haiku tokens and files
+ * NO alert — see the `firstContact` branch below, which is the
+ * load-bearing cost control of this whole change rather than a nicety.
  */
 export async function checkLookalikeBatch(env: Env): Promise<void> {
+  // `last_checked` is fetched, not just filtered on: it is the ONLY
+  // column that can tell a never-looked-at row from an observed-absent
+  // one, and the first-contact branch below turns on exactly that
+  // distinction. It was previously in the WHERE and not the SELECT.
   const rows = await env.DB.prepare(
-    `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered, ld.unicode_domain
+    `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
+            ld.unicode_domain, ld.last_checked
      FROM lookalike_domains ld
      WHERE ld.last_checked IS NULL
         OR ld.last_checked < datetime('now', '-24 hours')
@@ -200,6 +189,7 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
     permutation_type: string;
     registered: number;
     unicode_domain: string | null;
+    last_checked: string | null;
   }>();
 
   if (rows.results.length === 0) {
@@ -208,6 +198,9 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
   }
 
   let newRegistrations = 0;
+  let baselinesEstablished = 0;
+  let baselinesSuppressed = 0;
+  let alertsWithheldByFloor = 0;
   let totalChecked = 0;
 
   // Shared inline page-fetch budget across the whole tick (JS is single-
@@ -221,15 +214,30 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
     const batch = rows.results.slice(i, i + CONCURRENCY);
     const checks = batch.map(async (row) => {
       totalChecked++;
+
+      // The first-contact test, computed BEFORE the UPDATE below clears
+      // the evidence for it (that UPDATE sets `last_checked`, so after it
+      // runs the distinction is gone forever for this row).
+      const firstContact = row.last_checked === null;
+
       const result = await checkDomain(row.domain);
 
-      // Update the record
+      // Update the record. `baseline_established_at` is stamped here
+      // rather than in the first-contact branch below on purpose: the
+      // branch only runs for rows that RESOLVED, and a first contact
+      // that found nothing is still a baseline we established — the
+      // column records our coverage, not the domain's status. Bound as a
+      // flag rather than interpolated, and the CASE leaves the column
+      // untouched on every subsequent check so it can never be
+      // re-stamped (migration 0267).
       await env.DB.prepare(
         `UPDATE lookalike_domains
          SET registered = ?,
              resolves_to = ?,
              has_mx = ?,
              has_web = ?,
+             baseline_established_at = CASE WHEN ? = 1
+               THEN datetime('now') ELSE baseline_established_at END,
              last_checked = datetime('now'),
              updated_at = datetime('now')
          WHERE id = ?`,
@@ -238,19 +246,71 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
         result.ip ?? null,
         result.hasMx ? 1 : 0,
         result.hasWeb ? 1 : 0,
+        firstContact ? 1 : 0,
         row.id,
       ).run();
 
-      // Detect NEWLY registered domains (was 0, now resolves)
+      // Detect NEWLY registered domains (was 0, now resolves) — or, on a
+      // row we have never checked, simply "it resolves".
       if (result.registered && row.registered === 0) {
-        newRegistrations++;
+        if (firstContact) {
+          // ── BASELINE ESTABLISHMENT ──────────────────────────────────
+          // We learned nothing about WHEN this domain was registered,
+          // only that it is registered now. `first_seen` is deliberately
+          // NOT stamped (see migration 0267): claiming today as the
+          // appearance date of a squat that may be years old is worse
+          // than leaving it NULL, because downstream "new registrations
+          // this week" readings would then be a measure of our own crawl
+          // schedule.
+          baselinesEstablished++;
 
-        // Set first_seen
-        await env.DB.prepare(
-          `UPDATE lookalike_domains
-           SET first_seen = datetime('now')
-           WHERE id = ? AND first_seen IS NULL`,
-        ).bind(row.id).run();
+          // The signal test. Mail AND web together is the cheap,
+          // deterministic statement that a domain existing only to be
+          // mistaken for someone else's is also OPERATIONAL — it can
+          // both serve a page and receive replies. Either alone is
+          // ordinary: parked squats serve registrar landers, and MX is
+          // set by default by several registrars.
+          //
+          // The other qualifying signal — "the page scores as phishing"
+          // — is deliberately NOT evaluated here. The inline fetch below
+          // is capped at INLINE_PAGE_FETCH_CAP=10 against a LIMIT 50
+          // batch, and spending that budget on baseline rows (which are
+          // about to be ~10,770 of them) would starve it for the genuine
+          // transitions it exists to composite. `analyzeLookalikePages`
+          // owns that verdict, with its own per-run budget and a 24 h
+          // cadence, and since this change it can also RAISE the alert
+          // itself — so a baselined row whose page turns out to be a
+          // credential-harvest kit is caught there, one pass later,
+          // instead of here at the cost of the compositor's budget.
+          if (!(result.hasMx && result.hasWeb)) {
+            // NO HAIKU CALL AND NO ALERT. This early return is the cost
+            // control: at a 10-35% resolve rate over the seeder backlog
+            // it is the difference between ~1,080-3,770 Haiku calls plus
+            // the same number of permanent alerts, and zero of either.
+            baselinesSuppressed++;
+            logger.info('lookalike_baseline_no_signal', {
+              domain: row.domain,
+              has_mx: result.hasMx,
+              has_web: result.hasWeb,
+            });
+            return;
+          }
+          // Signal present → fall through to the full assessment path
+          // below, identical to a real transition from here on.
+        } else {
+          // ── OBSERVED TRANSITION ─────────────────────────────────────
+          // We checked this row before and it did not resolve; now it
+          // does. The domain genuinely appeared while we were watching,
+          // so `first_seen` means what it says.
+          newRegistrations++;
+
+          // Set first_seen
+          await env.DB.prepare(
+            `UPDATE lookalike_domains
+             SET first_seen = datetime('now')
+             WHERE id = ? AND first_seen IS NULL`,
+          ).bind(row.id).run();
+        }
 
         // R7 (2026-05-07): brand_profiles retired. Pull brand context
         // straight from `brands`. user_id-as-owner is dead; alerts
@@ -383,48 +443,90 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
         // unicode form (`аpple.com`) in the title so alerts aren't hostile.
         const displayDomain = row.unicode_domain ?? row.domain;
         const severity = threatLevel as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-        const alertId = await createAlert(env.DB, {
-          brandId: row.brand_id,
-          userId: brand.user_id,
-          alertType: 'lookalike_domain_active',
-          severity,
-          title: `Lookalike domain registered: ${displayDomain}`,
-          summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${result.hasWeb ? 'It has a web server.' : ''} ${result.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
-          details: {
-            lookalike_domain: row.domain,
-            unicode_domain: row.unicode_domain ?? undefined,
-            original_domain: brand.domain,
-            permutation_type: row.permutation_type,
-            resolves_to: result.ip,
-            has_mx: result.hasMx,
-            has_web: result.hasWeb,
-            // Page-content evidence when the inline analysis ran and
-            // scored; spreads to nothing otherwise so alert creation is
-            // never regressed by a skipped/failed fetch. Descriptive
-            // only — does not influence `severity` above, which is the
-            // already-composited `threatLevel`.
-            ...buildPageEvidenceDetails(pagePhishing),
-          },
-          sourceType: 'lookalike_scanner',
-          sourceId: row.id,
-          aiAssessment: aiAssessment || undefined,
-          aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(threatLevel)
-            ? [
-                'Investigate the domain for brand impersonation content',
-                'Consider filing a UDRP complaint or takedown request',
-                'Monitor for phishing emails from this domain',
-                'Alert customers if the domain is actively being used for phishing',
-              ]
-            : [
-                'Continue monitoring for content changes',
-                'Check periodically for brand impersonation',
-              ],
-        });
 
-        // Link the alert back to the lookalike record
-        await env.DB.prepare(
-          `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
-        ).bind(alertId, row.id).run();
+        // ── SEVERITY FLOOR ────────────────────────────────────────────
+        // Below HIGH there is no `lookalike_domain_active` row.
+        // Everything above this point has already been persisted —
+        // `threat_level`, `ai_assessment`, and the page columns written
+        // by `runPageAnalysisForDomain` — so nothing is lost but the
+        // notification. The comparison itself lives in
+        // `lib/lookalike-alert-policy.ts` and is shared with the
+        // page-analysis producer; it is NOT restated here.
+        //
+        // BEHAVIOUR CHANGE: this also stops MEDIUM alerts on genuine
+        // 0 -> 1 transitions, which used to be the common case (the
+        // compositor's default level is MEDIUM and only mail+web, BIMI or
+        // a page verdict lifted it). That is the requested change; the
+        // reasoning is in the floor's docstring.
+        //
+        // Scoped to this alert type only, and NOT an early return: the
+        // `typosquat_bimi` alert below is a different finding at a fixed
+        // HIGH severity. A LOW-assessed row with a BIMI record does not
+        // get its BIMI boost (that boost is `MEDIUM`-only), so an early
+        // return here would silently swallow a HIGH alert about the
+        // single most damning email signal this scanner can find.
+        let alertId: string | null = null;
+        if (clearsLookalikeAlertFloor(threatLevel)) {
+          alertId = await createAlert(env.DB, {
+            brandId: row.brand_id,
+            userId: brand.user_id,
+            alertType: 'lookalike_domain_active',
+            severity,
+            title: `Lookalike domain registered: ${displayDomain}`,
+            summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${result.hasWeb ? 'It has a web server.' : ''} ${result.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
+            details: {
+              lookalike_domain: row.domain,
+              unicode_domain: row.unicode_domain ?? undefined,
+              original_domain: brand.domain,
+              permutation_type: row.permutation_type,
+              resolves_to: result.ip,
+              has_mx: result.hasMx,
+              has_web: result.hasWeb,
+              // Page-content evidence when the inline analysis ran and
+              // scored; spreads to nothing otherwise so alert creation is
+              // never regressed by a skipped/failed fetch. Descriptive
+              // only — does not influence `severity` above, which is the
+              // already-composited `threatLevel`.
+              ...buildPageEvidenceDetails(pagePhishing),
+            },
+            sourceType: 'lookalike_scanner',
+            sourceId: row.id,
+            aiAssessment: aiAssessment || undefined,
+            aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(threatLevel)
+              ? [
+                  'Investigate the domain for brand impersonation content',
+                  'Consider filing a UDRP complaint or takedown request',
+                  'Monitor for phishing emails from this domain',
+                  'Alert customers if the domain is actively being used for phishing',
+                ]
+              : [
+                  'Continue monitoring for content changes',
+                  'Check periodically for brand impersonation',
+                ],
+          });
+        } else {
+          alertsWithheldByFloor++;
+          logger.info('lookalike_alert_withheld_below_floor', {
+            domain: row.domain,
+            threat_level: threatLevel,
+            floor: LOOKALIKE_ALERT_SEVERITY_FLOOR,
+            first_contact: firstContact,
+          });
+        }
+
+        // Link the alert back to the lookalike record. Guarded on a
+        // non-null id now, where it used to run unconditionally: both the
+        // floor above and `createAlert`'s NX2 tier gate can legitimately
+        // produce no alert, and `alert_id IS NULL` is precisely the state
+        // `analyzeLookalikePages` keys its own alert path on. Writing a
+        // NULL over a NULL was harmless; writing one at all is now
+        // meaningless work, and being explicit about it is what makes the
+        // page-analysis gate's precondition readable.
+        if (alertId) {
+          await env.DB.prepare(
+            `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
+          ).bind(alertId, row.id).run();
+        }
 
         // Additional alert if lookalike has BIMI
         if (hasBIMI) {
@@ -454,7 +556,17 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
 
   logger.info('lookalike_check', {
     checked: totalChecked,
+    // Transitions WE observed — the metric that used to be conflated
+    // with first contact and is now honest.
     new_registrations: newRegistrations,
+    // Rows resolved for the first time ever...
+    baselines_established: baselinesEstablished,
+    // ...of which this many carried no signal, so cost NO Haiku call and
+    // produced NO alert. During the seeder backlog drain this is the
+    // number to watch: it is the suppression doing its job.
+    baselines_suppressed: baselinesSuppressed,
+    // Assessed rows whose composed level sat below the severity floor.
+    alerts_withheld_below_floor: alertsWithheldByFloor,
   });
 }
 

@@ -87,7 +87,9 @@ export const lookalikeScannerAgent: AgentModule = {
       if (pages.analyzed > 0) {
         agentOutputs.push({
           type: "diagnostic",
-          summary: `Page analysis: ${pages.analyzed} scanned, ${pages.escalated} escalated, ${pages.credential_harvest} credential-harvest`,
+          summary: `Page analysis: ${pages.analyzed} scanned, ${pages.escalated} escalated, ` +
+            `${pages.credential_harvest} credential-harvest, ${pages.alerts_raised} alert(s) raised` +
+            `${pages.alert_cap_hit ? ' (per-run alert cap hit)' : ''}`,
           severity: pages.credential_harvest > 0 ? "high" : "info",
           details: { ...pages } as Record<string, unknown>,
         });

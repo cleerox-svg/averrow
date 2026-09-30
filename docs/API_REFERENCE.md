@@ -374,6 +374,31 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > a superset of the prior shape. A credential-form-off-domain page escalates the
 > row's `threat_level` (and the linked alert's severity) MEDIUM→HIGH/CRITICAL.
 
+> **`baseline_established_at` (migration 0267, additive).** Records when the
+> scanner FIRST established this row's registration/MX/web baseline, which is
+> not the same fact as `first_seen` (when the domain was observed to *appear*).
+> A seeded row starts `registered = 0` by INSERT default, so on first contact
+> `registered 0 → 1` says only "it resolves", never "it was just registered" —
+> `last_checked IS NULL` is the discriminator, and first contact now stamps this
+> column instead of `first_seen`. Both may legitimately be set on one row (a
+> baselined squat that lapses and is re-registered produces a real transition),
+> so `first_seen IS NULL AND baseline_established_at IS NOT NULL` is how to ask
+> "registered before we were watching". Staff-visible via
+> `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT (crawl coverage is
+> pipeline detail, same product call as `page_last_outcome`).
+
+> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and two producers.**
+> No alert row is created below HIGH — everything else is still persisted
+> (`threat_level`, `ai_assessment`, the page columns), so the row is unchanged
+> and only the notification is withheld. This *removed* previously-created
+> MEDIUM alerts on genuine `registered 0 → 1` transitions; the floor is defined
+> once in `lib/lookalike-alert-policy.ts` and shared. Two producers now file
+> this alert type: the registration checker (`scanners/lookalike-domains.ts`)
+> and the page-analysis pass (`scanners/lookalike-page-analysis.ts`), the latter
+> only for a registered row with NO linked alert whose page clears the phishing
+> bar — bounded per run and carrying `details.discovered_by = 'page_analysis'`
+> so the two are separable without a second `alert_type`.
+
 ## App Store Impersonation Monitoring
 
 iOS App Store impersonation scanner (Google Play + 3rd-party Android

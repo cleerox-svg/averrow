@@ -1,0 +1,61 @@
+-- 0267_lookalike_baseline_established.sql
+-- "We have now LOOKED at this row for the first time" — distinct from
+-- "this domain appeared", which is what `first_seen` already means.
+--
+-- WHY A NEW COLUMN RATHER THAN REUSING first_seen
+--
+-- `checkLookalikeBatch` treats `result.registered && row.registered = 0`
+-- as a NEW REGISTRATION and stamps `first_seen`. That reading is correct
+-- for a row we have checked before: registered went 0 -> 1 while we were
+-- watching, so the domain genuinely appeared. It is WRONG for a row we
+-- have never checked, because the seeder's INSERT leaves `registered` at
+-- its 0 default — so a squat registered in 2019 reads as a fresh
+-- registration the first time we resolve it, and `first_seen` would
+-- record the date of OUR first DNS query rather than anything about the
+-- domain.
+--
+-- That conflation was survivable while the table held 120 rows seeded
+-- over four months. It stops being survivable with the monitored-brand
+-- seeder: 359 un-seeded brands x ~30 permutations each is ~10,770 rows
+-- that all arrive at first contact with `registered = 0`, at a 10-35%
+-- observed registration rate — 1,080 to 3,770 rows that would each claim
+-- a registration date they cannot support.
+--
+-- So the two facts get two columns:
+--
+--   baseline_established_at  when WE first established this row's
+--                            registration/MX/web baseline. Says nothing
+--                            about the domain, only about our coverage.
+--   first_seen               when the domain was observed to APPEAR,
+--                            i.e. a 0 -> 1 transition we actually saw.
+--
+-- BOTH may be set on the same row, and that is not a contradiction: a
+-- row baselined as registered can later lapse (registered 1 -> 0 when the
+-- squat expires) and be re-registered (0 -> 1), which is a real
+-- transition and does stamp `first_seen`. Reading `first_seen IS NULL AND
+-- baseline_established_at IS NOT NULL` is therefore the honest way to ask
+-- "registered before we were watching", and nothing else in the schema
+-- could answer that question before this column existed.
+--
+-- NULL means "never checked" for rows created after this migration, and
+-- "checked before this migration" for the ~120 pre-existing rows. Those
+-- are indistinguishable on this column alone and deliberately so — they
+-- are also the rows whose `last_checked` is already non-NULL, so the
+-- checker's own first-contact test (`last_checked IS NULL`) classifies
+-- them correctly as not-first-contact without consulting this column at
+-- all. This column is a RECORD of the decision, never its input.
+--
+-- Staff-visible (added to LOOKALIKE_LIST_COLUMNS): a bounded timestamp
+-- with no attacker-controlled content, and it is what explains to an
+-- operator why a four-month-old registered squat has no alert. Left OFF
+-- the tenant SELECT in handlers/tenantDomainModule.ts — our crawl
+-- coverage is pipeline detail, not a customer-facing finding (the same
+-- product call made for page_last_outcome in 0266).
+--
+-- Additive only — ADD COLUMN, never DROP/ALTER (CLAUDE.md §8). No index:
+-- nothing filters or sorts on it. The checker's selection predicate is
+-- still `last_checked`, which is the column that was already there and
+-- already indexed for that purpose; adding an index here would be a dead
+-- write cost on a table about to grow ninety-fold.
+
+ALTER TABLE lookalike_domains ADD COLUMN baseline_established_at TEXT;
