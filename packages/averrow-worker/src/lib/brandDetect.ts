@@ -154,22 +154,63 @@ export function hostOf(raw: string): string {
 
 interface HostParts {
   host: string;
-  /** Labels with the public suffix removed: "a-b.evil.co.uk" → ["a-b", "evil"]. */
+  /** Labels with the public/platform suffix removed: "a-b.evil.co.uk" → ["a-b", "evil"]. */
   labels: string[];
-  /** Hyphen-split tokens of those labels: ["a", "b", "evil"]. */
+  /** Labels with "-"/"_" removed: ["ab", "evil"]. */
+  flat: string[];
+  /** Hyphen/underscore-split tokens of those labels: ["a", "b", "evil"]. */
   tokens: string[];
+  /** Unique flat labels + tokens — the candidates for exact and fuzzy matching. */
+  candidates: string[];
 }
 
-const HOSTNAME_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+const HOSTNAME_RE = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/;
 const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 /** A bare brand name, e.g. PhishTank's `target` field ("PayPal", "Bank of America"). */
-const BARE_NAME_RE = /^[a-z0-9 ]+$/;
+const BARE_NAME_RE = /^[a-z0-9 ]{1,64}$/;
+/** Unprefixed hex digests (md5/sha1/sha256) — never a brand name. */
+const HEX_DIGEST_RE = /^[0-9a-f]{16,}$/;
+
+/**
+ * Shared-hosting / platform suffixes: the label in front belongs to an
+ * arbitrary tenant, so the platform's own name is NOT brand evidence
+ * ("paypal-login.github.io" impersonates PayPal, not GitHub). Treated
+ * like a public suffix — excluded from matching. The platform itself
+ * still matches by canonical domain.
+ */
+const PLATFORM_SUFFIXES = [
+  "github.io", "gitlab.io", "pages.dev", "workers.dev", "r2.dev", "vercel.app",
+  "netlify.app", "web.app", "firebaseapp.com", "herokuapp.com", "azurewebsites.net",
+  "azurefd.net", "cloudfront.net", "appspot.com", "blogspot.com", "weebly.com",
+  "weeblysite.com", "wixsite.com", "godaddysites.com", "webflow.io", "framer.app",
+  "glitch.me", "replit.app", "repl.co", "ngrok.io", "ngrok-free.app", "b-cdn.net",
+  "backblazeb2.com", "s3.amazonaws.com", "onrender.com", "fly.dev", "surge.sh",
+  "wasmer.app", "alwaysdata.net", "square.site", "carrd.co", "notion.site",
+  "in.net", "web.id",
+];
+
+function suffixLabelCount(host: string): number {
+  for (const p of PLATFORM_SUFFIXES) {
+    if (host.endsWith(`.${p}`)) return p.split(".").length;
+  }
+  const reg = registrableDomain(host);
+  // Registrable labels minus its one owner label.
+  return reg ? reg.split(".").length - 1 : 0;
+}
+
+function buildParts(host: string, labels: string[], tokens: string[]): HostParts {
+  const flat = labels.map((l) => l.replace(/[-_]/g, "")).filter((l) => l.length > 0);
+  const candidates = [...new Set([...flat, ...tokens])];
+  return { host, labels, flat, tokens, candidates };
+}
 
 function hostParts(raw: string): HostParts | null {
   const trimmed = raw.trim().toLowerCase();
-  if (BARE_NAME_RE.test(trimmed) && !/^\d+$/.test(trimmed.replace(/ /g, ""))) {
+  if (BARE_NAME_RE.test(trimmed)) {
+    const joined = trimmed.replace(/ /g, "");
+    if (!joined || /^\d+$/.test(joined) || HEX_DIGEST_RE.test(joined)) return null;
     const words = trimmed.split(" ").filter((w) => w.length > 0);
-    return { host: words.join(""), labels: [words.join("")], tokens: words };
+    return buildParts(joined, [joined], words);
   }
   // Everything else must be a real hostname. JSON IOC blobs
   // ({"ip":…,"dataplane_feed":"telnetlogin"}), "hash:sha-256:…" values,
@@ -178,12 +219,9 @@ function hostParts(raw: string): HostParts | null {
   const host = hostOf(raw);
   if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
   const all = host.split(".").filter((l) => l.length > 0);
-  const reg = registrableDomain(host);
-  // Suffix label count = registrable labels minus its one owner label.
-  const suffixLen = reg ? reg.split(".").length - 1 : 0;
-  const labels = all.slice(0, all.length - suffixLen).filter((l) => l.length > 0);
-  const tokens = labels.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
-  return { host, labels, tokens };
+  const labels = all.slice(0, all.length - suffixLabelCount(host));
+  const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
+  return buildParts(host, labels, tokens);
 }
 
 interface PreparedBrand {
@@ -193,10 +231,6 @@ interface PreparedBrand {
   /** False for generic / too-short names — canonical-domain match only. */
   matchable: boolean;
 }
-
-// Normalizing 100K+ brand names per call dominated the old loop; cache the
-// prepared list per brands array (callers load it once per run).
-const preparedCache = new WeakMap<BrandRow[], PreparedBrand[]>();
 
 function prepareOne(b: BrandRow): PreparedBrand {
   const norm = normalizeBrand(b.name);
@@ -208,13 +242,40 @@ function prepareOne(b: BrandRow): PreparedBrand {
   };
 }
 
-function prepare(brands: BrandRow[]): PreparedBrand[] {
-  let prepared = preparedCache.get(brands);
-  if (!prepared) {
-    prepared = brands.map(prepareOne);
-    preparedCache.set(brands, prepared);
+/** Lookup structures over the brand catalog (100K+ rows). */
+interface BrandIndex {
+  canonical: Map<string, string>;
+  token: Map<string, string>;
+  /** Matchable brands with names long enough for substring matching. */
+  long: PreparedBrand[];
+  /** Same, bucketed by first character for edit-distance matching. */
+  longByFirst: Map<string, PreparedBrand[]>;
+}
+
+// Built once per brands array — callers load the catalog once per run and
+// match hundreds of threats against it. First brand in array order wins a
+// key, matching the old first-hit semantics.
+const indexCache = new WeakMap<BrandRow[], BrandIndex>();
+
+function indexBrands(brands: BrandRow[]): BrandIndex {
+  const cached = indexCache.get(brands);
+  if (cached) return cached;
+  const idx: BrandIndex = { canonical: new Map(), token: new Map(), long: [], longByFirst: new Map() };
+  for (const b of brands) {
+    const p = prepareOne(b);
+    if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
+    if (!p.matchable) continue;
+    if (!idx.token.has(p.norm)) idx.token.set(p.norm, p.id);
+    if (p.norm.length >= MIN_SUBSTRING_LEN) {
+      idx.long.push(p);
+      const first = p.norm[0] ?? "";
+      const bucket = idx.longByFirst.get(first);
+      if (bucket) bucket.push(p);
+      else idx.longByFirst.set(first, [p]);
+    }
   }
-  return prepared;
+  indexCache.set(brands, idx);
+  return idx;
 }
 
 /**
@@ -249,35 +310,30 @@ function maxEditDistance(len: number): number {
   return 0;
 }
 
+/**
+ * Exact whole-label / whole-token equality. No filler stripping here:
+ * stripping inside a short word manufactures matches ("helpscout" →
+ * "Scout", "webflow" → "Flow").
+ */
 function tokenMatch(parts: HostParts, norm: string): boolean {
-  for (const t of parts.tokens) {
-    if (t === norm) return true;
-  }
-  for (const l of parts.labels) {
-    const flat = l.replace(/-/g, "");
-    if (flat === norm || stripObfuscation(flat) === norm) return true;
-  }
-  return false;
+  return parts.candidates.includes(norm);
 }
 
+/** Substring (names >= 6 chars), raw or with phishing filler stripped. */
 function substringMatch(parts: HostParts, norm: string): boolean {
   if (norm.length < MIN_SUBSTRING_LEN) return false;
-  for (const l of parts.labels) {
-    const flat = l.replace(/-/g, "");
-    if (flat.includes(norm) || stripObfuscation(flat).includes(norm)) return true;
+  for (const l of parts.flat) {
+    if (l.includes(norm) || stripObfuscation(l).includes(norm)) return true;
   }
   return false;
 }
 
-function levenshteinMatch(parts: HostParts, norm: string): boolean {
+function fuzzyMatch(candidate: string, norm: string): boolean {
   const maxDist = maxEditDistance(norm.length);
   if (maxDist === 0) return false;
-  for (const t of [...parts.labels, ...parts.tokens]) {
-    if (t[0] !== norm[0]) continue;
-    if (Math.abs(t.length - norm.length) > maxDist) continue;
-    if (osaDistance(t, norm) <= maxDist) return true;
-  }
-  return false;
+  if (candidate[0] !== norm[0]) return false;
+  if (Math.abs(candidate.length - norm.length) > maxDist) return false;
+  return osaDistance(candidate, norm) <= maxDist;
 }
 
 /**
@@ -293,7 +349,7 @@ export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod
   if (!p.matchable) return null;
   if (tokenMatch(parts, p.norm)) return "token";
   if (substringMatch(parts, p.norm)) return "substring";
-  if (levenshteinMatch(parts, p.norm)) return "levenshtein";
+  if (parts.candidates.some((c) => fuzzyMatch(c, p.norm))) return "levenshtein";
   return null;
 }
 
@@ -317,23 +373,31 @@ export function keywordMatchesHost(keyword: string, raw: string): boolean {
  * @param brands - list of known brands
  */
 export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[]): BrandMatch | null {
-  const prepared = prepare(brands);
+  const idx = indexBrands(brands);
   for (const raw of haystacks) {
     if (!raw) continue;
     const parts = hostParts(raw);
     if (!parts) continue;
 
-    for (const b of prepared) {
-      if (b.canonical && parts.host === b.canonical) return { brandId: b.id, method: "canonical" };
+    const canonicalId = idx.canonical.get(parts.host);
+    if (canonicalId) return { brandId: canonicalId, method: "canonical" };
+
+    for (const c of parts.candidates) {
+      const id = idx.token.get(c);
+      if (id) return { brandId: id, method: "token" };
     }
-    for (const b of prepared) {
-      if (b.matchable && tokenMatch(parts, b.norm)) return { brandId: b.id, method: "token" };
+
+    const stripped = parts.flat.map(stripObfuscation);
+    for (const b of idx.long) {
+      if (parts.flat.some((l, i) => l.includes(b.norm) || (stripped[i] ?? "").includes(b.norm))) {
+        return { brandId: b.id, method: "substring" };
+      }
     }
-    for (const b of prepared) {
-      if (b.matchable && substringMatch(parts, b.norm)) return { brandId: b.id, method: "substring" };
-    }
-    for (const b of prepared) {
-      if (b.matchable && levenshteinMatch(parts, b.norm)) return { brandId: b.id, method: "levenshtein" };
+
+    for (const c of parts.candidates) {
+      for (const b of idx.longByFirst.get(c[0] ?? "") ?? []) {
+        if (fuzzyMatch(c, b.norm)) return { brandId: b.id, method: "levenshtein" };
+      }
     }
   }
   return null;

@@ -42,14 +42,13 @@ describe("Star Blizzard pulse false positives — must not match any brand", () 
 describe("real impersonations still match", () => {
   it.each([
     ["paypal-secure.com", "brand_paypal_com", "token"],
-    ["paypalsecure-verify.net", "brand_paypal_com", "token"],
+    ["paypalsecure-verify.net", "brand_paypal_com", "substring"],
     ["mypaypalcheckout.com", "brand_paypal_com", "substring"],
     ["paypa1-login.com", "brand_paypal_com", "levenshtein"],
     ["docusign-verify.net", "brand_docusign_com", "token"],
     ["docusigm.com", "brand_docusign_com", "levenshtein"],
     ["microsoft365-login.co.uk", "brand_microsoft_com", "substring"],
     ["kick-login.com", "brand_kick_com", "token"],
-    ["kicklogin.com", "brand_kick_com", "token"],
     ["netflix.com", "brand_netflix_com", "canonical"],
     ["www.paypal.com", "brand_paypal_com", "canonical"],
     ["https://roblox-free.xyz/claim?x=1", "brand_roblox_com", "token"],
@@ -161,5 +160,46 @@ describe("non-domain IOC values never match", () => {
 describe("adjacent transposition counts as one edit", () => {
   it("camosda.com → Camsoda", () => {
     expect(matchBrandToHost("camosda.com", b("Camsoda", "camsoda.com"))).toBe("levenshtein");
+  });
+});
+
+describe("code-review regressions", () => {
+  it("shared-hosting platform names are not brand evidence", () => {
+    const brands = [b("Github", "github.com"), b("PayPal", "paypal.com"), b("Firebase", "firebase.google.com")];
+    expect(fuzzyMatchBrandDetailed(["paypal-login.github.io"], brands))
+      .toEqual({ brandId: "brand_paypal_com", method: "token" });
+    expect(fuzzyMatchBrand(["khoiho805.github.io"], brands)).toBeNull();
+    expect(fuzzyMatchBrand(["myapp-12345.firebaseapp.com"], brands)).toBeNull();
+    expect(matchBrandToHost("evil.pages.dev", b("Pages", "pages.dev"))).toBeNull();
+  });
+
+  it("no filler stripping inside short words", () => {
+    expect(matchBrandToHost("helpscout.net", b("Scout", "scout.com"))).toBeNull();
+    expect(matchBrandToHost("webflow-x.io", b("Flow", "flow.com"))).toBeNull();
+    expect(matchBrandToHost("kicklogin.com", b("Kick", "kick.com"))).toBeNull();
+  });
+
+  it("unprefixed hex digests never match", () => {
+    expect(matchBrandToHost("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f0cafe24",
+      b("Cafe24", "cafe24.com"))).toBeNull();
+  });
+
+  it("bare names with punctuation stripped still match (PhishTank target)", () => {
+    expect(fuzzyMatchBrand(["ebay inc"], [b("eBay", "ebay.com")])).toBe("brand_ebay_com");
+    expect(fuzzyMatchBrand(["wells fargo company"], [b("Wells Fargo", "wellsfargo.com")]))
+      .toBe("brand_wellsfargo_com");
+  });
+
+  it("accepts underscores in hostnames", () => {
+    expect(matchBrandToHost("paypal_login.weebly.com", b("PayPal", "paypal.com"))).toBe("token");
+  });
+
+  it("single-pair and catalog matchers agree", () => {
+    for (const host of ["costc0.com", "camosda.com", "mypaypalcheckout.com", "drasw.club"]) {
+      const brand = [b("Costco", "costco.com"), b("Camsoda", "camsoda.com"), b("PayPal", "paypal.com"), b("Club", "club.fr")];
+      const hit = fuzzyMatchBrandDetailed([host], brand);
+      const pair = brand.map((x) => matchBrandToHost(host, x)).find((m) => m) ?? null;
+      expect(hit?.method ?? null, host).toBe(pair);
+    }
   });
 });
