@@ -84,6 +84,21 @@ All agents use Claude Haiku via the direct Anthropic API. The AI client is in `p
 - `scoreProvider()` — Hosting provider reputation scoring
 - `checkCostGuard()` — API cost control for non-critical agents
 
+Every helper's failure envelope carries an additive `failure_kind` (`throttled` / `budget_cap` = deliberate skip, no request made; `api_error` / `network` / `parse_error` = AI is not working). Callers that fall back to a heuristic on `!success` must not treat the two groups alike.
+
+### AI-call health counters
+
+Three agents — **analyst**, **sentinel**, **cartographer** — record strictly-API counters (`lib/haiku.ts` `newAiCallCounters` / `recordAiCall`) into `agent_outputs.details`: `aiCallsAttempted`, `aiCallsSucceeded`, `aiCallsSkipped`, `aiFirstFailureKind`, `aiFirstError`. They are the only trustworthy "is AI alive" signal; the legacy `haikuSuccesses` / `haikuSuccessCount` counters are **not** (sentinel counts a rules-based skip as a success). When every call on an agent's required AI path fails it returns `AgentResult.degraded`, and `executeAgent` finalizes the run `partial` with `completed_at` set — `partial` + `completed_at IS NULL` is an in-flight run. Full contract and the reasoning: `CLAUDE.md` §6 "AI-call health".
+
+Consumers of the counters (all `json_extract` the key names, agent-agnostic — a new agent that emits them is picked up with no change):
+
+| Consumer | What it does |
+|---|---|
+| Flight Control (`agents/flightControl.ts`) | `platform_ai_calls_failing` — `budget_ledger` silent >2h AND an agent with `>= AI_OUTAGE_MIN_ATTEMPTS` (3) attempts / 0 successes in that 2h window. Severity `high` (not `critical`: a critical auto-creates an incident that surfaces on the public status page). Dedup window 50 minutes. Needs migration 0272 (`docs/DEPLOYMENT.md`). |
+| `/api/{admin,internal}/platform-diagnostics` | `ai_health` block — `per_agent[]` over the requested window plus `agents_all_failing[]` (no 3-attempt floor, so it can list an agent FC has not yet alerted on). |
+
+A new AI-calling agent should adopt the counters; until it does it is invisible to both consumers.
+
 ### Agent Registry
 
 Agents are registered in `packages/averrow-worker/src/agents/index.ts`. The registry maps agent names to modules for the scheduler and API.
@@ -147,6 +162,7 @@ The Sentinel runs on every feed ingestion cycle. It processes newly ingested thr
 - **Brand squatting detection** — Identifies domains containing brand keywords (e.g., `paypal-verify.com`)
 - **Confidence scoring** — Assigns 0-100 confidence scores based on source quality and threat type
 - **Fallback** — Uses rule-based classification when Haiku is unavailable
+- **AI-call health** — High-confidence feed/type pairs (`confidence >= 85`) skip AI entirely, and the legacy `haiku=N/M` summary counts that skip as a success, so it can read healthy with zero API calls. Health is read from the strictly-API counters (see "AI-call health counters" above); the batch-level APT-pattern call is tracked as opportunistic and cannot by itself mark a run degraded.
 
 **Inputs:** Unclassified threats from the `threats` table
 **Outputs:** Updated threat records with `severity`, `confidence_score`, and `threat_type`
@@ -167,6 +183,7 @@ The Analyst processes threats that have no `target_brand_id` assigned. It uses C
 - Filters against the safe domain allowlist (`packages/averrow-worker/src/lib/safeDomains.ts`)
 - Runs brand-threat correlation via `packages/averrow-worker/src/brand-threat-correlator.ts`
 - Processes up to 30 unattributed threats per run
+- Brand matching falls back to keyword rules when Haiku fails; if every call fails the run finalizes `partial` with a severity-`high` diagnostic (strictly-API counters — see "AI-call health counters")
 
 **Outputs** (`agent_outputs`): writes `type='insight'` rows for actionable narratives —
 "Active Phishing + No DMARC", "AI-Generated Threat Detected", "Risk Score Spike",
@@ -238,6 +255,8 @@ The Cartographer operates in two phases:
 2. **Provider scoring** — Uses Claude Haiku to score the top 50 hosting providers based on threat volume, response times, and trends
 
 Also runs email security scans for monitored brands via `packages/averrow-worker/src/email-security.ts`.
+
+Provider scoring records strictly-API counters at the two real call sites (the batch call and the per-provider fallback) — not per provider, since a batch post-processes 5 providers per request. If every call fails the run finalizes `partial` with a severity-`high` diagnostic and providers fall back to the heuristic score. See "AI-call health counters" above.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
 **Outputs:** Enriched threat records (`threats.registrar`, `registration_date` populated via IANA RDAP bootstrap — switched from rdap.org in PR-C of the 2026-05-16 audit because rdap.org returns HTTP 403 to CF Workers); provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
@@ -428,6 +447,8 @@ exhausted before the `threat_briefings` INSERT could land).
 `geopolitical_campaigns`/`geopolitical_campaign_links`
 **Outputs:** `threat_briefings` row; `agent_runs` + `agent_events`
 (`briefing_generated`) instrumentation; briefing email via Resend
+
+**Schema gap (pre-existing, unrelated to AI-outage work):** no file under `packages/averrow-worker/migrations*/` creates `threat_briefings`, yet `handlers/briefing.ts` INSERTs into it and Flight Control alerts (`platform_briefing_silent`) on its staleness. The table exists in production (created out-of-band), so this is not a live bug — it is a fresh-environment reproducibility gap: a database built purely from the migrations has no `threat_briefings`, so the INSERT would fail there.
 
 ---
 

@@ -59,6 +59,16 @@ npx wrangler d1 execute trust-radar-v2-audit --file=migrations/XXXX_audit.sql
 
 Migrations are also run automatically by the deploy workflow.
 
+### Migration 0272 must land before (or with) the Worker that emits `platform_ai_calls_failing`
+
+`0272_notifications_add_ai_calls_failing.sql` rebuilds `notifications` to add `platform_ai_calls_failing` to the hand-maintained `type` CHECK (and restores `idx_notifications_dedup`). Worker code deployed against the pre-0272 schema fails **silently**: the key passes `createNotification`'s registry guard, the INSERT is rejected by the CHECK, Flight Control's try/catch swallows it, zero rows land, and the only trace is `console.warn('[flight-control] AI call-failure check failed:', …)`. The alert for the silent AI outage would itself fail silently — the exact failure it exists to prevent (traced in code: `createNotification`'s INSERT is unwrapped, and the only catch is Flight Control's).
+
+- **CI path is safe by ordering.** `deploy-radar.yml` runs `db:migrate:prod` before `pnpm run deploy`, and a failed migration step stops the job before the deploy step.
+- **The manual path is not.** `npx wrangler deploy` (see "Manual Deploy") runs no migrations. Apply first: `pnpm run db:migrate:prod` from `packages/averrow-worker`.
+- **Verify before trusting the alert:** `pnpm run db:migrate:status:prod` should list 0272 as applied, and `SELECT sql FROM sqlite_master WHERE name = 'notifications'` should contain `platform_ai_calls_failing`. `test/notification-check-drift.test.ts` only proves the migration *file* covers the registry, not that production applied it.
+- 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
+- The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
+
 ## Manual Deploy
 
 ```bash
