@@ -1084,7 +1084,7 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const { handleBrandLinkCleanup } = await import("../handlers/admin/brand-link-cleanup");
-    return handleBrandLinkCleanup(new URL(request.url), env);
+    return handleBrandLinkCleanup(new URL(request.url), env, `user:${ctx.userId}`);
   });
 
   router.post("/api/admin/alerts/backfill-triage", async (request: Request, env: Env) => {

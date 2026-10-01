@@ -5,29 +5,43 @@
 import type { Env } from "../../types";
 import {
   APPLY_CONFIRM_TOKEN,
+  UNDO_CONFIRM_TOKEN,
+  clampCursor,
   clampLimit,
   runBrandLinkCleanup,
   type CleanupMode,
 } from "../../lib/brand-link-cleanup";
 
-export async function handleBrandLinkCleanup(url: URL, env: Env): Promise<Response> {
+const MODES: readonly CleanupMode[] = ["dry_run", "apply", "undo", "reconcile"];
+const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/**
+ * @param actor "internal" for the internal-secret route, "user:<id>" for
+ *              the super_admin route — recorded in the log + audit trail.
+ */
+export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string): Promise<Response> {
   const modeParam = url.searchParams.get("mode") ?? "dry_run";
-  if (modeParam !== "dry_run" && modeParam !== "apply") {
-    return Response.json({ success: false, error: "mode must be dry_run or apply" }, { status: 400 });
+  const mode = MODES.find((m) => m === modeParam);
+  if (!mode) {
+    return Response.json({ success: false, error: `mode must be one of ${MODES.join(", ")}` }, { status: 400 });
   }
-  const mode: CleanupMode = modeParam;
-  if (mode === "apply" && url.searchParams.get("confirm") !== APPLY_CONFIRM_TOKEN) {
-    return Response.json(
-      { success: false, error: `apply requires confirm=${APPLY_CONFIRM_TOKEN}` },
-      { status: 400 },
-    );
+  const token = mode === "apply" ? APPLY_CONFIRM_TOKEN : mode === "undo" ? UNDO_CONFIRM_TOKEN : null;
+  if (token && url.searchParams.get("confirm") !== token) {
+    return Response.json({ success: false, error: `${mode} requires the confirm parameter` }, { status: 400 });
   }
-  const cursorRaw = Number(url.searchParams.get("cursor") ?? "0");
-  const cursor = Number.isFinite(cursorRaw) && cursorRaw > 0 ? Math.floor(cursorRaw) : 0;
-  const limit = clampLimit(url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined);
+  const runId = url.searchParams.get("run_id") ?? "manual";
+  if (!RUN_ID_RE.test(runId)) {
+    return Response.json({ success: false, error: "run_id must match [A-Za-z0-9_.:-]{1,64}" }, { status: 400 });
+  }
 
   try {
-    const data = await runBrandLinkCleanup(env, { mode, cursor, limit });
+    const data = await runBrandLinkCleanup(env, {
+      mode,
+      cursor: clampCursor(Number(url.searchParams.get("cursor") ?? "0")),
+      limit: clampLimit(url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined),
+      runId,
+      actor,
+    });
     return Response.json({ success: true, data });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

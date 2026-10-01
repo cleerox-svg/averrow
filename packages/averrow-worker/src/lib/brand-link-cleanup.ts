@@ -15,12 +15,23 @@
  *             ("paypal-login.github.io": GitHub → PayPal)
  *   clear   — nothing matches; target_brand_id → NULL
  *
- * Every relink/clear is logged to brand_link_cleanup_log (migration 0271)
- * with the original brand, so the run is reversible. dry_run writes
- * nothing. apply requires an explicit confirm token. Batched by rowid
- * keyset (cursor) so callers loop until `done` — see
- * scripts/brand-link-cleanup.sh. When an apply run finishes, the brand
- * counters are reconciled (lib/brand-count-reconciler.ts).
+ * Modes (each batched by rowid keyset — loop on next_cursor until done;
+ * scripts/brand-link-cleanup.sh):
+ *   dry_run   — decide + report, writes nothing (default)
+ *   apply     — confirm token required. Each relink/clear logs the
+ *               original brand + method to brand_link_cleanup_log
+ *               (migration 0271) in the SAME atomic batch as the
+ *               UPDATE guarded on the old brand, and only if that UPDATE
+ *               will apply — so the log never records a change that
+ *               didn't happen.
+ *   undo      — confirm token required. Restores logged links only where
+ *               the threat still holds the cleanup's value (later links
+ *               are never overwritten); stamps undone_at.
+ *   reconcile — one explicit brand-counter recompute
+ *               (lib/brand-count-reconciler.ts); run once after apply/undo.
+ * After apply/undo, threat_cube_brand / threat_cube_arcs older than the
+ * cube-healer's 30-day window still carry the old attribution — rebuild
+ * full history with scripts/cube-backfill.sh.
  *
  * Caveat: links made by the Analyst's Haiku inference carry no
  * brand_match_method and are indistinguishable from fuzzy links, so they
@@ -40,12 +51,13 @@ import {
   type BrandRow,
 } from "./brandDetect";
 
-export type CleanupMode = "dry_run" | "apply";
+export type CleanupMode = "dry_run" | "apply" | "undo" | "reconcile";
 export type CleanupAction = "keep" | "relink" | "clear";
 export type CleanupReason = "non_hostname" | "generic_brand" | "missing_brand" | "no_rule_match";
 
-/** Token the caller must pass to run in apply mode. */
+/** Tokens the caller must pass for the writing modes (accident guard, not auth). */
 export const APPLY_CONFIRM_TOKEN = "apply-brand-link-cleanup";
+export const UNDO_CONFIRM_TOKEN = "undo-brand-link-cleanup";
 
 export const DEFAULT_LIMIT = 500;
 export const MAX_LIMIT = 2000;
@@ -114,6 +126,7 @@ export function decideLink(
 
 export interface CleanupBatchResult {
   mode: CleanupMode;
+  run_id: string;
   scanned: number;
   keep: number;
   relink: number;
@@ -126,10 +139,23 @@ export interface CleanupBatchResult {
   added_by_brand: Record<string, number>;
   /** 'threat'-sourced alerts whose threat would lose/change its brand. */
   alerts_affected: number;
-  written: number;
+  /** Threat rows actually changed (apply: relinked/cleared; undo: restored). */
+  changed: number;
+  /** undo: logged links skipped because the threat moved on since. */
+  skipped: number;
   next_cursor: number;
   done: boolean;
   reconciled?: { brandsChecked: number; drifted: number; fixed: number };
+}
+
+export interface CleanupOptions {
+  mode: CleanupMode;
+  cursor: number;
+  limit: number;
+  /** Groups one cleanup run in the log (undo can target it). */
+  runId: string;
+  /** Who ran it: "internal" or "user:<id>". */
+  actor: string;
 }
 
 function bump(map: Record<string, number>, key: string): void {
@@ -141,14 +167,42 @@ export function clampLimit(raw: number | undefined): number {
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(raw)));
 }
 
-/** D1 caps bound parameters per statement at 100. */
-const IN_CHUNK = 90;
-const WRITE_CHUNK = 100;
+export function clampCursor(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.floor(raw));
+}
 
-export async function runBrandLinkCleanup(
-  env: Env,
-  opts: { mode: CleanupMode; cursor: number; limit: number },
-): Promise<CleanupBatchResult> {
+/** Pairs per D1 batch — each pair is (log, update); 100 statements. */
+const PAIRS_PER_BATCH = 50;
+
+function emptyResult(opts: CleanupOptions): CleanupBatchResult {
+  return {
+    mode: opts.mode, run_id: opts.runId, scanned: 0, keep: 0, relink: 0, clear: 0,
+    keep_by_method: {}, by_reason: {}, removed_by_brand: {}, added_by_brand: {},
+    alerts_affected: 0, changed: 0, skipped: 0, next_cursor: opts.cursor, done: true,
+  };
+}
+
+/** Sum `meta.changes` over the UPDATE statements at the given batch positions. */
+function changesAt(results: unknown[], every: number, offset: number): number {
+  let n = 0;
+  for (let i = offset; i < results.length; i += every) {
+    const r = results[i] as { meta?: { changes?: number } } | undefined;
+    n += r?.meta?.changes ?? 0;
+  }
+  return n;
+}
+
+export async function runBrandLinkCleanup(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
+  if (opts.mode === "reconcile") {
+    const { reconcileBrandThreatCounts } = await import("./brand-count-reconciler");
+    return { ...emptyResult(opts), reconciled: await reconcileBrandThreatCounts(env) };
+  }
+  if (opts.mode === "undo") return runUndo(env, opts);
+  return runValidate(env, opts);
+}
+
+async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
   const { mode, cursor, limit } = opts;
 
   const rows = await env.DB.prepare(
@@ -163,9 +217,8 @@ export async function runBrandLinkCleanup(
   ).bind(cursor, limit).all<LinkRow>();
 
   const result: CleanupBatchResult = {
-    mode, scanned: rows.results.length, keep: 0, relink: 0, clear: 0,
-    keep_by_method: {}, by_reason: {}, removed_by_brand: {}, added_by_brand: {},
-    alerts_affected: 0, written: 0,
+    ...emptyResult(opts),
+    scanned: rows.results.length,
     next_cursor: rows.results.at(-1)?.rid ?? cursor,
     done: rows.results.length < limit,
   };
@@ -197,48 +250,118 @@ export async function runBrandLinkCleanup(
     if (d.newBrandId) bump(result.added_by_brand, d.newBrandId);
   }
 
-  const changedIds = decisions.filter((x) => x.d.action !== "keep").map((x) => x.row.id);
-  for (let i = 0; i < changedIds.length; i += IN_CHUNK) {
-    const chunk = changedIds.slice(i, i + IN_CHUNK);
+  const changes = decisions.filter((x) => x.d.action !== "keep");
+  if (changes.length > 0) {
+    // One indexed query per batch (idx_alerts_source, migration 0271).
     const r = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM alerts
-        WHERE source_type = 'threat' AND source_id IN (${chunk.map(() => "?").join(",")})`,
-    ).bind(...chunk).first<{ n: number }>();
-    result.alerts_affected += r?.n ?? 0;
+        WHERE source_type = 'threat' AND source_id IN (SELECT value FROM json_each(?))`,
+    ).bind(JSON.stringify(changes.map((x) => x.row.id))).first<{ n: number }>();
+    result.alerts_affected = r?.n ?? 0;
   }
 
-  if (mode === "apply") {
+  if (mode !== "apply") return result;
+
+  // Method stamps on kept links — independent, no log needed.
+  const stamps = decisions
+    .filter(({ row, d }) => d.action === "keep" && row.brand_match_method === null && d.method)
+    .map(({ row, d }) => env.DB.prepare(
+      "UPDATE threats SET brand_match_method = ? WHERE id = ? AND brand_match_method IS NULL",
+    ).bind(d.method, row.id));
+  for (let i = 0; i < stamps.length; i += PAIRS_PER_BATCH * 2) {
+    await env.DB.batch(stamps.slice(i, i + PAIRS_PER_BATCH * 2));
+  }
+
+  // (log, update) pairs. A D1 batch is one transaction, and the log
+  // INSERT's EXISTS uses the same guard as the UPDATE right after it, so
+  // a log row exists iff the link was actually changed. ON CONFLICT
+  // overwrites only an UNDONE entry — a live entry keeps its original.
+  for (let i = 0; i < changes.length; i += PAIRS_PER_BATCH) {
     const stmts: D1PreparedStatement[] = [];
-    for (const { row, d } of decisions) {
-      if (d.action === "keep") {
-        if (row.brand_match_method === null && d.method) {
-          stmts.push(env.DB.prepare(
-            "UPDATE threats SET brand_match_method = ? WHERE id = ? AND brand_match_method IS NULL",
-          ).bind(d.method, row.id));
-        }
-        continue;
-      }
-      // Log first (INSERT OR IGNORE keeps the ORIGINAL brand on re-runs),
-      // then change the link only if nothing else moved it meanwhile.
+    for (const { row, d } of changes.slice(i, i + PAIRS_PER_BATCH)) {
       stmts.push(env.DB.prepare(
-        `INSERT OR IGNORE INTO brand_link_cleanup_log
-           (threat_id, old_brand_id, new_brand_id, action, reason, new_method)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(row.id, row.target_brand_id, d.newBrandId, d.action, d.reason ?? "no_rule_match", d.method));
+        `INSERT INTO brand_link_cleanup_log
+           (threat_id, old_brand_id, old_method, new_brand_id, new_method, action, reason, run_id, actor)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM threats WHERE id = ? AND target_brand_id = ?)
+         ON CONFLICT(threat_id) DO UPDATE SET
+           old_brand_id = excluded.old_brand_id, old_method = excluded.old_method,
+           new_brand_id = excluded.new_brand_id, new_method = excluded.new_method,
+           action = excluded.action, reason = excluded.reason, run_id = excluded.run_id,
+           actor = excluded.actor, created_at = datetime('now'), undone_at = NULL
+         WHERE brand_link_cleanup_log.undone_at IS NOT NULL`,
+      ).bind(
+        row.id, row.target_brand_id, row.brand_match_method, d.newBrandId, d.method,
+        d.action, d.reason ?? "no_rule_match", opts.runId, opts.actor,
+        row.id, row.target_brand_id,
+      ));
       stmts.push(env.DB.prepare(
         "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id = ?",
       ).bind(d.newBrandId, d.method, row.id, row.target_brand_id));
     }
-    for (let i = 0; i < stmts.length; i += WRITE_CHUNK) {
-      await env.DB.batch(stmts.slice(i, i + WRITE_CHUNK));
-    }
-    result.written = stmts.length;
-
-    if (result.done) {
-      const { reconcileBrandThreatCounts } = await import("./brand-count-reconciler");
-      result.reconciled = await reconcileBrandThreatCounts(env);
-    }
+    result.changed += changesAt(await env.DB.batch(stmts), 2, 1);
   }
 
+  await auditBatch(env, opts, result);
   return result;
+}
+
+interface LogRow {
+  rid: number;
+  threat_id: string;
+  old_brand_id: string;
+  old_method: string | null;
+  new_brand_id: string | null;
+}
+
+async function runUndo(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
+  const rows = await env.DB.prepare(
+    `SELECT rowid AS rid, threat_id, old_brand_id, old_method, new_brand_id
+       FROM brand_link_cleanup_log
+      WHERE rowid > ? AND undone_at IS NULL AND run_id = ?
+      ORDER BY rowid
+      LIMIT ?`,
+  ).bind(opts.cursor, opts.runId, opts.limit).all<LogRow>();
+
+  const result: CleanupBatchResult = {
+    ...emptyResult(opts),
+    scanned: rows.results.length,
+    next_cursor: rows.results.at(-1)?.rid ?? opts.cursor,
+    done: rows.results.length < opts.limit,
+  };
+
+  // (mark, restore) pairs in one transaction, both guarded on the threat
+  // still holding the cleanup's value — a link set after the cleanup is
+  // never overwritten and its log row stays live (counted as skipped).
+  for (let i = 0; i < rows.results.length; i += PAIRS_PER_BATCH) {
+    const stmts: D1PreparedStatement[] = [];
+    for (const l of rows.results.slice(i, i + PAIRS_PER_BATCH)) {
+      stmts.push(env.DB.prepare(
+        `UPDATE brand_link_cleanup_log SET undone_at = datetime('now')
+          WHERE threat_id = ? AND EXISTS (SELECT 1 FROM threats WHERE id = ? AND target_brand_id IS ?)`,
+      ).bind(l.threat_id, l.threat_id, l.new_brand_id));
+      stmts.push(env.DB.prepare(
+        "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id IS ?",
+      ).bind(l.old_brand_id, l.old_method, l.threat_id, l.new_brand_id));
+    }
+    result.changed += changesAt(await env.DB.batch(stmts), 2, 1);
+  }
+  result.skipped = result.scanned - result.changed;
+
+  await auditBatch(env, opts, result);
+  return result;
+}
+
+async function auditBatch(env: Env, opts: CleanupOptions, r: CleanupBatchResult): Promise<void> {
+  const { audit } = await import("./audit");
+  await audit(env, {
+    action: `brand_links.cleanup.${opts.mode}`,
+    userId: opts.actor.startsWith("user:") ? opts.actor.slice(5) : null,
+    resourceType: "brand_link_cleanup",
+    resourceId: opts.runId,
+    details: {
+      actor: opts.actor, cursor: opts.cursor, next_cursor: r.next_cursor,
+      scanned: r.scanned, relink: r.relink, clear: r.clear, changed: r.changed, skipped: r.skipped,
+    },
+  });
 }
