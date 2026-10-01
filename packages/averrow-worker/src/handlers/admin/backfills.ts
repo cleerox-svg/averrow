@@ -11,7 +11,7 @@ import { callAnthropicJSON } from "../../lib/anthropic";
 import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
-import { fuzzyMatchBrand } from "../../lib/brandDetect";
+import { fuzzyMatchBrandDetailed } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
@@ -667,13 +667,14 @@ export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number
     );
     if (haystacks.length === 0) continue;
 
-    const brandId = fuzzyMatchBrand(haystacks, brands);
-    if (!brandId) continue;
+    const match = fuzzyMatchBrandDetailed(haystacks, brands);
+    if (!match) continue;
+    const brandId = match.brandId;
 
     try {
       await env.DB.prepare(
-        "UPDATE threats SET target_brand_id = ? WHERE id = ? AND target_brand_id IS NULL",
-      ).bind(brandId, row.id).run();
+        "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id IS NULL",
+      ).bind(brandId, match.method, row.id).run();
 
       await env.DB.prepare(
         `UPDATE brands SET

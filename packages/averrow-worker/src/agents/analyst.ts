@@ -15,6 +15,7 @@ import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
 import { cachedValue } from "../lib/cached-value";
+import { isGenericBrand, keywordMatchesHost } from "../lib/brandDetect";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -174,7 +175,9 @@ export const analystAgent: AgentModule = {
     for (const b of brands.results) {
       const addKeyword = (kw: string) => {
         const norm = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (norm.length < 4) return;
+        // Generic-word names ("Data", "Login") match only by canonical
+        // domain — skip them AND their typo variants here.
+        if (norm.length < 4 || isGenericBrand(norm)) return;
         keywordToBrandId.set(norm, b.id);
         for (const variant of generateTypoVariants(norm)) {
           // setIfAbsent: don't let a typo variant from brand A overwrite
@@ -232,12 +235,14 @@ export const analystAgent: AgentModule = {
         continue;
       }
 
-      // Pre-filter: substring match against brand keywords. Skip AI on confident matches.
-      const domainNorm = (threat.malicious_domain ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      // Pre-filter: keyword match against brand keywords (host labels only,
+      // public suffix excluded, short keywords need a whole token — see
+      // keywordMatchesHost). Skip AI on confident matches.
+      const preMatchHost = threat.malicious_domain ?? '';
       let preMatchedBrandId: string | null = null;
-      if (domainNorm) {
+      if (preMatchHost) {
         for (const [kw, brandId] of keywordToBrandId) {
-          if (domainNorm.includes(kw)) {
+          if (keywordMatchesHost(kw, preMatchHost)) {
             preMatchedBrandId = brandId;
             break;
           }

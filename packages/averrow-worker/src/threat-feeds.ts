@@ -259,7 +259,12 @@ export async function syncPhishtankFeed(env: Env): Promise<{ fetched: number; ma
 
     // Check for brand match via domain OR target field
     const haystacks = [domain];
-    if (entry.target) haystacks.push(entry.target.toLowerCase());
+    // `target` is a free-text brand name ("eBay, Inc.", "AT&amp;T") —
+    // reduce it to plain words so the matcher treats it as a bare name.
+    if (entry.target) {
+      const name = entry.target.toLowerCase().replace(/&amp;/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+      if (name) haystacks.push(name);
+    }
     const brandId = fuzzyMatchBrand(haystacks, brands);
 
     if (brandId) {
