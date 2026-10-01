@@ -397,6 +397,18 @@ export default {
         return Response.json({ success: true, data });
       }
 
+      // POST /api/internal/brand-links/cleanup?mode=dry_run|apply&cursor=N&limit=N[&confirm=…]
+      // One batch of the brand-link cleanup (lib/brand-link-cleanup.ts):
+      // re-validates existing threats.target_brand_id links against the
+      // current matcher → keep / relink / clear. dry_run writes nothing;
+      // apply requires confirm=apply-brand-link-cleanup and logs every
+      // change to brand_link_cleanup_log (reversible). Loop on next_cursor
+      // until done — scripts/brand-link-cleanup.sh.
+      if (url.pathname === '/api/internal/brand-links/cleanup' && request.method === 'POST') {
+        const { handleBrandLinkCleanup } = await import('./handlers/admin/brand-link-cleanup');
+        return handleBrandLinkCleanup(url, env);
+      }
+
       // GET /api/internal/geoip-status
       // MCP-callable read of getGeoMmdbStatus(): row count, shadow
       // table progress, recent_attempts, oldest running refresh
