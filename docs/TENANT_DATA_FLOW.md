@@ -7,7 +7,7 @@ but the pages look empty." That symptom is almost always an
 **information-architecture** gap (a page reads a table that hasn't been
 populated for that brand), **not** a data or linkage bug.
 
-Audit date: 2026-05-25. Backend: `packages/trust-radar`. DB: `trust-radar-v2`.
+Audit date: 2026-05-25. Backend: `packages/averrow-worker`. DB: `trust-radar-v2`.
 
 ---
 
@@ -39,10 +39,14 @@ Resolving "org → its threats" is therefore:
 
 | Tenant page (route) | Endpoint | Backing table(s) |
 |---|---|---|
-| Overview (`/`) | `GET /api/orgs/:orgId/dashboard` | `threats` (counts), `social_profiles`, `alerts`, `brands` |
+| Modules home (`/`, `features/modules/Modules.tsx`) | `GET /api/orgs/:orgId/dashboard` | `threats` (counts), `social_profiles`, `alerts`, `brands` |
 | **Threats (`/threats`)** | **`GET /api/orgs/:orgId/threats`** | **`threats`** (the core feed-intel table) |
 | Signals (`/alerts`) | `GET /api/orgs/:orgId/alerts` | `alerts` |
+| Console (`/console`) | Composes `GET /api/orgs/:orgId/alerts` + `/takedowns` (no dedicated endpoint) | `alerts`, `takedown_requests` |
+| Investigations (`/investigations`) | `GET /api/orgs/:orgId/investigations[/:investigationId]` | `investigations`, `investigation_items`, `investigation_notes` |
 | Takedowns (`/takedowns`) | `GET /api/orgs/:orgId/takedowns` | `takedown_requests` |
+| Executives (`/settings/executives`) | `GET /api/orgs/:orgId/executives[/:execId]` | `org_executives` |
+| Automation Policy (`/automation-policy`) | `GET /api/orgs/:orgId/takedown-authorization` (read-only view; editing is in the signing flow) | takedown authorization scope |
 | Domain (`/modules/domain`) | `GET /api/orgs/:orgId/modules/domain[/brands/:id]` | `lookalike_domains`, `ct_certificates`, **`threats`** |
 | Social (`/modules/social`) | `GET /api/orgs/:orgId/modules/social[/brands/:id]` | `social_profiles` |
 | App Store (`/modules/app-store`) | `GET /api/orgs/:orgId/modules/app-store[/brands/:id]` | `app_store_listings` |

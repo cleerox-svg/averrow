@@ -1,5 +1,9 @@
 # AI Agents
 
+> **As of 2026-10-01 AI calls have been failing since 2026-07-10 (Anthropic prepaid credit exhausted); every agent is running on its rule-based fallback.** See `docs/AI_STRATEGY_2026-10.md` for the inventory and the direction.
+>
+> Campaign Hunter (`agents/campaign-hunter.ts` + `lib/agent-loop.ts`) is the only multi-turn tool-using agent (`runAgentLoop`; tools in `lib/hunter-tools.ts`). `agents/architect/analysis/analyzer.ts` and `synthesis/synthesizer.ts` are reachable only from `agents/architect/index.ts`, and the Architect agent is retired (not imported or registered in `agents/index.ts`), so they are effectively dead code.
+
 Averrow uses a mesh of AI agents plus infrastructure agents (Navigator, Cube Healer) powered by Claude Haiku via the Anthropic API. Agents are defined as modules in `packages/averrow-worker/src/agents/` and orchestrated by the agent runner in `packages/averrow-worker/src/lib/agentRunner.ts`. The registry is `packages/averrow-worker/src/agents/index.ts`.
 
 **Companion docs:**

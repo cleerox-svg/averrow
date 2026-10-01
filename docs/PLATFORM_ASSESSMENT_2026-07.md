@@ -1,5 +1,7 @@
 # Averrow Platform — Capabilities & Gaps Assessment — July 2026
 
+> **Status as of 2026-10-01:** `averrow-tenant` now has a vitest config and 7 test files (T2 addressed). Verified resolved in code: **R1** (CT/lookalike/trademark moved to dedicated crons `18`/`22`/`23 * * * *` in `wrangler.toml`), **S1** (JWT-mint routes now authenticate on a separate preview secret, `index.ts` ~L296-315), **S2** (`isReadOnlyGlobalRole` / `hasGlobalReadScope` mechanism in `middleware/auth.ts`), **TK1** (standing gate on the →submitted edge, `handlers/takedowns.ts:566`). Remaining findings were not re-verified. See `docs/DEPLOYMENT_PHASES_2026-07.md`.
+
 **Scope:** Full code-level assessment of the Averrow platform (averrow Worker,
 averrow-ops, averrow-tenant, averrow-marketing, averrow-mcp, shared) across four gap
 dimensions — competitive/capability, technical/architecture, security/RBAC,
