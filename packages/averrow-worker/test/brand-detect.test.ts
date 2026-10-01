@@ -241,5 +241,16 @@ describe("tier gate (2026-10-01 production dry run)", () => {
 
   it("content hosted on a shared IPFS gateway is not the gateway's brand", () => {
     expect(matchBrandToHost("https://ipfs.io/ipfs/bafkreia34hv5rni", b("Ipfs", "ipfs.io"))).toBeNull();
+    // Subdomain-style gateway: the CID label is the tenant, "ipfs"/"dweb" are not evidence.
+    expect(matchBrandToHost("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link",
+      b("Ipfs", "ipfs.io"))).toBeNull();
+  });
+
+  it("the gate decides the winner even when the tracked brand would match first", () => {
+    const brands = [tracked("Harbor", "harbor.com"), monitored("Ledger", "ledger.com")];
+    expect(fuzzyMatchBrandDetailed(["harbor-ledger.com"], brands))
+      .toEqual({ brandId: "brand_ledger_com", method: "token" });
+    expect(fuzzyMatchBrandDetailed(["harbor-ledger.com"], brands.map((x) => ({ ...x, tier: "monitored" }))))
+      .toEqual({ brandId: "brand_harbor_com", method: "token" });
   });
 });

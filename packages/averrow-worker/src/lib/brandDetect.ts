@@ -200,8 +200,12 @@ const PLATFORM_SUFFIXES = [
   "dynv6.net", "dynuddns.net", "dynu.com", "mydns.jp", "ydns.eu", "duckdns.org",
   "ddns.net", "hopto.org", "zapto.org", "sytes.net", "bounceme.net", "no-ip.com",
   "trycloudflare.com", "portmap.host", "edgeone.app", "gateway.dev", "wixstudio.com",
-  "wixsite.com", "cloudapp.net", "webcindario.com", "temporary.site",
+  "cloudapp.net", "webcindario.com", "temporary.site",
   "mytemp.website", "contaboserver.net",
+  // Subdomain-style IPFS gateways: <cid>.ipfs.dweb.link (path-style hosts
+  // are in SHARED_HOSTS below).
+  "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
+  "mypinata.cloud", "ipfs.cf-ipfs.com",
 ];
 
 /**

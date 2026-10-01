@@ -363,8 +363,12 @@ export const analystAgent: AgentModule = {
         result.data.brand_name,
         threat.malicious_domain,
       );
+      // Prefer the customer/monitored brand when a tracked-catalog row
+      // shares the name (the Tranco catalog holds many same-named rows).
       let brandId = await env.DB.prepare(
-        "SELECT id FROM brands WHERE LOWER(name) = LOWER(?)"
+        `SELECT id FROM brands WHERE LOWER(name) = LOWER(?)
+          ORDER BY CASE tier WHEN 'customer' THEN 0 WHEN 'monitored' THEN 1 ELSE 2 END
+          LIMIT 1`
       ).bind(matchedBrand).first<{ id: string }>();
 
       if (!brandId) {

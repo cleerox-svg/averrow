@@ -60,7 +60,8 @@ import {
 
 export type CleanupMode = "dry_run" | "apply" | "undo" | "reconcile";
 export type CleanupAction = "keep" | "relink" | "clear";
-export type CleanupReason = "non_hostname" | "generic_brand" | "missing_brand" | "no_rule_match";
+export type CleanupReason =
+  | "non_hostname" | "generic_brand" | "tracked_brand" | "missing_brand" | "no_rule_match";
 
 /** Tokens the caller must pass for the writing modes (accident guard, not auth). */
 export const APPLY_CONFIRM_TOKEN = "apply-brand-link-cleanup";
@@ -172,9 +173,12 @@ export function decideLink(
   }
 
   let reason: CleanupReason;
+  // non_hostname also covers shared-gateway hosts (ipfs.io/ipfs/<cid>),
+  // which the matcher treats as carrying no brand evidence.
   if (!haystacks.some(isMatchableInput)) reason = "non_hostname";
   else if (row.brand_name === null) reason = "missing_brand";
   else if (isGenericBrand(normalizeBrand(row.brand_name))) reason = "generic_brand";
+  else if (row.brand_tier === "tracked") reason = "tracked_brand";
   else reason = "no_rule_match";
 
   // Scope: only undo links the old buggy rules made. A dangling brand id

@@ -119,6 +119,21 @@ describe("cleanup scope — only undo what the old buggy matcher made", () => {
     expect(legacyFuzzyMatched(["notifyhubss.net"], "Apple")).toBe(false);
   });
 
+  it("clears a fuzzy link to a tracked-catalog brand with reason tracked_brand", () => {
+    const d = decideLink(row({
+      malicious_domain: "secure-protocol-update.com", brand_name: "Protocol",
+      brand_canonical: "protocol.com", brand_tier: "tracked",
+    }), () => null);
+    expect(d).toEqual({ action: "clear", method: null, newBrandId: null, reason: "tracked_brand" });
+  });
+
+  it("keeps a tracked brand's exact canonical-domain link", () => {
+    const d = decideLink(row({
+      malicious_domain: "protocol.com", brand_name: "Protocol", brand_canonical: "protocol.com", brand_tier: "tracked",
+    }), never);
+    expect(d).toMatchObject({ action: "keep", method: "canonical" });
+  });
+
   it("always clears a dangling brand id", () => {
     const d = decideLink(row({ malicious_domain: "example.com", brand_name: null, source_feed: "typosquat_scanner" }), () => null);
     expect(d).toMatchObject({ action: "clear", reason: "missing_brand" });

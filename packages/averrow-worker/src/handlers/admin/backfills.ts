@@ -630,7 +630,7 @@ export async function handleBackfillBrandSector(
 export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number; checked: number; pending: number }> {
   const brandRows = await env.DB.prepare(
     "SELECT id, name, canonical_domain, tier FROM brands",
-  ).all<{ id: string; name: string; canonical_domain: string }>();
+  ).all<{ id: string; name: string; canonical_domain: string; tier: string | null }>();
 
   const brands = brandRows.results;
   if (brands.length === 0) return { matched: 0, checked: 0, pending: 0 };
