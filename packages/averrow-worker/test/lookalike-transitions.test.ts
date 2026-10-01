@@ -16,7 +16,14 @@ import {
   type LookalikeStoredState,
   type LookalikeObservedState,
 } from "../src/scanners/lookalike-domains";
-import { lookalikeDrainFallingBehind } from "../src/agents/flightControl";
+import {
+  lookalikeDrainFallingBehind,
+  lookalikeParkedSetTooLarge,
+} from "../src/agents/flightControl";
+import {
+  LOOKALIKE_PARKED_WARN_THRESHOLD,
+  LOOKALIKE_UNPARK_PER_RUN,
+} from "../src/lib/lookalike-budget";
 
 /** A baselined, registered, mail+web row. */
 const stored = (over: Partial<LookalikeStoredState> = {}): LookalikeStoredState => ({
@@ -171,19 +178,33 @@ describe("lookalikeDrainFallingBehind", () => {
     expect(lookalikeDrainFallingBehind({ samples: [50, 40, 30, 20], drainPerTick: 50 })).toBe(false);
   });
 
-  it("does NOT fire on a single rise", () => {
-    // One rise is an hour of ordinary inflow jitter: the seeder adds
-    // ~300 rows on the tick it runs and 0 on a tick where every brand it
-    // picked was already seeded.
+  it("does NOT fire when a sample shows the backlog SHRINKING", () => {
+    // One dip mid-window is enough to clear the warning: the drain made
+    // ground at some point in the last four fresh samples, so "it is
+    // taking everything it can and still not getting anywhere" is not a
+    // true statement about it. The seeder's inflow is lumpy (~300 rows
+    // on the tick it runs, 0 on a tick where every brand it picked was
+    // already seeded), which is exactly the jitter this rules out.
     expect(lookalikeDrainFallingBehind({ samples: [900, 800, 850, 860], drainPerTick: 50 })).toBe(false);
   });
 
-  it("does NOT fire on a plateau", () => {
-    // Equal consecutive samples are not a rise. This also keeps a run of
-    // CACHED reads — which are the same number repeated — from reading
-    // as a trend, though the caller additionally only records fresh
-    // samples.
-    expect(lookalikeDrainFallingBehind({ samples: [900, 900, 900, 900], drainPerTick: 50 })).toBe(false);
+  it("DOES fire on a saturated plateau — the gauge is a bounded probe", () => {
+    // A deliberate inversion of the previous behaviour, and the reason
+    // for it is the gauge, not the predicate. `backlog.lookalike_dns_due`
+    // is now `COUNT(*) FROM (SELECT 1 ... LIMIT 51)` per cohort —
+    // 102 index reads instead of one per due row, which during the
+    // seeder drain was 300K-600K reads/day to produce a boolean.
+    //
+    // A bounded probe PLATEAUS at its ceiling under real saturation, so
+    // requiring a strict rise would have made this predicate dead code
+    // in exactly the regime it exists for: pegged, hour after hour,
+    // reporting nothing. "Saturated and not shrinking" is what "falling
+    // behind" meant all along; the strict rise was a proxy available
+    // only while the gauge was unbounded.
+    expect(lookalikeDrainFallingBehind({ samples: [102, 102, 102, 102], drainPerTick: 50 })).toBe(true);
+    // ...and a plateau BELOW the drain still says nothing, because
+    // saturation is still required.
+    expect(lookalikeDrainFallingBehind({ samples: [50, 50, 50, 50], drainPerTick: 50 })).toBe(false);
   });
 
   it("does NOT fire on a draining backlog", () => {
@@ -199,8 +220,36 @@ describe("lookalikeDrainFallingBehind", () => {
     }
   });
 
-  it("minRises is tunable, and a stricter setting needs more history", () => {
-    expect(lookalikeDrainFallingBehind({ samples: rising, drainPerTick: 50, minRises: 1 })).toBe(true);
-    expect(lookalikeDrainFallingBehind({ samples: rising, drainPerTick: 50, minRises: 4 })).toBe(false);
+  it("minSamples is tunable, and a stricter setting needs more history", () => {
+    expect(lookalikeDrainFallingBehind({ samples: rising, drainPerTick: 50, minSamples: 1 })).toBe(true);
+    // `rising` holds 4 samples, so 4 comparisons need 5 — silence, not a
+    // guess, when the history is short.
+    expect(lookalikeDrainFallingBehind({ samples: rising, drainPerTick: 50, minSamples: 4 })).toBe(false);
+  });
+});
+
+describe("lookalikeParkedSetTooLarge", () => {
+  // `backlog.lookalike_parked` had a gauge and NO threshold, so a
+  // growing parked set was visible only to an operator who thought to
+  // read the number — while the one warning that did exist is keyed on
+  // the DUE backlog, which PARKING REDUCES. A DNS outage severe enough
+  // to park a cohort therefore pushed the only alarm in the silencing
+  // direction.
+
+  it("is quiet at and below the threshold, and warns above it", () => {
+    const threshold = LOOKALIKE_PARKED_WARN_THRESHOLD;
+    expect(lookalikeParkedSetTooLarge({ parked: 0, threshold })).toBe(false);
+    expect(lookalikeParkedSetTooLarge({ parked: threshold, threshold })).toBe(false);
+    expect(lookalikeParkedSetTooLarge({ parked: threshold + 1, threshold })).toBe(true);
+  });
+
+  it("the production threshold sits below a DAY of un-park capacity", () => {
+    // The arithmetic behind the number, asserted rather than left in
+    // prose: below the threshold the sweep turns the whole parked set
+    // over inside a day, so crossing it genuinely means the set is
+    // growing faster than the lane that recovers it. If either constant
+    // moves, this is what notices the relationship broke.
+    expect(LOOKALIKE_PARKED_WARN_THRESHOLD)
+      .toBeLessThan(LOOKALIKE_UNPARK_PER_RUN * 24);
   });
 });

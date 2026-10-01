@@ -20,6 +20,11 @@ import { runPageAnalysisForDomain } from './lookalike-page-analysis';
 import { MONITORED_BRAND_PREDICATE_SQL } from '../lib/monitored-brands';
 import { computeBackoffRetryAt, LOOKALIKE_CHECK_LADDER } from '../lib/backoff';
 import {
+  LOOKALIKE_BATCH_LIMIT,
+  LOOKALIKE_UNPARK_PER_RUN,
+  LOOKALIKE_UNPARK_MIN_AGE_MODIFIER,
+} from '../lib/lookalike-budget';
+import {
   buildPageEvidenceDetails,
   clearsLookalikeAlertFloor,
   normalizeThreatLevel,
@@ -70,7 +75,11 @@ const INLINE_PAGE_BUDGET_MS = 60_000;
 // spill gives re-check the full 50. Deliberately NOT a bigger total: see
 // `lib/monitored-brands.ts` for why raising the cap without a
 // wall-clock guard makes things worse, not better.
-export const LOOKALIKE_BATCH_LIMIT = 50;
+//
+// `LOOKALIKE_BATCH_LIMIT` itself now lives in `lib/lookalike-budget.ts`
+// — Flight Control needs it, and importing it from this module dragged
+// `lib/haiku` / `email-security` / `lib/page-fetch` into FC's import
+// graph for the sake of one integer.
 const FIRST_CONTACT_SLOTS = 30;
 const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
 
@@ -118,13 +127,31 @@ const CHECK_CADENCE_MODIFIER = '+24 hours';
  * `observed_registered` in the run summary now do, so the next person to
  * size this has a measurement rather than this paragraph.
  *
- * Every call is additionally gated on `ai_assessment IS NULL`, so it is
- * once per row per LIFETIME, not once per pass. A capped row is
- * DEFERRED, not dropped: `ai_assessment` stays NULL and the row is
- * eligible again on its next due pass. The decrement is synchronous and
- * taken BEFORE the await, same shape and same race argument as
+ * Every call is additionally gated on a GUARDED CLAIM over
+ * `ai_assessment IS NULL` (see `claimHaikuCall`), so it is once per row
+ * per LIFETIME, not once per pass. The decrement is synchronous and
+ * taken BEFORE the claim's await, same shape and same race argument as
  * INLINE_PAGE_FETCH_CAP (JS is single-threaded between awaits, so the
- * CONCURRENCY below cannot overspend it).
+ * CONCURRENCY below cannot overspend it); a claim that loses the race
+ * refunds it.
+ *
+ * ── WHAT "DEFERRED, NOT DROPPED" ACTUALLY MEANS ────────────────────
+ *
+ * A capped or failed row is left CLAIMABLE — `ai_assessment` stays NULL
+ * and the claim is released — but it is NOT retried "on its next due
+ * pass", which is what this paragraph used to say. `compositeAndPersist`
+ * is reached only from `first_contact`, `registration_gained` or an
+ * mx/web GAIN; a row that has already baselined with mail+web present
+ * yields the `none` transition on every later pass and never re-enters
+ * the compositor. So the retry arrives on the row's next TRANSITION,
+ * which for a stable row may be never.
+ *
+ * That is a limit of the compositor's dispatch, not of the budget or the
+ * claim, and it is left as-is here because widening the dispatch to run
+ * on `none` would open a new spend surface. It is stated because the
+ * previous wording promised a cadence the code does not have —
+ * `test/lookalike-review-fixes.test.ts`'s `webFlap` helper carries the
+ * same note at the test end.
  */
 const HAIKU_CALLS_PER_RUN = 12;
 
@@ -146,6 +173,79 @@ const HAIKU_CALLS_PER_RUN = 12;
  * its claim and then hit the cap would never alert.
  */
 const BIMI_LOOKUPS_PER_RUN = 25;
+
+/**
+ * How old a Haiku claim must be before another pass may take it over.
+ *
+ * ── Why the lifetime gate is a CLAIM and not a read ─────────────────
+ *
+ * The gate used to be `row.ai_assessment === null` read off the SELECT
+ * snapshot — a read-then-act, where BIMI (which costs nothing but a DNS
+ * lookup) already used a guarded claim. Concurrent `checkLookalikeBatch`
+ * runs over first-contact rows, which is exactly what repeated "Scan
+ * now" presses produce, can each read NULL and each spend a token call
+ * on the same row; and with `agent_budget_rollups` empty there is
+ * nothing below the per-run cap to catch it (see HAIKU_CALLS_PER_RUN).
+ *
+ * ── Why a DEDICATED column and not a sentinel in `ai_assessment` ────
+ *
+ * The symmetric move — claim `ai_assessment` itself with a sentinel,
+ * release on failure, as the BIMI lane claims its own deliverable —
+ * introduces a NEW silent-loss path rather than closing one. A worker
+ * killed between the claim and the persist would leave the sentinel
+ * behind, and the sentinel is not NULL, so: the gate never fires again,
+ * `aiAttempted` is false on every later pass, the compositor's base is
+ * the STORED level (LOW on a row that never got one), and both
+ * infrastructure boosts are MEDIUM-only — so a mail+web row sits at LOW
+ * forever and never clears the alert floor. A dedicated column keeps the
+ * gate on `ai_assessment IS NULL` and makes the claim recoverable.
+ *
+ * Staleness has to be keyed on a column NOTHING ELSE WRITES, which is
+ * the other half of the argument: `updated_at` is refreshed by
+ * `persistCheckFacts` on every pass BEFORE the claim is attempted, so a
+ * stale claim keyed on it could never be detected as stale. One hour is
+ * two orders of magnitude above any single run's wall-clock budget and
+ * far inside the row's own cadence.
+ */
+const HAIKU_CLAIM_STALE_MODIFIER = '-1 hour';
+
+/**
+ * Take the row's once-per-lifetime Haiku call, or report that someone
+ * else holds it. Guarded in SQL — `changes === 1` is the claim.
+ *
+ * `ai_assessment IS NULL` is restated here rather than trusted from the
+ * caller's snapshot: the whole point is that the snapshot may be stale.
+ */
+async function claimHaikuCall(env: Env, id: string): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `UPDATE lookalike_domains
+     SET ai_claimed_at = datetime('now')
+     WHERE id = ?
+       AND ai_assessment IS NULL
+       AND (ai_claimed_at IS NULL OR ai_claimed_at <= datetime('now', ?))`,
+  ).bind(id, HAIKU_CLAIM_STALE_MODIFIER).run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+/**
+ * Give the claim back when the pass produced no assessment — a throw, a
+ * malformed answer, or an empty assessment string.
+ *
+ * This restores exactly the pre-claim behaviour for that case: the row
+ * is DEFERRED, not retired, and is eligible again on its next due pass.
+ * Never throws; a failed release costs the row nothing worse than
+ * waiting out `HAIKU_CLAIM_STALE_MODIFIER`.
+ */
+async function releaseHaikuClaim(env: Env, id: string): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `UPDATE lookalike_domains SET ai_claimed_at = NULL WHERE id = ?`,
+    ).bind(id).run();
+  } catch {
+    // Deliberately silent and uncounted: the claim self-heals on its
+    // own staleness window, so this is not a loss path.
+  }
+}
 
 /**
  * Budgets for ONE run of the shared row processor.
@@ -177,10 +277,15 @@ export const CRON_CHECK_LIMITS: CheckRunLimits = {
  * The operator-rescan budget — deliberately a fraction of the cron's.
  *
  * The rescan's JOB is the enqueue (`check_due_at` = the epoch, which
- * beats every other row unconditionally); the inline run is a courtesy
- * so the operator sees something immediately. The remainder drains on
- * the next cron ticks, at the front of the queue, because that is what
- * the enqueue already guaranteed.
+ * beats every other row in the cohort); the inline run is a courtesy so
+ * the operator sees something immediately. The remainder drains on the
+ * next cron ticks, at the front of the queue, because that is what the
+ * enqueue already guaranteed.
+ *
+ * The enqueue is BOUNDED at `LOOKALIKE_RESCAN_ENQUEUE_LIMIT` rows per
+ * press and skips rows already at the epoch — the queue is global and
+ * cross-tenant, so an unbounded epoch write is a starvation primitive.
+ * See that constant.
  */
 export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
   rows: 10,
@@ -200,6 +305,43 @@ export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
  * `lookalike_scanner` agent folds this into its `agentOutputs`
  * diagnostic, so it lands in `agent_runs` / the /v2/agents page
  * (CLAUDE.md §6) instead of requiring a log search.
+ *
+ * ── THE SWALLOWED-ERROR COUNTERS ────────────────────────────────────
+ *
+ * `row_errors` was the ONLY defect counter, and per-row isolation plus
+ * the BEC lane's own try/catch left FIVE independently-swallowed failure
+ * paths that it cannot see — each one `logger.error` and nothing else.
+ * CLAUDE.md §11 is explicit that operator-visible failure belongs on
+ * `agent_runs`, not the log stream, so each gets a counter and
+ * `lookalikeCheckDefects` folds them into the agent's severity:
+ *
+ *   bimi_claim_release_failures  THE WORST ONE. The row stays marked
+ *                                "BIMI recorded" with no alert in
+ *                                existence, and the lane's own
+ *                                `bimi_first_seen_at IS NULL`
+ *                                eligibility will never offer it again:
+ *                                a silently and PERMANENTLY lost
+ *                                finding, which is the only remaining
+ *                                path of that kind in this file.
+ *   bimi_alert_errors            A BIMI finding whose alert did not
+ *                                file. Retried next pass (the claim is
+ *                                released), but a persistent non-zero
+ *                                means every BIMI finding is being
+ *                                retried forever and none is landing.
+ *   cooldown_stamp_failures      The row was NOT backed off, so it is
+ *                                re-selected on the very next tick —
+ *                                the hot-loop shape per-row isolation
+ *                                exists to prevent.
+ *   ai_assessment_errors         A Haiku throw leaves `aiLevel` at its
+ *                                'MEDIUM' initial value, which the
+ *                                mail+web boost then lifts to HIGH — so
+ *                                an AI OUTAGE manufactures HIGH alerts.
+ *   inline_page_errors           Page evidence silently absent from the
+ *                                alert. `fetchSuspectPage` returns
+ *                                `{ok: false}` for every ordinary
+ *                                network/SSRF outcome rather than
+ *                                throwing, so a throw here is a real
+ *                                defect and not crawler noise.
  */
 export interface LookalikeCheckSummary {
   checked: number;
@@ -219,6 +361,15 @@ export interface LookalikeCheckSummary {
   row_errors: number;
   /** Rows the backoff ladder PARKED (`check_due_at = NULL`). */
   rows_parked: number;
+  /** Parked rows this tick RE-ADMITTED to the queue. */
+  rows_unparked: number;
+  // ── The five swallowed-error paths. All DEFECT counts; see the
+  // interface docstring for what each one costs.
+  bimi_alert_errors: number;
+  bimi_claim_release_failures: number;
+  cooldown_stamp_failures: number;
+  ai_assessment_errors: number;
+  inline_page_errors: number;
   haiku_calls: number;
   haiku_cap_hit: boolean;
   /** `has_mx 0 -> 1` on an already-registered row. */
@@ -258,6 +409,12 @@ function emptySummary(): LookalikeCheckSummary {
     checks_unresolved: 0,
     row_errors: 0,
     rows_parked: 0,
+    rows_unparked: 0,
+    bimi_alert_errors: 0,
+    bimi_claim_release_failures: 0,
+    cooldown_stamp_failures: 0,
+    ai_assessment_errors: 0,
+    inline_page_errors: 0,
     haiku_calls: 0,
     haiku_cap_hit: false,
     mx_gained: 0,
@@ -272,6 +429,30 @@ function emptySummary(): LookalikeCheckSummary {
     selected_first_contact: 0,
     selected_recheck: 0,
   };
+}
+
+/**
+ * Every DEFECT this run counted, as one number.
+ *
+ * PURE, exported and unit-tested so the agent's severity decision is not
+ * a hand-maintained `||` chain that drifts the next time a counter is
+ * added. The six members are exactly the paths that are invisible
+ * without it: the row-level throw plus the five independently-swallowed
+ * `logger.error` sites enumerated in `LookalikeCheckSummary`'s
+ * docstring.
+ *
+ * Deliberately NOT a member: `checks_unresolved` (an orderly DNS
+ * non-answer), `rows_parked` / `rows_unparked` (the ladder working as
+ * designed), `haiku_cap_hit` / `bimi_cap_hit` (budgets biting, which is
+ * what a budget is for) and `alerts_withheld_below_floor` (policy).
+ */
+export function lookalikeCheckDefects(s: LookalikeCheckSummary): number {
+  return s.row_errors
+    + s.bimi_alert_errors
+    + s.bimi_claim_release_failures
+    + s.cooldown_stamp_failures
+    + s.ai_assessment_errors
+    + s.inline_page_errors;
 }
 
 /**
@@ -290,8 +471,10 @@ function emptySummary(): LookalikeCheckSummary {
  * `has_mx` / `has_web` make MX and web APPEARANCE detectable.
  * `threat_level` / `ai_assessment` make the compositor re-entrant
  * without blanking what a previous pass (or the page pass, or an
- * analyst) established. `alert_id` keeps the one-alert-per-row bound on
- * the re-composite path. `baseline_established_at` is the first-contact
+ * analyst) established. `alert_id` bounds the MX/WEB re-composite path
+ * to one alert (and ONLY that path — a `registration_gained` after a
+ * lapse re-alerts by design; see that branch).
+ * `baseline_established_at` is the first-contact
  * discriminator (0267, amended). `bimi_first_seen_at` is the BEC lane's
  * eligibility token. `check_attempts` drives the backoff ladder.
  * `takedown_id` is what makes a `registered 1 -> 0` actionable.
@@ -385,7 +568,7 @@ function selectRecheckRows(env: Env, limit: number, offset: number) {
  * Driven by `idx_lookalike_brand` (brand_id equality) with the dueness
  * terms as residual filters — a brand holds ~30 permutations, so there
  * is nothing to narrow further. Deliberately NO `ORDER BY`: the rescan
- * handler has just stamped every row of the brand with the SAME
+ * handler has just stamped the brand's enqueued rows with the SAME
  * `check_due_at` (the epoch), so an ordering clause would buy nothing
  * and cost a temp b-tree. Same reasoning the first-contact cohort used
  * when all its rows shared a NULL key.
@@ -405,8 +588,113 @@ function selectBrandDueRows(env: Env, brandId: string, limit: number) {
 }
 
 /**
+ * Re-admit the oldest PARKED rows — the bounded way back out of the
+ * ladder's terminal step.
+ *
+ * ── Why a parked row needed one at all ──────────────────────────────
+ *
+ * See `LOOKALIKE_UNPARK_PER_RUN` in `lib/lookalike-budget.ts` for the
+ * full argument: four writers touch `check_due_at` and three of them
+ * cannot reach a parked row, so the only exit was the MANUAL per-brand
+ * operator rescan. A row parked before its first successful observation
+ * also still carries the seeder's `registered = 0 / has_web = 0 /
+ * resolves_to NULL` defaults, so it is invisible to both page-analysis
+ * cohorts too, and the one Flight Control warning is keyed on the DUE
+ * backlog — which parking REDUCES.
+ *
+ * ── Why this needs no cron and no new state ─────────────────────────
+ *
+ * It runs on the checker's own tick, BEFORE selection, and the rows it
+ * re-admits are due at `datetime('now')` — which is the LATEST possible
+ * due time among due rows. So they sort behind every genuinely overdue
+ * row in their cohort and consume only slack capacity: total work per
+ * tick is still `limits.rows`, and a saturated queue defers them for
+ * free rather than crowding anything out. A dedicated cron would also
+ * trigger CLAUDE.md's cron-audit rule for no benefit.
+ *
+ * The cadence is self-throttling with no cursor, no KV and no counter
+ * column, because `last_check_failed_at` is written ONLY by the failure
+ * path: on a parked row it is frozen at the moment it parked. A
+ * re-admitted row that fails again re-stamps it and is therefore not
+ * eligible for another `LOOKALIKE_UNPARK_MIN_AGE_MODIFIER` window; one
+ * that succeeds has it cleared and `check_attempts` reset by
+ * `persistCheckFacts` and rejoins the normal cadence.
+ *
+ * `check_attempts` is NOT reset here — see the budget module for why
+ * one probe per window is the affordable shape and a full ladder replay
+ * is not.
+ *
+ * Served by `idx_lookalike_parked` (migration 0269, keyed on
+ * `last_check_failed_at` and partial on `check_due_at IS NULL`), so the
+ * subquery is an index range scan in index order with no temp b-tree
+ * over a set that is tiny by construction. Never throws: an un-park
+ * failure must not cost the tick its actual work.
+ */
+async function unparkOldestRows(env: Env, limit: number): Promise<number> {
+  if (limit <= 0) return 0;
+  try {
+    const res = await env.DB.prepare(
+      `UPDATE lookalike_domains
+       SET check_due_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE id IN (
+         SELECT id FROM lookalike_domains
+          WHERE check_due_at IS NULL
+            AND last_check_failed_at <= datetime('now', ?)
+          ORDER BY last_check_failed_at ASC
+          LIMIT ?
+       )`,
+    ).bind(LOOKALIKE_UNPARK_MIN_AGE_MODIFIER, limit).run();
+    const unparked = res.meta.changes ?? 0;
+    if (unparked > 0) {
+      logger.info('lookalike_check_unparked', {
+        rows: unparked,
+        min_age: LOOKALIKE_UNPARK_MIN_AGE_MODIFIER,
+      });
+    }
+    return unparked;
+  } catch (err) {
+    logger.error('lookalike_unpark_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return 0;
+  }
+}
+
+/**
  * Advance the failure state: the historical record, the attempt counter,
  * and the next due time — which is NULL when the ladder says to park.
+ *
+ * ── ONE DERIVATION OF `check_attempts`, NOT TWO ─────────────────────
+ *
+ * `check_attempts` is BOUND, not `check_attempts + 1`. The increment
+ * used to be computed twice: `applyCheckBackoff` derived `attempts` from
+ * the SELECT SNAPSHOT to pick the ladder step, while this statement
+ * derived it again from the LIVE column. Those agree only if nothing
+ * wrote the column in between — and `persistCheckFacts` sets
+ * `check_attempts = 0` and runs BEFORE the BIMI lane, the compositor,
+ * Haiku, the page fetch, `createAlert` and `recordTakedownDown`, i.e.
+ * before every throw the per-row catch exists to absorb.
+ *
+ * So for any throw past that point the two derivations diverged and the
+ * row reached a FIXED POINT it could never leave:
+ *
+ *   tick 1  snapshot 0 -> step +60m  -> persist resets to 0 -> write 1
+ *   tick 2  snapshot 1 -> step +240m -> persist resets to 0 -> write 1
+ *   tick 3  snapshot 1 -> step +240m -> persist resets to 0 -> write 1
+ *
+ * `isTerminalAttempt(ladder, 2)` is false, so the row NEVER parked. It
+ * was re-selected roughly six times a day forever, permanently at the
+ * head of its cohort because +240m beats every healthy row's +24h —
+ * twenty such rows consume the entire 20-slot re-check floor — and
+ * `row_errors` stayed non-zero on every run, pinning the agent
+ * diagnostic at `severity: "high"` with no resolution path.
+ *
+ * Binding the value the caller already computed removes the second
+ * derivation rather than trying to keep two in step. The cost is that a
+ * genuinely concurrent failure on the same row can lose an increment
+ * (last writer wins) instead of double-counting it, which is the right
+ * direction for a ladder whose terminal step gives up.
  *
  * `last_checked` is deliberately NOT written: it means "when did we last
  * SUCCESSFULLY observe" and a failed attempt is not an observation.
@@ -428,31 +716,40 @@ function selectBrandDueRows(env: Env, brandId: string, limit: number) {
  * marker and asserts a single match, so a second identical literal would
  * fail extraction rather than silently drift.
  */
-function stampCheckFailure(env: Env, id: string, nextDueAt: string | null) {
+function stampCheckFailure(
+  env: Env,
+  id: string,
+  attempts: number,
+  nextDueAt: string | null,
+) {
   return env.DB.prepare(
     `UPDATE lookalike_domains
      SET last_check_failed_at = datetime('now'),
-         check_attempts = check_attempts + 1,
+         check_attempts = ?,
          check_due_at = ?,
          updated_at = datetime('now')
      WHERE id = ?`,
-  ).bind(nextDueAt, id).run();
+  ).bind(attempts, nextDueAt, id).run();
 }
 
 /**
  * Apply the backoff ladder to a row that just failed, and report whether
  * it was parked. Never throws — a cooldown-stamp failure must not
- * re-raise into `Promise.all` and undo the per-row isolation.
+ * re-raise into `Promise.all` and undo the per-row isolation. It IS
+ * counted, though: an un-stamped row is re-selected on the very next
+ * tick, which is the hot loop the isolation exists to prevent.
  */
 async function applyCheckBackoff(
   env: Env,
   row: Pick<LookalikeCheckRow, 'id' | 'domain' | 'check_attempts'>,
+  counters: LookalikeCheckSummary,
 ): Promise<{ parked: boolean }> {
   const attempts = (row.check_attempts ?? 0) + 1;
   const nextDueAt = computeBackoffRetryAt(LOOKALIKE_CHECK_LADDER, attempts);
   try {
-    await stampCheckFailure(env, row.id, nextDueAt);
+    await stampCheckFailure(env, row.id, attempts, nextDueAt);
   } catch (err) {
+    counters.cooldown_stamp_failures += 1;
     logger.error('lookalike_check_cooldown_stamp_failed', {
       lookalike_id: row.id,
       error: err instanceof Error ? err.message : String(err),
@@ -526,10 +823,36 @@ async function fileBimiAlert(
  * Eligibility is `registered = 1 AND has_mx = 1 AND bimi_first_seen_at
  * IS NULL`, evaluated on EVERY due check of the row rather than once at
  * first contact. The cadence is therefore the checker's own
- * (`check_due_at`), which is why this needs no third selection query and
- * no second cooldown column: a row that is due for a DNS check is due
- * for its BIMI lookup, and the dueness ordering means no row can be
- * head-of-line blocked out of the lane.
+ * (`check_due_at`) and the lane needs no third selection query.
+ *
+ * ── WHAT THAT CADENCE ACTUALLY IS ───────────────────────────────────
+ *
+ * NOT 24 h. `CHECK_CADENCE_MODIFIER` is what a row's NEXT due time is
+ * set to after a successful observation, which is a different quantity
+ * from how often a row is actually reached: that is the population
+ * divided by the throughput. At the post-seed target of ~56,040 rows
+ * against 50 rows/tick x 24 ticks = 1,200 checks/day, a given row —
+ * and therefore its BIMI lookup — comes round roughly every 47 DAYS.
+ * The 24 h cadence is reached only once the drain is small relative to
+ * throughput, which at `LOOKALIKE_BATCH_LIMIT = 50` it is not.
+ *
+ * That is still a strict improvement on "once per row, ever", which is
+ * what the lane was before, and it is the honest number to size
+ * `BIMI_LOOKUPS_PER_RUN` and any future standalone lane against.
+ *
+ * ── WHY NOT A STANDALONE LANE (the real objection) ──────────────────
+ *
+ * A dedicated BEC SELECT over `registered = 1 AND has_mx = 1 AND
+ * bimi_first_seen_at IS NULL` would reach the eligible set far faster
+ * than 47 days, and it was rejected — but not for want of an ordering
+ * column. `check_due_at` exists and would order it fine. The objection
+ * is that `check_due_at` only ADVANCES when the DNS lane selects the
+ * row, so a standalone query ordered by it re-serves the SAME top rows
+ * every tick: a row it looked at and found no BIMI record on writes
+ * nothing (presence-only — see below), so it stays at the head of the
+ * order forever and the rest of the set is never reached. A standalone
+ * lane therefore needs its OWN cooldown column, which is the cost, not
+ * the ordering.
  *
  * Before this, the BIMI check was reachable exactly once — on first
  * contact, through the mail-only baseline branch or the full-assessment
@@ -551,9 +874,17 @@ async function fileBimiAlert(
  * 3. A `true` answer CLAIMS the row: `UPDATE ... WHERE id = ? AND
  *    bimi_first_seen_at IS NULL`. Exactly one writer can see
  *    `changes === 1`, and only that writer files.
- * 4. If `createAlert` throws, the claim is RELEASED so the finding is
- *    not lost. The release is itself guarded — a failed release must not
- *    re-raise.
+ * 4. If the alert does not get filed FOR ANY REASON, the claim is
+ *    RELEASED so the finding is not lost. "Any reason" is load-bearing:
+ *    the release used to live only in the `catch`, and a MISSING BRAND
+ *    ROW took neither path — `loadBrandContext` returning null simply
+ *    skipped the `if (brand)` body, nothing threw, and the row was left
+ *    permanently marked BIMI-recorded with no alert in existence, which
+ *    the lane's own `bimi_first_seen_at IS NULL` eligibility then never
+ *    offers again. The release is itself guarded (a failed release must
+ *    not re-raise) and COUNTED, because a swallowed release failure is
+ *    the one remaining path in this file to a silently and permanently
+ *    lost finding.
  *
  * The alert id is NOT written to `alert_id`:
  * `raiseUnalertedPhishingPageAlert` keys on `alert_id IS NULL`, so a
@@ -616,30 +947,68 @@ async function probeAndFileBimi(
 
   try {
     const brand = await loadBrandContext(env, row.brand_id);
-    if (brand) {
-      await fileBimiAlert(env, row, brand.domain);
-      counters.bimi_alerts += 1;
+    if (!brand) {
+      // NOT a silent skip. The claim is already taken, so returning here
+      // without releasing it is exactly the permanent-loss shape the
+      // claim-then-act protocol exists to avoid.
+      counters.bimi_alert_errors += 1;
+      logger.error('lookalike_bimi_alert_error', {
+        domain: row.domain,
+        lookalike_id: row.id,
+        error: 'brand_context_missing',
+      });
+      await releaseBimiClaim(env, row.id, counters);
+      return { bimiKnown: false };
     }
+    await fileBimiAlert(env, row, brand.domain);
+    counters.bimi_alerts += 1;
   } catch (err) {
+    counters.bimi_alert_errors += 1;
     logger.error('lookalike_bimi_alert_error', {
       domain: row.domain,
+      lookalike_id: row.id,
       error: err instanceof Error ? err.message : String(err),
     });
-    // RELEASE THE CLAIM. Without this a thrown `createAlert` would leave
-    // the row marked as "BIMI recorded" with no alert anywhere, and the
-    // lane's own eligibility predicate would never offer it again.
-    try {
-      await env.DB.prepare(
-        `UPDATE lookalike_domains SET bimi_first_seen_at = NULL WHERE id = ?`,
-      ).bind(row.id).run();
-    } catch (releaseErr) {
-      logger.error('lookalike_bimi_claim_release_failed', {
-        lookalike_id: row.id,
-        error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
-      });
-    }
+    await releaseBimiClaim(env, row.id, counters);
+    // No alert was filed, so nothing above may assert BIMI on this row
+    // — the compositor's boost would otherwise raise it to HIGH with no
+    // finding behind the level. The claim is released, so the next pass
+    // re-probes and files.
+    return { bimiKnown: false };
   }
   return { bimiKnown: true };
+}
+
+/**
+ * Give back the BEC lane's claim so the finding is retried.
+ *
+ * Extracted because there are now TWO non-filing paths (a thrown
+ * `createAlert` and a missing brand row) and this file holds exactly ONE
+ * copy of the statement — `test/lookalike-sql-statements.test.ts`
+ * extracts it by marker and asserts a single match, so a second literal
+ * would fail extraction rather than silently drift.
+ *
+ * Never throws. A failed release is COUNTED rather than only logged:
+ * the row is then marked BIMI-recorded with no alert anywhere and the
+ * lane will never offer it again, which is the only remaining
+ * silent-permanent-loss path in this file.
+ */
+async function releaseBimiClaim(
+  env: Env,
+  id: string,
+  counters: LookalikeCheckSummary,
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `UPDATE lookalike_domains SET bimi_first_seen_at = NULL WHERE id = ?`,
+    ).bind(id).run();
+  } catch (releaseErr) {
+    counters.bimi_claim_release_failures += 1;
+    logger.error('lookalike_bimi_claim_release_failed', {
+      lookalike_id: id,
+      error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+    });
+  }
 }
 
 // ─── Transition classification ───────────────────────────────────
@@ -867,12 +1236,27 @@ interface RunBudgets {
  * learned nothing new about it — silently undoing the user's choice.
  *
  * With it, a Haiku-vetoed LOW row on a later pass computes: base = LOW
- * (stored, no new call because `ai_assessment IS NOT NULL`), the mail+web
- * boost does not fire (it is MEDIUM-only, exactly as before), the BIMI
- * boost does not fire (MEDIUM-only), and the monotonic persist writes
- * nothing. It stays LOW. The ONLY thing that can raise it is
- * `escalateThreatLevelForPage` — a deterministic page verdict, which is
- * not an AI signal and is monotonic by construction.
+ * (stored, no new call because the lifetime claim is spent), the mail+web
+ * boost does not fire (it is MEDIUM-only, exactly as before), and the
+ * monotonic persist writes nothing. It stays LOW. TWO things can raise
+ * it, and neither is an AI signal: `escalateThreatLevelForPage` (a
+ * deterministic page verdict, monotonic by construction) and the BIMI
+ * boost, which is no longer MEDIUM-only — see its comment below for why
+ * leaving a BIMI-publishing squat at LOW while filing a fixed-HIGH alert
+ * about it was incoherent.
+ *
+ * ── MEDIUM IS REACHABLE AS A PERSISTED VERDICT ──────────────────────
+ *
+ * Worth stating because the opposite was assumed. MEDIUM is not only
+ * `aiLevel`'s initial value: `escalateThreatLevelForPage` escalates from
+ * LOW, not only from MEDIUM, so a `web_gained` row with no MX and a page
+ * score of 30-59 — or a bare anti-bot wall — persists MEDIUM. What is
+ * true is that NOTHING READS MEDIUM: `agents/sparrow.ts`'s takedown
+ * eligibility, `handlers/tenantDomainModule.ts`'s per-brand rollups and
+ * `agents/trademarkMonitor.ts` all test HIGH/CRITICAL only, and
+ * `LOOKALIKE_ALERT_SEVERITY_FLOOR` is HIGH. So a MEDIUM row is a row an
+ * analyst can sort and filter and nothing else — which is the intent,
+ * but for a different reason than "MEDIUM cannot happen".
  */
 async function compositeAndPersist(
   env: Env,
@@ -893,77 +1277,132 @@ async function compositeAndPersist(
   //      serve registrar landers; several registrars set MX by default),
   //      and at the seeder's population a per-appearance Haiku call is
   //      the cost problem this whole change exists to avoid.
-  //   2. `ai_assessment IS NULL` — once per row per LIFETIME, not once
-  //      per pass. Re-entrancy without this gate is an unbounded spend.
+  //   2. a GUARDED CLAIM on `ai_assessment IS NULL` — once per row per
+  //      LIFETIME, not once per pass, and not a read-then-act: see
+  //      `claimHaikuCall` for why the snapshot read it replaced could be
+  //      spent twice on one row by concurrent runs.
   //   3. the per-run cap. See HAIKU_CALLS_PER_RUN: with metering dead
   //      this is the only real bound, so it is enforced here and not
   //      deferred.
+  //
+  // ORDER MATTERS, twice over. The cap is checked BEFORE the claim (a
+  // row that burned its claim and then hit the cap would be deferred
+  // with a claim nobody releases until it goes stale), and the budget
+  // decrement is taken SYNCHRONOUSLY before the claim's await — JS is
+  // single-threaded between awaits, so that is what keeps CONCURRENCY
+  // from overspending the cap. A claim that loses the race REFUNDS the
+  // decrement, because no call was made.
   let aiAttempted = false;
   let aiLevel: PageThreatLevel = 'MEDIUM';
   let newAssessment: string | null = null;
 
   if (observed.hasMx && observed.hasWeb && row.ai_assessment === null) {
-    if (budgets.haiku.remaining > 0) {
-      budgets.haiku.remaining -= 1;
-      counters.haiku_calls += 1;
-      aiAttempted = true;
-      try {
-        const aiResult = await analyzeWithHaiku(env, { agentId: "lookalike_scanner", runId: null },
-          `Assess the threat level of this newly registered lookalike domain. Is it likely malicious brand impersonation or benign?
-               Respond with JSON: {"threat_level": "LOW|MEDIUM|HIGH|CRITICAL", "assessment": "brief explanation", "indicators": ["list of suspicious indicators"]}`,
-          {
-            lookalike_domain: row.domain,
-            original_domain: brand.domain,
-            brand_name: brand.brand_name,
-            permutation_type: row.permutation_type,
-            resolves_to_ip: observed.ip,
-            has_mx_records: observed.hasMx,
-            has_web_server: observed.hasWeb,
-          },
-        );
-
-        if (aiResult.success && aiResult.data) {
-          const structured = aiResult.data.structured as {
-            threat_level?: string;
-            assessment?: string;
-          } | undefined;
-          const responseText = aiResult.data.response ?? '';
-
-          if (structured?.threat_level) {
-            const level = structured.threat_level.toUpperCase();
-            if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
-              aiLevel = level as PageThreatLevel;
-            }
-          }
-          const text = structured?.assessment ?? responseText;
-          // Only a NON-EMPTY assessment is a result worth persisting.
-          // The old code wrote `''` here and so blanked whatever a
-          // previous pass had established.
-          if (text) newAssessment = text;
-        }
-      } catch (err) {
-        logger.error('lookalike_ai_assessment_error', {
-          domain: row.domain,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else {
+    if (budgets.haiku.remaining <= 0) {
       counters.haiku_cap_hit = true;
       logger.warn('lookalike_haiku_cap_hit', {
         domain: row.domain,
         lookalike_id: row.id,
         cap: budgets.haiku.cap,
       });
+    } else {
+      budgets.haiku.remaining -= 1;
+      const claimed = await claimHaikuCall(env, row.id);
+      if (!claimed) {
+        // Another pass owns this row's one call. No spend, so the
+        // decrement is given back.
+        budgets.haiku.remaining += 1;
+      } else {
+        counters.haiku_calls += 1;
+        aiAttempted = true;
+        try {
+          const aiResult = await analyzeWithHaiku(env, { agentId: "lookalike_scanner", runId: null },
+            `Assess the threat level of this newly registered lookalike domain. Is it likely malicious brand impersonation or benign?
+               Respond with JSON: {"threat_level": "LOW|MEDIUM|HIGH|CRITICAL", "assessment": "brief explanation", "indicators": ["list of suspicious indicators"]}`,
+            {
+              lookalike_domain: row.domain,
+              original_domain: brand.domain,
+              brand_name: brand.brand_name,
+              permutation_type: row.permutation_type,
+              resolves_to_ip: observed.ip,
+              has_mx_records: observed.hasMx,
+              has_web_server: observed.hasWeb,
+            },
+          );
+
+          if (aiResult.success && aiResult.data) {
+            const structured = aiResult.data.structured as {
+              threat_level?: string;
+              assessment?: string;
+            } | undefined;
+            const responseText = aiResult.data.response ?? '';
+
+            if (structured?.threat_level) {
+              const level = structured.threat_level.toUpperCase();
+              if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
+                aiLevel = level as PageThreatLevel;
+              }
+            }
+            const text = structured?.assessment ?? responseText;
+            // Only a NON-EMPTY assessment is a result worth persisting.
+            // The old code wrote `''` here and so blanked whatever a
+            // previous pass had established.
+            if (text) newAssessment = text;
+          }
+        } catch (err) {
+          // COUNTED, not only logged. The consequence is specific and
+          // worth an operator seeing: `aiLevel` stays at its 'MEDIUM'
+          // initial value and `aiAttempted` is already true, so the
+          // mail+web boost below lifts it to HIGH — i.e. a sustained AI
+          // outage manufactures HIGH alerts out of rows nothing assessed.
+          // Left as-is deliberately: the alternative (fall back to the
+          // stored level) turns the outage into a SILENT MISS, because
+          // both infrastructure boosts are MEDIUM-only and a fresh row's
+          // stored level is LOW. Erring toward the notification is the
+          // better failure, but only if it is visible.
+          counters.ai_assessment_errors += 1;
+          logger.error('lookalike_ai_assessment_error', {
+            domain: row.domain,
+            lookalike_id: row.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        // No assessment produced -> give the claim back, so the row is
+        // DEFERRED rather than retired. Exactly the behaviour the
+        // pre-claim `ai_assessment IS NULL` read had for this case.
+        if (newAssessment === null) await releaseHaikuClaim(env, row.id);
+      }
     }
   }
 
   // THE line the veto turns on — see this function's docstring.
   let level: PageThreatLevel = aiAttempted ? aiLevel : storedLevel;
 
-  // Infrastructure boosts. MEDIUM-only, unchanged: that is precisely
-  // what lets a Haiku LOW stand against the mail+web signal.
+  // The mail+web boost stays MEDIUM-ONLY, unchanged: that is precisely
+  // what lets a Haiku LOW stand against the deterministic mail+web
+  // signal, which is the veto the user chose to keep. Nothing below
+  // reopens it.
   if (observed.hasMx && observed.hasWeb && level === 'MEDIUM') level = 'HIGH';
-  if (opts.bimiKnown && level === 'MEDIUM') level = 'HIGH';
+
+  // ── THE BIMI BOOST IS NOT MEDIUM-ONLY ────────────────────────────
+  //
+  // It was, and that produced an incoherent row: a Haiku-vetoed LOW row
+  // that publishes a BIMI record kept `threat_level = 'LOW'` while this
+  // file filed a FIXED-HIGH `typosquat_bimi` alert about it. And
+  // `agents/sparrow.ts` gates takedown eligibility on `threat_level IN
+  // ('HIGH','CRITICAL')` — so the single most damning email signal this
+  // scanner can find could not reach the takedown queue, on the strength
+  // of a model verdict about a page.
+  //
+  // Filing a HIGH alert IS the assertion that the row is HIGH, so the
+  // level follows the alert rather than contradicting it. Monotonic like
+  // every other write here: it RAISES to HIGH and never lowers a
+  // CRITICAL that a page verdict established.
+  //
+  // Pre-existing, not a regression introduced by the recurring lane —
+  // but the lane is what makes it reachable on rows other than first
+  // contact, which is why it is fixed here. Flagged in the commit so it
+  // can be reversed on its own.
+  if (opts.bimiKnown && THREAT_LEVEL_RANK[level] < THREAT_LEVEL_RANK.HIGH) level = 'HIGH';
 
   // Deterministic page-content analysis (D6 / S2.4). Slots the page
   // phishing score into the same compositor: a credential-form-off-domain
@@ -996,8 +1435,15 @@ async function compositeAndPersist(
         });
       }
     } catch (err) {
+      // COUNTED: page evidence is silently absent from the alert
+      // otherwise. `fetchSuspectPage` returns `{ok: false}` for every
+      // ordinary outcome (timeout, SSRF block, non-HTML, oversize), so a
+      // throw reaching here is a defect and not crawler noise — which is
+      // what makes it worth the agent's severity.
+      counters.inline_page_errors += 1;
       logger.error('lookalike_inline_page_error', {
         domain: row.domain,
+        lookalike_id: row.id,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1011,10 +1457,20 @@ async function compositeAndPersist(
     THREAT_LEVEL_RANK[level] >= THREAT_LEVEL_RANK[storedLevel] ? level : storedLevel;
 
   // ── The monotonic persist ─────────────────────────────────────────
-  // `threat_level` is raised or RESTATED, never lowered — the rank
-  // comparison is in SQL so a concurrent writer (the page pass's
-  // `applyEscalation`, an analyst's PATCH) cannot be clobbered by a
-  // stale read. `>=` rather than `>` so an equal level is rewritten
+  // `threat_level` is raised or RESTATED, never lowered, and the rank
+  // comparison is IN SQL so THIS statement cannot lower a level a
+  // concurrent writer raised between our SELECT and here.
+  //
+  // That is a one-way guarantee, NOT a symmetry — this comment used to
+  // claim the symmetry and it does not hold. `analyzeLookalikePages`'s
+  // `applyEscalation` does its monotonic comparison in JS and then
+  // issues a bare `SET threat_level = ?`, so it can still write a stale
+  // value over a level this statement just raised. Pre-existing and
+  // narrow (the two passes are different crons and a later pass
+  // re-escalates), but the asymmetry is real and should not be asserted
+  // away.
+  //
+  // `>=` rather than `>` so an equal level is rewritten
   // rather than skipped, which is a no-op on a real value and is what
   // materializes a level on a row whose `threat_level` is NULL (the 0031
   // DEFAULT is 'LOW', but a NULL would otherwise be unreachable by a LOW
@@ -1222,7 +1678,7 @@ async function runCheckRows(
         // Only the failure record and the backoff advance.
         if (!result.resolved) {
           counters.checks_unresolved += 1;
-          const { parked } = await applyCheckBackoff(env, row);
+          const { parked } = await applyCheckBackoff(env, row, counters);
           if (parked) counters.rows_parked += 1;
           logger.info('lookalike_check_unresolved', {
             domain: row.domain,
@@ -1324,6 +1780,26 @@ async function runCheckRows(
           // We checked this row before and it did not resolve; now it
           // does. The domain genuinely appeared while we were watching,
           // so `first_seen` means what it says.
+          //
+          // ── NO `alert_id` GUARD HERE, DELIBERATELY ─────────────
+          //
+          // `allowAlert: true` is unconditional, unlike the mx/web path
+          // below which bounds itself on `row.alert_id === null`. So a
+          // domain that cycles registered -> lapsed -> re-registered
+          // files one alert PER CYCLE and `alert_id` ends up pointing at
+          // the most recent one.
+          //
+          // That is the intended behaviour, not an oversight: a
+          // re-registration after a lapse is a genuinely new event —
+          // typically a NEW registrant, which is the thing this platform
+          // exists to notice — and suppressing it would make the second
+          // appearance of a squat invisible forever. The cost is bounded
+          // by how often a domain can actually lapse and be re-taken.
+          //
+          // What it means is that "one alert per row per lifetime" is
+          // true of the MX/WEB path, not of the row. No comment in this
+          // file should claim otherwise. Pinned by a lapse ->
+          // re-registration test in `test/lookalike-review-fixes.test.ts`.
           counters.new_registrations += 1;
           await env.DB.prepare(
             `UPDATE lookalike_domains
@@ -1411,7 +1887,7 @@ async function runCheckRows(
         // did not produce a usable observation, so it belongs behind the
         // ladder exactly as a timeout does; without this it would be
         // re-selected on the very next tick and throw again.
-        const { parked } = await applyCheckBackoff(env, row);
+        const { parked } = await applyCheckBackoff(env, row, counters);
         if (parked) counters.rows_parked += 1;
       }
     });
@@ -1525,6 +2001,11 @@ export async function checkLookalikeBatch(
   env: Env,
   limits: CheckRunLimits = CRON_CHECK_LIMITS,
 ): Promise<LookalikeCheckSummary> {
+  // BEFORE selection, so a re-admitted row can be picked up this tick.
+  // It is due at `datetime('now')`, i.e. behind every genuinely overdue
+  // row, so it takes only slack capacity — see `unparkOldestRows`.
+  const unparked = await unparkOldestRows(env, LOOKALIKE_UNPARK_PER_RUN);
+
   const recheckSlots = Math.max(0, limits.rows - FIRST_CONTACT_SLOTS);
   const recheck = await selectRecheckRows(env, recheckSlots, 0);
   const firstContactBudget = limits.rows - recheck.results.length;
@@ -1547,11 +2028,14 @@ export async function checkLookalikeBatch(
   const selected = [...byId.values()];
 
   if (selected.length === 0) {
-    logger.info('lookalike_check', { message: 'no domains to check' });
-    return emptySummary();
+    const empty = emptySummary();
+    empty.rows_unparked = unparked;
+    logger.info('lookalike_check', { message: 'no domains to check', rows_unparked: unparked });
+    return empty;
   }
 
   const summary = await runCheckRows(env, selected, limits);
+  summary.rows_unparked = unparked;
   summary.selected_first_contact = firstContacts.results.length;
   summary.selected_recheck = recheck.results.length + spill.length;
   logCheckSummary('lookalike_check', summary);
@@ -1567,8 +2051,13 @@ export async function checkLookalikeBatch(
  * on rows belonging to brands the caller never asked about, with no rate
  * limit of any kind in front of it. Brand-scoped and small-budgeted
  * (`SCAN_NOW_CHECK_LIMITS`) removes that amplifier; the rest of the
- * brand's rows are already at the front of the cron queue because the
- * handler stamped them `check_due_at = '1970-01-01 00:00:00'`.
+ * brand's enqueued rows are already at the front of the cron queue
+ * because the handler stamped them `check_due_at = '1970-01-01
+ * 00:00:00'`, bounded at `LOOKALIKE_RESCAN_ENQUEUE_LIMIT`.
+ *
+ * No un-park sweep here, deliberately: the handler's enqueue already
+ * revives this brand's parked rows, and running the GLOBAL sweep from a
+ * request path would let a button press re-admit other tenants' rows.
  */
 export async function checkLookalikeBatchForBrand(
   env: Env,

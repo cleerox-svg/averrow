@@ -81,10 +81,18 @@ export const FEED_RETRY_LADDER: BackoffLadder = {
  *     1 + 4 + 12 + 24 + 48 x 4 ≈ 233 h ≈ 10 days of patient retrying,
  *     which is long enough that a park means "this domain's resolver has
  *     been unanswerable for a week and a half", not "the network
- *     blipped". A parked row is revived by the operator rescan endpoint
- *     (which resets `check_attempts = 0`) and is counted by Flight
- *     Control's `backlog.lookalike_parked` gauge, so parking is visible
- *     rather than silent.
+ *     blipped".
+ *
+ * A park is a LONG CADENCE, not a terminal state. Three things bring a
+ * parked row back, and the first is what makes the park survivable
+ * without an operator: `unparkOldestRows` re-admits the oldest parked
+ * rows on the checker's own tick, bounded per run and self-throttling
+ * on `last_check_failed_at` (see `lib/lookalike-budget.ts`); the
+ * operator rescan endpoint revives a brand's rows on demand (and resets
+ * `check_attempts = 0`); and any successful observation resets the
+ * counter outright. Parking is also visible rather than silent —
+ * `backlog.lookalike_parked` now carries a Flight Control threshold, not
+ * just a number.
  */
 export const LOOKALIKE_CHECK_LADDER: BackoffLadder = {
   name: 'lookalike_check',

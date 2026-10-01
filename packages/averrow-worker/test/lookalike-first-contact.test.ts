@@ -78,6 +78,14 @@ interface StoredRow {
   check_attempts: number;
   /** Migration 0269 — the recurring BEC lane's presence-only marker. */
   bimi_first_seen_at: string | null;
+  /**
+   * Migration 0269 — the Haiku lifetime gate's CLAIM TOKEN. The gate was
+   * a read of the SELECT snapshot (`row.ai_assessment === null`), which
+   * two concurrent runs could both pass on the same row; it is now a
+   * guarded `UPDATE ... WHERE id = ? AND ai_assessment IS NULL AND
+   * (ai_claimed_at IS NULL OR ai_claimed_at <= <stale>)`.
+   */
+  ai_claimed_at: string | null;
   threat_level: string | null;
   ai_assessment: string | null;
   alert_id: string | null;
@@ -106,6 +114,7 @@ function makeRow(over: Partial<StoredRow> = {}): StoredRow {
     check_due_at: "2026-01-01 00:00:00",
     check_attempts: 0,
     bimi_first_seen_at: null,
+    ai_claimed_at: null,
     threat_level: null,
     ai_assessment: null,
     alert_id: null,
@@ -189,13 +198,49 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
             // attempt counter, and the ladder's next due stamp (NULL =
             // PARK). NO registration state, and `last_checked`
             // deliberately untouched.
-            const [nextDueAt, id] = args as [string | null, string];
+            //
+            // `check_attempts` is BOUND now, not `check_attempts + 1`.
+            // The two derivations it replaced (the caller's, from the
+            // SELECT snapshot, and the statement's, from the live
+            // column) disagreed whenever the success path had already
+            // reset the column — which is every throw past
+            // `persistCheckFacts` — and pinned the counter at a fixed
+            // point the ladder could never terminate on.
+            const [attempts, nextDueAt, id] = args as [number, string | null, string];
             const row = store.get(id);
             if (row) {
               row.last_check_failed_at = NOW;
-              row.check_attempts += 1;
+              row.check_attempts = attempts;
               row.check_due_at = nextDueAt;
             }
+          } else if (sql.includes("SET ai_claimed_at = datetime('now')")) {
+            // The Haiku lifetime gate's guarded claim. Re-stated with
+            // the usual caveat (the statement itself runs against real
+            // SQLite in the sibling file); what matters here is that it
+            // reports ONE changed row for a claimable row and ZERO
+            // otherwise, because that boolean is what decides whether a
+            // token call happens.
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row && row.ai_assessment === null && row.ai_claimed_at === null) {
+              row.ai_claimed_at = NOW;
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          } else if (sql.includes("SET ai_claimed_at = NULL")) {
+            // Released when the pass produced no assessment, which is
+            // what keeps a throttled or failed call DEFERRED rather
+            // than retired.
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row) row.ai_claimed_at = null;
+          } else if (sql.includes("SET check_due_at = datetime('now')")) {
+            // The un-park sweep. `WHERE id IN (SELECT ... LIMIT ?)` is
+            // not worth re-implementing here: no test in this file seeds
+            // a parked row, and the statement is executed against real
+            // SQLite in `test/lookalike-sql-statements.test.ts` and
+            // driven end-to-end in `test/lookalike-review-fixes.test.ts`.
+            return { meta: { changes: 0 } };
           } else if (sql.includes("SET first_seen = datetime('now')")) {
             const [id] = args as [string];
             const row = store.get(id);
@@ -667,17 +712,23 @@ describe("checkLookalikeBatch — the Haiku veto survives re-entrancy", () => {
 
   it("a re-entrant pass on a vetoed LOW row does not drift upward", async () => {
     // Exactly what the pass computes: no new Haiku call (the gate is
-    // `ai_assessment IS NULL`), so the compositor's base is the STORED
-    // level — LOW — rather than a fresh `'MEDIUM'`. The mail+web boost
-    // is MEDIUM-only, so it does not fire. Neither does the BIMI boost.
-    // The monotonic persist writes nothing lower and nothing higher.
+    // `ai_assessment IS NULL`, and the claim is already spent), so the
+    // compositor's base is the STORED level — LOW — rather than a fresh
+    // `'MEDIUM'`. The mail+web boost is MEDIUM-only, so it does not
+    // fire. The monotonic persist writes nothing lower and nothing
+    // higher.
     //
     // Had the base been re-seeded at MEDIUM (which is what a naive
     // extraction of the old straight-line code would do), the mail+web
     // boost WOULD fire and the row would silently reach HIGH on a pass
     // that learned nothing new about it.
+    //
+    // NO BIMI HERE, deliberately: the BIMI boost is no longer
+    // MEDIUM-only (see the test below), so leaving it on would conflate
+    // "the mail+web veto holds" with "the BIMI boost fires" and this
+    // test would pass for the wrong reason.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
-    checkBIMISpy.mockResolvedValue(true);
+    checkBIMISpy.mockResolvedValue(false);
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     // A fresh capability appearance, so the compositor definitely runs.
     const { env, store } = makeEnv([makeRow({ ...vetoedLow, has_mx: 0 })]);
@@ -688,9 +739,56 @@ describe("checkLookalikeBatch — the Haiku veto survives re-entrancy", () => {
     expect(analyzeWithHaikuSpy, "once per row per LIFETIME").not.toHaveBeenCalled();
     expect(row.threat_level).toBe("LOW");
     expect(row.ai_assessment).toBe("benign fan site");
-    // ...and therefore no alert: LOW is below the floor.
+    // ...and therefore no alert at all: LOW is below the floor.
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("a BIMI record DOES raise a vetoed LOW row — we assert HIGH by alerting", async () => {
+    // The counterpart to the test above, and a deliberate behaviour
+    // change. The BIMI boost used to be MEDIUM-only like the mail+web
+    // one, which produced an incoherent row: a Haiku-vetoed LOW row that
+    // publishes a BIMI record kept `threat_level = 'LOW'` while this
+    // file filed a FIXED-HIGH `typosquat_bimi` alert about it — and
+    // `agents/sparrow.ts` gates takedown eligibility on `threat_level IN
+    // ('HIGH','CRITICAL')`, so the most damning email signal the scanner
+    // can find could never reach the takedown queue.
+    //
+    // Filing a HIGH alert IS the assertion that the row is HIGH, so the
+    // level follows the alert. This does NOT reopen the Haiku veto for
+    // the mail+web case — that is the test above, and it still holds.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow({ ...vetoedLow, has_mx: 0 })]);
+
+    await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(analyzeWithHaikuSpy, "still no new AI call").not.toHaveBeenCalled();
+    expect(row.threat_level).toBe("HIGH");
+    // The AI's own text is untouched — the level is raised, the
+    // assessment is not rewritten.
+    expect(row.ai_assessment).toBe("benign fan site");
+    // And at HIGH the row now clears the floor, so the primary alert
+    // lands alongside the BIMI one instead of the row sitting at LOW
+    // with a HIGH alert about it.
     expect(createAlertSpy.mock.calls.map((c) => (c[1] as { alertType: string }).alertType))
-      .toEqual(["typosquat_bimi"]);
+      .toEqual(["typosquat_bimi", "lookalike_domain_active"]);
+  });
+
+  it("the BIMI boost NEVER lowers a CRITICAL a page verdict established", async () => {
+    // Monotonic, like every other write in the compositor: raising to
+    // HIGH must not be expressible as `level = 'HIGH'` unconditionally.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([
+      makeRow({ ...vetoedLow, has_mx: 0, threat_level: "CRITICAL" }),
+    ]);
+
+    await checkLookalikeBatch(env);
+
+    expect(store.get("l1")!.threat_level).toBe("CRITICAL");
   });
 
   it("a page escalation CAN still raise a vetoed row — it is deterministic, not AI", async () => {
@@ -819,11 +917,19 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     expect(store.get("l1")!.alert_id).toBe("alert_1");
   });
 
-  it("still files the typosquat_bimi alert when the floor withholds the main one", async () => {
-    // The floor is scoped to `lookalike_domain_active`. A LOW-assessed
-    // row does NOT get the BIMI boost (that boost is MEDIUM-only), so an
-    // early return on the floor would have swallowed a fixed-HIGH alert
-    // about the single most damning email signal this scanner finds.
+  it("files the typosquat_bimi alert independently of the floor — and the BIMI boost clears it", async () => {
+    // The floor is scoped to `lookalike_domain_active`, and an early
+    // return on it would have swallowed a fixed-HIGH alert about the
+    // single most damning email signal this scanner finds. That is the
+    // property being pinned, and it still holds: `typosquat_bimi` is
+    // filed BEFORE the floor is consulted.
+    //
+    // What changed is the second alert. A BIMI-publishing row is now
+    // raised to HIGH (it used to stay at the Haiku LOW while a HIGH
+    // alert was filed about it — see the compositor's boost comment), so
+    // it clears the floor and the primary alert lands too. The ORDER is
+    // the assertion that matters: BIMI first, from the lane that runs
+    // ahead of the compositor.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
     checkBIMISpy.mockResolvedValue(true);
@@ -833,9 +939,29 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     await checkLookalikeBatch(env);
 
     const types = createAlertSpy.mock.calls.map((c) => (c[1] as { alertType: string }).alertType);
-    expect(types).toEqual(["typosquat_bimi"]);
-    // The BIMI alert is NOT linked as the row's alert_id (it never was),
-    // so the page path can still raise the primary alert later.
+    expect(types).toEqual(["typosquat_bimi", "lookalike_domain_active"]);
+    expect(store.get("l1")!.threat_level).toBe("HIGH");
+    // The BIMI alert is never what lands in `alert_id` — that would
+    // permanently suppress `raiseUnalertedPhishingPageAlert`, which keys
+    // on `alert_id IS NULL`. The id here is the primary alert's.
+    expect(store.get("l1")!.alert_id).toBe("alert_1");
+  });
+
+  it("withholds the primary alert when BIMI is absent and the AI says LOW", async () => {
+    // The floor's own behaviour, isolated from the BIMI boost — which is
+    // what the test above used to be testing before the boost became
+    // unconditional. Without this, nothing pins "a Haiku LOW with no
+    // BIMI record files NOTHING".
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
+    checkBIMISpy.mockResolvedValue(false);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow(observed)]);
+
+    await checkLookalikeBatch(env);
+
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(store.get("l1")!.threat_level).toBe("LOW");
     expect(store.get("l1")!.alert_id).toBeNull();
   });
 

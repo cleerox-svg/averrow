@@ -475,13 +475,48 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > permanently-unanswerable domain costs zero reads structurally instead of being
 > re-admitted every 24 h forever. A parked row reads as `check_due_at = NULL`
 > with a non-zero `check_attempts`, is counted by Flight Control's
-> `backlog.lookalike_parked`, and is revived by the rescan endpoint below or by
-> any successful check. Three stamps now coexist on this table and they are NOT
+> `backlog.lookalike_parked`, and has THREE ways back: the bounded un-park
+> sweep described below, the rescan endpoint, and any successful check (which
+> resets `check_attempts`). `check_attempts` is written as a BOUND value, not
+> `check_attempts + 1` — the caller already derives it to pick the ladder step,
+> and the two derivations diverged on every throw past the success path (which
+> resets the column to 0), pinning the counter at a fixed point the ladder could
+> never terminate on. Three stamps now coexist on this table and they are NOT
 > interchangeable: `page_fetched_at` is the page pass's cooldown (written on
 > both outcomes), `last_checked` means strictly "when a check last SUCCEEDED",
 > and `check_due_at` is the DNS schedule. Migration 0269's header records why
 > page analysis was deliberately left alone. Both columns are staff-visible via
 > `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT.
+
+> **The un-park sweep — a park is a long cadence, not a terminal state.** Four
+> writers touch `check_due_at` and three of them require the row to have been
+> SELECTED, which a parked row is not, so the only exit used to be the MANUAL
+> per-brand rescan. A row parked before its first successful observation also
+> still carries `registered = 0 / has_web = 0 / resolves_to NULL`, making it
+> invisible to BOTH page-analysis cohorts as well. The checker's own tick now
+> re-admits the OLDEST parked rows (bounded per run) before selecting, at
+> `check_due_at = datetime('now')` — the latest possible due time, so they sort
+> behind every genuinely overdue row and consume only slack capacity. The
+> cadence self-throttles on `last_check_failed_at` (written only by the failure
+> path, hence frozen on a parked row), and `check_attempts` is deliberately NOT
+> reset: a still-dead row is probed ONCE and re-parks, rather than replaying the
+> whole ladder every window. Bounds live in `lib/lookalike-budget.ts`.
+
+> **`ai_claimed_at` (migration 0269, additive) — the Haiku lifetime gate's
+> claim token.** The once-per-row-per-lifetime AI call was gated on a READ of
+> the SELECT snapshot (`ai_assessment IS NULL`), so two concurrent runs over the
+> same first-contact row — which repeated "Scan now" presses produce — could
+> each read NULL and each spend. It is now a guarded claim (`UPDATE ... WHERE
+> id = ? AND ai_assessment IS NULL AND (ai_claimed_at IS NULL OR ai_claimed_at
+> <= datetime('now','-1 hour'))`), released whenever the pass produced no
+> assessment. A DEDICATED column rather than a sentinel in `ai_assessment`,
+> because a worker killed mid-call would leave that sentinel behind, the gate
+> would never fire again, and both infrastructure boosts are MEDIUM-only — so a
+> mail+web row would sit at LOW forever and never clear the HIGH alert floor.
+> Staleness is keyed on this column precisely because nothing else writes it
+> (`updated_at` is refreshed by the success path before the claim is attempted,
+> so a stale claim keyed on it could never be detected as stale). Staff-visible
+> via `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT.
 
 > **`bimi_first_seen_at` (migration 0269, additive) — presence only, never
 > absence.** Stamped when a BIMI record is OBSERVED on a lookalike domain, and
@@ -491,10 +526,23 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > first-contact-only — every due check of a `registered = 1 AND has_mx = 1` row
 > whose `bimi_first_seen_at IS NULL` spends one DNS TXT lookup, bounded by a
 > per-run cap — so a squat that publishes BIMI months after we baselined it is
-> no longer invisible forever. The column doubles as the lane's idempotency
+> no longer invisible forever. **The cadence that buys is ~47 days post-seed,
+> not 24 h**: `+24 hours` is what a row's next due time is set to after a
+> success, while how often a row is REACHED is the population over the
+> throughput — ~56,040 rows against 50 rows/tick x 24 ticks = 1,200 checks/day.
+> Still a strict improvement on "once per row, ever". A standalone BEC SELECT
+> would be faster but needs its OWN cooldown column first: `check_due_at` only
+> advances when the DNS lane selects the row, and a BIMI pass that finds no
+> record writes nothing, so a standalone query ordered by it would re-serve the
+> same top rows every tick. The column doubles as the lane's idempotency
 > token: the fixed-HIGH `typosquat_bimi` alert is filed only after a guarded
 > `UPDATE ... WHERE id = ? AND bimi_first_seen_at IS NULL` reports one changed
-> row, and the claim is released if `createAlert` throws. That alert's id is
+> row, and the claim is RELEASED on every path that does not file — a thrown
+> `createAlert` **and a missing brand row**, which originally took neither
+> branch (`if (brand)` was simply skipped, nothing threw) and left the row
+> permanently marked BIMI-recorded with no alert in existence. A release that
+> itself fails is counted on the agent diagnostic, because it is the one
+> remaining path to a silently and permanently lost finding. That alert's id is
 > deliberately **not** written to `alert_id` — `raiseUnalertedPhishingPageAlert`
 > keys on `alert_id IS NULL`, so one parked there would permanently suppress the
 > row's phishing-page alert. Find it instead as
@@ -521,14 +569,50 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > stored value wherever the per-probe flag is false. Haiku runs only when
 > mail+web is present AND `ai_assessment IS NULL`, so at most once per row per
 > lifetime, under a per-run cap — a deliberate narrowing from "every observed
-> 0 → 1", with the deterministic page pass covering the web lane instead.
+> 0 → 1", with the deterministic page pass covering the web lane instead. A
+> capped or failed call leaves the row CLAIMABLE but is retried on the row's
+> next TRANSITION rather than its next due pass: `compositeAndPersist` is
+> reached only from first contact, a registration gain or an mx/web gain, so a
+> stable baselined row yields `none` forever.
+>
+> **A `registration_gained` after a lapse re-alerts, by design.** That branch
+> passes `allowAlert: true` unconditionally — unlike the mx/web path, which
+> bounds itself on `alert_id IS NULL` — so a domain cycling registered → lapsed
+> → re-registered files one alert per cycle and `alert_id` points at the most
+> recent. A re-registration is typically a NEW registrant, which is the thing
+> this platform exists to notice. "One alert per row per lifetime" is therefore
+> true of the MX/WEB path, not of the row. `first_seen` is NOT re-stamped (its
+> `AND first_seen IS NULL` guard is genuinely lifetime-scoped).
+>
+> **A BIMI-publishing squat is raised to HIGH regardless of a Haiku veto.** The
+> BIMI boost used to be MEDIUM-only like the mail+web boost, which produced an
+> incoherent row: a Haiku-vetoed LOW row that publishes BIMI kept
+> `threat_level = 'LOW'` while a fixed-HIGH `typosquat_bimi` alert was filed
+> about it — and `agents/sparrow.ts` gates takedown eligibility on
+> `threat_level IN ('HIGH','CRITICAL')`, so the strongest email signal the
+> scanner finds could never reach the takedown queue. Filing a HIGH alert IS the
+> assertion that the row is HIGH, so the level follows the alert, monotonically
+> (it never lowers a CRITICAL a page verdict established). The Haiku veto over
+> the deterministic **mail+web** signal is unchanged.
 
-> **`POST /api/lookalikes/:brandId/scan` is a priority ENQUEUE, brand-scoped and
-> bounded.** It sets `check_due_at = '1970-01-01 00:00:00'` and
-> `check_attempts = 0` on the brand's rows (which also REVIVES any the ladder
-> had parked) and clears `last_check_failed_at`. The epoch is earlier than any
-> stamp the system can produce, so those rows sort ahead of everything in their
-> cohort unconditionally. It touches `last_checked` not at all, so first contact
+> **`POST /api/lookalikes/:brandId/scan` is a priority ENQUEUE, brand-scoped,
+> small-budgeted and ROW-BOUNDED.** It sets `check_due_at =
+> '1970-01-01 00:00:00'` and `check_attempts = 0` on up to
+> `LOOKALIKE_RESCAN_ENQUEUE_LIMIT` (100) of the brand's rows — parked rows
+> first, then the most overdue — and clears `last_check_failed_at`. The epoch is
+> earlier than any stamp the system can produce, so those rows sort ahead of
+> everything in their cohort. **The bound is a safety property, not a
+> performance one**: both cohort selectors are `ORDER BY check_due_at ASC` over
+> a GLOBAL, cross-tenant queue drained 50 rows a tick, so the previous
+> un-capped `WHERE brand_id = ?` let an org-scoped staff member scripting this
+> endpoint pin an unbounded number of their own rows to the head of that queue
+> and starve every other tenant's detection latency indefinitely. The statement
+> additionally SKIPS rows already at the epoch, which is what makes the bound
+> hold over time rather than per call: repeated presses re-stamp nothing until
+> the previous batch has drained, so one brand can hold at most 100 rows at the
+> queue head at any instant. A brand with more than 100 rows gets the rest on a
+> later press. `domains_queued` is therefore the number actually enqueued, which
+> may be fewer than the brand's row count. It touches `last_checked` not at all, so first contact
 > is structurally unforgeable from here — which is what the previous two forms
 > of this handler (`last_checked = NULL`, then a `CASE` writing
 > `datetime('now','-25 hours')`) existed to work around. The inline run is now

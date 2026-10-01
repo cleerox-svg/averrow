@@ -39,6 +39,11 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { MONITORED_BRAND_PREDICATE_SQL } from "../src/lib/monitored-brands";
+import {
+  LOOKALIKE_DUE_PROBE_LIMIT,
+  LOOKALIKE_DUE_GAUGE_CEILING,
+  LOOKALIKE_RESCAN_ENQUEUE_LIMIT,
+} from "../src/lib/lookalike-budget";
 import { applyLookalikeSchema, lookalikeSchema } from "./lookalike-schema";
 
 type Stmt = {
@@ -92,13 +97,29 @@ function sqlContaining(src: string, markers: string[]): string {
   const literals = [...src.matchAll(/`([^`]*)`/g)].map((m) => m[1]!);
   const hits = literals.filter((t) => markers.every((mk) => t.includes(mk)));
   expect(hits.length, `expected exactly 1 template literal matching ${markers.join(" + ")}`).toBe(1);
-  const withPredicate = hits[0]!.replace(
-    /\$\{MONITORED_BRAND_PREDICATE_SQL\}/g,
-    MONITORED_BRAND_PREDICATE_SQL,
-  );
+  let withPredicate = hits[0]!;
+  for (const [name, value] of Object.entries(SQL_INTERPOLATIONS)) {
+    withPredicate = withPredicate.split(`\${${name}}`).join(String(value));
+  }
   expect(withPredicate, "unsubstituted interpolation left in extracted SQL").not.toMatch(/\$\{/);
   return withPredicate;
 }
+
+/**
+ * Compile-time constants the statements under test interpolate.
+ *
+ * `MONITORED_BRAND_PREDICATE_SQL` was the only one; Flight Control's due
+ * gauge now also inlines `LOOKALIKE_DUE_PROBE_LIMIT`, because `cacheCount`
+ * takes a bare SQL string with no bind parameters. Substituting from the
+ * REAL exported constants keeps the "never retype a statement" contract
+ * intact — a retyped `LIMIT 51` would silently stop tracking the
+ * constant, which is the same defect class as the hand-typed `bimiSql`
+ * this round deleted.
+ */
+const SQL_INTERPOLATIONS: Record<string, string | number> = {
+  MONITORED_BRAND_PREDICATE_SQL,
+  LOOKALIKE_DUE_PROBE_LIMIT,
+};
 
 // ─── The statements under test, by marker ─────────────────────────
 // Named here so a failure message says WHICH statement moved, and so
@@ -118,8 +139,14 @@ const SQL = {
   compositePersist: () => sqlContaining(scannerSrc, ["SET threat_level = CASE", "ai_assessment = CASE"]),
   /** The recurring BEC lane's guarded claim. */
   bimiClaim: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = datetime('now')"]),
-  /** The claim release, for a `createAlert` that threw. */
+  /** The claim release, for any path that did not file the alert. */
   bimiRelease: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = NULL"]),
+  /** The Haiku lifetime gate's guarded claim (replaces a snapshot read). */
+  haikuClaim: () => sqlContaining(scannerSrc, ["SET ai_claimed_at = datetime('now')"]),
+  /** Its release, for a pass that produced no assessment. */
+  haikuRelease: () => sqlContaining(scannerSrc, ["SET ai_claimed_at = NULL"]),
+  /** The bounded un-park sweep — the ladder's only automatic way back. */
+  unparkSweep: () => sqlContaining(scannerSrc, ["SET check_due_at = datetime('now')", "LIMIT ?"]),
   /** Sparrow's verification contract, reused from the lapse branch. */
   takedownDown: () => sqlContaining(scannerSrc, ["UPDATE takedown_requests", "verification_status = 'down'"]),
   /**
@@ -208,6 +235,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       check_due_at: "2026-01-01 00:00:00",
       check_attempts: 0,
       bimi_first_seen_at: null,
+      ai_claimed_at: null,
       ...over,
     };
     const cols = Object.keys(row);
@@ -231,6 +259,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       check_due_at: string | null;
       check_attempts: number;
       bimi_first_seen_at: string | null;
+      ai_claimed_at: string | null;
       threat_level: string | null;
       ai_assessment: string | null;
     };
@@ -241,13 +270,25 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     db.exec(DDL);
     applyLookalikeSchema(db);
     // 0031's four indexes + 0227's takedown index + 0268's partial page
-    // index + 0269's four (two cohort, one parked, one BEC lane). If a
-    // migration stops creating one of these the plan assertions below
-    // are what notice.
+    // index + 0269's THREE (two cohort, one parked). If a migration
+    // stops creating one of these the plan assertions below are what
+    // notice.
+    //
+    // Three, not four: 0269 carried `idx_lookalike_bimi_due` on
+    // `(registered, has_mx) WHERE registered = 1 AND has_mx = 1 AND
+    // bimi_first_seen_at IS NULL` and it has been REMOVED as dead. No
+    // query in `src/` selects on that predicate — the lane's only
+    // statements are its guarded claim and release, both PK seeks — so
+    // it cost an index entry per eligible row over a 56,010-row seed,
+    // rewritten on every successful check (the success path writes both
+    // `registered` and `has_mx`), for zero reads. The test that
+    // "proved" it was hand-typing a `bimiSql` that existed nowhere in
+    // `src/`, in the one file whose whole contract is that extracting
+    // beats retyping.
     expect(
       lookalikeSchema().indexes.length,
       "expected index DDL to be extracted from the migrations",
-    ).toBe(10);
+    ).toBe(9);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 
@@ -474,9 +515,22 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   // ═════════════════════════════════════════════════════════════════
 
   describe("the failed-check UPDATE", () => {
-    /** Bind order: nextDueAt (NULL = PARK), id. */
-    const fail = (id: string, nextDueAt: string | null) =>
-      db.prepare(SQL.failureCooldown()).run(nextDueAt, id);
+    /**
+     * Bind order: attempts, nextDueAt (NULL = PARK), id.
+     *
+     * `check_attempts` is BOUND, not `check_attempts + 1`. The
+     * statement used to derive the increment itself while the caller
+     * derived it independently from the SELECT snapshot to pick the
+     * ladder step — two derivations that diverge the moment anything
+     * writes the column in between, which `persistCheckFacts` does
+     * (`check_attempts = 0`) before every throw the per-row catch
+     * absorbs. The ACCUMULATION and PARKING consequences are driven
+     * end-to-end in `test/lookalike-review-fixes.test.ts`; what this
+     * lane pins is that the statement writes exactly the value it is
+     * handed.
+     */
+    const fail = (id: string, nextDueAt: string | null, attempts = 1) =>
+      db.prepare(SQL.failureCooldown()).run(attempts, nextDueAt, id);
 
     it("writes NO registration state, and does not touch last_checked", () => {
       const id = insert({
@@ -511,11 +565,16 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       expect(row.last_check_failed_at).not.toBeNull();
     });
 
-    it("counts the attempt and defers the row to the backoff stamp it is given", () => {
+    it("writes the attempt count it is GIVEN, not the column plus one", () => {
+      // The mutation this catches: restoring `check_attempts =
+      // check_attempts + 1` makes this 3 (2 in the column + 1) instead
+      // of the 7 the caller computed. Those are the same number only
+      // while nothing else writes the column, which is exactly the
+      // assumption that failed.
       const id = insert({ check_attempts: 2 });
-      fail(id, "9999-01-01 00:00:00");
+      fail(id, "9999-01-01 00:00:00", 7);
       const row = fetch(id);
-      expect(row.check_attempts).toBe(3);
+      expect(row.check_attempts).toBe(7);
       expect(row.check_due_at).toBe("9999-01-01 00:00:00");
       // ...and it is therefore out of its cohort.
       const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
@@ -530,7 +589,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // reads".
       const parked = insert({ check_attempts: 8 });
       const healthy = insert({ baseline_established_at: "2026-06-01 00:00:00" });
-      fail(parked, null);
+      fail(parked, null, 9);
       expect(fetch(parked).check_due_at).toBeNull();
       expect(fetch(parked).check_attempts).toBe(9);
 
@@ -684,17 +743,158 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   });
 
   // ═════════════════════════════════════════════════════════════════
+  // The Haiku lifetime gate is a CLAIM, not a snapshot read
+  // ═════════════════════════════════════════════════════════════════
+  //
+  // The gate was `row.ai_assessment === null` off the SELECT snapshot —
+  // a read-then-act, where the BIMI lane (whose cost is a DNS lookup
+  // rather than tokens) already used a guarded claim. Two concurrent
+  // runs over the same first-contact row, which is what repeated
+  // "Scan now" presses produce, could both read NULL and both spend.
+
+  describe("the Haiku claim", () => {
+    /** Bind order: id, staleness modifier. */
+    const claim = (id: string, stale = "-1 hour") =>
+      db.prepare(SQL.haikuClaim()).run(id, stale);
+
+    it("exactly ONE of two concurrent claims on the same row succeeds", () => {
+      const id = insert();
+      expect(claim(id).changes, "first claim").toBe(1);
+      expect(claim(id).changes, "second claim").toBe(0);
+      expect(fetch(id).ai_claimed_at).not.toBeNull();
+    });
+
+    it("refuses a row that already HAS an assessment", () => {
+      // The lifetime bound itself. `ai_assessment IS NULL` is restated
+      // in the statement rather than trusted from the caller's snapshot,
+      // which is the whole point — the snapshot may be stale.
+      const id = insert({ ai_assessment: "assessed already" });
+      expect(claim(id).changes).toBe(0);
+      expect(fetch(id).ai_claimed_at).toBeNull();
+    });
+
+    it("the release makes the row claimable again", () => {
+      // A throttled or failed call must leave the row DEFERRED, not
+      // retired — exactly what the pre-claim read did for that case.
+      const id = insert();
+      expect(claim(id).changes).toBe(1);
+      db.prepare(SQL.haikuRelease()).run(id);
+      expect(fetch(id).ai_claimed_at).toBeNull();
+      expect(claim(id).changes).toBe(1);
+    });
+
+    it("a STALE claim is reclaimable, so a killed worker cannot retire the row", () => {
+      // Why this is a dedicated column and not a sentinel written into
+      // `ai_assessment`. A worker killed between claim and persist leaves
+      // the marker behind; with the marker in `ai_assessment` the gate
+      // would never fire again, the compositor's base would fall back to
+      // the stored LOW, and both infrastructure boosts are MEDIUM-only —
+      // so a mail+web row would sit at LOW forever and never clear the
+      // HIGH alert floor. Mutation-checked: deleting the
+      // `ai_claimed_at <= datetime('now', ?)` arm makes this 0.
+      const id = insert({ ai_claimed_at: "2020-01-01 00:00:00" });
+      expect(claim(id).changes).toBe(1);
+    });
+
+    it("a FRESH claim is not reclaimable", () => {
+      // The other direction: the staleness window must not be so loose
+      // that it defeats the claim it is protecting.
+      const id = insert();
+      expect(claim(id).changes).toBe(1);
+      expect(claim(id).changes).toBe(0);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // The un-park sweep — the ladder's only AUTOMATIC way back
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("the un-park sweep", () => {
+    /** Bind order: minimum park age (a datetime modifier), LIMIT. */
+    const sweep = (modifier = "-7 days", limit = 25) =>
+      db.prepare(SQL.unparkSweep()).run(modifier, limit);
+
+    const parkedAt = (stamp: string, over: Record<string, unknown> = {}) =>
+      insert({ check_due_at: null, check_attempts: 9, last_check_failed_at: stamp, ...over });
+
+    it("re-admits a long-parked row into its cohort", () => {
+      // The gap this closes: FOUR writers touch `check_due_at` and three
+      // of them require the row to have been SELECTED, which a parked row
+      // is not. The only exit was the MANUAL per-brand rescan.
+      const id = parkedAt("2020-01-01 00:00:00", { baseline_established_at: "2026-06-01 00:00:00" });
+      expect(sweep().changes).toBe(1);
+      expect(fetch(id).check_due_at).not.toBeNull();
+      const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(recheck).toContain(id);
+    });
+
+    it("leaves a RECENTLY parked row alone", () => {
+      // The self-throttle. `last_check_failed_at` is written only by the
+      // failure path, so on a parked row it is frozen at the moment it
+      // parked — which is what makes "parked for longer than the window"
+      // a true statement with no cursor and no counter column.
+      // Mutation-checked: deleting the age term makes this 1.
+      const id = parkedAt("2026-09-30 23:00:00");
+      expect(sweep().changes).toBe(0);
+      expect(fetch(id).check_due_at).toBeNull();
+    });
+
+    it("is BOUNDED, oldest park first", () => {
+      const oldest = parkedAt("2019-01-01 00:00:00");
+      const middle = parkedAt("2020-01-01 00:00:00");
+      const newest = parkedAt("2021-01-01 00:00:00");
+      expect(sweep("-7 days", 2).changes).toBe(2);
+      expect(fetch(oldest).check_due_at).not.toBeNull();
+      expect(fetch(middle).check_due_at).not.toBeNull();
+      expect(fetch(newest).check_due_at).toBeNull();
+    });
+
+    it("does NOT reset check_attempts — one probe per window, not a ladder replay", () => {
+      // Resetting the counter would send a still-dead row back through
+      // the whole 1h/4h/12h/24h/48h ladder — ~8 further DNS probes over
+      // 10 days — every window. Leaving it past the terminal count means
+      // the row is probed ONCE and re-parks on that single failure,
+      // which is what makes the sweep affordable at scale. A SUCCESSFUL
+      // observation still resets it, via the success path.
+      const id = parkedAt("2020-01-01 00:00:00");
+      sweep();
+      expect(fetch(id).check_attempts).toBe(9);
+    });
+
+    it("touches no row that is not parked", () => {
+      const healthy = insert({ check_due_at: "2026-09-29 12:00:00", last_check_failed_at: "2019-01-01 00:00:00" });
+      sweep();
+      expect(fetch(healthy).check_due_at).toBe("2026-09-29 12:00:00");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
   // "Scan now" is a priority ENQUEUE
   // ═════════════════════════════════════════════════════════════════
 
   describe("the handleScanLookalikes enqueue UPDATE", () => {
+    /**
+     * Bind order: brandId, LIMIT.
+     *
+     * The LIMIT is the bound this round added. The statement used to be
+     * `WHERE brand_id = ?` with no cap, over a GLOBAL cross-tenant queue
+     * ordered by `check_due_at ASC` and drained 50 rows a tick — so an
+     * org-scoped caller scripting the endpoint could pin an unbounded
+     * number of their own rows to the head of that queue and starve
+     * every other tenant indefinitely. The default here is the
+     * production value so the ordinary assertions read unchanged; the
+     * bound itself gets its own cases below.
+     */
+    const enqueue = (limit = LOOKALIKE_RESCAN_ENQUEUE_LIMIT) =>
+      db.prepare(SQL.handlerReset()).run("b1", limit);
+
     it("puts the brand's rows at the FRONT of their cohort, ahead of every real stamp", () => {
       // What the old `-25 hours` CASE could only approximate. The epoch
       // is earlier than any stamp the system can produce, so these rows
       // sort first unconditionally rather than "first among rows checked
       // more than 25 hours ago".
       const ahead = insert({ baseline_established_at: "2026-06-01 00:00:00", check_due_at: "2020-01-01 00:00:00" });
-      db.prepare(SQL.handlerReset()).run("b1");
+      enqueue();
       const order = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
       expect(order[0]).toBe(ahead);
       expect(fetch(ahead).check_due_at).toBe("1970-01-01 00:00:00");
@@ -709,7 +909,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // reachable from here.
       const checked = insert({ last_checked: "2026-09-29 12:00:00", baseline_established_at: "2026-06-01 00:00:00", registered: 1 });
       const never = insert();
-      db.prepare(SQL.handlerReset()).run("b1");
+      enqueue();
       expect(fetch(checked).last_checked).toBe("2026-09-29 12:00:00");
       expect(fetch(checked).baseline_established_at).toBe("2026-06-01 00:00:00");
       expect(fetch(never).last_checked).toBeNull();
@@ -728,7 +928,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // `check_attempts = 0` + epoch write it would stay unreachable
       // forever.
       const parked = insert({ check_due_at: null, check_attempts: 9, baseline_established_at: "2026-06-01 00:00:00" });
-      db.prepare(SQL.handlerReset()).run("b1");
+      enqueue();
       const row = fetch(parked);
       expect(row.check_due_at).toBe("1970-01-01 00:00:00");
       expect(row.check_attempts).toBe(0);
@@ -738,7 +938,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
 
     it("clears the DNS failure record so the rescan is not held off", () => {
       const id = insert({ last_check_failed_at: "2026-09-30 11:00:00" });
-      db.prepare(SQL.handlerReset()).run("b1");
+      enqueue();
       expect(fetch(id).last_check_failed_at).toBeNull();
     });
 
@@ -746,9 +946,59 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       db.prepare(`INSERT OR IGNORE INTO brands (id, name, canonical_domain, tier) VALUES ('b2','Other','other.example','monitored')`).run();
       const mine = insert({ check_due_at: "2026-09-29 12:00:00" });
       const theirs = insert({ brand_id: "b2", check_due_at: "2026-09-29 12:00:00" });
-      db.prepare(SQL.handlerReset()).run("b1");
+      enqueue();
       expect(fetch(mine).check_due_at).toBe("1970-01-01 00:00:00");
       expect(fetch(theirs).check_due_at).toBe("2026-09-29 12:00:00");
+    });
+
+    it("is BOUNDED — one press cannot enqueue more than its limit", () => {
+      // THE UNBOUNDED CASE. Both cohort selectors are `ORDER BY
+      // check_due_at ASC` over a global, cross-tenant queue drained 50
+      // rows a tick, so an un-capped epoch write is a
+      // queue-starvation primitive: a scripted caller pins an arbitrary
+      // number of their own rows to the head of it. Mutation-checked:
+      // deleting the `LIMIT ?` makes this 7 instead of 3.
+      const ids = Array.from({ length: 7 }, (_, i) =>
+        insert({ check_due_at: `2026-09-2${i} 12:00:00` }));
+      enqueue(3);
+      const stamped = ids.filter((id) => fetch(id).check_due_at === "1970-01-01 00:00:00");
+      expect(stamped.length).toBe(3);
+    });
+
+    it("prefers PARKED rows, then the most overdue", () => {
+      // `ORDER BY check_due_at ASC` puts SQLite's NULLs first, which is
+      // the behaviour we want: an operator pressing "Scan now" is
+      // asking for exactly the rows the ladder gave up on, and those are
+      // the rows no other writer can reach.
+      const parked = insert({ check_due_at: null, check_attempts: 9 });
+      const old = insert({ check_due_at: "2026-01-01 00:00:00" });
+      const recent = insert({ check_due_at: "2026-09-30 00:00:00" });
+      enqueue(2);
+      expect(fetch(parked).check_due_at).toBe("1970-01-01 00:00:00");
+      expect(fetch(old).check_due_at).toBe("1970-01-01 00:00:00");
+      expect(fetch(recent).check_due_at).toBe("2026-09-30 00:00:00");
+    });
+
+    it("SKIPS rows already at the epoch, so repeated presses cannot grow the claim", () => {
+      // What makes the bound hold over TIME rather than per call. A
+      // scripted loop re-stamps NOTHING until the previous batch has
+      // drained, so one brand can hold at most `limit` rows at the head
+      // of the global queue at any instant and can only refresh them as
+      // fast as the checker drains them — no cooldown table, no KV, no
+      // clock. Mutation-checked: deleting the `check_due_at >
+      // '1970-01-01 00:00:00'` term makes the second press report 2
+      // changed rows instead of 1, and the brand's head-of-queue claim
+      // then grows without limit across presses.
+      const first = insert({ check_due_at: "2026-01-01 00:00:00" });
+      const second = insert({ check_due_at: "2026-02-01 00:00:00" });
+      expect(enqueue(1).changes).toBe(1);
+      expect(fetch(first).check_due_at).toBe("1970-01-01 00:00:00");
+      // Second press: the already-enqueued row is skipped, so the one
+      // slot goes to the NEXT row rather than re-stamping the first.
+      expect(enqueue(1).changes).toBe(1);
+      expect(fetch(second).check_due_at).toBe("1970-01-01 00:00:00");
+      // Third press with both enqueued: nothing left to claim.
+      expect(enqueue(1).changes).toBe(0);
     });
 
     it("the brand-scoped selector serves only that brand, bounded", () => {
@@ -1160,17 +1410,65 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       }
     });
 
-    it("the BEC lane's eligible set is an index seek", () => {
-      // `registered = 1 AND has_mx = 1 AND bimi_first_seen_at IS NULL`
-      // over ~19,000 registered rows, every tick. The index is partial on
-      // exactly that predicate so it SHRINKS as rows are claimed.
-      const bimiSql = `SELECT ld.id FROM lookalike_domains ld
-        WHERE ld.registered = 1 AND ld.has_mx = 1 AND ld.bimi_first_seen_at IS NULL
-        LIMIT 25`;
+    it("the due gauge is a BOUNDED probe — it stops counting at its ceiling", () => {
+      // The gauge's two consumers are a log string and the boolean
+      // `current > drainPerTick`, and both cohort halves are index RANGE
+      // counts — one index entry read per DUE row. The plan fixture
+      // seeds ~half the table due, at a projected 56,010 rows, and the
+      // gauge is recomputed ~12x/day: 300K-600K index reads a day to
+      // produce a boolean.
+      //
+      // `LIMIT 51` per cohort answers that boolean EXACTLY (51 already
+      // beats the 50-row drain however the cohorts split it) for at
+      // most 102 reads. Measured against the SEEDED fixture, not an
+      // empty table, so a removed LIMIT genuinely overshoots.
+      // Mutation-checked: deleting either `LIMIT` returns tens of
+      // thousands and fails this.
       for (const [state, target] of STATES()) {
-        const detail = plan(target, bimiSql, []);
-        expect(detail, `${state}: ${detail}`).toContain("idx_lookalike_bimi_due");
-        expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN\b/);
+        const row = target.prepare(SQL.fcDueGauge()).get() as { count: number };
+        expect(row.count, `${state}: gauge above its ceiling`)
+          .toBeLessThanOrEqual(LOOKALIKE_DUE_GAUGE_CEILING);
+        // And not vacuously small — the fixture has far more than a
+        // tick's worth due, so the probe must be pegged AT the ceiling.
+        expect(row.count, `${state}: gauge should be saturated on this fixture`)
+          .toBe(LOOKALIKE_DUE_GAUGE_CEILING);
+      }
+    });
+
+    // NO PLAN TEST FOR THE BEC LANE, deliberately. There is no cohort
+    // query to plan: the lane rides the DNS checker's own selection and
+    // its two statements are PK seeks. The test that used to live here
+    // hand-typed a `bimiSql` that appears nowhere in `src/` and asserted
+    // a plan for it, which tested SQLite rather than Averrow — in the one
+    // file whose stated contract is that extracting beats retyping. The
+    // index it "proved" is gone with it; see the index-count assertion
+    // above.
+
+    it("the un-park sweep is an index range scan over the parked set", () => {
+      // The oldest-parked subquery, over a set that is tiny by
+      // construction but still must not be a table scan: it runs on
+      // EVERY checker tick. `idx_lookalike_parked` is keyed on
+      // `last_check_failed_at` (not `id`) precisely so this is a range
+      // scan in index order with no sort step — the gauge above is served
+      // either way, this is the reader that needed the key.
+      for (const [state, target] of STATES()) {
+        const detail = plan(target, SQL.unparkSweep(), ["-7 days", 25]);
+        expect(detail, `${state}: ${detail}`).toContain("idx_lookalike_parked");
+        expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN lookalike_domains\b(?! USING)/);
+        expect(detail, `${state}: ${detail}`).not.toMatch(/TEMP B-TREE/i);
+      }
+    });
+
+    it("the bounded rescan enqueue seeks by brand", () => {
+      // The epoch write is now `WHERE id IN (SELECT ... LIMIT ?)`. The
+      // inner select must still seek on `brand_id` rather than scan a
+      // table headed for ~56,010 rows — a sort over one brand's ~30 rows
+      // is acceptable and is what the ORDER BY buys (parked rows first),
+      // so TEMP B-TREE is deliberately NOT asserted against here.
+      for (const [state, target] of STATES()) {
+        const detail = plan(target, SQL.handlerReset(), ["b3", 100]);
+        expect(detail, `${state}: ${detail}`).toContain("idx_lookalike_brand");
+        expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN lookalike_domains\b(?! USING)/);
       }
     });
 

@@ -54,6 +54,13 @@ const EXPECTED_COLUMNS = [
   // 0269 recurring BEC lane — presence-only, never a record of absence.
   // The evidence behind a typosquat_bimi alert.
   "bimi_first_seen_at",
+  // 0269 Haiku lifetime gate — the CLAIM TOKEN that replaced a read of
+  // the SELECT snapshot, so two concurrent runs can no longer both spend
+  // a token call on one row. Staff-visible for the same reason as the
+  // scheduling columns: it explains an absence (a mail+web row whose
+  // ai_assessment is still NULL is capped, in flight, or failing).
+  // Added by hand, which is the review step this file exists to force.
+  "ai_claimed_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

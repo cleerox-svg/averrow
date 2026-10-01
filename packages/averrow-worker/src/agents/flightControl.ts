@@ -49,7 +49,15 @@ import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { evaluateGeoipStall, type GeoipStallWatch } from "../lib/geoip-stall";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
-import { LOOKALIKE_BATCH_LIMIT } from "../scanners/lookalike-domains";
+// From `lib/lookalike-budget.ts`, NOT from `scanners/lookalike-domains`:
+// importing two integers from the scanner statically dragged `lib/haiku`,
+// `email-security` and `lib/page-fetch` into this module's import graph.
+import {
+  LOOKALIKE_BATCH_LIMIT,
+  LOOKALIKE_DUE_PROBE_LIMIT,
+  LOOKALIKE_DUE_GAUGE_CEILING,
+  LOOKALIKE_PARKED_WARN_THRESHOLD,
+} from "../lib/lookalike-budget";
 
 // TTLs for backlog counters. "Monitoring" backlogs (the broad _checked
 // queries that a partial index can't help with because the predicate
@@ -2160,22 +2168,51 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // full-scans a table headed for ~56,010 rows, every tick. Each
     // subquery below states all three terms and is an index range
     // count. Verified by EXPLAIN in test/lookalike-sql-statements.test.ts.
+    //
+    // ── A BOUNDED PROBE, NOT AN EXACT COUNT ───────────────────────
+    //
+    // Each cohort half is wrapped in `COUNT(*) FROM (SELECT 1 ... LIMIT
+    // 51)`. An index RANGE count reads one index entry per matching
+    // row, so the exact form read one entry per DUE row — tens of
+    // thousands during the seeder drain, at ~12 fresh computations a
+    // day: 300K-600K index reads daily to produce what the only two
+    // consumers need, which is a log string and the boolean
+    // `current > drainPerTick`.
+    //
+    // `LIMIT 51` (`LOOKALIKE_DUE_PROBE_LIMIT`) answers that boolean
+    // EXACTLY for at most 102 reads: 51 is already greater than the
+    // 50-row drain however the two cohorts split it. What it gives up
+    // is RESOLUTION above the ceiling, which is why
+    // `lookalikeDrainFallingBehind` now asks for a NON-DECREASING run
+    // of saturated samples instead of a strictly rising one — a
+    // bounded probe plateaus at its ceiling and can no longer express
+    // "rising". The log line states the ceiling so the number is not
+    // read as exact.
     cacheCount('backlog.lookalike_dns_due', BACKLOG_TTL_LIVE_S, `
       SELECT
-        (SELECT COUNT(*) FROM lookalike_domains
-          WHERE check_due_at IS NOT NULL
-            AND baseline_established_at IS NULL
-            AND check_due_at <= datetime('now'))
-      + (SELECT COUNT(*) FROM lookalike_domains
-          WHERE check_due_at IS NOT NULL
-            AND baseline_established_at IS NOT NULL
-            AND check_due_at <= datetime('now')) AS count
+        (SELECT COUNT(*) FROM (
+          SELECT 1 FROM lookalike_domains
+           WHERE check_due_at IS NOT NULL
+             AND baseline_established_at IS NULL
+             AND check_due_at <= datetime('now')
+           LIMIT ${LOOKALIKE_DUE_PROBE_LIMIT}))
+      + (SELECT COUNT(*) FROM (
+          SELECT 1 FROM lookalike_domains
+           WHERE check_due_at IS NOT NULL
+             AND baseline_established_at IS NOT NULL
+             AND check_due_at <= datetime('now')
+           LIMIT ${LOOKALIKE_DUE_PROBE_LIMIT})) AS count
     `, true),
     // Rows the backoff ladder PARKED (`check_due_at = NULL`) — the
     // ladder's terminal step after ~10 days of unanswerable DNS. Served
     // by `idx_lookalike_parked`, a partial index that is tiny by
-    // construction. Monitoring TTL: a parked row is by definition not
-    // going anywhere, so this does not need to be fresh every tick.
+    // construction. Monitoring TTL: a parked row is by definition on a
+    // long cadence, so this does not need to be fresh every tick.
+    //
+    // Left EXACT rather than bounded like the due gauge above: the
+    // parked set is small by construction, and this number is compared
+    // against a threshold far above 1 (`LOOKALIKE_PARKED_WARN_THRESHOLD`)
+    // where a ceiling would have to sit above the threshold anyway.
     cacheCount('backlog.lookalike_parked', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM lookalike_domains
       WHERE check_due_at IS NULL
@@ -2288,9 +2325,9 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
   // A critical event every hour for eight weeks is not a signal.
   //
   // What is worth an operator's attention is narrower, and it is
-  // computed by `lookalikeDrainFallingBehind` below: the backlog rising
-  // across SEVERAL consecutive fresh samples WHILE the drain is
-  // saturated. That reads as "the checker is taking every row it is
+  // computed by `lookalikeDrainFallingBehind` below: the backlog NOT
+  // SHRINKING across SEVERAL consecutive fresh samples WHILE the drain
+  // is saturated. That reads as "the checker is taking every row it is
   // allowed to and still losing ground", which during the seed drain is
   // a true and useful statement of how long the drain will take, and
   // after it is a capacity problem.
@@ -2317,19 +2354,57 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
 
       const samples = (history.results ?? []).map((r) => r.count);
       if (lookalikeDrainFallingBehind({ samples, drainPerTick: LOOKALIKE_BATCH_LIMIT })) {
+        const atCeiling = backlog.lookalikeDnsDue >= LOOKALIKE_DUE_GAUGE_CEILING;
         await logActivity(db, 'flight_control', 'warning', 'lookalike_backlog',
-          `Lookalike DNS-check backlog rising while the drain is saturated: ` +
-          `${backlog.lookalikeDnsDue} due, ${LOOKALIKE_BATCH_LIMIT}/tick drain, ` +
+          `Lookalike DNS-check backlog not draining while the drain is saturated: ` +
+          `${backlog.lookalikeDnsDue}${atCeiling ? '+' : ''} due ` +
+          `(bounded probe, ceiling ${LOOKALIKE_DUE_GAUGE_CEILING}), ` +
+          `${LOOKALIKE_BATCH_LIMIT}/tick drain, ` +
           `${backlog.lookalikeParked} parked`,
           {
             backlog: 'lookalike_dns_due',
             count: backlog.lookalikeDnsDue,
+            count_is_lower_bound: atCeiling,
+            gauge_ceiling: LOOKALIKE_DUE_GAUGE_CEILING,
             parked: backlog.lookalikeParked,
             drain_per_tick: LOOKALIKE_BATCH_LIMIT,
             samples,
           }
         );
       }
+    } catch { /* never block FC on a gauge */ }
+  }
+
+  // ── The PARKED set's own threshold ─────────────────────────────
+  //
+  // `backlog.lookalike_parked` had a gauge and no threshold, so a
+  // growing parked set was visible only to an operator who thought to
+  // read the number. That is the worst case for a silent gauge, because
+  // the one warning that DID exist is keyed on the DUE backlog — which
+  // PARKING REDUCES. A DNS outage severe enough to park a cohort
+  // therefore pushed the only alarm in the silencing direction.
+  //
+  // Same channel and same "never block FC" discipline as the drain
+  // warning above, and for the same reason it is not a
+  // `notifications.type`: that CHECK constraint cannot be altered in
+  // SQLite without rebuilding `notifications`, which cascades.
+  if (!lookalikeParkedResult.wasCached
+      && lookalikeParkedSetTooLarge({
+        parked: backlog.lookalikeParked,
+        threshold: LOOKALIKE_PARKED_WARN_THRESHOLD,
+      })) {
+    try {
+      await logActivity(db, 'flight_control', 'warning', 'lookalike_parked',
+        `Lookalike parked set above threshold: ${backlog.lookalikeParked} rows ` +
+        `parked by the backoff ladder (threshold ${LOOKALIKE_PARKED_WARN_THRESHOLD}). ` +
+        `The un-park sweep re-admits the oldest rows on each checker tick; a set ` +
+        `this size is growing faster than it recovers.`,
+        {
+          backlog: 'lookalike_parked',
+          count: backlog.lookalikeParked,
+          threshold: LOOKALIKE_PARKED_WARN_THRESHOLD,
+        }
+      );
     } catch { /* never block FC on a gauge */ }
   }
 
@@ -2344,7 +2419,29 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
 }
 
 /**
- * Is the lookalike DNS-check drain losing ground while already saturated?
+ * Has the lookalike PARKED set grown past what the un-park sweep can
+ * recover?
+ *
+ * PURE for the same reason `lookalikeDrainFallingBehind` is: the
+ * predicate IS the content of the alert, and a mocked D1 would only
+ * re-assert the mock. Trivial today and deliberately so — what matters
+ * is that the comparison has ONE definition and a name, rather than
+ * being an inline `>` nobody can find or test.
+ *
+ * Strictly greater than, so a threshold of 0 still means "warn on any
+ * parked row" only if the caller asks for -1. The production value is
+ * `LOOKALIKE_PARKED_WARN_THRESHOLD`; see it for the arithmetic.
+ */
+export function lookalikeParkedSetTooLarge(opts: {
+  parked: number;
+  threshold: number;
+}): boolean {
+  return opts.parked > opts.threshold;
+}
+
+/**
+ * Is the lookalike DNS-check drain failing to make progress while
+ * already saturated?
  *
  * PURE so it can be unit-tested without a D1 mock, which is the point:
  * the predicate is the whole content of the alert and a mocked D1 would
@@ -2363,27 +2460,46 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
  * distribution of the two cohorts. That means this needs no read of the
  * agent's own run diagnostics to know the drain was saturated.
  *
- * THREE consecutive rises, not one. One rise is an hour of ordinary
- * inflow jitter (the seeder adds ~300 rows on the tick it runs and 0 on
- * a tick where every brand it picked was already seeded).
+ * THREE consecutive comparisons, not one. One sample's movement is an
+ * hour of ordinary inflow jitter (the seeder adds ~300 rows on the tick
+ * it runs and 0 on a tick where every brand it picked was already
+ * seeded).
+ *
+ * ── NON-DECREASING, NOT STRICTLY RISING ─────────────────────────────
+ *
+ * This asked for three STRICT rises, which was correct while the gauge
+ * was an exact count. It is now a BOUNDED PROBE (`LIMIT 51` per cohort
+ * — see `LOOKALIKE_DUE_PROBE_LIMIT` for the read-cost arithmetic that
+ * bought), so under real saturation the samples PLATEAU at the ceiling
+ * instead of rising. Requiring a strict rise against a capped gauge
+ * would have made this predicate dead code in exactly the regime it
+ * exists for: pegged at the ceiling, hour after hour, reporting
+ * nothing.
+ *
+ * So the condition is "saturated AND not shrinking", which is what
+ * "falling behind" meant all along — the strict rise was a proxy for
+ * it, available only because the gauge was unbounded. The three
+ * comparisons still rule out one hour of jitter, and a genuinely
+ * draining backlog (any sample lower than the one before it) still
+ * clears the warning.
  */
 export function lookalikeDrainFallingBehind(opts: {
   samples: number[];
   drainPerTick: number;
-  minRises?: number;
+  minSamples?: number;
 }): boolean {
-  const { samples, drainPerTick, minRises = 3 } = opts;
-  if (samples.length < minRises + 1) return false;
+  const { samples, drainPerTick, minSamples = 3 } = opts;
+  if (samples.length < minSamples + 1) return false;
   const current = samples[0] ?? 0;
   // Not saturated → the drain is keeping up with what is offered, and a
   // rising backlog is then a SELECTION problem, not a capacity one.
   // That failure class is what the cohort split and its plan assertions
   // address, and it would be misreported by this message.
   if (current <= drainPerTick) return false;
-  for (let i = 0; i < minRises; i += 1) {
+  for (let i = 0; i < minSamples; i += 1) {
     const newer = samples[i] ?? 0;
     const older = samples[i + 1] ?? 0;
-    if (newer <= older) return false;
+    if (newer < older) return false;
   }
   return true;
 }

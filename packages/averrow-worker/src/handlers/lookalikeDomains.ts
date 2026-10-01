@@ -13,6 +13,7 @@
 
 import { json } from "../lib/cors";
 import { generateAndStoreLookalikes, checkLookalikeBatchForBrand } from "../scanners/lookalike-domains";
+import { LOOKALIKE_RESCAN_ENQUEUE_LIMIT } from "../lib/lookalike-budget";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
 import { hasGlobalReadScope, type AuthContext } from "../middleware/auth";
@@ -99,6 +100,16 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // absence — and OFF the tenant SELECT with the rest of the
   // crawl-pipeline detail.
   "check_due_at", "check_attempts",
+  // `ai_claimed_at` is the Haiku lifetime gate's CLAIM TOKEN — when a
+  // pass took this row's one AI call, cleared when the pass produced no
+  // assessment, and self-healing after an hour so a worker killed
+  // mid-call cannot retire the row from the lane. Staff-visible on the
+  // same reasoning as the three stamps above: it is a bounded timestamp
+  // with no attacker-controlled content, and it EXPLAINS AN ABSENCE (a
+  // mail+web row whose `ai_assessment` is still NULL is either capped,
+  // in flight, or has been failing). OFF the tenant SELECT with the rest
+  // of the pipeline detail.
+  "ai_claimed_at",
   // `bimi_first_seen_at` is presence-only: when we OBSERVED a BIMI
   // record on this squat, never a record of absence (migration 0269 §2).
   // Staff-visible because it is the evidence behind a `typosquat_bimi`
@@ -349,7 +360,39 @@ export async function handleScanLookalikes(
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
 
-    // ── A PRIORITY ENQUEUE, NOT A TIMESTAMP TRICK ───────────────────
+    // ── A BOUNDED PRIORITY ENQUEUE, NOT A TIMESTAMP TRICK ───────────
+    //
+    // ── THE BOUND, AND WHY IT IS NOT OPTIONAL ───────────────────────
+    //
+    // This statement used to be `WHERE brand_id = ?` with no LIMIT, and
+    // both cohort selectors are `ORDER BY check_due_at ASC` over a
+    // GLOBAL, CROSS-TENANT queue drained 50 rows a tick. So an
+    // org-scoped staff member scripting this endpoint could pin an
+    // unbounded number of their own rows to the head of that queue
+    // indefinitely and starve every other tenant's due rows. The blast
+    // radius is detection latency for other tenants, not data exposure,
+    // but it is unbounded, and "jump the queue" was never meant to mean
+    // "own the queue".
+    //
+    // TWO terms bound it, and they are chosen so the honest press is
+    // unchanged:
+    //
+    //   * `LIMIT ?` (`LOOKALIKE_RESCAN_ENQUEUE_LIMIT`) caps one press at
+    //     100 rows — above the ~30 permutations a brand holds, so a real
+    //     operator never meets it, and two ticks' worth of the global
+    //     drain in the worst case.
+    //   * `check_due_at > <epoch>` SKIPS rows already enqueued, which is
+    //     what makes the bound hold over TIME rather than per call: a
+    //     scripted loop re-stamps nothing until the previous batch has
+    //     drained, so the brand can hold at most 100 rows at the head of
+    //     the queue at any instant and can only refresh them as fast as
+    //     the checker drains them. No cooldown table, no KV, no clock.
+    //
+    // `check_due_at IS NULL` is included on purpose: a PARKED row is
+    // exactly what an operator pressing "Scan now" wants revived, and
+    // `ORDER BY check_due_at ASC` puts those NULLs first so parked rows
+    // are enqueued ahead of merely-overdue ones. A brand with more than
+    // 100 rows gets the rest on the next press, after this batch drains.
     //
     // Scheduling has its own column now (`check_due_at`, migration
     // 0269), so "re-check this brand first" is expressible directly: the
@@ -379,8 +422,14 @@ export async function handleScanLookalikes(
            check_attempts = 0,
            last_check_failed_at = NULL,
            updated_at = datetime('now')
-       WHERE brand_id = ?`,
-    ).bind(brandId).run();
+       WHERE id IN (
+         SELECT id FROM lookalike_domains
+          WHERE brand_id = ?
+            AND (check_due_at IS NULL OR check_due_at > '1970-01-01 00:00:00')
+          ORDER BY check_due_at ASC
+          LIMIT ?
+       )`,
+    ).bind(brandId, LOOKALIKE_RESCAN_ENQUEUE_LIMIT).run();
 
     const resetCount = resetResult.meta.changes ?? 0;
 

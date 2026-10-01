@@ -91,9 +91,41 @@
 --
 -- A parked row is still visible (`check_due_at IS NULL` + a non-zero
 -- `check_attempts` is the operator-readable signature, both on the staff
--- list payload), still counted by Flight Control's
--- `backlog.lookalike_parked` gauge, and still revivable by the
--- brand rescan endpoint, which resets `check_attempts = 0`.
+-- list payload) and still counted by Flight Control's
+-- `backlog.lookalike_parked` gauge, which now carries a THRESHOLD rather
+-- than being a number an operator has to think to read.
+--
+-- ── A PARK IS A LONG CADENCE, NOT A TERMINAL STATE ───────────────────
+--
+-- As first written it WAS terminal in practice. Four writers touch
+-- `check_due_at` — the seeder (`INSERT OR IGNORE`, which never touches
+-- an existing row), the success path and the failure path (both of which
+-- require the row to have been SELECTED, which a parked row is not), and
+-- the per-brand operator rescan. So the only exit was MANUAL. Worse, a
+-- row parked before its first successful observation still carries the
+-- seeder's `registered = 0 / has_web = 0 / resolves_to NULL` defaults,
+-- which makes it invisible to BOTH page-analysis cohorts as well:
+-- permanently undetectable, with no automatic recovery path. And the
+-- realistic trigger is OUR side rather than the domain's — sustained
+-- `cloudflare-dns.com` degradation or rate-limiting (a non-ok DoH reply
+-- lands in the same unresolved branch as a timeout) across the ladder's
+-- ~10 days parks a whole cohort, while the only warning that existed is
+-- keyed on the DUE backlog, which parking REDUCES.
+--
+-- So `unparkOldestRows` re-admits the oldest parked rows on the
+-- checker's own tick, bounded per run, with no cron (which would trigger
+-- CLAUDE.md's cron-audit rule) and no new state. The cadence
+-- self-throttles on `last_check_failed_at`, which is written ONLY by the
+-- failure path and is therefore frozen on a parked row — a re-admitted
+-- row that fails again re-stamps it and waits out another window.
+--
+-- THAT IS WHY `idx_lookalike_parked` IS KEYED ON
+-- `last_check_failed_at` rather than on `id`. Both forms serve Flight
+-- Control's `COUNT(*) WHERE check_due_at IS NULL` equally (the partial
+-- predicate is what makes the count an index read), but only this one
+-- also serves the sweep's `last_check_failed_at <= ? ORDER BY
+-- last_check_failed_at ASC` as an index range scan in index order, with
+-- no temp b-tree. One index, two readers.
 --
 -- ── THE TWO PARTIAL INDEXES, AND WHY TWO ─────────────────────────────
 --
@@ -138,10 +170,42 @@
 -- anyway, because asserting is cheaper than reasoning.
 --
 -- A third partial index covers the PARKED set for Flight Control's
--- gauge. It is tiny by construction (only parked rows hold an entry) and
--- its write cost is one entry per park/unpark event, which is rare by
--- definition — so it buys an operator gauge that would otherwise be a
--- full scan of a ninety-fold-grown table, for almost nothing.
+-- gauge AND the un-park sweep. It is tiny by construction (only parked
+-- rows hold an entry) and its write cost is one entry per park/unpark
+-- event, which is rare by definition — so it buys an operator gauge
+-- that would otherwise be a full scan of a ninety-fold-grown table, for
+-- almost nothing.
+--
+-- ── NO FOURTH INDEX FOR THE BEC LANE ────────────────────────────────
+--
+-- This migration carried `idx_lookalike_bimi_due` on `(registered,
+-- has_mx) WHERE registered = 1 AND has_mx = 1 AND bimi_first_seen_at IS
+-- NULL`, and it has been REMOVED. It had no reader: grep over `src/`
+-- finds no query selecting on that predicate. The only
+-- `bimi_first_seen_at` statements are the lane's guarded claim and its
+-- release, both PK seeks, plus column projections. The index was
+-- designed for a standalone BEC SELECT that §2's cadence deviation then
+-- decided not to write (see the scanner's `probeAndFileBimi` for why a
+-- standalone lane needs its own cooldown column first). Its cost was an
+-- index entry per eligible row over a 56,010-row seed, rewritten on
+-- every successful check — the success path writes both `registered` and
+-- `has_mx` — for zero reads. If a standalone lane is ever written, it
+-- arrives with its own cooldown column and brings this index back then.
+--
+-- ── DEAD BUT RETAINED: idx_lookalike_last_checked ───────────────────
+--
+-- Migration 0031's `idx_lookalike_last_checked` now has ZERO selection
+-- readers. This migration's redesign removed the last predicate on that
+-- column: `last_checked` keeps exactly one job ("when did we last
+-- SUCCESSFULLY observe"), read by `agents/observer.ts`'s briefing count
+-- and the staff/tenant column lists, by NO `WHERE` clause. 0268's plan
+-- notes about it (lines 51, 102-103, 143) describe a selection shape
+-- that no longer exists.
+--
+-- It is NOT dropped. CLAUDE.md §8 forbids dropping existing schema
+-- without explicit instruction, and 0031 is APPLIED — so this note is
+-- the record, so that the next person reading those 0268 plan lines
+-- knows the index is retained deliberately and not still load-bearing.
 --
 -- ══════════════════════════════════════════════════════════════════════
 -- 2. bimi_first_seen_at — PRESENCE ONLY, NEVER ABSENCE
@@ -157,6 +221,28 @@
 -- has_mx = 1` row whose `bimi_first_seen_at IS NULL` spends one DNS TXT
 -- lookup, bounded by a per-run cap.
 --
+-- ── WHAT "RECURRING" ACTUALLY BUYS: ~47 DAYS, NOT 24 HOURS ──────────
+--
+-- State the real number, because riding the DNS checker's schedule is
+-- easy to misread as riding its 24 h CADENCE. `+24 hours` is what a
+-- row's NEXT due time is set to after a success; how often a row is
+-- actually REACHED is the population divided by the throughput. At the
+-- post-seed target of ~56,040 rows against 50 rows/tick x 24 ticks =
+-- 1,200 checks/day, a given row — and therefore its BIMI lookup — comes
+-- round about every 47 DAYS. The 24 h cadence is only reached once the
+-- due set is small relative to throughput, which at a 50-row drain it
+-- is not.
+--
+-- That is still a strict improvement on "once per row, ever", and it is
+-- the honest figure to size `BIMI_LOOKUPS_PER_RUN` and any future
+-- standalone lane against. A standalone lane would reach the eligible
+-- set far faster; what it needs first is its OWN cooldown column, since
+-- `check_due_at` only advances when the DNS lane selects the row and a
+-- BIMI pass that finds no record writes nothing (presence only), so a
+-- standalone query ordered by `check_due_at` would re-serve the same
+-- top rows every tick and never reach the rest. The objection is the
+-- cooldown, not the ordering.
+--
 -- THIS COLUMN RECORDS PRESENCE ONLY. It is stamped when a BIMI record is
 -- OBSERVED and is never written to mean "no BIMI record". That is not
 -- fastidiousness: `checkBIMIExists` (`src/email-security.ts`) catches
@@ -170,8 +256,11 @@
 -- It doubles as the lane's IDEMPOTENCY TOKEN. The alert is filed only
 -- after a guarded claim (`UPDATE ... WHERE id = ? AND
 -- bimi_first_seen_at IS NULL`) reports one changed row, and the claim is
--- released if `createAlert` throws. The per-run cap is checked BEFORE
--- the claim, so a capped row cannot burn its claim and then never alert.
+-- RELEASED on every path that does not file — a thrown `createAlert`
+-- and a MISSING BRAND ROW, which took neither branch originally and so
+-- left the row marked BIMI-recorded with no alert in existence. The
+-- per-run cap is checked BEFORE the claim, so a capped row cannot burn
+-- its claim and then never alert.
 --
 -- The BIMI alert id is deliberately NOT written to `alert_id`.
 -- `raiseUnalertedPhishingPageAlert` keys its whole existence on
@@ -180,10 +269,45 @@
 -- alert stays discoverable as `alerts.source_type = 'lookalike_scanner'
 -- AND source_id = <lookalike id> AND alert_type = 'typosquat_bimi'`.
 --
--- Its partial index is the eligible set itself (`registered = 1 AND
--- has_mx = 1 AND bimi_first_seen_at IS NULL`), so it SHRINKS as rows are
--- claimed and holds no entry for a row that has already been found to
--- publish BIMI.
+-- It gets NO index of its own — see "NO FOURTH INDEX FOR THE BEC LANE"
+-- in §1 for why the one this migration originally carried was dead.
+--
+-- ══════════════════════════════════════════════════════════════════════
+-- 3. ai_claimed_at — THE HAIKU LIFETIME GATE'S CLAIM TOKEN
+-- ══════════════════════════════════════════════════════════════════════
+--
+-- The compositor's AI call is gated "once per row per LIFETIME" on
+-- `ai_assessment IS NULL`, and that gate was a READ of the SELECT
+-- snapshot — a read-then-act, where the BIMI lane (whose cost is a DNS
+-- lookup rather than tokens) already used a guarded claim. Concurrent
+-- `checkLookalikeBatch` runs over first-contact rows, which is exactly
+-- what repeated "Scan now" presses produce, can each read NULL and each
+-- spend on the same row; and with `agent_budget_rollups` empty for the
+-- month there is nothing below the per-run cap to catch it.
+--
+-- WHY A DEDICATED COLUMN AND NOT A SENTINEL IN `ai_assessment`. The
+-- symmetric move — claim the deliverable itself, as the BIMI lane does
+-- — would introduce a new silent-loss path rather than close one. A
+-- worker killed between claim and persist leaves the sentinel behind;
+-- the sentinel is not NULL, so the gate never fires again, the
+-- compositor's base level falls back to the STORED level (LOW on a row
+-- that never got one), and BOTH infrastructure boosts are MEDIUM-only
+-- — so a mail+web row would sit at LOW forever and never clear the HIGH
+-- alert floor. A dedicated column keeps the gate on `ai_assessment IS
+-- NULL` and makes the claim recoverable.
+--
+-- Staleness must be keyed on a column NOTHING ELSE WRITES, which is the
+-- other half of the argument: `updated_at` is refreshed by the success
+-- path on every pass BEFORE the claim is attempted, so a stale claim
+-- keyed on it could never be DETECTED as stale. Nothing but the claim
+-- and its release writes this column, so `ai_claimed_at <=
+-- datetime('now','-1 hour')` is a true statement about an abandoned
+-- claim — two orders of magnitude above any run's wall-clock budget and
+-- far inside the row's own cadence.
+--
+-- NO INDEX. Both statements are PK seeks (`WHERE id = ?` with the
+-- claim's guards as residual terms); nothing ever selects a cohort on
+-- it. An index here would be `idx_lookalike_bimi_due`'s mistake again.
 --
 -- ══════════════════════════════════════════════════════════════════════
 --
@@ -200,6 +324,7 @@
 ALTER TABLE lookalike_domains ADD COLUMN check_due_at TEXT;
 ALTER TABLE lookalike_domains ADD COLUMN check_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE lookalike_domains ADD COLUMN bimi_first_seen_at TEXT;
+ALTER TABLE lookalike_domains ADD COLUMN ai_claimed_at TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_lookalike_due_first_contact
   ON lookalike_domains(check_due_at)
@@ -209,13 +334,13 @@ CREATE INDEX IF NOT EXISTS idx_lookalike_due_recheck
   ON lookalike_domains(check_due_at)
   WHERE check_due_at IS NOT NULL AND baseline_established_at IS NOT NULL;
 
+-- Keyed on `last_check_failed_at`, not `id`: it serves Flight Control's
+-- `COUNT(*) WHERE check_due_at IS NULL` either way, and only this key
+-- also makes the un-park sweep's `last_check_failed_at <= ? ORDER BY
+-- last_check_failed_at ASC` an index range scan in index order.
 CREATE INDEX IF NOT EXISTS idx_lookalike_parked
-  ON lookalike_domains(id)
+  ON lookalike_domains(last_check_failed_at)
   WHERE check_due_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_lookalike_bimi_due
-  ON lookalike_domains(registered, has_mx)
-  WHERE registered = 1 AND has_mx = 1 AND bimi_first_seen_at IS NULL;
 
 -- ── Backfill: put every existing row on the new schedule ─────────────
 --

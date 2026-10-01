@@ -50,9 +50,14 @@ vi.mock("../src/scanners/lookalike-page-analysis", async (importOriginal) => {
   return { ...actual, runPageAnalysisForDomain: pageAnalysisSpy };
 });
 
-const { checkLookalikeBatch, checkLookalikeBatchForBrand, generateAndStoreLookalikes } =
-  await import("../src/scanners/lookalike-domains");
+const {
+  checkLookalikeBatch, checkLookalikeBatchForBrand, generateAndStoreLookalikes,
+  lookalikeCheckDefects,
+} = await import("../src/scanners/lookalike-domains");
 const { handleScanLookalikes } = await import("../src/handlers/lookalikeDomains");
+const { LOOKALIKE_UNPARK_PER_RUN } = await import("../src/lib/lookalike-budget");
+type LookalikeCheckSummary =
+  Awaited<ReturnType<typeof checkLookalikeBatch>>;
 
 // ─── A minimal D1 shim over node:sqlite ───────────────────────────
 
@@ -104,6 +109,20 @@ interface Harness {
   row(id: string): Record<string, unknown>;
   /** Domains handed to `checkDomain` this run, in call order. */
   checked(): string[];
+  /**
+   * Make every `.run()` whose SQL contains `fragment` throw.
+   *
+   * Needed because the one defect this round's blocker is about — the
+   * split read-modify-write on `check_attempts` — is only reachable from
+   * a throw that happens AFTER `persistCheckFacts` has reset the column.
+   * Mocking a collaborator cannot produce that: `checkDomain` throws
+   * BEFORE the reset, and every other collaborator past it
+   * (`checkBIMIExists`, `analyzeWithHaiku`, `runPageAnalysisForDomain`,
+   * `createAlert` on the BIMI path) is caught by a narrower try/catch.
+   * The BEC lane's guarded CLAIM is the statement that is deliberately
+   * un-caught, and it runs on every due pass of a registered + MX row.
+   */
+  failOn(fragment: string): void;
 }
 
 function harness(): Harness {
@@ -116,6 +135,8 @@ function harness(): Harness {
   ).run();
 
   type Bound = { sql: string; params: unknown[] };
+
+  const failing: string[] = [];
 
   const DB = {
     prepare(sql: string) {
@@ -130,6 +151,8 @@ function harness(): Harness {
             return (db.prepare(sql).get(...params) ?? null) as T | null;
           },
           async run() {
+            const hit = failing.find((f) => sql.includes(f));
+            if (hit) throw new Error(`injected D1 failure on: ${hit}`);
             return { meta: { changes: db.prepare(sql).run(...params).changes } };
           },
         };
@@ -178,6 +201,7 @@ function harness(): Harness {
         check_due_at: "2026-01-01 00:00:00",
         check_attempts: 0,
         bimi_first_seen_at: null,
+        ai_claimed_at: null,
         ...over,
       };
       const cols = Object.keys(row);
@@ -192,6 +216,9 @@ function harness(): Harness {
     },
     checked() {
       return checkDomainSpy.mock.calls.map((c) => c[0] as string);
+    },
+    failOn(fragment: string) {
+      failing.push(fragment);
     },
   };
 }
@@ -246,6 +273,45 @@ const STALE = "2026-09-01 00:00:00";
  * harness, so this says only the first.
  */
 const BASELINED = { baseline_established_at: STALE, last_checked: STALE } as const;
+
+/**
+ * An all-zero summary, taken FROM THE SOURCE rather than retyped.
+ *
+ * A run over an empty table returns `emptySummary()` verbatim, so this
+ * cannot drift out of step with the interface the way a hand-written
+ * object literal would — and a new counter added without a default would
+ * show up here rather than being silently absent.
+ */
+async function emptyLikeSummary(): Promise<LookalikeCheckSummary> {
+  return checkLookalikeBatch(harness().env);
+}
+
+/**
+ * Make the row due again AND drop `has_web`, so the next pass observes a
+ * `web_gained` transition.
+ *
+ * ── Why a bare `makeDue` is not enough to re-reach the compositor ────
+ *
+ * `compositeAndPersist` runs only on `first_contact`,
+ * `registration_gained` or an mx/web GAIN. A row that has already
+ * baselined with mail+web present yields the `none` transition on every
+ * later pass, so a deferred Haiku call (capped, thrown, or empty) is NOT
+ * in fact retried "on its next due pass" — it is retried on its next
+ * TRANSITION, which for a stable row may be never.
+ *
+ * That is a real limitation of the compositor's dispatch and not of the
+ * claim (the claim is released either way, which is what keeps the row
+ * CLAIMABLE); it is recorded in `HAIKU_CALLS_PER_RUN`'s docstring rather
+ * than papered over here, and these tests drive the transition
+ * explicitly rather than asserting a cadence the code does not have.
+ */
+async function webFlap(h: Harness, id: string): Promise<void> {
+  await h.env.DB.prepare(
+    `UPDATE lookalike_domains
+     SET has_web = 0, check_due_at = datetime('now', '-1 hour')
+     WHERE id = ?`,
+  ).bind(id).run();
+}
 
 /** Re-admit a row the backoff ladder deferred, so the next tick sees it. */
 async function makeDue(h: Harness, id: string): Promise<void> {
@@ -1299,5 +1365,559 @@ describe.skipIf(!hasSqlite())("generateAndStoreLookalikes — new rows are DUE, 
         WHERE check_due_at != '2099-01-01 00:00:00' OR check_attempts != 4`,
     ).first<{ n: number }>();
     expect(moved!.n).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// BLOCKER — the attempt counter must ACCUMULATE and the ladder must END
+// ═══════════════════════════════════════════════════════════════════
+//
+// `applyCheckBackoff` computed `attempts` from the SELECT SNAPSHOT to
+// pick the ladder step, while the UPDATE wrote `check_attempts =
+// check_attempts + 1` from the LIVE column. Those agree only while
+// nothing writes the column in between — and `persistCheckFacts` sets
+// `check_attempts = 0` and runs BEFORE the BIMI lane, the compositor,
+// Haiku, the page fetch, `createAlert` and `recordTakedownDown`, i.e.
+// before every throw the per-row catch exists to absorb.
+//
+// The result was a FIXED POINT:
+//
+//   tick 1  snapshot 0 -> step +60m  -> persist resets to 0 -> write 1
+//   tick 2  snapshot 1 -> step +240m -> persist resets to 0 -> write 1
+//   tick 3  snapshot 1 -> step +240m -> persist resets to 0 -> write 1
+//
+// `isTerminalAttempt(ladder, 2)` is false, so the row NEVER parked: it
+// was re-selected ~6x/day forever at the HEAD of its cohort (+240m beats
+// every healthy row's +24h), twenty such rows consumed the entire
+// 20-slot re-check floor, and `row_errors` stayed non-zero on every run
+// — pinning the agent diagnostic at `severity: "high"` with no
+// resolution path.
+//
+// The two pre-existing error-isolation tests above assert only "cooled
+// down" and "not re-selected NEXT tick", both of which the broken
+// version satisfied. These assert the two things it did not.
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — the backoff ladder terminates", () => {
+  /**
+   * A row that throws PAST `persistCheckFacts` on every due pass.
+   *
+   * The BEC lane's guarded claim is the statement to fail: it is the one
+   * un-caught `.run()` after the success path, and it runs on every due
+   * pass of a registered + MX row whose `bimi_first_seen_at IS NULL`.
+   * Every other post-persist collaborator is wrapped in a narrower
+   * try/catch, which is exactly why this defect survived.
+   */
+  function poisoned(h: Harness): string {
+    const id = h.seed({
+      ...BASELINED,
+      registered: 1,
+      has_mx: 1,
+      has_web: 1,
+      resolves_to: "5.6.7.8",
+    });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    checkBIMISpy.mockResolvedValue(true);
+    h.failOn("SET bimi_first_seen_at = datetime('now')");
+    return id;
+  }
+
+  it("ACCUMULATES the attempt counter across consecutive failures", async () => {
+    // Mutation-checked: restoring `check_attempts = check_attempts + 1`
+    // in `stampCheckFailure` pins every reading below at 1.
+    const h = harness();
+    const id = poisoned(h);
+
+    const seen: number[] = [];
+    for (let tick = 1; tick <= 4; tick += 1) {
+      const summary = await checkLookalikeBatch(h.env);
+      expect(summary.row_errors, `tick ${tick} threw`).toBe(1);
+      seen.push(h.row(id).check_attempts as number);
+      await makeDue(h, id);
+    }
+
+    expect(seen).toEqual([1, 2, 3, 4]);
+  });
+
+  it("EVENTUALLY PARKS the row instead of re-admitting it forever", async () => {
+    // The consequence that matters. `LOOKALIKE_CHECK_LADDER` parks past
+    // 8 consecutive failures, so the 9th stamp writes `check_due_at =
+    // NULL` and the row holds no entry in either partial cohort index.
+    // Mutation-checked: with the old `check_attempts + 1` the counter
+    // sticks at 1 and this loop runs out without ever parking.
+    const h = harness();
+    const id = poisoned(h);
+
+    let parkedOnTick = 0;
+    for (let tick = 1; tick <= 12 && parkedOnTick === 0; tick += 1) {
+      const summary = await checkLookalikeBatch(h.env);
+      if (summary.rows_parked > 0) {
+        parkedOnTick = tick;
+        break;
+      }
+      await makeDue(h, id);
+    }
+
+    expect(parkedOnTick, "the ladder must terminate").toBe(9);
+    expect(h.row(id).check_due_at).toBeNull();
+    expect(h.row(id).check_attempts).toBe(9);
+
+    // ...and a parked row is genuinely out of the queue: the next tick
+    // selects nothing at all, rather than serving it again.
+    const after = await checkLookalikeBatch(h.env);
+    expect(after.checked).toBe(0);
+  });
+
+  it("a SUCCESSFUL observation resets the counter, so recovery is real", async () => {
+    const h = harness();
+    const id = poisoned(h);
+    await checkLookalikeBatch(h.env);
+    await checkLookalikeBatch(h.env); // not due — no-op, proves the gate
+    await makeDue(h, id);
+    await checkLookalikeBatch(h.env);
+    expect(h.row(id).check_attempts).toBe(2);
+
+    // The resolver comes back AND the claim stops failing.
+    const clean = harness();
+    const good = clean.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 1, check_attempts: 5 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    checkBIMISpy.mockResolvedValue(false);
+    await checkLookalikeBatch(clean.env);
+    expect(clean.row(good).check_attempts).toBe(0);
+  });
+
+  it("the unresolved-DNS branch accumulates too — the realistic trigger", async () => {
+    // A sustained `cloudflare-dns.com` outage or rate-limit (a non-ok
+    // DoH reply lands in the same branch as a timeout) is the way a
+    // whole cohort actually parks, and it never reaches
+    // `persistCheckFacts` at all. Pinned so the fix cannot regress the
+    // path that was already correct.
+    const h = harness();
+    const id = h.seed(BASELINED);
+    checkDomainSpy.mockResolvedValue(NO_ANSWER);
+
+    const seen: number[] = [];
+    for (let tick = 1; tick <= 3; tick += 1) {
+      const summary = await checkLookalikeBatch(h.env);
+      expect(summary.checks_unresolved).toBe(1);
+      expect(summary.row_errors, "an unanswered probe is not a defect").toBe(0);
+      seen.push(h.row(id).check_attempts as number);
+      await makeDue(h, id);
+    }
+    expect(seen).toEqual([1, 2, 3]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// The swallowed-error counters, and the one permanent-loss path
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — swallowed failures are COUNTED", () => {
+  it("a missing brand row RELEASES the BIMI claim instead of losing the finding", async () => {
+    // The security-lane find. `loadBrandContext` returning falsy took
+    // NEITHER branch of the lane's claim-then-act protocol: `if (brand)`
+    // was simply skipped, nothing threw, so the `catch`'s release never
+    // ran. The row was left permanently marked BIMI-recorded with NO
+    // ALERT IN EXISTENCE, and the lane's own eligibility predicate
+    // (`bimi_first_seen_at IS NULL`) would never offer it again.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }),
+    );
+    checkBIMISpy.mockResolvedValue(true);
+    // The brand the row points at no longer exists.
+    await h.env.DB.prepare(`DELETE FROM brands WHERE id = 'b1'`).run();
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.bimi_alerts).toBe(0);
+    // VISIBLE on `agent_runs`, not only in the log stream (CLAUDE.md §11).
+    expect(summary.bimi_alert_errors).toBe(1);
+    expect(summary.row_errors, "contained by the lane, not a row error").toBe(0);
+    // THE CLAIM IS RELEASED. Mutation-checked: removing the release call
+    // leaves this non-null and the finding is gone forever.
+    expect(h.row(id).bimi_first_seen_at).toBeNull();
+
+    // ...so once the brand is back, the very next pass files.
+    await h.env.DB.prepare(
+      `INSERT INTO brands (id, name, canonical_domain, tier)
+       VALUES ('b1', 'Acme', 'acme.example', 'monitored')`,
+    ).run();
+    await makeDue(h, id);
+    const retry = await checkLookalikeBatch(h.env);
+    expect(retry.bimi_alerts).toBe(1);
+    expect(retry.bimi_alert_errors).toBe(0);
+  });
+
+  it("a thrown typosquat_bimi alert is counted, not just logged", async () => {
+    // The sibling test above this file's error-isolation block already
+    // proves the claim is released. What it could not see is that the
+    // failure existed at all: `row_errors` is 0 (the lane contains it)
+    // and nothing else reached `agent_runs`.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }),
+    );
+    checkBIMISpy.mockResolvedValue(true);
+    createAlertSpy.mockRejectedValue(new Error("alerts insert failed"));
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.row_errors).toBe(0);
+    expect(summary.bimi_alert_errors).toBe(1);
+    expect(h.row(id).bimi_first_seen_at).toBeNull();
+  });
+
+  it("a FAILED claim release is counted — the last silent-permanent-loss path", async () => {
+    // If the release itself fails the row IS left marked BIMI-recorded
+    // with no alert anywhere, which the lane will never offer again.
+    // Nothing can undo that from here, so the only correct behaviour is
+    // to make it visible.
+    const h = harness();
+    h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }),
+    );
+    checkBIMISpy.mockResolvedValue(true);
+    createAlertSpy.mockRejectedValue(new Error("alerts insert failed"));
+    h.failOn("SET bimi_first_seen_at = NULL");
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.bimi_alert_errors).toBe(1);
+    expect(summary.bimi_claim_release_failures).toBe(1);
+    // And it must not escalate into a row error — the lane still has to
+    // contain it so the rest of the batch runs.
+    expect(summary.row_errors).toBe(0);
+  });
+
+  it("a Haiku throw is counted — an AI outage must not raise HIGH alerts invisibly", async () => {
+    const h = harness();
+    h.seed({ ...BASELINED, registered: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockRejectedValue(new Error("gateway 529"));
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.ai_assessment_errors).toBe(1);
+    expect(summary.haiku_calls, "the spend was attempted and must be reported").toBe(1);
+    expect(summary.row_errors).toBe(0);
+  });
+
+  it("a Haiku throw RELEASES the claim, so the row is deferred and not retired", async () => {
+    // The claim's own failure mode, and the reason the claim lives in
+    // its OWN column rather than as a sentinel in `ai_assessment`: a
+    // claim nobody gives back permanently retires the row from the
+    // lane, and `aiAttempted` is then false on every later pass — so the
+    // compositor's base falls back to the stored LOW and BOTH
+    // infrastructure boosts are MEDIUM-only. A mail+web row would sit at
+    // LOW forever and never clear the HIGH alert floor.
+    //
+    // Mutation-checked: deleting the `releaseHaikuClaim` call makes the
+    // retry spend nothing and the row stay at LOW.
+    //
+    // The retry is driven by a web FLAP rather than a bare re-check,
+    // and that is not test convenience — see
+    // `webFlap` below for the real limit it works around.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0, resolves_to: "5.6.7.8" });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockRejectedValue(new Error("gateway 529"));
+
+    await checkLookalikeBatch(h.env);
+    expect(analyzeWithHaikuSpy, "the pass did spend").toHaveBeenCalledTimes(1);
+    expect(h.row(id).ai_claimed_at, "the claim was given back").toBeNull();
+    expect(h.row(id).ai_assessment).toBeNull();
+
+    // A later pass claims again and succeeds.
+    await webFlap(h, id);
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("CRITICAL"));
+    const retry = await checkLookalikeBatch(h.env);
+
+    expect(retry.haiku_calls).toBe(1);
+    expect(retry.ai_assessment_errors).toBe(0);
+    expect(h.row(id).ai_assessment).toBe("assessed CRITICAL");
+    expect(h.row(id).threat_level).toBe("CRITICAL");
+  });
+
+  it("an assessment that LANDED keeps the claim, so the lifetime bound holds", async () => {
+    // The other direction: the release must be conditional on "this pass
+    // produced nothing", or the claim buys nothing at all. Driven
+    // through a second COMPOSITOR pass (not a bare re-check, which
+    // would not reach the gate at all — see `webFlap`), so this tests
+    // the gate rather than the dispatch.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0, resolves_to: "5.6.7.8" });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+
+    await checkLookalikeBatch(h.env);
+    expect(h.row(id).ai_claimed_at).not.toBeNull();
+    expect(h.row(id).ai_assessment).toBe("assessed HIGH");
+
+    await webFlap(h, id);
+    const second = await checkLookalikeBatch(h.env);
+    expect(second.haiku_calls, "once per row per LIFETIME").toBe(0);
+    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("an inline page-analysis throw is counted", async () => {
+    const h = harness();
+    h.seed({ ...BASELINED, registered: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+    pageAnalysisSpy.mockRejectedValue(new Error("page write failed"));
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.inline_page_errors).toBe(1);
+    expect(summary.row_errors).toBe(0);
+  });
+
+  it("a cooldown stamp that fails is counted — the row is NOT backed off", async () => {
+    // The consequence is specific: an un-stamped row is re-selected on
+    // the very next tick, which is the hot loop per-row isolation exists
+    // to prevent.
+    const h = harness();
+    h.seed(BASELINED);
+    checkDomainSpy.mockResolvedValue(NO_ANSWER);
+    h.failOn("SET last_check_failed_at = datetime('now')");
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.checks_unresolved).toBe(1);
+    expect(summary.cooldown_stamp_failures).toBe(1);
+    expect(summary.rows_parked).toBe(0);
+  });
+
+  it("lookalikeCheckDefects folds every defect counter, and nothing else", async () => {
+    // The agent's severity reads THIS, so an added counter cannot
+    // silently miss the decision. The non-members are deliberate: an
+    // unanswered DNS probe, a park, a re-admission and a budget cap are
+    // all the system working.
+    const clean = await emptyLikeSummary();
+    expect(lookalikeCheckDefects(clean)).toBe(0);
+    for (const k of [
+      "row_errors", "bimi_alert_errors", "bimi_claim_release_failures",
+      "cooldown_stamp_failures", "ai_assessment_errors", "inline_page_errors",
+    ] as const) {
+      expect(lookalikeCheckDefects({ ...clean, [k]: 3 }), k).toBe(3);
+    }
+    for (const k of [
+      "checks_unresolved", "rows_parked", "rows_unparked",
+      "alerts_withheld_below_floor", "baselines_suppressed",
+    ] as const) {
+      expect(lookalikeCheckDefects({ ...clean, [k]: 3 }), k).toBe(0);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// A parked row has an AUTOMATIC way back
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — the un-park sweep", () => {
+  it("re-admits a long-parked row and checks it in the same tick", async () => {
+    // Four writers touch `check_due_at` and three of them require the
+    // row to have been SELECTED, which a parked row is not — so the only
+    // exit was the MANUAL per-brand rescan. A row parked before its
+    // first successful observation also still carries the seeder's
+    // `registered = 0 / has_web = 0 / resolves_to NULL`, which makes it
+    // invisible to BOTH page-analysis cohorts as well.
+    const h = harness();
+    const id = h.seed({
+      check_due_at: null,
+      check_attempts: 9,
+      last_check_failed_at: "2020-01-01 00:00:00",
+    });
+    checkDomainSpy.mockResolvedValue(answer());
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.rows_unparked).toBe(1);
+    expect(summary.checked, "re-admitted and checked in the same tick").toBe(1);
+    expect(h.row(id).check_due_at).not.toBeNull();
+  });
+
+  it("leaves a recently-parked row alone, so the cadence is long not instant", async () => {
+    const h = harness();
+    const id = h.seed({
+      check_due_at: null,
+      check_attempts: 9,
+      last_check_failed_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+    });
+    checkDomainSpy.mockResolvedValue(answer());
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.rows_unparked).toBe(0);
+    expect(summary.checked).toBe(0);
+    expect(h.row(id).check_due_at).toBeNull();
+  });
+
+  it("a re-admitted row that fails again RE-PARKS on one probe, not a ladder replay", async () => {
+    // `check_attempts` is deliberately not reset by the sweep: resetting
+    // it would send a still-dead row back through the whole
+    // 1h/4h/12h/24h/48h ladder — ~8 further DNS probes over 10 days —
+    // every window. Past the terminal count the row is probed ONCE.
+    const h = harness();
+    const id = h.seed({
+      check_due_at: null,
+      check_attempts: 9,
+      last_check_failed_at: "2020-01-01 00:00:00",
+    });
+    checkDomainSpy.mockResolvedValue(NO_ANSWER);
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.rows_unparked).toBe(1);
+    expect(summary.checks_unresolved).toBe(1);
+    expect(summary.rows_parked, "one probe, straight back to parked").toBe(1);
+    expect(h.row(id).check_due_at).toBeNull();
+    // ...and `last_check_failed_at` moved, which is what defers the next
+    // re-admission by another whole window. That self-throttle is the
+    // whole reason this needs no cursor, no KV and no counter column.
+    expect(h.row(id).last_check_failed_at).not.toBe("2020-01-01 00:00:00");
+  });
+
+  it("a re-admitted row that SUCCEEDS rejoins the normal cadence", async () => {
+    const h = harness();
+    const id = h.seed({
+      ...BASELINED,
+      check_due_at: null,
+      check_attempts: 9,
+      last_check_failed_at: "2020-01-01 00:00:00",
+    });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+
+    await checkLookalikeBatch(h.env);
+
+    expect(h.row(id).check_attempts).toBe(0);
+    expect(h.row(id).last_check_failed_at).toBeNull();
+    expect(h.row(id).check_due_at).not.toBeNull();
+  });
+
+  it("the sweep is bounded per tick", async () => {
+    const h = harness();
+    for (let i = 0; i < 40; i += 1) {
+      h.seed({
+        check_due_at: null,
+        check_attempts: 9,
+        last_check_failed_at: `2020-01-${String((i % 28) + 1).padStart(2, "0")} 00:00:00`,
+      });
+    }
+    checkDomainSpy.mockResolvedValue(answer());
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.rows_unparked).toBe(LOOKALIKE_UNPARK_PER_RUN);
+  });
+
+  it("the brand rescan path does NOT run the global sweep", async () => {
+    // Running it from a request path would let one button press
+    // re-admit other tenants' rows. The handler's own enqueue already
+    // revives the brand being rescanned.
+    const h = harness();
+    const mine = h.seed({
+      check_due_at: null, check_attempts: 9, last_check_failed_at: "2020-01-01 00:00:00",
+    });
+    checkDomainSpy.mockResolvedValue(answer());
+
+    const summary = await checkLookalikeBatchForBrand(h.env, "b1");
+
+    expect(summary.rows_unparked).toBe(0);
+    expect(h.row(mine).check_due_at).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// A re-registration after a lapse IS a new event
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — lapse then re-registration", () => {
+  it("files a SECOND alert on re-registration, and re-points alert_id", async () => {
+    // A judgement call, pinned rather than left to a reading of the
+    // code. `registration_gained` passes `allowAlert: true`
+    // UNCONDITIONALLY — unlike the mx/web path, which bounds itself on
+    // `alert_id IS NULL` — so a domain cycling registered -> lapsed ->
+    // re-registered files one alert PER CYCLE.
+    //
+    // That is intended: a re-registration after a lapse is typically a
+    // NEW REGISTRANT, which is the thing this platform exists to
+    // notice, and suppressing it would make the second appearance of a
+    // squat invisible forever. What it means is that "one alert per row
+    // per lifetime" is true of the MX/WEB path, NOT of the row — and no
+    // test exercised this cycle at all before now.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 1, resolves_to: "5.6.7.8" });
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+    createAlertSpy.mockResolvedValue("alert_first");
+
+    // ── The lapse. An ANSWERED 1 -> 0.
+    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+    const lapse = await checkLookalikeBatch(h.env);
+    expect(lapse.registrations_lost).toBe(1);
+    expect(h.row(id).registered).toBe(0);
+    expect(createAlertSpy, "a lapse never alerts").not.toHaveBeenCalled();
+
+    // ── The re-registration, one cadence later.
+    await makeDue(h, id);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "9.9.9.9", hasMx: true, hasWeb: true }),
+    );
+    createAlertSpy.mockResolvedValue("alert_second");
+    const regained = await checkLookalikeBatch(h.env);
+
+    expect(regained.new_registrations).toBe(1);
+    const types = createAlertSpy.mock.calls.map((c) => (c[1] as { alertType: string }).alertType);
+    expect(types).toEqual(["lookalike_domain_active"]);
+    expect(h.row(id).alert_id).toBe("alert_second");
+
+    // ── And a THIRD cycle alerts again, which is the property the
+    // absent `alert_id` guard actually expresses.
+    await makeDue(h, id);
+    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+    await checkLookalikeBatch(h.env);
+    await makeDue(h, id);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "9.9.9.9", hasMx: true, hasWeb: true }),
+    );
+    createAlertSpy.mockResolvedValue("alert_third");
+    await checkLookalikeBatch(h.env);
+    expect(h.row(id).alert_id).toBe("alert_third");
+  });
+
+  it("does NOT re-stamp first_seen on the second appearance", async () => {
+    // The guard that IS lifetime-scoped: `WHERE id = ? AND first_seen IS
+    // NULL`. The alert repeats; the recorded appearance date does not.
+    const h = harness();
+    const id = h.seed({
+      ...BASELINED, registered: 1, has_mx: 1, has_web: 1,
+      first_seen: "2026-03-04 05:06:07",
+    });
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+
+    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+    await checkLookalikeBatch(h.env);
+    await makeDue(h, id);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "9.9.9.9", hasMx: true, hasWeb: true }),
+    );
+    await checkLookalikeBatch(h.env);
+
+    expect(h.row(id).first_seen).toBe("2026-03-04 05:06:07");
   });
 });
