@@ -83,7 +83,7 @@ interface EmailRepResult {
 // ─── Helpers ───────────────────────────────────────────────────────
 
 async function loadBrands(db: D1Database): Promise<BrandRow[]> {
-  const rows = await db.prepare("SELECT id, name, canonical_domain FROM brands").all<BrandRow>();
+  const rows = await db.prepare("SELECT id, name, canonical_domain, tier FROM brands").all<BrandRow>();
   return rows.results;
 }
 

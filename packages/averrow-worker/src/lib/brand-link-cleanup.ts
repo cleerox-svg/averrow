@@ -79,6 +79,7 @@ export interface LinkRow {
   brand_match_method: string | null;
   brand_name: string | null;
   brand_canonical: string | null;
+  brand_tier?: string | null;
   source_feed: string | null;
 }
 
@@ -162,6 +163,7 @@ export function decideLink(
       id: row.target_brand_id,
       name: row.brand_name,
       canonical_domain: row.brand_canonical ?? "",
+      tier: row.brand_tier,
     };
     for (const h of haystacks) {
       const method = matchBrandToHost(h, current);
@@ -280,7 +282,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical, t.source_feed
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, t.source_feed
        FROM threats t
        LEFT JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL

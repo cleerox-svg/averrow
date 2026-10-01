@@ -161,7 +161,7 @@ export const analystAgent: AgentModule = {
 
     // Load known brands with their keyword/alias data for cheap pre-matching
     const brands = await env.DB.prepare(
-      "SELECT id, name, brand_keywords, aliases FROM brands ORDER BY threat_count DESC LIMIT 100"
+      "SELECT id, name, brand_keywords, aliases FROM brands WHERE tier IN ('monitored', 'customer') ORDER BY threat_count DESC LIMIT 100"
     ).all<{ id: string; name: string; brand_keywords: string | null; aliases: string | null }>();
     const brandNames = brands.results.map((b) => b.name);
 
