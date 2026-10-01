@@ -39,6 +39,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { MONITORED_BRAND_PREDICATE_SQL } from "../src/lib/monitored-brands";
+import { applyLookalikeSchema, lookalikeSchema } from "./lookalike-schema";
 
 type Stmt = {
   all(...params: unknown[]): unknown[];
@@ -69,7 +70,9 @@ function read(rel: string): string {
 const scannerSrc = read("../src/scanners/lookalike-domains.ts");
 const analyzerSrc = read("../src/scanners/lookalike-page-analysis.ts");
 const handlerSrc = read("../src/handlers/lookalikeDomains.ts");
-const migration0031 = read("../migrations/0031_lookalike_domains.sql");
+// 0031's CREATE TABLE + indexes now arrive via `applyLookalikeSchema`;
+// 0268 is still read directly because two assertions are ABOUT the
+// migration's text (that it refreshes statistics, table-scoped).
 const migration0268 = read("../migrations/0268_lookalike_check_failure_cooldown.sql");
 
 /**
@@ -124,32 +127,14 @@ const SQL = {
 };
 
 // ─── Schema ───────────────────────────────────────────────────────
-// The column set the statements above touch. Indexes come from the
-// MIGRATION FILES rather than being retyped, so a plan assertion below
-// fails if a migration's index definition drifts from what the query
-// needs (which is exactly how a "cheap" query becomes a full scan).
+// Table AND indexes come from the MIGRATION FILES via
+// `test/lookalike-schema.ts` — see that module for why hand-writing
+// either is the defect this file exists to correct. `brands` is the only
+// hand-written table left: no statement here writes to it, it is joined
+// on its primary key alone, and it is not the table whose column set has
+// drifted.
 
 const DDL = `
-  CREATE TABLE lookalike_domains (
-    id TEXT PRIMARY KEY,
-    brand_id TEXT NOT NULL,
-    domain TEXT NOT NULL,
-    permutation_type TEXT,
-    registered INTEGER DEFAULT 0,
-    resolves_to TEXT,
-    has_mx INTEGER DEFAULT 0,
-    has_web INTEGER DEFAULT 0,
-    first_seen TEXT,
-    last_checked TEXT,
-    threat_level TEXT DEFAULT 'LOW',
-    alert_id TEXT,
-    unicode_domain TEXT,
-    page_fetched_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    baseline_established_at TEXT,
-    last_check_failed_at TEXT
-  );
   CREATE TABLE brands (
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -157,19 +142,6 @@ const DDL = `
     tier TEXT
   );
 `;
-
-/**
- * Every `CREATE INDEX ... ;` statement in a migration file.
- *
- * `--` comments are stripped first: both migrations discuss indexes in
- * prose ("ADD COLUMN / CREATE INDEX, never DROP/ALTER"), and a match
- * starting inside a comment would run to the next real semicolon and
- * swallow the statement after it.
- */
-function indexStatements(migration: string): string[] {
-  const code = migration.replace(/^\s*--.*$/gm, "");
-  return [...code.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX[\s\S]*?;/gi)].map((m) => m[0]);
-}
 
 describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   let db: InstanceType<SqliteCtor>;
@@ -216,12 +188,14 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   beforeAll(() => {
     db = new DatabaseSync!(":memory:");
     db.exec(DDL);
-    const indexes = [...indexStatements(migration0031), ...indexStatements(migration0268)];
-    // The base table's four indexes plus 0268's partial page index. If a
-    // migration stops creating one of these the plan assertions below
-    // are what notice.
-    expect(indexes.length, "expected index DDL to be extracted from both migrations").toBe(5);
-    for (const stmt of indexes) db.exec(stmt);
+    applyLookalikeSchema(db);
+    // 0031's four indexes + 0227's takedown index + 0268's partial page
+    // index. If a migration stops creating one of these the plan
+    // assertions below are what notice.
+    expect(
+      lookalikeSchema().indexes.length,
+      "expected index DDL to be extracted from the migrations",
+    ).toBe(6);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 
@@ -237,9 +211,13 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   // `lookalike-domains.ts` fails the second and fourth cases here.
 
   describe("the per-check UPDATE's baseline CASE", () => {
-    /** Bind order: registered, ip, hasMx, hasWeb, firstContactFlag, id. */
+    /**
+     * Bind order: registered, aAnswered, ip, mxAnswered, hasMx,
+     * webAnswered, hasWeb, firstContactFlag, id.
+     */
     function runCheck(id: string, firstContactFlag: 0 | 1, registered = 1) {
-      return db.prepare(SQL.perCheckUpdate()).run(registered, "5.6.7.8", 1, 1, firstContactFlag, id);
+      return db.prepare(SQL.perCheckUpdate())
+        .run(registered, 1, "5.6.7.8", 1, 1, 1, 1, firstContactFlag, id);
     }
 
     it("stamps the column on first contact", () => {
@@ -283,12 +261,94 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
 
     it("writes the DNS facts it is given", () => {
       const id = insert();
-      db.prepare(SQL.perCheckUpdate()).run(1, "9.9.9.9", 1, 0, 1, id);
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "9.9.9.9", 1, 1, 1, 0, 1, id);
       const row = fetch(id);
       expect(row.registered).toBe(1);
       expect(row.resolves_to).toBe("9.9.9.9");
       expect(row.has_mx).toBe(1);
       expect(row.has_web).toBe(0);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // B3 — an UNANSWERED probe must not overwrite a known value
+  // ═════════════════════════════════════════════════════════════════
+  //
+  // `resolved` is scoped to `registered` alone (a SEEN A record
+  // short-circuits it), so this same UPDATE can be reached with any of
+  // the three per-field probes having learned nothing. It used to write
+  // all three unconditionally.
+  //
+  // Mutation-checked: replacing any one arm with the bare
+  // `<column> = ?` it used to be fails the matching case here.
+
+  describe("the per-check UPDATE's per-field answer gates", () => {
+    /** A row with all three facts already KNOWN from an earlier check. */
+    function known(): string {
+      return insert({
+        registered: 1,
+        resolves_to: "5.6.7.8",
+        has_mx: 1,
+        has_web: 1,
+        last_checked: "2026-09-01 00:00:00",
+      });
+    }
+
+    it("an unanswered WEB probe keeps the stored has_web", () => {
+      // The one with the sharpest consequence: both page-analysis
+      // cohorts require `has_web = 1`, and the page pass is the only
+      // producer that can still alert on a row whose `registered === 0`
+      // one-shot has already fired. Writing 0 here from a 3s timeout
+      // removed the row's last path to an alert.
+      const id = known();
+      // registered, aAnswered, ip, mxAnswered, hasMx, webAnswered=0, hasWeb=0
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 1, 1, 0, 0, 0, id);
+      expect(fetch(id).has_web).toBe(1);
+    });
+
+    it("an unanswered MX probe keeps the stored has_mx", () => {
+      // A answers with a record -> `resolved` true -> this branch runs,
+      // while the MX query timed out. `hasMx = false` over a stored 1
+      // erases the mail evidence that IS the BEC-precursor signal.
+      const id = known();
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 0, 0, 1, 1, 0, id);
+      expect(fetch(id).has_mx).toBe(1);
+    });
+
+    it("an unanswered A probe keeps the stored resolves_to", () => {
+      // MX answers, A times out: `registered` is true, `resolved` is
+      // true, and `result.ip` is undefined. `result.ip ?? null` then
+      // ERASED a known IP — and both page cohorts require
+      // `resolves_to IS NOT NULL`.
+      const id = known();
+      db.prepare(SQL.perCheckUpdate()).run(1, 0, null, 1, 1, 1, 1, 0, id);
+      expect(fetch(id).resolves_to).toBe("5.6.7.8");
+    });
+
+    it("an ANSWERED probe still writes a negative finding", () => {
+      // The other direction, which matters just as much: "we looked and
+      // there is no web server / no MX / no A record" is a real
+      // observation and must be persisted. A gate that swallowed it
+      // would make the columns write-once.
+      const id = known();
+      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 1, 0, 0, id);
+      const row = fetch(id);
+      expect(row.registered).toBe(0);
+      expect(row.resolves_to).toBeNull();
+      expect(row.has_mx).toBe(0);
+      expect(row.has_web).toBe(0);
+    });
+
+    it("registered is written unconditionally — the branch's precondition covers it", () => {
+      // This statement only runs when `resolved` is true, which is
+      // exactly the condition that makes `registered` authoritative. So
+      // there is deliberately no gate on it, and a 1 -> 0 lapse we DID
+      // observe must land.
+      const id = known();
+      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 0, 0, 0, id);
+      expect(fetch(id).registered).toBe(0);
+      // ...while the unanswered web probe still preserved its column.
+      expect(fetch(id).has_web).toBe(1);
     });
   });
 
@@ -470,8 +530,134 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   // ═════════════════════════════════════════════════════════════════
 
   describe("EXPLAIN QUERY PLAN — every cohort query is an index range scan", () => {
-    function plan(sql: string, params: unknown[]): string {
-      const rows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>;
+    /**
+     * ── WHY THIS BLOCK HAS ITS OWN DATABASES ─────────────────────────
+     *
+     * The previous version measured all four plans on the table the
+     * outer `beforeEach` had just TRUNCATED, and asserted
+     * `not.toMatch(/SCAN lookalike_domains\b/)`. Both halves were dead:
+     *
+     *   * SQLite reports the ALIAS, so the detail line for an
+     *     unindexed read of `lookalike_domains ld` is literally
+     *     `SCAN ld`. The regex could never match the string it existed
+     *     to catch — mutation-checked by deleting
+     *     `idx_lookalike_last_checked`, which produced `SCAN ld` and
+     *     left the old assertion GREEN.
+     *   * On zero rows SQLite prefers an index unconditionally, so the
+     *     plans were pinned in the one state where nothing can be
+     *     learned.
+     *
+     * So the plans are now measured on dedicated databases seeded to the
+     * projected production shape, and asserted with a bare `\bSCAN\b` —
+     * the strongest form, which all four queries genuinely satisfy.
+     *
+     * TWO databases, with and without `ANALYZE`, because the plans are
+     * statistics-dependent and a single state proves only half of it.
+     * A fresh D1 has no statistics for this table; a D1 that has run
+     * 0123's bare `ANALYZE;` (or 0268's own, added in this round) has
+     * measured ones.
+     *
+     * ── WHY THE TIMESTAMPS ARE PER-ROW ────────────────────────────────
+     *
+     * `last_checked` / `page_fetched_at` are seeded with a DISTINCT
+     * stamp per row, spread over an hour, because `sqlite_stat1` records
+     * only average rows-per-value and the plan turns on it. A fixture
+     * that seeds two constant timestamps drives that average to
+     * 18,670-of-56,010 and the planner then emits `SCAN ld` for the
+     * first-contact cohort — measured, and measured to flip back at
+     * three or more distinct values. Production stamps `datetime('now')`
+     * per row at 50 rows/tick, so it carries thousands of distinct
+     * values and is nowhere near that regime. An empty table and a
+     * two-value fixture are therefore misleading in OPPOSITE directions,
+     * and neither is what this block should be asserting against.
+     */
+    const ROWS = 56_010;
+    const BRANDS = 1_867;
+
+    let planDb: InstanceType<SqliteCtor>;
+    let analyzedDb: InstanceType<SqliteCtor>;
+
+    function seeded(analyze: boolean): InstanceType<SqliteCtor> {
+      const fresh = new DatabaseSync!(":memory:");
+      fresh.exec(DDL);
+      applyLookalikeSchema(fresh);
+
+      const bi = fresh.prepare(
+        `INSERT INTO brands (id, name, canonical_domain, tier) VALUES (?, ?, ?, ?)`,
+      );
+      fresh.exec("BEGIN");
+      for (let i = 0; i < BRANDS + 33; i += 1) {
+        bi.run(`b${i}`, `B${i}`, `b${i}.example`, i < BRANDS ? "monitored" : "tracked");
+      }
+      // The production mix the population comments in
+      // `scanners/lookalike-domains.ts` and
+      // `scanners/lookalike-page-analysis.ts` project: ~70% of candidate
+      // rows never checked, 25% registered, ~70% of those with a web
+      // server, and a fifth of those already page-analyzed. Every cohort
+      // predicate therefore selects a NON-EMPTY, non-trivial slice.
+      //
+      // Timestamps are computed RELATIVE TO THE CLOCK (not hardcoded
+      // dates, which silently age out of their own 24-hour window and
+      // empty the cohort they exist to populate) and are DISTINCT PER
+      // ROW (see the block docstring: a low-cardinality fixture changes
+      // the plan). `stale` is comfortably outside the 24 h cadence,
+      // `fresh` comfortably inside it.
+      const stamp = (base: number, slot: number): string =>
+        new Date(base + slot * 1000).toISOString().replace("T", " ").slice(0, 19);
+      const now = Date.now();
+      const staleBase = now - 30 * 24 * 3600_000;
+      const freshBase = now - 3600_000;
+
+      const li = fresh.prepare(
+        `INSERT INTO lookalike_domains
+           (id, brand_id, domain, permutation_type, registered, resolves_to,
+            has_mx, has_web, last_checked, page_fetched_at)
+         VALUES (?, ?, ?, 'replacement', ?, ?, ?, ?, ?, ?)`,
+      );
+      let checkSlot = 0;
+      let pageSlot = 0;
+      for (let i = 0; i < ROWS; i += 1) {
+        const registered = i % 4 === 0 ? 1 : 0;
+        const hasWeb = registered === 1 && i % 10 < 7 ? 1 : 0;
+        // 30% checked, half of those stale. Each gets its own second.
+        let lastChecked: string | null = null;
+        if (i % 10 < 3) {
+          const slot = checkSlot++;
+          lastChecked = stamp(slot % 2 === 0 ? staleBase : freshBase, slot % 1800);
+        }
+        // A fifth of the has_web rows already page-analyzed, half stale.
+        // `hasWeb && i % 5 === 0` forces `i % 20 === 0`, so the
+        // stale/fresh split must NOT be keyed on `i % 2` — that made
+        // every page row fresh and emptied the re-analysis cohort.
+        let pageFetched: string | null = null;
+        if (hasWeb === 1 && i % 5 === 0) {
+          const slot = pageSlot++;
+          pageFetched = stamp(slot % 2 === 0 ? staleBase : freshBase, slot % 1800);
+        }
+        li.run(
+          `l${i}`,
+          `b${i % BRANDS}`,
+          `acm3-${i}.example`,
+          registered,
+          registered === 1 ? "1.2.3.4" : null,
+          registered === 1 && i % 3 === 0 ? 1 : 0,
+          hasWeb,
+          lastChecked,
+          pageFetched,
+        );
+      }
+      fresh.exec("COMMIT");
+      if (analyze) fresh.exec("ANALYZE");
+      return fresh;
+    }
+
+    beforeAll(() => {
+      planDb = seeded(false);
+      analyzedDb = seeded(true);
+    });
+
+    function plan(target: InstanceType<SqliteCtor>, sql: string, params: unknown[]): string {
+      const rows = target.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>;
       return rows.map((r) => r.detail).join("\n");
     }
 
@@ -482,13 +668,49 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       { label: "page / re-analysis", sql: SQL.reanalysisSelect, params: [20, 0], index: "idx_lookalike_page_due" },
     ];
 
+    it("the plan fixture is actually populated — no vacuous plan below", () => {
+      // The empty-table mistake, guarded explicitly rather than trusted.
+      const c = planDb.prepare(
+        `SELECT COUNT(*) AS n,
+                SUM(last_checked IS NULL) AS never_checked,
+                SUM(registered) AS registered,
+                SUM(page_fetched_at IS NOT NULL) AS paged
+           FROM lookalike_domains`,
+      ).get() as { n: number; never_checked: number; registered: number; paged: number };
+      expect(c.n).toBe(ROWS);
+      expect(c.never_checked).toBeGreaterThan(30_000);
+      expect(c.registered).toBeGreaterThan(10_000);
+      expect(c.paged).toBeGreaterThan(1_000);
+      // And every cohort SELECT returns rows, so a plan is being chosen
+      // for a query that has work to do.
+      for (const c2 of CASES) {
+        expect((planDb.prepare(c2.sql()).all(...c2.params) as unknown[]).length, c2.label)
+          .toBeGreaterThan(0);
+      }
+    });
+
+    // Both stat states, because a fresh D1 has no statistics for this
+    // table while one that has run 0123's bare `ANALYZE;` (or 0268's
+    // own) has measured ones — and the plans differ by statistics, not
+    // by anything in the query.
+    const STATES = (): Array<[string, InstanceType<SqliteCtor>]> => [
+      ["no statistics", planDb],
+      ["after ANALYZE", analyzedDb],
+    ];
+
     for (const c of CASES) {
       it(`${c.label} SEARCHes ${c.index} and never scans lookalike_domains`, () => {
-        const detail = plan(c.sql(), c.params);
-        expect(detail, detail).toContain(c.index);
-        // "SCAN lookalike_domains" (as opposed to "SEARCH") is the
-        // full-table read this whole arrangement exists to avoid.
-        expect(detail, detail).not.toMatch(/SCAN lookalike_domains\b/);
+        for (const [state, target] of STATES()) {
+          const detail = plan(target, c.sql(), c.params);
+          expect(detail, `${state}: ${detail}`).toContain(c.index);
+          // A BARE `\bSCAN\b`. SQLite prints the ALIAS, so an unindexed
+          // read of `lookalike_domains ld` reads `SCAN ld` and the old
+          // `/SCAN lookalike_domains\b/` could never match the string it
+          // existed to catch. Mutation-checked: dropping
+          // `idx_lookalike_last_checked` yields `SCAN ld`, which the old
+          // assertion passed and this one fails.
+          expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN\b/);
+        }
       });
     }
 
@@ -498,9 +720,69 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
         // would materialize the whole cohort — ~56,010 rows — per tick,
         // which is the cost the `NULLS FIRST` single query was paying
         // before it was split.
-        const detail = plan(c.sql(), c.params);
-        expect(detail, detail).not.toMatch(/TEMP B-TREE/i);
+        for (const [state, target] of STATES()) {
+          const detail = plan(target, c.sql(), c.params);
+          expect(detail, `${state}: ${detail}`).not.toMatch(/TEMP B-TREE/i);
+        }
       });
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // What the first-contact plan actually depends on
+    // ═════════════════════════════════════════════════════════════════
+
+    it("0268 refreshes statistics, and the plans hold with them", () => {
+      // The sibling convention (0099/0100/0101/0123/0197/0200) and the
+      // reason it is safe here, asserted together: measured statistics
+      // keep all four plans, so the ANALYZE this round adds to 0268 is
+      // the sibling behaviour rather than a risk.
+      const code = migration0268.replace(/^\s*--.*$/gm, "");
+      expect(code, "0268 must refresh statistics like its siblings").toMatch(/\bANALYZE\b/i);
+      // Table-scoped, not 0123's bare whole-database form.
+      expect(code).toMatch(/ANALYZE\s+lookalike_domains\s*;/i);
+    });
+
+    it("the first-contact plan is CARDINALITY-sensitive — which is why the fixture stamps per row", () => {
+      // Not a hypothetical, and the reason the seeding above is the way
+      // it is. `sqlite_stat1` stores only average rows-per-value, so it
+      // cannot express that the NULL bucket of `last_checked` holds most
+      // of the table. Drive that average high enough — TWO or fewer
+      // distinct non-NULL values across 56,010 rows — and the planner
+      // prices the `IS NULL` seek plus a per-row table lookup above an
+      // unindexed read with `LIMIT 50`, and emits `SCAN ld`.
+      //
+      // Production cannot reach that regime (`datetime('now')` per row,
+      // 50 rows/tick => thousands of distinct values), but a FIXTURE
+      // trivially can — and a fixture that did would have "proved" a
+      // full scan that production never performs. Pinned so the next
+      // person to simplify the seeding above sees why it is not
+      // simplified.
+      const degenerate = (distinctStamps: number): string => {
+        const d = new DatabaseSync!(":memory:");
+        applyLookalikeSchema(d);
+        const ins = d.prepare(
+          `INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type, last_checked)
+           VALUES (?, 'b1', ?, 'replacement', ?)`,
+        );
+        d.exec("BEGIN");
+        for (let i = 0; i < ROWS; i += 1) {
+          ins.run(
+            `l${i}`,
+            `d${i}.example`,
+            i % 10 < 3 ? `2026-08-01 00:00:${String(i % distinctStamps).padStart(2, "0")}` : null,
+          );
+        }
+        d.exec("COMMIT");
+        d.exec("ANALYZE");
+        return plan(d, SQL.firstContactSelect(), [50]);
+      };
+      expect(degenerate(2), "2 distinct stamps").toMatch(/\bSCAN\b/);
+      expect(degenerate(3), "3 distinct stamps").not.toMatch(/\bSCAN\b/);
+      // ...and the real fixture is far past the flip point.
+      const distinct = (analyzedDb.prepare(
+        `SELECT COUNT(DISTINCT last_checked) AS n FROM lookalike_domains`,
+      ).get() as { n: number }).n;
+      expect(distinct).toBeGreaterThan(1_000);
+    });
   });
 });

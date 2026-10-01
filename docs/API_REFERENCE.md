@@ -387,22 +387,36 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT (crawl coverage is
 > pipeline detail, same product call as `page_last_outcome`).
 
-> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and THREE producers.**
+> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and FOUR producers.**
 > No alert row is created below HIGH — everything else is still persisted
 > (`threat_level`, `ai_assessment`, the page columns), so the row is unchanged
 > and only the notification is withheld. This *removed* previously-created
 > MEDIUM alerts on genuine `registered 0 → 1` transitions; the floor is defined
-> once in `lib/lookalike-alert-policy.ts` and shared. Three producers file this
-> alert type: the registration checker (`scanners/lookalike-domains.ts`); the
-> page-analysis pass (`scanners/lookalike-page-analysis.ts`), only for a
-> registered row with NO linked alert whose page clears the phishing bar,
-> bounded per run and carrying `details.discovered_by = 'page_analysis'`; and
-> the claim-time backfill (`lib/alert-backfill.ts`, reached from brand claim /
-> lead conversion), which now also imports the floor, files only for
+> once in `lib/lookalike-alert-policy.ts` and shared. **Four** files file this
+> alert type, across **five** configured sources (this paragraph said "three"
+> and the policy module said a fourth was "a contradiction in terms" while
+> `phantom-matcher.ts` — already in the repo — was filing it):
+> **(1)** the registration checker (`scanners/lookalike-domains.ts`);
+> **(2)** the page-analysis pass (`scanners/lookalike-page-analysis.ts`), only
+> for a registered row with NO linked alert whose page clears the phishing bar,
+> bounded per run and carrying `details.discovered_by = 'page_analysis'`;
+> **(3)** the claim-time backfill (`lib/alert-backfill.ts`, reached from brand
+> claim / lead conversion), which also imports the floor, files only for
 > `registered = 1` rows, derives its severity from the row's already-composited
 > `threat_level` rather than a hardcoded `medium`, and marks its output
-> `details.discovered_by = 'claim_backfill'`. There is no backfill exemption
-> from the floor.
+> `details.discovered_by = 'claim_backfill'` — there is no backfill exemption
+> from the floor; and **(4)** the phantom-hit matcher
+> (`lib/phantom-matcher.ts`), from two of its three `SOURCE_CONFIG` entries
+> (`nrd` and `lookalike`; the `ct` entry files `ct_certificate_issued` through
+> the same call). Producer 4 is the **one documented exemption** from the
+> floor: it files at `low` via `PHANTOM_MATCH_ALERT_SEVERITY`, imported from
+> the policy module rather than hardcoded. Its bound is why that is
+> affordable — **at most one alert per `phantom_domains` row, ever** (the
+> guarded `WHERE id = ? AND status = 'predicted'` claim runs *before*
+> `createAlert`), over a population written only by the manual-trigger
+> `phantom_enumerator`. Applying the floor would instead either delete the
+> phantom lane's only output or force a `high` severity that contradicts what
+> a phantom hit means (W2.3 spec §6.1/§6.2).
 
 > **`last_check_failed_at` (migration 0268, additive).** The DNS-check cooldown
 > for an attempt that produced NO answer (resolver timeout / non-ok DoH
@@ -414,6 +428,27 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > NOT advanced on failure, because `last_checked IS NULL` is the first-contact
 > discriminator above. Staff-visible via `LOOKALIKE_LIST_COLUMNS`; absent from
 > the tenant SELECT.
+
+> **Per-probe `answered` flags, and per-field writes (`lib/domain-checker.ts`).**
+> `resolved` is scoped to `registered` **and nothing else** — a *seen* A record
+> short-circuits it, so `resolved: true` is compatible with an MX probe that
+> timed out, an A probe that timed out, and a web probe that was never
+> attempted. `DomainCheckResult` therefore carries `aAnswered` / `mxAnswered` /
+> `webAnswered` alongside it, and a caller that PERSISTS a field must not write
+> one whose flag is false. The web probe had **no** flag at all: both HEAD
+> attempts ended in a bare `catch {}`, so a 3 s timeout, a TCP reset, a TLS
+> failure and a tarpit were indistinguishable from "serves nothing" and were
+> written as `has_web = 0`. A 403/404/redirect **does** count as answered (the
+> `fetch` resolved); only connection-level failure does not.
+> `checkLookalikeBatch`'s per-check UPDATE now gates `resolves_to`, `has_mx`
+> and `has_web` on their own flags via bound `CASE WHEN ? = 1 THEN ? ELSE
+> <column> END` arms, so an unanswered probe keeps the last answering probe's
+> value. This matters beyond data quality: both page-analysis cohorts require
+> `has_web = 1 AND resolves_to IS NOT NULL`, and the page pass is the only
+> producer that can still alert on a row whose `registered === 0` one-shot has
+> already fired — so erasing either column on a blip removed the row's last
+> path to an alert. `registered` itself is still written unconditionally,
+> because that branch only runs when `resolved` is true.
 
 > **`POST /api/lookalikes/:brandId/scan` no longer nulls `last_checked`.** It
 > stamps already-checked rows with `datetime('now','-25 hours')` — past the

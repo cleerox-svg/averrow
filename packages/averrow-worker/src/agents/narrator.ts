@@ -133,8 +133,18 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     // only on a `registered 0 -> 1` transition we observed — first
     // contact with an already-registered squat leaves it NULL by design
     // (migration 0267), so this counts appearances and nothing else.
+    // ── COLUMNS THAT DO NOT EXIST ─────────────────────────────────
+    // This selected `dns_active`, `has_content` and `mx_records`. None
+    // of the three is in ANY migration for `lookalike_domains`; the real
+    // columns are `resolves_to`, `has_web` and `has_mx` (migration
+    // 0031). The statement therefore raised SQLITE_ERROR on every run
+    // and the `.catch(() => ({ results: [] }))` below swallowed it, so
+    // `lookalikes` was PERMANENTLY EMPTY — the signal-type gate never
+    // counted this channel and the rendered section never appeared.
+    // `resolves_to` replaces `dns_active`: a row that resolves is one we
+    // hold an IP for, which is what "DNS active" was reaching for.
     env.DB.prepare(
-      `SELECT domain, registered, dns_active, has_content, mx_records, first_seen
+      `SELECT domain, registered, resolves_to, has_web, has_mx, first_seen
        FROM lookalike_domains
        WHERE brand_id = ? AND registered = 1 AND first_seen >= datetime('now', '-7 days')
        ORDER BY first_seen DESC LIMIT 30`
@@ -467,10 +477,14 @@ Accounts: ${context.socialFindings.slice(0, 10).map((s: any) => `@${s.suspicious
 
   // Lookalike domains
   if (context.lookalikes.length > 0) {
-    const withContent = context.lookalikes.filter((d: any) => d.has_content).length;
-    const withMx = context.lookalikes.filter((d: any) => d.mx_records).length;
+    // `has_web` / `has_mx`, not the phantom `has_content` / `mx_records`
+    // this filtered on — see the SELECT's comment. Both are 0/1 INTEGER
+    // columns, so a truthiness filter is the right shape; `mx_records`
+    // was a string test against a column that has never existed.
+    const withWeb = context.lookalikes.filter((d: any) => d.has_web).length;
+    const withMx = context.lookalikes.filter((d: any) => d.has_mx).length;
     parts.push(`## Lookalike Domains (registered)
-Count: ${context.lookalikes.length} (${withContent} with content, ${withMx} with MX records)
+Count: ${context.lookalikes.length} (${withWeb} with a web server, ${withMx} with MX records)
 Domains: ${context.lookalikes.slice(0, 15).map((d: any) => d.domain).join(", ")}`);
   }
 

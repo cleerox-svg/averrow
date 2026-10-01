@@ -367,15 +367,34 @@ export const observerAgent: AgentModule = {
       // `first_seen` for "appeared": the latter is now stamped ONLY on a
       // `registered 0 -> 1` transition we actually observed, never on
       // first contact.
+      //
+      // ── COLUMNS THAT DO NOT EXIST ─────────────────────────────────
+      //
+      // This statement used to select `has_content` and `mx_records`.
+      // Neither column is in ANY migration for `lookalike_domains` — the
+      // real ones are `has_web` and `has_mx` (migration 0031). So the
+      // statement raised SQLITE_ERROR on every run, and because the
+      // `try` below wraps BOTH queries, the throw also skipped the
+      // `newRegistered` list: the daily briefing has had NO lookalike
+      // section at all, silently, rather than a wrong one. The schema is
+      // now pinned by test (`test/lookalike-backfill-and-reports.test.ts`
+      // builds its DDL from the migration files, so a phantom column
+      // fails instead of being accommodated).
+      //
+      // `has_web` is not a synonym for the old `has_content` label: it
+      // means "something answered on 80/443", not "the page had
+      // content". The briefing copy below says "with a web server"
+      // accordingly — the page-CONTENT verdict lives in
+      // `page_phishing_score` and is a different reading.
       const lookalikeSummary = await env.DB.prepare(`
         SELECT COUNT(*) as total,
           SUM(CASE WHEN registered = 1 THEN 1 ELSE 0 END) as registered,
-          SUM(CASE WHEN has_content = 1 THEN 1 ELSE 0 END) as with_content,
-          SUM(CASE WHEN mx_records IS NOT NULL AND mx_records != '' THEN 1 ELSE 0 END) as with_mx,
+          SUM(CASE WHEN has_web = 1 THEN 1 ELSE 0 END) as with_web,
+          SUM(CASE WHEN has_mx = 1 THEN 1 ELSE 0 END) as with_mx,
           COUNT(DISTINCT brand_id) as brands
         FROM lookalike_domains
         WHERE last_checked >= datetime('now', '-24 hours')
-      `).first<{ total: number; registered: number; with_content: number; with_mx: number; brands: number }>();
+      `).first<{ total: number; registered: number; with_web: number; with_mx: number; brands: number }>();
 
       if (lookalikeSummary && lookalikeSummary.total > 0) {
         const newRegistered = await env.DB.prepare(`
@@ -388,14 +407,22 @@ export const observerAgent: AgentModule = {
         `).all<{ domain: string; brand_name: string }>();
 
         lookalikeContext = `Lookalike Domains (24h): ${lookalikeSummary.total} checked, ${lookalikeSummary.registered} registered, ` +
-          `${lookalikeSummary.with_content} with content, ${lookalikeSummary.with_mx} with MX records, targeting ${lookalikeSummary.brands} brands.`;
+          `${lookalikeSummary.with_web} with a web server, ${lookalikeSummary.with_mx} with MX records, targeting ${lookalikeSummary.brands} brands.`;
         if (newRegistered.results.length > 0) {
           lookalikeContext += ` Newly registered: ${newRegistered.results.map(d =>
             `${d.domain} (${d.brand_name})`
           ).join(", ")}.`;
         }
       }
-    } catch { /* lookalike_domains table may not exist yet */ }
+    } catch (err) {
+      // Was a BARE `catch {}` commented "table may not exist yet". That
+      // is what let a SQLITE_ERROR on a non-existent COLUMN delete the
+      // whole lookalike section of the daily briefing without a trace.
+      // The section is still optional — a briefing without it is better
+      // than no briefing — but the reason is now in the log, matching
+      // the social/CT blocks around it.
+      console.warn("[observer] lookalike query error:", String(err));
+    }
 
     // ─── CT certificate findings ──────────────────────────────────
     let ctCertContext = "";

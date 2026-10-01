@@ -66,7 +66,28 @@ export const lookalikeScannerAgent: AgentModule = {
     }
 
     try {
-      await checkLookalikeBatch(ctx.env);
+      const check = await checkLookalikeBatch(ctx.env);
+      // Surface the run's counters as a diagnostic so they reach
+      // `agent_runs` / `agent_outputs` and the /v2/agents page, not only
+      // the log stream. `row_errors` is the reason this exists: with
+      // per-row error isolation a poisoned row no longer aborts the
+      // tick, so a non-zero count is now a thing that can happen
+      // SILENTLY — and a silent defect counter is not telemetry. It
+      // raises the diagnostic severity by itself.
+      if (check.checked > 0) {
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `Checked ${check.checked} lookalike domain(s): ` +
+            `${check.new_registrations} observed registration(s), ` +
+            `${check.baselines_established} baseline(s) established ` +
+            `(${check.baselines_suppressed} with no signal), ` +
+            `${check.baseline_bimi_alerts} BIMI alert(s), ` +
+            `${check.alerts_withheld_below_floor} alert(s) withheld below the severity floor, ` +
+            `${check.checks_unresolved} unresolved, ${check.row_errors} row error(s)`,
+          severity: check.row_errors > 0 ? "high" : "info",
+          details: { ...check } as Record<string, unknown>,
+        });
+      }
     } catch (err) {
       scanError = err instanceof Error ? err.message : String(err);
       agentOutputs.push({

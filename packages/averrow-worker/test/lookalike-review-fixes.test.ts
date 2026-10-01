@@ -27,6 +27,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
 import type { Env } from "../src/types";
 import type { AuthContext } from "../src/middleware/auth";
+import { applyLookalikeSchema } from "./lookalike-schema";
 
 // ─── Collaborator mocks ───────────────────────────────────────────
 
@@ -70,44 +71,14 @@ try {
 }
 const hasSqlite = (): boolean => DatabaseSync !== null;
 
+/**
+ * `lookalike_domains` is built from the MIGRATION FILES
+ * (`applyLookalikeSchema`), not declared here. A hand-written copy of a
+ * 33-column table cannot fail on a column the code invents — it can only
+ * be edited to match one — which is exactly how three phantom columns
+ * survived a whole review round in a sibling test file.
+ */
 const DDL = `
-  CREATE TABLE lookalike_domains (
-    id TEXT PRIMARY KEY,
-    brand_id TEXT NOT NULL,
-    domain TEXT NOT NULL,
-    permutation_type TEXT,
-    registered INTEGER DEFAULT 0,
-    resolves_to TEXT,
-    has_mx INTEGER DEFAULT 0,
-    has_web INTEGER DEFAULT 0,
-    first_seen TEXT,
-    last_checked TEXT,
-    threat_level TEXT DEFAULT 'LOW',
-    ai_assessment TEXT,
-    alert_id TEXT,
-    status TEXT DEFAULT 'monitoring',
-    takedown_id TEXT,
-    unicode_domain TEXT,
-    page_fetched_at TEXT,
-    page_http_status INTEGER,
-    page_phishing_score INTEGER,
-    page_signals TEXT,
-    page_content_hash TEXT,
-    page_anti_bot_wall TEXT,
-    page_ai_signals TEXT,
-    page_score_delta INTEGER,
-    page_generator TEXT,
-    page_exfil_sink TEXT,
-    page_exfil_sink_id TEXT,
-    page_evidence TEXT,
-    page_last_outcome TEXT,
-    baseline_established_at TEXT,
-    last_check_failed_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE UNIQUE INDEX idx_lookalike_brand_domain ON lookalike_domains(brand_id, domain);
-  CREATE INDEX idx_lookalike_last_checked ON lookalike_domains(last_checked);
   CREATE TABLE brands (
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -128,6 +99,7 @@ interface Harness {
 function harness(): Harness {
   const db = new DatabaseSync!(":memory:");
   db.exec(DDL);
+  applyLookalikeSchema(db);
   db.prepare(
     `INSERT INTO brands (id, name, canonical_domain, tier)
      VALUES ('b1', 'Acme', 'acme.example', 'monitored')`,
@@ -188,13 +160,34 @@ function harness(): Harness {
   };
 }
 
-/** A resolved DNS answer. `resolved: true` means "this IS an observation". */
-function answer(over: Partial<{ registered: boolean; ip: string; hasMx: boolean; hasWeb: boolean }> = {}) {
-  return { registered: false, resolved: true, hasMx: false, hasWeb: false, ...over };
+/**
+ * A resolved DNS answer. `resolved: true` means "this IS an
+ * observation", and the three per-probe flags default to true — i.e.
+ * every probe answered, which is what "an answer" means.
+ *
+ * They are explicit rather than assumed because they are what the
+ * per-check UPDATE now gates each field's write on: a test that omitted
+ * them would silently assert the DON'T-OVERWRITE path while claiming to
+ * test the normal one.
+ */
+function answer(
+  over: Partial<{
+    registered: boolean; ip: string; hasMx: boolean; hasWeb: boolean;
+    aAnswered: boolean; mxAnswered: boolean; webAnswered: boolean;
+  }> = {},
+) {
+  return {
+    registered: false, resolved: true, hasMx: false, hasWeb: false,
+    aAnswered: true, mxAnswered: true, webAnswered: true,
+    ...over,
+  };
 }
 
 /** A FAILED check — a timeout or non-ok DoH response. Not an observation. */
-const NO_ANSWER = { registered: false, resolved: false, hasMx: false, hasWeb: false };
+const NO_ANSWER = {
+  registered: false, resolved: false, hasMx: false, hasWeb: false,
+  aAnswered: false, mxAnswered: false, webAnswered: false,
+};
 
 function haikuSays(level: string) {
   return {
@@ -574,5 +567,190 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     expect(h.checked()).not.toContain(h.row(dead).domain);
     expect(h.checked()).not.toContain(h.row(live).domain);
     expect(h.checked().length).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// B3 — an unanswered probe must not erase known evidence
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — unanswered probes preserve evidence", () => {
+  /** A row already known to be registered, resolving, mail+web. */
+  function knownGood(h: Harness): string {
+    return h.seed({
+      registered: 1,
+      resolves_to: "5.6.7.8",
+      has_mx: 1,
+      has_web: 1,
+      last_checked: STALE,
+      first_seen: "2026-01-15 00:00:00",
+      baseline_established_at: "2026-01-15 00:00:00",
+      threat_level: "HIGH",
+    });
+  }
+
+  it("a web probe that never answered does not flip has_web to 0", async () => {
+    // `resolved` is scoped to `registered`, so a SEEN A record makes it
+    // true even though the HEAD probes both died at the connection
+    // level. The row stays in the page-analysis cohorts — which require
+    // `has_web = 1` — and those are the only producer that can still
+    // alert on a row whose `registered === 0` one-shot has fired.
+    const h = harness();
+    const id = knownGood(h);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: false, webAnswered: false }),
+    );
+
+    await checkLookalikeBatch(h.env);
+
+    const row = h.row(id);
+    expect(row.has_web).toBe(1);
+    // The rest of the observation still landed.
+    expect(row.registered).toBe(1);
+    expect(row.last_checked).not.toBe(STALE);
+  });
+
+  it("an MX probe that never answered does not flip has_mx to 0", async () => {
+    const h = harness();
+    const id = knownGood(h);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: false, mxAnswered: false, hasWeb: true }),
+    );
+
+    await checkLookalikeBatch(h.env);
+
+    expect(h.row(id).has_mx).toBe(1);
+  });
+
+  it("an A probe that never answered does not erase resolves_to", async () => {
+    // MX answered, A timed out: `registered` true, `resolved` true, and
+    // `result.ip` undefined. `result.ip ?? null` used to write NULL,
+    // which drops the row out of both page cohorts (`resolves_to IS NOT
+    // NULL`) until the next good A probe.
+    const h = harness();
+    const id = knownGood(h);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, hasMx: true, hasWeb: true, aAnswered: false }),
+    );
+
+    await checkLookalikeBatch(h.env);
+
+    expect(h.row(id).resolves_to).toBe("5.6.7.8");
+  });
+
+  it("an ANSWERED negative still lands — the gate is not a write-once latch", async () => {
+    // The direction that would be just as wrong: "we looked and there is
+    // no web server now" is a real observation about a squat that has
+    // been parked, and must overwrite the stored 1.
+    const h = harness();
+    const id = knownGood(h);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }),
+    );
+
+    await checkLookalikeBatch(h.env);
+
+    const row = h.row(id);
+    expect(row.has_web).toBe(0);
+    expect(row.has_mx).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// F8 — one bad row must not abort the batch
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation", () => {
+  it("a throwing row does not stop the rest of the batch, and is cooled down", async () => {
+    // Before per-row isolation: the throw rejected that row's promise,
+    // `Promise.all(checks)` rejected, and the tick aborted — every
+    // remaining row went unprocessed AND unstamped, so the next tick
+    // re-selected the same set and hit the same row again. A permanent
+    // tick killer at 56,010 rows.
+    const h = harness();
+    const bad = h.seed({ last_checked: STALE, registered: 0 });
+    const good = h.seed({ last_checked: STALE, registered: 0 });
+
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+    // The unguarded await that made this reachable in production.
+    createAlertSpy.mockImplementation(async (_db: unknown, p: { sourceId?: string }) => {
+      if (p.sourceId === bad) throw new Error("alerts table is having a day");
+      return "alert_1";
+    });
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    // Both rows were attempted...
+    expect(h.checked()).toHaveLength(2);
+    // ...the good one completed and got its alert linked...
+    expect(h.row(good).alert_id).toBe("alert_1");
+    expect(h.row(good).threat_level).toBe("HIGH");
+    // ...and the bad one is counted rather than swallowed.
+    expect(summary.row_errors).toBe(1);
+    expect(summary.checked).toBe(2);
+    // The failure is VISIBLE and the row is cooled down, so the next
+    // tick does not immediately re-select it and throw again.
+    expect(h.row(bad).last_check_failed_at).not.toBeNull();
+  });
+
+  it("the cooled-down bad row is not re-selected on the next tick", async () => {
+    const h = harness();
+    const bad = h.seed({ last_checked: STALE, registered: 0 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+    createAlertSpy.mockRejectedValue(new Error("boom"));
+
+    await checkLookalikeBatch(h.env);
+    expect(h.row(bad).last_check_failed_at).not.toBeNull();
+
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(answer());
+    const second = await checkLookalikeBatch(h.env);
+    expect(h.checked()).toHaveLength(0);
+    expect(second.checked).toBe(0);
+  });
+
+  it("the TAIL typosquat_bimi alert throwing is isolated too", async () => {
+    // The other unguarded await, and the more interesting one: the
+    // full-assessment path's `fileBimiAlert` sits at the very END of the
+    // row body, AFTER the primary alert has been filed and linked. A
+    // throw there used to discard every remaining row in the batch while
+    // this row's own work was already complete — so the tick lost
+    // DIFFERENT rows than the one that failed, and none of them were
+    // stamped.
+    //
+    // (The mail-only lane's BIMI lookup and the MEDIUM-boost lookup were
+    // both already try/caught. This one was not.)
+    const h = harness();
+    const id = h.seed({ last_checked: STALE, registered: 0 });
+    const other = h.seed({ last_checked: STALE, registered: 0 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
+    const badDomain = h.row(id).domain as string;
+    // BIMI is present on the bad row only, so only it reaches the tail.
+    checkBIMISpy.mockImplementation(async (domain: string) => domain === badDomain);
+    createAlertSpy.mockImplementation(async (_db: unknown, p: { alertType: string; sourceId?: string }) => {
+      if (p.alertType === "typosquat_bimi") throw new Error("alerts insert failed");
+      return "alert_1";
+    });
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.checked).toBe(2);
+    // EXACTLY one row error — the sibling row was unaffected, which is
+    // the whole property.
+    expect(summary.row_errors).toBe(1);
+    // The unaffected row completed end to end...
+    expect(h.row(other).alert_id).toBe("alert_1");
+    expect(h.row(other).threat_level).toBe("HIGH");
+    // ...and the thrower's work up to the throw is still persisted (the
+    // primary alert WAS filed and linked), with a cooldown stamped so it
+    // is not re-selected immediately.
+    expect(h.row(id).threat_level).toBe("HIGH");
+    expect(h.row(id).alert_id).toBe("alert_1");
+    expect(h.row(id).last_check_failed_at).not.toBeNull();
   });
 });

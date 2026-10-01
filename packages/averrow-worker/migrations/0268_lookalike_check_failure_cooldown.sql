@@ -88,11 +88,60 @@
 -- by `registered = 1` in practice and adding it to the index WHERE would
 -- not narrow the index further.
 --
--- Additive only — ADD COLUMN / CREATE INDEX, never DROP/ALTER
--- (CLAUDE.md §8).
+-- ── ANALYZE, AND WHAT THE PLANS ACTUALLY DEPEND ON ────────────────────
+--
+-- Every sibling index migration (0099/0100/0101/0123/0197/0200) ends
+-- with one, each commenting that the planner otherwise falls back to a
+-- scan; this one was shipped without. Measured on the migration-derived
+-- schema at the projected volume (56,010 candidate rows, 1,867 brands,
+-- 25% registered, ~70% of those has_web, `last_checked` /
+-- `page_fetched_at` spread over realistic per-row second-resolution
+-- stamps), all four cohort SELECTs are index searches with NO temp
+-- b-tree, in BOTH stat states:
+--
+--   checker/first    SEARCH ld USING INDEX idx_lookalike_last_checked (last_checked=?)
+--   checker/recheck  SEARCH ld USING INDEX idx_lookalike_last_checked (last_checked>? AND last_checked<?)
+--   page/first       SEARCH ld USING INDEX idx_lookalike_page_due (registered=? AND has_web=? AND page_fetched_at=?)
+--   page/re          SEARCH ld USING INDEX idx_lookalike_page_due (registered=? AND has_web=? AND page_fetched_at>? AND page_fetched_at<?)
+--
+-- So ANALYZE is added for the sibling reason (a fresh D1 with no
+-- statistics for this table, and stale 0123-era statistics from when it
+-- held ~120 rows, are both worse than measured ones), and it is safe.
+--
+-- ONE MEASURED SENSITIVITY, recorded because it is what makes the paired
+-- plan test meaningful. `sqlite_stat1` stores only average
+-- rows-per-value, so it cannot represent the fact that the NULL bucket
+-- of `last_checked` holds most of the table. When that average gets
+-- large enough — which happens only if `last_checked` has TWO OR FEWER
+-- distinct non-NULL values across all 56,010 rows (stat1
+-- `56010 18670` / `56010 28005`) — the planner prices the
+-- `last_checked IS NULL` seek plus a table lookup per row above an
+-- unindexed read with `LIMIT 50` and emits `SCAN ld`. At three or more
+-- distinct values (`56010 14003` and below) it uses the index again.
+-- Production cannot reach the degenerate regime: `last_checked` is
+-- stamped `datetime('now')` per row at 50 rows/tick, so it carries
+-- thousands of distinct values. A test fixture that seeds two constant
+-- timestamps DOES reach it, which is why
+-- `test/lookalike-sql-statements.test.ts` seeds per-row stamps and
+-- asserts the plans with and without ANALYZE — an empty table (SQLite
+-- prefers an index unconditionally there) and a two-value fixture are
+-- misleading in opposite directions.
+--
+-- Additive only — ADD COLUMN / CREATE INDEX / ANALYZE, never DROP/ALTER
+-- (CLAUDE.md §8). ANALYZE is table-scoped (0100's `ANALYZE threats;`
+-- shape) rather than 0123's bare whole-database form: the other tables'
+-- statistics are not this migration's business and a bare ANALYZE reads
+-- every index in the database.
 
 ALTER TABLE lookalike_domains ADD COLUMN last_check_failed_at TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_lookalike_page_due
   ON lookalike_domains(registered, has_web, page_fetched_at)
   WHERE registered = 1 AND has_web = 1;
+
+-- Statistics refresh so the planner costs the new index (and the
+-- pre-existing `idx_lookalike_last_checked`) from measured cardinality
+-- rather than from defaults or 0123-era stats taken when this table held
+-- ~120 rows. See the header for the measurement and the one degenerate
+-- regime it identified.
+ANALYZE lookalike_domains;

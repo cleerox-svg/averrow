@@ -68,6 +68,46 @@ const LOOKALIKE_BATCH_LIMIT = 50;
 const FIRST_CONTACT_SLOTS = 30;
 const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
 
+/**
+ * What one `checkLookalikeBatch` run did.
+ *
+ * Returned as well as logged (F8). `row_errors` in particular has to
+ * reach an operator surface rather than only the log stream: it counts
+ * rows whose processing THREW, which before per-row isolation could not
+ * be counted at all because a single throw aborted the tick. The
+ * `lookalike_scanner` agent folds this into its `agentOutputs`
+ * diagnostic, so it lands in `agent_runs` / the /v2/agents page
+ * (CLAUDE.md §6) instead of requiring a log search.
+ */
+export interface LookalikeCheckSummary {
+  checked: number;
+  new_registrations: number;
+  baselines_established: number;
+  baselines_suppressed: number;
+  baseline_bimi_alerts: number;
+  alerts_withheld_below_floor: number;
+  /** Checks the resolver gave no answer for — orderly, not a defect. */
+  checks_unresolved: number;
+  /** Rows whose processing threw. A DEFECT count; should be 0. */
+  row_errors: number;
+  selected_first_contact: number;
+  selected_recheck: number;
+}
+
+/** "Nothing was due" — every counter zero. */
+const EMPTY_CHECK_SUMMARY: LookalikeCheckSummary = {
+  checked: 0,
+  new_registrations: 0,
+  baselines_established: 0,
+  baselines_suppressed: 0,
+  baseline_bimi_alerts: 0,
+  alerts_withheld_below_floor: 0,
+  checks_unresolved: 0,
+  row_errors: 0,
+  selected_first_contact: 0,
+  selected_recheck: 0,
+};
+
 /** The columns `checkLookalikeBatch` needs per row. */
 interface LookalikeCheckRow {
   id: string;
@@ -125,6 +165,33 @@ function selectRecheckRows(env: Env, limit: number, offset: number) {
      ORDER BY ld.last_checked ASC
      LIMIT ? OFFSET ?`,
   ).bind(limit, offset).all<LookalikeCheckRow>();
+}
+
+/**
+ * Advance ONLY the failure cooldown (migration 0268) — no registration
+ * state, and deliberately NOT `last_checked`.
+ *
+ * `last_checked IS NULL` is the load-bearing first-contact
+ * discriminator, so a failed attempt must not touch it: writing it would
+ * re-classify a never-observed row as "checked before" while
+ * `registered` still held the seeder's INSERT default, which mints a
+ * false `0 -> 1` transition one tick later. The cooldown describes the
+ * last ATTEMPT; `last_checked` describes the last SUCCESS.
+ *
+ * Extracted because it now has TWO callers — the unresolved-DNS branch
+ * and the per-row error isolation (F8) — and this file holds exactly ONE
+ * copy of the statement. That is not only DRY:
+ * `test/lookalike-sql-statements.test.ts` extracts it from source by
+ * marker and asserts a single match, so a second identical literal would
+ * fail extraction rather than silently drift.
+ */
+function stampCheckFailure(env: Env, id: string) {
+  return env.DB.prepare(
+    `UPDATE lookalike_domains
+     SET last_check_failed_at = datetime('now'),
+         updated_at = datetime('now')
+     WHERE id = ?`,
+  ).bind(id).run();
 }
 
 /**
@@ -335,7 +402,7 @@ export async function seedLookalikesForOrgBrands(
  * mail-only squat (`analyzeLookalikePages` requires `has_web = 1`). See
  * the email lane inside that branch.
  */
-export async function checkLookalikeBatch(env: Env): Promise<void> {
+export async function checkLookalikeBatch(env: Env): Promise<LookalikeCheckSummary> {
   // ── SELECTION: two cohorts, two budgets ─────────────────────────
   //
   // `last_checked` is fetched, not just filtered on: it is the ONLY
@@ -377,7 +444,7 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
 
   if (selected.length === 0) {
     logger.info('lookalike_check', { message: 'no domains to check' });
-    return;
+    return EMPTY_CHECK_SUMMARY;
   }
 
   let newRegistrations = 0;
@@ -387,6 +454,12 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
   let alertsWithheldByFloor = 0;
   let checksUnresolved = 0;
   let totalChecked = 0;
+  // Rows whose processing THREW (F8). Distinct from `checksUnresolved`,
+  // which is an orderly "the resolver gave no answer": this counts a
+  // defect — a rejected `createAlert`, a DB error, a bad BIMI lookup —
+  // and a non-zero value here used to be invisible because it took the
+  // whole tick down with it.
+  let rowErrors = 0;
 
   // Shared inline page-fetch budget across the whole tick (JS is single-
   // threaded between awaits, so the synchronous `remaining--` before each
@@ -398,398 +471,463 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
   for (let i = 0; i < selected.length; i += CONCURRENCY) {
     const batch = selected.slice(i, i + CONCURRENCY);
     const checks = batch.map(async (row) => {
-      totalChecked++;
-
-      // The first-contact test, computed BEFORE the UPDATE below clears
-      // the evidence for it (that UPDATE sets `last_checked`, so after it
-      // runs the distinction is gone forever for this row).
-      const firstContact = row.last_checked === null;
-
-      const result = await checkDomain(row.domain);
-
-      // ── THE CHECK FAILED — NOT "nothing found" ────────────────────
+      // ── PER-ROW ERROR ISOLATION (F8) ──────────────────────────────
       //
-      // `checkDomain` returns `registered: false` for a 3s DNS timeout
-      // exactly as it does for a clean NXDOMAIN. Writing that value over
-      // a stored `registered = 1` manufactures a lapse, and the next
-      // successful check then reads as a 0 -> 1 registration: a false
-      // `first_seen`, a Haiku call, and a permanent un-triageable alert,
-      // from a transient resolver blip. That used to be partly absorbed
-      // by the `AND first_seen IS NULL` guard on the stamp; baseline
-      // rows leave `first_seen` NULL by design, so every seeded row is
-      // now exposed to it.
+      // Everything below runs inside a try. It did not, and the two
+      // unguarded awaits in it were `createAlert` and the full-path
+      // `checkBIMIExists` — one throw there rejected this row's promise,
+      // `Promise.all(checks)` rejected, and the WHOLE TICK aborted:
+      // every remaining row in the batch went unprocessed AND unstamped,
+      // so the next tick re-selected the same set and hit the same bad
+      // row again. Harmless at 120 rows; at 56,010 a single poisoned row
+      // is a permanent tick killer.
       //
-      // So an unresolved check writes NO registration state at all. Only
-      // the FAILURE cooldown advances (migration 0268) — `last_checked`
-      // must stay NULL on a never-observed row, because that NULL is the
-      // first-contact discriminator; writing it here would re-classify
-      // the row as "checked before" while `registered` still held the
-      // seeder's INSERT default, reproducing the same false transition
-      // one tick later. Same shape as the page pass's failure branch:
-      // the cooldown describes the last ATTEMPT, the verdict the last
-      // SUCCESS.
-      if (!result.resolved) {
-        checksUnresolved++;
+      // The catch does three things, in this order of importance: the
+      // failure is VISIBLE (logged with the domain and counted in the
+      // run summary, not swallowed), the row is COOLED DOWN so it is not
+      // re-selected immediately, and the batch CONTINUES.
+      try {
+        totalChecked++;
+
+        // The first-contact test, computed BEFORE the UPDATE below clears
+        // the evidence for it (that UPDATE sets `last_checked`, so after it
+        // runs the distinction is gone forever for this row).
+        const firstContact = row.last_checked === null;
+
+        const result = await checkDomain(row.domain);
+
+        // ── THE CHECK FAILED — NOT "nothing found" ────────────────────
+        //
+        // `checkDomain` returns `registered: false` for a 3s DNS timeout
+        // exactly as it does for a clean NXDOMAIN. Writing that value over
+        // a stored `registered = 1` manufactures a lapse, and the next
+        // successful check then reads as a 0 -> 1 registration: a false
+        // `first_seen`, a Haiku call, and a permanent un-triageable alert,
+        // from a transient resolver blip. That used to be partly absorbed
+        // by the `AND first_seen IS NULL` guard on the stamp; baseline
+        // rows leave `first_seen` NULL by design, so every seeded row is
+        // now exposed to it.
+        //
+        // So an unresolved check writes NO registration state at all. Only
+        // the FAILURE cooldown advances (migration 0268) — `last_checked`
+        // must stay NULL on a never-observed row, because that NULL is the
+        // first-contact discriminator; writing it here would re-classify
+        // the row as "checked before" while `registered` still held the
+        // seeder's INSERT default, reproducing the same false transition
+        // one tick later. Same shape as the page pass's failure branch:
+        // the cooldown describes the last ATTEMPT, the verdict the last
+        // SUCCESS.
+        if (!result.resolved) {
+          checksUnresolved++;
+          await stampCheckFailure(env, row.id);
+          logger.info('lookalike_check_unresolved', {
+            domain: row.domain,
+            first_contact: firstContact,
+            stored_registered: row.registered,
+          });
+          return;
+        }
+
+        // Update the record. `baseline_established_at` is stamped here
+        // rather than in the first-contact branch below on purpose: the
+        // branch only runs for rows that RESOLVED, and a first contact
+        // that found nothing is still a baseline we established — the
+        // column records our coverage, not the domain's status. Bound as a
+        // flag rather than interpolated.
+        //
+        // The CASE carries `AND baseline_established_at IS NULL` so the
+        // column is STRUCTURALLY single-write. The previous version
+        // asserted in a comment that it "can never be re-stamped" while
+        // relying entirely on `last_checked` being non-NULL — which the
+        // "Scan now" handler used to clear wholesale, making the assertion
+        // false on any rescanned brand. The guard now holds regardless of
+        // how `last_checked` is manipulated (migration 0267).
+        //
+        // `last_check_failed_at = NULL` closes the failure cooldown: a
+        // successful observation supersedes any run of failures.
+        //
+        // ── AN UNANSWERED PROBE MUST NOT OVERWRITE A KNOWN VALUE ───────
+        //
+        // `resolved` above is scoped to `registered` and to nothing else,
+        // because a SEEN A record short-circuits it. So three of the four
+        // facts below can arrive from a probe that learned nothing, and
+        // this statement used to write all of them unconditionally:
+        //
+        //   * web probe timed out / reset / tarpitted -> `hasWeb = false`
+        //     over a stored `has_web = 1`. That drops the row out of BOTH
+        //     page-analysis cohorts (they require `has_web = 1`), which is
+        //     the only producer that can still alert on a row whose
+        //     `registered === 0` one-shot has already fired.
+        //   * A answered with a record, MX timed out -> `hasMx = false`
+        //     over a stored 1, erasing the mail evidence that is the whole
+        //     BEC-precursor signal.
+        //   * MX answered, A timed out -> `ip: undefined`, and
+        //     `result.ip ?? null` then ERASED a previously known IP,
+        //     dropping the row out of the page cohorts again (they require
+        //     `resolves_to IS NOT NULL`).
+        //
+        // Each field is now gated on its OWN answer flag, bound rather
+        // than interpolated, so a field with no answer keeps whatever the
+        // last answering probe stored. `registered` itself stays
+        // unconditional: this branch only runs when `resolved` is true,
+        // which is exactly the condition that makes `registered`
+        // authoritative.
         await env.DB.prepare(
           `UPDATE lookalike_domains
-           SET last_check_failed_at = datetime('now'),
+           SET registered = ?,
+               resolves_to = CASE WHEN ? = 1 THEN ? ELSE resolves_to END,
+               has_mx      = CASE WHEN ? = 1 THEN ? ELSE has_mx END,
+               has_web     = CASE WHEN ? = 1 THEN ? ELSE has_web END,
+               baseline_established_at = CASE
+                 WHEN ? = 1 AND baseline_established_at IS NULL
+                   THEN datetime('now') ELSE baseline_established_at END,
+               last_checked = datetime('now'),
+               last_check_failed_at = NULL,
                updated_at = datetime('now')
            WHERE id = ?`,
-        ).bind(row.id).run();
-        logger.info('lookalike_check_unresolved', {
-          domain: row.domain,
-          first_contact: firstContact,
-          stored_registered: row.registered,
-        });
-        return;
-      }
+        ).bind(
+          result.registered ? 1 : 0,
+          result.aAnswered ? 1 : 0,
+          result.ip ?? null,
+          result.mxAnswered ? 1 : 0,
+          result.hasMx ? 1 : 0,
+          result.webAnswered ? 1 : 0,
+          result.hasWeb ? 1 : 0,
+          firstContact ? 1 : 0,
+          row.id,
+        ).run();
 
-      // Update the record. `baseline_established_at` is stamped here
-      // rather than in the first-contact branch below on purpose: the
-      // branch only runs for rows that RESOLVED, and a first contact
-      // that found nothing is still a baseline we established — the
-      // column records our coverage, not the domain's status. Bound as a
-      // flag rather than interpolated.
-      //
-      // The CASE carries `AND baseline_established_at IS NULL` so the
-      // column is STRUCTURALLY single-write. The previous version
-      // asserted in a comment that it "can never be re-stamped" while
-      // relying entirely on `last_checked` being non-NULL — which the
-      // "Scan now" handler used to clear wholesale, making the assertion
-      // false on any rescanned brand. The guard now holds regardless of
-      // how `last_checked` is manipulated (migration 0267).
-      //
-      // `last_check_failed_at = NULL` closes the failure cooldown: a
-      // successful observation supersedes any run of failures.
-      await env.DB.prepare(
-        `UPDATE lookalike_domains
-         SET registered = ?,
-             resolves_to = ?,
-             has_mx = ?,
-             has_web = ?,
-             baseline_established_at = CASE
-               WHEN ? = 1 AND baseline_established_at IS NULL
-                 THEN datetime('now') ELSE baseline_established_at END,
-             last_checked = datetime('now'),
-             last_check_failed_at = NULL,
-             updated_at = datetime('now')
-         WHERE id = ?`,
-      ).bind(
-        result.registered ? 1 : 0,
-        result.ip ?? null,
-        result.hasMx ? 1 : 0,
-        result.hasWeb ? 1 : 0,
-        firstContact ? 1 : 0,
-        row.id,
-      ).run();
+        // Detect NEWLY registered domains (was 0, now resolves) — or, on a
+        // row we have never checked, simply "it resolves".
+        if (result.registered && row.registered === 0) {
+          if (firstContact) {
+            // ── BASELINE ESTABLISHMENT ──────────────────────────────────
+            // We learned nothing about WHEN this domain was registered,
+            // only that it is registered now. `first_seen` is deliberately
+            // NOT stamped (see migration 0267): claiming today as the
+            // appearance date of a squat that may be years old is worse
+            // than leaving it NULL, because downstream "new registrations
+            // this week" readings would then be a measure of our own crawl
+            // schedule.
+            baselinesEstablished++;
 
-      // Detect NEWLY registered domains (was 0, now resolves) — or, on a
-      // row we have never checked, simply "it resolves".
-      if (result.registered && row.registered === 0) {
-        if (firstContact) {
-          // ── BASELINE ESTABLISHMENT ──────────────────────────────────
-          // We learned nothing about WHEN this domain was registered,
-          // only that it is registered now. `first_seen` is deliberately
-          // NOT stamped (see migration 0267): claiming today as the
-          // appearance date of a squat that may be years old is worse
-          // than leaving it NULL, because downstream "new registrations
-          // this week" readings would then be a measure of our own crawl
-          // schedule.
-          baselinesEstablished++;
-
-          // The FULL-ASSESSMENT signal test. Mail AND web together is
-          // the cheap, deterministic statement that a domain existing
-          // only to be mistaken for someone else's is also OPERATIONAL —
-          // it can both serve a page and receive replies. Either alone is
-          // ordinary: parked squats serve registrar landers, and MX is
-          // set by default by several registrars.
-          //
-          // The other qualifying signal — "the page scores as phishing"
-          // — is deliberately NOT evaluated here. The inline fetch below
-          // is capped at INLINE_PAGE_FETCH_CAP=10 against a LIMIT 50
-          // batch, and spending that budget on baseline rows (which are
-          // about to be ~56,010 of them) would starve it for the genuine
-          // transitions it exists to composite. `analyzeLookalikePages`
-          // owns that verdict, with its own per-run budget and a 24 h
-          // cadence, and since this change it can also RAISE the alert
-          // itself — so a baselined row whose page turns out to be a
-          // credential-harvest kit is caught there, one pass later,
-          // instead of here at the cost of the compositor's budget.
-          if (!(result.hasMx && result.hasWeb)) {
-            // ── THE EMAIL LANE IS NOT GATED ON THE WEB CONDITION ──────
+            // The FULL-ASSESSMENT signal test. Mail AND web together is
+            // the cheap, deterministic statement that a domain existing
+            // only to be mistaken for someone else's is also OPERATIONAL —
+            // it can both serve a page and receive replies. Either alone is
+            // ordinary: parked squats serve registrar landers, and MX is
+            // set by default by several registrars.
             //
-            // This early return used to sit ABOVE the BIMI check, so a
-            // first-contact row that failed `hasMx && hasWeb` skipped
-            // BIMI entirely. The shape that suppressed was MX and NO web
-            // — a registered squat set up to RECEIVE MAIL and serve
-            // nothing, which is the BEC-precursor shape. It is also
-            // invisible to `analyzeLookalikePages` (that pass requires
-            // `has_web = 1`), so it was permanently unalertable by ANY
-            // producer, while this file's own comments call BIMI the
-            // single most damning email signal the scanner can find.
-            //
-            // Admitting it does NOT reopen the AI-spend problem the
-            // baseline branch exists to close: a BIMI check is one DNS
-            // lookup against a bounded cohort, not a Haiku call. No
-            // Haiku call is made here, and no
-            // `lookalike_domain_active` alert either.
-            if (result.hasMx) {
-              try {
-                if (await checkBIMIExists(row.domain)) {
-                  const bimiBrand = await loadBrandContext(env, row.brand_id);
-                  if (bimiBrand) {
-                    await fileBimiAlert(env, row, bimiBrand.domain, 'system');
-                    baselineBimiAlerts++;
+            // The other qualifying signal — "the page scores as phishing"
+            // — is deliberately NOT evaluated here. The inline fetch below
+            // is capped at INLINE_PAGE_FETCH_CAP=10 against a LIMIT 50
+            // batch, and spending that budget on baseline rows (which are
+            // about to be ~56,010 of them) would starve it for the genuine
+            // transitions it exists to composite. `analyzeLookalikePages`
+            // owns that verdict, with its own per-run budget and a 24 h
+            // cadence, and since this change it can also RAISE the alert
+            // itself — so a baselined row whose page turns out to be a
+            // credential-harvest kit is caught there, one pass later,
+            // instead of here at the cost of the compositor's budget.
+            if (!(result.hasMx && result.hasWeb)) {
+              // ── THE EMAIL LANE IS NOT GATED ON THE WEB CONDITION ──────
+              //
+              // This early return used to sit ABOVE the BIMI check, so a
+              // first-contact row that failed `hasMx && hasWeb` skipped
+              // BIMI entirely. The shape that suppressed was MX and NO web
+              // — a registered squat set up to RECEIVE MAIL and serve
+              // nothing, which is the BEC-precursor shape. It is also
+              // invisible to `analyzeLookalikePages` (that pass requires
+              // `has_web = 1`), so it was permanently unalertable by ANY
+              // producer, while this file's own comments call BIMI the
+              // single most damning email signal the scanner can find.
+              //
+              // Admitting it does NOT reopen the AI-spend problem the
+              // baseline branch exists to close: a BIMI check is one DNS
+              // lookup against a bounded cohort, not a Haiku call. No
+              // Haiku call is made here, and no
+              // `lookalike_domain_active` alert either.
+              if (result.hasMx) {
+                try {
+                  if (await checkBIMIExists(row.domain)) {
+                    const bimiBrand = await loadBrandContext(env, row.brand_id);
+                    if (bimiBrand) {
+                      await fileBimiAlert(env, row, bimiBrand.domain, 'system');
+                      baselineBimiAlerts++;
+                    }
                   }
+                } catch (err) {
+                  // Non-blocking, exactly as on the full path.
+                  logger.error('lookalike_baseline_bimi_error', {
+                    domain: row.domain,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
                 }
-              } catch (err) {
-                // Non-blocking, exactly as on the full path.
-                logger.error('lookalike_baseline_bimi_error', {
-                  domain: row.domain,
-                  error: err instanceof Error ? err.message : String(err),
-                });
               }
-            }
 
-            // NO HAIKU CALL AND NO `lookalike_domain_active` ALERT. This
-            // early return is the cost control: at a 10-35% resolve rate
-            // over the seeder backlog it is the difference between
-            // thousands of Haiku calls plus the same number of permanent
-            // alerts, and zero of either.
-            baselinesSuppressed++;
-            logger.info('lookalike_baseline_no_signal', {
-              domain: row.domain,
-              has_mx: result.hasMx,
-              has_web: result.hasWeb,
-            });
-            return;
-          }
-          // Signal present → fall through to the full assessment path
-          // below, identical to a real transition from here on.
-        } else {
-          // ── OBSERVED TRANSITION ─────────────────────────────────────
-          // We checked this row before and it did not resolve; now it
-          // does. The domain genuinely appeared while we were watching,
-          // so `first_seen` means what it says.
-          newRegistrations++;
-
-          // Set first_seen
-          await env.DB.prepare(
-            `UPDATE lookalike_domains
-             SET first_seen = datetime('now')
-             WHERE id = ? AND first_seen IS NULL`,
-          ).bind(row.id).run();
-        }
-
-        const brandRow = await loadBrandContext(env, row.brand_id);
-
-        if (!brandRow) return;
-        const brand = { ...brandRow, user_id: 'system' };
-
-        // Request AI assessment
-        let threatLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'MEDIUM';
-        let aiAssessment = '';
-
-        try {
-          const aiResult = await analyzeWithHaiku(env, { agentId: "lookalike_scanner", runId: null },
-            `Assess the threat level of this newly registered lookalike domain. Is it likely malicious brand impersonation or benign?
-             Respond with JSON: {"threat_level": "LOW|MEDIUM|HIGH|CRITICAL", "assessment": "brief explanation", "indicators": ["list of suspicious indicators"]}`,
-            {
-              lookalike_domain: row.domain,
-              original_domain: brand.domain,
-              brand_name: brand.brand_name,
-              permutation_type: row.permutation_type,
-              resolves_to_ip: result.ip,
-              has_mx_records: result.hasMx,
-              has_web_server: result.hasWeb,
-            },
-          );
-
-          if (aiResult.success && aiResult.data) {
-            const structured = aiResult.data.structured as {
-              threat_level?: string;
-              assessment?: string;
-            } | undefined;
-            const responseText = aiResult.data.response ?? '';
-
-            // Try to extract threat_level from structured data or response
-            if (structured?.threat_level) {
-              const level = structured.threat_level.toUpperCase();
-              if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
-                threatLevel = level as typeof threatLevel;
-              }
-            }
-            aiAssessment = structured?.assessment ?? responseText;
-          }
-        } catch (err) {
-          logger.error('lookalike_ai_assessment_error', {
-            domain: row.domain,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-
-        // Boost threat level based on infrastructure signals
-        if (result.hasMx && result.hasWeb && threatLevel === 'MEDIUM') {
-          threatLevel = 'HIGH';
-        }
-
-        // BIMI on a lookalike domain is extremely suspicious
-        let hasBIMI = false;
-        try {
-          hasBIMI = await checkBIMIExists(row.domain);
-          if (hasBIMI && threatLevel === 'MEDIUM') {
-            threatLevel = 'HIGH';
-          }
-        } catch {
-          // BIMI check failed — non-blocking
-        }
-
-        // Deterministic page-content analysis (D6 / S2.4). Slots the
-        // page phishing score into this same threat_level compositor: a
-        // credential-form-off-domain page escalates MEDIUM→HIGH/CRITICAL
-        // (monotonic — never downgrades). Inline only for newly-
-        // registered has_web domains and capped per tick; the throttled
-        // analyzeLookalikePages pass re-checks the broader registered set.
-        // All fetches funnel through the SSRF-safe fetchSuspectPage.
-        //
-        // Hoisted out of the block below so the alert built at the tail of
-        // this iteration can carry the same evidence (Lane 3 Phase 3 step
-        // 16). Stays null when the branch is skipped or throws, which
-        // `buildPageEvidenceDetails` degrades to `{}`.
-        let pagePhishing: PagePhishingResult | null = null;
-        if (
-          result.hasWeb &&
-          inlinePageBudget.remaining > 0 &&
-          Date.now() - inlinePageBudget.runStart < INLINE_PAGE_BUDGET_MS
-        ) {
-          inlinePageBudget.remaining -= 1;
-          try {
-            const { phishing } = await runPageAnalysisForDomain(
-              env,
-              { id: row.id, domain: row.domain, brand_name: brand.brand_name, brand_domain: brand.domain },
-              Date.now() + DEFAULT_DEADLINE_MS,
-            );
-            pagePhishing = phishing;
-            if (phishing) {
-              // Derive the bare-wall MEDIUM floor flag caller-side from the
-              // fired set (T4.1 spec §3) so the escalation fn stays pure.
-              threatLevel = escalateThreatLevelForPage(threatLevel, {
-                score: phishing.score,
-                credentialHarvest: phishing.credentialHarvest,
-                antiBotWall: phishing.signals.includes('anti_bot_wall'),
+              // NO HAIKU CALL AND NO `lookalike_domain_active` ALERT. This
+              // early return is the cost control: at a 10-35% resolve rate
+              // over the seeder backlog it is the difference between
+              // thousands of Haiku calls plus the same number of permanent
+              // alerts, and zero of either.
+              baselinesSuppressed++;
+              logger.info('lookalike_baseline_no_signal', {
+                domain: row.domain,
+                has_mx: result.hasMx,
+                has_web: result.hasWeb,
               });
+              return;
+            }
+            // Signal present → fall through to the full assessment path
+            // below, identical to a real transition from here on.
+          } else {
+            // ── OBSERVED TRANSITION ─────────────────────────────────────
+            // We checked this row before and it did not resolve; now it
+            // does. The domain genuinely appeared while we were watching,
+            // so `first_seen` means what it says.
+            newRegistrations++;
+
+            // Set first_seen
+            await env.DB.prepare(
+              `UPDATE lookalike_domains
+               SET first_seen = datetime('now')
+               WHERE id = ? AND first_seen IS NULL`,
+            ).bind(row.id).run();
+          }
+
+          const brandRow = await loadBrandContext(env, row.brand_id);
+
+          if (!brandRow) return;
+          const brand = { ...brandRow, user_id: 'system' };
+
+          // Request AI assessment
+          let threatLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'MEDIUM';
+          let aiAssessment = '';
+
+          try {
+            const aiResult = await analyzeWithHaiku(env, { agentId: "lookalike_scanner", runId: null },
+              `Assess the threat level of this newly registered lookalike domain. Is it likely malicious brand impersonation or benign?
+               Respond with JSON: {"threat_level": "LOW|MEDIUM|HIGH|CRITICAL", "assessment": "brief explanation", "indicators": ["list of suspicious indicators"]}`,
+              {
+                lookalike_domain: row.domain,
+                original_domain: brand.domain,
+                brand_name: brand.brand_name,
+                permutation_type: row.permutation_type,
+                resolves_to_ip: result.ip,
+                has_mx_records: result.hasMx,
+                has_web_server: result.hasWeb,
+              },
+            );
+
+            if (aiResult.success && aiResult.data) {
+              const structured = aiResult.data.structured as {
+                threat_level?: string;
+                assessment?: string;
+              } | undefined;
+              const responseText = aiResult.data.response ?? '';
+
+              // Try to extract threat_level from structured data or response
+              if (structured?.threat_level) {
+                const level = structured.threat_level.toUpperCase();
+                if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
+                  threatLevel = level as typeof threatLevel;
+                }
+              }
+              aiAssessment = structured?.assessment ?? responseText;
             }
           } catch (err) {
-            logger.error('lookalike_inline_page_error', {
+            logger.error('lookalike_ai_assessment_error', {
               domain: row.domain,
               error: err instanceof Error ? err.message : String(err),
             });
           }
-        }
 
-        // Update threat level and AI assessment
-        await env.DB.prepare(
-          `UPDATE lookalike_domains
-           SET threat_level = ?,
-               ai_assessment = ?,
-               updated_at = datetime('now')
-           WHERE id = ?`,
-        ).bind(threatLevel, aiAssessment, row.id).run();
+          // Boost threat level based on infrastructure signals
+          if (result.hasMx && result.hasWeb && threatLevel === 'MEDIUM') {
+            threatLevel = 'HIGH';
+          }
 
-        // Create alert via alerts pipeline. For IDN homoglyph variants the
-        // stored `domain` is punycode (xn--…); surface the human-readable
-        // unicode form (`аpple.com`) in the title so alerts aren't hostile.
-        const displayDomain = row.unicode_domain ?? row.domain;
-        const severity = threatLevel as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+          // BIMI on a lookalike domain is extremely suspicious
+          let hasBIMI = false;
+          try {
+            hasBIMI = await checkBIMIExists(row.domain);
+            if (hasBIMI && threatLevel === 'MEDIUM') {
+              threatLevel = 'HIGH';
+            }
+          } catch {
+            // BIMI check failed — non-blocking
+          }
 
-        // ── SEVERITY FLOOR ────────────────────────────────────────────
-        // Below HIGH there is no `lookalike_domain_active` row.
-        // Everything above this point has already been persisted —
-        // `threat_level`, `ai_assessment`, and the page columns written
-        // by `runPageAnalysisForDomain` — so nothing is lost but the
-        // notification. The comparison itself lives in
-        // `lib/lookalike-alert-policy.ts` and is shared with the
-        // page-analysis producer; it is NOT restated here.
-        //
-        // BEHAVIOUR CHANGE: this also stops MEDIUM alerts on genuine
-        // 0 -> 1 transitions, which used to be the common case (the
-        // compositor's default level is MEDIUM and only mail+web, BIMI or
-        // a page verdict lifted it). That is the requested change; the
-        // reasoning is in the floor's docstring.
-        //
-        // Scoped to this alert type only, and NOT an early return: the
-        // `typosquat_bimi` alert below is a different finding at a fixed
-        // HIGH severity. A LOW-assessed row with a BIMI record does not
-        // get its BIMI boost (that boost is `MEDIUM`-only), so an early
-        // return here would silently swallow a HIGH alert about the
-        // single most damning email signal this scanner can find.
-        let alertId: string | null = null;
-        if (clearsLookalikeAlertFloor(threatLevel)) {
-          alertId = await createAlert(env.DB, {
-            brandId: row.brand_id,
-            userId: brand.user_id,
-            alertType: 'lookalike_domain_active',
-            severity,
-            title: `Lookalike domain registered: ${displayDomain}`,
-            summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${result.hasWeb ? 'It has a web server.' : ''} ${result.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
-            details: {
-              lookalike_domain: row.domain,
-              unicode_domain: row.unicode_domain ?? undefined,
-              original_domain: brand.domain,
-              permutation_type: row.permutation_type,
-              resolves_to: result.ip,
-              has_mx: result.hasMx,
-              has_web: result.hasWeb,
-              // Page-content evidence when the inline analysis ran and
-              // scored; spreads to nothing otherwise so alert creation is
-              // never regressed by a skipped/failed fetch. Descriptive
-              // only — does not influence `severity` above, which is the
-              // already-composited `threatLevel`.
-              ...buildPageEvidenceDetails(pagePhishing),
-            },
-            sourceType: 'lookalike_scanner',
-            sourceId: row.id,
-            aiAssessment: aiAssessment || undefined,
-            aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(threatLevel)
-              ? [
-                  'Investigate the domain for brand impersonation content',
-                  'Consider filing a UDRP complaint or takedown request',
-                  'Monitor for phishing emails from this domain',
-                  'Alert customers if the domain is actively being used for phishing',
-                ]
-              : [
-                  'Continue monitoring for content changes',
-                  'Check periodically for brand impersonation',
-                ],
-          });
-        } else {
-          alertsWithheldByFloor++;
-          logger.info('lookalike_alert_withheld_below_floor', {
-            domain: row.domain,
-            threat_level: threatLevel,
-            floor: LOOKALIKE_ALERT_SEVERITY_FLOOR,
-            first_contact: firstContact,
-          });
-        }
+          // Deterministic page-content analysis (D6 / S2.4). Slots the
+          // page phishing score into this same threat_level compositor: a
+          // credential-form-off-domain page escalates MEDIUM→HIGH/CRITICAL
+          // (monotonic — never downgrades). Inline only for newly-
+          // registered has_web domains and capped per tick; the throttled
+          // analyzeLookalikePages pass re-checks the broader registered set.
+          // All fetches funnel through the SSRF-safe fetchSuspectPage.
+          //
+          // Hoisted out of the block below so the alert built at the tail of
+          // this iteration can carry the same evidence (Lane 3 Phase 3 step
+          // 16). Stays null when the branch is skipped or throws, which
+          // `buildPageEvidenceDetails` degrades to `{}`.
+          let pagePhishing: PagePhishingResult | null = null;
+          if (
+            result.hasWeb &&
+            inlinePageBudget.remaining > 0 &&
+            Date.now() - inlinePageBudget.runStart < INLINE_PAGE_BUDGET_MS
+          ) {
+            inlinePageBudget.remaining -= 1;
+            try {
+              const { phishing } = await runPageAnalysisForDomain(
+                env,
+                { id: row.id, domain: row.domain, brand_name: brand.brand_name, brand_domain: brand.domain },
+                Date.now() + DEFAULT_DEADLINE_MS,
+              );
+              pagePhishing = phishing;
+              if (phishing) {
+                // Derive the bare-wall MEDIUM floor flag caller-side from the
+                // fired set (T4.1 spec §3) so the escalation fn stays pure.
+                threatLevel = escalateThreatLevelForPage(threatLevel, {
+                  score: phishing.score,
+                  credentialHarvest: phishing.credentialHarvest,
+                  antiBotWall: phishing.signals.includes('anti_bot_wall'),
+                });
+              }
+            } catch (err) {
+              logger.error('lookalike_inline_page_error', {
+                domain: row.domain,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
 
-        // Link the alert back to the lookalike record. Guarded on a
-        // non-null id now, where it used to run unconditionally: both the
-        // floor above and `createAlert`'s NX2 tier gate can legitimately
-        // produce no alert, and `alert_id IS NULL` is precisely the state
-        // `analyzeLookalikePages` keys its own alert path on. Writing a
-        // NULL over a NULL was harmless; writing one at all is now
-        // meaningless work, and being explicit about it is what makes the
-        // page-analysis gate's precondition readable.
-        if (alertId) {
+          // Update threat level and AI assessment
           await env.DB.prepare(
-            `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
-          ).bind(alertId, row.id).run();
-        }
+            `UPDATE lookalike_domains
+             SET threat_level = ?,
+                 ai_assessment = ?,
+                 updated_at = datetime('now')
+             WHERE id = ?`,
+          ).bind(threatLevel, aiAssessment, row.id).run();
 
-        // Additional alert if lookalike has BIMI. Shared builder with
-        // the mail-only first-contact lane above.
-        if (hasBIMI) {
-          await fileBimiAlert(env, row, brand.domain, brand.user_id);
+          // Create alert via alerts pipeline. For IDN homoglyph variants the
+          // stored `domain` is punycode (xn--…); surface the human-readable
+          // unicode form (`аpple.com`) in the title so alerts aren't hostile.
+          const displayDomain = row.unicode_domain ?? row.domain;
+          const severity = threatLevel as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+          // ── SEVERITY FLOOR ────────────────────────────────────────────
+          // Below HIGH there is no `lookalike_domain_active` row.
+          // Everything above this point has already been persisted —
+          // `threat_level`, `ai_assessment`, and the page columns written
+          // by `runPageAnalysisForDomain` — so nothing is lost but the
+          // notification. The comparison itself lives in
+          // `lib/lookalike-alert-policy.ts` and is shared with the
+          // page-analysis producer; it is NOT restated here.
+          //
+          // BEHAVIOUR CHANGE: this also stops MEDIUM alerts on genuine
+          // 0 -> 1 transitions, which used to be the common case (the
+          // compositor's default level is MEDIUM and only mail+web, BIMI or
+          // a page verdict lifted it). That is the requested change; the
+          // reasoning is in the floor's docstring.
+          //
+          // Scoped to this alert type only, and NOT an early return: the
+          // `typosquat_bimi` alert below is a different finding at a fixed
+          // HIGH severity. A LOW-assessed row with a BIMI record does not
+          // get its BIMI boost (that boost is `MEDIUM`-only), so an early
+          // return here would silently swallow a HIGH alert about the
+          // single most damning email signal this scanner can find.
+          let alertId: string | null = null;
+          if (clearsLookalikeAlertFloor(threatLevel)) {
+            alertId = await createAlert(env.DB, {
+              brandId: row.brand_id,
+              userId: brand.user_id,
+              alertType: 'lookalike_domain_active',
+              severity,
+              title: `Lookalike domain registered: ${displayDomain}`,
+              summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${result.hasWeb ? 'It has a web server.' : ''} ${result.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
+              details: {
+                lookalike_domain: row.domain,
+                unicode_domain: row.unicode_domain ?? undefined,
+                original_domain: brand.domain,
+                permutation_type: row.permutation_type,
+                resolves_to: result.ip,
+                has_mx: result.hasMx,
+                has_web: result.hasWeb,
+                // Page-content evidence when the inline analysis ran and
+                // scored; spreads to nothing otherwise so alert creation is
+                // never regressed by a skipped/failed fetch. Descriptive
+                // only — does not influence `severity` above, which is the
+                // already-composited `threatLevel`.
+                ...buildPageEvidenceDetails(pagePhishing),
+              },
+              sourceType: 'lookalike_scanner',
+              sourceId: row.id,
+              aiAssessment: aiAssessment || undefined,
+              aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(threatLevel)
+                ? [
+                    'Investigate the domain for brand impersonation content',
+                    'Consider filing a UDRP complaint or takedown request',
+                    'Monitor for phishing emails from this domain',
+                    'Alert customers if the domain is actively being used for phishing',
+                  ]
+                : [
+                    'Continue monitoring for content changes',
+                    'Check periodically for brand impersonation',
+                  ],
+            });
+          } else {
+            alertsWithheldByFloor++;
+            logger.info('lookalike_alert_withheld_below_floor', {
+              domain: row.domain,
+              threat_level: threatLevel,
+              floor: LOOKALIKE_ALERT_SEVERITY_FLOOR,
+              first_contact: firstContact,
+            });
+          }
+
+          // Link the alert back to the lookalike record. Guarded on a
+          // non-null id now, where it used to run unconditionally: both the
+          // floor above and `createAlert`'s NX2 tier gate can legitimately
+          // produce no alert, and `alert_id IS NULL` is precisely the state
+          // `analyzeLookalikePages` keys its own alert path on. Writing a
+          // NULL over a NULL was harmless; writing one at all is now
+          // meaningless work, and being explicit about it is what makes the
+          // page-analysis gate's precondition readable.
+          if (alertId) {
+            await env.DB.prepare(
+              `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
+            ).bind(alertId, row.id).run();
+          }
+
+          // Additional alert if lookalike has BIMI. Shared builder with
+          // the mail-only first-contact lane above.
+          if (hasBIMI) {
+            await fileBimiAlert(env, row, brand.domain, brand.user_id);
+          }
+        }
+      } catch (err) {
+        rowErrors++;
+        logger.error('lookalike_check_row_error', {
+          domain: row.domain,
+          lookalike_id: row.id,
+          first_contact: row.last_checked === null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Same cooldown the unresolved-DNS branch uses (ONE statement,
+        // two callers — see `stampCheckFailure`). A row that threw did
+        // not produce a usable observation, so it belongs behind the
+        // cooldown exactly as a timeout does; without this it would be
+        // re-selected on the very next tick and throw again. Guarded in
+        // turn, because a DB error HERE must not re-raise into
+        // `Promise.all` and undo the isolation.
+        try {
+          await stampCheckFailure(env, row.id);
+        } catch (stampErr) {
+          logger.error('lookalike_check_cooldown_stamp_failed', {
+            lookalike_id: row.id,
+            error: stampErr instanceof Error ? stampErr.message : String(stampErr),
+          });
         }
       }
     });
@@ -820,11 +958,27 @@ export async function checkLookalikeBatch(env: Env): Promise<void> {
     // failure cooldown. A rising number here is a resolver problem, and
     // before migration 0268 it was silently minting false transitions.
     checks_unresolved: checksUnresolved,
+    // Rows that THREW (F8). A defect count, not a resolver count: it was
+    // previously unobservable because one throw aborted the whole tick.
+    row_errors: rowErrors,
     // The cohort split, so starvation is visible in the log rather than
     // inferred from a stalled `new_registrations` count.
     selected_first_contact: firstContacts.results.length,
     selected_recheck: recheck.results.length + spill.length,
   });
+
+  return {
+    checked: totalChecked,
+    new_registrations: newRegistrations,
+    baselines_established: baselinesEstablished,
+    baselines_suppressed: baselinesSuppressed,
+    baseline_bimi_alerts: baselineBimiAlerts,
+    alerts_withheld_below_floor: alertsWithheldByFloor,
+    checks_unresolved: checksUnresolved,
+    row_errors: rowErrors,
+    selected_first_contact: firstContacts.results.length,
+    selected_recheck: recheck.results.length + spill.length,
+  };
 }
 
 // checkDomain() moved to lib/domain-checker.ts for shared use with Sparrow Phase F

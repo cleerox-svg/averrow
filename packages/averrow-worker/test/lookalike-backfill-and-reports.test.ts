@@ -22,10 +22,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
+import { applyLookalikeSchema, lookalikeColumns } from "./lookalike-schema";
 
 const { createAlertSpy } = vi.hoisted(() => ({ createAlertSpy: vi.fn() }));
 vi.mock("../src/lib/alerts", () => ({ createAlert: createAlertSpy }));
@@ -52,14 +54,18 @@ function read(rel: string): string {
   return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 }
 
-/** Every source table the backfill touches, so no source errors. */
+/**
+ * Every source table the backfill touches, so no source errors.
+ *
+ * `lookalike_domains` is DELIBERATELY ABSENT from this literal: it is
+ * built from the migration files by `applyLookalikeSchema` below. The
+ * previous version of this file declared it here by hand — with
+ * `has_content INTEGER, mx_records TEXT, dns_active INTEGER`, three
+ * columns that exist in NO migration — which is how the queries this
+ * lane was written to prove came to be tested against a schema shaped to
+ * fit them. See `test/lookalike-schema.ts`.
+ */
 const DDL = `
-  CREATE TABLE lookalike_domains (
-    id TEXT PRIMARY KEY, brand_id TEXT, domain TEXT, permutation_type TEXT,
-    registered INTEGER DEFAULT 0, threat_level TEXT, first_seen TEXT,
-    last_checked TEXT, has_content INTEGER, mx_records TEXT, dns_active INTEGER,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
   CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT, canonical_domain TEXT, tier TEXT);
   CREATE TABLE org_brands (org_id TEXT, brand_id TEXT);
   CREATE TABLE org_members (org_id TEXT, user_id TEXT, role TEXT, created_at TEXT);
@@ -97,6 +103,18 @@ const DDL = `
   );
 `;
 
+/**
+ * A fresh in-memory DB with the hand-written source tables AND the
+ * migration-derived `lookalike_domains`. Every test goes through here,
+ * so no test can quietly reintroduce a hand-written column set.
+ */
+function freshDb(): InstanceType<SqliteCtor> {
+  const db = new DatabaseSync!(":memory:");
+  db.exec(DDL);
+  applyLookalikeSchema(db);
+  return db;
+}
+
 function shim(db: InstanceType<SqliteCtor>): Env {
   const DB = {
     prepare(sql: string) {
@@ -128,8 +146,7 @@ beforeEach(() => {
 
 describe.skipIf(!hasSqlite())("backfillAlertsForBrand — lookalike_domain_active", () => {
   function setup(rows: Array<Partial<{ id: string; registered: number; threat_level: string | null }>>) {
-    const db = new DatabaseSync!(":memory:");
-    db.exec(DDL);
+    const db = freshDb();
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','customer')`).run();
     db.prepare(`INSERT INTO org_brands (org_id, brand_id) VALUES ('o1','b1')`).run();
     db.prepare(`INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ('o1','u1','owner','2026-01-01')`).run();
@@ -227,18 +244,69 @@ describe.skipIf(!hasSqlite())("backfillAlertsForBrand — lookalike_domain_activ
     expect(src).not.toMatch(/alertType:\s*'lookalike_domain_active',\s*severity:\s*'medium'/);
   });
 
-  it("the policy docstring names all three producers", () => {
+  it("the policy docstring names every producer the repo actually has", () => {
+    // The count in this docstring has now been wrong TWICE — first
+    // "BOTH producers" while there were three, then "a FOURTH producer
+    // is a contradiction in terms" while `lib/phantom-matcher.ts` was
+    // already filing the type. So the list is not asserted against a
+    // hardcoded expectation; it is DERIVED from the source tree, and
+    // every file found must be named in the policy module.
     const policy = read("../src/lib/lookalike-alert-policy.ts");
-    for (const producer of [
-      "scanners/lookalike-domains.ts",
-      "scanners/lookalike-page-analysis.ts",
-      "lib/alert-backfill.ts",
-    ]) {
-      expect(policy, producer).toContain(producer);
+    const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
+    const producers = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith(".ts")) continue;
+        const code = readFileSync(full, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/^\s*\/\/.*$/gm, "");
+        // `alertType:` naming this family, either as a literal or via a
+        // config field whose value is this literal.
+        if (/alertType:\s*["']lookalike_domain_active["']/.test(code) ||
+            (/alertType/.test(code) && /["']lookalike_domain_active["']/.test(code))) {
+          producers.add(full.slice(srcDir.length).replace(/\\/g, "/"));
+        }
+      }
+    };
+    walk(srcDir);
+
+    // Sanity: the walk found the ones we know about, so a path or regex
+    // failure cannot make this vacuous.
+    expect(producers.size, [...producers].join(", ")).toBeGreaterThanOrEqual(4);
+    for (const rel of producers) {
+      if (rel === "lib/lookalike-alert-policy.ts") continue; // the module itself
+      expect(policy, `${rel} files lookalike_domain_active but the policy docstring does not name it`)
+        .toContain(rel);
     }
-    // The affirmative claim, asserted because the sentence it replaced
-    // ("imported by BOTH producers") is the one a reader would trust.
-    expect(policy).toContain("imported by ALL THREE producers");
+
+    // And the specific false claim is gone.
+    expect(policy).not.toContain("A FOURTH producer is a contradiction in terms");
+    expect(policy).not.toContain("imported by ALL THREE producers");
+  });
+
+  it("phantom-matcher takes its severity FROM the policy module, exemption and all", () => {
+    // Producer 4. It legitimately files below the HIGH floor (a phantom
+    // hit is a monitoring signal, and it is bounded to one alert per
+    // phantom ever by the guarded claim), but it must not do so by
+    // hardcoding a severity in ignorance of the floor — which is what
+    // it did, and why the floor's docstring could deny it existed.
+    const matcher = read("../src/lib/phantom-matcher.ts")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(matcher).toMatch(
+      /import\s*\{[^}]*PHANTOM_MATCH_ALERT_SEVERITY[^}]*\}\s*from\s*["']\.\/lookalike-alert-policy["']/,
+    );
+    expect(matcher).toContain("severity: PHANTOM_MATCH_ALERT_SEVERITY");
+    // The bare literal it replaced must be gone from the alert call.
+    expect(matcher).not.toMatch(/severity:\s*["']low["']/);
+
+    // The exemption's BOUND has to be stated where the floor lives, not
+    // just asserted to exist.
+    const policy = read("../src/lib/lookalike-alert-policy.ts");
+    expect(policy).toContain("PHANTOM_MATCH_ALERT_SEVERITY");
+    expect(policy).toContain("AT MOST ONE alert per `phantom_domains` row");
   });
 });
 
@@ -261,8 +329,23 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
 
   const OBSERVER_LIST = () => sqlContaining(observerSrc, ["FROM lookalike_domains ld", "JOIN brands b"]);
   const OBSERVER_SUMMARY = () => sqlContaining(observerSrc, ["FROM lookalike_domains", "COUNT(DISTINCT brand_id)"]);
-  const NARRATOR_BRAND = () => sqlContaining(narratorSrc, ["FROM lookalike_domains", "dns_active"]);
+  // RE-KEYED off `dns_active`, a column that does not exist. Keying an
+  // extractor on a phantom name is how the whole phantom-column family
+  // survived a "fixed by test" round: the marker pinned the defect in
+  // place, so correcting the query would have failed extraction rather
+  // than the assertion. The markers below are structural and real — the
+  // table name and the statement's own ORDER BY / LIMIT.
+  const NARRATOR_BRAND = () =>
+    sqlContaining(narratorSrc, ["FROM lookalike_domains", "ORDER BY first_seen DESC LIMIT 30"]);
   const NARRATOR_SIGNALS = () => sqlContaining(narratorSrc, ["lookalike_count", "appstore_count"]);
+
+  const ALL_FOUR = () =>
+    [
+      ["observer:list", OBSERVER_LIST()],
+      ["observer:summary", OBSERVER_SUMMARY()],
+      ["narrator:brand", NARRATOR_BRAND()],
+      ["narrator:signals", NARRATOR_SIGNALS()],
+    ] as const;
 
   /**
    * One row of every shape the widened pipeline produces.
@@ -273,13 +356,23 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
    * genuine transition.
    */
   function fixture() {
-    const db = new DatabaseSync!(":memory:");
-    db.exec(DDL);
+    const db = freshDb();
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
+    // REAL columns (migration 0031): `has_web` / `has_mx` / `resolves_to`.
+    // `has_web = 1, has_mx = 0` on every row, so the observer summary's
+    // two corrected SUM(CASE ...) arms return DIFFERENT numbers and the
+    // assertions below can tell them apart — with both at 0 the test
+    // could not distinguish a working arm from a mis-named one.
+    //
+    // `permutation_type` is supplied because the REAL schema declares it
+    // `NOT NULL` — the hand-written DDL this replaced had it nullable,
+    // which is a second, quieter way a fixture-shaped schema diverges
+    // from the table the code actually writes to.
     const ins = db.prepare(
       `INSERT INTO lookalike_domains
-         (id, brand_id, domain, registered, first_seen, last_checked, created_at, has_content, mx_records, dns_active)
-       VALUES (?, 'b1', ?, ?, ?, ?, ?, 0, NULL, 1)`,
+         (id, brand_id, domain, permutation_type, registered, first_seen, last_checked, created_at,
+          has_web, has_mx, resolves_to)
+       VALUES (?, 'b1', ?, 'replacement', ?, ?, ?, ?, 1, 0, '5.6.7.8')`,
     );
     // Baselined today: created now, checked now, NO observed appearance.
     ins.run("seeded_baseline", "s1.example", 1, null, "now-ish", null);
@@ -304,7 +397,9 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
 
   it("observer's summary counts rows we CHECKED, not rows the seeder inserted", () => {
     const db = fixture();
-    const row = db.prepare(OBSERVER_SUMMARY()).get() as { total: number; registered: number };
+    const row = db.prepare(OBSERVER_SUMMARY()).get() as {
+      total: number; registered: number; with_web: number; with_mx: number; brands: number;
+    };
     // seeded_baseline + appeared were checked in the window; the
     // never-checked seeder row and the four-month-old one were not.
     expect(row.total).toBe(2);
@@ -312,12 +407,52 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
     // The block is gated on `total > 0`, so the briefing line still
     // renders — the fix narrows the numbers, it does not zero the report.
     expect(row.total).toBeGreaterThan(0);
+    // The two infrastructure arms, which used to name `has_content` and
+    // `mx_records` — columns that do not exist, so this statement threw
+    // SQLITE_ERROR and (because the agent wraps BOTH queries in one
+    // `try`) took the observer's whole lookalike section with it. The
+    // fixture sets has_web = 1 / has_mx = 0 on every row, so a swapped
+    // or mis-named arm changes these numbers.
+    expect(row.with_web).toBe(2);
+    expect(row.with_mx).toBe(0);
+    expect(row.brands).toBe(1);
   });
 
   it("narrator's per-brand 7-day list contains ONLY the observed transition", () => {
     const db = fixture();
-    const rows = db.prepare(NARRATOR_BRAND()).all("b1") as Array<{ domain: string }>;
+    const rows = db.prepare(NARRATOR_BRAND()).all("b1") as Array<{
+      domain: string; has_web: number; has_mx: number; resolves_to: string | null;
+    }>;
     expect(rows.map((r) => r.domain)).toEqual(["s3.example"]);
+    // The narrator's RENDERER filters on these three by name
+    // (`d.has_web` / `d.has_mx`), so the SELECT must actually deliver
+    // them — it used to ask for `dns_active` / `has_content` /
+    // `mx_records` and deliver nothing at all, the `.catch` turning the
+    // SQLITE_ERROR into a permanently empty array.
+    expect(rows[0]!.has_web).toBe(1);
+    expect(rows[0]!.has_mx).toBe(0);
+    expect(rows[0]!.resolves_to).toBe("5.6.7.8");
+  });
+
+  it("the renderer's field names are the ones the SELECT delivers", () => {
+    // The other half of the same defect: the SELECT and the `filter()`
+    // over its results are 330 lines apart, and both named phantom
+    // columns, so they agreed with each other and with nothing else.
+    // Executing the query proves the SELECT; this proves the consumer
+    // reads the same names.
+    //
+    // Comments are stripped first: the corrected source documents the
+    // three phantom names on purpose (that record is the point), and
+    // matching raw text would fail on the very comment that explains the
+    // fix — "repairing" which would be exactly backwards.
+    const code = narratorSrc
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toMatch(/d\.has_web\b/);
+    expect(code).toMatch(/d\.has_mx\b/);
+    for (const phantom of ["has_content", "mx_records", "dns_active"]) {
+      expect(code, `narrator code still references ${phantom}`).not.toContain(phantom);
+    }
   });
 
   it("narrator's signal-gate count does not fire on seeder output", () => {
@@ -345,14 +480,60 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
   it("no lookalike reading keys on created_at any more", () => {
     // The structural half. A reading restored to `created_at` passes
     // every count above the moment the fixture is "updated to match".
-    for (const [label, sql] of [
-      ["observer:list", OBSERVER_LIST()],
-      ["observer:summary", OBSERVER_SUMMARY()],
-      ["narrator:brand", NARRATOR_BRAND()],
-      ["narrator:signals", NARRATOR_SIGNALS()],
-    ] as const) {
+    for (const [label, sql] of ALL_FOUR()) {
       expect(sql, label).not.toMatch(/ld\.created_at|lookalike_domains\s+WHERE\s+created_at/);
     }
     expect(NARRATOR_SIGNALS()).toMatch(/FROM lookalike_domains ld WHERE ld\.brand_id = b\.id AND ld\.registered = 1 AND ld\.first_seen >=/);
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // The phantom-column guard itself
+  // ─────────────────────────────────────────────────────────────────
+
+  it("all four statements EXECUTE against the migration-built schema", () => {
+    // The load-bearing test of this lane. `lookalike_domains` here is
+    // derived from the migration files, so a column that no migration
+    // declares raises `no such column` and fails HERE, rather than being
+    // accommodated by a hand-written CREATE TABLE and then throwing in
+    // production. Both agents' previous statements named three such
+    // columns; the observer's threw away its own daily-briefing section.
+    const db = fixture();
+    db.prepare(
+      `INSERT INTO threats (id, target_brand_id, threat_type, severity, source_feed, indicator, status, created_at)
+       VALUES ('t1','b1','phishing','high','feed','x','active', datetime('now','-1 day'))`,
+    ).run();
+    db.exec(`ALTER TABLE brands ADD COLUMN email_security_grade TEXT`);
+    db.exec(`ALTER TABLE brands ADD COLUMN threat_count INTEGER DEFAULT 0`);
+    db.prepare(`UPDATE brands SET threat_count = 5 WHERE id = 'b1'`).run();
+    db.exec(`CREATE TABLE social_monitor_results (id TEXT, brand_id TEXT, created_at TEXT)`);
+
+    const params: Record<string, unknown[]> = {
+      "observer:list": [],
+      "observer:summary": [],
+      "narrator:brand": ["b1"],
+      "narrator:signals": [],
+    };
+    for (const [label, sql] of ALL_FOUR()) {
+      expect(() => db.prepare(sql).all(...(params[label] as never[])), label).not.toThrow();
+    }
+  });
+
+  it("names no column the table does not have", () => {
+    // Belt to the execution test's braces, and the one that names the
+    // three offenders explicitly so a regression reads as itself rather
+    // than as a generic SQLite error. Derived from the migrations, not
+    // hardcoded, so a column genuinely added later is simply real.
+    const real = new Set(lookalikeColumns());
+    for (const phantom of ["has_content", "mx_records", "dns_active"]) {
+      expect(real, `${phantom} must not be a real column`).not.toContain(phantom);
+      for (const [label, sql] of ALL_FOUR()) {
+        expect(sql, `${label} references phantom column ${phantom}`).not.toContain(phantom);
+      }
+    }
+    // Sanity: the derived column list is the real thing, not an empty set
+    // that would make the loop above vacuous.
+    for (const col of ["has_web", "has_mx", "resolves_to", "first_seen", "last_checked"]) {
+      expect(real, col).toContain(col);
+    }
   });
 });

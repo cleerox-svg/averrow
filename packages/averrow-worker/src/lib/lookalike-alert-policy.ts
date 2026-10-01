@@ -2,29 +2,52 @@
  * Lookalike alert POLICY — when a `lookalike_domain_active` alert may
  * exist at all, and what it is allowed to carry.
  *
- * ONE definition, imported by ALL THREE producers:
- *   - `scanners/lookalike-domains.ts`      (the registration checker)
- *   - `scanners/lookalike-page-analysis.ts` (the page-verdict pass)
- *   - `lib/alert-backfill.ts`               (claim-time backfill)
+ * ── THE PRODUCERS, ENUMERATED ───────────────────────────────────────
  *
- * The third one was the correction. This docstring previously said "ONE
+ * FOUR files call `createAlert` with `alertType:
+ * 'lookalike_domain_active'`, across FIVE configured sources. Verified
+ * by repo-wide grep, not by memory — this docstring has now been wrong
+ * twice about its own count:
+ *
+ *   1. `scanners/lookalike-domains.ts:845`      registration checker
+ *   2. `scanners/lookalike-page-analysis.ts:461` page-verdict pass
+ *   3. `lib/alert-backfill.ts:186`               claim-time backfill
+ *   4. `lib/phantom-matcher.ts:271`              phantom-hit matcher,
+ *      reached from TWO of its three `SOURCE_CONFIG` entries
+ *      (`nrd:117` and `lookalike:138`; the `ct` entry files
+ *      `ct_certificate_issued` instead through the same call).
+ *
+ * The first three go through `clearsLookalikeAlertFloor` below. The
+ * fourth is a DOCUMENTED EXEMPTION with a stated bound — see
+ * `PHANTOM_MATCH_ALERT_SEVERITY`.
+ *
+ * Producer 3 was the previous correction: this docstring said "ONE
  * definition, imported by BOTH producers" and the floor's own text said
- * "on either producer path" — and both were false: `alert-backfill.ts`
- * filed `lookalike_domain_active` at a hardcoded `medium`, selected on
- * `created_at` with no `registered` filter, up to 100 per claimed brand,
- * with `bypassTierGate: true`. Widening the seeder to 1,867 brands
- * turned that into a burst of MEDIUM alerts about domains that were not
- * even registered, on the one surface a brand-new tenant sees first.
+ * "on either producer path", and both were false — `alert-backfill.ts`
+ * filed at a hardcoded `medium`, selected on `created_at` with no
+ * `registered` filter, up to 100 per claimed brand, with
+ * `bypassTierGate: true`. Widening the seeder to 1,867 brands turned
+ * that into a burst of MEDIUM alerts about domains that were not even
+ * registered, on the one surface a brand-new tenant sees first. It now
+ * imports `clearsLookalikeAlertFloor` and derives its severity from the
+ * row's already-composited `threat_level` rather than a constant. THERE
+ * IS NO BACKFILL EXEMPTION, deliberately — see the note at that call
+ * site for why a claim-time batch is the worst rather than the best case
+ * for one.
  *
- * It now imports `clearsLookalikeAlertFloor` and derives its severity
- * from the row's already-composited `threat_level` rather than a
- * constant. THERE IS NO BACKFILL EXEMPTION, deliberately — see the note
- * at that call site for why a claim-time batch is the worst rather than
- * the best case for one.
+ * Producer 4 is this round's correction, and it makes the point sharper
+ * than the sentence it replaces. That sentence read: "A FOURTH producer
+ * is a contradiction in terms, not a possibility to plan for: whatever
+ * files this alert type imports from here." `lib/phantom-matcher.ts`
+ * was already in the repository, filing this type at a hardcoded
+ * `severity: "low"` with no import from this module — so the claim was
+ * falsified by a file that predated it. An assertion about a codebase is
+ * not an invariant; the enumeration above and the tests that pin it are.
  *
- * A FOURTH producer is a contradiction in terms, not a possibility to
- * plan for: whatever files this alert type imports from here. If you are
- * adding one and it does not, that is the defect.
+ * ADDING A PRODUCER: import from here. Either call
+ * `clearsLookalikeAlertFloor`, or add an exemption constant alongside
+ * `PHANTOM_MATCH_ALERT_SEVERITY` that states its bound, and add yourself
+ * to the list above. A producer that does neither is the defect.
  *
  * ── Why lib/ and not beside either producer ─────────────────────────
  *
@@ -64,8 +87,9 @@ export const THREAT_LEVEL_RANK: Record<PageThreatLevel, number> = {
 /**
  * The severity floor for `lookalike_domain_active` alerts.
  *
- * Below this level NO alert row is created — on ANY of the three
- * producer paths listed in this module's docstring.
+ * Below this level NO alert row is created — on producers 1-3 of the
+ * four listed in this module's docstring. Producer 4 is exempt; see
+ * `PHANTOM_MATCH_ALERT_SEVERITY`.
  * Everything else is still persisted: `threat_level`, `ai_assessment`,
  * and the whole page-analysis column family. THE DATA IS THE
  * DELIVERABLE; THE ALERT IS THE NOTIFICATION, and the two had been
@@ -116,6 +140,58 @@ export const LOOKALIKE_ALERT_SEVERITY_FLOOR: PageThreatLevel = 'HIGH';
 export function clearsLookalikeAlertFloor(level: PageThreatLevel): boolean {
   return THREAT_LEVEL_RANK[level] >= THREAT_LEVEL_RANK[LOOKALIKE_ALERT_SEVERITY_FLOOR];
 }
+
+/**
+ * THE ONE DOCUMENTED EXEMPTION from `LOOKALIKE_ALERT_SEVERITY_FLOOR`:
+ * the severity `lib/phantom-matcher.ts` (producer 4) files its
+ * phantom-hit alerts at.
+ *
+ * Producer 4 does NOT call `clearsLookalikeAlertFloor`, and applying the
+ * floor to it would be wrong in both available directions. Withholding
+ * the alert would delete the phantom lane's only output — a `low`
+ * monitoring alert is the entire deliverable of Wave 2 §6.1, and the
+ * enumerator already never writes `threats` and never alerts. Raising
+ * the severity to HIGH to clear the floor would contradict §6.2: a
+ * phantom hit says "a domain our LLM predicted would be hallucinated for
+ * this brand has now been independently observed", which is a
+ * monitoring signal, not a confirmed active phish.
+ *
+ * ── THE BOUND, which is why the exemption is affordable ─────────────
+ *
+ * The floor's argument is queue arithmetic, not taste (see its
+ * docstring): ~8,941 alerts already unworked, ~36/week intake, and no
+ * triage rule that can ever auto-clear this family, so every alert it
+ * files is permanent manual work. That argument applies to producers
+ * 1-3 because their populations are unbounded in the relevant sense —
+ * 56,010 candidate rows re-checked on a 24 h cadence, and up to 100 per
+ * brand claim.
+ *
+ * Producer 4's is bounded by construction, twice over:
+ *
+ *   * AT MOST ONE alert per `phantom_domains` row, EVER. The alert is
+ *     gated behind a guarded `UPDATE ... WHERE id = ? AND status =
+ *     'predicted'` claim that runs BEFORE `createAlert`, so a second
+ *     matcher pass, a second source hitting the same phantom, and a
+ *     re-run of the endpoint all find 0 changed rows and file nothing.
+ *   * The population is `phantom_domains` at `status = 'predicted'`,
+ *     written only by `agents/phantomEnumerator.ts` — a `trigger:
+ *     "manual"` agent with one bounded Haiku pass per monitored-tier
+ *     brand. It is not a permutation table and it does not grow on a
+ *     cron.
+ *
+ * So the lifetime ceiling on this producer is "one alert per phantom
+ * ever enumerated", which an operator controls directly by choosing to
+ * run the enumerator. That is a different kind of quantity from a
+ * cron-driven re-check, and the reason this is an exemption rather than
+ * a hole.
+ *
+ * Imported by the matcher instead of being a bare literal there so that
+ * (a) a future change to the floor puts the reader in front of this
+ * note, and (b) the exemption is visible from the policy module rather
+ * than only discoverable by grep — which is exactly how producer 4 went
+ * unnoticed while the docstring claimed it could not exist.
+ */
+export const PHANTOM_MATCH_ALERT_SEVERITY = 'low';
 
 /**
  * Does a page verdict clear the bar `escalateThreatLevelForPage` already

@@ -29,9 +29,46 @@ export interface DomainCheckResult {
    *         `registered` is a default, not a finding. Leave any stored
    *         registration state alone.
    *
-   * `hasMx` / `hasWeb` / `ip` are only meaningful when this is true.
+   * SCOPED TO `registered`, and to nothing else. This field used to
+   * claim that "`hasMx` / `hasWeb` / `ip` are only meaningful when this
+   * is true", which was false in BOTH directions:
+   *
+   *   * `resolved` can be true while `hasMx` / `ip` are meaningless — a
+   *     SEEN A record short-circuits it (`registered || ...`), so an A
+   *     answer with an MX timeout yields `resolved: true, hasMx: false`
+   *     from a probe that learned nothing about mail; and an MX answer
+   *     with an A timeout yields `resolved: true, ip: undefined` from a
+   *     probe that learned nothing about the address.
+   *   * `resolved` says nothing at all about the WEB probe, which has
+   *     its own timeout and its own failure mode.
+   *
+   * Per-field answers are what a caller that PERSISTS these values
+   * needs, so each now carries its own flag below. A caller must not
+   * write a field whose flag is false: doing so records "not present"
+   * for "we could not tell", which erases a known IP / MX / web server
+   * on a transient probe failure and drops the row out of the cohorts
+   * keyed on those columns.
    */
   resolved: boolean;
+  /**
+   * The A query returned a parseable response (an NXDOMAIN counts; a
+   * timeout or non-ok DoH reply does not). `ip` is meaningful only when
+   * this is true.
+   */
+  aAnswered: boolean;
+  /**
+   * The MX query returned a parseable response. `hasMx` is meaningful
+   * only when this is true.
+   */
+  mxAnswered: boolean;
+  /**
+   * A web probe COMPLETED — any HTTP response, INCLUDING 403 / 404 / a
+   * redirect, over https or the http fallback. False means every attempt
+   * failed at the connection level (timeout, TCP reset, TLS failure,
+   * tarpit) or that no probe was attempted at all (`registered` false).
+   * `hasWeb` is meaningful only when this is true.
+   */
+  webAnswered: boolean;
   ip?: string;
   hasMx: boolean;
   hasWeb: boolean;
@@ -105,7 +142,16 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
     // the verdict below is not treated as authoritative.
   }
 
-  // Web check: HEAD request with 3s timeout
+  // Web check: HEAD request with 3s timeout.
+  //
+  // Both branches used to end in a bare `catch {}` commented "No web
+  // server", leaving `hasWeb = false` — so a 3s timeout, a TCP reset, a
+  // TLS failure and a tarpit were all indistinguishable from a domain
+  // that genuinely serves nothing, and a caller persisting `hasWeb`
+  // wrote 0 over a known 1. `webAnswered` is the same distinction the
+  // DNS probes already draw: a 403/404/redirect IS an answer (the
+  // `fetch` resolved), only a connection-level failure is not.
+  let webAnswered = false;
   if (registered) {
     try {
       const webRes = await fetch(`https://${domain}`, {
@@ -115,6 +161,7 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
       });
       // Any response (including redirects) means there's a web server
       hasWeb = webRes.status > 0;
+      webAnswered = true;
     } catch {
       // Try HTTP as fallback
       try {
@@ -124,11 +171,16 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
           redirect: 'manual',
         });
         hasWeb = httpRes.status > 0;
+        webAnswered = true;
       } catch {
-        // No web server
+        // BOTH probes failed at the connection level. NOT an answer:
+        // `webAnswered` stays false and `hasWeb` is a default, not a
+        // finding.
       }
     }
   }
+  // `registered === false` means no probe was attempted, so there is no
+  // web answer either — which the `if` above already leaves correct.
 
   // A record we SAW is self-authenticating, so a positive `registered`
   // is always resolved. A negative one is only trustworthy when BOTH
@@ -137,5 +189,5 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
   // BEC-precursor shape the lookalike scanner cares most about.
   const resolved = registered || (aAnswered && mxAnswered);
 
-  return { registered, resolved, ip, hasMx, hasWeb };
+  return { registered, resolved, aAnswered, mxAnswered, webAnswered, ip, hasMx, hasWeb };
 }
