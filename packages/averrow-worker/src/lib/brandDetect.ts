@@ -24,6 +24,15 @@ export interface BrandRow {
   id: string;
   name: string;
   canonical_domain: string;
+  /**
+   * brands.tier. `tracked` = the passive Tranco top-1M catalog (~112K rows,
+   * full of dictionary words and hosting services) — matches ONLY by exact
+   * canonical domain. `monitored` / `customer` (or unknown) get the full
+   * fuzzy rule set. Production dry run 2026-10-01: 74% of the new matcher's
+   * relinks landed on tracked brands ("Protocol", "Shield", "Dynv6",
+   * "Vault", …); the real targets (T-Mobile, Ledger, MetaMask) are monitored.
+   */
+  tier?: string | null;
 }
 
 /** Which rule produced a match — persisted to threats.brand_match_method. */
@@ -187,7 +196,27 @@ const PLATFORM_SUFFIXES = [
   "backblazeb2.com", "s3.amazonaws.com", "onrender.com", "fly.dev", "surge.sh",
   "wasmer.app", "alwaysdata.net", "square.site", "carrd.co", "notion.site",
   "in.net", "web.id",
+  // Dynamic DNS / tunnels / more shared hosting (2026-10-01 dry run).
+  "dynv6.net", "dynuddns.net", "dynu.com", "mydns.jp", "ydns.eu", "duckdns.org",
+  "ddns.net", "hopto.org", "zapto.org", "sytes.net", "bounceme.net", "no-ip.com",
+  "trycloudflare.com", "portmap.host", "edgeone.app", "gateway.dev", "wixstudio.com",
+  "cloudapp.net", "webcindario.com", "temporary.site",
+  "mytemp.website", "contaboserver.net",
+  // Subdomain-style IPFS gateways: <cid>.ipfs.dweb.link (path-style hosts
+  // are in SHARED_HOSTS below).
+  "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
+  "mypinata.cloud", "ipfs.cf-ipfs.com",
 ];
+
+/**
+ * Shared content gateways: a threat AT this exact host is hosted content
+ * (ipfs.io/ipfs/<cid>), not the gateway operator's brand — the host carries
+ * no brand evidence at all, so it is not matched by any rule.
+ */
+const SHARED_HOSTS: ReadonlySet<string> = new Set([
+  "ipfs.io", "dweb.link", "cloudflare-ipfs.com", "gateway.pinata.cloud",
+  "w3s.link", "nftstorage.link", "4everland.io",
+]);
 
 function suffixLabelCount(host: string): number {
   for (const p of PLATFORM_SUFFIXES) {
@@ -217,7 +246,7 @@ function hostParts(raw: string): HostParts | null {
   // "1.2.3.4 (6 lists)" and IP literals were matched as free text before
   // ("Login", "Ashs", "List", "1x1x5") — they carry no brand signal.
   const host = hostOf(raw);
-  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
+  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host) || SHARED_HOSTS.has(host)) return null;
   const all = host.split(".").filter((l) => l.length > 0);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
   const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
@@ -238,7 +267,7 @@ function prepareOne(b: BrandRow): PreparedBrand {
     id: b.id,
     canonical: (b.canonical_domain ?? "").toLowerCase().replace(/^www\./, ""),
     norm,
-    matchable: norm.length >= 4 && !isGenericBrand(norm),
+    matchable: norm.length >= 4 && !isGenericBrand(norm) && b.tier !== "tracked",
   };
 }
 
@@ -417,7 +446,7 @@ export function isMatchableInput(raw: string): boolean {
  * Load all brands from DB.
  */
 export async function loadBrands(db: D1Database): Promise<BrandRow[]> {
-  const rows = await db.prepare("SELECT id, name, canonical_domain FROM brands").all<BrandRow>();
+  const rows = await db.prepare("SELECT id, name, canonical_domain, tier FROM brands").all<BrandRow>();
   return rows.results;
 }
 

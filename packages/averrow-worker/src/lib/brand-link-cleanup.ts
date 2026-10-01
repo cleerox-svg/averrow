@@ -60,7 +60,8 @@ import {
 
 export type CleanupMode = "dry_run" | "apply" | "undo" | "reconcile";
 export type CleanupAction = "keep" | "relink" | "clear";
-export type CleanupReason = "non_hostname" | "generic_brand" | "missing_brand" | "no_rule_match";
+export type CleanupReason =
+  | "non_hostname" | "generic_brand" | "tracked_brand" | "missing_brand" | "no_rule_match";
 
 /** Tokens the caller must pass for the writing modes (accident guard, not auth). */
 export const APPLY_CONFIRM_TOKEN = "apply-brand-link-cleanup";
@@ -79,6 +80,7 @@ export interface LinkRow {
   brand_match_method: string | null;
   brand_name: string | null;
   brand_canonical: string | null;
+  brand_tier?: string | null;
   source_feed: string | null;
 }
 
@@ -162,6 +164,7 @@ export function decideLink(
       id: row.target_brand_id,
       name: row.brand_name,
       canonical_domain: row.brand_canonical ?? "",
+      tier: row.brand_tier,
     };
     for (const h of haystacks) {
       const method = matchBrandToHost(h, current);
@@ -170,9 +173,12 @@ export function decideLink(
   }
 
   let reason: CleanupReason;
+  // non_hostname also covers shared-gateway hosts (ipfs.io/ipfs/<cid>),
+  // which the matcher treats as carrying no brand evidence.
   if (!haystacks.some(isMatchableInput)) reason = "non_hostname";
   else if (row.brand_name === null) reason = "missing_brand";
   else if (isGenericBrand(normalizeBrand(row.brand_name))) reason = "generic_brand";
+  else if (row.brand_tier === "tracked") reason = "tracked_brand";
   else reason = "no_rule_match";
 
   // Scope: only undo links the old buggy rules made. A dangling brand id
@@ -280,7 +286,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical, t.source_feed
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, t.source_feed
        FROM threats t
        LEFT JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL

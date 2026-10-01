@@ -76,11 +76,15 @@ export const ANALYST_TABLES = [
 export const brandMatchJson = (confidence: number, brandName = "Zorbex"): string =>
   JSON.stringify({ brand_name: brandName, confidence, reasoning: "test", matched_indicators: ["domain"] });
 
-/** A brand whose keyword makes `acmebank-*` hosts pre-match (no AI call). */
+/**
+ * A monitored brand whose keyword makes `acmebank-*` hosts pre-match (no AI
+ * call). Monitored, because the analyst pre-match only loads tier
+ * monitored/customer brands (the tracked Tranco catalog is canonical-only).
+ */
 export function seedKeywordBrand(raw: SqliteDb): void {
   raw.exec(
-    `INSERT INTO brands (id, name, canonical_domain, threat_count, brand_keywords, first_seen)
-     VALUES ('brand_acmebank', 'Acmebank', 'acmebank.com', 0, '["acmebank"]', datetime('now'))`,
+    `INSERT INTO brands (id, name, canonical_domain, threat_count, brand_keywords, first_seen, tier)
+     VALUES ('brand_acmebank', 'Acmebank', 'acmebank.com', 0, '["acmebank"]', datetime('now'), 'monitored')`,
   );
 }
 

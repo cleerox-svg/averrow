@@ -203,3 +203,54 @@ describe("code-review regressions", () => {
     }
   });
 });
+
+describe("tier gate (2026-10-01 production dry run)", () => {
+  const tracked = (name: string, canonical: string): BrandRow => ({ ...b(name, canonical), tier: "tracked" });
+  const monitored = (name: string, canonical: string): BrandRow => ({ ...b(name, canonical), tier: "monitored" });
+
+  it("tracked-catalog brands match only their exact canonical domain", () => {
+    expect(matchBrandToHost("abc.protocol-labs.net", tracked("Protocol", "protocol.com"))).toBeNull();
+    expect(matchBrandToHost("us-east-1.foo.com", tracked("East", "east.net"))).toBeNull();
+    expect(matchBrandToHost("shieldsecure.xyz", tracked("Shield", "shield.com"))).toBeNull();
+    expect(matchBrandToHost("protocol.com", tracked("Protocol", "protocol.com"))).toBe("canonical");
+  });
+
+  it("monitored brands keep full fuzzy matching", () => {
+    expect(matchBrandToHost("t-mobile-verify.net", monitored("T-Mobile", "t-mobile.com"))).toBe("substring");
+    expect(matchBrandToHost("metamask-restore.app", monitored("MetaMask", "metamask.io"))).toBe("token");
+  });
+
+  it("the catalog matcher skips tracked brands and picks the monitored one", () => {
+    const brands = [tracked("Vault", "vault.com"), monitored("Ledger", "ledger.com")];
+    expect(fuzzyMatchBrandDetailed(["ledger-vault-secure.com"], brands))
+      .toEqual({ brandId: "brand_ledger_com", method: "token" });
+    expect(fuzzyMatchBrand(["my-vault.com"], brands)).toBeNull();
+  });
+
+  it("brands without a tier (legacy callers) still match fully", () => {
+    expect(matchBrandToHost("paypal-secure.com", b("PayPal", "paypal.com"))).toBe("token");
+  });
+
+  it("dynamic-DNS / tunnel suffixes are not brand evidence", () => {
+    for (const host of ["paypal-login.dynv6.net", "paypal-login.mydns.jp", "paypal-login.trycloudflare.com"]) {
+      expect(fuzzyMatchBrandDetailed([host], [b("Dynv6", "dynv6.net"), b("Mydns", "mydns.jp"), b("PayPal", "paypal.com")]), host)
+        .toEqual({ brandId: "brand_paypal_com", method: "token" });
+    }
+    expect(fuzzyMatchBrand(["xyz123.dynv6.net"], [b("Dynv6", "dynv6.net")])).toBeNull();
+  });
+
+  it("content hosted on a shared IPFS gateway is not the gateway's brand", () => {
+    expect(matchBrandToHost("https://ipfs.io/ipfs/bafkreia34hv5rni", b("Ipfs", "ipfs.io"))).toBeNull();
+    // Subdomain-style gateway: the CID label is the tenant, "ipfs"/"dweb" are not evidence.
+    expect(matchBrandToHost("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link",
+      b("Ipfs", "ipfs.io"))).toBeNull();
+  });
+
+  it("the gate decides the winner even when the tracked brand would match first", () => {
+    const brands = [tracked("Harbor", "harbor.com"), monitored("Ledger", "ledger.com")];
+    expect(fuzzyMatchBrandDetailed(["harbor-ledger.com"], brands))
+      .toEqual({ brandId: "brand_ledger_com", method: "token" });
+    expect(fuzzyMatchBrandDetailed(["harbor-ledger.com"], brands.map((x) => ({ ...x, tier: "monitored" }))))
+      .toEqual({ brandId: "brand_harbor_com", method: "token" });
+  });
+});

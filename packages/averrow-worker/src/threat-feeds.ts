@@ -12,7 +12,7 @@
  */
 
 import type { Env } from "./types";
-import { fuzzyMatchBrand, type BrandRow } from "./lib/brandDetect";
+import { fuzzyMatchBrand, loadBrands } from "./lib/brandDetect";
 import { extractDomain } from "./lib/domain-utils";
 
 // ─── Common Types ──────────────────────────────────────────────────
@@ -81,11 +81,6 @@ interface EmailRepResult {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
-
-async function loadBrands(db: D1Database): Promise<BrandRow[]> {
-  const rows = await db.prepare("SELECT id, name, canonical_domain FROM brands").all<BrandRow>();
-  return rows.results;
-}
 
 async function insertSignal(db: D1Database, signal: ThreatSignal): Promise<void> {
   await db.prepare(

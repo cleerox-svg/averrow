@@ -215,6 +215,22 @@ describe.skipIf(!hasSqlite())("analyst — strictly-API counters and run status 
   // ═══════════════════════════════════════════════════════════════════
   // 2. The keyword pre-match skip
   // ═══════════════════════════════════════════════════════════════════
+  describe("2b. tracked-catalog brands are not keyword pre-match candidates", () => {
+    it("a tier='tracked' brand's keyword does not pre-match; the threats go to the model", async () => {
+      raw.exec(
+        `INSERT INTO brands (id, name, canonical_domain, threat_count, brand_keywords, first_seen, tier)
+         VALUES ('brand_acmebank', 'Acmebank', 'acmebank.com', 0, '["acmebank"]', datetime('now'), 'tracked')`,
+      );
+      seedThreats(raw, keywordMatched(2));
+      useFetch({ anthropic: api400 });
+
+      const run = await runAnalyst();
+
+      expect(run.details.keywordPreMatched).toBe(0);
+      expect(net.anthropicCalls).toHaveLength(2);
+    });
+  });
+
   describe("2. every threat pre-matches on a brand keyword (NO API call is made)", () => {
     beforeEach(() => {
       seedKeywordBrand(raw);
