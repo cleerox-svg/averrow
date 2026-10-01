@@ -343,6 +343,12 @@ export const flightControlAgent: AgentModule = {
     // auto:platform_briefing_silent incident so it can auto-resolve
     // it on heal. Bundle F (2026-05-07).
     { kind: "d1_table", name: "incidents" },
+    // Lookalike check-schedule gauges (migration 0269): FC counts the
+    // due backlog per cohort and the parked set, so an operator can see
+    // the one-time seed drain progressing and can tell a drain that is
+    // merely slow from one that has stalled. Read-only — the drain
+    // itself is the lookalike_scanner's own `22 * * * *` tick.
+    { kind: "d1_table", name: "lookalike_domains" },
     { kind: "d1_table", name: "push_subscriptions" },
     { kind: "d1_table", name: "social_mentions" },
     { kind: "d1_table", name: "threat_briefings" },
