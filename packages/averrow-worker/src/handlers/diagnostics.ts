@@ -11,6 +11,7 @@ import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaus
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
+import { parseNewestFailure } from "../lib/haiku";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import type { Env } from "../types";
 
@@ -1611,6 +1612,68 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       cost_usd: number;
     }>();
 
+    // ─── 6b. AI health (silent-AI-failure surface) ──────────────────
+    // ai_spend_24h above answers "what did AI cost". It CANNOT answer
+    // "is AI working": a zero-cost window looks identical whether the
+    // platform had nothing to classify or every call was returning
+    // HTTP 400. That ambiguity is how ~3 months of total AI outage
+    // (last budget_ledger row 2026-07-10) read as healthy on every
+    // surface, including this endpoint.
+    //
+    // `last_ledger_row_at` is ground truth for the last SUCCESSFUL
+    // call (lib/anthropic.ts writes one ledger row per success, nothing
+    // on failure). The per-agent attempted/succeeded rollup is the
+    // disambiguator: attempted = 0 means a quiet platform, attempted > 0
+    // with succeeded = 0 means an outage. Same pair Flight Control's
+    // platform_ai_calls_failing check alerts on.
+    const aiLedgerLastP = env.DB.prepare(`
+      SELECT MAX(created_at) AS last_at FROM budget_ledger
+    `).first<{ last_at: string | null }>();
+
+    // Strictly-API counters, written into agent_outputs.details by the
+    // instrumented agents. Agent-agnostic — any agent that starts
+    // emitting aiCallsAttempted / aiCallsSucceeded shows up here with no
+    // change.
+    //
+    // The json_valid() CASE wrapper is load-bearing: json_extract()
+    // RAISES on a malformed JSON payload, which would abort the whole
+    // diagnostics response. Rows surviving the WHERE all have valid
+    // JSON, so the SELECT-list extracts need no wrapper. Flat rather
+    // than a CTE to match the Flight Control query this mirrors (see
+    // the resource-drift note there).
+    const aiCallHealthP = env.DB.prepare(`
+      SELECT agent_id,
+             SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
+             SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
+             SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSkipped')   AS INTEGER), 0)) AS skipped,
+             MAX(created_at)                                     AS last_run_at,
+             -- Kind + message from THE SAME, NEWEST failing row. Two
+             -- independent MAX() aggregates (the first version) paired a
+             -- kind from one row with a message from another, and MAX on
+             -- text is lexicographic rather than temporal so neither was
+             -- the newest. See flightControl.ts parseNewestFailure for the
+             -- decoder and the full rationale.
+             MAX(CASE WHEN json_extract(details, '$.aiFirstError') IS NOT NULL
+                      THEN created_at || char(31) || json_object(
+                             'kind',  json_extract(details, '$.aiFirstFailureKind'),
+                             'error', json_extract(details, '$.aiFirstError'))
+                      END)                                       AS newest_failure
+        FROM agent_outputs
+       WHERE created_at > datetime('now', '-' || ? || ' hours')
+         AND (CASE WHEN json_valid(details)
+                   THEN json_extract(details, '$.aiCallsAttempted')
+                   ELSE NULL END) IS NOT NULL
+       GROUP BY agent_id
+       ORDER BY attempted DESC
+    `).bind(hoursBack).all<{
+      agent_id: string;
+      attempted: number;
+      succeeded: number;
+      skipped: number;
+      last_run_at: string | null;
+      newest_failure: string | null;
+    }>();
+
     // ─── 7. Cron health (recent Navigator + orchestrator) ───────────
     // Navigator was renamed from 'fast_tick' — both IDs are queried so the
     // window spans the transition. Historical rows keep 'fast_tick'; new
@@ -1716,7 +1779,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       geoCoverage,
       feedHealth, feedStatus, feedErrors,
       agentMesh, workflowAgentMesh, stalled, backlog,
-      aiSpend, cronHealth, totals, d1Metrics, d1Attribution,
+      aiSpend, aiLedgerLast, aiCallHealth, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries, d1TopWriteQueries, d1BillingCycle, d1Recent,
       cachedCountStats,
       moduleEntitlements,
@@ -1731,7 +1794,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       geoCoverageP,
       feedHealthP, feedStatusP, feedErrorsP,
       agentMeshP, workflowAgentMeshP, stalledP, backlogP,
-      aiSpendP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
+      aiSpendP, aiLedgerLastP, aiCallHealthP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
       d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP, d1BillingCycleP, d1RecentP,
       getCachedCountStats(env),
       moduleEntitlementsP,
@@ -2226,6 +2289,48 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           total_cost_usd: aiSpend.results.reduce((s, a) => s + (a.cost_usd ?? 0), 0),
           total_calls: aiSpend.results.reduce((s, a) => s + a.calls, 0),
           by_agent: aiSpend.results,
+        },
+
+        // Is AI actually WORKING — distinct from ai_spend_24h, which only
+        // says what it cost. Read these three together:
+        //
+        //   hours_since_last_call  hours since the newest budget_ledger
+        //                          row, i.e. the last SUCCESSFUL call.
+        //                          null = the ledger is empty.
+        //   per_agent[].attempted  real Anthropic round-trips. Excludes
+        //                          deliberate skips (budget throttle /
+        //                          per-agent cap), which land in
+        //                          `skipped` instead.
+        //   per_agent[].succeeded  of those, how many came back usable.
+        //
+        // attempted = 0 across the board + a silent ledger = a quiet
+        // platform, which is fine. attempted > 0 with succeeded = 0 is an
+        // OUTAGE — agents are falling through to rule-based paths while
+        // reporting work done. `agents_all_failing` is that set
+        // pre-computed; non-empty means Flight Control should also have
+        // raised platform_ai_calls_failing. `first_error` carries the
+        // HTTP status (400 = unpaid Anthropic balance, 401 = bad key,
+        // 429 = rate limit).
+        //
+        // Only agents instrumented with the strictly-API counters appear
+        // in per_agent (analyst, sentinel today). An absent agent means
+        // "not instrumented", NOT "healthy".
+        ai_health: {
+          last_ledger_row_at: aiLedgerLast?.last_at ?? null,
+          hours_since_last_call: aiLedgerLast?.last_at
+            ? Math.round(
+                ((Date.now() - Date.parse(aiLedgerLast.last_at.replace(' ', 'T') + 'Z')) / 3_600_000) * 10,
+              ) / 10
+            : null,
+          window_hours: hoursBack,
+          per_agent: aiCallHealth.results.map((r) => {
+            const { newest_failure: _packed, ...rest } = r;
+            const f = parseNewestFailure(r.newest_failure);
+            return { ...rest, first_failure_kind: f.kind, first_error: f.error };
+          }),
+          agents_all_failing: aiCallHealth.results
+            .filter((r) => r.attempted > 0 && r.succeeded === 0)
+            .map((r) => r.agent_id),
         },
 
         platform_totals: totals,

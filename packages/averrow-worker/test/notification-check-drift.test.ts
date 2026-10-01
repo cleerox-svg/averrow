@@ -70,6 +70,55 @@ const childTables = [
   ),
 ];
 
+/**
+ * idx_notifications_dedup has been lost once already. Created in 0167 to
+ * kill a documented ~12M reads/day, it was NOT recreated by the 0186 /
+ * 0207 / 0215 / 0265 rebuilds, so it was absent from 0186 until 0272
+ * restored it — and every createNotification call full-scanned
+ * notifications in between. All six surviving indexes lead with user_id,
+ * while a platform-wide dedup lookup has group_key set and user_id NULL,
+ * so none of them can serve it.
+ *
+ * Deliberately scoped to THIS index rather than "every index ever
+ * created": idx_notifications_user / idx_notifications_created were also
+ * dropped by those rebuilds, but they have no uncovered call site (the
+ * schema moved from read_at to `state`, and idx_notifications_inbox
+ * serves the inbox reads), so reviving them would be write cost for no
+ * read.
+ */
+describe("notifications rebuilds preserve the dedup index", () => {
+  const dropRe = /DROP TABLE (?:IF EXISTS )?notifications\s*;/i;
+
+  it("the dedup index exists in the migration set at all", () => {
+    const defining = migrations.filter((m) =>
+      /CREATE INDEX (?:IF NOT EXISTS )?idx_notifications_dedup/i.test(m.sql));
+    expect(defining.map((m) => m.name)).toContain("0272_notifications_add_ai_calls_failing.sql");
+  });
+
+  it("every migration that rebuilds notifications from 0272 on recreates it", () => {
+    const offenders = migrations
+      .filter((m) => m.name >= "0272" && dropRe.test(m.sql))
+      .filter((m) => !/CREATE INDEX (?:IF NOT EXISTS )?idx_notifications_dedup/i.test(m.sql))
+      .map((m) => m.name);
+    expect(
+      offenders,
+      "DROP TABLE notifications drops its indexes; without recreating the dedup index " +
+        "every createNotification call reverts to a full table scan",
+    ).toEqual([]);
+  });
+
+  it("the index recreated by the newest rebuild still covers (type, group_key, created_at)", () => {
+    const newest = [...migrations].reverse().find((m) =>
+      /CREATE INDEX (?:IF NOT EXISTS )?idx_notifications_dedup/i.test(m.sql))!;
+    const decl = /CREATE INDEX (?:IF NOT EXISTS )?idx_notifications_dedup\s+ON notifications\(([^)]*)\)/i
+      .exec(newest.sql);
+    expect(decl, "dedup index declaration not parseable").not.toBeNull();
+    const cols = decl![1]!.split(",").map((c) => c.trim().replace(/\s+DESC$/i, ""));
+    // Both hot dedup paths seek on (type, group_key) then order by created_at.
+    expect(cols.slice(0, 3)).toEqual(["type", "group_key", "created_at"]);
+  });
+});
+
 describe("notifications rebuilds preserve FK child tables", () => {
   it("knows about notification_deliveries", () => {
     expect(childTables).toContain("notification_deliveries");

@@ -71,12 +71,267 @@ export interface HaikuProviderScore {
   response_assessment?: string;
 }
 
-interface HaikuResponse<T> {
+/**
+ * Why a failure happened, so a caller can tell a DELIBERATE SKIP from an
+ * OUTAGE.
+ *
+ * Before this discriminator existed, every helper here collapsed both into
+ * `{ success: false, error: string }`. Callers do `if (!result.success)
+ * useHeuristic()` — which is correct for a budget throttle and catastrophic
+ * for an HTTP 400. The platform ran ~3 months on rule-based fallbacks with
+ * zero working AI and every agent reporting success, because nothing could
+ * see the difference (last budget_ledger row 2026-07-10, root cause
+ * `Anthropic HTTP 400 — "Your credit balance is too low"`).
+ *
+ *   throttled    — OUR choice. BudgetManager hard/emergency throttle told
+ *                  non-critical callers to skip. No API call was made.
+ *                  Expected, self-inflicted, not an incident.
+ *   budget_cap   — OUR choice. The per-agent monthlyTokenCap pre-flight in
+ *                  callAnthropic refused the call. No API call was made.
+ *   api_error    — THEIR refusal (or ours misconfigured): HTTP 4xx/5xx, or
+ *                  no API key configured. This is the outage class.
+ *   network      — fetch threw / timed out. Nothing reached Anthropic.
+ *   parse_error  — the call billed and returned 2xx, but the body wasn't
+ *                  usable (no text block, no JSON payload, malformed JSON).
+ *
+ * `api_error`, `network` and `parse_error` all mean "AI is not working".
+ * `throttled` and `budget_cap` mean "AI was intentionally skipped".
+ */
+export type HaikuFailureKind =
+  | 'throttled'
+  | 'budget_cap'
+  | 'api_error'
+  | 'parse_error'
+  | 'network';
+
+export interface HaikuResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
   model?: string;
   tokens_used?: number;
+  /** Set only when `success === false`. Additive — `success` and `error`
+   *  stay byte-identical so no existing call site changes behaviour. */
+  failure_kind?: HaikuFailureKind;
+}
+
+/**
+ * Message prefixes thrown by lib/anthropic.ts for the non-HTTP failure
+ * modes. AnthropicError carries `.status` for HTTP failures (the typed
+ * field we prefer), but the transport / response-shape failures carry no
+ * typed discriminator, so these are matched on `.message`.
+ *
+ * Keep in sync with the throw sites in lib/anthropic.ts:
+ *   - `Anthropic fetch failed:`            callAnthropic fetch catch
+ *   - `budget_cap_exceeded:`               callAnthropic budget pre-flight
+ *   - `Anthropic response JSON parse failed:`  callAnthropic JSON.parse catch
+ *   - `Anthropic response had no text block`   callAnthropicJSON
+ *   - `Anthropic response had no JSON payload` callAnthropicJSON
+ *   - `Anthropic JSON parse failed:`           callAnthropicJSON
+ */
+const BUDGET_CAP_PREFIX = 'budget_cap_exceeded:';
+const NETWORK_PREFIX = 'Anthropic fetch failed:';
+const PARSE_MARKERS = [
+  'Anthropic response JSON parse failed',
+  'Anthropic response had no text block',
+  'Anthropic response had no JSON payload',
+  'Anthropic JSON parse failed',
+] as const;
+
+/**
+ * Bucket a thrown wrapper error into a HaikuFailureKind.
+ *
+ * Defaults to `api_error` rather than a "don't know" bucket: an
+ * unrecognised throw out of the Anthropic client means AI is not working,
+ * and the whole point of this field is that an unknown failure must never
+ * read as a deliberate skip. `resolveApiKey`'s "No API key configured"
+ * throw lands here too, which is correct — a missing key is an outage.
+ */
+/**
+ * True when a failure_kind means WE CHOSE to skip the call, so no request
+ * ever reached Anthropic.
+ *
+ * Agents use this to keep their strictly-API counters honest: a throttled
+ * or budget-capped result must NOT count as an attempted API call, or a
+ * deliberate cost throttle would read identically to an outage and trip
+ * `platform_ai_calls_failing`.
+ */
+export function isDeliberateAiSkip(kind: HaikuFailureKind | null | undefined): boolean {
+  return kind === 'throttled' || kind === 'budget_cap';
+}
+
+/**
+ * Strictly-API AI counters for one agent run, plus the one way to update
+ * them. Shared by analyst / sentinel / cartographer so the three cannot
+ * drift — Flight Control's `platform_ai_calls_failing` check and the
+ * diagnostics `ai_health` block both read these exact key names back out
+ * of `agent_outputs.details` via json_extract.
+ *
+ * These exist because the agents' PRE-EXISTING counters are not a usable
+ * "is AI alive" test and must not be repurposed:
+ *   - sentinel's `haikuSuccesses` increments for a rules-based skip that
+ *     makes NO API call, so `haiku=N/0` can mean zero calls were made.
+ *     This is why its telemetry read healthy through a 3-month outage.
+ *   - analyst's only increments after a confidence gate, so a healthy
+ *     low-confidence answer counts as neither success nor failure.
+ *   - cartographer's counts post-processed providers, and its batch path
+ *     post-processes 5 providers per single API call.
+ * Those feed summary strings and agent_runs details operators read today,
+ * so their semantics are left alone.
+ */
+export interface AiCallCounters {
+  /** Requests that actually left for Anthropic. A throttled or
+   *  budget-capped result is NOT an attempt — no request was made — or a
+   *  deliberate cost throttle would be indistinguishable from an outage. */
+  aiCallsAttempted: number;
+  /** Of those, how many came back usable. */
+  aiCallsSucceeded: number;
+  /** Calls we chose not to make (budget throttle / per-agent cap). */
+  aiCallsSkipped: number;
+  /** FIRST failure only — one line, never accumulated per item. An outage
+   *  repeats identically for every item in a batch; the first error string
+   *  is the whole diagnosis and more is noise. */
+  aiFirstFailureKind: HaikuFailureKind | null;
+  aiFirstError: string | null;
+}
+
+export function newAiCallCounters(): AiCallCounters {
+  return {
+    aiCallsAttempted: 0,
+    aiCallsSucceeded: 0,
+    aiCallsSkipped: 0,
+    aiFirstFailureKind: null,
+    aiFirstError: null,
+  };
+}
+
+/**
+ * Record the outcome of ONE real wrapper call.
+ *
+ * MUST be called exactly once per API call, at the site where the call is
+ * initiated — never per processed item. Sentinel shares one promise across
+ * sibling threats and cartographer post-processes 5 providers per batch
+ * call; counting per item in either would let `succeeded` exceed
+ * `attempted` and break the >= floor in Flight Control's gate.
+ *
+ * `ok` is the caller's own definition of a usable response, because that
+ * differs per wrapper (parsed JSON vs non-empty text vs a batch whose
+ * length matches the input).
+ */
+export function recordAiCall(
+  c: AiCallCounters,
+  result: { success: boolean; error?: string; failure_kind?: HaikuFailureKind },
+  ok: boolean,
+  logPrefix?: string,
+): void {
+  if (ok) {
+    c.aiCallsAttempted++;
+    c.aiCallsSucceeded++;
+    return;
+  }
+  if (isDeliberateAiSkip(result.failure_kind)) {
+    c.aiCallsSkipped++;
+    return;
+  }
+  c.aiCallsAttempted++;
+  if (c.aiFirstError === null) {
+    c.aiFirstFailureKind = result.failure_kind ?? null;
+    c.aiFirstError = result.error ?? 'no data returned';
+    if (logPrefix) {
+      console.error(`${logPrefix} FIRST AI FAILURE — kind=${c.aiFirstFailureKind ?? 'unknown'}, error: ${c.aiFirstError}`);
+    }
+  }
+}
+
+/**
+ * Sum two counter sets. Used to persist one merged view in
+ * `agent_outputs.details` when an agent tracks its REQUIRED AI path and
+ * its OPPORTUNISTIC calls separately (see sentinel's APT detector): the
+ * raw counters operators and Flight Control read must account for every
+ * real request, while the agent's own degraded-run verdict comes from the
+ * required path alone.
+ *
+ * First-failure fields prefer `a`'s, so pass the required path first.
+ */
+export function mergeAiCallCounters(a: AiCallCounters, b: AiCallCounters): AiCallCounters {
+  return {
+    aiCallsAttempted: a.aiCallsAttempted + b.aiCallsAttempted,
+    aiCallsSucceeded: a.aiCallsSucceeded + b.aiCallsSucceeded,
+    aiCallsSkipped: a.aiCallsSkipped + b.aiCallsSkipped,
+    aiFirstFailureKind: a.aiFirstFailureKind ?? b.aiFirstFailureKind,
+    aiFirstError: a.aiFirstError ?? b.aiFirstError,
+  };
+}
+
+/**
+ * Minimum real API calls before "every call failed" is an outage rather
+ * than noise, applied by Flight Control to its per-agent SUM over the
+ * detection window.
+ *
+ * Three is the smallest count that cannot be one unlucky request. It sits
+ * in FC rather than in the per-run verdict below on purpose: FC sums
+ * across the window, so an agent failing 1-2 calls per run still
+ * accumulates past the floor within the window and alerts. A per-run floor
+ * would instead be a permanent detection ceiling for low-volume agents.
+ *
+ * The specific noise this removes is one transient 529 reaching
+ * super_admins' phones. The other half of that problem — sentinel's single
+ * best-effort APT call per run being able to mark a whole run degraded —
+ * is handled at the source by tracking it as opportunistic, not by a floor.
+ */
+export const AI_OUTAGE_MIN_ATTEMPTS = 3;
+
+/**
+ * True when every real API call on an agent's REQUIRED AI path failed.
+ * The one definition of "this run's AI is dead".
+ *
+ * No floor here, deliberately: a run that made 2 calls and had both
+ * refused DID fall back to rules for everything it was asked to do, and
+ * saying so is honest. The consequences of a degraded run are all
+ * internal — a severity-high `agent_outputs` row and `agent_runs.status =
+ * 'partial'`, which the public status page counts as a success and no
+ * orphan/stall path touches. Nobody is paged by this; FC's floor governs
+ * that.
+ */
+export function isAiAllFailing(c: Pick<AiCallCounters, 'aiCallsAttempted' | 'aiCallsSucceeded'>): boolean {
+  return c.aiCallsAttempted > 0 && c.aiCallsSucceeded === 0;
+}
+
+/**
+ * Split the `created_at || char(31) || json_object(...)` value the
+ * AI-failure rollups in agents/flightControl.ts and handlers/diagnostics.ts
+ * aggregate (see either query for why it is shaped that way) back into its two fields.
+ *
+ * Never throws — a diagnostic that cannot be
+ * parsed must degrade to "unknown", not break the alert that carries it.
+ */
+export function parseNewestFailure(
+  packed: string | null,
+): { kind: string | null; error: string | null } {
+  if (!packed) return { kind: null, error: null };
+  const sep = packed.indexOf('\u001f');
+  if (sep === -1) return { kind: null, error: null };
+  try {
+    const parsed: unknown = JSON.parse(packed.slice(sep + 1));
+    if (typeof parsed !== 'object' || parsed === null) return { kind: null, error: null };
+    const o = parsed as Record<string, unknown>;
+    return {
+      kind: typeof o.kind === 'string' ? o.kind : null,
+      error: typeof o.error === 'string' ? o.error : null,
+    };
+  } catch {
+    return { kind: null, error: null };
+  }
+}
+
+function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+  if (!(err instanceof AnthropicError)) return 'api_error';
+  // Typed field first — an HTTP status is unambiguous.
+  if (typeof err.status === 'number') return 'api_error';
+  if (err.message.startsWith(BUDGET_CAP_PREFIX)) return 'budget_cap';
+  if (err.message.startsWith(NETWORK_PREFIX)) return 'network';
+  if (PARSE_MARKERS.some((m) => err.message.includes(m))) return 'parse_error';
+  return 'api_error';
 }
 
 // ─── Cost guard (BudgetManager-backed) ───────────────────────────
@@ -150,7 +405,7 @@ async function callJsonSafe<T>(
   // Global AI throttle gate — covers every agent on the hot path.
   const throttled = await isAiThrottled(env);
   if (throttled) {
-    return { success: false, error: `throttled: ${throttled}` };
+    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
   }
 
   try {
@@ -170,7 +425,7 @@ async function callJsonSafe<T>(
     };
   } catch (err) {
     const msg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
-    return { success: false, error: msg };
+    return { success: false, error: msg, failure_kind: classifyAnthropicFailure(err) };
   }
 }
 
@@ -182,11 +437,18 @@ export async function callHaikuRaw(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 16,
-): Promise<{ success: boolean; text?: string; error?: string; tokens_used?: number }> {
+): Promise<{
+  success: boolean;
+  text?: string;
+  error?: string;
+  tokens_used?: number;
+  /** See HaikuFailureKind — set only when `success === false`. Additive. */
+  failure_kind?: HaikuFailureKind;
+}> {
   // Global AI throttle gate — same path as callJsonSafe.
   const throttled = await isAiThrottled(env);
   if (throttled) {
-    return { success: false, error: `throttled: ${throttled}` };
+    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
   }
 
   try {
@@ -206,7 +468,11 @@ export async function callHaikuRaw(
       tokens_used: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
     };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+      failure_kind: classifyAnthropicFailure(err),
+    };
   }
 }
 

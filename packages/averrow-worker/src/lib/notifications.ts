@@ -287,6 +287,23 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     }
   }
 
+  // The last silent no-op in the chain. Every gate above returns 0 for a
+  // reason it can state, but an EMPTY recipient list just falls through
+  // this loop: no row, no throw, no log, and `created = 0` is
+  // indistinguishable from "deduped". A platform alert whose audience is
+  // 'super_admin' at a moment when no active super_admin exists (all
+  // deactivated, role renamed, a fresh environment) therefore vanishes
+  // completely. For the AI-outage alert in particular the silence IS the
+  // defect being fixed, so make it audible.
+  if (userIds.length === 0) {
+    console.warn(
+      `[createNotification] type=${opts.type} audience=${audience} resolved ZERO recipients — ` +
+      `notification dropped. No row was written. Check that at least one active user matches ` +
+      `this audience (super_admin => users.status='active' AND role='super_admin').`,
+    );
+    return 0;
+  }
+
   let created = 0;
   for (const uid of userIds) {
     // Pull every pref we might need in one query — v1 (event flags +
