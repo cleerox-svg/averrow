@@ -33,10 +33,15 @@
  * cube-healer's 30-day window still carry the old attribution — rebuild
  * full history with scripts/cube-backfill.sh.
  *
- * Caveat: links made by the Analyst's Haiku inference carry no
- * brand_match_method and are indistinguishable from fuzzy links, so they
- * are re-validated like any other; a cleared threat re-enters the
- * Analyst / backfill queues (target_brand_id IS NULL).
+ * SCOPE — only undo what the old buggy matcher made. A link that fails
+ * the new rules is still KEPT (`kept_protected`) when:
+ *   - its source_feed is a brand-scoped detector that sets the brand at
+ *     insert (AUTHORITATIVE_FEEDS: typosquat/variant scans, CT, NRD, …), or
+ *   - the pre-#1727 fuzzy matcher would not have produced it
+ *     (legacyFuzzyMatched) — so the Analyst's Haiku inference, which also
+ *     reads URL paths and page context, made it. First production dry-run
+ *     batch: notifyhubss.net → Apple, serdtfngbfv3.pages.dev → Amazon.
+ * Only a dangling brand id is cleared unconditionally.
  */
 
 import type { Env } from "../types";
@@ -47,6 +52,8 @@ import {
   loadBrands,
   matchBrandToHost,
   normalizeBrand,
+  levenshtein,
+  stripObfuscation,
   type BrandMatchMethod,
   type BrandRow,
 } from "./brandDetect";
@@ -72,6 +79,56 @@ export interface LinkRow {
   brand_match_method: string | null;
   brand_name: string | null;
   brand_canonical: string | null;
+  source_feed: string | null;
+}
+
+/**
+ * Why a link that fails the new rules is still kept:
+ *   authoritative_source — written by a brand-scoped detector that sets
+ *     target_brand_id at insert because the domain was found AS a
+ *     lookalike of that brand (typosquat/variant scans, CT, NRD, …).
+ *   not_legacy_match — the pre-#1727 fuzzy matcher would NOT have produced
+ *     this link, so something else did (the Analyst's Haiku inference,
+ *     which also reads URL paths / page context). Not ours to undo.
+ */
+export type ProtectedReason = "authoritative_source" | "not_legacy_match";
+
+/** source_feed values whose brand link is set at insert by a brand-scoped detector. */
+export const AUTHORITATIVE_FEEDS: ReadonlySet<string> = new Set([
+  "typosquat_scanner",     // feeds/typosquat_scanner.ts
+  "numbered_variant_scan", // agents/analyst.ts
+  "ct_logs",               // feeds/certstream.ts
+  "nrd_hagezi",            // feeds/nrd_hagezi.ts
+  "spam_trap",             // spam-trap.ts
+  "abuse_mailbox",         // lib/abuse-mailbox-iocs.ts
+]);
+
+const LEGACY_GENERIC = new Set(["www", "one", "bit", "dns", "app", "web", "api", "cdn", "dev", "net", "goo"]);
+
+/**
+ * Would the PRE-#1727 matcher have linked these inputs to this brand?
+ * Pairwise replica of its strategies 2–4 (raw substring incl. TLD and URL
+ * path, filler-stripped substring, edit distance <= 2 on segments) plus the
+ * Analyst keyword pre-match (alphanumeric-normalized substring). The
+ * cleanup only undoes links this reproduces — i.e. links the buggy rules
+ * made — and leaves AI- or detector-made links alone.
+ */
+export function legacyFuzzyMatched(haystacks: string[], brandName: string): boolean {
+  const name = normalizeBrand(brandName);
+  if (name.length < 4 || /^\d+$/.test(name) || LEGACY_GENERIC.has(name)) return false;
+  for (const raw of haystacks) {
+    const lower = raw.toLowerCase();
+    if (lower.includes(name)) return true;
+    if (stripObfuscation(lower).includes(name)) return true;
+    if (lower.replace(/[^a-z0-9]/g, "").includes(name)) return true;
+    if (name.length >= 5) {
+      for (const seg of lower.split(/[.\-/]+/)) {
+        if (seg.length < 3 || Math.abs(seg.length - name.length) > 2) continue;
+        if (levenshtein(seg, name) <= 2) return true;
+      }
+    }
+  }
+  return false;
 }
 
 export interface LinkDecision {
@@ -80,6 +137,8 @@ export interface LinkDecision {
   method: BrandMatchMethod | null;
   newBrandId: string | null;
   reason: CleanupReason | null;
+  /** Set on a `keep` that failed the new rules but is out of the cleanup's scope. */
+  protectedBy?: ProtectedReason;
 }
 
 function haystacksOf(row: LinkRow): string[] {
@@ -116,6 +175,17 @@ export function decideLink(
   else if (isGenericBrand(normalizeBrand(row.brand_name))) reason = "generic_brand";
   else reason = "no_rule_match";
 
+  // Scope: only undo links the old buggy rules made. A dangling brand id
+  // is always cleared.
+  if (reason !== "missing_brand" && row.brand_name !== null) {
+    if (row.source_feed && AUTHORITATIVE_FEEDS.has(row.source_feed)) {
+      return { action: "keep", method: null, newBrandId: null, reason, protectedBy: "authoritative_source" };
+    }
+    if (!legacyFuzzyMatched(haystacks, row.brand_name)) {
+      return { action: "keep", method: null, newBrandId: null, reason, protectedBy: "not_legacy_match" };
+    }
+  }
+
   // Non-hostname inputs can't match anything — skip the catalog scan.
   const hit = reason === "non_hostname" ? null : rematch(haystacks);
   if (hit && hit.brandId !== row.target_brand_id) {
@@ -132,6 +202,8 @@ export interface CleanupBatchResult {
   relink: number;
   clear: number;
   keep_by_method: Record<string, number>;
+  /** Links that fail the new rules but are out of scope, by ProtectedReason. */
+  kept_protected: Record<string, number>;
   by_reason: Record<string, number>;
   /** Links removed (relinked away or cleared) per original brand. */
   removed_by_brand: Record<string, number>;
@@ -178,7 +250,7 @@ const PAIRS_PER_BATCH = 50;
 function emptyResult(opts: CleanupOptions): CleanupBatchResult {
   return {
     mode: opts.mode, run_id: opts.runId, scanned: 0, keep: 0, relink: 0, clear: 0,
-    keep_by_method: {}, by_reason: {}, removed_by_brand: {}, added_by_brand: {},
+    keep_by_method: {}, kept_protected: {}, by_reason: {}, removed_by_brand: {}, added_by_brand: {},
     alerts_affected: 0, changed: 0, skipped: 0, next_cursor: opts.cursor, done: true,
   };
 }
@@ -208,7 +280,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, t.source_feed
        FROM threats t
        LEFT JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL
@@ -242,6 +314,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
     if (d.action === "keep") {
       result.keep++;
       if (d.method) bump(result.keep_by_method, d.method);
+      if (d.protectedBy) bump(result.kept_protected, d.protectedBy);
       continue;
     }
     result[d.action]++;
