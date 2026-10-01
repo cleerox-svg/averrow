@@ -8,6 +8,7 @@ vi.mock("../src/lib/audit", () => ({ audit: (...a: unknown[]) => auditMock(...(a
 
 import {
   decideLink,
+  legacyFuzzyMatched,
   runBrandLinkCleanup,
   clampLimit,
   clampCursor,
@@ -24,6 +25,7 @@ function row(over: Partial<LinkRow>): LinkRow {
   return {
     rid, id: `t${rid}`, malicious_domain: null, malicious_url: null, ioc_value: null,
     target_brand_id: "brand_x", brand_match_method: null, brand_name: "X", brand_canonical: "x.com",
+    source_feed: "openphish",
     ...over,
   };
 }
@@ -89,6 +91,40 @@ describe("decideLink", () => {
   });
 });
 
+describe("cleanup scope — only undo what the old buggy matcher made", () => {
+  it("keeps links from brand-scoped detectors even when the new rules reject them", () => {
+    for (const source_feed of ["typosquat_scanner", "numbered_variant_scan", "ct_logs", "nrd_hagezi", "spam_trap", "abuse_mailbox"]) {
+      const d = decideLink(row({ malicious_domain: "bta.com.pk", brand_name: "Bata", brand_canonical: "bata.com.pk", source_feed }), never);
+      expect(d, source_feed).toMatchObject({ action: "keep", protectedBy: "authoritative_source" });
+    }
+  });
+
+  it("keeps links the old matcher could not have produced (AI / page-context links)", () => {
+    // Production examples from the first dry-run batch.
+    for (const [domain, url, name] of [
+      ["notifyhubss.net", "https://notifyhubss.net/d20f186ca77ef34e48p97abd2d12a82f5caa.html/", "Apple"],
+      ["serdtfngbfv3.pages.dev", "http://serdtfngbfv3.pages.dev/-/zh/dp/B0DTBJJ4QM/ref=zg_bsnr", "Amazon"],
+      ["icloud-iforgot.live", "https://icloud-iforgot.live/", "Apple"],
+    ] as const) {
+      const d = decideLink(row({ malicious_domain: domain, malicious_url: url, brand_name: name, brand_canonical: "x.com" }), never);
+      expect(d, domain).toMatchObject({ action: "keep", protectedBy: "not_legacy_match" });
+    }
+  });
+
+  it("still clears links the old matcher did produce", () => {
+    expect(legacyFuzzyMatched(["byveo.org"], "Coveo")).toBe(true);
+    expect(legacyFuzzyMatched(["drasw.club"], "Club")).toBe(true);
+    expect(legacyFuzzyMatched(['{"dataplane_feed":"telnetlogin"}'], "Login")).toBe(true);
+    expect(legacyFuzzyMatched(["115.50.231.176"], "1x1x5")).toBe(true);
+    expect(legacyFuzzyMatched(["notifyhubss.net"], "Apple")).toBe(false);
+  });
+
+  it("always clears a dangling brand id", () => {
+    const d = decideLink(row({ malicious_domain: "example.com", brand_name: null, source_feed: "typosquat_scanner" }), () => null);
+    expect(d).toMatchObject({ action: "clear", reason: "missing_brand" });
+  });
+});
+
 // Minimal D1 stub: serves the batch SELECT, the brand catalog, the log
 // SELECT and the alerts COUNT; records every batch() write and reports
 // `changes: 1` for each statement (or per `changesFor`).
@@ -123,7 +159,7 @@ function stubEnv(
 
 const LINKS = (): LinkRow[] => [
   row({ malicious_domain: "paypal-secure.com", target_brand_id: "brand_paypal", brand_name: "PayPal", brand_canonical: "paypal.com" }),
-  row({ ioc_value: '{"ip":"1.2.3.4","dataplane_feed":"sshpwauth"}', target_brand_id: "brand_word", brand_name: "Word", brand_canonical: "word.tips" }),
+  row({ ioc_value: '{"ip":"109.123.238.174","category":"ssh_password_spray","dataplane_feed":"sshpwauth"}', target_brand_id: "brand_word", brand_name: "Word", brand_canonical: "word.tips", source_feed: "dataplane" }),
   row({ malicious_domain: "paypal-login.github.io", target_brand_id: "brand_github", brand_name: "Github", brand_canonical: "github.com", brand_match_method: "keyword" }),
 ];
 const CATALOG = [
@@ -147,6 +183,7 @@ describe("runBrandLinkCleanup — dry_run", () => {
     expect(r).toMatchObject({
       run_id: "run1", scanned: 3, keep: 1, relink: 1, clear: 1, changed: 0, done: true,
       keep_by_method: { token: 1 },
+      kept_protected: {},
       by_reason: { non_hostname: 1, no_rule_match: 1 },
       removed_by_brand: { brand_word: 1, brand_github: 1 },
       added_by_brand: { brand_paypal: 1 },

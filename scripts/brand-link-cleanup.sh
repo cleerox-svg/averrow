@@ -89,7 +89,7 @@ batch = json.load(open(sys.argv[1]))["data"]
 totals = json.load(open(sys.argv[2]))
 for k in ("scanned", "keep", "relink", "clear", "alerts_affected", "changed", "skipped"):
     totals[k] = totals.get(k, 0) + batch[k]
-for k in ("keep_by_method", "by_reason", "removed_by_brand", "added_by_brand"):
+for k in ("keep_by_method", "kept_protected", "by_reason", "removed_by_brand", "added_by_brand"):
     agg = totals.setdefault(k, {})
     for key, n in batch[k].items():
         agg[key] = agg.get(key, 0) + n
@@ -120,6 +120,7 @@ t = json.load(open(sys.argv[1]))
 top = lambda d, n=25: dict(sorted(d.items(), key=lambda kv: -kv[1])[:n])
 summary = {k: t.get(k, 0) for k in ("scanned", "keep", "relink", "clear", "alerts_affected", "changed", "skipped")}
 summary["keep_by_method"] = t.get("keep_by_method", {})
+summary["kept_protected"] = t.get("kept_protected", {})
 summary["by_reason"] = t.get("by_reason", {})
 summary["top_removed_by_brand"] = top(t.get("removed_by_brand", {}))
 summary["top_added_by_brand"] = top(t.get("added_by_brand", {}))
