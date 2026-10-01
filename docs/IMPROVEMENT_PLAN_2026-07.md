@@ -15,6 +15,8 @@ pipeline (plan → build → test → verify → review → ship).
 
 **Status legend:** ⬜ not started · 🟡 in progress · ✅ landed
 
+> **Status as of 2026-10-01:** Waves 0–3 are live (see `docs/DEPLOYMENT_PHASES_2026-07.md`). The October follow-on for AI provider + agentic direction is `docs/AI_STRATEGY_2026-10.md`.
+
 ## Working agreement — human-in-the-loop gates (unchanged from June)
 
 No session is built without explicit scope approval. Anything that sends external traffic
@@ -107,7 +109,7 @@ differentiator decision. Mostly copy/config; low blast radius; high commercial u
 > proving the renamed thing still dispatches/authorizes/groups/returns. Default is
 > **rename the human-visible string, keep the identifier.** One PR per coherent rename.
 
-### S1.0 — Naming occurrence map & rename-safety review (prerequisite for S1.1–S1.3) ⬜
+### S1.0 — Naming occurrence map & rename-safety review (prerequisite for S1.1–S1.3) ✅ *(verified 2026-10-01: `docs/NAMING_RENAME_SAFETY_2026-07.md` exists)*
 **Owner:** backend-engineer + appsec-reviewer + market-analyst → docs-maintainer.
 Produce `docs/NAMING_RENAME_SAFETY_2026-07.md` — the per-name occurrence map across every
 layer (DB, migrations, API, `agent_id`, KV/JWT/`type` keys, ops UI, tenant UI, marketing,
@@ -117,35 +119,35 @@ alignment table** (each ops + tenant nav item → does the label match its signa
 recommended label aligned to DRP category + competitor nomenclature). S1.1–S1.3 execute
 FROM this map; they do not re-decide it.
 
-### S1.1 — Purge internal code names from customer surfaces (§5.1–5.2) ⬜
+### S1.1 — Purge internal code names from customer surfaces (§5.1–5.2) ✅ *(per DEPLOYMENT_PHASES; spot-check 2026-10-01: tenant `TakedownDetail.tsx` no longer says "Sparrow", but "Blackbox" still appears in `averrow-marketing` `platform/ai-agents.astro` + `platform/threat-detection.astro` — residual)*
 **Owner:** content-strategist + frontend-engineer. Remove Sentinel/ASTRA/Observer/
 Navigator/**Blackbox**/Pathfinder as *primary* labels from the marketing site and the
 public changelog; replace with the single functional labels from the lexicon. Kill the
 **Blackbox phantom** entirely. Fix the tenant leaks ("Sparrow" `TakedownDetail.tsx:146`,
 "cockpit" `Console.tsx`).
 
-### S1.2 — Fix the three wrong agent descriptions (§5.3) ⬜
+### S1.2 — Fix the three wrong agent descriptions (§5.3) ✅ *(per DEPLOYMENT_PHASES; not individually re-verified)*
 **Owner:** content-strategist. Navigator (DNS resolution, not geo — geo is Cartographer);
 remove Pathfinder from *customer-protection* framing entirely (it is an internal sales
 tool); reconcile Blackbox→Narrator/Observer.
 
-### S1.3 — Canonicalize core nouns (§5.4) ⬜
+### S1.3 — Canonicalize core nouns (§5.4) ✅ *(per DEPLOYMENT_PHASES; not individually re-verified)*
 **Owner:** content-strategist + frontend-engineer. Pick one term each (alert|signal,
 exposure score, campaign, cluster, investigation) per the lexicon and apply across
 ops/tenant/marketing; align the `/alerts` route label with its chosen noun.
 
-### S1.4 — Adopt the DRPS category label + SEO (C4) ⬜
+### S1.4 — Adopt the DRPS category label + SEO (C4) ✅ *(per DEPLOYMENT_PHASES; not individually re-verified)*
 **Owner:** seo-strategist + content-strategist. Work "Digital Risk Protection / DRPS" into
 meta descriptions and ≥1 prominent on-page mention without displacing brand voice.
 
-### S1.5 — Surface real, unmarketed capabilities (C2, C3, C6) ⬜
+### S1.5 — Surface real, unmarketed capabilities (C2, C3, C6) ✅ *(per DEPLOYMENT_PHASES; not individually re-verified)*
 **Owner:** content-strategist + web-copywriter. Name and explain: **standing-gated takedown
 execution** (with a real metric once S2.x instruments it), infrastructure/campaign
 clustering (a "Threat Graph" equivalent), executive-name monitoring, and a defined
 `/platform/campaign-intelligence` page. **Do not publish any takedown speed/volume/success
 number until engineering confirms it** (see S2.1).
 
-### S1.6 — Re-anchor the differentiator trio (§6, C1) ⬜
+### S1.6 — Re-anchor the differentiator trio (§6, C1) ✅ *(per DEPLOYMENT_PHASES; spot-check 2026-10-01: "42 agents" still headlines `solutions/mid-market.astro` — residual)*
 **Owner:** content-strategist. Shift homepage/platform emphasis off "42 agents" onto the
 free scan + transparency + edge-native price/cost story. Stop implying behavioral
 actor-attribution.
@@ -154,17 +156,17 @@ actor-attribution.
 
 ## Wave 2 — Takedown surfaces + close the differentiator claim (invest half of "both")
 
-### S2.1 — Takedown metrics instrumentation (C2 prerequisite) ⬜
+### S2.1 — Takedown metrics instrumentation (C2 prerequisite) ✅ *(verified: `GET /api/admin/takedowns/metrics`, `routes/admin.ts:634`)*
 **Owner:** backend-engineer. Compute submission→resolution time, monthly volume, and
 success rate from `takedown_submissions`. Expose to ops; gate any *public* number behind
 owner sign-off. Unblocks the S1.5 marketing claim with a real figure.
 
-### S2.2 — Averrow-analyst hand-submit path (TK2) ⬜
+### S2.2 — Averrow-analyst hand-submit path (TK2) ✅ *(verified: hand-submit route at `routes/admin.ts:644`; re-runs standing gates)*
 **Owner:** backend-engineer → appsec-reviewer. Build one authenticated ops endpoint
 (gated on `manage_takedowns`) that re-runs Phase G's per-row standing checks
 (`requireAuthorizationForModule` + entitlement + provider resolve) then calls
 `dispatchSubmission` — a single-takedown, human-triggered Phase G for the "auto is on but
-this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE` gate.
+this one needs a human" case. Gated by the existing `TAKEDOWN_SEND_MODE` flag — which is now `"live"` in `packages/averrow-worker/wrangler.toml:339`, so it is NOT dark in production (as of 2026-10-01).
 
 ### S2.3 — Ops "Takedowns" → two surfaces (TK3) ✅ *(scope segmented-control on the `org_id IS NULL/NOT NULL` axis inside the existing Takedowns page — Authorized (customer) vs Prospect (orgless drafts, grouped by brand, deep-linking to BrandDetail Risk); backend `scope`/`brand_id` params + scoped `status_counts`; no new endpoint/nav/route)*
 **Owner:** frontend-engineer + backend-engineer. Split the Ops takedown feature by purpose:
@@ -216,7 +218,7 @@ this one needs a human" case. Ships dark behind the existing `TAKEDOWN_SEND_MODE
 
 ---
 
-## Wave 3 — Debt & hardening (P2/P3)
+## Wave 3 — Debt & hardening (P2/P3) ✅ *(shipped per DEPLOYMENT_PHASES Phase 6; spot-checks 2026-10-01: S3.1 `verifyOrgAccess`/`hasGlobalReadScope` in `middleware/auth.ts`, S3.2 blanket internal-POST guard in `index.ts`, S3.3 `averrow-tenant/vitest.config.ts` + 7 test files, S3.4 `test/orchestrator-hour-gate.test.ts`; 3 slices deferred)*
 
 - **S3.1 (S3+S4)** — extract one shared `verifyOrgAccess` into `middleware/auth.ts`;
   reconcile the outer/inner org-net exemption sets (single "who is global-read" predicate).

@@ -17,6 +17,7 @@ If the task touches agents or backend:
 5. `docs/PLATFORM_DATA_DEPENDENCIES.md` — cross-surface data flow (what reads from
    `agent_runs` vs `agent_activity_log`, how Status/Notifications/APIs/Agents
    depend on each other, the workflow-agent reconciliation rule)
+6. `docs/AI_STRATEGY_2026-10.md` — AI provider + agentic direction (read before adding any AI call)
 
 If the task touches login, profile, push, biometric, or PWA install:
 5. `docs/SHARED_LOGIN_SPEC.md` — the canonical Averrow ↔ FarmTrack
@@ -124,7 +125,7 @@ papered over by editing product source to pass a check.
 ├── CLAUDE.md                     ← This file
 ├── RESTRUCTURE_SPEC.md           ← Architecture source of truth ← READ THIS
 ├── AVERROW_UI_STANDARD.md        ← Component quick reference
-└── docs/IMPROVEMENT_PLAN_2026-06.md ← Active roadmap (see docs/PLATFORM_ASSESSMENT_2026-06.md; old master plan archived)
+└── docs/IMPROVEMENT_PLAN_2026-07.md ← Active roadmap (see docs/PLATFORM_ASSESSMENT_2026-07.md; 2026-06 plan superseded; AI direction: docs/AI_STRATEGY_2026-10.md)
 ```
 
 ---
@@ -439,6 +440,7 @@ pattern with a single event-driven exception (pivot_detected, where
 sub-hourly latency matters).
 
 ### AI usage rules:
+- Before adding or changing an AI call, read `docs/AI_STRATEGY_2026-10.md` — it classifies every existing call (keep-on-Claude / move-to-Workers-AI / replace-with-rules / delete) and sets the provider direction.
 - **Haiku:** classification, scoring, short summaries — high volume
 - **Sonnet:** threat actor narratives, cluster briefs — sparingly
 - **NEVER** use AI for what SQL `GROUP BY` can do in 50ms

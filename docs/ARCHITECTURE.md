@@ -14,8 +14,8 @@ averrow/
 │   ├── averrow-worker/     → Primary Cloudflare Worker (API + SPA), deploy name `averrow`
 │   │   ├── src/
 │   │   │   ├── index.ts            → Router + Worker entry point
-│   │   │   ├── agents/             → AI agent modules (16 agents)
-│   │   │   ├── feeds/              → Threat feed ingestion modules (17 feeds)
+│   │   │   ├── agents/             → AI agent modules (~45 registered in `agents/index.ts` as of 2026-10; Architect retired)
+│   │   │   ├── feeds/              → Threat feed ingestion modules (~56 feed modules as of 2026-10)
 │   │   │   ├── handlers/           → Route handler functions
 │   │   │   ├── lib/                → Shared utilities (JWT, CORS, DNS, etc.)
 │   │   │   ├── middleware/         → Auth, rate limiting, security headers
@@ -30,7 +30,7 @@ averrow/
 │   │   │   ├── spam-trap.ts        → Spam trap email handler
 │   │   │   ├── honeypot.ts         → Honeypot page server
 │   │   │   └── types.ts            → Shared TypeScript types
-│   │   ├── migrations/             → D1 SQL migrations (0001–0035+)
+│   │   ├── migrations/             → D1 SQL migrations (0001–0272 as of 2026-10)
 │   │   ├── public/                 → Static SPA assets (built frontend)
 │   │   └── wrangler.toml           → Worker configuration
 ├── prototypes/             → UI design specifications (HTML mockups)

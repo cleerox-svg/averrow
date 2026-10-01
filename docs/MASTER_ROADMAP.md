@@ -1,4 +1,6 @@
 # Averrow Platform — Master Product Roadmap
+
+> **SUPERSEDED — see `docs/IMPROVEMENT_PLAN_2026-07.md` and `docs/AI_STRATEGY_2026-10.md`.** This roadmap is historical (last updated 2026-03-28); items below such as the /v2 cutover are long complete.
 Last updated: 2026-03-28
 
 ## Current Sprint
