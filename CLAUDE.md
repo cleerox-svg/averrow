@@ -452,6 +452,54 @@ sub-hourly latency matters).
   by passing `idempotencyKey: ''` when the prompt legitimately includes
   a timestamp or other non-stable input. See PR-N (#1309).
 
+### AI-call health (silent-outage guard)
+
+The platform once ran ~3 months with zero working AI (last `budget_ledger`
+row 2026-07-10; every call `Anthropic HTTP 400 — credit balance too low`)
+while every agent reported `success`. Rules that came out of it:
+
+- **`failure_kind` on `lib/haiku.ts` results** (additive; `success`/`error`
+  unchanged). `throttled` / `budget_cap` = WE chose to skip, no request
+  left (`isDeliberateAiSkip()`). `api_error` / `network` / `parse_error` =
+  AI is not working. An unrecognised throw defaults to `api_error`, never
+  to a skip.
+- **Strictly-API counters** — `newAiCallCounters()` / `recordAiCall()` in
+  `lib/haiku.ts`, spread into `agent_outputs.details` as `aiCallsAttempted`,
+  `aiCallsSucceeded`, `aiCallsSkipped`, `aiFirstFailureKind`, `aiFirstError`.
+  Instrumented today: analyst, sentinel, cartographer. Call `recordAiCall`
+  exactly once per real API call **at the site that initiates it, never per
+  processed item** (sentinel shares one promise across sibling threats;
+  cartographer's batch path post-processes 5 providers per call — per-item
+  counting lets `succeeded` exceed `attempted`). Flight Control and
+  `ai_health` read these key names back via `json_extract`; renaming one
+  means updating both queries.
+- **Do NOT use the legacy counters for outage detection.** `haikuSuccesses`
+  / `haikuFailures` / `haikuSuccessCount` are left as-is for the summary
+  strings operators read, but they are not "is AI alive" tests: sentinel's
+  `haikuSuccesses` is incremented for a rules-based skip that makes **no
+  API call** (so `haiku=N/0` can mean zero calls were made — this is why the
+  outage read healthy); analyst's only increments after its confidence
+  gate; cartographer's counts post-processed providers, not requests.
+- **`AgentResult.degraded: { reason }`** — set when the agent completed but
+  every call on its required AI path failed (`isAiAllFailing()`:
+  `attempted > 0 && succeeded === 0`, no floor; sentinel's batch-level APT
+  call is tracked separately as opportunistic and excluded). `executeAgent`
+  then finalizes `agent_runs.status = 'partial'` (not `failed` — the
+  rule-based fallback did real work) and the agent's summary `agent_outputs`
+  row goes out at `severity: 'high'`. **`partial` alone is ambiguous**:
+  `executeAgent` also seeds every in-flight run as `partial`, and
+  held-for-approval runs finish `partial`. The distinction is `completed_at` — `NULL` = still running (or
+  orphaned), set = a finished run (degraded or awaiting approval). Never read
+  `status = 'partial'` without it.
+- **Alert:** Flight Control raises `platform_ai_calls_failing` (severity
+  `high` — NOT `critical`, which would auto-create an incident that surfaces
+  on the public status page) when `budget_ledger` has been silent >2h AND an
+  agent logged `>= AI_OUTAGE_MIN_ATTEMPTS` (3) attempts with 0 successes in
+  that 2h window. Deploy dependency: migration 0272 — see `docs/DEPLOYMENT.md`.
+- **Public uptime** (`lib/platform-status.ts`): finished `partial` runs count
+  as successes and in-flight rows (`completed_at IS NULL`) are excluded from
+  the denominator, so a degraded-AI run does not surface on `/status`.
+
 ### Cron schedule (wrangler.toml):
 ```
 navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, cache warming of 24 endpoints)
@@ -1174,7 +1222,8 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `agent_mesh.stalled[]` | Runs stuck in 'running' state >15 minutes |
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |
-| `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd` |
+| `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd`. Says what AI *cost*, not whether it *works* — a zero-cost window is identical for "nothing to classify" and "every call HTTP 400". Read `ai_health` for that. |
+| `ai_health` | Is AI *working* (`ai_spend_24h` only says what it cost): `last_ledger_row_at`, `hours_since_last_call` (newest `budget_ledger` row = last SUCCESSFUL call; `null` = empty), `window_hours`, `per_agent[]` (`attempted`, `succeeded`, `skipped`, `last_run_at`, `first_failure_kind`, `first_error`), `agents_all_failing[]` (`attempted > 0`, `succeeded = 0`). Only counter-instrumented agents appear (analyst, sentinel, cartographer) — absent ≠ healthy. See §6 "AI-call health". |
 | `platform_totals` | `brands`, `providers`, `campaigns`, `clusters`, `feeds_enabled`, `feeds_disabled` |
 | `brand_count_drift` | Last cube_healer reconciliation of `brands.threat_count` AND `brands.active_threat_count` in one pass (`brandsChecked`, `drifted`, `fixed`, `checked_at`). Persistent large `drifted` = a brand-link writer is skipping the counter bump — see `lib/brand-count-reconciler.ts`. |
 | `page_analysis` | Page-content scorer health + Lane 3 shadow telemetry over the analyzed `lookalike_domains` population. Cloaking (Wave 3, rec 4): `walls_observed`, `wall_rate_pct`, `by_family[]` (GROUP BY `page_anti_bot_wall`, migration 0260) — rising `wall_rate_pct` = growing crawler blind spot. **`fetched_ok` is a misnomer kept for contract stability**: it counts every row the pass has touched, successes and failures alike — `by_fetch_outcome[]` is the actual success/failure split (inferred from `page_ai_signals` being non-NULL, so rows last analyzed before migration 0264 read as `not_scored_*` until their next pass). `truncated: true` means the population exceeded `PAGE_DIAG_ROW_LIMIT` and **every number in the block is then a lower bound**. Lane 3 shadow blocks (migration 0264), structurally separate by design: `ai_build.*` (`scored`, `any_fired`, `by_signal[]` with rates, `class_a_cap_hits`, `escalations_attributable` — the metric that decides whether Class A is promoted or demoted to metadata — `escalations_any`, `persisted_delta_drift`, which is stale-weight-table detection and should decay on the 24h cadence; a value that doesn't is a writer bug), `exfil.*` (`by_sink_host[]`, `distinct_sink_ids`, `sink_ids_per_firing` — far below 1.0 means one operator running many kits, the clustering finding this lane exists to produce), `generator.by_token[]` (builder mix, weight 0). No rate is actionable below n=30. See `lib/page-fetch.ts` / `lib/page-phishing-scorer.ts` and `docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md` §6. |
@@ -1194,8 +1243,8 @@ or **"assess the platform"**:
 1. Run `./scripts/platform-diagnostics.sh` (or `./scripts/platform-diagnostics.sh 24` for a wider window)
 2. Parse the JSON response
 3. Report findings organized by priority:
-   - **Critical:** stuck_pile > 0, feeds at_risk with pct_to_auto_pause >= 80%, stalled agents, failed cron
-   - **Warning:** feeds with failure_rate > 50%, enriched_last_hour < 20, cartographer_queue growing
+   - **Critical:** stuck_pile > 0, feeds at_risk with pct_to_auto_pause >= 80%, stalled agents, failed cron, `ai_health.agents_all_failing` non-empty (AI outage — quote `first_error`)
+   - **Warning:** feeds with failure_rate > 50%, enriched_last_hour < 20, cartographer_queue growing, `ai_health.hours_since_last_call` > 2 (or `null`) — benign only if every `per_agent[].attempted` is 0 AND ingestion is genuinely quiet; a silent ledger on a platform that is ingesting threats is suspect, not healthy
    - **Healthy:** everything else — summarize briefly
 4. If enriched_last_hour looks suspiciously low, note it may be mid-cycle and suggest re-checking in 15 min
 5. Compare `cartographer_queue` vs `cartographer_queue_raw` to flag private IP inflation

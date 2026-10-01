@@ -12,15 +12,16 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 
 | Table / KV key | Writer | Reader(s) | Purpose |
 |---|---|---|---|
-| `agent_runs` | `lib/agentRunner.executeAgent` at start/end | API, status, FC, diagnostics | Per-execution lifecycle for inline agents. Always paired with status=`partial` row at start, UPDATE to success/failed at end. |
+| `agent_runs` | `lib/agentRunner.executeAgent` at start/end | API, status, FC, diagnostics | Per-execution lifecycle for inline agents. Always seeded as status=`partial` (`completed_at` NULL) at start, then UPDATEd at end to `success` / `failed`, or to `partial` again when the run finished degraded (`AgentResult.degraded` — every AI call failed) or is held for approval. A finished run always has `completed_at`; **`partial` + `completed_at IS NULL` is in flight**, so never count `status='partial'` alone as either a failure or a success. |
 | `agent_activity_log` | Workflow bodies (`workflows/*.ts`) AND `lib/workflow-dispatch.dispatchWorkflow` AND FC logActivity | API, status, FC, diagnostics, notification narrator | Per-event log. **Sole source of truth for workflow-dispatched agents** because they don't write to `agent_runs`. Event types: `workflow_dispatched`, `batch_complete`, `workflow_dispatch_failed`, `workflow_cooldown_skip`, `started`, `recovery`, `batch_complete` (FC tick), etc. |
 | `agent_outputs` | Agent execute() bodies | API (`/api/insights/latest`, Home "Latest Intel"), briefing, narrator | Per-agent insights / diagnostics. AI-generated content. Type column: `insight`, `correlation`, `diagnostic`. The legacy `score` (Cartographer) and `classification` (Analyst) types were folded into `insight` in the 2026-05-16 platform audit so they surface through `/api/insights/latest` instead of being written to /dev/null. Cartographer additionally gates Haiku scoring to providers with ≥5 active threats OR repeat-offender status (≥3 campaigns) — saves ~40% of its daily AI spend. |
+| `agent_outputs.details` AI counters (`aiCallsAttempted` / `aiCallsSucceeded` / `aiCallsSkipped` / `aiFirstFailureKind` / `aiFirstError`) | analyst, sentinel, cartographer via `lib/haiku.ts` `newAiCallCounters` / `recordAiCall` — once per real API call, never per item | FC `platform_ai_calls_failing` and diagnostics `ai_health` (both `json_extract`, `json_valid`-guarded, agent-agnostic) | Strictly-API call outcomes. **Not** the legacy `haikuSuccesses` counters, which count rules-based skips as successes. Key names are a contract between the three writers and the two readers. |
 | `agent_events` | Agents on completion | Orchestrator's `processAgentEvents` | Event-driven dispatch trigger. **Mostly telemetry** post-PR-L — only `pivot_detected` → Observer is wired. See CLAUDE.md §6 for the canonical chain vs the historical declared chain. |
 | `agent_configs` | Admin endpoints, FC auto-pause logic | All status surfaces | Circuit breaker state (`enabled`, `paused_reason`, `consecutive_failures`, etc). |
 | `feed_status` | `lib/feedRunner.runFeed` success/failure paths | Diagnostics, dashboard | Per-feed live state. PR-K added `next_retry_at` for the circuit breaker. |
 | `feed_pull_history` | `lib/feedRunner.runFeed` at start | Diagnostics, milestones, dashboard | Per-pull log. Captures records_ingested, status, error_message, duration_ms. |
 | `feed_configs` | Admin endpoints, auto-pause logic | feedRunner dispatch, diagnostics | Source URLs, schedules, enabled flag, paused_reason. |
-| `budget_ledger` | `lib/anthropic.callAnthropic` | Diagnostics, budget UI, FC budget logic | Per-AI-call token + cost ledger. Single source for AI spend. |
+| `budget_ledger` | `lib/anthropic.callAnthropic` | Diagnostics, budget UI, FC budget logic | Per-AI-call token + cost ledger. Single source for AI spend. **One row per SUCCESSFUL call, nothing on failure** — which makes `MAX(created_at)` the ground truth for "AI last worked" (FC `platform_ai_calls_failing`, diagnostics `ai_health.last_ledger_row_at`). A silent ledger alone cannot distinguish a quiet platform from an outage; pair it with the attempt counters in `agent_outputs.details`. |
 | `notifications` | `lib/platform-templates.emitPlatformNotification` | UI inbox, notification_narrator, briefing | Platform alerts. Group_key for dedup. |
 | `takedown_requests` | `handlers/takedowns` | Tenant takedowns page, sparrow agent, ops admin | Customer-initiated takedown requests with full lifecycle. |
 | `threats` | Feeds, cart, enricher, analyst | Almost everything | Core threat intel table. Pre-computed columns (`brand.threat_count`, `hosting_providers.active_threat_count`) avoid full scans. |
@@ -52,7 +53,7 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 | `/api/internal/platform-diagnostics` `agent_mesh.per_agent[]` | `handlers/diagnostics.ts` (PR-J) | Per-agent rollup with `dispatch_source: 'workflow'\|'agent_runs'` | Nexus shows 0 success, 5 failed |
 | `/api/agents` (Agents grid) | `handlers/agents.ts handleListAgents` (PR-R) | last_run_at, last_run_status, jobs_24h, status pill | Nexus card shows "FAILING" |
 | FC `getAgentHealth` → `platform_agent_stalled` notification gate | `agents/flightControl.ts:1453` (PR-R) | `is_stalled` boolean, `last_run_at`, `last_run_status` | False `platform_agent_stalled` notifications fire for nexus every FC tick |
-| `/api/internal/platform-status` `categories[agents]` realtime | `lib/platform-status.computeAgentsRealtime` (PR-R) | 6h success rate for the agents category pill | Status page shows degraded; nexus contributes 0 successes |
+| `/api/internal/platform-status` `categories[agents]` realtime | `lib/platform-status.computeAgentsRealtime` (PR-R) | 6h success rate for the agents category pill. `success` and finished `partial` count as successes; `completed_at IS NULL` rows are excluded (see `PUBLIC_UPTIME_SEMANTICS` in the file) | Status page shows degraded; nexus contributes 0 successes |
 
 **Surfaces that DO NOT need reconciliation (correct by construction):**
 
@@ -62,7 +63,7 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 
 **Surfaces still on agent_runs-only (acceptable):**
 
-- `computeAgentsDaily` (status page trailing 30d chart) — historical accuracy of the dip during nexus's pre-workflow outage is correct
+- `computeAgentsDaily` (status page trailing 30d chart) — historical accuracy of the dip during nexus's pre-workflow outage is correct. Same success/`partial`/`completed_at` semantics as the realtime function: an internal AI outage (degraded `partial` runs) is deliberately not a public availability event
 - `/api/agents/:name` (agent detail page) — TODO follow-up if pain emerges
 - `/api/agents/runs` (runs feed) — TODO follow-up if pain emerges
 - `architect/collectors/ops.ts` — internal architect agent, low priority
@@ -98,6 +99,12 @@ cart enrichment_warnings phase ───────► platform_enrichment_stuc
 budget_ledger 24h aggregate ──────────► platform_ai_spend_burst             ► notifications inbox
   reads: budget_ledger SUM(cost)
 
+budget_ledger silence + agent_outputs ► platform_ai_calls_failing           ► notifications inbox
+  details AI counters (FC, hourly)         group_key: platform_ai_calls_failing:<UTC date>
+  reads: MAX(budget_ledger.created_at) > 2h AND an agent with >= 3 aiCallsAttempted,
+         0 aiCallsSucceeded in the same 2h window (severity: high, audience: super_admin,
+         dedup -50 min — not critical, which would auto-create a public-status incident)
+
 handlers/briefing daily run ──────────► platform_briefing_silent            ► notifications inbox
   reads: threat_briefings.delivered_at      (when >24h since last)
 
@@ -123,7 +130,9 @@ dns-queue reaper-stalled supervisor ───► platform_dns_queue_reaper_stall
 
 **Key dependency:** ANY change to `getAgentHealth`'s `is_stalled` computation (PR-R reconciliation) directly affects whether `platform_agent_stalled` fires. Without PR-R's workflow-event reconciliation, nexus would generate a false `platform_agent_stalled` every FC tick (every hour), polluting the inbox AND triggering misleading "nexus stalled" entries in the daily briefing via `notification_narrator`.
 
-**Dedup convention:** All `emitPlatformNotification` calls use a `group_key`. The notifications table has a UNIQUE constraint on `(group_key, dedup_window)` so re-firing the same key within the window is a no-op insert. See `lib/platform-templates.ts` for the canonical group_key shapes.
+**Dedup convention:** All `emitPlatformNotification` calls use a `group_key`. Dedup is application-level, not a DB constraint (the `notifications` table has no UNIQUE on it): `createNotification` runs a `SELECT 1 … WHERE type=? AND group_key=? AND created_at > datetime('now', <window>) ORDER BY created_at DESC LIMIT 1` first and returns 0 on a hit; the window is the event's `dedupWindow` in the shared registry. That query is served by `idx_notifications_dedup (type, group_key, created_at DESC)`.
+
+**Adding a notification key is a two-part change.** Register it in `packages/shared/src/notification-events.ts` (`KNOWN_EVENT_KEYS`, dedup windows and the toggleable set all derive from it) **and** ship a migration that widens the `notifications.type` CHECK, which is a hand-maintained copy of the registry (re-synced in 0207, 0215, 0265, 0272). A key in the registry but not in the CHECK passes `createNotification`'s guard and then throws at INSERT; Flight Control's mandatory try/catch turns that into a `console.warn` and zero rows, so the alert fails silently. `test/notification-check-drift.test.ts` fails CI on the file-level mismatch, but it checks the migration *file* — it cannot tell you production has applied it (see `docs/DEPLOYMENT.md` "Database Migrations"). Separately, `createNotification` now logs a `console.warn` and returns 0 when an audience resolves to zero recipients (e.g. no active `super_admin`) — previously a silent no-op. See `lib/platform-templates.ts` for the canonical group_key shapes.
 
 ---
 
@@ -226,6 +235,7 @@ When adding a new workflow-dispatched agent:
 | "Is feed X healthy?" | `feed_status` (live state) + `feed_pull_history` (forensic) |
 | "Has agent X been failing?" | `agent_runs.status='failed'` count + `agent_activity_log` workflow_dispatch_failed count. Reconcile via helper. |
 | "What's our AI spend today?" | `budget_ledger` SUM(cost_usd). Single source. |
+| "Is AI actually working?" | Diagnostics `ai_health` (`hours_since_last_call` + `per_agent[].attempted/succeeded`). **Not** `ai_spend_24h` (cost only) and **not** the legacy `haikuSuccesses` counters. |
 | "Why is the platform degraded?" | `platform-status` endpoint's `note` field. Per-category. |
 | "What did agent X output recently?" | `agent_outputs` filtered by `agent_id` + recency |
 | "What's queued in the enrichment pipeline?" | `threats WHERE enriched_at IS NULL` — but use `cachedCount` keys `count.threats.carto_queue*` for diagnostics surfaces (PR-I) |
@@ -254,6 +264,7 @@ When adding a new workflow-dispatched agent:
 | PR-X | 2026-05-14 | Billing-cycle (18th-17th) D1 tracker. New `fetchBillingCycleMetrics` aggregates rows_read across all account D1 databases, replaces 24h × 30 projection. UI surfaces per-database breakdown. |
 | PR-Y | 2026-05-14 | Top-queries leaderboard now includes `databaseId` dimension — each card shows which DB the query came from. |
 | PR-Z | 2026-05-14 | New `threat_cube_arcs` (country × brand × type × severity per hour). `handleObservatoryArcs` + `handleObservatoryBrandArcs` swapped to read from cube — eliminates the largest D1 spender on the backend side (~14M reads/24h → ~0.5M). Same OLAP-cubes pattern as `threat_cube_geo` / `threat_cube_brand` / `threat_cube_provider` / `threat_cube_status`. |
+| AI-outage detection | 2026-10-01 | Silent-AI-failure guard after ~3 months of zero working AI (last `budget_ledger` row 2026-07-10, Anthropic HTTP 400 credit balance). `failure_kind` on `lib/haiku.ts` results; strictly-API counters in analyst/sentinel/cartographer; `AgentResult.degraded` → run finalizes `partial`; FC `platform_ai_calls_failing` (migration 0272); diagnostics `ai_health`; public-status uptime counts finished `partial` as success and excludes in-flight rows. Branch `claude/averrow-intel-feeds-research-ukhoef`. |
 
 ---
 
