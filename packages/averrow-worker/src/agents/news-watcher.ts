@@ -280,10 +280,11 @@ export const newsWatcherAgent: AgentModule = {
 
         // Upsert each named actor — bumps last_seen on existing ones,
         // creates new rows for first-seen names.
-        const country = extraction.target_countries[0] ?? null;
+        // No country arg: target_countries are the victims, not the
+        // actor's origin — upsertActorByName derives origin itself.
         for (const actorName of extraction.actors) {
           try {
-            const actorId = await upsertActorByName(env.DB, actorName, "news", country);
+            const actorId = await upsertActorByName(env.DB, actorName, "news");
             if (actorId) actorsUpserted++;
           } catch (err) {
             console.error(`[news-watcher] actor upsert failed for ${actorName}:`, err);
