@@ -56,6 +56,15 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'sandworm':        'Sandworm',
   'apt44':           'Sandworm',
   'voodoo bear':     'Sandworm',
+  'star blizzard':   'Star Blizzard',
+  'coldriver':       'Star Blizzard',
+  'seaborgium':      'Star Blizzard',
+  'callisto':        'Star Blizzard',
+  'callisto group':  'Star Blizzard',
+  'unc4057':         'Star Blizzard',
+  'tag-53':          'Star Blizzard',
+  'blue charlie':    'Star Blizzard',
+  'gossamer bear':   'Star Blizzard',
 
   // ── North Korean
   'lazarus':         'Lazarus Group',
@@ -125,6 +134,25 @@ const ALIAS_TO_CANONICAL: Record<string, string> = {
   'blackcat':        'ALPHV',
 };
 
+// Canonical name → attributed origin (ISO 3166-1 alpha-2). This is the
+// ONLY source of threat_actors.country_code for auto-created actors:
+// pulse `targeted_countries` and news `target_countries` name the
+// VICTIMS, never the actor's origin, so they must not populate it.
+// Cybercriminal groups are deliberately absent (no state attribution).
+const CANONICAL_ORIGIN: Record<string, string> = {
+  'APT28': 'RU', 'APT29': 'RU', 'Turla': 'RU', 'Sandworm': 'RU', 'Star Blizzard': 'RU',
+  'Lazarus Group': 'KP', 'Kimsuky': 'KP', 'Andariel': 'KP',
+  'APT1': 'CN', 'APT10': 'CN', 'APT40': 'CN', 'APT41': 'CN', 'Mustang Panda': 'CN',
+  'Charming Kitten': 'IR', 'MuddyWater': 'IR', 'APT33': 'IR', 'OilRig': 'IR',
+  'Agrius': 'IR', 'CyberAv3ngers': 'IR', 'Handala': 'IR', 'Hydro Kitten': 'IR',
+  'Cotton Sandstorm': 'IR',
+};
+
+/** Attributed origin country (ISO-2) for a canonical actor name, or null. */
+export function originCountryFor(canonicalName: string): string | null {
+  return CANONICAL_ORIGIN[canonicalName] ?? null;
+}
+
 /**
  * Canonicalize a free-form actor name or alias against the registry.
  * Returns the canonical name (e.g. "APT28") or null if unrecognized.
@@ -187,21 +215,24 @@ export async function upsertActorByName(
   if (!trimmed) return null;
   const actorName = canonicalActorName(trimmed) ?? trimmed;
   const id = actorIdFor(actorName);
+  const origin = originCountryFor(actorName);
 
   // INSERT new actors with the calling source as provenance. On conflict
-  // bump only the freshness columns — never overwrite country/status/
-  // description/source on existing rows since the reference taxonomy or
-  // a higher-confidence source may have populated them.
+  // bump the freshness columns and fill a MISSING country from the known
+  // origin only — never overwrite country/status/description/source on
+  // existing rows since the reference taxonomy or a higher-confidence
+  // source may have populated them.
   await db
     .prepare(`
       INSERT INTO threat_actors
         (id, name, status, source, country_code, first_seen, last_seen, updated_at)
       VALUES (?, ?, 'active', ?, ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
-        last_seen  = datetime('now'),
-        updated_at = datetime('now')
+        country_code = COALESCE(threat_actors.country_code, ?),
+        last_seen    = datetime('now'),
+        updated_at   = datetime('now')
     `)
-    .bind(id, actorName, source, countryCode)
+    .bind(id, actorName, source, origin ?? countryCode, origin)
     .run();
 
   return id;
@@ -264,22 +295,26 @@ export async function upsertActorFromPulse(
   if (!actorName) return null;
 
   const id = actorIdFor(actorName);
-  const country = pulse.targeted_countries?.[0] ?? null;
+  // Origin comes from the canonical registry only — the pulse's
+  // targeted_countries are victims (and full names, not ISO-2 codes).
+  const origin = originCountryFor(actorName);
 
-  // INSERT new actors with full provenance; on conflict, just bump the
-  // freshness columns. We deliberately don't overwrite country, status,
-  // or description on conflict — those may have richer values from the
-  // reference taxonomy or from later news/Mandiant attribution.
+  // INSERT new actors with full provenance; on conflict, bump the
+  // freshness columns and fill a missing country from the known origin.
+  // We deliberately don't overwrite country, status, or description on
+  // conflict — those may have richer values from the reference taxonomy
+  // or from later news/Mandiant attribution.
   await db
     .prepare(`
       INSERT INTO threat_actors
         (id, name, status, source, country_code, first_seen, last_seen, updated_at)
       VALUES (?, ?, 'active', 'otx', ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
-        last_seen  = datetime('now'),
-        updated_at = datetime('now')
+        country_code = COALESCE(threat_actors.country_code, ?),
+        last_seen    = datetime('now'),
+        updated_at   = datetime('now')
     `)
-    .bind(id, actorName, country)
+    .bind(id, actorName, origin, origin)
     .run();
 
   return id;
