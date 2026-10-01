@@ -22,6 +22,8 @@
 import type { Env } from "../types";
 import { createAlert } from "./alerts";
 import type { CreateAlertParams } from "./alerts";
+import { clearsLookalikeAlertFloor } from "./lookalike-alert-policy";
+import type { PageThreatLevel } from "./page-phishing-scorer";
 
 export interface BackfillSummary {
   brand_id: string;
@@ -121,29 +123,81 @@ export async function backfillAlertsForBrand(
   });
 
   // ─── lookalike_domains → lookalike_domain_active ─────────────────────
+  //
+  // THE THIRD PRODUCER of this alert type, and until now the only one
+  // that did not go through `lib/lookalike-alert-policy.ts`. It filed at
+  // a hardcoded `medium` with no `registered` filter, so claiming a
+  // brand the widened seeder had touched could file up to 100 MEDIUM
+  // alerts — for domains that were not even registered — straight past
+  // the HIGH floor both scanner paths respect, and with
+  // `bypassTierGate: true` so `createAlert`'s own gate could not stop
+  // them either. The policy module's docstring claimed "ONE definition,
+  // imported by BOTH producers"; this is the import that makes it true.
+  //
+  // WHAT SEVERITY DOES A BACKFILLED ROW DESERVE? Not a fresh judgement,
+  // and not a constant. `lookalike_domains.threat_level` is the level
+  // the scanner ALREADY composited for this row — Haiku's read plus the
+  // mail+web and BIMI boosts, plus any monotonic page escalation
+  // `applyEscalation` wrote later. Reusing it makes the backfill file
+  // exactly what the live producers would have filed, which is the whole
+  // premise of claim-time backfill: these alerts are missing only
+  // because the NX2 tier gate declined them while the brand was
+  // `tracked`. Composing a NEW severity here would be a second opinion
+  // nobody asked for, and a constant is how the floor got bypassed.
+  //
+  // NO EXEMPTION from the floor. The floor's argument is queue
+  // arithmetic (see its docstring), and a claim-time burst of up to 100
+  // rows into a tenant's brand-new signals page is the single worst
+  // place to spend it: the backfill lands in one batch, the alerts can
+  // never be auto-cleared, and a MEDIUM lookalike is precisely the
+  // finding the floor decided does not earn permanent manual work. Rows
+  // below the floor still arrive on the tenant's domains surface with
+  // their persisted verdict — the data is the deliverable, the alert is
+  // the notification.
   await runSource(env, summary, 'lookalike_scanner', async () => {
     const rows = await env.DB.prepare(`
-      SELECT id, domain, permutation_type, created_at
+      SELECT id, domain, permutation_type, threat_level, created_at
         FROM lookalike_domains
        WHERE brand_id = ?
+         AND registered = 1
          AND created_at >= datetime('now', ?)
        ORDER BY created_at DESC
        LIMIT 100
     `).bind(brandId, sinceWindow).all<{
-      id: string; domain: string; permutation_type: string | null; created_at: string;
+      id: string; domain: string; permutation_type: string | null;
+      threat_level: string | null; created_at: string;
     }>();
     summary.by_source.lookalike_scanner!.scanned = rows.results.length;
     summary.scanned += rows.results.length;
     for (const r of rows.results) {
+      const level = normalizeThreatLevel(r.threat_level);
+      if (!clearsLookalikeAlertFloor(level)) {
+        // Withheld, not dropped: the row keeps its verdict and stays
+        // reachable by the page-analysis producer, which can raise the
+        // alert later if the page turns out to be phishing. Counted as
+        // `skipped` — the bucket already means "considered, no row
+        // written", which is what happened.
+        summary.skipped_duplicate++;
+        summary.by_source.lookalike_scanner!.skipped++;
+        continue;
+      }
       await insertOnce(env, userId, {
         brandId,
         alertType: 'lookalike_domain_active',
-        severity: 'medium',
+        severity: normalizeSeverity(level),
         title: `Lookalike domain registered: ${r.domain}`,
         summary: `Lookalike ${r.permutation_type ?? 'variant'} of your brand domain detected.`,
         sourceType: 'lookalike_scanner',
         sourceId: r.id,
-        details: { lookalike_domain: r.domain, permutation_type: r.permutation_type, observed_at: r.created_at },
+        details: {
+          lookalike_domain: r.domain,
+          permutation_type: r.permutation_type,
+          threat_level: level,
+          observed_at: r.created_at,
+          // Distinguishes this producer from the other two inside the
+          // same alert type, the same way the page pass marks its own.
+          discovered_by: 'claim_backfill',
+        },
       }, summary, 'lookalike_scanner');
     }
   });
@@ -365,6 +419,19 @@ async function insertOnce(
 // tier exists for alerts (intentional; alerts are higher-stakes than
 // notifications). Source-table severities that say 'info' map to 'low'
 // rather than failing the type check.
+/**
+ * `lookalike_domains.threat_level` as a `PageThreatLevel`.
+ *
+ * The column is free TEXT with a `'LOW'` DEFAULT, so an unrecognised or
+ * NULL value must land somewhere. LOW is the right floor-side default:
+ * an unassessed row has produced no finding, and defaulting UP would
+ * file an alert on the strength of a missing value.
+ */
+function normalizeThreatLevel(raw: string | null | undefined): PageThreatLevel {
+  const v = (raw ?? '').toUpperCase();
+  return v === 'CRITICAL' || v === 'HIGH' || v === 'MEDIUM' ? v : 'LOW';
+}
+
 function normalizeSeverity(s: string | null | undefined): 'critical' | 'high' | 'medium' | 'low' {
   const v = (s ?? '').toLowerCase();
   if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low') return v;

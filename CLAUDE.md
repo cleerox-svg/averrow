@@ -971,6 +971,65 @@ const series = await cachedValue<Array<{ day: string; count: number }>>(
 Hit/miss for both helpers feeds the same `cached_count.hit_rate` ring
 in `/api/internal/platform-diagnostics`.
 
+### Brand scope — `brands.tier`, and why `monitoring_status` is a trap
+
+**Read this before writing any query that decides "which brands does the
+platform care about".** Audited 2026-09-30; the intuitive answer is wrong
+and has already been gotten wrong twice.
+
+**`brands.tier` is the scope column.** Values: `tracked` (passive
+catalog, ~112K rows — `createAlert` returns `null` for these by design so
+the alerts table doesn't grow with the catalog), `monitored` (~1,864),
+`customer` (3, org-claimed). Tier was assigned mechanically by migration
+0156 — `UPDATE brands SET tier='monitored' WHERE tier='tracked' AND
+threat_count > 0` — so every monitored-tier brand is threat-bearing by
+construction.
+
+**`brands.monitoring_status` is VESTIGIAL. Do not filter on it.**
+
+- **Nothing in the repository ever writes `'inactive'`.** The only
+  occurrences beside a read are two schema `DEFAULT` clauses (migrations
+  0036, 0042). Every other reference is a `WHERE monitoring_status =
+  'active'` read. The value therefore *cannot* express an operator
+  decision to stop watching a brand — no code path can set it.
+  `updateBrandField` (`db/brands.ts`) lists the column in its allowlist
+  and has zero call sites.
+- **It cross-cuts tier rather than refining it**: 631 `tracked` brands
+  are `active`, 1,505 `monitored` brands are `inactive`, and `'paused'`
+  (the third value migration 0036 documents) has never existed in a
+  single row across 114,251 brands.
+- **`handleAddMonitoredBrand`** (`handlers/brands.ts`) — the handler for
+  an operator *explicitly* adding a brand to monitoring — omits
+  `monitoring_status` from its INSERT, so a brand someone asked to
+  monitor is born `inactive`. This is why 2 of the 3 `customer`-tier
+  brands are `inactive`.
+- **678 distinct `monitored` + `inactive` brands hold an *enabled*
+  `brand_monitor_schedule` row.** The platform actively schedules
+  monitors for brands this column calls inactive.
+- The real watchlist is the **`monitored_brands`** table, which has the
+  columns a decision needs (`added_by`, `added_at`, `removed_at`).
+  `monitoring_status='active'` is a denormalized copy of it from one
+  March 2026 seed run: 815 of 991 `active` rows are in it, and **0 of
+  113,258** `inactive` non-customer rows are.
+
+**Absence of `'active'` is not the presence of a decision to stop.** If
+you need "did a human choose this brand", read `monitored_brands` or
+`org_brands`. If you need "does the platform cover this brand", read
+`tier`. Five OSINT feeds (`mastodon`/`reddit`/`github`/`telegram`/`hibp`)
+and `brand-scoring.ts` still filter on `monitoring_status='active'` and
+are consequently narrower than intended — a latent bug, not a policy.
+
+**Standing product stipulation (user decision, 2026-09-30):** *every*
+brand the platform monitors gets typosquat coverage — `tier IN
+('monitored','customer')`, all 1,867 — regardless of tenant assignment or
+`monitoring_status`. Typosquat data is threat-ACTOR evidence (§13:
+patterns are the product), not a per-customer entitlement. Do **not**
+re-narrow this to `org_brands` membership or re-introduce a
+`monitoring_status` filter; both have been tried and reverted. The single
+definition is `MONITORED_BRAND_PREDICATE_SQL` in `lib/monitored-brands.ts`
+— shared by the seeder and the page-analysis pass so they cannot drift.
+That file carries the full audit and the throughput preconditions.
+
 ### Key tables:
 ```
 brands                    ← Brand registry (9,652+ brands)

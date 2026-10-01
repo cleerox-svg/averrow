@@ -428,7 +428,11 @@ intervals.
 signal-by-signal, not all at once. This is the single most important step — it
 catches a "fires on 40% of pages" failure before an operator ever sees it.
 
-> ### ⚠️ 5.1a — The gate is blocked on POPULATION, not elapsed time
+> ### ⚠️ 5.1a — The gate was blocked on POPULATION, not elapsed time
+>
+> **Resolved the same day — the finding is kept in full because the reasoning
+> is the reason the fix is shaped the way it is. Jump to "Resolved 2026-09-30"
+> at the end of this section for what actually shipped.**
 >
 > Measured against production 2026-09-30, day 9 of shadow mode. **Waiting to
 > day 14 changes nothing**, because the constraint is not accrual.
@@ -500,6 +504,123 @@ catches a "fires on 40% of pages" failure before an operator ever sees it.
 > not enough of them to measure. Phase 2's §11.3/§11.4 work (migration 0266)
 > was still worth landing — it makes the gate data trustworthy for whenever
 > the population question is answered.
+>
+> ---
+>
+> #### ✅ Resolved 2026-09-30 — (a), on a product position
+>
+> Route (a), decided on doctrine rather than on the measurement need: *every
+> brand the platform monitors should have typosquat coverage, whether or not a
+> tenant is assigned it.* That is the threat-ACTOR reading (`CLAUDE.md` §13 —
+> patterns are the product); `org_brands` membership was the brand-protection
+> reading, and it is the narrower product.
+>
+> **STANDING STIPULATION (user decision, 2026-09-30). Do not re-litigate.**
+> The target population is **all 1,867 brands** at `tier IN
+> ('monitored','customer')` — every brand the platform monitors, regardless of
+> tenant assignment *or* `monitoring_status`. Two narrowings have now been
+> tried and reverted, and both are closed:
+>
+> 1. **`org_brands` membership** — the original gate. 3 brands of 114,251.
+>    Closed: a typosquat is actor evidence, not a per-customer entitlement.
+> 2. **`monitoring_status = 'active'`** — the 362-brand staging filter below.
+>    Closed on evidence, not preference: the column is vestigial (see the
+>    correction at the end of this section — nothing in the repo ever writes
+>    `'inactive'`, so its absence encodes no decision).
+>
+> A future session that re-adds either filter is reintroducing a known defect.
+> The single definition is `MONITORED_BRAND_PREDICATE_SQL` in
+> `lib/monitored-brands.ts`, shared by the seeder and the page-analysis pass so
+> the two cannot drift; that file carries the audit and the throughput
+> preconditions. Also mirrored in `CLAUDE.md` §8 under "Brand scope", which is
+> read at the start of every session.
+>
+> **What the stipulation does not license.** Widening the population is not
+> permission to widen the *caps*. The three preconditions below are unchanged,
+> and the 47-day re-check cycle they describe is an accepted interim state, not
+> a bug to be fixed by raising `LIMIT 50` without the wall-clock guard.
+>
+> Both gates — the seeder and the page-analysis pass — now share
+> `MONITORED_BRAND_PREDICATE_SQL` (`lib/monitored-brands.ts`), one definition
+> so they cannot drift:
+>
+> ```sql
+> (b.tier = 'customer' OR (b.tier = 'monitored' AND b.monitoring_status = 'active'))
+> ```
+>
+> | | brands | analyzable rows |
+> |---|---|---|
+> | old `org_brands` gate | 3 | 36 |
+> | this predicate | **362** | 36 → drains from a 359-brand backlog |
+> | `tier IN (…) AND status='active'` | 360 | **17** ← rejected |
+>
+> The third row is the obvious spelling and it is wrong: two of the three
+> `customer`-tier brands carry `monitoring_status <> 'active'`, so requiring
+> the flag uniformly would have **halved the existing pipeline** on the change
+> meant to widen it. `customer` is therefore unconditional. The matrix is
+> pinned cell-by-cell against real SQLite in
+> `test/monitored-brands-predicate.test.ts`, which runs the queries extracted
+> from source rather than retyped copies.
+>
+> **This is a stage, not the end state.** `monitored` + any status is 1,867
+> brands ≈ 56,010 rows, and `checkLookalikeBatch` reads 50/hour — a **47-day**
+> DNS cycle, against ~9 days for the 362-brand stage. Widening further is
+> gated on raising that limit and `PAGE_ANALYSIS_LIMIT` (20/run) first, in
+> their own change with their own cost argument. Bigger population behind
+> unchanged caps just moves the starvation from "nothing to analyze" to "a
+> 47-day cycle", which is harder to notice.
+>
+> #### ⚠️ Correction, same day — `monitoring_status` is vestigial
+>
+> The paragraph above says `monitored` tier "does honour the flag, because
+> there `inactive` is the only thing distinguishing it from the 114K-brand
+> catalog." **That was an unverified assumption and it is false.** Audited
+> against the repo and production:
+>
+> - **Nothing in the repository ever writes `'inactive'`.** The only
+>   occurrences beside a read are two schema `DEFAULT` clauses (migrations
+>   0036, 0042). Every other reference is `WHERE monitoring_status = 'active'`.
+>   So the value cannot express an operator decision to stop watching a brand
+>   — no code path can set it. (`updateBrandField` lists the column in its
+>   allowlist and has zero call sites.)
+> - **The flag cross-cuts tier rather than refining it.** 631 `tracked` brands
+>   are `active`; `'paused'`, the third documented value, has never existed in
+>   a single row. What distinguishes a monitored-tier brand is `tier` itself,
+>   set mechanically by migration 0156 from `threat_count > 0`.
+> - **`handleAddMonitoredBrand`** — the handler for an operator explicitly
+>   adding a brand to monitoring — omits `monitoring_status` from its INSERT,
+>   so a brand someone asked to monitor is born `inactive`. That is why 2 of 3
+>   customer brands are.
+> - **678 distinct `monitored` + `inactive` brands hold an *enabled*
+>   `brand_monitor_schedule` row.** The platform schedules monitors for brands
+>   this column calls inactive.
+> - The real watchlist is the `monitored_brands` table, which has the columns
+>   a decision needs (`added_by`, `added_at`, `removed_at`).
+>   `monitoring_status='active'` is a denormalized copy of it from one March
+>   2026 seed run: 815 of 991 active rows are in it, and **0 of 113,258**
+>   inactive non-customer rows are.
+>
+> Absence of `'active'` is not the presence of a decision to stop. The
+> predicate is therefore a **staging throttle**, not a definition of the
+> target: read its `active` term as "an arbitrary ~20% slice addressable by an
+> existing indexed column." The honest target is all 1,867, and the `active`
+> term should be **deleted rather than re-justified** once the caps move. See
+> `lib/monitored-brands.ts` for the full audit and the three specific
+> preconditions (wall-clock guard, tiered cadence with an explicit
+> `last_checked IS NULL` budget, and `PAGE_DIAG_ROW_LIMIT` — the third being
+> the one that would otherwise break §5.2's own measurement).
+>
+> **What this does and does not unblock.** It removes the arithmetic
+> impossibility: ~540 scored rows at observed rates against the ~285 §5.2
+> needs for n ≥ 30 in its positive-control arm. It does **not** make §5.2
+> runnable today — the backlog drains at 10 brands/hour (~36 h) and then DNS
+> at 50 rows/hour (~9 days), so the gate becomes answerable in roughly two
+> weeks *of accrual that is actually happening*, which is what §5.1 wrongly
+> assumed was already true. Re-run the §5.1a census before attempting §5.2.
+> Also unchanged: the exposure side of route (a) is real — the platform now
+> fetches more open-internet pages. The SSRF-safe fetcher, the 24h per-domain
+> cadence and the per-run wall-clock budget are the existing controls; nothing
+> about them was relaxed.
 
 **5.2 Positive control, free.** Rows already carrying
 `page_phishing_score >= 60` or `credentialHarvest` are a high-confidence
@@ -711,11 +832,15 @@ Per `CLAUDE.md` §1A each step runs the full pipeline. Owners in brackets.
 call, `onDocument` comments, the real `on*` attribute walk, generator charset
 restriction, one-pass diagnostics, and the versioned cache key.*
 
-**Phase 2 — promotion. ⬜ BLOCKED — see §5.1a first, then §11.**
-*§11.3/§11.4 shipped (migration 0266). Promotion itself is blocked on
-POPULATION, not elapsed time: 35 eligible rows, 2 in §5.2's positive-control
-arm, and the seeder cannot add more by construction. §5.1a has the numbers,
-the two-link root cause and the three ways forward.*
+**Phase 2 — promotion. ⬜ WAITING ON ACCRUAL — see §5.1a, then §11.**
+*§11.3/§11.4 shipped (migration 0266). The population block is RESOLVED
+(§5.1a "Resolved 2026-09-30"): both gates moved off `org_brands` onto
+`MONITORED_BRAND_PREDICATE_SQL`, 3 brands → 362, and the seeder now has a
+359-brand backlog to drain instead of being a no-op by construction. §5.2 is
+not runnable the same day — the backlog drains at 10 brands/h, then DNS at 50
+rows/h, so ~2 weeks of real accrual. Re-run the §5.1a census before
+attempting the gate; do not read a 0% rate as death before n ≥ 30 (§4.6,
+§11.5, and the underpowered third case in §5.1a).*
 8. Remove the shadow flag **per signal, as each clears its §5.2/§5.3 gate** —
    not all at once. *[backend-engineer + threat-intel-analyst]*
 9. `credentialHarvest` extension + `covert_exfil_sink` HIGH floor, **with the
@@ -855,6 +980,26 @@ step 12 is approving a property nobody can test.
 > triage decider that can dismiss — the only option that could *introduce*
 > dismissals on a family that currently has none, and so the one needing
 > `appsec-reviewer` before anything is written, not after.
+
+> **Update 2026-09-30 — the family now has TWO producers and a severity floor,
+> and still zero dismissal paths.** `lookalike_domain_active` alerts are created
+> by the registration checker *and* by the page-analysis pass
+> (`raiseUnalertedPhishingPageAlert`), and both are gated on a HIGH/CRITICAL
+> floor defined once in `lib/lookalike-alert-policy.ts`. Neither producer, and
+> nothing downstream of them, can dismiss: `createAlert`'s triage dispatch still
+> matches no branch for `sourceType: 'lookalike_scanner'`, and the new page path
+> can only WITHHOLD (below the floor or below the phishing bar) or RAISE.
+>
+> This makes option **(a)** above the standing answer rather than one of three:
+> the safety property §3.3 wanted holds structurally, so widening
+> `credentialHarvest` still cannot produce a dismissal — but the *mechanism* is
+> "this family has no dismissal path at all", not the
+> `page_credential_harvest === 1` guard, which remains unreachable here. Do not
+> re-argue §3.3 from that guard. Note also that the page pass's alert gate reads
+> `score` / `credentialHarvest` / the fired `anti_bot_wall` key ONLY — no
+> `aiSignals`, no `scoreDelta` — so promoting a shadow signal would, for the
+> first time, put Lane 3 output on a path that CREATES operator work. That is a
+> §5.2 consideration to weigh at promotion time, not a blocker now.
 
 ### 11.2 The A3 rule needs its two-tier split before `default_scaffold_title` is promoted
 

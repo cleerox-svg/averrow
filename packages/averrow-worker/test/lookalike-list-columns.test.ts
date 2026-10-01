@@ -35,6 +35,32 @@ const EXPECTED_COLUMNS = [
   // because it explains a stale verdict. Added by hand, which is the
   // review step this file exists to force.
   "page_last_outcome",
+  // 0267 first-contact baseline — "when WE first looked", distinct from
+  // first_seen's "when the domain appeared". Staff-visible for the same
+  // reason as page_last_outcome: it explains an absence (a registered
+  // squat with no alert) that otherwise reads as a bug.
+  "baseline_established_at",
+  // 0268 DNS-check failure cooldown — "the last check FAILED", as
+  // opposed to last_checked's "the last check SUCCEEDED". Staff-visible
+  // on the same reasoning: it explains a row that is neither baselined
+  // nor advancing, because its resolver keeps timing out.
+  "last_check_failed_at",
+  // 0269 check scheduling — when the row may next be selected (NULL =
+  // PARKED by the backoff ladder) and the consecutive failure count
+  // driving it. Together they are the operator-readable signature of a
+  // row that has STOPPED advancing, which is an absence that otherwise
+  // reads as a bug.
+  "check_due_at", "check_attempts",
+  // 0269 recurring BEC lane — presence-only, never a record of absence.
+  // The evidence behind a typosquat_bimi alert.
+  "bimi_first_seen_at",
+  // 0269 Haiku lifetime gate — the CLAIM TOKEN that replaced a read of
+  // the SELECT snapshot, so two concurrent runs can no longer both spend
+  // a token call on one row. Staff-visible for the same reason as the
+  // scheduling columns: it explains an absence (a mail+web row whose
+  // ai_assessment is still NULL is capped, in flight, or failing).
+  // Added by hand, which is the review step this file exists to force.
+  "ai_claimed_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

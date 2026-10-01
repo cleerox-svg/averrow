@@ -374,6 +374,256 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 > a superset of the prior shape. A credential-form-off-domain page escalates the
 > row's `threat_level` (and the linked alert's severity) MEDIUM→HIGH/CRITICAL.
 
+> **`baseline_established_at` (migration 0267, additive) IS the first-contact
+> discriminator.** Records when the scanner FIRST established this row's
+> registration/MX/web baseline, which is not the same fact as `first_seen` (when
+> the domain was observed to *appear*). A seeded row starts `registered = 0` by
+> INSERT default, so on first contact `registered 0 → 1` says only "it
+> resolves", never "it was just registered". Both columns may legitimately be
+> set on one row (a baselined squat that lapses and is re-registered produces a
+> real transition), so `first_seen IS NULL AND baseline_established_at IS NOT
+> NULL` is how to ask "registered before we were watching". Staff-visible via
+> `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT (crawl coverage is
+> pipeline detail, same product call as `page_last_outcome`).
+>
+> **This column, not `last_checked`, is what the checker reads.** 0267 as first
+> written called it "a RECORD of the decision, never its input" and left
+> `last_checked IS NULL` as the discriminator — which gave `last_checked` three
+> simultaneous jobs (last success, dueness, first contact), so every scheduling
+> write was also a reclassification. That is how this endpoint's rescan came to
+> *forge* first contact, and why it needed a `CASE` to work around a column it
+> was not trying to affect. The discriminator now lives on a column nothing but
+> the single-write `CASE` in the per-check UPDATE can reach, so no scheduling
+> operation can forge it. 0267 carries a one-time
+> `UPDATE ... SET baseline_established_at = last_checked WHERE
+> baseline_established_at IS NULL AND last_checked IS NOT NULL` so pre-existing
+> rows are not all misread as first contact on the first tick after deploy.
+
+> **`lookalike_domain_active` alerts: a HIGH/CRITICAL floor and FOUR producers.**
+> No alert row is created below HIGH — everything else is still persisted
+> (`threat_level`, `ai_assessment`, the page columns), so the row is unchanged
+> and only the notification is withheld. This *removed* previously-created
+> MEDIUM alerts on genuine `registered 0 → 1` transitions; the floor is defined
+> once in `lib/lookalike-alert-policy.ts` and shared. **Four** files file this
+> alert type, across **five** configured sources (this paragraph said "three"
+> and the policy module said a fourth was "a contradiction in terms" while
+> `phantom-matcher.ts` — already in the repo — was filing it):
+> **(1)** the registration checker (`scanners/lookalike-domains.ts`);
+> **(2)** the page-analysis pass (`scanners/lookalike-page-analysis.ts`), only
+> for a registered row with NO linked alert whose page clears the phishing bar,
+> bounded per run and carrying `details.discovered_by = 'page_analysis'`;
+> **(3)** the claim-time backfill (`lib/alert-backfill.ts`, reached from brand
+> claim / lead conversion), which also imports the floor, files only for
+> `registered = 1` rows, derives its severity from the row's already-composited
+> `threat_level` rather than a hardcoded `medium`, and marks its output
+> `details.discovered_by = 'claim_backfill'` — there is no backfill exemption
+> from the floor; and **(4)** the phantom-hit matcher
+> (`lib/phantom-matcher.ts`), from two of its three `SOURCE_CONFIG` entries
+> (`nrd` and `lookalike`; the `ct` entry files `ct_certificate_issued` through
+> the same call). Producer 4 is the **one documented exemption** from the
+> floor: it files at `low` via `PHANTOM_MATCH_ALERT_SEVERITY`, imported from
+> the policy module rather than hardcoded. Its bound is why that is
+> affordable — **at most one alert per `phantom_domains` row, ever** (the
+> guarded `WHERE id = ? AND status = 'predicted'` claim runs *before*
+> `createAlert`), over a population written only by the manual-trigger
+> `phantom_enumerator`. Applying the floor would instead either delete the
+> phantom lane's only output or force a `high` severity that contradicts what
+> a phantom hit means (W2.3 spec §6.1/§6.2).
+
+> **`last_check_failed_at` (migration 0268, additive).** The DNS-check cooldown
+> for an attempt that produced NO answer (resolver timeout / non-ok DoH
+> response), as distinct from `last_checked`, which now means strictly "when a
+> check last SUCCEEDED". `checkDomain` (`lib/domain-checker.ts`) returns a
+> `resolved` flag for this, and an unresolved check writes no registration state
+> at all — a transient failure can no longer flip `registered` 1 → 0 and make
+> the next success read as a registration event. `last_checked` is deliberately
+> NOT advanced on failure, because a failed attempt is not an observation. Since
+> migration 0269 this column is a pure HISTORICAL RECORD: it is still written,
+> but no selection predicate reads it — the backoff it used to express now lives
+> in `check_due_at` / `check_attempts`, and
+> `test/lookalike-sql-statements.test.ts` asserts that neither it nor
+> `last_checked` appears in any cohort query's `WHERE`. Staff-visible via
+> `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT.
+
+> **Per-probe `answered` flags, and per-field writes (`lib/domain-checker.ts`).**
+> `resolved` is scoped to `registered` **and nothing else** — a *seen* A record
+> short-circuits it, so `resolved: true` is compatible with an MX probe that
+> timed out, an A probe that timed out, and a web probe that was never
+> attempted. `DomainCheckResult` therefore carries `aAnswered` / `mxAnswered` /
+> `webAnswered` alongside it, and a caller that PERSISTS a field must not write
+> one whose flag is false. The web probe had **no** flag at all: both HEAD
+> attempts ended in a bare `catch {}`, so a 3 s timeout, a TCP reset, a TLS
+> failure and a tarpit were indistinguishable from "serves nothing" and were
+> written as `has_web = 0`. A 403/404/redirect **does** count as answered (the
+> `fetch` resolved); only connection-level failure does not.
+> `checkLookalikeBatch`'s per-check UPDATE now gates `resolves_to`, `has_mx`
+> and `has_web` on their own flags via bound `CASE WHEN ? = 1 THEN ? ELSE
+> <column> END` arms, so an unanswered probe keeps the last answering probe's
+> value. This matters beyond data quality: both page-analysis cohorts require
+> `has_web = 1 AND resolves_to IS NOT NULL`, and the page pass is the only
+> producer that can still alert on a row whose `registered === 0` one-shot has
+> already fired — so erasing either column on a blip removed the row's last
+> path to an alert. `registered` itself is still written unconditionally,
+> because that branch only runs when `resolved` is true.
+
+> **`check_due_at` + `check_attempts` (migration 0269, additive) — the
+> checker's own schedule.** `check_due_at` is when a row may next be selected;
+> `check_attempts` is the consecutive failed-attempt count that drives the
+> jittered backoff ladder in `lib/backoff.ts` (1 h / 4 h / 12 h / 24 h, capped
+> at 48 h). Past 8 consecutive failures the row is **PARKED**: `check_due_at =
+> NULL`, which drops it out of both partial cohort indexes entirely, so a
+> permanently-unanswerable domain costs zero reads structurally instead of being
+> re-admitted every 24 h forever. A parked row reads as `check_due_at = NULL`
+> with a non-zero `check_attempts`, is counted by Flight Control's
+> `backlog.lookalike_parked`, and has THREE ways back: the bounded un-park
+> sweep described below, the rescan endpoint, and any successful check (which
+> resets `check_attempts`). `check_attempts` is written as a BOUND value, not
+> `check_attempts + 1` — the caller already derives it to pick the ladder step,
+> and the two derivations diverged on every throw past the success path (which
+> resets the column to 0), pinning the counter at a fixed point the ladder could
+> never terminate on. Three stamps now coexist on this table and they are NOT
+> interchangeable: `page_fetched_at` is the page pass's cooldown (written on
+> both outcomes), `last_checked` means strictly "when a check last SUCCEEDED",
+> and `check_due_at` is the DNS schedule. Migration 0269's header records why
+> page analysis was deliberately left alone. Both columns are staff-visible via
+> `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT.
+
+> **The un-park sweep — a park is a long cadence, not a terminal state.** Four
+> writers touch `check_due_at` and three of them require the row to have been
+> SELECTED, which a parked row is not, so the only exit used to be the MANUAL
+> per-brand rescan. A row parked before its first successful observation also
+> still carries `registered = 0 / has_web = 0 / resolves_to NULL`, making it
+> invisible to BOTH page-analysis cohorts as well. The checker's own tick now
+> re-admits the OLDEST parked rows (bounded per run) before selecting, at
+> `check_due_at = datetime('now')` — the latest possible due time, so they sort
+> behind every genuinely overdue row and consume only slack capacity. The
+> cadence self-throttles on `last_check_failed_at` (written only by the failure
+> path, hence frozen on a parked row), and `check_attempts` is deliberately NOT
+> reset: a still-dead row is probed ONCE and re-parks, rather than replaying the
+> whole ladder every window. Bounds live in `lib/lookalike-budget.ts`.
+
+> **`ai_claimed_at` (migration 0269, additive) — the Haiku lifetime gate's
+> claim token.** The once-per-row-per-lifetime AI call was gated on a READ of
+> the SELECT snapshot (`ai_assessment IS NULL`), so two concurrent runs over the
+> same first-contact row — which repeated "Scan now" presses produce — could
+> each read NULL and each spend. It is now a guarded claim (`UPDATE ... WHERE
+> id = ? AND ai_assessment IS NULL AND (ai_claimed_at IS NULL OR ai_claimed_at
+> <= datetime('now','-1 hour'))`), released whenever the pass produced no
+> assessment. A DEDICATED column rather than a sentinel in `ai_assessment`,
+> because a worker killed mid-call would leave that sentinel behind, the gate
+> would never fire again, and both infrastructure boosts are MEDIUM-only — so a
+> mail+web row would sit at LOW forever and never clear the HIGH alert floor.
+> Staleness is keyed on this column precisely because nothing else writes it
+> (`updated_at` is refreshed by the success path before the claim is attempted,
+> so a stale claim keyed on it could never be detected as stale). Staff-visible
+> via `LOOKALIKE_LIST_COLUMNS`; absent from the tenant SELECT.
+
+> **`bimi_first_seen_at` (migration 0269, additive) — presence only, never
+> absence.** Stamped when a BIMI record is OBSERVED on a lookalike domain, and
+> never written to mean "there is none": `checkBIMIExists` catches its own
+> errors and returns `false`, so absence and lookup-failure are the same value
+> at the call site. The BEC lane is now **recurring** rather than
+> first-contact-only — every due check of a `registered = 1 AND has_mx = 1` row
+> whose `bimi_first_seen_at IS NULL` spends one DNS TXT lookup, bounded by a
+> per-run cap — so a squat that publishes BIMI months after we baselined it is
+> no longer invisible forever. **The cadence that buys is ~47 days post-seed,
+> not 24 h**: `+24 hours` is what a row's next due time is set to after a
+> success, while how often a row is REACHED is the population over the
+> throughput — ~56,040 rows against 50 rows/tick x 24 ticks = 1,200 checks/day.
+> Still a strict improvement on "once per row, ever". A standalone BEC SELECT
+> would be faster but needs its OWN cooldown column first: `check_due_at` only
+> advances when the DNS lane selects the row, and a BIMI pass that finds no
+> record writes nothing, so a standalone query ordered by it would re-serve the
+> same top rows every tick. The column doubles as the lane's idempotency
+> token: the fixed-HIGH `typosquat_bimi` alert is filed only after a guarded
+> `UPDATE ... WHERE id = ? AND bimi_first_seen_at IS NULL` reports one changed
+> row, and the claim is RELEASED on every path that does not file — a thrown
+> `createAlert` **and a missing brand row**, which originally took neither
+> branch (`if (brand)` was simply skipped, nothing threw) and left the row
+> permanently marked BIMI-recorded with no alert in existence. A release that
+> itself fails is counted on the agent diagnostic, because it is the one
+> remaining path to a silently and permanently lost finding. That alert's id is
+> deliberately **not** written to `alert_id` — `raiseUnalertedPhishingPageAlert`
+> keys on `alert_id IS NULL`, so one parked there would permanently suppress the
+> row's phishing-page alert. Find it instead as
+> `alerts.source_type = 'lookalike_scanner' AND source_id = <lookalike id> AND
+> alert_type = 'typosquat_bimi'`.
+
+> **Transitions the checker now detects.** The per-row SELECT used to carry only
+> `registered`, so the sole detectable transition was `registered 0 → 1` — and
+> since `registered` is monotone in practice, every capability in the checker
+> (the alert, the Haiku call, the BIMI probe, the compositor) was reachable
+> exactly ONCE per row. It now also reads `has_mx` / `has_web` / `threat_level`
+> / `ai_assessment` / `alert_id` / `bimi_first_seen_at` / `takedown_id`, and
+> dispatches on the observed transition. An MX or web APPEARANCE on an
+> already-registered row re-opens the compositor and the BIMI lane but files no
+> alert of its own — with one bounded exception: when the gain COMPLETES the
+> mail+web pair the row is the same operational shape first contact alerts on,
+> so an alert may be filed if the row carries none yet and the composed level
+> clears the HIGH floor. An answered `registered 1 → 0` is persisted, never
+> downgrades `threat_level` (`agents/sparrow.ts` reads it for takedown
+> eligibility and priority), and stamps the linked takedown
+> `verification_status = 'down'` + `last_verified_at` reusing Sparrow's Phase F
+> contract. A `resolves_to` change is recorded and is never a trigger. A probe
+> that did not ANSWER cannot mint any transition: the classifier is fed the
+> stored value wherever the per-probe flag is false. Haiku runs only when
+> mail+web is present AND `ai_assessment IS NULL`, so at most once per row per
+> lifetime, under a per-run cap — a deliberate narrowing from "every observed
+> 0 → 1", with the deterministic page pass covering the web lane instead. A
+> capped or failed call leaves the row CLAIMABLE but is retried on the row's
+> next TRANSITION rather than its next due pass: `compositeAndPersist` is
+> reached only from first contact, a registration gain or an mx/web gain, so a
+> stable baselined row yields `none` forever.
+>
+> **A `registration_gained` after a lapse re-alerts, by design.** That branch
+> passes `allowAlert: true` unconditionally — unlike the mx/web path, which
+> bounds itself on `alert_id IS NULL` — so a domain cycling registered → lapsed
+> → re-registered files one alert per cycle and `alert_id` points at the most
+> recent. A re-registration is typically a NEW registrant, which is the thing
+> this platform exists to notice. "One alert per row per lifetime" is therefore
+> true of the MX/WEB path, not of the row. `first_seen` is NOT re-stamped (its
+> `AND first_seen IS NULL` guard is genuinely lifetime-scoped).
+>
+> **A BIMI-publishing squat is raised to HIGH regardless of a Haiku veto.** The
+> BIMI boost used to be MEDIUM-only like the mail+web boost, which produced an
+> incoherent row: a Haiku-vetoed LOW row that publishes BIMI kept
+> `threat_level = 'LOW'` while a fixed-HIGH `typosquat_bimi` alert was filed
+> about it — and `agents/sparrow.ts` gates takedown eligibility on
+> `threat_level IN ('HIGH','CRITICAL')`, so the strongest email signal the
+> scanner finds could never reach the takedown queue. Filing a HIGH alert IS the
+> assertion that the row is HIGH, so the level follows the alert, monotonically
+> (it never lowers a CRITICAL a page verdict established). The Haiku veto over
+> the deterministic **mail+web** signal is unchanged.
+
+> **`POST /api/lookalikes/:brandId/scan` is a priority ENQUEUE, brand-scoped,
+> small-budgeted and ROW-BOUNDED.** It sets `check_due_at =
+> '1970-01-01 00:00:00'` and `check_attempts = 0` on up to
+> `LOOKALIKE_RESCAN_ENQUEUE_LIMIT` (100) of the brand's rows — parked rows
+> first, then the most overdue — and clears `last_check_failed_at`. The epoch is
+> earlier than any stamp the system can produce, so those rows sort ahead of
+> everything in their cohort. **The bound is a safety property, not a
+> performance one**: both cohort selectors are `ORDER BY check_due_at ASC` over
+> a GLOBAL, cross-tenant queue drained 50 rows a tick, so the previous
+> un-capped `WHERE brand_id = ?` let an org-scoped staff member scripting this
+> endpoint pin an unbounded number of their own rows to the head of that queue
+> and starve every other tenant's detection latency indefinitely. The statement
+> additionally SKIPS rows already at the epoch, which is what makes the bound
+> hold over time rather than per call: repeated presses re-stamp nothing until
+> the previous batch has drained, so one brand can hold at most 100 rows at the
+> queue head at any instant. A brand with more than 100 rows gets the rest on a
+> later press. `domains_queued` is therefore the number actually enqueued, which
+> may be fewer than the brand's row count. It touches `last_checked` not at all, so first contact
+> is structurally unforgeable from here — which is what the previous two forms
+> of this handler (`last_checked = NULL`, then a `CASE` writing
+> `datetime('now','-25 hours')`) existed to work around. The inline run is now
+> **brand-scoped and small-budgeted** (10 rows, 3 Haiku calls, 5 BIMI lookups,
+> 2 page fetches) instead of awaiting the GLOBAL `checkLookalikeBatch`, which
+> was up to 100 DoH queries, 50 HEAD probes, 50 Haiku calls and 10 page fetches
+> per button press against rows belonging to brands the caller never asked
+> about. The response adds `domains_checked_inline` alongside the unchanged
+> `domains_queued`; the remainder drains on the next cron ticks from the front
+> of the queue.
+
 ## App Store Impersonation Monitoring
 
 iOS App Store impersonation scanner (Google Play + 3rd-party Android

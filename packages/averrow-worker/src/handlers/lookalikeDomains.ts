@@ -12,7 +12,8 @@
  */
 
 import { json } from "../lib/cors";
-import { generateAndStoreLookalikes, checkLookalikeBatch } from "../scanners/lookalike-domains";
+import { generateAndStoreLookalikes, checkLookalikeBatchForBrand } from "../scanners/lookalike-domains";
+import { LOOKALIKE_RESCAN_ENQUEUE_LIMIT } from "../lib/lookalike-budget";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
 import { hasGlobalReadScope, type AuthContext } from "../middleware/auth";
@@ -71,6 +72,51 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // customer-facing finding. That is a weaker reason than
   // `page_evidence`'s, which is a content-injection constraint.
   "page_last_outcome",
+  // ── 0267 first-contact baseline ──
+  // When WE first established this row's registration baseline, as
+  // opposed to `first_seen` (when the domain was observed to APPEAR).
+  // Staff-visible: a bounded timestamp with no attacker-controlled
+  // content, and it is what explains to an operator why a registered
+  // squat carries no alert — first contact is baseline establishment,
+  // not a registration event. OFF the tenant SELECT: our crawl coverage
+  // is pipeline detail, the same product call made for page_last_outcome.
+  "baseline_established_at",
+  // ── 0268 DNS-check failure cooldown ──
+  // When the last check FAILED to produce an answer, as opposed to
+  // `last_checked` (when one last succeeded). Staff-visible on the same
+  // reasoning as the two above: a bounded timestamp with no
+  // attacker-controlled content, and it is what explains a row that is
+  // neither baselined nor advancing — the resolver keeps timing out on
+  // it. OFF the tenant SELECT with the rest of the crawl-pipeline detail.
+  "last_check_failed_at",
+  // ── 0269 check scheduling + the recurring BEC lane ──
+  // `check_due_at` is when the row may next be selected (NULL = PARKED
+  // by the backoff ladder) and `check_attempts` is the consecutive
+  // failure count driving it. Together they are the operator-readable
+  // signature of a row that has stopped advancing: a NULL due time plus
+  // a non-zero attempt count means "the resolver has been unanswerable
+  // on this domain for ~10 days and we stopped asking". Staff-visible
+  // for the same reason as last_check_failed_at — it explains an
+  // absence — and OFF the tenant SELECT with the rest of the
+  // crawl-pipeline detail.
+  "check_due_at", "check_attempts",
+  // `ai_claimed_at` is the Haiku lifetime gate's CLAIM TOKEN — when a
+  // pass took this row's one AI call, cleared when the pass produced no
+  // assessment, and self-healing after an hour so a worker killed
+  // mid-call cannot retire the row from the lane. Staff-visible on the
+  // same reasoning as the three stamps above: it is a bounded timestamp
+  // with no attacker-controlled content, and it EXPLAINS AN ABSENCE (a
+  // mail+web row whose `ai_assessment` is still NULL is either capped,
+  // in flight, or has been failing). OFF the tenant SELECT with the rest
+  // of the pipeline detail.
+  "ai_claimed_at",
+  // `bimi_first_seen_at` is presence-only: when we OBSERVED a BIMI
+  // record on this squat, never a record of absence (migration 0269 §2).
+  // Staff-visible because it is the evidence behind a `typosquat_bimi`
+  // alert, and a bounded timestamp with no attacker-controlled content.
+  // OFF the tenant SELECT: the finding reaches the customer as the
+  // alert, not as a pipeline column.
+  "bimi_first_seen_at",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is
@@ -314,23 +360,95 @@ export async function handleScanLookalikes(
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
 
-    // Reset last_checked for all this brand's domains so the batch checker picks them up
+    // ── A BOUNDED PRIORITY ENQUEUE, NOT A TIMESTAMP TRICK ───────────
+    //
+    // ── THE BOUND, AND WHY IT IS NOT OPTIONAL ───────────────────────
+    //
+    // This statement used to be `WHERE brand_id = ?` with no LIMIT, and
+    // both cohort selectors are `ORDER BY check_due_at ASC` over a
+    // GLOBAL, CROSS-TENANT queue drained 50 rows a tick. So an
+    // org-scoped staff member scripting this endpoint could pin an
+    // unbounded number of their own rows to the head of that queue
+    // indefinitely and starve every other tenant's due rows. The blast
+    // radius is detection latency for other tenants, not data exposure,
+    // but it is unbounded, and "jump the queue" was never meant to mean
+    // "own the queue".
+    //
+    // TWO terms bound it, and they are chosen so the honest press is
+    // unchanged:
+    //
+    //   * `LIMIT ?` (`LOOKALIKE_RESCAN_ENQUEUE_LIMIT`) caps one press at
+    //     100 rows — above the ~30 permutations a brand holds, so a real
+    //     operator never meets it, and two ticks' worth of the global
+    //     drain in the worst case.
+    //   * `check_due_at > <epoch>` SKIPS rows already enqueued, which is
+    //     what makes the bound hold over TIME rather than per call: a
+    //     scripted loop re-stamps nothing until the previous batch has
+    //     drained, so the brand can hold at most 100 rows at the head of
+    //     the queue at any instant and can only refresh them as fast as
+    //     the checker drains them. No cooldown table, no KV, no clock.
+    //
+    // `check_due_at IS NULL` is included on purpose: a PARKED row is
+    // exactly what an operator pressing "Scan now" wants revived, and
+    // `ORDER BY check_due_at ASC` puts those NULLs first so parked rows
+    // are enqueued ahead of merely-overdue ones. A brand with more than
+    // 100 rows gets the rest on the next press, after this batch drains.
+    //
+    // Scheduling has its own column now (`check_due_at`, migration
+    // 0269), so "re-check this brand first" is expressible directly: the
+    // epoch is earlier than any real stamp, so these rows sort ahead of
+    // everything in their cohort unconditionally. `check_attempts = 0`
+    // comes with it, which is what REVIVES a row the backoff ladder had
+    // parked (`check_due_at IS NULL`) — an operator asking for a scan is
+    // exactly the signal that the ladder's verdict should be retried.
+    //
+    // What this replaces was a `CASE` writing `last_checked =
+    // datetime('now','-25 hours')` on checked rows and NULL on unchecked
+    // ones. That `CASE` existed only because `last_checked` was
+    // simultaneously the dueness predicate AND the first-contact
+    // discriminator, so making a row due could not be done without
+    // claiming something about whether we had ever looked at it (the
+    // original form, `last_checked = NULL`, claimed we had not — and so
+    // reclassified a genuine registration on a rescanned brand as a
+    // baseline). With the two jobs in two columns the workaround is not
+    // needed: nothing here touches `last_checked`, so first contact is
+    // structurally unforgeable from this endpoint.
+    //
+    // `last_check_failed_at` is still cleared — it is a historical
+    // record and an operator-triggered rescan supersedes it.
     const resetResult = await env.DB.prepare(
       `UPDATE lookalike_domains
-       SET last_checked = NULL, updated_at = datetime('now')
-       WHERE brand_id = ?`,
-    ).bind(brandId).run();
+       SET check_due_at = '1970-01-01 00:00:00',
+           check_attempts = 0,
+           last_check_failed_at = NULL,
+           updated_at = datetime('now')
+       WHERE id IN (
+         SELECT id FROM lookalike_domains
+          WHERE brand_id = ?
+            AND (check_due_at IS NULL OR check_due_at > '1970-01-01 00:00:00')
+          ORDER BY check_due_at ASC
+          LIMIT ?
+       )`,
+    ).bind(brandId, LOOKALIKE_RESCAN_ENQUEUE_LIMIT).run();
 
     const resetCount = resetResult.meta.changes ?? 0;
 
-    // Run the batch checker immediately
-    await checkLookalikeBatch(env);
+    // Run a BRAND-SCOPED, SMALL-BUDGET slice inline. This used to await
+    // the GLOBAL `checkLookalikeBatch(env)` — up to 100 DoH queries, 50
+    // HEAD probes, 50 Haiku calls and 10 page fetches per button press,
+    // against rows belonging to brands the caller never asked about,
+    // with no rate limit in front of it. The enqueue above is what
+    // actually guarantees the work happens; this is the courtesy slice
+    // so the operator sees movement, and the remainder drains on the
+    // next cron ticks from the front of the queue.
+    const checked = await checkLookalikeBatchForBrand(env, brandId);
 
     logger.info("lookalike_scan_triggered", {
       brand_id: brandId,
       user_id: ctx.userId,
       org_id: ctx.orgId,
       domains_queued: resetCount,
+      domains_checked_inline: checked.checked,
     });
 
     return json({
@@ -338,6 +456,7 @@ export async function handleScanLookalikes(
       data: {
         brand_id: brandId,
         domains_queued: resetCount,
+        domains_checked_inline: checked.checked,
         message: "Scan triggered. Results will be available shortly.",
       },
     }, 200, origin);

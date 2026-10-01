@@ -1,0 +1,114 @@
+-- 0267_lookalike_baseline_established.sql
+-- "We have now LOOKED at this row for the first time" — distinct from
+-- "this domain appeared", which is what `first_seen` already means.
+--
+-- WHY A NEW COLUMN RATHER THAN REUSING first_seen
+--
+-- `checkLookalikeBatch` treats `result.registered && row.registered = 0`
+-- as a NEW REGISTRATION and stamps `first_seen`. That reading is correct
+-- for a row we have checked before: registered went 0 -> 1 while we were
+-- watching, so the domain genuinely appeared. It is WRONG for a row we
+-- have never checked, because the seeder's INSERT leaves `registered` at
+-- its 0 default — so a squat registered in 2019 reads as a fresh
+-- registration the first time we resolve it, and `first_seen` would
+-- record the date of OUR first DNS query rather than anything about the
+-- domain.
+--
+-- That conflation was survivable while the table held 120 rows seeded
+-- over four months. It stops being survivable with the monitored-brand
+-- seeder: 359 un-seeded brands x ~30 permutations each is ~10,770 rows
+-- that all arrive at first contact with `registered = 0`, at a 10-35%
+-- observed registration rate — 1,080 to 3,770 rows that would each claim
+-- a registration date they cannot support.
+--
+-- So the two facts get two columns:
+--
+--   baseline_established_at  when WE first established this row's
+--                            registration/MX/web baseline. Says nothing
+--                            about the domain, only about our coverage.
+--   first_seen               when the domain was observed to APPEAR,
+--                            i.e. a 0 -> 1 transition we actually saw.
+--
+-- BOTH may be set on the same row, and that is not a contradiction: a
+-- row baselined as registered can later lapse (registered 1 -> 0 when the
+-- squat expires) and be re-registered (0 -> 1), which is a real
+-- transition and does stamp `first_seen`. Reading `first_seen IS NULL AND
+-- baseline_established_at IS NOT NULL` is therefore the honest way to ask
+-- "registered before we were watching", and nothing else in the schema
+-- could answer that question before this column existed.
+--
+-- NULL means "never checked" for rows created after this migration, and
+-- "checked before this migration" for the ~120 pre-existing rows. Those
+-- are indistinguishable on this column alone and deliberately so.
+--
+-- ── AMENDED: THIS COLUMN IS NOW THE INPUT, NOT A RECORD OF IT ─────────
+--
+-- This header used to end "This column is a RECORD of the decision,
+-- never its input", and that is no longer true. `checkLookalikeBatch`
+-- now derives `firstContact` from `baseline_established_at IS NULL`
+-- instead of from `last_checked IS NULL`.
+--
+-- WHY THE FLIP. `last_checked` was carrying three unrelated jobs at
+-- once: "when did we last successfully observe this row" (its name, and
+-- what `agents/observer.ts`' 24 h briefing count and the staff/tenant
+-- column lists actually read), "is this row due" (the 24 h cadence
+-- predicate), and "is this first contact" (the discriminator this
+-- migration introduced). Any writer that touched it for one job silently
+-- changed the other two — which is exactly how the "Scan now" handler's
+-- `last_checked = NULL` reset came to FORGE first contact on a rescanned
+-- brand, and why that handler needed a `CASE` to work around a column it
+-- was not trying to affect.
+--
+-- Reading first contact off THIS column makes that forgery structurally
+-- impossible: nothing but the per-check UPDATE's single-write `CASE`
+-- writes it, so no scheduling operation can reach it. Dueness moved to
+-- its own column (`check_due_at`, migration 0269), and `last_checked`
+-- keeps exactly one job — the one its name states.
+--
+-- CONSEQUENCE FOR THE PRE-EXISTING ROWS. Under the old discriminator the
+-- ~120 legacy rows classified correctly WITHOUT this column, because
+-- their `last_checked` was already non-NULL. Under the new one they
+-- would all read as first contact on the next tick — re-baselined, their
+-- `first_seen` suppressed, their alerts withheld unless mail+web
+-- happened to be present. So the flip requires a one-time
+-- disambiguation, and it is the UPDATE at the bottom of this file: where
+-- we have a successful observation (`last_checked IS NOT NULL`) we DID
+-- establish a baseline, and its timestamp is the best evidence we have
+-- of when. ~120 rows in production.
+--
+-- Amending an UNAPPLIED migration rather than stacking a 0269 fix-up:
+-- production's `d1_migrations` ends at 0266, so 0267 and 0268 have never
+-- run anywhere and are still design documents. CLAUDE.md §8's
+-- never-DROP-or-ALTER rule protects APPLIED schema. The moment #1724
+-- merges this freedom is gone.
+--
+-- Staff-visible (added to LOOKALIKE_LIST_COLUMNS): a bounded timestamp
+-- with no attacker-controlled content, and it is what explains to an
+-- operator why a four-month-old registered squat has no alert. Left OFF
+-- the tenant SELECT in handlers/tenantDomainModule.ts — our crawl
+-- coverage is pipeline detail, not a customer-facing finding (the same
+-- product call made for page_last_outcome in 0266).
+--
+-- Additive only — ADD COLUMN plus a one-time data UPDATE, never
+-- DROP/ALTER (CLAUDE.md §8). No index HERE: this column is never a
+-- leading key. It appears in migration 0269's two cohort indexes only as
+-- a PARTIAL-INDEX predicate (`baseline_established_at IS NULL` /
+-- `IS NOT NULL`), which is what splits the two cohorts without making it
+-- a sort key.
+
+ALTER TABLE lookalike_domains ADD COLUMN baseline_established_at TEXT;
+
+-- ── One-time disambiguation for the pre-existing rows ────────────────
+--
+-- See "CONSEQUENCE FOR THE PRE-EXISTING ROWS" above. Without this every
+-- legacy row is misclassified as first contact on the first tick after
+-- deploy. `last_checked IS NOT NULL` is precisely "we have successfully
+-- observed this row at least once", which is the definition of having
+-- established its baseline; its timestamp is the only evidence of when.
+--
+-- Idempotent (`WHERE baseline_established_at IS NULL`) and a no-op on a
+-- fresh database. ~120 rows in production.
+UPDATE lookalike_domains
+   SET baseline_established_at = last_checked
+ WHERE baseline_established_at IS NULL
+   AND last_checked IS NOT NULL;

@@ -20,8 +20,14 @@
  *   - §6.4: the status-flip UPDATE is guarded by `WHERE ... AND
  *     status = 'predicted'` so the alert-creating transition can fire
  *     AT MOST ONCE per phantom row (the row-state IS the dedup key).
- *   - §6.2: the hit alert's severity is hardcoded to `'low'` regardless of
- *     the reused alert_type's own default severity.
+ *   - §6.2: the hit alert's severity is `'low'` regardless of the reused
+ *     alert_type's own default severity. It is now taken from
+ *     `PHANTOM_MATCH_ALERT_SEVERITY` (`lib/lookalike-alert-policy.ts`)
+ *     rather than hardcoded here: two of the three sources reuse
+ *     `lookalike_domain_active`, which makes this module producer 4 of a
+ *     type that has a HIGH severity floor, and a bare literal was how
+ *     that floor's own docstring came to deny this producer existed. The
+ *     VALUE is unchanged; where it comes from is not.
  *   - §6.1: only the two already-existing alert types are reused
  *     (`lookalike_domain_active`, `ct_certificate_issued`) — no new type.
  *   - §6.3: a `null` return from `createAlert` (NX2 tier gate) is tolerated
@@ -35,6 +41,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { clampMatchLimit } from "../src/lib/phantom-matcher";
+import { PHANTOM_MATCH_ALERT_SEVERITY } from "../src/lib/lookalike-alert-policy";
 
 const matcherPath = fileURLToPath(new URL("../src/lib/phantom-matcher.ts", import.meta.url));
 const matcherSrc = readFileSync(matcherPath, "utf8");
@@ -132,7 +139,7 @@ describe("guarded status='predicted' claim transition (spec §6.4 at-most-once)"
 // §6.1/§6.2 guard: reused alert types only, severity hardcoded to 'low'
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("reused alert types + hardcoded 'low' severity (spec §6.1/§6.2)", () => {
+describe("reused alert types + the 'low' monitoring severity (spec §6.1/§6.2)", () => {
   it("SOURCE_CONFIG reuses exactly the two documented alert types, no new type", () => {
     expect(matcherSrc).toMatch(/alertType:\s*"lookalike_domain_active"/);
     expect(matcherSrc).toMatch(/alertType:\s*"ct_certificate_issued"/);
@@ -147,10 +154,30 @@ describe("reused alert types + hardcoded 'low' severity (spec §6.1/§6.2)", () 
     expect(lookalikeBlock).toMatch(/alertType:\s*"lookalike_domain_active"/);
   });
 
-  it("the createAlert call passes severity: \"low\" as a literal, not a variable", () => {
+  it("the createAlert call takes its 'low' severity FROM the shared lookalike policy", () => {
+    // This assertion used to require the OPPOSITE: `severity: "low"` as
+    // a literal, "not a variable". That requirement was itself the
+    // defect. Two of the three SOURCE_CONFIG entries reuse
+    // `lookalike_domain_active`, so this call is producer 4 of a type
+    // whose severity FLOOR lives in `lib/lookalike-alert-policy.ts` —
+    // and a hardcoded literal here is precisely why that module's
+    // docstring was able to claim a fourth producer "is a contradiction
+    // in terms, not a possibility to plan for".
+    //
+    // The value is unchanged (spec §6.2: a phantom hit is a monitoring
+    // signal, not a confirmed active phish). What changed is that it now
+    // comes from the module that owns the floor, which carries the
+    // exemption and its bound — at most one alert per phantom row ever,
+    // over a manual-trigger-only population.
     const callMatch = matcherSrc.match(/createAlert\(env\.DB,\s*\{[\s\S]*?\}\)/);
     expect(callMatch, "createAlert call not found").toBeTruthy();
-    expect(callMatch![0]).toMatch(/severity:\s*"low"/);
+    expect(callMatch![0]).toMatch(/severity:\s*PHANTOM_MATCH_ALERT_SEVERITY/);
+    expect(matcherSrc).toMatch(
+      /import\s*\{[^}]*PHANTOM_MATCH_ALERT_SEVERITY[^}]*\}\s*from\s*"\.\/lookalike-alert-policy"/,
+    );
+    // ...and it still RESOLVES to 'low', asserted on the real export so
+    // a rename of the constant cannot quietly change the severity.
+    expect(PHANTOM_MATCH_ALERT_SEVERITY).toBe("low");
   });
 
   it("the createAlert call leaves orgId unset (phantom hits are brand-wide, not org-private)", () => {

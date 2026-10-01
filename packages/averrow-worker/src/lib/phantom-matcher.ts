@@ -50,6 +50,12 @@
 import type { Env } from "../types";
 import type { AlertTypeKey } from "@averrow/shared";
 import { createAlert } from "./alerts";
+// Producer 4 of `lookalike_domain_active` (see that module's
+// enumeration). This module does NOT apply the HIGH severity floor, and
+// the severity it does use is imported from the policy module rather
+// than written as a bare literal here, so the exemption and its bound
+// live where the floor lives. See PHANTOM_MATCH_ALERT_SEVERITY.
+import { PHANTOM_MATCH_ALERT_SEVERITY } from "./lookalike-alert-policy";
 
 export type PhantomMatchSource = "nrd" | "ct" | "lookalike";
 
@@ -265,6 +271,16 @@ async function matchSource(
     // hit is "our prediction came true", a monitoring signal, not a
     // confirmed active phish. orgId intentionally UNSET (brand-wide).
     // NEVER inserts a threats row.
+    //
+    // TWO of the three SOURCE_CONFIG entries above reuse
+    // `lookalike_domain_active`, which makes this call PRODUCER 4 of
+    // that type and the ONLY one that does not apply the HIGH severity
+    // floor. That is deliberate and bounded — the alert cannot fire
+    // twice for a phantom (the guarded claim above runs first) and
+    // `phantom_domains` is written only by a manual-trigger enumerator.
+    // The severity constant carries the full argument; it is imported
+    // rather than inlined so a change to the floor cannot silently miss
+    // this call site the way the floor's own docstring did.
     const brandLabel = row.brand_name ?? row.brand_id;
     let alertId: string | null = null;
     try {
@@ -274,7 +290,7 @@ async function matchSource(
         // to 'system' — the alert stays tenant-scoped at read time via brand_id.
         userId: "system",
         alertType: cfg.alertType,
-        severity: "low",
+        severity: PHANTOM_MATCH_ALERT_SEVERITY,
         title: "Predicted phantom domain registered",
         summary:
           `Phantom domain ${row.domain} predicted for ${brandLabel} was ` +
