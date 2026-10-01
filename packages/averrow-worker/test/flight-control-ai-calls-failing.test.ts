@@ -41,6 +41,7 @@ vi.mock("../src/lib/platform-templates", async (importOriginal) => {
 
 import { emitPlatformNotification } from "../src/lib/platform-templates";
 import { flightControlAgent } from "../src/agents/flightControl";
+import { parseNewestFailure, AI_OUTAGE_MIN_ATTEMPTS } from "../src/lib/haiku";
 import { executeAgent } from "../src/lib/agentRunner";
 import { sentinelAgent } from "../src/agents/sentinel";
 import {
@@ -263,7 +264,9 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
     });
 
     it("a ledger that has NEVER been written is silent: a failing run still emits, and the message says so", async () => {
-      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 2 }));
+      // 3 attempts, not 2: AI_OUTAGE_MIN_ATTEMPTS is the noise floor. The
+      // subject of this test is the empty-ledger message, not the count.
+      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 3 }));
 
       await runFlightControl();
 
@@ -337,19 +340,26 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
     });
   });
 
-  describe("leg 2 boundaries — attempt window (threshold + 1h = 3h) and the succeeded = 0 requirement", () => {
-    it("a failing run 2.5h old is inside the window: emits", async () => {
+  describe("leg 2 boundaries — attempt window (EQUAL to the 2h threshold) and the succeeded = 0 requirement", () => {
+    // The window is deliberately the same 2h as the ledger threshold, not
+    // wider. Any successful call inside the window necessarily writes a
+    // ledger row inside the window, which fails leg 1 — so summing
+    // `succeeded` over the window agrees with leg 1 instead of adding
+    // delay of its own. The earlier threshold + 1h of grace meant one
+    // pre-outage success could suppress an agent for up to 3h while the
+    // comment claimed 2h detection latency.
+    it("a failing run 1.5h old is inside the window: emits", async () => {
       ledgerRowHoursAgo(5);
-      outputHoursAgo(2.5, "sentinel", failingRun());
+      outputHoursAgo(1.5, "sentinel", failingRun());
 
       await runFlightControl();
 
       expect(aiEmits()).toHaveLength(1);
     });
 
-    it("a failing run 3.5h old has aged out: no emit (and the query ran cleanly)", async () => {
+    it("a failing run 2.5h old has aged out of the 2h window: no emit (and the query ran cleanly)", async () => {
       ledgerRowHoursAgo(5);
-      outputHoursAgo(3.5, "sentinel", failingRun());
+      outputHoursAgo(2.5, "sentinel", failingRun());
 
       await runFlightControl();
 
@@ -368,12 +378,156 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
       expectCheckRanCleanly({ failingQueryShouldRun: true });
     });
 
-    it("the failing-run query binds its window parameter (an unbound `?` would silently match nothing)", () => {
-      // Behavioural proof is the 2.5h-emits test above (datetime('now', NULL)
-      // is NULL, so an unbound parameter qualifies no rows). This pins arity
-      // statically so a second placeholder added later cannot go unbound.
-      expect(FAILING_SQL.match(/\?/g)).toHaveLength(1);
+    it("the failing-run query binds BOTH its parameters (an unbound `?` would silently match nothing)", () => {
+      // Behavioural proof is the 1.5h-emits test above (datetime('now', NULL)
+      // is NULL, so an unbound window qualifies no rows) plus the floor
+      // tests below (an unbound floor makes HAVING ... >= NULL never true).
+      // This pins arity statically so a third placeholder added later
+      // cannot go unbound: FC binds the window AND the attempts floor.
+      expect(FAILING_SQL.match(/\?/g)).toHaveLength(2);
       expect(DIAG_AI_HEALTH_SQL.match(/\?/g)).toHaveLength(1);
+    });
+
+    it("the attempts floor is bound from AI_OUTAGE_MIN_ATTEMPTS, not inlined", () => {
+      // An inlined literal would silently drift from the exported const
+      // that the agents' own verdicts and the alert copy reference.
+      expect(FAILING_SQL).toMatch(/HAVING[\s\S]*>= \?/);
+      expect(FC_SRC).toMatch(/\.bind\(`-\$\{AI_ATTEMPT_WINDOW_HOURS\} hours`, AI_OUTAGE_MIN_ATTEMPTS\)/);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Attempts floor — one transient failure must not page anyone
+  // ═══════════════════════════════════════════════════════════════════
+  describe(`attempts floor (AI_OUTAGE_MIN_ATTEMPTS = ${AI_OUTAGE_MIN_ATTEMPTS})`, () => {
+    it("premise: the floor is 3, so the boundary cases below are the real ones", () => {
+      expect(AI_OUTAGE_MIN_ATTEMPTS).toBe(3);
+    });
+
+    it("ONE failed attempt in the window: no emit (a single transient 529 is not an outage)", async () => {
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(0.5, "sentinel", failingRun({ aiCallsAttempted: 1 }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(0);
+      expectCheckRanCleanly({ failingQueryShouldRun: true });
+    });
+
+    it("TWO failed attempts in the window: still no emit (one below the floor)", async () => {
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 2 }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(0);
+      expectCheckRanCleanly({ failingQueryShouldRun: true });
+    });
+
+    it("THREE failed attempts: emits (the floor is >=, not >)", async () => {
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 3 }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(1);
+      expectRollupQualified(1);
+    });
+
+    it("the floor ACCUMULATES across runs, so it is a noise filter and not a detection ceiling", async () => {
+      // A low-volume agent failing 1-2 calls per run must still alert. This
+      // is why the floor sums over the window instead of being applied
+      // per-run inside the agent: three separate 1-attempt runs qualify.
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(1.5, "analyst", failingRun({ aiCallsAttempted: 1 }));
+      outputHoursAgo(1.0, "analyst", failingRun({ aiCallsAttempted: 1 }));
+      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 1 }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(1);
+      const t = aiEmits()[0]![2] as { title: string; message: string };
+      expect(t.title).toBe("AI calls failing — 3 attempted, 0 succeeded");
+      expect(t.message).toMatch(/Floor: an agent needs >= 3 real attempts/);
+    });
+
+    it("the floor is PER AGENT: two agents at 2 attempts each do not combine to clear it", async () => {
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(0.5, "analyst", failingRun({ aiCallsAttempted: 2 }));
+      outputHoursAgo(0.5, "sentinel", failingRun({ aiCallsAttempted: 2 }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(0);
+      expectCheckRanCleanly({ failingQueryShouldRun: true });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // The reported failure kind and message must describe THE SAME failure
+  // ═══════════════════════════════════════════════════════════════════
+  describe("first-failure diagnostic is read from one row", () => {
+    it("pairs the kind with the message from the SAME, NEWEST failing row", async () => {
+      // Two independent MAX() aggregates (the first implementation) would
+      // mix these: MAX on text is lexicographic, so MAX(kind) picks
+      // 'parse_error' (p > a) from the OLDER row while MAX(error) picks
+      // the 'Z...' message from the newer one — an operator reads
+      // "parse_error" beside an HTTP-400 message and chases the wrong
+      // cause. The newest row here is the api_error one.
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(1.5, "sentinel", failingRun({
+        aiCallsAttempted: 3,
+        aiFirstFailureKind: "parse_error",
+        aiFirstError: "Anthropic JSON parse failed: Unexpected token",
+      }));
+      outputHoursAgo(0.2, "sentinel", failingRun({
+        aiCallsAttempted: 3,
+        aiFirstFailureKind: "api_error",
+        aiFirstError: "ZZZ Anthropic HTTP 400: credit balance is too low",
+      }));
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(1);
+      const t = aiEmits()[0]![2] as { message: string };
+      expect(t.message).toMatch(/First failure kind: api_error/);
+      expect(t.message).toMatch(/credit balance is too low/);
+      // The older row's kind must not be the one reported.
+      expect(t.message).not.toMatch(/parse_error/);
+      expect(t.message).not.toMatch(/Unexpected token/);
+    });
+
+    it("a healthy row in the same group cannot blank the diagnosis", async () => {
+      // The aggregate is restricted to rows that actually recorded a
+      // failure, so the newest row overall (which may carry no error)
+      // cannot win it and report kind=null.
+      ledgerRowHoursAgo(5);
+      outputHoursAgo(1.0, "sentinel", failingRun({ aiCallsAttempted: 3 }));
+      outputHoursAgo(0.1, "sentinel", { aiCallsAttempted: 0, aiCallsSucceeded: 0, aiCallsSkipped: 4 });
+
+      await runFlightControl();
+
+      expect(aiEmits()).toHaveLength(1);
+      expect((aiEmits()[0]![2] as { message: string }).message).toMatch(/First failure kind: api_error/);
+    });
+  });
+
+  describe("parseNewestFailure (the decoder)", () => {
+    it("never throws, and degrades to unknown rather than breaking the alert that carries it", () => {
+      expect(parseNewestFailure(null)).toEqual({ kind: null, error: null });
+      expect(parseNewestFailure("")).toEqual({ kind: null, error: null });
+      expect(parseNewestFailure("no separator here")).toEqual({ kind: null, error: null });
+      expect(parseNewestFailure("2026-10-01 00:00:00\u001f{not json")).toEqual({ kind: null, error: null });
+      expect(parseNewestFailure("2026-10-01 00:00:00\u001f[1,2]")).toEqual({ kind: null, error: null });
+      expect(parseNewestFailure("2026-10-01 00:00:00\u001f{\"kind\":5,\"error\":null}")).toEqual({ kind: null, error: null });
+    });
+
+    it("round-trips a message containing the separator-adjacent characters and JSON punctuation", () => {
+      const packed = `2026-10-01 00:00:00\u001f${JSON.stringify({ kind: "api_error", error: 'HTTP 400: {"error":{"message":"too low"}}' })}`;
+      expect(parseNewestFailure(packed)).toEqual({
+        kind: "api_error",
+        error: 'HTTP 400: {"error":{"message":"too low"}}',
+      });
     });
   });
 
@@ -422,12 +576,17 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
       outputHoursAgo(0.5, "analyst", { aiCallsAttempted: 0, aiCallsSucceeded: 0, aiCallsSkipped: 9 });
 
       const rows = raw.prepare(DIAG_AI_HEALTH_SQL).all(24) as Array<{
-        agent_id: string; attempted: number; succeeded: number; skipped: number; first_failure_kind: string | null;
+        agent_id: string; attempted: number; succeeded: number; skipped: number; newest_failure: string | null;
       }>;
 
       const byAgent = Object.fromEntries(rows.map((r) => [r.agent_id, r]));
-      expect(byAgent.sentinel).toMatchObject({ attempted: 6, succeeded: 0, skipped: 2, first_failure_kind: "api_error" });
+      expect(byAgent.sentinel).toMatchObject({ attempted: 6, succeeded: 0, skipped: 2 });
+      // kind + message travel together in one packed column — see
+      // parseNewestFailure and the same-row test below.
+      expect(parseNewestFailure(byAgent.sentinel!.newest_failure).kind).toBe("api_error");
       expect(byAgent.analyst).toMatchObject({ attempted: 0, succeeded: 0, skipped: 9 });
+      // A healthy row records no failure, so nothing is invented for it.
+      expect(parseNewestFailure(byAgent.analyst!.newest_failure)).toEqual({ kind: null, error: null });
     });
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
-import { inferBrand, isDeliberateAiSkip, type HaikuFailureKind } from "../lib/haiku";
+import { inferBrand, newAiCallCounters, recordAiCall, isAiAllFailing } from "../lib/haiku";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { correlateBrandThreats } from "../brand-threat-correlator";
 import { resolveMasterBrandName } from "../lib/threatScoring";
@@ -215,33 +215,14 @@ export const analystAgent: AgentModule = {
 
     // ── Strictly-API AI counters (silent-AI-failure guard) ──────────
     // DELIBERATELY SEPARATE from haikuSuccesses / haikuFailures above,
-    // which are NOT a usable "is AI alive" test:
-    //   - haikuSuccesses only increments AFTER the confidence >= 70 gate,
-    //     so a perfectly healthy low-confidence answer counts as neither
-    //     a success nor a failure here.
-    //   - sentinel's equivalent counter increments for a rules-based skip
-    //     that makes no API call at all.
-    // Those two feed summary strings + agent_runs details that operators
-    // read today, so their semantics are left untouched.
+    // which are NOT a usable "is AI alive" test: haikuSuccesses only
+    // increments AFTER the confidence >= 70 gate, so a perfectly healthy
+    // low-confidence answer counts as neither a success nor a failure.
+    // Those feed summary strings + agent_runs details operators read
+    // today, so their semantics are left untouched.
     //
-    // These four count ONLY real round-trips to Anthropic:
-    //   aiCallsAttempted — a request actually left for the API. A
-    //     throttled / budget-capped result does NOT count (no call was
-    //     made), otherwise a deliberate cost throttle would be
-    //     indistinguishable from an outage.
-    //   aiCallsSucceeded — that request came back usable.
-    //   aiCallsSkipped   — we chose not to call (throttle / budget cap).
-    // attempted > 0 && succeeded === 0 is the honest "AI is dead" signal
-    // that Flight Control's platform_ai_calls_failing check reads back
-    // out of agent_outputs.details.
-    let aiCallsAttempted = 0;
-    let aiCallsSucceeded = 0;
-    let aiCallsSkipped = 0;
-    // FIRST failure only — one line, never accumulated per item. An
-    // outage repeats identically for every item in the batch; the first
-    // error string is the whole diagnosis and anything more is noise.
-    let aiFirstFailureKind: HaikuFailureKind | null = null;
-    let aiFirstError: string | null = null;
+    // See lib/haiku.ts AiCallCounters for the contract.
+    const ai = newAiCallCounters();
 
     const outputs: AgentOutputEntry[] = [];
 
@@ -304,14 +285,9 @@ export const analystAgent: AgentModule = {
       // Strictly-API bookkeeping — see the counter block above. Done
       // immediately after the call and BEFORE any confidence gating, so
       // "the API answered" and "we liked the answer" stay separate facts.
-      if (result.success && result.data) {
-        aiCallsAttempted++;
-        aiCallsSucceeded++;
-      } else if (isDeliberateAiSkip(result.failure_kind)) {
-        aiCallsSkipped++;
-      } else {
-        aiCallsAttempted++;
-      }
+      // One inferBrand call per threat, no sharing, so per-item is also
+      // per-call here.
+      recordAiCall(ai, result, result.success && !!result.data);
 
       // Derive attack classification from available signals
       const domain = threat.malicious_domain ?? '';
@@ -362,10 +338,6 @@ export const analystAgent: AgentModule = {
 
       if (!result.success || !result.data) {
         haikuFailures++;
-        if (aiFirstError === null) {
-          aiFirstFailureKind = result.failure_kind ?? null;
-          aiFirstError = result.error ?? "no data returned";
-        }
         if (haikuFailures === 1) {
           console.error(`[analyst] FIRST HAIKU FAILURE — domain=${threat.malicious_domain}, kind=${result.failure_kind ?? "unknown"}, error: ${result.error ?? "no data returned"}`);
           console.error(`[analyst] This error will repeat for all ${threats.results.length} threats. Fix the root cause above.`);
@@ -1275,13 +1247,15 @@ export const analystAgent: AgentModule = {
     // agent still did real work (keyword pre-matching is rule-based and
     // unaffected), so this is a DEGRADED run, not a failed one — but it
     // must not read as `severity: "info"`. That is precisely how three
-    // months of zero working AI looked healthy in agent_outputs.
-    const aiAllFailing = aiCallsAttempted > 0 && aiCallsSucceeded === 0;
+    // months of zero working AI looked healthy in agent_outputs. The
+    // AI_OUTAGE_MIN_ATTEMPTS floor keeps one transient failure in a quiet
+    // tick from producing a degraded run.
+    const aiAllFailing = isAiAllFailing(ai);
 
     outputs.push({
       type: "diagnostic",
       summary: aiAllFailing
-        ? `AI CALLS ALL FAILING — analyst made ${aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${aiFirstFailureKind ?? "unknown"} — ${aiFirstError ?? "unknown"}). Brand matching ran on keyword rules only (${itemsUpdated} matched, ${keywordPreMatched} pre-matched).`
+        ? `AI CALLS ALL FAILING — analyst made ${ai.aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"}). Brand matching ran on keyword rules only (${itemsUpdated} matched, ${keywordPreMatched} pre-matched).`
         : itemsProcessed > 0
         ? `Analyst matched ${itemsUpdated} threats to brands (${itemsProcessed} processed, haiku=${haikuSuccesses}/${haikuFailures}, low_conf=${lowConfidence}, keywordPreMatched=${keywordPreMatched})`
         : `Analyst found 0 unmatched threats to process`,
@@ -1296,13 +1270,11 @@ export const analystAgent: AgentModule = {
         haikuSuccesses,
         haikuFailures,
         // Strictly-API counters — Flight Control's
-        // platform_ai_calls_failing check reads these two back via
-        // json_extract. Renaming them means updating that query.
-        aiCallsAttempted,
-        aiCallsSucceeded,
-        aiCallsSkipped,
-        aiFirstFailureKind,
-        aiFirstError,
+        // platform_ai_calls_failing check and the diagnostics ai_health
+        // block read these key names back via json_extract. Spread so
+        // the key names come from AiCallCounters and cannot drift
+        // between the three instrumented agents.
+        ...ai,
         lowConfidence,
         keywordPreMatched,
         knownBrands: brandNames.length,
@@ -1331,7 +1303,7 @@ export const analystAgent: AgentModule = {
       ...(aiAllFailing
         ? {
             degraded: {
-              reason: `all ${aiCallsAttempted} Anthropic call(s) failed (first: ${aiFirstFailureKind ?? "unknown"} — ${aiFirstError ?? "unknown"})`,
+              reason: `all ${ai.aiCallsAttempted} Anthropic call(s) failed (first: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"})`,
             },
           }
         : {}),

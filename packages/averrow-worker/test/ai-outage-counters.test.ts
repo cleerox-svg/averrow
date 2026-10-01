@@ -126,12 +126,25 @@ describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status
       expect(run.runRow.status).toBe("success");
     });
 
-    it("the batch-level APT detector IS a real call: >= 10 rule-skipped threats + HTTP 400 counts as attempted, and the summary sees it", async () => {
+    it("the batch-level APT detector IS a real call: >= 10 rule-skipped threats + HTTP 400 is COUNTED as attempted, but alone does NOT degrade the run", async () => {
       // The summary output is pushed AFTER the APT block precisely so its
-      // AI-health verdict sees this call ("Do not move it back up"). If the
-      // summary were computed before the APT call, this run would read as
-      // attempted === 0 / status success while the only real API call of the
-      // run was failing.
+      // counters see this call ("Do not move it back up"). If the summary
+      // were computed before the APT call, this run would read as
+      // attempted === 0 and the only real API call of the run would be
+      // invisible.
+      //
+      // The run nevertheless finalizes 'success', NOT 'partial'. The APT
+      // detector is ONE opportunistic best-effort call per run whose
+      // failure costs the run nothing (no APT hits is a normal outcome),
+      // so sentinel records it in a separate counter set and computes its
+      // degraded verdict from the REQUIRED path (per-threat
+      // classification) alone. Before that split, a single transient 529
+      // here was enough to mark a whole run degraded and emit a
+      // severity-high output — with every threat rule-skipped it is the
+      // only call of the run, so attempted=1 / succeeded=0 looked exactly
+      // like a total outage. Raw counters stay honest for Flight Control
+      // (which has its own AI_OUTAGE_MIN_ATTEMPTS floor); only the
+      // per-run verdict ignores it.
       seedThreats(raw, distinct(10, RULE_SKIPPED));
       fetchSpy.mockImplementation(async () => new Response(CREDIT_BALANCE_400, { status: 400 }));
 
@@ -141,7 +154,27 @@ describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status
       expect(run.details.aiCallsAttempted).toBe(1);
       expect(run.details.aiCallsSucceeded).toBe(0);
       expect(run.details.haikuSuccesses).toBe(10); // legacy counter still reads healthy
-      expect(run.runRow.status).toBe("partial");
+      // Counted, but not an outage on its own.
+      expect(run.runRow.status).toBe("success");
+      expect(run.details.aiFirstFailureKind).toBe("api_error");
+    });
+
+    it("an empty text block from the APT detector is a MODEL answer, not a dead API: counted as a success", async () => {
+      // callHaikuRaw returns { success: true, text: "" } when the response
+      // carries no text block. The call was still billed and wrote a
+      // budget_ledger row, so counting it as a failed attempt would
+      // contradict leg 1 of the Flight Control gate (which reads that same
+      // ledger as proof AI is alive) and would surface a first-failure
+      // with failure_kind undefined => "unknown".
+      seedThreats(raw, distinct(10, RULE_SKIPPED));
+      fetchSpy.mockImplementation(async () => anthropicOk(""));
+
+      const run = await runSentinel();
+
+      expect(run.details.aiCallsAttempted).toBe(1);
+      expect(run.details.aiCallsSucceeded).toBe(1);
+      expect(run.details.aiFirstError).toBeNull();
+      expect(run.runRow.status).toBe("success");
     });
   });
 

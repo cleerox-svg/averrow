@@ -189,7 +189,12 @@ export interface PlatformAiCallsFailingVars {
   hours_since_last_call: number | null;
   /** Threshold (hours) of ledger silence above which we alert. */
   threshold_hours: number;
-  /** Agents whose recent runs recorded attempted > 0 and succeeded = 0. */
+  /** Minimum real attempts in the window before zero successes counts as
+   *  an outage — the noise floor, surfaced so an operator reading the
+   *  alert knows a single transient failure could not have produced it. */
+  min_attempts: number;
+  /** Agents whose runs in the window recorded >= min_attempts real
+   *  attempts and zero successes. */
   failing_agents: Array<{
     agent_id: string;
     attempted: number;
@@ -658,6 +663,7 @@ export function renderPlatformAiCallsFailing(v: PlatformAiCallsFailingVars): Ren
     message:
       `Last billed Anthropic call: ${silence} (threshold ${v.threshold_hours}h). ` +
       `Agents still attempting and failing: ${agentList}. ` +
+      `(Floor: an agent needs >= ${v.min_attempts} real attempts in the window to qualify, so this is not one unlucky request.) ` +
       `First failure kind: ${firstKind} — ${truncate(firstError, 300)}. ` +
       `Affected agents are silently falling through to their rule-based paths, so threat ` +
       `classification, brand matching and provider scoring are running UNSCORED by AI.`,

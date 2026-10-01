@@ -20,7 +20,7 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { scoreProvider, scoreProvidersBatch } from "../lib/haiku";
+import { scoreProvider, scoreProvidersBatch, newAiCallCounters, recordAiCall, isAiAllFailing } from "../lib/haiku";
 import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
@@ -826,6 +826,24 @@ export const cartographerAgent: AgentModule = {
     let haikuSuccessCount = 0;
     let haikuFailCount = 0;
 
+    // ── Strictly-API AI counters (silent-AI-failure guard) ──────────
+    // Cartographer is 62% of all platform AI spend and runs on its own
+    // `9 * * * *` cron, so without this it was the largest blind spot in
+    // the detection: analyst and sentinel both have big non-AI paths
+    // (keyword pre-match / rules skip at confidence >= 85), so in a quiet
+    // window both honestly report attempted = 0 while cartographer burned
+    // failing calls invisibly and Flight Control's conjunction stayed
+    // silent.
+    //
+    // DO NOT key anything on haikuSuccessCount / haikuFailCount above:
+    // those count POST-PROCESSED PROVIDERS, and the batch path
+    // post-processes 5 providers per single API call (processOneAiProvider
+    // is even handed a synthetic `{success:true, data:score}` envelope per
+    // index). Counting there would inflate successes 5x and let succeeded
+    // exceed attempted. These are recorded at the two sites where a
+    // request actually leaves — see lib/haiku.ts AiCallCounters.
+    const ai = newAiCallCounters();
+
     // Batch: threat type breakdowns for all providers
     const providerIds = providers.results.map(p => p.id);
     const allTypeBreakdowns = providerIds.length > 0 ? await env.DB.prepare(`
@@ -930,12 +948,20 @@ export const cartographerAgent: AgentModule = {
         && Array.isArray(batchResult.data)
         && batchResult.data.length === batch.length;
 
+      // ONE real API call per batch, whatever its length. `batchOk` is
+      // the right notion of success here: a 2xx whose array is short or
+      // malformed is a usable-response failure, and it is also exactly
+      // what sends us down the per-provider fallback below (which then
+      // records its own calls), so attempted reflects every request that
+      // actually left.
+      recordAiCall(ai, batchResult, batchOk, "[cartographer]");
+
       if (!batchOk) {
         // Batch failed or partial — drop back to per-provider scoring
         // for this batch. Preserves the old behavior exactly.
         if (batchResult.tokens_used) totalTokens += batchResult.tokens_used;
         for (const entry of batch) {
-          await processOneAiProvider(entry, await scoreProvider(env, callCtx, {
+          const oneResult = await scoreProvider(env, callCtx, {
             name: entry.provider.name,
             asn: entry.provider.asn,
             active_threats: entry.provider.active_threat_count,
@@ -944,7 +970,9 @@ export const cartographerAgent: AgentModule = {
             threat_types: entry.threatTypes,
             trend_7d: entry.provider.trend_7d,
             trend_30d: entry.provider.trend_30d,
-          }));
+          });
+          recordAiCall(ai, oneResult, oneResult.success && !!oneResult.data, "[cartographer]");
+          await processOneAiProvider(entry, oneResult);
         }
         continue;
       }
@@ -1202,12 +1230,32 @@ export const cartographerAgent: AgentModule = {
     }
     itemsCreated += statsCreated;
 
+    // Every Anthropic round-trip this run made came back unusable (with
+    // the AI_OUTAGE_MIN_ATTEMPTS noise floor applied). Provider scoring
+    // still produced numbers — computeHeuristicScore is the fallback and
+    // is unaffected — so this is a DEGRADED run, not a failed one. What
+    // it must not be is `severity: "info"`: cartographer is 62% of AI
+    // spend, and "providers scored (0 AI, N heuristic)" at info severity
+    // is how its share of the three-month outage stayed invisible.
+    const aiAllFailing = isAiAllFailing(ai);
+
     // Emit diagnostic output so cartographer never shows 0 outputs silently
     outputs.push({
       type: "diagnostic",
-      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (${haikuSuccessCount} AI, ${haikuFailCount} heuristic), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
-      severity: providers.results.length === 0 ? "medium" : "info",
+      summary: aiAllFailing
+        ? `AI CALLS ALL FAILING — cartographer made ${ai.aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"}). All ${haikuFailCount} provider score(s) fell back to the heuristic.`
+        : `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (${haikuSuccessCount} AI, ${haikuFailCount} heuristic), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
+      // 'high' on an AI outage, else the existing provider-count rule.
+      // agent_outputs.severity CHECK allows critical/high/medium/low/info
+      // (migration 0061).
+      severity: aiAllFailing ? "high" : providers.results.length === 0 ? "medium" : "info",
       details: {
+        // Strictly-API counters — Flight Control's
+        // platform_ai_calls_failing check and the diagnostics ai_health
+        // block read these key names back via json_extract. Spread so
+        // the key names come from AiCallCounters and cannot drift
+        // between the three instrumented agents.
+        ...ai,
         ip_api_enriched: batchGeoResponded,
         ip_api_geo_located: batchGeoLocated,
         rdap_enriched: rdapEnriched,
@@ -1240,6 +1288,15 @@ export const cartographerAgent: AgentModule = {
       model,
       tokensUsed: totalTokens,
       agentOutputs: outputs,
+      // See AgentResult.degraded — finalizes agent_runs.status as
+      // 'partial', not 'success' and not 'failed'.
+      ...(aiAllFailing
+        ? {
+            degraded: {
+              reason: `all ${ai.aiCallsAttempted} Anthropic call(s) failed (first: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"})`,
+            },
+          }
+        : {}),
     };
   },
 };

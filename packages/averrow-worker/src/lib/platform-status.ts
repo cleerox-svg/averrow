@@ -172,12 +172,15 @@ interface AgentDayRow {
 // outage is historically accurate.
 async function computeAgentsDaily(env: Env, days: string[]): Promise<DailyPoint[]> {
   const earliest = days[0]!;
+  // See PUBLIC_UPTIME_SEMANTICS below — 'partial' is a success here, and
+  // in-flight rows are excluded from the denominator.
   const rows = await env.DB.prepare(`
     SELECT date(started_at) AS day,
            COUNT(*) AS total_runs,
-           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+           SUM(CASE WHEN status IN ('success', 'partial') THEN 1 ELSE 0 END) AS successes
       FROM agent_runs
      WHERE started_at >= ?
+       AND completed_at IS NOT NULL
      GROUP BY day
   `).bind(earliest).all<AgentDayRow>();
 
@@ -187,7 +190,7 @@ async function computeAgentsDaily(env: Env, days: string[]): Promise<DailyPoint[
   return days.map(day => {
     const row = byDay.get(day);
     if (!row || row.total_runs === 0) {
-      return { date: day, status: "outage" as const, uptime_pct: 0, note: "no agent runs" };
+      return { date: day, status: "outage" as const, uptime_pct: 0, note: "no completed agent runs" };
     }
     const uptime = (row.successes / row.total_runs) * 100;
     const status = classify(uptime, AGENTS_OPERATIONAL, AGENTS_DEGRADED);
@@ -294,6 +297,43 @@ async function computeFeedsRealtime(env: Env): Promise<{ status: CategoryStatus;
   return { status: "operational", note: `${successPulls} ingest pulls in 6h` };
 }
 
+/**
+ * PUBLIC_UPTIME_SEMANTICS — read before touching either agent-uptime query.
+ *
+ * Both of these feed the UNAUTHENTICATED /status page, so what counts as a
+ * failure here is a customer-facing claim about availability.
+ *
+ * 1. `'partial'` counts as a SUCCESS. `agent_runs.status` has three
+ *    finished values and only 'failed' means the agent threw. 'partial' is
+ *    a run that COMPLETED and did useful work in a degraded mode — today
+ *    either held pending approval, or an agent whose Anthropic calls all
+ *    failed and which fell through to its rule-based path
+ *    (AgentResult.degraded). An internal AI outage is deliberately NOT a
+ *    public availability event: the pipeline keeps moving, and the operator
+ *    signal for it is the `platform_ai_calls_failing` notification at
+ *    severity 'high' — which is 'high' precisely so it does NOT auto-create
+ *    an incident and surface here. Counting 'partial' as a failure would
+ *    route it onto this page anyway, through the back door: analyst +
+ *    sentinel finalizing 'partial' hourly drags this category to ~90% →
+ *    "degraded".
+ *
+ * 2. In-flight rows are EXCLUDED from the denominator. agentRunner seeds
+ *    every new run as `status='partial', completed_at NULL` and only
+ *    stamps a terminal status when execute() returns, so a run that is
+ *    merely still going was being counted as a failure. This was a
+ *    pre-existing undercount, independent of (1) — at any instant the
+ *    currently-running agents each cost this page a "failure". A finished
+ *    run always has completed_at set (both the success and the failure
+ *    finalize paths stamp it), and killed orphans get stamped 'failed' by
+ *    the navigator reaper within its per-agent ceiling, so they still
+ *    land in the denominator — just once they are genuinely known-dead
+ *    rather than while in doubt.
+ *
+ * If a future caller needs strict `status='success'` accounting, add a
+ * separate helper rather than loosening this one — these two functions are
+ * consumed only by computePlatformStatus (the public page) and nothing
+ * else reads them.
+ */
 async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus; note: string }> {
   // PR-R reconciliation: workflow-dispatched agents (nexus + future)
   // write to agent_activity_log not agent_runs. Without this, an
@@ -303,9 +343,10 @@ async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus
   const [runRow, wfStats] = await Promise.all([
     env.DB.prepare(`
       SELECT COUNT(*) AS total,
-             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+             SUM(CASE WHEN status IN ('success', 'partial') THEN 1 ELSE 0 END) AS successes
         FROM agent_runs
        WHERE started_at >= datetime('now', '-6 hours')
+         AND completed_at IS NOT NULL
     `).first<{ total: number; successes: number }>(),
     getWorkflowAgentStats(env.DB, 6),
   ]);
@@ -327,7 +368,7 @@ async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus
   const successes = runsSuccess + wfSuccesses;
 
   if (total === 0) {
-    return { status: "outage", note: "no agent runs in 6h" };
+    return { status: "outage", note: "no completed agent runs in 6h" };
   }
   const uptime = (successes / total) * 100;
   const status = classify(uptime, AGENTS_OPERATIONAL, AGENTS_DEGRADED);

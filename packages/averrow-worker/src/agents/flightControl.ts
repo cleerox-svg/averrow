@@ -15,6 +15,7 @@ import type { Env } from "../types";
 import { BudgetManager, fetchAnthropicUsageReport } from "../lib/budgetManager";
 import type { BudgetStatus, AgentBudgetLimits, ThrottleLevel } from "../lib/budgetManager";
 import { createNotification } from "../lib/notifications";
+import { AI_OUTAGE_MIN_ATTEMPTS, parseNewestFailure } from "../lib/haiku";
 import { dohTxtLookup, parseDmarcPolicy } from "../lib/doh";
 import { transitionStatus as transitionIncidentStatus } from "../lib/incidents";
 import {
@@ -1094,14 +1095,28 @@ export const flightControlAgent: AgentModule = {
     //
     // FALSE-POSITIVE PROOFING — both conditions must hold:
     //   1. the ledger has been silent past the threshold, AND
-    //   2. at least one recent run recorded aiCallsAttempted > 0 with
-    //      aiCallsSucceeded = 0.
+    //   2. some agent's runs inside the window recorded at least
+    //      AI_OUTAGE_MIN_ATTEMPTS real attempts with zero successes.
     // Condition 2 alone is what makes this safe. A genuinely quiet
     // platform (no unclassified threats, no unmatched brands) makes no
     // AI calls, so its ledger is silent too — but its attempted count
     // is zero and it must not alert. Equally, a deliberate budget
     // throttle counts as skipped, not attempted, in the agents'
-    // counters, so cost-guard quiet periods don't alert either.
+    // counters, so cost-guard quiet periods don't alert either. The
+    // attempts floor is the third guard: without it one transient 529 in
+    // a quiet tick pages super_admins.
+    //
+    // DETECTION LATENCY IS THE LEDGER THRESHOLD — 2h, and the attempt
+    // window is deliberately EQUAL to it, not wider. Any successful call
+    // inside the window necessarily writes a ledger row inside the
+    // window, which fails leg 1; so `SUM(succeeded) = 0` is a consistency
+    // check against leg 1 rather than an independent source of delay. An
+    // earlier version used threshold + 1h of grace, which meant one
+    // pre-outage success could suppress an agent for up to 3h while the
+    // comment still claimed 2h. Every instrumented agent runs hourly
+    // (analyst :07, cartographer :09, sentinel with the orchestrator), so
+    // a 2h window holds ~2 runs each and FC's tick drift of tens of
+    // seconds cannot age all of them out.
     //
     // Per CLAUDE.md §8: FC runs hourly, so the bare MAX(created_at) read
     // is correct here — cachedCount would never hit within its TTL and
@@ -1110,9 +1125,8 @@ export const flightControlAgent: AgentModule = {
     // agent_outputs(created_at DESC) from migration 0123).
     try {
       const AI_SILENCE_THRESHOLD_HOURS = 2;
-      // One hour of grace past the threshold so an hourly FC tick can't
-      // land in a window where the failing run has aged out.
-      const AI_ATTEMPT_WINDOW_HOURS = AI_SILENCE_THRESHOLD_HOURS + 1;
+      // Equal to the threshold by design — see the latency note above.
+      const AI_ATTEMPT_WINDOW_HOURS = AI_SILENCE_THRESHOLD_HOURS;
 
       const ledgerRow = await db.prepare(`
         SELECT MAX(created_at) AS last_at FROM budget_ledger
@@ -1149,27 +1163,45 @@ export const flightControlAgent: AgentModule = {
         // that CTE's name as a phantom d1 table and fails
         // `npm run check:resource-drift`. It scans comments too, so this
         // note deliberately avoids spelling the verb out next to a word.
+        // `newest_failure` pairs the failure KIND with the failure MESSAGE
+        // from THE SAME ROW. Taking them as two independent MAX()
+        // aggregates (the first version) was wrong twice over: MAX on text
+        // is lexicographic, not temporal, so neither field was the newest,
+        // and the two could come from different rows — an operator would
+        // read a 'parse_error' kind beside an unrelated HTTP-400 message
+        // and chase the wrong cause, which is worse than no diagnostic.
+        //
+        // Prefixing with created_at makes the lexicographic MAX genuinely
+        // temporal (sqlite's 'YYYY-MM-DD HH:MM:SS' is fixed-width and
+        // sorts chronologically as text), and bundling both fields into
+        // one json_object means the winner is one row by construction.
+        // The CASE restricts the aggregate to rows that actually recorded
+        // a failure, so a healthy row in the same group cannot win it and
+        // blank the diagnosis. char(31) is the unit separator — it cannot
+        // occur in a JSON-encoded payload.
         const failingRows = await db.prepare(`
           SELECT agent_id,
                  SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
                  SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
-                 MAX(json_extract(details, '$.aiFirstFailureKind')) AS first_failure_kind,
-                 MAX(json_extract(details, '$.aiFirstError'))       AS first_error
+                 MAX(CASE WHEN json_extract(details, '$.aiFirstError') IS NOT NULL
+                          THEN created_at || char(31) || json_object(
+                                 'kind',  json_extract(details, '$.aiFirstFailureKind'),
+                                 'error', json_extract(details, '$.aiFirstError'))
+                          END) AS newest_failure
             FROM agent_outputs
            WHERE created_at >= datetime('now', ?)
              AND (CASE WHEN json_valid(details)
                        THEN json_extract(details, '$.aiCallsAttempted')
                        ELSE NULL END) IS NOT NULL
            GROUP BY agent_id
-          HAVING SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) > 0
+          HAVING SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) >= ?
              AND SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) = 0
            ORDER BY attempted DESC
-        `).bind(`-${AI_ATTEMPT_WINDOW_HOURS} hours`).all<{
+        `).bind(`-${AI_ATTEMPT_WINDOW_HOURS} hours`, AI_OUTAGE_MIN_ATTEMPTS).all<{
           agent_id: string;
           attempted: number;
           succeeded: number;
-          first_failure_kind: string | null;
-          first_error: string | null;
+          newest_failure: string | null;
         }>();
 
         const failing = failingRows.results ?? [];
@@ -1178,12 +1210,16 @@ export const flightControlAgent: AgentModule = {
             renderPlatformAiCallsFailing({
               hours_since_last_call: hoursSinceLastCall,
               threshold_hours: AI_SILENCE_THRESHOLD_HOURS,
-              failing_agents: failing.map((r) => ({
-                agent_id: r.agent_id,
-                attempted: r.attempted,
-                first_failure_kind: r.first_failure_kind,
-                first_error: r.first_error,
-              })),
+              min_attempts: AI_OUTAGE_MIN_ATTEMPTS,
+              failing_agents: failing.map((r) => {
+                const f = parseNewestFailure(r.newest_failure);
+                return {
+                  agent_id: r.agent_id,
+                  attempted: r.attempted,
+                  first_failure_kind: f.kind,
+                  first_error: f.error,
+                };
+              }),
             })
           );
         }

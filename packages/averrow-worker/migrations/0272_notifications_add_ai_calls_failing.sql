@@ -35,11 +35,31 @@
 -- 0265 allowed is carried over unchanged.
 --
 -- No triggers are recreated because notifications has never had one
--- (verified across all migrations). idx_notifications_user and
--- idx_notifications_created are likewise not recreated: they were last
--- defined in 0107 and have been absent since the 0207/0215 swaps, so
--- 0265's six-index set is the live shape and reproducing it keeps this
--- migration a pure CHECK widening.
+-- (verified across all migrations). On indexes, this migration is NOT a
+-- pure copy of 0265's set — one is restored and two stay dropped:
+--
+--   RESTORED: idx_notifications_dedup (type, group_key, created_at DESC).
+--     Created once, in 0167, and never recreated by 0186 / 0207 / 0215 /
+--     0265 — so it has been GONE since 0186 while the comment in 0167
+--     still documents the ~12M reads/day it was added to save. Both hot
+--     dedup paths need it and neither can use any of the six surviving
+--     indexes, because all of them lead with user_id while a
+--     platform-wide dedup lookup has group_key set and user_id NULL:
+--       lib/notifications.ts  — SELECT 1 ... WHERE type=? AND group_key=?
+--                               AND created_at > ? ORDER BY created_at DESC
+--       lib/platform-templates.ts — SELECT id ... WHERE type=? AND
+--                               group_key=? ORDER BY created_at DESC
+--     Every createNotification call runs one of them, so the whole
+--     notification surface has been paying a full table scan per emit.
+--     That includes this migration's own new alert.
+--
+--   STILL DROPPED: idx_notifications_user (user_id, read_at) and
+--     idx_notifications_created (created_at). Last defined in 0107 and
+--     absent since the 0207/0215 swaps. Unlike the dedup index these have
+--     no uncovered call site: the schema moved from read_at to a `state`
+--     column, and idx_notifications_inbox (user_id, state, created_at DESC)
+--     serves the inbox reads that idx_notifications_user was built for.
+--     Reviving them would add write cost for no read.
 
 PRAGMA defer_foreign_keys = ON;
 
@@ -142,5 +162,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_audience ON notifications(audience,
 CREATE INDEX IF NOT EXISTS idx_notifications_group    ON notifications(user_id, group_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread   ON notifications(user_id) WHERE state = 'unread';
 CREATE INDEX IF NOT EXISTS idx_notifications_snoozed  ON notifications(user_id, snoozed_until) WHERE state = 'snoozed';
+-- Restored here after being dropped by 0186 — see the header. Without it
+-- every createNotification call full-scans this table.
+CREATE INDEX IF NOT EXISTS idx_notifications_dedup    ON notifications(type, group_key, created_at DESC);
 
 PRAGMA defer_foreign_keys = OFF;

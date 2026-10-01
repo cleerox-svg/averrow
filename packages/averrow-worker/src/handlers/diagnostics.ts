@@ -11,6 +11,7 @@ import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaus
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
+import { parseNewestFailure } from "../lib/haiku";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import type { Env } from "../types";
 
@@ -1646,8 +1647,17 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSkipped')   AS INTEGER), 0)) AS skipped,
              MAX(created_at)                                     AS last_run_at,
-             MAX(json_extract(details, '$.aiFirstFailureKind'))  AS first_failure_kind,
-             MAX(json_extract(details, '$.aiFirstError'))        AS first_error
+             -- Kind + message from THE SAME, NEWEST failing row. Two
+             -- independent MAX() aggregates (the first version) paired a
+             -- kind from one row with a message from another, and MAX on
+             -- text is lexicographic rather than temporal so neither was
+             -- the newest. See flightControl.ts parseNewestFailure for the
+             -- decoder and the full rationale.
+             MAX(CASE WHEN json_extract(details, '$.aiFirstError') IS NOT NULL
+                      THEN created_at || char(31) || json_object(
+                             'kind',  json_extract(details, '$.aiFirstFailureKind'),
+                             'error', json_extract(details, '$.aiFirstError'))
+                      END)                                       AS newest_failure
         FROM agent_outputs
        WHERE created_at > datetime('now', '-' || ? || ' hours')
          AND (CASE WHEN json_valid(details)
@@ -1661,8 +1671,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       succeeded: number;
       skipped: number;
       last_run_at: string | null;
-      first_failure_kind: string | null;
-      first_error: string | null;
+      newest_failure: string | null;
     }>();
 
     // ─── 7. Cron health (recent Navigator + orchestrator) ───────────
@@ -2314,7 +2323,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
               ) / 10
             : null,
           window_hours: hoursBack,
-          per_agent: aiCallHealth.results,
+          per_agent: aiCallHealth.results.map((r) => {
+            const { newest_failure: _packed, ...rest } = r;
+            const f = parseNewestFailure(r.newest_failure);
+            return { ...rest, first_failure_kind: f.kind, first_error: f.error };
+          }),
           agents_all_failing: aiCallHealth.results
             .filter((r) => r.attempted > 0 && r.succeeded === 0)
             .map((r) => r.agent_id),

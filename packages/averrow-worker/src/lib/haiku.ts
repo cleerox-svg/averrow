@@ -160,6 +160,170 @@ export function isDeliberateAiSkip(kind: HaikuFailureKind | null | undefined): b
   return kind === 'throttled' || kind === 'budget_cap';
 }
 
+/**
+ * Strictly-API AI counters for one agent run, plus the one way to update
+ * them. Shared by analyst / sentinel / cartographer so the three cannot
+ * drift — Flight Control's `platform_ai_calls_failing` check and the
+ * diagnostics `ai_health` block both read these exact key names back out
+ * of `agent_outputs.details` via json_extract.
+ *
+ * These exist because the agents' PRE-EXISTING counters are not a usable
+ * "is AI alive" test and must not be repurposed:
+ *   - sentinel's `haikuSuccesses` increments for a rules-based skip that
+ *     makes NO API call, so `haiku=N/0` can mean zero calls were made.
+ *     This is why its telemetry read healthy through a 3-month outage.
+ *   - analyst's only increments after a confidence gate, so a healthy
+ *     low-confidence answer counts as neither success nor failure.
+ *   - cartographer's counts post-processed providers, and its batch path
+ *     post-processes 5 providers per single API call.
+ * Those feed summary strings and agent_runs details operators read today,
+ * so their semantics are left alone.
+ */
+export interface AiCallCounters {
+  /** Requests that actually left for Anthropic. A throttled or
+   *  budget-capped result is NOT an attempt — no request was made — or a
+   *  deliberate cost throttle would be indistinguishable from an outage. */
+  aiCallsAttempted: number;
+  /** Of those, how many came back usable. */
+  aiCallsSucceeded: number;
+  /** Calls we chose not to make (budget throttle / per-agent cap). */
+  aiCallsSkipped: number;
+  /** FIRST failure only — one line, never accumulated per item. An outage
+   *  repeats identically for every item in a batch; the first error string
+   *  is the whole diagnosis and more is noise. */
+  aiFirstFailureKind: HaikuFailureKind | null;
+  aiFirstError: string | null;
+}
+
+export function newAiCallCounters(): AiCallCounters {
+  return {
+    aiCallsAttempted: 0,
+    aiCallsSucceeded: 0,
+    aiCallsSkipped: 0,
+    aiFirstFailureKind: null,
+    aiFirstError: null,
+  };
+}
+
+/**
+ * Record the outcome of ONE real wrapper call.
+ *
+ * MUST be called exactly once per API call, at the site where the call is
+ * initiated — never per processed item. Sentinel shares one promise across
+ * sibling threats and cartographer post-processes 5 providers per batch
+ * call; counting per item in either would let `succeeded` exceed
+ * `attempted` and break the >= floor in Flight Control's gate.
+ *
+ * `ok` is the caller's own definition of a usable response, because that
+ * differs per wrapper (parsed JSON vs non-empty text vs a batch whose
+ * length matches the input).
+ */
+export function recordAiCall(
+  c: AiCallCounters,
+  result: { success: boolean; error?: string; failure_kind?: HaikuFailureKind },
+  ok: boolean,
+  logPrefix?: string,
+): void {
+  if (ok) {
+    c.aiCallsAttempted++;
+    c.aiCallsSucceeded++;
+    return;
+  }
+  if (isDeliberateAiSkip(result.failure_kind)) {
+    c.aiCallsSkipped++;
+    return;
+  }
+  c.aiCallsAttempted++;
+  if (c.aiFirstError === null) {
+    c.aiFirstFailureKind = result.failure_kind ?? null;
+    c.aiFirstError = result.error ?? 'no data returned';
+    if (logPrefix) {
+      console.error(`${logPrefix} FIRST AI FAILURE — kind=${c.aiFirstFailureKind ?? 'unknown'}, error: ${c.aiFirstError}`);
+    }
+  }
+}
+
+/**
+ * Sum two counter sets. Used to persist one merged view in
+ * `agent_outputs.details` when an agent tracks its REQUIRED AI path and
+ * its OPPORTUNISTIC calls separately (see sentinel's APT detector): the
+ * raw counters operators and Flight Control read must account for every
+ * real request, while the agent's own degraded-run verdict comes from the
+ * required path alone.
+ *
+ * First-failure fields prefer `a`'s, so pass the required path first.
+ */
+export function mergeAiCallCounters(a: AiCallCounters, b: AiCallCounters): AiCallCounters {
+  return {
+    aiCallsAttempted: a.aiCallsAttempted + b.aiCallsAttempted,
+    aiCallsSucceeded: a.aiCallsSucceeded + b.aiCallsSucceeded,
+    aiCallsSkipped: a.aiCallsSkipped + b.aiCallsSkipped,
+    aiFirstFailureKind: a.aiFirstFailureKind ?? b.aiFirstFailureKind,
+    aiFirstError: a.aiFirstError ?? b.aiFirstError,
+  };
+}
+
+/**
+ * Minimum real API calls before "every call failed" is an outage rather
+ * than noise, applied by Flight Control to its per-agent SUM over the
+ * detection window.
+ *
+ * Three is the smallest count that cannot be one unlucky request. It sits
+ * in FC rather than in the per-run verdict below on purpose: FC sums
+ * across the window, so an agent failing 1-2 calls per run still
+ * accumulates past the floor within the window and alerts. A per-run floor
+ * would instead be a permanent detection ceiling for low-volume agents.
+ *
+ * The specific noise this removes is one transient 529 reaching
+ * super_admins' phones. The other half of that problem — sentinel's single
+ * best-effort APT call per run being able to mark a whole run degraded —
+ * is handled at the source by tracking it as opportunistic, not by a floor.
+ */
+export const AI_OUTAGE_MIN_ATTEMPTS = 3;
+
+/**
+ * True when every real API call on an agent's REQUIRED AI path failed.
+ * The one definition of "this run's AI is dead".
+ *
+ * No floor here, deliberately: a run that made 2 calls and had both
+ * refused DID fall back to rules for everything it was asked to do, and
+ * saying so is honest. The consequences of a degraded run are all
+ * internal — a severity-high `agent_outputs` row and `agent_runs.status =
+ * 'partial'`, which the public status page counts as a success and no
+ * orphan/stall path touches. Nobody is paged by this; FC's floor governs
+ * that.
+ */
+export function isAiAllFailing(c: Pick<AiCallCounters, 'aiCallsAttempted' | 'aiCallsSucceeded'>): boolean {
+  return c.aiCallsAttempted > 0 && c.aiCallsSucceeded === 0;
+}
+
+/**
+ * Split the `created_at || char(31) || json_object(...)` value the
+ * AI-failure rollups in agents/flightControl.ts and handlers/diagnostics.ts
+ * aggregate (see either query for why it is shaped that way) back into its two fields.
+ *
+ * Never throws — a diagnostic that cannot be
+ * parsed must degrade to "unknown", not break the alert that carries it.
+ */
+export function parseNewestFailure(
+  packed: string | null,
+): { kind: string | null; error: string | null } {
+  if (!packed) return { kind: null, error: null };
+  const sep = packed.indexOf('\u001f');
+  if (sep === -1) return { kind: null, error: null };
+  try {
+    const parsed: unknown = JSON.parse(packed.slice(sep + 1));
+    if (typeof parsed !== 'object' || parsed === null) return { kind: null, error: null };
+    const o = parsed as Record<string, unknown>;
+    return {
+      kind: typeof o.kind === 'string' ? o.kind : null,
+      error: typeof o.error === 'string' ? o.error : null,
+    };
+  } catch {
+    return { kind: null, error: null };
+  }
+}
+
 function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
   if (!(err instanceof AnthropicError)) return 'api_error';
   // Typed field first — an HTTP status is unambiguous.
