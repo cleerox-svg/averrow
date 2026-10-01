@@ -16,6 +16,7 @@ import { createNotification } from "./notifications";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./threatScoring";
 import { isPrivateIP } from "./geoip";
 import { withD1Retry } from "./d1-retry";
+import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -253,20 +254,27 @@ interface FeedStatusRow {
  *   Fail #4+ → 120 min (cap — same as the hourly cadence boundary;
  *                       past this the auto-pause threshold owns recovery)
  *
- * Jitter: ±25%, deterministic-per-call via crypto.getRandomValues so
- * multiple feeds failing simultaneously don't thunder-herd back at the
- * exact same minute. The 2026 best-practice consensus (Fastio, Adaline,
- * Google Vertex AI retry docs) all stress the jitter.
+ * Jitter: ±25% so multiple feeds failing simultaneously don't
+ * thunder-herd back at the exact same minute. The 2026 best-practice
+ * consensus (Fastio, Adaline, Google Vertex AI retry docs) all stress
+ * the jitter.
+ *
+ * The ladder and the jitter now live in `lib/backoff.ts`, which the
+ * lookalike DNS checker shares (with its OWN ladder — see
+ * LOOKALIKE_CHECK_LADDER for why a 120-min cap is wrong for a 24 h
+ * cadence). This function is a thin adapter that keeps the feed path's
+ * signature and its `FEED_RETRY_LADDER` steps exactly as they were;
+ * `test/feed-circuit-breaker.test.ts` passes against it unmodified.
  */
 export function computeFeedRetryAt(consecutiveFailures: number, now: Date = new Date()): string {
-  const baseMs =
-    consecutiveFailures <= 1 ?  5 * 60_000 :
-    consecutiveFailures === 2 ? 15 * 60_000 :
-    consecutiveFailures === 3 ? 45 * 60_000 :
-                                120 * 60_000;
-  const jitter = (Math.random() - 0.5) * 0.5 * baseMs; // ±25%
-  const retryAt = new Date(now.getTime() + baseMs + jitter);
-  return retryAt.toISOString().replace('T', ' ').slice(0, 19); // SQLite datetime
+  const retryAt = computeBackoffRetryAt(FEED_RETRY_LADDER, consecutiveFailures, now);
+  // FEED_RETRY_LADDER sets `terminalAfterAttempts: null`, so the ladder
+  // can never say "park" and this is unreachable. Thrown rather than
+  // `!`-asserted so the impossible case is loud instead of implicit.
+  if (retryAt === null) {
+    throw new Error('computeFeedRetryAt: the feed ladder must never park a feed');
+  }
+  return retryAt;
 }
 
 // ─── Dedicated-cron enrichment feeds ─────────────────────────────

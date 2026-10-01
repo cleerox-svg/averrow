@@ -50,7 +50,7 @@ vi.mock("../src/scanners/lookalike-page-analysis", async (importOriginal) => {
   return { ...actual, runPageAnalysisForDomain: pageAnalysisSpy };
 });
 
-const { checkLookalikeBatch } = await import("../src/scanners/lookalike-domains");
+const { checkLookalikeBatch, checkLookalikeBatchForBrand } = await import("../src/scanners/lookalike-domains");
 
 // ─── D1 mock ──────────────────────────────────────────────────────
 
@@ -64,18 +64,32 @@ interface StoredRow {
   last_checked: string | null;
   // Written by the statements under test.
   first_seen: string | null;
+  /**
+   * Migration 0267, AMENDED: this — not `last_checked` — is the
+   * first-contact discriminator now. `last_checked` keeps exactly one
+   * job ("when did we last successfully observe"), and dueness lives in
+   * `check_due_at`.
+   */
   baseline_established_at: string | null;
-  /** Migration 0268 — the F6 failure cooldown. */
+  /** Migration 0268 — the historical record of the last failed attempt. */
   last_check_failed_at: string | null;
+  /** Migration 0269 — the schedule. NULL = PARKED by the backoff ladder. */
+  check_due_at: string | null;
+  check_attempts: number;
+  /** Migration 0269 — the recurring BEC lane's presence-only marker. */
+  bimi_first_seen_at: string | null;
   threat_level: string | null;
   ai_assessment: string | null;
   alert_id: string | null;
+  takedown_id: string | null;
   resolves_to: string | null;
   has_mx: number | null;
   has_web: number | null;
 }
 
 const NOW = "MOCK_NOW";
+/** What a successful check's `check_due_at` becomes: not due any more. */
+const LATER = "MOCK_NOW_PLUS_CADENCE";
 
 function makeRow(over: Partial<StoredRow> = {}): StoredRow {
   return {
@@ -89,9 +103,13 @@ function makeRow(over: Partial<StoredRow> = {}): StoredRow {
     first_seen: null,
     baseline_established_at: null,
     last_check_failed_at: null,
+    check_due_at: "2026-01-01 00:00:00",
+    check_attempts: 0,
+    bimi_first_seen_at: null,
     threat_level: null,
     ai_assessment: null,
     alert_id: null,
+    takedown_id: null,
     resolves_to: null,
     has_mx: null,
     has_web: null,
@@ -118,11 +136,11 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
           }
           throw new Error(`unexpected .first() for: ${sql}`);
         },
-        async run() {
+        async run(): Promise<{ meta: { changes: number } }> {
           if (sql.includes("SET registered = ?")) {
             // The per-check UPDATE. Bind order:
             // registered, aAnswered, ip, mxAnswered, hasMx,
-            // webAnswered, hasWeb, firstContactFlag, id.
+            // webAnswered, hasWeb, firstContactFlag, cadenceModifier, id.
             //
             // The three `CASE WHEN ? = 1 THEN ? ELSE <column> END` arms
             // are re-stated below, with the same caveat as the baseline
@@ -132,10 +150,10 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
             // in `test/lookalike-sql-statements.test.ts`.
             const [
               registered, aAnswered, ip, mxAnswered, hasMx,
-              webAnswered, hasWeb, firstContact, id,
+              webAnswered, hasWeb, firstContact, , id,
             ] = args as [
               number, number, string | null, number, number,
-              number, number, number, string,
+              number, number, number, string, string,
             ];
             const row = store.get(id);
             if (row) {
@@ -145,6 +163,12 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
               if (webAnswered === 1) row.has_web = hasWeb;
               row.last_checked = NOW;
               row.last_check_failed_at = null;
+              // Migration 0269: a successful observation resets the
+              // ladder and schedules the next check a cadence out. The
+              // exact stamp does not matter here — "not due any more" is
+              // the only property these assertions rest on.
+              row.check_attempts = 0;
+              row.check_due_at = LATER;
               // `CASE WHEN ? = 1 AND baseline_established_at IS NULL
               //   THEN datetime('now') ELSE <self> END`.
               //
@@ -161,29 +185,61 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow> }
               }
             }
           } else if (sql.includes("SET last_check_failed_at = datetime('now')")) {
-            // The F6 unresolved-check branch: cooldown only, NO
-            // registration state, and `last_checked` deliberately
-            // untouched so a never-observed row stays first contact.
-            const [id] = args as [string];
+            // The failed-check branch: the historical record, the
+            // attempt counter, and the ladder's next due stamp (NULL =
+            // PARK). NO registration state, and `last_checked`
+            // deliberately untouched.
+            const [nextDueAt, id] = args as [string | null, string];
             const row = store.get(id);
-            if (row) row.last_check_failed_at = NOW;
+            if (row) {
+              row.last_check_failed_at = NOW;
+              row.check_attempts += 1;
+              row.check_due_at = nextDueAt;
+            }
           } else if (sql.includes("SET first_seen = datetime('now')")) {
             const [id] = args as [string];
             const row = store.get(id);
             // `WHERE id = ? AND first_seen IS NULL` — same caveat as
             // above; the guard is pinned in the real-SQLite lane.
             if (row && row.first_seen === null) row.first_seen = NOW;
-          } else if (sql.includes("SET threat_level = ?")) {
-            const [level, assessment, id] = args as [string, string, string];
+          } else if (sql.includes("SET threat_level = CASE")) {
+            // The compositor's MONOTONIC persist. Bind order: newRank,
+            // newLevel, hasAssessment, assessment, id. Re-stated with
+            // the same caveat; the rank CASE and the assessment guard
+            // are executed against real SQLite in the sibling file.
+            const [rank, level, hasAssessment, assessment, id] =
+              args as [number, string, number, string | null, string];
             const row = store.get(id);
             if (row) {
-              row.threat_level = level;
-              row.ai_assessment = assessment;
+              const RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+              const stored = row.threat_level === null ? -1 : (RANK[row.threat_level] ?? 0);
+              if (rank >= stored) row.threat_level = level;
+              if (hasAssessment === 1) row.ai_assessment = assessment;
             }
+          } else if (sql.includes("SET bimi_first_seen_at = datetime('now')")) {
+            // The BEC lane's guarded claim. Reports 0 changes on an
+            // already-claimed row, which is what makes the lane
+            // file-once.
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row && row.bimi_first_seen_at === null) {
+              row.bimi_first_seen_at = NOW;
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          } else if (sql.includes("SET bimi_first_seen_at = NULL")) {
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row) row.bimi_first_seen_at = null;
           } else if (sql.includes("SET alert_id = ?")) {
             const [alertId, id] = args as [string, string];
             const row = store.get(id);
             if (row) row.alert_id = alertId;
+          } else if (sql.includes("UPDATE takedown_requests")) {
+            // The lapse branch's reuse of Sparrow's verification
+            // contract. No takedown store here — the statement itself is
+            // executed against real SQLite in the sibling file.
+            return { meta: { changes: 0 } };
           } else {
             throw new Error(`unexpected .run() for: ${sql}`);
           }
@@ -226,22 +282,25 @@ beforeEach(() => {
 
 // ─── Part 1 — first contact is baseline establishment ─────────────
 
-describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
+describe("checkLookalikeBatch — first contact (baseline_established_at IS NULL)", () => {
   it("resolving with NO signal: no Haiku call, no alert, no first_seen", async () => {
-    // The seeder-backlog shape: never checked, registered years ago,
-    // parked. 1,080-3,770 rows look exactly like this.
+    // The seeder-backlog shape: never looked at, registered years ago,
+    // parked. Thousands of rows look exactly like this.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true }));
     const { env, store } = makeEnv([makeRow()]);
 
     await checkLookalikeBatch(env);
 
     // THE cost control. Not a nicety: this is the branch that decides
-    // whether the seeder backlog costs ~3,700 Haiku calls or zero.
+    // whether the seeder backlog costs thousands of Haiku calls or zero.
     expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(createAlertSpy).not.toHaveBeenCalled();
     // ...and no inline page fetch either — the other budget this path
     // would otherwise starve.
     expect(pageAnalysisSpy).not.toHaveBeenCalled();
+    // ...and no BIMI lookup, because BIMI is a MAIL signal and this row
+    // has no MX. The lane's gate is `hasMx`, not "any baseline".
+    expect(checkBIMISpy).not.toHaveBeenCalled();
 
     const row = store.get("l1")!;
     // The DNS facts ARE recorded. Withholding the alert is not
@@ -255,6 +314,9 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
     expect(row.baseline_established_at).toBe(NOW);
     expect(row.first_seen).toBeNull();
     expect(row.alert_id).toBeNull();
+    // And it is scheduled rather than left permanently due.
+    expect(row.check_due_at).toBe(LATER);
+    expect(row.check_attempts).toBe(0);
   });
 
   it("mail AND web together IS a signal: full assessment runs and alerts", async () => {
@@ -285,6 +347,9 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
       { hasMx: false, hasWeb: false },
     ]) {
       vi.clearAllMocks();
+      checkBIMISpy.mockResolvedValue(false);
+      createAlertSpy.mockResolvedValue("alert_1");
+      analyzeWithHaikuSpy.mockResolvedValue(haikuSays("MEDIUM"));
       checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", ...infra }));
       const { env } = makeEnv([makeRow()]);
       await checkLookalikeBatch(env);
@@ -312,30 +377,74 @@ describe("checkLookalikeBatch — first contact (last_checked IS NULL)", () => {
 
 // ─── The boundary itself ──────────────────────────────────────────
 
-describe("checkLookalikeBatch — the first-contact boundary is last_checked, not registered", () => {
-  const observedAbsent = { last_checked: "2026-09-01 00:00:00", registered: 0 };
+describe("checkLookalikeBatch — the boundary is baseline_established_at", () => {
+  /**
+   * A row we HAVE observed, and observed to be absent.
+   *
+   * Carries `baseline_established_at` as well as `last_checked` because
+   * the DISCRIMINATOR is now the former (migration 0267, amended). The
+   * two used to be the same fact expressed in one column, which is why
+   * `last_checked` could be manipulated by a scheduling operation and
+   * silently reclassify the row.
+   */
+  const observedAbsent = {
+    last_checked: "2026-09-01 00:00:00",
+    baseline_established_at: "2026-09-01 00:00:00",
+    registered: 0,
+  };
 
-  it("a row we HAVE checked before takes the transition path, signal or not", async () => {
+  it("last_checked alone no longer makes a row a re-check", async () => {
+    // THE FLIP, stated as a test. A row with a `last_checked` but NO
+    // baseline is first contact — which is the state the "Scan now"
+    // handler's old `last_checked = NULL` reset used to FORGE in the
+    // opposite direction, and the state migration 0267's disambiguation
+    // UPDATE exists to prevent on the ~120 legacy rows.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true }));
+    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+
+    await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    // Baseline establishment, not an appearance: no `first_seen`, no
+    // Haiku, no alert.
+    expect(row.baseline_established_at).toBe(NOW);
+    expect(row.first_seen).toBeNull();
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("a BASELINED row takes the transition path and stamps a real first_seen", async () => {
     // Identical DNS result to the suppressed case above — no MX, web
-    // only. The ONLY difference is that `last_checked` is non-NULL, and
+    // only. The ONLY difference is that the row carries a baseline, and
     // that is enough to make this a transition we witnessed.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true }));
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     const { env, store } = makeEnv([makeRow(observedAbsent)]);
 
     await checkLookalikeBatch(env);
 
-    // Haiku runs: a domain that appeared while we were watching is a
-    // real event and worth a token.
-    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
-    expect(createAlertSpy).toHaveBeenCalledTimes(1);
     const row = store.get("l1")!;
     // first_seen stamped — this is the transition case...
     expect(row.first_seen).toBe(NOW);
-    // ...and the baseline column stays NULL: it is not first contact,
-    // and the CASE in the per-check UPDATE must not re-stamp it.
-    expect(row.baseline_established_at).toBeNull();
+    // ...and the baseline column is NOT re-stamped.
+    expect(row.baseline_established_at).toBe("2026-09-01 00:00:00");
+  });
+
+  it("a transition with neither mail nor web spends NO Haiku", async () => {
+    // A DELIBERATE NARROWING. Haiku used to run on EVERY observed
+    // 0 -> 1. It is now gated on mail+web (and on `ai_assessment IS
+    // NULL`) on every path. What is given up is a Haiku-only HIGH on a
+    // bare registration; what covers it instead is the deterministic
+    // page pass, which sees any row with a web server one pass later
+    // and can raise the alert itself.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
+    const { env, store } = makeEnv([makeRow(observedAbsent)]);
+
+    await checkLookalikeBatch(env);
+
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    // The transition is still RECORDED.
+    expect(store.get("l1")!.first_seen).toBe(NOW);
   });
 
   it("does not re-stamp baseline_established_at on a later check", async () => {
@@ -375,24 +484,307 @@ describe("checkLookalikeBatch — the first-contact boundary is last_checked, no
   });
 });
 
+// ─── Part 2 — the transitions the widened SELECT made visible ─────
+
+describe("checkLookalikeBatch — transition detection", () => {
+  /** A registered, resolving, web-only row we have observed before. */
+  const webOnly = {
+    last_checked: "2026-09-01 00:00:00",
+    baseline_established_at: "2026-09-01 00:00:00",
+    registered: 1,
+    resolves_to: "5.6.7.8",
+    has_mx: 0,
+    has_web: 1,
+    threat_level: "LOW",
+  };
+
+  it("an MX appearance that COMPLETES mail+web assesses and alerts, once", async () => {
+    // THE DETECTION HOLE THIS CLOSES. Before the widened SELECT the
+    // checker could only see `registered 0 -> 1`, so a row first
+    // observed as web-only could later acquire MX — becoming exactly the
+    // operational shape first contact alerts on — and the checker could
+    // never reach it again. The row would sit at LOW forever with no
+    // notification.
+    //
+    // A DELIBERATE DEPARTURE from a strict reading of "MX-alone and
+    // web-alone file no alert of their own": the stated reason for that
+    // rule is that MX alone is a registrar default and web alone a
+    // parking lander. A gain that COMPLETES the pair is neither. Bounded
+    // three ways — the pair must be complete, the row must carry no
+    // alert yet, and the composed level must clear the HIGH floor.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow(webOnly)]);
+
+    await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(row.has_mx).toBe(1);
+    // MEDIUM from Haiku + the mail-and-web boost = HIGH.
+    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
+    expect(row.threat_level).toBe("HIGH");
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(row.alert_id).toBe("alert_1");
+    // NOT a registration event — the domain did not appear, it gained a
+    // capability.
+    expect(row.first_seen).toBeNull();
+  });
+
+  it("an MX appearance that does NOT complete the pair files no alert", async () => {
+    // The case the "no alert of its own" rule is actually about: MX
+    // arriving on a row with no web server. Still re-opens the
+    // compositor and the BIMI lane; still files nothing.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }));
+    const { env, store } = makeEnv([makeRow({
+      ...webOnly, has_web: 0,
+    })]);
+
+    await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(row.has_mx).toBe(1);
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    // The BIMI lane DID run — that is the value of re-opening on an MX
+    // appearance.
+    expect(checkBIMISpy).toHaveBeenCalledWith("acm3.example");
+  });
+
+  it("an MX appearance does not re-alert a row that already has an alert", async () => {
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env } = makeEnv([makeRow({ ...webOnly, alert_id: "alert_old" })]);
+
+    await checkLookalikeBatch(env);
+
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("an answered lapse persists, does NOT downgrade threat_level, and files nothing", async () => {
+    // `agents/sparrow.ts` reads `threat_level` for takedown eligibility
+    // and priority, so downgrading a lapsed squat would silently
+    // de-queue it. A squat that lapsed is still evidence of who targeted
+    // this brand.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: false, resolved: true, hasMx: false, hasWeb: false }));
+    const { env, store } = makeEnv([makeRow({
+      ...webOnly, threat_level: "CRITICAL", has_mx: 1,
+    })]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(row.registered).toBe(0);
+    expect(row.threat_level).toBe("CRITICAL");
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(summary.registrations_lost).toBe(1);
+  });
+
+  it("an answered mail/web loss persists only", async () => {
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
+    const { env, store } = makeEnv([makeRow({ ...webOnly, has_mx: 1 })]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(row.has_mx).toBe(0);
+    expect(row.has_web).toBe(0);
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(summary.mail_or_web_lost).toBe(1);
+  });
+
+  it("a resolves_to change is recorded, never a trigger", async () => {
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "9.9.9.9", hasMx: false, hasWeb: true }));
+    const { env, store } = makeEnv([makeRow(webOnly)]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    expect(store.get("l1")!.resolves_to).toBe("9.9.9.9");
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    expect(summary.mx_gained + summary.web_gained + summary.new_registrations).toBe(0);
+  });
+
+  it("an UNANSWERED probe cannot mint a transition", async () => {
+    // The precondition `classifyLookalikeTransitions` documents. A
+    // three-second MX timeout reports `hasMx: false`, and reading that
+    // as a loss is migration 0268's defect generalised from `registered`
+    // to every column.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({
+      registered: true, resolved: true, ip: "5.6.7.8",
+      hasMx: false, mxAnswered: false, hasWeb: false, webAnswered: false,
+    }));
+    const { env, store } = makeEnv([makeRow({ ...webOnly, has_mx: 1 })]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    // Stored values preserved...
+    expect(store.get("l1")!.has_mx).toBe(1);
+    expect(store.get("l1")!.has_web).toBe(1);
+    // ...and no loss reported.
+    expect(summary.mail_or_web_lost).toBe(0);
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("measures the mail+web share of the registered rows it observed", async () => {
+    // `HAIKU_CALLS_PER_RUN` is sized against this ratio and nothing used
+    // to record it — the only number available was a one-off manual
+    // query (26 of 42 registered rows, 62%).
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env } = makeEnv([makeRow({ ...webOnly, ai_assessment: "already assessed" })]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    expect(summary.observed_registered).toBe(1);
+    expect(summary.observed_mail_and_web).toBe(1);
+    expect(summary.observed_mx_only).toBe(0);
+    expect(summary.observed_web_only).toBe(0);
+  });
+});
+
+// ─── Part 2b — re-entrancy must not undo the Haiku veto ───────────
+
+describe("checkLookalikeBatch — the Haiku veto survives re-entrancy", () => {
+  /**
+   * A row the model deliberately rated LOW, with mail AND web present.
+   *
+   * The user was asked whether a Haiku LOW may veto the deterministic
+   * mail+web signal and chose to leave it as-is, so there is NO
+   * `max(deterministic, ai)`. Under the old one-shot code that choice
+   * was safe by accident — the compositor could not run twice. Making it
+   * re-entrant is what puts it at risk.
+   */
+  const vetoedLow = {
+    last_checked: "2026-09-01 00:00:00",
+    baseline_established_at: "2026-09-01 00:00:00",
+    registered: 1,
+    resolves_to: "5.6.7.8",
+    has_mx: 1,
+    has_web: 1,
+    threat_level: "LOW",
+    ai_assessment: "benign fan site",
+  };
+
+  it("a re-entrant pass on a vetoed LOW row does not drift upward", async () => {
+    // Exactly what the pass computes: no new Haiku call (the gate is
+    // `ai_assessment IS NULL`), so the compositor's base is the STORED
+    // level — LOW — rather than a fresh `'MEDIUM'`. The mail+web boost
+    // is MEDIUM-only, so it does not fire. Neither does the BIMI boost.
+    // The monotonic persist writes nothing lower and nothing higher.
+    //
+    // Had the base been re-seeded at MEDIUM (which is what a naive
+    // extraction of the old straight-line code would do), the mail+web
+    // boost WOULD fire and the row would silently reach HIGH on a pass
+    // that learned nothing new about it.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    // A fresh capability appearance, so the compositor definitely runs.
+    const { env, store } = makeEnv([makeRow({ ...vetoedLow, has_mx: 0 })]);
+
+    await checkLookalikeBatch(env);
+
+    const row = store.get("l1")!;
+    expect(analyzeWithHaikuSpy, "once per row per LIFETIME").not.toHaveBeenCalled();
+    expect(row.threat_level).toBe("LOW");
+    expect(row.ai_assessment).toBe("benign fan site");
+    // ...and therefore no alert: LOW is below the floor.
+    expect(createAlertSpy.mock.calls.map((c) => (c[1] as { alertType: string }).alertType))
+      .toEqual(["typosquat_bimi"]);
+  });
+
+  it("a page escalation CAN still raise a vetoed row — it is deterministic, not AI", async () => {
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({
+      result: { ok: true },
+      phishing: { score: 95, credentialHarvest: true, signals: ["credential_form_off_domain"] },
+    });
+    const { env, store } = makeEnv([makeRow({ ...vetoedLow, has_mx: 0 })]);
+
+    await checkLookalikeBatch(env);
+
+    expect(store.get("l1")!.threat_level).toBe("CRITICAL");
+  });
+
+  it("a throttled or failed Haiku call does NOT blank a stored assessment", async () => {
+    // The second live bug re-entrancy created. `ai_assessment` was
+    // written unconditionally from a variable initialised `''`, and
+    // `agents/sparrow.ts` embeds that text in the takedown evidence
+    // packet.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    analyzeWithHaikuSpy.mockRejectedValue(new Error("gateway 529"));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    // `ai_assessment` NULL so the call is attempted, but a stored level
+    // the failed call must not undercut.
+    const { env, store } = makeEnv([makeRow({
+      ...vetoedLow, has_mx: 0, ai_assessment: null, threat_level: "CRITICAL",
+    })]);
+
+    await checkLookalikeBatch(env);
+
+    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
+    const row = store.get("l1")!;
+    // The failed call produced no text, so nothing was written...
+    expect(row.ai_assessment).toBeNull();
+    // ...and the MEDIUM fallback did not drag CRITICAL down.
+    expect(row.threat_level).toBe("CRITICAL");
+  });
+
+  it("the per-run Haiku cap defers rather than drops", async () => {
+    // With AI metering dead this cap is the only real cost bound, so a
+    // capped row must stay eligible: `ai_assessment` is left NULL, which
+    // is the gate's own predicate.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const rows = Array.from({ length: 5 }, (_, i) => makeRow({
+      id: `l${i}`,
+      domain: `acm3-${i}.example`,
+      last_checked: "2026-09-01 00:00:00",
+      baseline_established_at: "2026-09-01 00:00:00",
+      registered: 1, resolves_to: "5.6.7.8", has_mx: 0, has_web: 1,
+    }));
+    const { env, store } = makeEnv(rows);
+
+    // `SCAN_NOW_CHECK_LIMITS.haikuCalls` is 3 — the smallest cap in the
+    // codebase, and the cheapest way to drive this.
+    const summary = await checkLookalikeBatchForBrand(env, "b1");
+
+    expect(summary.haiku_calls).toBe(3);
+    expect(summary.haiku_cap_hit).toBe(true);
+    const unassessed = rows.filter((r) => store.get(r.id)!.ai_assessment === null);
+    expect(unassessed).toHaveLength(2);
+  });
+});
+
 // ─── Part 3 — the severity floor, in the checker ──────────────────
 
 describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
-  it("withholds a MEDIUM alert on a genuine transition, but persists everything else", async () => {
-    // THE BEHAVIOUR CHANGE. Before the floor this produced a MEDIUM
-    // `lookalike_domain_active` alert that no triage rule could ever
-    // clear. It now produces a fully-populated row and no alert.
-    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("MEDIUM"));
-    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+  const observed = {
+    last_checked: "2026-09-01 00:00:00",
+    baseline_established_at: "2026-09-01 00:00:00",
+  };
+
+  it("withholds a LOW alert on a genuine transition, but persists everything else", async () => {
+    // THE BEHAVIOUR CHANGE. Before the floor this produced an alert that
+    // no triage rule could ever clear. It now produces a fully-populated
+    // row and no alert.
+    //
+    // LOW here is the Haiku veto standing against the mail+web signal,
+    // which is also the only way the checker reaches a sub-HIGH level on
+    // a fresh assessment at all: AI now runs ONLY when mail+web is
+    // present, and mail+web lifts a MEDIUM to HIGH.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 
     expect(createAlertSpy).not.toHaveBeenCalled();
     const row = store.get("l1")!;
     // The data is the deliverable; the alert is the notification.
-    expect(row.threat_level).toBe("MEDIUM");
-    expect(row.ai_assessment).toBe("assessed MEDIUM");
+    expect(row.threat_level).toBe("LOW");
+    expect(row.ai_assessment).toBe("assessed LOW");
     expect(row.first_seen).toBe(NOW);
     // And critically: alert_id stays NULL, which is exactly the state
     // `analyzeLookalikePages`' own alert path keys on. A withheld row is
@@ -400,21 +792,26 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     expect(row.alert_id).toBeNull();
   });
 
-  it("withholds LOW too", async () => {
-    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
-    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+  it("withholds a stored MEDIUM carried into a re-entrant pass", async () => {
+    // The other way a sub-HIGH level reaches the floor now: no new AI
+    // call (the row is already assessed), so the compositor's base is
+    // the STORED level, and a mail-only transition cannot lift it.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }));
+    const { env, store } = makeEnv([makeRow({
+      ...observed, threat_level: "MEDIUM", ai_assessment: "assessed MEDIUM",
+    })]);
 
     await checkLookalikeBatch(env);
 
     expect(createAlertSpy).not.toHaveBeenCalled();
-    expect(store.get("l1")!.threat_level).toBe("LOW");
+    expect(store.get("l1")!.threat_level).toBe("MEDIUM");
   });
 
   it("lets CRITICAL through", async () => {
-    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("CRITICAL"));
-    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 
@@ -427,10 +824,11 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     // row does NOT get the BIMI boost (that boost is MEDIUM-only), so an
     // early return on the floor would have swallowed a fixed-HIGH alert
     // about the single most damning email signal this scanner finds.
-    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
     checkBIMISpy.mockResolvedValue(true);
-    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+    const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 
@@ -443,12 +841,13 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
 
   it("does not write alert_id when createAlert declines (NX2 tier gate)", async () => {
     // `createAlert` returns null for tier='tracked'. The link UPDATE is
-    // now guarded on a non-null id, so the column stays NULL rather than
-    // being overwritten with one — which is what makes "alert_id IS NULL"
-    // a trustworthy precondition for the page-analysis producer.
+    // guarded on a non-null id, so the column stays NULL rather than
+    // being overwritten with one — which is what makes "alert_id IS
+    // NULL" a trustworthy precondition for the page-analysis producer.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     createAlertSpy.mockResolvedValue(null);
-    const { env, store } = makeEnv([makeRow({ last_checked: "2026-09-01 00:00:00" })]);
+    const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 

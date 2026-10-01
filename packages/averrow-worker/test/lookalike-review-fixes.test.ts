@@ -50,7 +50,8 @@ vi.mock("../src/scanners/lookalike-page-analysis", async (importOriginal) => {
   return { ...actual, runPageAnalysisForDomain: pageAnalysisSpy };
 });
 
-const { checkLookalikeBatch } = await import("../src/scanners/lookalike-domains");
+const { checkLookalikeBatch, checkLookalikeBatchForBrand, generateAndStoreLookalikes } =
+  await import("../src/scanners/lookalike-domains");
 const { handleScanLookalikes } = await import("../src/handlers/lookalikeDomains");
 
 // ─── A minimal D1 shim over node:sqlite ───────────────────────────
@@ -85,6 +86,15 @@ const DDL = `
     canonical_domain TEXT,
     tier TEXT
   );
+  CREATE TABLE takedown_requests (
+    id TEXT PRIMARY KEY,
+    status TEXT,
+    target_type TEXT,
+    target_value TEXT,
+    verification_status TEXT,
+    last_verified_at TEXT,
+    updated_at TEXT
+  );
 `;
 
 interface Harness {
@@ -105,20 +115,39 @@ function harness(): Harness {
      VALUES ('b1', 'Acme', 'acme.example', 'monitored')`,
   ).run();
 
+  type Bound = { sql: string; params: unknown[] };
+
   const DB = {
     prepare(sql: string) {
-      const wrap = (params: unknown[]) => ({
-        async all<T>() {
-          return { results: db.prepare(sql).all(...params) as T[], meta: {} };
-        },
-        async first<T>() {
-          return (db.prepare(sql).get(...params) ?? null) as T | null;
-        },
-        async run() {
-          return { meta: { changes: db.prepare(sql).run(...params).changes } };
-        },
-      });
-      return { ...wrap([]), bind: (...p: unknown[]) => wrap(p) };
+      const wrap = (params: unknown[]) => {
+        const self = {
+          sql,
+          params,
+          async all<T>() {
+            return { results: db.prepare(sql).all(...params) as T[], meta: {} };
+          },
+          async first<T>() {
+            return (db.prepare(sql).get(...params) ?? null) as T | null;
+          },
+          async run() {
+            return { meta: { changes: db.prepare(sql).run(...params).changes } };
+          },
+        };
+        return self;
+      };
+      return {
+        ...wrap([]),
+        bind: (...p: unknown[]) => wrap(p),
+      };
+    },
+    // `generateAndStoreLookalikes` inserts through `DB.batch`. Executed
+    // sequentially here — D1's batch is a transaction, which `node:sqlite`
+    // gives us by default for a statement run, and nothing under test
+    // depends on the atomicity.
+    async batch(stmts: Bound[]) {
+      return stmts.map((st) => ({
+        meta: { changes: db.prepare(st.sql).run(...st.params).changes },
+      }));
     },
   };
 
@@ -142,6 +171,13 @@ function harness(): Harness {
         last_check_failed_at: null,
         threat_level: null,
         alert_id: null,
+        ai_assessment: null,
+        // Migration 0269. DUE by default, so a row seeded here behaves
+        // like one the seeder inserted (`check_due_at = datetime('now')`).
+        // A test that wants a deferred or PARKED row says so.
+        check_due_at: "2026-01-01 00:00:00",
+        check_attempts: 0,
+        bimi_first_seen_at: null,
         ...over,
       };
       const cols = Object.keys(row);
@@ -198,6 +234,26 @@ function haikuSays(level: string) {
 
 const STALE = "2026-09-01 00:00:00";
 
+/**
+ * The RE-CHECK cohort marker.
+ *
+ * The cohort discriminator is `baseline_established_at` (migration 0267,
+ * amended) and NOT `last_checked`, which now carries exactly one job:
+ * "when did we last successfully observe this row". These tests used to
+ * seed `last_checked: STALE` to mean BOTH "already observed" and "due",
+ * which is precisely the conflation the change removed — so the two
+ * facts are now stated separately. `check_due_at` defaults to due in the
+ * harness, so this says only the first.
+ */
+const BASELINED = { baseline_established_at: STALE, last_checked: STALE } as const;
+
+/** Re-admit a row the backoff ladder deferred, so the next tick sees it. */
+async function makeDue(h: Harness, id: string): Promise<void> {
+  await h.env.DB.prepare(
+    `UPDATE lookalike_domains SET check_due_at = datetime('now', '-1 hour') WHERE id = ?`,
+  ).bind(id).run();
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   checkBIMISpy.mockResolvedValue(false);
@@ -232,7 +288,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
     const h = harness();
     checkDomainSpy.mockResolvedValue(answer());
     const firstIds = Array.from({ length: 120 }, () => h.seed());
-    const recheckIds = Array.from({ length: 40 }, () => h.seed({ last_checked: STALE }));
+    const recheckIds = Array.from({ length: 40 }, () => h.seed(BASELINED));
 
     await checkLookalikeBatch(h.env);
 
@@ -250,7 +306,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
     const h = harness();
     checkDomainSpy.mockResolvedValue(answer());
     const firstIds = Array.from({ length: 120 }, () => h.seed());
-    const recheckIds = Array.from({ length: 5 }, () => h.seed({ last_checked: STALE }));
+    const recheckIds = Array.from({ length: 5 }, () => h.seed(BASELINED));
 
     await checkLookalikeBatch(h.env);
 
@@ -269,7 +325,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
     // known population. The spill is what prevents that.
     const h = harness();
     checkDomainSpy.mockResolvedValue(answer());
-    const recheckIds = Array.from({ length: 80 }, () => h.seed({ last_checked: STALE }));
+    const recheckIds = Array.from({ length: 80 }, () => h.seed(BASELINED));
 
     await checkLookalikeBatch(h.env);
 
@@ -282,7 +338,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
     const h = harness();
     checkDomainSpy.mockResolvedValue(answer());
     const firstIds = Array.from({ length: 200 }, () => h.seed());
-    const recheckIds = Array.from({ length: 200 }, () => h.seed({ last_checked: STALE }));
+    const recheckIds = Array.from({ length: 200 }, () => h.seed(BASELINED));
 
     await checkLookalikeBatch(h.env);
 
@@ -300,7 +356,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
     checkDomainSpy.mockResolvedValue(answer());
     // 30 known rows, dated so the ordering is unambiguous.
     const recheckIds = Array.from({ length: 30 }, (_, i) =>
-      h.seed({ last_checked: `2026-08-${String(i + 1).padStart(2, "0")} 00:00:00` }),
+      h.seed({ ...BASELINED, check_due_at: `2026-08-${String(i + 1).padStart(2, "0")} 00:00:00` }),
     );
     Array.from({ length: 60 }, () => h.seed());
 
@@ -313,28 +369,29 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — first-contact / re-check 
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// B2 — "Scan now" must not forge first contact
+// B2 — "Scan now" is a PRIORITY ENQUEUE, brand-scoped and bounded
 // ═══════════════════════════════════════════════════════════════════
 
-describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan reset path", () => {
+describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => {
   const ctx = { userId: "u1", orgId: null, role: "super_admin" } as unknown as AuthContext;
   const req = () => new Request("https://averrow.test/api/lookalikes/b1/scan", { method: "POST" });
 
   it("a genuine registration on a RESCANNED brand is still a registration, not a baseline", async () => {
-    // Before the fix the handler wrote `last_checked = NULL`, so
-    // `firstContact` came back true for a row we had observed as
-    // unregistered the day before. The 0 -> 1 that followed was
-    // reclassified as BASELINE: no `first_seen`, no Haiku, no alert
-    // unless MX and web happened to coincide — and
-    // `baseline_established_at` was re-stamped, contradicting both the
-    // scanner's own comment and migration 0267.
+    // The endpoint's two earlier forms both wrote `last_checked`: first
+    // NULL (which CLAIMED we had never looked, so the 0 -> 1 that
+    // followed was reclassified as BASELINE — no `first_seen`, no Haiku,
+    // no alert unless MX and web happened to coincide, and 0267's column
+    // re-stamped), then a `CASE` working around that. Scheduling has its
+    // own column now, so there is nothing left to work around.
     const h = harness();
     const id = h.seed({
       registered: 0,
       last_checked: "2026-09-29 12:00:00",
       baseline_established_at: "2026-06-01 00:00:00",
     });
-    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
 
     const res = await handleScanLookalikes(req(), h.env, "b1", ctx);
@@ -347,13 +404,54 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan reset path", 
     expect(row.threat_level).toBe("HIGH");
     // And 0267's column is untouched — single-write, structurally.
     expect(row.baseline_established_at).toBe("2026-06-01 00:00:00");
-    expect(row.last_checked).not.toBeNull();
   });
 
-  it("leaves a never-checked row at first contact — the mirror-image bug", async () => {
-    // The stale stamp must NOT be written over a NULL. Doing so would
-    // demote a real first contact to a fake re-check, which is the one
-    // state that CAN mint a false `first_seen` for a years-old squat.
+  it("does NOT touch last_checked — first contact is unforgeable from here", async () => {
+    // The structural half of the fix. The handler's UPDATE no longer
+    // mentions the discriminator at all, so no sequence of rescans can
+    // reclassify a row. Both shapes are checked: an already-observed row
+    // keeps its record until the CHECK advances it, and a never-observed
+    // one stays never-observed.
+    const h = harness();
+    const observed = h.seed({
+      last_checked: "2026-09-29 12:00:00",
+      baseline_established_at: "2026-06-01 00:00:00",
+    });
+    const never = h.seed();
+    // No check runs: an empty due set is impossible here (the enqueue
+    // makes everything due), so suppress the probe instead.
+    checkDomainSpy.mockResolvedValue(NO_ANSWER);
+
+    await handleScanLookalikes(req(), h.env, "b1", ctx);
+
+    expect(h.row(observed).last_checked).toBe("2026-09-29 12:00:00");
+    expect(h.row(observed).baseline_established_at).toBe("2026-06-01 00:00:00");
+    expect(h.row(never).last_checked).toBeNull();
+    expect(h.row(never).baseline_established_at).toBeNull();
+  });
+
+  it("a BARE registration spends no Haiku — the mail+web gate applies to transitions too", async () => {
+    // A DELIBERATE NARROWING in this change, pinned so it is not
+    // mistaken for a regression. Haiku used to run on EVERY observed
+    // 0 -> 1 regardless of infrastructure. It is now gated on mail+web
+    // (and on `ai_assessment IS NULL`) on every path, including this
+    // one. What is given up is a Haiku-only HIGH on a registration with
+    // neither mail nor web; what covers that case instead is the
+    // deterministic page pass, which sees any row with a web server one
+    // pass later and can raise the alert itself.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 0 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+
+    await checkLookalikeBatch(h.env);
+
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    // The transition itself is still RECORDED — withholding the token
+    // spend is not withholding the finding.
+    expect(h.row(id).first_seen).not.toBeNull();
+  });
+
+  it("leaves a never-checked row at first contact", async () => {
     const h = harness();
     const id = h.seed();
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasWeb: true }));
@@ -370,18 +468,86 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan reset path", 
     expect(row.registered).toBe(1);
   });
 
-  it("reports the brand's rows as queued and clears their failure cooldown", async () => {
+  it("enqueues the brand's rows at the front and reports both counts", async () => {
     const h = harness();
-    h.seed({ last_checked: "2026-09-29 12:00:00", last_check_failed_at: "2026-09-30 11:00:00" });
+    h.seed({
+      last_checked: "2026-09-29 12:00:00",
+      baseline_established_at: "2026-09-29 12:00:00",
+      last_check_failed_at: "2026-09-30 11:00:00",
+    });
     h.seed({ last_check_failed_at: "2026-09-30 11:00:00" });
     checkDomainSpy.mockResolvedValue(answer());
 
     const res = await handleScanLookalikes(req(), h.env, "b1", ctx);
-    const body = await res.json() as { data: { domains_queued: number } };
+    const body = await res.json() as {
+      data: { domains_queued: number; domains_checked_inline: number };
+    };
     expect(body.data.domains_queued).toBe(2);
     // Both were checked in the same call — an operator asking for a scan
-    // should not wait out a DNS-failure cooldown.
+    // should not wait out a DNS-failure backoff.
+    expect(body.data.domains_checked_inline).toBe(2);
     expect(h.checked().length).toBe(2);
+  });
+
+  it("the inline run is BRAND-SCOPED — it no longer checks other brands' rows", async () => {
+    // THE AMPLIFIER THIS REMOVES. The handler used to `await
+    // checkLookalikeBatch(env)`, the GLOBAL batch: up to 100 DoH
+    // queries, 50 HEAD probes, 50 Haiku calls and 10 page fetches per
+    // button press, against rows belonging to brands the caller never
+    // asked about, with no rate limit of any kind in front of it.
+    const h = harness();
+    await h.env.DB.prepare(
+      `INSERT INTO brands (id, name, canonical_domain, tier)
+       VALUES ('b2', 'Other', 'other.example', 'monitored')`,
+    ).run();
+    const mine = h.seed();
+    const theirs = h.seed({ brand_id: "b2" });
+    checkDomainSpy.mockResolvedValue(answer());
+
+    await handleScanLookalikes(req(), h.env, "b1", ctx);
+
+    expect(h.checked()).toEqual([h.row(mine).domain]);
+    expect(h.checked()).not.toContain(h.row(theirs).domain);
+    // The other brand's row is untouched — not even its schedule.
+    expect(h.row(theirs).check_due_at).toBe("2026-01-01 00:00:00");
+  });
+
+  it("the inline run is BOUNDED — a 40-row brand does not spend 40 checks in the request", async () => {
+    // `SCAN_NOW_CHECK_LIMITS.rows` is 10. The remainder is not dropped:
+    // every row of the brand now carries `check_due_at =
+    // '1970-01-01 00:00:00'`, which beats every other row in its cohort
+    // unconditionally, so the cron drains them from the front.
+    const h = harness();
+    const ids = Array.from({ length: 40 }, () => h.seed());
+    checkDomainSpy.mockResolvedValue(answer());
+
+    const res = await handleScanLookalikes(req(), h.env, "b1", ctx);
+    const body = await res.json() as {
+      data: { domains_queued: number; domains_checked_inline: number };
+    };
+
+    expect(body.data.domains_queued).toBe(40);
+    expect(body.data.domains_checked_inline).toBe(10);
+    expect(h.checked()).toHaveLength(10);
+    // The un-checked remainder is still enqueued ahead of everything.
+    const stillQueued = ids.filter((id) => h.row(id).check_due_at === "1970-01-01 00:00:00");
+    expect(stillQueued).toHaveLength(30);
+  });
+
+  it("REVIVES a parked row", async () => {
+    // A parked row is unreachable by the cohort selects, so without the
+    // `check_attempts = 0` + epoch write it would stay unreachable
+    // forever. An operator asking for a scan is exactly the signal that
+    // the ladder's give-up verdict should be retried.
+    const h = harness();
+    const id = h.seed({ check_due_at: null, check_attempts: 9 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+
+    await handleScanLookalikes(req(), h.env, "b1", ctx);
+
+    expect(h.checked()).toEqual([h.row(id).domain]);
+    expect(h.row(id).check_attempts).toBe(0);
+    expect(h.row(id).check_due_at).not.toBeNull();
   });
 });
 
@@ -502,12 +668,11 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(createAlertSpy).not.toHaveBeenCalled();
 
-    // ── Tick 2: the resolver recovers. Expire the failure cooldown so
-    // the row is due (the cooldown is what stops a dead resolver from
-    // head-of-line blocking the batch every tick).
-    await h.env.DB.prepare(
-      `UPDATE lookalike_domains SET last_check_failed_at = datetime('now', '-25 hours') WHERE id = ?`,
-    ).bind(id).run();
+    // ── Tick 2: the resolver recovers. Re-admit the row, because the
+    // backoff ladder deferred it (that deferral is what stops a dead
+    // resolver from head-of-line blocking the batch every tick).
+    expect(row.check_attempts).toBe(1);
+    await makeDue(h, id);
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     await checkLookalikeBatch(h.env);
 
@@ -536,9 +701,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     expect(row.last_checked).toBeNull();
     expect(row.baseline_established_at).toBeNull();
 
-    await h.env.DB.prepare(
-      `UPDATE lookalike_domains SET last_check_failed_at = datetime('now', '-25 hours') WHERE id = ?`,
-    ).bind(id).run();
+    await makeDue(h, id);
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasWeb: true }));
     await checkLookalikeBatch(h.env);
 
@@ -551,10 +714,10 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     expect(createAlertSpy).not.toHaveBeenCalled();
   });
 
-  it("a cooling-down row is not re-selected, so a dead resolver cannot block the batch", async () => {
+  it("a backed-off row is not re-selected, so a dead resolver cannot block the batch", async () => {
     const h = harness();
-    const dead = h.seed({ last_checked: STALE });
-    const live = h.seed({ last_checked: STALE });
+    const dead = h.seed(BASELINED);
+    const live = h.seed(BASELINED);
 
     checkDomainSpy.mockResolvedValue(NO_ANSWER);
     await checkLookalikeBatch(h.env);
@@ -563,10 +726,65 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     vi.clearAllMocks();
     checkDomainSpy.mockResolvedValue(answer());
     await checkLookalikeBatch(h.env);
-    // Both are inside the 24h failure cooldown now.
+    // Both sit behind the ladder's first step now.
     expect(h.checked()).not.toContain(h.row(dead).domain);
     expect(h.checked()).not.toContain(h.row(live).domain);
     expect(h.checked().length).toBe(0);
+  });
+
+  it("the ladder escalates, and PARKS a row that never answers", async () => {
+    // The sticky-row fix. The old flat 24 h cooldown re-admitted a row
+    // whose resolver always times out EVERY DAY, FOREVER, at the head of
+    // a cohort it could never leave. The ladder climbs (1 h / 4 h / 12 h
+    // / 24 h / 48 h) and then parks: `check_due_at = NULL` drops the row
+    // out of both partial cohort indexes, so a permanently-dead row
+    // costs zero reads STRUCTURALLY rather than being deprioritized.
+    const h = harness();
+    const id = h.seed(BASELINED);
+    checkDomainSpy.mockResolvedValue(NO_ANSWER);
+
+    // The ladder's terminal is 8 consecutive failures, so the 9th
+    // attempt is the one that parks. Each tick needs the row re-admitted
+    // because the previous tick deferred it — which is itself the
+    // property under test.
+    let summary = await checkLookalikeBatch(h.env);
+    for (let i = 2; i <= 9; i += 1) {
+      expect(h.row(id).check_attempts, `after attempt ${i - 1}`).toBe(i - 1);
+      // Up to the terminal step the row always has a future due time.
+      expect(h.row(id).check_due_at, `after attempt ${i - 1}`).not.toBeNull();
+      await makeDue(h, id);
+      summary = await checkLookalikeBatch(h.env);
+    }
+
+    const row = h.row(id);
+    expect(row.check_attempts).toBe(9);
+    expect(row.check_due_at, "the 9th failure parks the row").toBeNull();
+    expect(summary.rows_parked).toBe(1);
+
+    // And a parked row is UNREACHABLE — not merely last in line.
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+    const after = await checkLookalikeBatch(h.env);
+    expect(after.checked).toBe(0);
+    expect(h.checked()).toHaveLength(0);
+  });
+
+  it("a successful check UN-PARKS the row and resets the ladder", async () => {
+    const h = harness();
+    const id = h.seed({ ...BASELINED, check_due_at: null, check_attempts: 9 });
+    // Only an operator rescan can reach a parked row, so reach it the
+    // way that endpoint does.
+    await h.env.DB.prepare(
+      `UPDATE lookalike_domains SET check_due_at = '1970-01-01 00:00:00', check_attempts = 0 WHERE id = ?`,
+    ).bind(id).run();
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
+
+    await checkLookalikeBatch(h.env);
+
+    const row = h.row(id);
+    expect(row.check_attempts).toBe(0);
+    expect(row.check_due_at).not.toBeNull();
+    expect(row.check_due_at).not.toBe("1970-01-01 00:00:00");
   });
 });
 
@@ -668,8 +886,8 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     // re-selected the same set and hit the same row again. A permanent
     // tick killer at 56,010 rows.
     const h = harness();
-    const bad = h.seed({ last_checked: STALE, registered: 0 });
-    const good = h.seed({ last_checked: STALE, registered: 0 });
+    const bad = h.seed({ ...BASELINED, registered: 0 });
+    const good = h.seed({ ...BASELINED, registered: 0 });
 
     checkDomainSpy.mockResolvedValue(
       answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
@@ -698,7 +916,7 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
 
   it("the cooled-down bad row is not re-selected on the next tick", async () => {
     const h = harness();
-    const bad = h.seed({ last_checked: STALE, registered: 0 });
+    const bad = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     createAlertSpy.mockRejectedValue(new Error("boom"));
@@ -713,24 +931,31 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     expect(second.checked).toBe(0);
   });
 
-  it("the TAIL typosquat_bimi alert throwing is isolated too", async () => {
-    // The other unguarded await, and the more interesting one: the
-    // full-assessment path's `fileBimiAlert` sits at the very END of the
-    // row body, AFTER the primary alert has been filed and linked. A
-    // throw there used to discard every remaining row in the batch while
-    // this row's own work was already complete — so the tick lost
-    // DIFFERENT rows than the one that failed, and none of them were
-    // stamped.
+  it("a typosquat_bimi alert that throws costs the row NOTHING — and releases its claim", async () => {
+    // This used to be the second unguarded await: `fileBimiAlert` sat at
+    // the very END of the row body, AFTER the primary alert had been
+    // filed and linked, so a throw there discarded every REMAINING row
+    // in the batch while this row's own work was already complete. The
+    // tick therefore lost DIFFERENT rows than the one that failed, and
+    // none of them were stamped. Per-row isolation downgraded that from
+    // "tick killer" to "one counted row error".
     //
-    // (The mail-only lane's BIMI lookup and the MEDIUM-boost lookup were
-    // both already try/caught. This one was not.)
+    // Making the BEC lane RECURRING improves on it again, and in a way
+    // worth pinning rather than inferring. The lane runs BEFORE the
+    // compositor (its answer feeds the MEDIUM boost) and owns its own
+    // try/catch, so a thrown `createAlert` here is no longer a row
+    // error at all: the row goes on to complete its full assessment, and
+    // the lane RELEASES its `bimi_first_seen_at` claim so the finding is
+    // retried on the next pass instead of being marked recorded with no
+    // alert anywhere.
     const h = harness();
-    const id = h.seed({ last_checked: STALE, registered: 0 });
-    const other = h.seed({ last_checked: STALE, registered: 0 });
+    const id = h.seed({ ...BASELINED, registered: 0 });
+    const other = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
     analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     const badDomain = h.row(id).domain as string;
-    // BIMI is present on the bad row only, so only it reaches the tail.
+    // BIMI is present on the bad row only, so only it reaches the lane's
+    // alert path.
     checkBIMISpy.mockImplementation(async (domain: string) => domain === badDomain);
     createAlertSpy.mockImplementation(async (_db: unknown, p: { alertType: string; sourceId?: string }) => {
       if (p.alertType === "typosquat_bimi") throw new Error("alerts insert failed");
@@ -740,17 +965,339 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     const summary = await checkLookalikeBatch(h.env);
 
     expect(summary.checked).toBe(2);
-    // EXACTLY one row error — the sibling row was unaffected, which is
-    // the whole property.
-    expect(summary.row_errors).toBe(1);
-    // The unaffected row completed end to end...
+    // NOT a row error any more — the lane contained it.
+    expect(summary.row_errors).toBe(0);
+    expect(summary.bimi_alerts).toBe(0);
+    // The sibling row completed end to end, which was the original
+    // property...
     expect(h.row(other).alert_id).toBe("alert_1");
     expect(h.row(other).threat_level).toBe("HIGH");
-    // ...and the thrower's work up to the throw is still persisted (the
-    // primary alert WAS filed and linked), with a cooldown stamped so it
-    // is not re-selected immediately.
+    // ...and so did the row whose BIMI alert threw.
     expect(h.row(id).threat_level).toBe("HIGH");
     expect(h.row(id).alert_id).toBe("alert_1");
-    expect(h.row(id).last_check_failed_at).not.toBeNull();
+    // THE CLAIM IS RELEASED. Without this the row would read as "BIMI
+    // recorded" with no alert in existence, and the lane's eligibility
+    // predicate (`bimi_first_seen_at IS NULL`) would never offer it
+    // again — a permanently lost finding, silently.
+    expect(h.row(id).bimi_first_seen_at).toBeNull();
+    // ...so the very next pass retries it, and succeeds.
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    createAlertSpy.mockResolvedValue("alert_2");
+    await makeDue(h, id);
+    const retry = await checkLookalikeBatch(h.env);
+    expect(retry.bimi_alerts).toBe(1);
+    expect(h.row(id).bimi_first_seen_at).not.toBeNull();
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // The recurring BEC lane
+  // ═════════════════════════════════════════════════════════════════
+
+  it("re-checks BIMI on a row baselined months ago — the lane is RECURRING", async () => {
+    // THE BLIND SPOT THIS CLOSES. The BIMI check used to be reachable
+    // exactly once, on first contact, so a squat that published a BIMI
+    // record a month after we baselined it was invisible FOREVER — and
+    // `analyzeLookalikePages` cannot see the shape either, because it
+    // requires `has_web = 1`. Nothing else in the platform looks at
+    // mail-only squats.
+    const h = harness();
+    const id = h.seed({
+      ...BASELINED,
+      registered: 1,
+      resolves_to: "5.6.7.8",
+      has_mx: 1,
+      has_web: 0,
+      first_seen: null,
+      threat_level: "LOW",
+      ai_assessment: "assessed LOW",
+    });
+    // No transition at all this pass: the stored state and the observed
+    // state agree. The lane must still run.
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(true);
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(checkBIMISpy).toHaveBeenCalledWith(h.row(id).domain);
+    expect(summary.bimi_alerts).toBe(1);
+    const types = createAlertSpy.mock.calls.map((c) => (c[1] as { alertType: string }).alertType);
+    expect(types).toEqual(["typosquat_bimi"]);
+    expect(h.row(id).bimi_first_seen_at).not.toBeNull();
+    // The BIMI id is NOT linked as `alert_id`:
+    // `raiseUnalertedPhishingPageAlert` keys on `alert_id IS NULL`, so
+    // one parked there would permanently suppress that row's
+    // phishing-page alert.
+    expect(h.row(id).alert_id).toBeNull();
+  });
+
+  it("files the BIMI alert ONCE per row, ever", async () => {
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, resolves_to: "5.6.7.8", has_mx: 1 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(true);
+
+    const first = await checkLookalikeBatch(h.env);
+    expect(first.bimi_alerts).toBe(1);
+
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    await makeDue(h, id);
+    const second = await checkLookalikeBatch(h.env);
+
+    // Claimed, so no second alert AND no second lookup: the claim is
+    // also what keeps the lane's DNS cost bounded over time.
+    expect(second.bimi_alerts).toBe(0);
+    expect(second.bimi_lookups).toBe(0);
+    expect(checkBIMISpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("NEVER records BIMI absence, so a lookup failure is retried", async () => {
+    // `checkBIMIExists` catches its own errors and returns `false`, so
+    // absence and lookup-failure are the SAME value at the call site.
+    // Recording either would mark the row "we checked, there is none"
+    // from a transient resolver blip and retire it from the lane
+    // permanently — which is migration 0268's defect in a new column.
+    const h = harness();
+    const id = h.seed({ ...BASELINED, registered: 1, resolves_to: "5.6.7.8", has_mx: 1 });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(false);
+
+    await checkLookalikeBatch(h.env);
+    expect(h.row(id).bimi_first_seen_at).toBeNull();
+
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(true);
+    await makeDue(h, id);
+    const retry = await checkLookalikeBatch(h.env);
+    expect(retry.bimi_alerts).toBe(1);
+  });
+
+  it("the per-run cap is checked BEFORE the claim, so a capped row still alerts later", async () => {
+    // The ordering bug this avoids: a row that claimed and THEN hit the
+    // cap would be marked recorded with no alert filed, and the lane
+    // would never offer it again. `SCAN_NOW_CHECK_LIMITS.bimiLookups` is
+    // 5, which is the smallest cap in the codebase and therefore the
+    // cheapest way to drive it.
+    const h = harness();
+    const ids = Array.from({ length: 8 }, () =>
+      h.seed({ ...BASELINED, registered: 1, resolves_to: "5.6.7.8", has_mx: 1 }),
+    );
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true }));
+    checkBIMISpy.mockResolvedValue(true);
+
+    const summary = await checkLookalikeBatchForBrand(h.env, "b1");
+
+    expect(summary.bimi_lookups).toBe(5);
+    expect(summary.bimi_alerts).toBe(5);
+    expect(summary.bimi_cap_hit).toBe(true);
+    // The three capped rows are UNCLAIMED, so they are still eligible.
+    const unclaimed = ids.filter((id) => h.row(id).bimi_first_seen_at === null);
+    expect(unclaimed).toHaveLength(3);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Re-entrancy — the two bugs the one-shot compositor hid
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("checkLookalikeBatch — re-entrant compositor, real SQLite", () => {
+  /** A registered, resolving, web-only row already at CRITICAL. */
+  function critical(h: Harness, over: Record<string, unknown> = {}): string {
+    return h.seed({
+      ...BASELINED,
+      registered: 1,
+      resolves_to: "5.6.7.8",
+      has_mx: 0,
+      has_web: 1,
+      // A page escalation put it here. `agents/sparrow.ts` reads this
+      // column for takedown eligibility and priority.
+      threat_level: "CRITICAL",
+      ai_assessment: "credential harvest kit",
+      ...over,
+    });
+  }
+
+  it("a re-composite with an EXHAUSTED page budget does not write the row DOWN", async () => {
+    // THE PRODUCTION SCENARIO. `threat_level` used to be seeded fresh at
+    // `'MEDIUM'` each pass and written back unconditionally, so a row at
+    // CRITICAL from a page escalation was written DOWN to HIGH on any
+    // pass where the inline page budget was exhausted — silently
+    // de-queuing a confirmed credential-harvest kit from Sparrow.
+    //
+    // Driven through `checkLookalikeBatchForBrand`, whose
+    // `inlinePageFetches` budget is 2: the first two rows consume it and
+    // the third re-composites with NO page verdict at all, which is
+    // exactly the state that used to downgrade.
+    const h = harness();
+    const ids = [critical(h), critical(h), critical(h)];
+    // Every row gains MX, so every row re-opens the compositor.
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    // A page pass that scores nothing, so no escalation can mask the bug.
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+
+    await checkLookalikeBatchForBrand(h.env, "b1");
+
+    // At most 2 page fetches were attempted — so at least one row went
+    // through the compositor with no page verdict.
+    expect(pageAnalysisSpy.mock.calls.length).toBeLessThanOrEqual(2);
+    for (const id of ids) {
+      expect(h.row(id).threat_level, id).toBe("CRITICAL");
+    }
+  });
+
+  it("a Haiku verdict BELOW the stored level does not lower it", async () => {
+    // The veto applies to the INITIAL assessment; the monotonic persist
+    // applies to the stored value. They only meet when a stored level
+    // already EXCEEDS the model's verdict, and there the deterministic
+    // page escalation that produced it wins.
+    const h = harness();
+    const id = critical(h, { ai_assessment: null, has_mx: 0 });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+
+    await checkLookalikeBatchForBrand(h.env, "b1");
+
+    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
+    const row = h.row(id);
+    expect(row.threat_level).toBe("CRITICAL");
+    // The assessment itself IS recorded — the verdict is data even when
+    // it does not move the level.
+    expect(row.ai_assessment).toBe("assessed LOW");
+  });
+
+  it("a failed Haiku call does not blank the stored assessment", async () => {
+    const h = harness();
+    const id = critical(h);
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
+
+    await checkLookalikeBatchForBrand(h.env, "b1");
+
+    // `ai_assessment` is already set, so no call is even attempted —
+    // and the text `agents/sparrow.ts` embeds in the takedown evidence
+    // packet survives.
+    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    expect(h.row(id).ai_assessment).toBe("credential harvest kit");
+  });
+
+  it("an answered lapse stamps the linked takedown down, reusing Sparrow's contract", async () => {
+    // Same two columns Sparrow's Phase F writes on its own 7-day
+    // cadence, from the same `checkDomain` observation arriving via the
+    // lookalike lane — often sooner.
+    const h = harness();
+    await h.env.DB.prepare(
+      `INSERT INTO takedown_requests (id, status, target_type, target_value, verification_status, last_verified_at)
+       VALUES ('td1', 'taken_down', 'domain', 'acm3-1.example', NULL, NULL)`,
+    ).run();
+    const id = critical(h, { takedown_id: "td1" });
+    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.registrations_lost).toBe(1);
+    expect(summary.takedowns_verified_down).toBe(1);
+    const td = await h.env.DB.prepare(
+      `SELECT verification_status, last_verified_at FROM takedown_requests WHERE id = 'td1'`,
+    ).first<{ verification_status: string | null; last_verified_at: string | null }>();
+    expect(td!.verification_status).toBe("down");
+    expect(td!.last_verified_at).not.toBeNull();
+    // The lapse is persisted but the level is NOT downgraded: a squat
+    // that lapsed is still evidence of who targeted this brand, and
+    // Sparrow reads this column for takedown priority.
+    expect(h.row(id).registered).toBe(0);
+    expect(h.row(id).threat_level).toBe("CRITICAL");
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("a lapse on a takedown that is NOT taken_down leaves it alone", async () => {
+    const h = harness();
+    await h.env.DB.prepare(
+      `INSERT INTO takedown_requests (id, status, target_type, target_value, verification_status, last_verified_at)
+       VALUES ('td2', 'submitted', 'domain', 'acm3-1.example', NULL, NULL)`,
+    ).run();
+    critical(h, { takedown_id: "td2" });
+    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.registrations_lost).toBe(1);
+    // `verification_status` describes a TAKEN-DOWN target. A
+    // submitted-but-unconfirmed takedown's lifecycle stays Sparrow's to
+    // advance; writing 'down' here would claim a confirmation nobody
+    // gave.
+    expect(summary.takedowns_verified_down).toBe(0);
+    const td = await h.env.DB.prepare(
+      `SELECT verification_status FROM takedown_requests WHERE id = 'td2'`,
+    ).first<{ verification_status: string | null }>();
+    expect(td!.verification_status).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// The seeder must put new candidates ON the schedule
+// ═══════════════════════════════════════════════════════════════════
+
+describe.skipIf(!hasSqlite())("generateAndStoreLookalikes — new rows are DUE, not parked", () => {
+  it("a freshly seeded candidate is checked on the very next tick", async () => {
+    // THE SILENT-DEATH CASE. `check_due_at IS NULL` means PARKED, and
+    // both cohort indexes are partial on `check_due_at IS NOT NULL`, so
+    // a seeder that forgot this column would mint ~56,010 rows that the
+    // checker can NEVER see — the entire widened pipeline doing nothing,
+    // with no error anywhere. Under the previous arrangement "due" was
+    // the ABSENCE of a value (`last_checked IS NULL`), so the seeder had
+    // nothing to remember; that is exactly why this needs a test now.
+    const h = harness();
+    const created = await generateAndStoreLookalikes(h.env, "b1", "acme.example");
+    expect(created, "dnstwist produced permutations").toBeGreaterThan(0);
+
+    const parked = await h.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM lookalike_domains WHERE check_due_at IS NULL`,
+    ).first<{ n: number }>();
+    expect(parked!.n, "no seeded row may be born parked").toBe(0);
+
+    const due = await h.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM lookalike_domains
+        WHERE check_due_at IS NOT NULL AND check_due_at <= datetime('now')`,
+    ).first<{ n: number }>();
+    expect(due!.n).toBe(created);
+
+    // ...and the checker actually picks them up, which is the property
+    // the counts above are only evidence for.
+    checkDomainSpy.mockResolvedValue(answer());
+    const summary = await checkLookalikeBatch(h.env);
+    expect(summary.checked).toBeGreaterThan(0);
+    expect(summary.selected_first_contact).toBeGreaterThan(0);
+  });
+
+  it("re-seeding the same brand does not re-schedule rows it already has", async () => {
+    // `INSERT OR IGNORE` means a second pass changes nothing — including
+    // the schedule, so a row mid-backoff is not quietly re-admitted by a
+    // seeder re-run.
+    const h = harness();
+    await generateAndStoreLookalikes(h.env, "b1", "acme.example");
+    await h.env.DB.prepare(
+      `UPDATE lookalike_domains SET check_due_at = '2099-01-01 00:00:00', check_attempts = 4`,
+    ).run();
+
+    const second = await generateAndStoreLookalikes(h.env, "b1", "acme.example");
+    expect(second, "nothing new to insert").toBe(0);
+
+    const moved = await h.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM lookalike_domains
+        WHERE check_due_at != '2099-01-01 00:00:00' OR check_attempts != 4`,
+    ).first<{ n: number }>();
+    expect(moved!.n).toBe(0);
   });
 });

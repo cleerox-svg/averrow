@@ -45,6 +45,15 @@ const EXPECTED_COLUMNS = [
   // on the same reasoning: it explains a row that is neither baselined
   // nor advancing, because its resolver keeps timing out.
   "last_check_failed_at",
+  // 0269 check scheduling — when the row may next be selected (NULL =
+  // PARKED by the backoff ladder) and the consecutive failure count
+  // driving it. Together they are the operator-readable signature of a
+  // row that has STOPPED advancing, which is an absence that otherwise
+  // reads as a bug.
+  "check_due_at", "check_attempts",
+  // 0269 recurring BEC lane — presence-only, never a record of absence.
+  // The evidence behind a typosquat_bimi alert.
+  "bimi_first_seen_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

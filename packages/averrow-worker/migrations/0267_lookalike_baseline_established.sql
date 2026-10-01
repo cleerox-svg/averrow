@@ -39,11 +39,48 @@
 --
 -- NULL means "never checked" for rows created after this migration, and
 -- "checked before this migration" for the ~120 pre-existing rows. Those
--- are indistinguishable on this column alone and deliberately so — they
--- are also the rows whose `last_checked` is already non-NULL, so the
--- checker's own first-contact test (`last_checked IS NULL`) classifies
--- them correctly as not-first-contact without consulting this column at
--- all. This column is a RECORD of the decision, never its input.
+-- are indistinguishable on this column alone and deliberately so.
+--
+-- ── AMENDED: THIS COLUMN IS NOW THE INPUT, NOT A RECORD OF IT ─────────
+--
+-- This header used to end "This column is a RECORD of the decision,
+-- never its input", and that is no longer true. `checkLookalikeBatch`
+-- now derives `firstContact` from `baseline_established_at IS NULL`
+-- instead of from `last_checked IS NULL`.
+--
+-- WHY THE FLIP. `last_checked` was carrying three unrelated jobs at
+-- once: "when did we last successfully observe this row" (its name, and
+-- what `agents/observer.ts`' 24 h briefing count and the staff/tenant
+-- column lists actually read), "is this row due" (the 24 h cadence
+-- predicate), and "is this first contact" (the discriminator this
+-- migration introduced). Any writer that touched it for one job silently
+-- changed the other two — which is exactly how the "Scan now" handler's
+-- `last_checked = NULL` reset came to FORGE first contact on a rescanned
+-- brand, and why that handler needed a `CASE` to work around a column it
+-- was not trying to affect.
+--
+-- Reading first contact off THIS column makes that forgery structurally
+-- impossible: nothing but the per-check UPDATE's single-write `CASE`
+-- writes it, so no scheduling operation can reach it. Dueness moved to
+-- its own column (`check_due_at`, migration 0269), and `last_checked`
+-- keeps exactly one job — the one its name states.
+--
+-- CONSEQUENCE FOR THE PRE-EXISTING ROWS. Under the old discriminator the
+-- ~120 legacy rows classified correctly WITHOUT this column, because
+-- their `last_checked` was already non-NULL. Under the new one they
+-- would all read as first contact on the next tick — re-baselined, their
+-- `first_seen` suppressed, their alerts withheld unless mail+web
+-- happened to be present. So the flip requires a one-time
+-- disambiguation, and it is the UPDATE at the bottom of this file: where
+-- we have a successful observation (`last_checked IS NOT NULL`) we DID
+-- establish a baseline, and its timestamp is the best evidence we have
+-- of when. ~120 rows in production.
+--
+-- Amending an UNAPPLIED migration rather than stacking a 0269 fix-up:
+-- production's `d1_migrations` ends at 0266, so 0267 and 0268 have never
+-- run anywhere and are still design documents. CLAUDE.md §8's
+-- never-DROP-or-ALTER rule protects APPLIED schema. The moment #1724
+-- merges this freedom is gone.
 --
 -- Staff-visible (added to LOOKALIKE_LIST_COLUMNS): a bounded timestamp
 -- with no attacker-controlled content, and it is what explains to an
@@ -52,10 +89,26 @@
 -- coverage is pipeline detail, not a customer-facing finding (the same
 -- product call made for page_last_outcome in 0266).
 --
--- Additive only — ADD COLUMN, never DROP/ALTER (CLAUDE.md §8). No index:
--- nothing filters or sorts on it. The checker's selection predicate is
--- still `last_checked`, which is the column that was already there and
--- already indexed for that purpose; adding an index here would be a dead
--- write cost on a table about to grow ninety-fold.
+-- Additive only — ADD COLUMN plus a one-time data UPDATE, never
+-- DROP/ALTER (CLAUDE.md §8). No index HERE: this column is never a
+-- leading key. It appears in migration 0269's two cohort indexes only as
+-- a PARTIAL-INDEX predicate (`baseline_established_at IS NULL` /
+-- `IS NOT NULL`), which is what splits the two cohorts without making it
+-- a sort key.
 
 ALTER TABLE lookalike_domains ADD COLUMN baseline_established_at TEXT;
+
+-- ── One-time disambiguation for the pre-existing rows ────────────────
+--
+-- See "CONSEQUENCE FOR THE PRE-EXISTING ROWS" above. Without this every
+-- legacy row is misclassified as first contact on the first tick after
+-- deploy. `last_checked IS NOT NULL` is precisely "we have successfully
+-- observed this row at least once", which is the definition of having
+-- established its baseline; its timestamp is the only evidence of when.
+--
+-- Idempotent (`WHERE baseline_established_at IS NULL`) and a no-op on a
+-- fresh database. ~120 rows in production.
+UPDATE lookalike_domains
+   SET baseline_established_at = last_checked
+ WHERE baseline_established_at IS NULL
+   AND last_checked IS NOT NULL;

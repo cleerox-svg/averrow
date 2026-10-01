@@ -49,6 +49,7 @@ import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { evaluateGeoipStall, type GeoipStallWatch } from "../lib/geoip-stall";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
+import { LOOKALIKE_BATCH_LIMIT } from "../scanners/lookalike-domains";
 
 // TTLs for backlog counters. "Monitoring" backlogs (the broad _checked
 // queries that a partial index can't help with because the predicate
@@ -119,6 +120,14 @@ interface Backlog {
   domainGeoBacklog:   number;  // threats with domain but no IP (all, includes cooldown)
   domainGeoDrainable: number;  // subset of domainGeoBacklog actually eligible right now
   brandEnrichBacklog: number;  // brands with no enriched_at
+  // ── Lookalike DNS check scheduling (migration 0269) ──────────────
+  // ONE gauge PAIR, deliberately not a drift/stall/reaper triad. That
+  // triad exists for `dns_queue` because the working set is a COPY in a
+  // second database and the failure mode is the copy diverging from its
+  // source. There is no copy here — `check_due_at` lives on the rows it
+  // schedules — so there is nothing to reconcile and nothing to reap.
+  lookalikeDnsDue:  number;  // rows eligible for a DNS check right now
+  lookalikeParked:  number;  // rows the backoff ladder gave up on
 }
 
 interface DegradedFeed {
@@ -1891,7 +1900,7 @@ export const flightControlAgent: AgentModule = {
 
     outputs.push({
       type: 'diagnostic',
-      summary: `Platform ${overallStatus} — backlog: cart=${backlogs.cartographer} analyst=${backlogs.analyst} watchdog=${backlogs.watchdog} surbl=${backlogs.surblUnchecked} vt=${backlogs.vtUnchecked} gsb=${backlogs.gsbUnchecked} dbl=${backlogs.dblUnchecked} abuseipdb=${backlogs.abuseipdbUnchecked} pdns=${backlogs.pdnsUnchecked} greynoise=${backlogs.greynoiseUnchecked} seclookup=${backlogs.seclookupUnchecked} domainGeo=${backlogs.domainGeoBacklog}(drainable=${backlogs.domainGeoDrainable}) brandEnrich=${backlogs.brandEnrichBacklog} agents=[${agentHealthSummary}] navigator=${navigatorHealth.status} feeds=[${feedHealthSummary}] budget=$${budgetStatus.spent_this_month}/${budgetStatus.config.monthly_limit_usd} (${budgetStatus.throttle_level})`,
+      summary: `Platform ${overallStatus} — backlog: cart=${backlogs.cartographer} analyst=${backlogs.analyst} watchdog=${backlogs.watchdog} surbl=${backlogs.surblUnchecked} vt=${backlogs.vtUnchecked} gsb=${backlogs.gsbUnchecked} dbl=${backlogs.dblUnchecked} abuseipdb=${backlogs.abuseipdbUnchecked} pdns=${backlogs.pdnsUnchecked} greynoise=${backlogs.greynoiseUnchecked} seclookup=${backlogs.seclookupUnchecked} domainGeo=${backlogs.domainGeoBacklog}(drainable=${backlogs.domainGeoDrainable}) brandEnrich=${backlogs.brandEnrichBacklog} lookalikeDue=${backlogs.lookalikeDnsDue}(parked=${backlogs.lookalikeParked}) agents=[${agentHealthSummary}] navigator=${navigatorHealth.status} feeds=[${feedHealthSummary}] budget=$${budgetStatus.spent_this_month}/${budgetStatus.config.monthly_limit_usd} (${budgetStatus.throttle_level})`,
       severity: tripped.length > 0 || stalled.length > 0 || navigatorDegraded || budgetStatus.throttle_level === 'emergency' ? 'high' : 'info',
       details: snapshot,
     });
@@ -1984,6 +1993,8 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     domainGeoResult,
     domainGeoDrainableResult,
     brandEnrichResult,
+    lookalikeDueResult,
+    lookalikeParkedResult,
   ] = await Promise.all([
     // Live counters — used for scaling decisions, kept fresh every tick.
     //
@@ -2130,6 +2141,39 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
       SELECT COUNT(*) as count FROM brands
       WHERE enriched_at IS NULL AND canonical_domain IS NOT NULL
     `),
+
+    // ── Lookalike DNS check scheduling (migration 0269) ────────────
+    //
+    // Written as the SUM OF THE TWO COHORTS rather than as one
+    // `WHERE check_due_at <= datetime('now')`, and that is not
+    // stylistic. The only indexes on `check_due_at` are PARTIAL, split
+    // by cohort (`baseline_established_at IS [NOT] NULL`), because that
+    // is what gives each cohort SELECT an index range scan in index
+    // order. A single-predicate count states neither cohort term, so
+    // SQLite cannot prove either partial index is implied and
+    // full-scans a table headed for ~56,010 rows, every tick. Each
+    // subquery below states all three terms and is an index range
+    // count. Verified by EXPLAIN in test/lookalike-sql-statements.test.ts.
+    cacheCount('backlog.lookalike_dns_due', BACKLOG_TTL_LIVE_S, `
+      SELECT
+        (SELECT COUNT(*) FROM lookalike_domains
+          WHERE check_due_at IS NOT NULL
+            AND baseline_established_at IS NULL
+            AND check_due_at <= datetime('now'))
+      + (SELECT COUNT(*) FROM lookalike_domains
+          WHERE check_due_at IS NOT NULL
+            AND baseline_established_at IS NOT NULL
+            AND check_due_at <= datetime('now')) AS count
+    `, true),
+    // Rows the backoff ladder PARKED (`check_due_at = NULL`) — the
+    // ladder's terminal step after ~10 days of unanswerable DNS. Served
+    // by `idx_lookalike_parked`, a partial index that is tiny by
+    // construction. Monitoring TTL: a parked row is by definition not
+    // going anywhere, so this does not need to be fresh every tick.
+    cacheCount('backlog.lookalike_parked', BACKLOG_TTL_MONITORING_S, `
+      SELECT COUNT(*) as count FROM lookalike_domains
+      WHERE check_due_at IS NULL
+    `, true),
   ]);
 
   const backlog: Backlog = {
@@ -2149,6 +2193,8 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     domainGeoBacklog:   domainGeoResult.value,
     domainGeoDrainable: domainGeoDrainableResult.value,
     brandEnrichBacklog: brandEnrichResult.value,
+    lookalikeDnsDue:    lookalikeDueResult.value,
+    lookalikeParked:    lookalikeParkedResult.value,
   };
 
   // ── Persist backlog snapshots + run stall detection ────────────
@@ -2226,6 +2272,61 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     } catch { /* never block FC */ }
   }
 
+  // ── The lookalike DNS-check drain ──────────────────────────────
+  //
+  // Deliberately NOT a member of TRACKED above. That loop's rule is
+  // `trend >= 0 → critical`, which for this backlog would be a false
+  // alarm for about eight weeks by design: while the monitored-brand
+  // seeder drains its 1,864-brand stage it adds ~300 candidate rows per
+  // tick against a 50-row drain, so the due backlog RISES on purpose.
+  // A critical event every hour for eight weeks is not a signal.
+  //
+  // What is worth an operator's attention is narrower, and it is
+  // computed by `lookalikeDrainFallingBehind` below: the backlog rising
+  // across SEVERAL consecutive fresh samples WHILE the drain is
+  // saturated. That reads as "the checker is taking every row it is
+  // allowed to and still losing ground", which during the seed drain is
+  // a true and useful statement of how long the drain will take, and
+  // after it is a capacity problem.
+  //
+  // One activity-log WARNING, which is the channel the nine enrichment
+  // backlogs above already use. Not a `notifications.type`: that CHECK
+  // constraint cannot be altered in SQLite, so a new platform
+  // notification type requires the table-rebuild dance (migrations 0215
+  // / 0265) — and D1 enforces foreign keys, so rebuilding `notifications`
+  // cascades into deliveries. Out of scope for an additive change, and
+  // the activity log is where a backlog warning belongs anyway.
+  if (!lookalikeDueResult.wasCached) {
+    try {
+      await db.prepare(
+        `INSERT INTO backlog_history (backlog_name, count) VALUES (?, ?)`
+      ).bind('lookalike_dns_due', backlog.lookalikeDnsDue).run();
+
+      const history = await db.prepare(`
+        SELECT count FROM backlog_history
+        WHERE backlog_name = 'lookalike_dns_due'
+        ORDER BY recorded_at DESC
+        LIMIT 4
+      `).all<{ count: number }>();
+
+      const samples = (history.results ?? []).map((r) => r.count);
+      if (lookalikeDrainFallingBehind({ samples, drainPerTick: LOOKALIKE_BATCH_LIMIT })) {
+        await logActivity(db, 'flight_control', 'warning', 'lookalike_backlog',
+          `Lookalike DNS-check backlog rising while the drain is saturated: ` +
+          `${backlog.lookalikeDnsDue} due, ${LOOKALIKE_BATCH_LIMIT}/tick drain, ` +
+          `${backlog.lookalikeParked} parked`,
+          {
+            backlog: 'lookalike_dns_due',
+            count: backlog.lookalikeDnsDue,
+            parked: backlog.lookalikeParked,
+            drain_per_tick: LOOKALIKE_BATCH_LIMIT,
+            samples,
+          }
+        );
+      }
+    } catch { /* never block FC on a gauge */ }
+  }
+
   // Trim history to last 7 days (best effort, keeps the table small).
   try {
     await db.prepare(
@@ -2234,6 +2335,51 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
   } catch { /* ignore */ }
 
   return backlog;
+}
+
+/**
+ * Is the lookalike DNS-check drain losing ground while already saturated?
+ *
+ * PURE so it can be unit-tested without a D1 mock, which is the point:
+ * the predicate is the whole content of the alert and a mocked D1 would
+ * only re-assert the mock.
+ *
+ * `samples` is NEWEST FIRST, exactly as the `ORDER BY recorded_at DESC`
+ * query returns it, and holds only FRESHLY COMPUTED values — a cached
+ * read is the same number again and a run of those would read as a
+ * plateau, not as a rise.
+ *
+ * SATURATION IS DERIVED, not measured. When more rows are due than one
+ * tick may take, every tick necessarily fills its budget: the checker's
+ * re-check cohort claims its floor, first contact absorbs the
+ * remainder, and the spill returns whatever first contact could not use,
+ * so `due > drainPerTick` implies `selected === drainPerTick` for every
+ * distribution of the two cohorts. That means this needs no read of the
+ * agent's own run diagnostics to know the drain was saturated.
+ *
+ * THREE consecutive rises, not one. One rise is an hour of ordinary
+ * inflow jitter (the seeder adds ~300 rows on the tick it runs and 0 on
+ * a tick where every brand it picked was already seeded).
+ */
+export function lookalikeDrainFallingBehind(opts: {
+  samples: number[];
+  drainPerTick: number;
+  minRises?: number;
+}): boolean {
+  const { samples, drainPerTick, minRises = 3 } = opts;
+  if (samples.length < minRises + 1) return false;
+  const current = samples[0] ?? 0;
+  // Not saturated → the drain is keeping up with what is offered, and a
+  // rising backlog is then a SELECTION problem, not a capacity one.
+  // That failure class is what the cohort split and its plan assertions
+  // address, and it would be misreported by this message.
+  if (current <= drainPerTick) return false;
+  for (let i = 0; i < minRises; i += 1) {
+    const newer = samples[i] ?? 0;
+    const older = samples[i + 1] ?? 0;
+    if (newer <= older) return false;
+  }
+  return true;
 }
 
 // ─── Agent Health ────────────────────────────────────────────────

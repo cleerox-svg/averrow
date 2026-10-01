@@ -79,11 +79,15 @@ export const lookalikeScannerAgent: AgentModule = {
           type: "diagnostic",
           summary: `Checked ${check.checked} lookalike domain(s): ` +
             `${check.new_registrations} observed registration(s), ` +
+            `${check.registrations_lost} lapse(s), ` +
+            `${check.mx_gained} MX / ${check.web_gained} web appearance(s), ` +
             `${check.baselines_established} baseline(s) established ` +
             `(${check.baselines_suppressed} with no signal), ` +
-            `${check.baseline_bimi_alerts} BIMI alert(s), ` +
+            `${check.bimi_alerts} BIMI alert(s) from ${check.bimi_lookups} lookup(s), ` +
+            `${check.haiku_calls} Haiku call(s)${check.haiku_cap_hit ? ' (cap hit)' : ''}, ` +
             `${check.alerts_withheld_below_floor} alert(s) withheld below the severity floor, ` +
-            `${check.checks_unresolved} unresolved, ${check.row_errors} row error(s)`,
+            `${check.checks_unresolved} unresolved, ${check.rows_parked} parked, ` +
+            `${check.row_errors} row error(s)`,
           severity: check.row_errors > 0 ? "high" : "info",
           details: { ...check } as Record<string, unknown>,
         });

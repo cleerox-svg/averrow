@@ -70,10 +70,13 @@ function read(rel: string): string {
 const scannerSrc = read("../src/scanners/lookalike-domains.ts");
 const analyzerSrc = read("../src/scanners/lookalike-page-analysis.ts");
 const handlerSrc = read("../src/handlers/lookalikeDomains.ts");
+const fcSrc = read("../src/agents/flightControl.ts");
 // 0031's CREATE TABLE + indexes now arrive via `applyLookalikeSchema`;
 // 0268 is still read directly because two assertions are ABOUT the
 // migration's text (that it refreshes statistics, table-scoped).
 const migration0268 = read("../migrations/0268_lookalike_check_failure_cooldown.sql");
+const migration0269 = read("../migrations/0269_lookalike_check_scheduling.sql");
+const migration0267 = read("../migrations/0267_lookalike_baseline_established.sql");
 
 /**
  * The single template literal in `src` containing every marker, with
@@ -105,6 +108,21 @@ const SQL = {
   /** The per-check UPDATE. Carries the single-write baseline CASE. */
   perCheckUpdate: () => sqlContaining(scannerSrc, ["SET registered = ?", "baseline_established_at = CASE"]),
   /**
+   * The MONOTONIC threat_level + non-blanking ai_assessment persist.
+   *
+   * Markers are the two SET clauses, deliberately NOT the rank CASE's
+   * contents: matching on those would make a deletion of the guard fail
+   * at EXTRACTION rather than at the semantic assertions, which detects
+   * exactly one edit and nothing else.
+   */
+  compositePersist: () => sqlContaining(scannerSrc, ["SET threat_level = CASE", "ai_assessment = CASE"]),
+  /** The recurring BEC lane's guarded claim. */
+  bimiClaim: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = datetime('now')"]),
+  /** The claim release, for a `createAlert` that threw. */
+  bimiRelease: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = NULL"]),
+  /** Sparrow's verification contract, reused from the lapse branch. */
+  takedownDown: () => sqlContaining(scannerSrc, ["UPDATE takedown_requests", "verification_status = 'down'"]),
+  /**
    * The observed-transition `first_seen` stamp.
    *
    * The marker is the SET clause ONLY, deliberately NOT the
@@ -116,14 +134,29 @@ const SQL = {
    * `IS NOT NULL` fails too, not just removing it.
    */
   firstSeenStamp: () => sqlContaining(scannerSrc, ["SET first_seen = datetime('now')"]),
-  /** The F6 unresolved-check branch: cooldown only. */
+  /** The F6 unresolved-check branch: failure record + backoff, no state. */
   failureCooldown: () => sqlContaining(scannerSrc, ["SET last_check_failed_at = datetime('now')"]),
-  /** "Scan now" (B2) — makes rows due without forging first contact. */
-  handlerReset: () => sqlContaining(handlerSrc, ["SET last_checked = CASE", "WHEN last_checked IS NULL THEN NULL"]),
-  firstContactSelect: () => sqlContaining(scannerSrc, ["FROM lookalike_domains ld", "ld.last_checked IS NULL"]),
-  recheckSelect: () => sqlContaining(scannerSrc, ["FROM lookalike_domains ld", "ld.last_checked IS NOT NULL"]),
+  /** "Scan now" — a priority ENQUEUE on `check_due_at`. */
+  handlerReset: () => sqlContaining(handlerSrc, ["SET check_due_at = '1970-01-01 00:00:00'"]),
+  firstContactSelect: () => sqlContaining(scannerSrc, ["FROM lookalike_domains ld", "ld.baseline_established_at IS NULL"]),
+  recheckSelect: () => sqlContaining(scannerSrc, ["FROM lookalike_domains ld", "ld.baseline_established_at IS NOT NULL"]),
+  /** The operator rescan's brand-scoped, bounded selector. */
+  brandDueSelect: () => sqlContaining(scannerSrc, ["FROM lookalike_domains ld", "ld.brand_id = ?"]),
   firstAnalysisSelect: () => sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NULL"]),
   reanalysisSelect: () => sqlContaining(analyzerSrc, ["FROM lookalike_domains ld", "page_fetched_at IS NOT NULL"]),
+  /**
+   * Flight Control's two gauges. Extracted from FC rather than retyped
+   * for the usual reason, plus one specific to them: the due gauge is
+   * written as a SUM OF TWO COHORT SUBQUERIES purely so each half can
+   * use its partial index, and a retyped single-predicate copy would
+   * "prove" a plan the deployed query does not have.
+   */
+  fcDueGauge: () => sqlContaining(fcSrc, [
+    "FROM lookalike_domains",
+    "baseline_established_at IS NULL",
+    "baseline_established_at IS NOT NULL",
+  ]),
+  fcParkedGauge: () => sqlContaining(fcSrc, ["FROM lookalike_domains", "WHERE check_due_at IS NULL"]),
 };
 
 // ─── Schema ───────────────────────────────────────────────────────
@@ -140,6 +173,13 @@ const DDL = `
     name TEXT,
     canonical_domain TEXT,
     tier TEXT
+  );
+  CREATE TABLE takedown_requests (
+    id TEXT PRIMARY KEY,
+    status TEXT,
+    verification_status TEXT,
+    last_verified_at TEXT,
+    updated_at TEXT
   );
 `;
 
@@ -162,6 +202,12 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       first_seen: null,
       baseline_established_at: null,
       last_check_failed_at: null,
+      // Migration 0269. `check_due_at` defaults to DUE so a row seeded
+      // here behaves like one the seeder inserted; a test that wants a
+      // parked or future row says so.
+      check_due_at: "2026-01-01 00:00:00",
+      check_attempts: 0,
+      bimi_first_seen_at: null,
       ...over,
     };
     const cols = Object.keys(row);
@@ -182,6 +228,11 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       last_check_failed_at: string | null;
       first_seen: string | null;
       baseline_established_at: string | null;
+      check_due_at: string | null;
+      check_attempts: number;
+      bimi_first_seen_at: string | null;
+      threat_level: string | null;
+      ai_assessment: string | null;
     };
   }
 
@@ -190,12 +241,13 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     db.exec(DDL);
     applyLookalikeSchema(db);
     // 0031's four indexes + 0227's takedown index + 0268's partial page
-    // index. If a migration stops creating one of these the plan
-    // assertions below are what notice.
+    // index + 0269's four (two cohort, one parked, one BEC lane). If a
+    // migration stops creating one of these the plan assertions below
+    // are what notice.
     expect(
       lookalikeSchema().indexes.length,
       "expected index DDL to be extracted from the migrations",
-    ).toBe(6);
+    ).toBe(10);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 
@@ -213,11 +265,16 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   describe("the per-check UPDATE's baseline CASE", () => {
     /**
      * Bind order: registered, aAnswered, ip, mxAnswered, hasMx,
-     * webAnswered, hasWeb, firstContactFlag, id.
+     * webAnswered, hasWeb, firstContactFlag, cadenceModifier, id.
+     *
+     * The cadence modifier (migration 0269) is BOUND rather than inlined
+     * so there is one named constant for "+24 hours" instead of the same
+     * number written into three statements — which is how the old "Scan
+     * now" handler came to encode it as the magic `-25 hours`.
      */
     function runCheck(id: string, firstContactFlag: 0 | 1, registered = 1) {
       return db.prepare(SQL.perCheckUpdate())
-        .run(registered, 1, "5.6.7.8", 1, 1, 1, 1, firstContactFlag, id);
+        .run(registered, 1, "5.6.7.8", 1, 1, 1, 1, firstContactFlag, "+24 hours", id);
     }
 
     it("stamps the column on first contact", () => {
@@ -259,9 +316,41 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       expect(row.last_check_failed_at).toBeNull();
     });
 
+    it("schedules the next check one cadence out and resets the attempt counter", () => {
+      // Migration 0269: dueness is `check_due_at` and nothing else, so
+      // the success path has to advance it. If it did not, every row
+      // would stay permanently due and the cohort selects would re-serve
+      // the same 50 rows every tick.
+      const id = insert({ check_due_at: "2026-01-01 00:00:00", check_attempts: 4 });
+      runCheck(id, 1);
+      const row = fetch(id);
+      expect(row.check_attempts).toBe(0);
+      expect(row.check_due_at).not.toBe("2026-01-01 00:00:00");
+      // ...and it is genuinely in the FUTURE, which is the property the
+      // cohort predicate (`check_due_at <= datetime('now')`) reads.
+      const stillDue = db.prepare(
+        `SELECT 1 AS n FROM lookalike_domains
+         WHERE id = ? AND check_due_at <= datetime('now')`,
+      ).get(id);
+      expect(stillDue, "a just-checked row must not still be due").toBeUndefined();
+    });
+
+    it("UN-PARKS a row the ladder had given up on", () => {
+      // A parked row (`check_due_at IS NULL`) is unreachable by the
+      // cohort selects, so the only ways back are the operator rescan
+      // and — if something else reaches it — a successful check. Pinned
+      // because the success path writes `check_due_at` unconditionally,
+      // and that unconditional write is what makes recovery possible.
+      const id = insert({ check_due_at: null, check_attempts: 9 });
+      runCheck(id, 0);
+      const row = fetch(id);
+      expect(row.check_due_at).not.toBeNull();
+      expect(row.check_attempts).toBe(0);
+    });
+
     it("writes the DNS facts it is given", () => {
       const id = insert();
-      db.prepare(SQL.perCheckUpdate()).run(1, 1, "9.9.9.9", 1, 1, 1, 0, 1, id);
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "9.9.9.9", 1, 1, 1, 0, 1, "+24 hours", id);
       const row = fetch(id);
       expect(row.registered).toBe(1);
       expect(row.resolves_to).toBe("9.9.9.9");
@@ -302,7 +391,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // removed the row's last path to an alert.
       const id = known();
       // registered, aAnswered, ip, mxAnswered, hasMx, webAnswered=0, hasWeb=0
-      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 1, 1, 0, 0, 0, id);
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 1, 1, 0, 0, 0, "+24 hours", id);
       expect(fetch(id).has_web).toBe(1);
     });
 
@@ -311,7 +400,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // while the MX query timed out. `hasMx = false` over a stored 1
       // erases the mail evidence that IS the BEC-precursor signal.
       const id = known();
-      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 0, 0, 1, 1, 0, id);
+      db.prepare(SQL.perCheckUpdate()).run(1, 1, "5.6.7.8", 0, 0, 1, 1, 0, "+24 hours", id);
       expect(fetch(id).has_mx).toBe(1);
     });
 
@@ -321,7 +410,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // ERASED a known IP — and both page cohorts require
       // `resolves_to IS NOT NULL`.
       const id = known();
-      db.prepare(SQL.perCheckUpdate()).run(1, 0, null, 1, 1, 1, 1, 0, id);
+      db.prepare(SQL.perCheckUpdate()).run(1, 0, null, 1, 1, 1, 1, 0, "+24 hours", id);
       expect(fetch(id).resolves_to).toBe("5.6.7.8");
     });
 
@@ -331,7 +420,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // observation and must be persisted. A gate that swallowed it
       // would make the columns write-once.
       const id = known();
-      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 1, 0, 0, id);
+      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 1, 0, 0, "+24 hours", id);
       const row = fetch(id);
       expect(row.registered).toBe(0);
       expect(row.resolves_to).toBeNull();
@@ -345,7 +434,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // there is deliberately no gate on it, and a 1 -> 0 lapse we DID
       // observe must land.
       const id = known();
-      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 0, 0, 0, id);
+      db.prepare(SQL.perCheckUpdate()).run(0, 1, null, 1, 0, 0, 0, 0, "+24 hours", id);
       expect(fetch(id).registered).toBe(0);
       // ...while the unanswered web probe still preserved its column.
       expect(fetch(id).has_web).toBe(1);
@@ -384,8 +473,12 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   // F6 — an unresolved check writes NO registration state
   // ═════════════════════════════════════════════════════════════════
 
-  describe("the unresolved-check cooldown UPDATE", () => {
-    it("advances only last_check_failed_at — registration state and last_checked are untouched", () => {
+  describe("the failed-check UPDATE", () => {
+    /** Bind order: nextDueAt (NULL = PARK), id. */
+    const fail = (id: string, nextDueAt: string | null) =>
+      db.prepare(SQL.failureCooldown()).run(nextDueAt, id);
+
+    it("writes NO registration state, and does not touch last_checked", () => {
       const id = insert({
         registered: 1,
         resolves_to: "5.6.7.8",
@@ -394,87 +487,328 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
         last_checked: "2026-09-01 00:00:00",
         first_seen: "2026-03-04 05:06:07",
       });
-      db.prepare(SQL.failureCooldown()).run(id);
+      fail(id, "2026-10-01 01:00:00");
       const row = fetch(id);
       // The whole point: a 3s DNS timeout must not manufacture a lapse.
       expect(row.registered).toBe(1);
       expect(row.resolves_to).toBe("5.6.7.8");
+      // `last_checked` means "when did we last SUCCESSFULLY observe".
       expect(row.last_checked).toBe("2026-09-01 00:00:00");
       expect(row.first_seen).toBe("2026-03-04 05:06:07");
       expect(row.last_check_failed_at).not.toBeNull();
     });
 
-    it("leaves last_checked NULL on a never-observed row, so it stays first contact", () => {
-      // If this wrote `last_checked`, the row would be re-classified as
-      // "checked before" while `registered` still held the seeder's
-      // INSERT default — and the next successful check would read the
-      // resulting 0 -> 1 as a registration event. The failure cooldown
-      // exists as its own column for exactly this reason.
+    it("leaves baseline_established_at alone, so a failed first contact STAYS first contact", () => {
+      // Since 0267's amendment this is the discriminator. A failed
+      // attempt that stamped it would reclassify a never-observed row as
+      // "baselined" while `registered` still held the seeder's INSERT
+      // default — and the next successful check would then read the
+      // resulting 0 -> 1 as a registration event.
       const id = insert();
-      db.prepare(SQL.failureCooldown()).run(id);
+      fail(id, "2026-10-01 01:00:00");
       const row = fetch(id);
-      expect(row.last_checked).toBeNull();
       expect(row.baseline_established_at).toBeNull();
       expect(row.last_check_failed_at).not.toBeNull();
     });
 
-    it("keeps the row out of BOTH cohorts for 24h, then readmits it", () => {
-      const id = insert();
-      db.prepare(SQL.failureCooldown()).run(id);
-      const due = () =>
-        (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
-      expect(due(), "cooling down").not.toContain(id);
+    it("counts the attempt and defers the row to the backoff stamp it is given", () => {
+      const id = insert({ check_attempts: 2 });
+      fail(id, "9999-01-01 00:00:00");
+      const row = fetch(id);
+      expect(row.check_attempts).toBe(3);
+      expect(row.check_due_at).toBe("9999-01-01 00:00:00");
+      // ...and it is therefore out of its cohort.
+      const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
+      expect(first, "deferred by the ladder").not.toContain(id);
+    });
 
-      db.prepare(
-        `UPDATE lookalike_domains SET last_check_failed_at = datetime('now', '-25 hours') WHERE id = ?`,
-      ).run(id);
-      expect(due(), "cooldown expired").toContain(id);
+    it("A NULL due stamp PARKS the row out of both cohort indexes entirely", () => {
+      // The terminal step, and the structural part of it: a parked row
+      // is not merely deprioritized, it holds no entry in either partial
+      // index. The predicates below are the ones the indexes are built
+      // on, so "absent from both" is the same statement as "costs zero
+      // reads".
+      const parked = insert({ check_attempts: 8 });
+      const healthy = insert({ baseline_established_at: "2026-06-01 00:00:00" });
+      fail(parked, null);
+      expect(fetch(parked).check_due_at).toBeNull();
+      expect(fetch(parked).check_attempts).toBe(9);
+
+      const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
+      const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(first).not.toContain(parked);
+      expect(recheck).not.toContain(parked);
+      // The healthy row is still there, so this is not a vacuous pass
+      // from an empty cohort.
+      expect(recheck).toContain(healthy);
+    });
+
+    it("the parked row is exactly what Flight Control's parked gauge counts", () => {
+      insert();
+      insert({ baseline_established_at: "2026-06-01 00:00:00" });
+      const parked = insert();
+      fail(parked, null);
+      const n = (db.prepare(SQL.fcParkedGauge()).get() as { count: number }).count;
+      expect(n).toBe(1);
     });
   });
 
   // ═════════════════════════════════════════════════════════════════
-  // B2 — "Scan now" makes rows due without forging first contact
+  // The monotonic persist + the non-blanking assessment
+  // ═════════════════════════════════════════════════════════════════
+  //
+  // Mutation-checked: replacing the rank CASE with a bare
+  // `threat_level = ?` fails three cases here; replacing the assessment
+  // CASE with a bare `ai_assessment = ?` fails two.
+
+  describe("the compositor's persist UPDATE", () => {
+    const RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+    /** Bind order: newRank, newLevel, hasAssessment, assessment, id. */
+    const persist = (id: string, level: string, assessment: string | null) =>
+      db.prepare(SQL.compositePersist())
+        .run(RANK[level]!, level, assessment === null ? 0 : 1, assessment, id);
+
+    it("raises a stored level", () => {
+      const id = insert({ threat_level: "MEDIUM" });
+      persist(id, "HIGH", null);
+      expect(fetch(id).threat_level).toBe("HIGH");
+    });
+
+    it("NEVER lowers a stored level", () => {
+      // The live bug re-entrancy created. `threat_level` was seeded
+      // fresh at MEDIUM each pass and written back unconditionally, so a
+      // row at CRITICAL from a page escalation was written DOWN to HIGH
+      // on any pass where the inline page budget was exhausted — and
+      // `agents/sparrow.ts` reads this column for takedown ELIGIBILITY
+      // and PRIORITY.
+      const id = insert({ threat_level: "CRITICAL" });
+      persist(id, "HIGH", null);
+      expect(fetch(id).threat_level).toBe("CRITICAL");
+    });
+
+    it("restates an equal level rather than losing it", () => {
+      const id = insert({ threat_level: "HIGH" });
+      persist(id, "HIGH", null);
+      expect(fetch(id).threat_level).toBe("HIGH");
+    });
+
+    it("materializes a level on a row whose threat_level is NULL", () => {
+      // The reason the rank comparison is `>=` and not `>`. A NULL
+      // ranks as the floor (0), so a LOW verdict would be `0 > 0` —
+      // false — and the row would stay NULL forever, unreachable by the
+      // only verdict that could ever describe it.
+      const id = insert({ threat_level: null });
+      persist(id, "LOW", null);
+      expect(fetch(id).threat_level).toBe("LOW");
+    });
+
+    it("does NOT blank a good ai_assessment when this pass produced none", () => {
+      // The second live bug. `ai_assessment` was written unconditionally
+      // from a variable initialised `''`, so a failed or throttled Haiku
+      // call erased the assessment `agents/sparrow.ts` embeds in the
+      // takedown evidence packet.
+      const id = insert({ ai_assessment: "a careful earlier verdict" });
+      persist(id, "HIGH", null);
+      expect(fetch(id).ai_assessment).toBe("a careful earlier verdict");
+    });
+
+    it("writes an assessment this pass DID produce", () => {
+      const id = insert({ ai_assessment: null });
+      persist(id, "HIGH", "fresh verdict");
+      expect(fetch(id).ai_assessment).toBe("fresh verdict");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // The recurring BEC lane's claim-then-act
   // ═════════════════════════════════════════════════════════════════
 
-  describe("the handleScanLookalikes reset UPDATE", () => {
-    it("stamps a checked row STALE rather than NULL, so it lands in the re-check cohort", () => {
-      const id = insert({ last_checked: "2026-09-29 12:00:00", registered: 1, baseline_established_at: "2026-06-01 00:00:00" });
-      db.prepare(SQL.handlerReset()).run("b1");
-      const row = fetch(id);
-      // NOT NULL — that is the whole fix. NULL would have re-classified
-      // a real registration as a baseline and re-stamped 0267's column.
-      expect(row.last_checked).not.toBeNull();
-      const recheckIds = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
-      const firstIds = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
-      expect(recheckIds).toContain(id);
-      expect(firstIds).not.toContain(id);
-    });
-
-    it("leaves a genuinely never-checked row NULL — the mirror-image bug", () => {
-      // Writing the stale stamp over a never-checked row would demote a
-      // real first contact to a fake re-check, which is the one state
-      // that CAN mint a false `first_seen`.
+  describe("the BIMI claim and release", () => {
+    it("claims an unclaimed row exactly once", () => {
       const id = insert();
-      db.prepare(SQL.handlerReset()).run("b1");
-      const row = fetch(id);
-      expect(row.last_checked).toBeNull();
-      const firstIds = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
-      expect(firstIds).toContain(id);
+      const first = db.prepare(SQL.bimiClaim()).run(id);
+      expect(first.changes, "the claim").toBe(1);
+      const second = db.prepare(SQL.bimiClaim()).run(id);
+      // THE idempotency guarantee: only the writer that sees 1 may file,
+      // so a second pass (or a second producer) files nothing.
+      expect(second.changes, "the second claim").toBe(0);
+      expect(fetch(id).bimi_first_seen_at).not.toBeNull();
     });
 
-    it("clears the DNS failure cooldown so the rescan is not held off", () => {
-      const id = insert({ last_checked: "2026-09-29 12:00:00", last_check_failed_at: "2026-09-30 11:00:00" });
+    it("the release puts the row back in the lane", () => {
+      // Without the release a thrown `createAlert` would leave the row
+      // marked "BIMI recorded" with no alert anywhere, and the lane's own
+      // eligibility predicate would never offer it again.
+      const id = insert();
+      db.prepare(SQL.bimiClaim()).run(id);
+      db.prepare(SQL.bimiRelease()).run(id);
+      expect(fetch(id).bimi_first_seen_at).toBeNull();
+      expect(db.prepare(SQL.bimiClaim()).run(id).changes).toBe(1);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // The lapse branch reuses Sparrow's verification contract
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("the takedown verification write", () => {
+    beforeEach(() => {
+      db.prepare(`DELETE FROM takedown_requests`).run();
+    });
+
+    it("stamps a taken-down takedown as verified down", () => {
+      db.prepare(
+        `INSERT INTO takedown_requests (id, status, verification_status, last_verified_at)
+         VALUES ('td1', 'taken_down', NULL, NULL)`,
+      ).run();
+      const res = db.prepare(SQL.takedownDown()).run("td1");
+      expect(res.changes).toBe(1);
+      const td = db.prepare(`SELECT * FROM takedown_requests WHERE id = 'td1'`).get() as {
+        verification_status: string | null; last_verified_at: string | null;
+      };
+      expect(td.verification_status).toBe("down");
+      expect(td.last_verified_at).not.toBeNull();
+    });
+
+    it("does NOT touch a takedown that is not in 'taken_down' status", () => {
+      // `verification_status` describes a taken-down target. A
+      // submitted-but-unconfirmed takedown's lifecycle stays Sparrow's
+      // to advance, and writing 'down' on it would claim a confirmation
+      // nobody gave.
+      db.prepare(
+        `INSERT INTO takedown_requests (id, status, verification_status, last_verified_at)
+         VALUES ('td2', 'submitted', NULL, NULL)`,
+      ).run();
+      expect(db.prepare(SQL.takedownDown()).run("td2").changes).toBe(0);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // "Scan now" is a priority ENQUEUE
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("the handleScanLookalikes enqueue UPDATE", () => {
+    it("puts the brand's rows at the FRONT of their cohort, ahead of every real stamp", () => {
+      // What the old `-25 hours` CASE could only approximate. The epoch
+      // is earlier than any stamp the system can produce, so these rows
+      // sort first unconditionally rather than "first among rows checked
+      // more than 25 hours ago".
+      const ahead = insert({ baseline_established_at: "2026-06-01 00:00:00", check_due_at: "2020-01-01 00:00:00" });
+      db.prepare(SQL.handlerReset()).run("b1");
+      const order = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(order[0]).toBe(ahead);
+      expect(fetch(ahead).check_due_at).toBe("1970-01-01 00:00:00");
+    });
+
+    it("does NOT touch last_checked, so first contact is unforgeable from here", () => {
+      // THE fix this endpoint needed. Its previous two forms both wrote
+      // `last_checked` — first NULL (which CLAIMED we had never looked,
+      // reclassifying a real registration as a baseline), then a `CASE`
+      // working around that. With dueness in its own column there is
+      // nothing to work around: the discriminator is simply not
+      // reachable from here.
+      const checked = insert({ last_checked: "2026-09-29 12:00:00", baseline_established_at: "2026-06-01 00:00:00", registered: 1 });
+      const never = insert();
+      db.prepare(SQL.handlerReset()).run("b1");
+      expect(fetch(checked).last_checked).toBe("2026-09-29 12:00:00");
+      expect(fetch(checked).baseline_established_at).toBe("2026-06-01 00:00:00");
+      expect(fetch(never).last_checked).toBeNull();
+      expect(fetch(never).baseline_established_at).toBeNull();
+      // ...and each still lands in the cohort it belongs to.
+      const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
+      expect(recheck).toContain(checked);
+      expect(first).toContain(never);
+    });
+
+    it("REVIVES a row the backoff ladder had parked", () => {
+      // An operator asking for a scan is exactly the signal that the
+      // ladder's give-up verdict should be retried, and a parked row is
+      // unreachable by the cohort selects — so without the
+      // `check_attempts = 0` + epoch write it would stay unreachable
+      // forever.
+      const parked = insert({ check_due_at: null, check_attempts: 9, baseline_established_at: "2026-06-01 00:00:00" });
+      db.prepare(SQL.handlerReset()).run("b1");
+      const row = fetch(parked);
+      expect(row.check_due_at).toBe("1970-01-01 00:00:00");
+      expect(row.check_attempts).toBe(0);
+      const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(recheck).toContain(parked);
+    });
+
+    it("clears the DNS failure record so the rescan is not held off", () => {
+      const id = insert({ last_check_failed_at: "2026-09-30 11:00:00" });
       db.prepare(SQL.handlerReset()).run("b1");
       expect(fetch(id).last_check_failed_at).toBeNull();
     });
 
     it("touches only the named brand", () => {
-      db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b2','Other','other.example','monitored')`).run();
-      const mine = insert({ last_checked: "2026-09-29 12:00:00" });
-      const theirs = insert({ brand_id: "b2", last_checked: "2026-09-29 12:00:00" });
+      db.prepare(`INSERT OR IGNORE INTO brands (id, name, canonical_domain, tier) VALUES ('b2','Other','other.example','monitored')`).run();
+      const mine = insert({ check_due_at: "2026-09-29 12:00:00" });
+      const theirs = insert({ brand_id: "b2", check_due_at: "2026-09-29 12:00:00" });
       db.prepare(SQL.handlerReset()).run("b1");
-      expect(fetch(mine).last_checked).not.toBe("2026-09-29 12:00:00");
-      expect(fetch(theirs).last_checked).toBe("2026-09-29 12:00:00");
+      expect(fetch(mine).check_due_at).toBe("1970-01-01 00:00:00");
+      expect(fetch(theirs).check_due_at).toBe("2026-09-29 12:00:00");
+    });
+
+    it("the brand-scoped selector serves only that brand, bounded", () => {
+      db.prepare(`INSERT OR IGNORE INTO brands (id, name, canonical_domain, tier) VALUES ('b2','Other','other.example','monitored')`).run();
+      const mine = [insert(), insert(), insert()];
+      const theirs = insert({ brand_id: "b2" });
+      const got = (db.prepare(SQL.brandDueSelect()).all("b1", 2) as Array<{ id: string }>).map((r) => r.id);
+      expect(got.length, "bounded by the limit").toBe(2);
+      for (const id of got) expect(mine).toContain(id);
+      expect(got).not.toContain(theirs);
+    });
+
+    it("the brand-scoped selector skips rows that are not due, and parked ones", () => {
+      const due = insert();
+      const later = insert({ check_due_at: "9999-01-01 00:00:00" });
+      const parked = insert({ check_due_at: null });
+      const got = (db.prepare(SQL.brandDueSelect()).all("b1", 50) as Array<{ id: string }>).map((r) => r.id);
+      expect(got).toEqual([due]);
+      expect(got).not.toContain(later);
+      expect(got).not.toContain(parked);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
+  // NO DOUBLE-SOURCING — the comment, as a failing test
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("the cohort SELECTs source dueness from ONE column", () => {
+    /** The WHERE clause only — the projection may legitimately read anything. */
+    function whereOf(sql: string): string {
+      const m = sql.match(/\bWHERE\b([\s\S]*)$/i);
+      expect(m, "no WHERE clause found — the extraction moved").toBeTruthy();
+      return m![1]!;
+    }
+
+    for (const [label, sql] of [
+      ["first contact", SQL.firstContactSelect],
+      ["re-check", SQL.recheckSelect],
+      ["brand-scoped", SQL.brandDueSelect],
+    ] as Array<[string, () => string]>) {
+      it(`${label} mentions neither last_checked nor last_check_failed_at in its WHERE`, () => {
+        // `last_checked` used to carry THREE jobs — last success, dueness
+        // and the first-contact discriminator — so every scheduling write
+        // was also a reclassification. It now carries exactly one, and
+        // `last_check_failed_at` is a pure historical record. Both have
+        // live READERS that mean precisely that (`agents/observer.ts`'s
+        // 24 h briefing count, the staff and tenant column lists), which
+        // is why neither was deleted; what must not come back is either
+        // one appearing in a SELECTION predicate. A comment saying so
+        // decays. This does not.
+        const where = whereOf(sql());
+        expect(where, `${label} WHERE: ${where}`).not.toMatch(/\blast_checked\b/);
+        expect(where, `${label} WHERE: ${where}`).not.toMatch(/\blast_check_failed_at\b/);
+      });
+    }
+
+    it("Flight Control's due gauge is sourced the same way", () => {
+      const sql = SQL.fcDueGauge();
+      expect(sql).not.toMatch(/\blast_checked\b/);
+      expect(sql).not.toMatch(/\blast_check_failed_at\b/);
     });
   });
 
@@ -485,17 +819,34 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   describe("the four cohort SELECTs partition the due set", () => {
     it("the checker's two cohorts are disjoint and cover every due row", () => {
       const never = insert();
-      const stale = insert({ last_checked: "2026-09-01 00:00:00" });
-      const fresh = insert({ last_checked: "9999-01-01 00:00:00" });
+      const stale = insert({ baseline_established_at: "2026-06-01 00:00:00" });
+      const fresh = insert({ check_due_at: "9999-01-01 00:00:00" });
 
       const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
       const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
 
       expect(first).toEqual([never]);
       expect(recheck).toEqual([stale]);
-      // A row checked within the cadence is in NEITHER — the split did
-      // not widen the population, only how its budget is allocated.
+      // A row not yet due is in NEITHER — the split did not widen the
+      // population, only how its budget is allocated.
       expect([...first, ...recheck]).not.toContain(fresh);
+    });
+
+    it("the due gauge counts exactly the union of the two cohorts", () => {
+      // Flight Control's gauge is written as a sum of two cohort
+      // subqueries so each half can use its partial index. This pins
+      // that the arithmetic agrees with what the checker would select —
+      // a gauge that counts a different set is worse than no gauge.
+      insert();
+      insert();
+      insert({ baseline_established_at: "2026-06-01 00:00:00" });
+      insert({ check_due_at: "9999-01-01 00:00:00" });
+      insert({ check_due_at: null });
+      const first = (db.prepare(SQL.firstContactSelect()).all(500) as unknown[]).length;
+      const recheck = (db.prepare(SQL.recheckSelect()).all(500, 0) as unknown[]).length;
+      const gauge = (db.prepare(SQL.fcDueGauge()).get() as { count: number }).count;
+      expect(gauge).toBe(first + recheck);
+      expect(gauge).toBe(3);
     });
 
     it("the page pass's two cohorts are disjoint and cover every due row", () => {
@@ -513,14 +864,34 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
 
     it("the re-check OFFSET spill serves the NEXT slice, not the same one", () => {
       const ids = [1, 2, 3, 4, 5].map((n) =>
-        insert({ last_checked: `2026-09-0${n} 00:00:00` }),
+        insert({
+          baseline_established_at: "2026-06-01 00:00:00",
+          check_due_at: `2026-09-0${n} 00:00:00`,
+        }),
       );
       const head = (db.prepare(SQL.recheckSelect()).all(2, 0) as Array<{ id: string }>).map((r) => r.id);
       const spill = (db.prepare(SQL.recheckSelect()).all(3, 2) as Array<{ id: string }>).map((r) => r.id);
-      // Stalest first, and the two slices tile the cohort without
+      // MOST OVERDUE first, and the two slices tile the cohort without
       // overlapping — which is what makes the spill safe to merge.
       expect(head).toEqual(ids.slice(0, 2));
       expect(spill).toEqual(ids.slice(2, 5));
+    });
+
+    it("both cohorts serve the MOST OVERDUE row first", () => {
+      // The due timestamp IS the priority — there is no `priority`
+      // column, deliberately (see migration 0269: with no equality on a
+      // leading column, `ORDER BY priority DESC, check_due_at ASC`
+      // cannot seek and walks the whole `priority = 0` group). So the
+      // ordering has to be load-bearing on its own, in BOTH cohorts.
+      const newer = insert({ check_due_at: "2026-09-20 00:00:00" });
+      const older = insert({ check_due_at: "2026-02-02 00:00:00" });
+      const first = (db.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
+      expect(first).toEqual([older, newer]);
+
+      const rNewer = insert({ baseline_established_at: "2026-06-01 00:00:00", check_due_at: "2026-09-20 00:00:00" });
+      const rOlder = insert({ baseline_established_at: "2026-06-01 00:00:00", check_due_at: "2026-02-02 00:00:00" });
+      const recheck = (db.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(recheck).toEqual([rOlder, rNewer]);
     });
   });
 
@@ -559,17 +930,23 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
      *
      * ── WHY THE TIMESTAMPS ARE PER-ROW ────────────────────────────────
      *
-     * `last_checked` / `page_fetched_at` are seeded with a DISTINCT
+     * `check_due_at` / `page_fetched_at` are seeded with a DISTINCT
      * stamp per row, spread over an hour, because `sqlite_stat1` records
-     * only average rows-per-value and the plan turns on it. A fixture
-     * that seeds two constant timestamps drives that average to
-     * 18,670-of-56,010 and the planner then emits `SCAN ld` for the
-     * first-contact cohort — measured, and measured to flip back at
-     * three or more distinct values. Production stamps `datetime('now')`
-     * per row at 50 rows/tick, so it carries thousands of distinct
-     * values and is nowhere near that regime. An empty table and a
-     * two-value fixture are therefore misleading in OPPOSITE directions,
-     * and neither is what this block should be asserting against.
+     * only average rows-per-value and a plan can turn on it. The
+     * measured case is 0268's: a fixture seeding two constant
+     * `last_checked` values drives that average to 18,670-of-56,010 and
+     * the planner then emits `SCAN ld` for the old `IS NULL`-keyed
+     * first-contact cohort, flipping back at three or more distinct
+     * values. Read that migration's "ONE MEASURED SENSITIVITY" note
+     * before simplifying any of this.
+     *
+     * 0269's two cohort indexes are NOT exposed to that particular
+     * regime — they are partial on `check_due_at IS NOT NULL`, so every
+     * indexed row has a real value and there is no NULL bucket for
+     * stat1 to mis-price. The per-row stamping is kept anyway: it is
+     * what the page cohorts still need, and a fixture that is realistic
+     * in one dimension and degenerate in another is the shape that
+     * produced the dead assertions this block replaced.
      */
     const ROWS = 56_010;
     const BRANDS = 1_867;
@@ -607,23 +984,44 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       const now = Date.now();
       const staleBase = now - 30 * 24 * 3600_000;
       const freshBase = now - 3600_000;
+      /** Comfortably in the FUTURE — a `check_due_at` that is not yet due. */
+      const laterBase = now + 20 * 3600_000;
 
       const li = fresh.prepare(
         `INSERT INTO lookalike_domains
            (id, brand_id, domain, permutation_type, registered, resolves_to,
-            has_mx, has_web, last_checked, page_fetched_at)
-         VALUES (?, ?, ?, 'replacement', ?, ?, ?, ?, ?, ?)`,
+            has_mx, has_web, last_checked, page_fetched_at,
+            baseline_established_at, check_due_at, check_attempts,
+            bimi_first_seen_at)
+         VALUES (?, ?, ?, 'replacement', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       let checkSlot = 0;
       let pageSlot = 0;
+      let dueSlot = 0;
       for (let i = 0; i < ROWS; i += 1) {
         const registered = i % 4 === 0 ? 1 : 0;
         const hasWeb = registered === 1 && i % 10 < 7 ? 1 : 0;
-        // 30% checked, half of those stale. Each gets its own second.
+        const hasMx = registered === 1 && i % 3 === 0 ? 1 : 0;
+        // 30% already baselined (observed at least once), half of those
+        // with a stale `last_checked`. Each gets its own second.
         let lastChecked: string | null = null;
         if (i % 10 < 3) {
           const slot = checkSlot++;
           lastChecked = stamp(slot % 2 === 0 ? staleBase : freshBase, slot % 1800);
+        }
+        // `baseline_established_at` is now the COHORT discriminator, and
+        // it tracks `last_checked` on a real row (migration 0267's
+        // disambiguation UPDATE sets exactly that for legacy rows).
+        const baseline = lastChecked;
+        // `check_due_at` is the SCHEDULING column and is independent of
+        // the cohort: ~half the table is due now, ~half is not, and 1%
+        // is PARKED (NULL) so both cohort indexes have entries excluded
+        // and the parked gauge has something to count.
+        let checkDue: string | null;
+        if (i % 100 === 0) checkDue = null;
+        else {
+          const slot = dueSlot++;
+          checkDue = stamp(slot % 2 === 0 ? staleBase : laterBase, slot % 1800);
         }
         // A fifth of the has_web rows already page-analyzed, half stale.
         // `hasWeb && i % 5 === 0` forces `i % 20 === 0`, so the
@@ -640,10 +1038,17 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
           `acm3-${i}.example`,
           registered,
           registered === 1 ? "1.2.3.4" : null,
-          registered === 1 && i % 3 === 0 ? 1 : 0,
+          hasMx,
           hasWeb,
           lastChecked,
           pageFetched,
+          baseline,
+          checkDue,
+          checkDue === null ? 9 : 0,
+          // A seventh of the mail-bearing rows already claimed by the
+          // BEC lane, so `idx_lookalike_bimi_due`'s partial predicate
+          // excludes a real slice rather than nothing.
+          registered === 1 && hasMx === 1 && i % 7 === 0 ? "2026-09-01 00:00:00" : null,
         );
       }
       fresh.exec("COMMIT");
@@ -662,8 +1067,8 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     }
 
     const CASES: Array<{ label: string; sql: () => string; params: unknown[]; index: string }> = [
-      { label: "checker / first contact", sql: SQL.firstContactSelect, params: [50], index: "idx_lookalike_last_checked" },
-      { label: "checker / re-check", sql: SQL.recheckSelect, params: [50, 0], index: "idx_lookalike_last_checked" },
+      { label: "checker / first contact", sql: SQL.firstContactSelect, params: [50], index: "idx_lookalike_due_first_contact" },
+      { label: "checker / re-check", sql: SQL.recheckSelect, params: [50, 0], index: "idx_lookalike_due_recheck" },
       { label: "page / first analysis", sql: SQL.firstAnalysisSelect, params: [20], index: "idx_lookalike_page_due" },
       { label: "page / re-analysis", sql: SQL.reanalysisSelect, params: [20, 0], index: "idx_lookalike_page_due" },
     ];
@@ -672,15 +1077,24 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // The empty-table mistake, guarded explicitly rather than trusted.
       const c = planDb.prepare(
         `SELECT COUNT(*) AS n,
-                SUM(last_checked IS NULL) AS never_checked,
+                SUM(baseline_established_at IS NULL) AS never_baselined,
                 SUM(registered) AS registered,
-                SUM(page_fetched_at IS NOT NULL) AS paged
+                SUM(page_fetched_at IS NOT NULL) AS paged,
+                SUM(check_due_at IS NULL) AS parked,
+                SUM(check_due_at IS NOT NULL AND check_due_at <= datetime('now')) AS due
            FROM lookalike_domains`,
-      ).get() as { n: number; never_checked: number; registered: number; paged: number };
+      ).get() as {
+        n: number; never_baselined: number; registered: number;
+        paged: number; parked: number; due: number;
+      };
       expect(c.n).toBe(ROWS);
-      expect(c.never_checked).toBeGreaterThan(30_000);
+      expect(c.never_baselined).toBeGreaterThan(30_000);
       expect(c.registered).toBeGreaterThan(10_000);
       expect(c.paged).toBeGreaterThan(1_000);
+      // Both ends of the scheduling column are represented: a parked
+      // slice (excluded from both cohort indexes) and a large due slice.
+      expect(c.parked).toBeGreaterThan(100);
+      expect(c.due).toBeGreaterThan(10_000);
       // And every cohort SELECT returns rows, so a plan is being chosen
       // for a query that has work to do.
       for (const c2 of CASES) {
@@ -706,13 +1120,71 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
           // A BARE `\bSCAN\b`. SQLite prints the ALIAS, so an unindexed
           // read of `lookalike_domains ld` reads `SCAN ld` and the old
           // `/SCAN lookalike_domains\b/` could never match the string it
-          // existed to catch. Mutation-checked: dropping
-          // `idx_lookalike_last_checked` yields `SCAN ld`, which the old
-          // assertion passed and this one fails.
+          // existed to catch. Mutation-checked: dropping either cohort
+          // index yields `SCAN ld`, which the old assertion passed and
+          // this one fails.
           expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN\b/);
         }
       });
     }
+
+    it("the checker's cohorts use SEPARATE indexes — neither borrows the other's", () => {
+      // The split is only worth its two indexes if each cohort actually
+      // uses its own. A single shared index on `check_due_at` would make
+      // both cohorts scan past the other's rows, which is the cost the
+      // partial predicates exist to avoid.
+      for (const [state, target] of STATES()) {
+        const first = plan(target, SQL.firstContactSelect(), [50]);
+        const recheck = plan(target, SQL.recheckSelect(), [50, 0]);
+        expect(first, `${state}: ${first}`).not.toContain("idx_lookalike_due_recheck");
+        expect(recheck, `${state}: ${recheck}`).not.toContain("idx_lookalike_due_first_contact");
+      }
+    });
+
+    it("Flight Control's gauges are index reads, not table scans", () => {
+      // The due gauge is a sum of two cohort subqueries precisely so each
+      // half implies a partial index; a single-predicate
+      // `check_due_at <= datetime('now')` count would imply neither and
+      // full-scan the table on every FC tick. The parked gauge reads its
+      // own partial index, which is tiny by construction — an index-only
+      // `SCAN ... USING INDEX` there is the cheap form, not the one the
+      // bare `\bSCAN\b` assertion above is hunting.
+      for (const [state, target] of STATES()) {
+        const due = plan(target, SQL.fcDueGauge(), []);
+        expect(due, `${state}: ${due}`).toContain("idx_lookalike_due_first_contact");
+        expect(due, `${state}: ${due}`).toContain("idx_lookalike_due_recheck");
+        expect(due, `${state}: ${due}`).not.toMatch(/\bSCAN lookalike_domains\b(?! USING)/);
+
+        const parked = plan(target, SQL.fcParkedGauge(), []);
+        expect(parked, `${state}: ${parked}`).toContain("idx_lookalike_parked");
+      }
+    });
+
+    it("the BEC lane's eligible set is an index seek", () => {
+      // `registered = 1 AND has_mx = 1 AND bimi_first_seen_at IS NULL`
+      // over ~19,000 registered rows, every tick. The index is partial on
+      // exactly that predicate so it SHRINKS as rows are claimed.
+      const bimiSql = `SELECT ld.id FROM lookalike_domains ld
+        WHERE ld.registered = 1 AND ld.has_mx = 1 AND ld.bimi_first_seen_at IS NULL
+        LIMIT 25`;
+      for (const [state, target] of STATES()) {
+        const detail = plan(target, bimiSql, []);
+        expect(detail, `${state}: ${detail}`).toContain("idx_lookalike_bimi_due");
+        expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN\b/);
+      }
+    });
+
+    it("the brand-scoped rescan selector seeks by brand and needs no sort", () => {
+      for (const [state, target] of STATES()) {
+        const detail = plan(target, SQL.brandDueSelect(), ["b3", 10]);
+        expect(detail, `${state}: ${detail}`).toContain("idx_lookalike_brand");
+        expect(detail, `${state}: ${detail}`).not.toMatch(/\bSCAN\b/);
+        // No `ORDER BY`, deliberately: the rescan handler stamps every
+        // row of the brand with the SAME `check_due_at`, so ordering
+        // would buy nothing and cost a temp b-tree.
+        expect(detail, `${state}: ${detail}`).not.toMatch(/TEMP B-TREE/i);
+      }
+    });
 
     for (const c of CASES) {
       it(`${c.label} needs no temp b-tree for ordering`, () => {
@@ -731,58 +1203,153 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     // What the first-contact plan actually depends on
     // ═════════════════════════════════════════════════════════════════
 
-    it("0268 refreshes statistics, and the plans hold with them", () => {
+    it("0268 and 0269 both refresh statistics, table-scoped", () => {
       // The sibling convention (0099/0100/0101/0123/0197/0200) and the
       // reason it is safe here, asserted together: measured statistics
-      // keep all four plans, so the ANALYZE this round adds to 0268 is
-      // the sibling behaviour rather than a risk.
-      const code = migration0268.replace(/^\s*--.*$/gm, "");
-      expect(code, "0268 must refresh statistics like its siblings").toMatch(/\bANALYZE\b/i);
-      // Table-scoped, not 0123's bare whole-database form.
-      expect(code).toMatch(/ANALYZE\s+lookalike_domains\s*;/i);
+      // keep every plan above, so each ANALYZE is sibling behaviour
+      // rather than a risk. Table-scoped, not 0123's bare
+      // whole-database form, which reads every index in the database.
+      for (const [label, sql] of [["0268", migration0268], ["0269", migration0269]] as const) {
+        const code = sql.replace(/^\s*--.*$/gm, "");
+        expect(code, `${label} must refresh statistics like its siblings`).toMatch(/\bANALYZE\b/i);
+        expect(code, label).toMatch(/ANALYZE\s+lookalike_domains\s*;/i);
+      }
     });
 
-    it("the first-contact plan is CARDINALITY-sensitive — which is why the fixture stamps per row", () => {
-      // Not a hypothetical, and the reason the seeding above is the way
-      // it is. `sqlite_stat1` stores only average rows-per-value, so it
-      // cannot express that the NULL bucket of `last_checked` holds most
-      // of the table. Drive that average high enough — TWO or fewer
-      // distinct non-NULL values across 56,010 rows — and the planner
-      // prices the `IS NULL` seek plus a per-row table lookup above an
-      // unindexed read with `LIMIT 50`, and emits `SCAN ld`.
+    it("0269 backfills check_due_at, so no pre-existing row reads as PARKED", () => {
+      // The one way this migration could brick the whole lane: the new
+      // predicates read `check_due_at IS NULL` as parked, and every row
+      // that existed before the ADD COLUMN has exactly that. Asserted
+      // against the migration TEXT because the statement is a data
+      // UPDATE, which `lookalikeSchema()` deliberately does not apply.
+      const code = migration0269.replace(/^\s*--.*$/gm, "");
+      expect(code).toMatch(/UPDATE\s+lookalike_domains[\s\S]*SET\s+check_due_at\s*=/i);
+      expect(code, "the backfill must be idempotent").toMatch(/WHERE\s+check_due_at\s+IS\s+NULL/i);
+
+      // ...and it does the right thing on both row shapes. Run against
+      // real SQLite rather than pattern-matched, on a table seeded as it
+      // would be the moment before the migration runs.
+      const d = new DatabaseSync!(":memory:");
+      applyLookalikeSchema(d);
+      d.prepare(
+        `INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type, last_checked, check_due_at)
+         VALUES ('never', 'b1', 'a.example', 'replacement', NULL, NULL),
+                ('stale', 'b1', 'b.example', 'replacement', '2026-01-01 00:00:00', NULL),
+                ('kept',  'b1', 'c.example', 'replacement', NULL, '2099-01-01 00:00:00')`,
+      ).run();
+      const backfill = code.match(/UPDATE\s+lookalike_domains[\s\S]*?;/i);
+      expect(backfill, "could not extract the backfill UPDATE").toBeTruthy();
+      d.exec(backfill![0]!);
+      const rows = d.prepare(
+        `SELECT id, check_due_at,
+                (check_due_at IS NOT NULL AND check_due_at <= datetime('now')) AS due
+           FROM lookalike_domains ORDER BY id`,
+      ).all() as Array<{ id: string; check_due_at: string | null; due: number }>;
+      const by = new Map(rows.map((r) => [r.id, r]));
+      // Never observed -> due NOW. Stale -> one cadence past a date in
+      // the past, so also due now. Neither may be left parked.
+      expect(by.get("never")!.due, "never-observed row must be due").toBe(1);
+      expect(by.get("stale")!.due, "stale row must be due").toBe(1);
+      // An already-scheduled row is not re-stamped (idempotence).
+      expect(by.get("kept")!.check_due_at).toBe("2099-01-01 00:00:00");
+    });
+
+    it("0267 disambiguates the pre-existing rows, so none reads as first contact", () => {
+      // THE OTHER WAY THIS DEPLOY COULD GO WRONG, and the mirror image
+      // of 0269's backfill. 0267 flipped the first-contact discriminator
+      // from `last_checked IS NULL` to `baseline_established_at IS
+      // NULL`. Under the old rule the ~120 production rows classified
+      // correctly WITHOUT the column, because their `last_checked` was
+      // already non-NULL. Under the new rule every one of them reads as
+      // first contact on the first tick after deploy: re-baselined,
+      // `first_seen` suppressed, alerts withheld unless mail+web
+      // happened to be present. Silently, and once per row forever.
       //
-      // Production cannot reach that regime (`datetime('now')` per row,
-      // 50 rows/tick => thousands of distinct values), but a FIXTURE
-      // trivially can — and a fixture that did would have "proved" a
-      // full scan that production never performs. Pinned so the next
-      // person to simplify the seeding above sees why it is not
-      // simplified.
-      const degenerate = (distinctStamps: number): string => {
+      // Asserted against the migration TEXT because the statement is a
+      // data UPDATE, which `lookalikeSchema()` deliberately does not
+      // apply — then EXECUTED, because a pattern match would pass on an
+      // UPDATE that set the wrong column.
+      const code = migration0267.replace(/^\s*--.*$/gm, "");
+      const stmt = code.match(/UPDATE\s+lookalike_domains[\s\S]*?;/i);
+      expect(stmt, "0267 must carry the disambiguation UPDATE").toBeTruthy();
+      expect(stmt![0], "and it must be idempotent")
+        .toMatch(/WHERE\s+baseline_established_at\s+IS\s+NULL/i);
+
+      const d = new DatabaseSync!(":memory:");
+      applyLookalikeSchema(d);
+      d.prepare(
+        `INSERT INTO lookalike_domains
+           (id, brand_id, domain, permutation_type, registered, last_checked,
+            baseline_established_at, check_due_at)
+         VALUES ('legacy', 'b1', 'a.example', 'replacement', 1, '2026-05-01 00:00:00', NULL, '2026-01-01 00:00:00'),
+                ('fresh',  'b1', 'b.example', 'replacement', 0, NULL, NULL, '2026-01-01 00:00:00'),
+                ('done',   'b1', 'c.example', 'replacement', 1, '2026-05-01 00:00:00', '2026-04-01 00:00:00', '2026-01-01 00:00:00')`,
+      ).run();
+      d.exec(stmt![0]!);
+
+      const rows = d.prepare(
+        `SELECT id, baseline_established_at FROM lookalike_domains ORDER BY id`,
+      ).all() as Array<{ id: string; baseline_established_at: string | null }>;
+      const by = new Map(rows.map((r) => [r.id, r.baseline_established_at]));
+      // An observed row IS baselined, and its `last_checked` is the best
+      // evidence we have of when.
+      expect(by.get("legacy")).toBe("2026-05-01 00:00:00");
+      // A genuinely never-observed row stays first contact.
+      expect(by.get("fresh")).toBeNull();
+      // An already-disambiguated row is not re-stamped (idempotence).
+      expect(by.get("done")).toBe("2026-04-01 00:00:00");
+
+      // ...and the cohort SELECTs agree, which is the property the
+      // column values are only evidence for.
+      const first = (d.prepare(SQL.firstContactSelect()).all(50) as Array<{ id: string }>).map((r) => r.id);
+      const recheck = (d.prepare(SQL.recheckSelect()).all(50, 0) as Array<{ id: string }>).map((r) => r.id);
+      expect(first).toEqual(["fresh"]);
+      expect(recheck.sort()).toEqual(["done", "legacy"]);
+    });
+
+    it("the new cohort plans are NOT cardinality-sensitive the way 0268's were", () => {
+      // 0268 documents a measured degenerate regime: `sqlite_stat1`
+      // records only average rows-per-value, so it could not express
+      // that the NULL bucket of `last_checked` held most of the table,
+      // and at TWO or fewer distinct non-NULL values across 56,010 rows
+      // the planner priced the old `last_checked IS NULL` seek above an
+      // unindexed read with `LIMIT 50` and emitted `SCAN ld`.
+      //
+      // 0269's cohort indexes are PARTIAL on `check_due_at IS NOT NULL`,
+      // so every indexed row carries a real value and there is no NULL
+      // bucket to mis-price. This pins that claim at the SAME degenerate
+      // cardinality that broke the old plan — one distinct stamp across
+      // the whole table — rather than asserting it in prose.
+      const degenerate = (distinctStamps: number): { first: string; recheck: string } => {
         const d = new DatabaseSync!(":memory:");
         applyLookalikeSchema(d);
         const ins = d.prepare(
-          `INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type, last_checked)
-           VALUES (?, 'b1', ?, 'replacement', ?)`,
+          `INSERT INTO lookalike_domains
+             (id, brand_id, domain, permutation_type, baseline_established_at, check_due_at)
+           VALUES (?, 'b1', ?, 'replacement', ?, ?)`,
         );
         d.exec("BEGIN");
         for (let i = 0; i < ROWS; i += 1) {
           ins.run(
             `l${i}`,
             `d${i}.example`,
-            i % 10 < 3 ? `2026-08-01 00:00:${String(i % distinctStamps).padStart(2, "0")}` : null,
+            // 30% baselined, exactly as the real fixture.
+            i % 10 < 3 ? "2026-06-01 00:00:00" : null,
+            `2026-08-01 00:00:${String(i % distinctStamps).padStart(2, "0")}`,
           );
         }
         d.exec("COMMIT");
         d.exec("ANALYZE");
-        return plan(d, SQL.firstContactSelect(), [50]);
+        return {
+          first: plan(d, SQL.firstContactSelect(), [50]),
+          recheck: plan(d, SQL.recheckSelect(), [50, 0]),
+        };
       };
-      expect(degenerate(2), "2 distinct stamps").toMatch(/\bSCAN\b/);
-      expect(degenerate(3), "3 distinct stamps").not.toMatch(/\bSCAN\b/);
-      // ...and the real fixture is far past the flip point.
-      const distinct = (analyzedDb.prepare(
-        `SELECT COUNT(DISTINCT last_checked) AS n FROM lookalike_domains`,
-      ).get() as { n: number }).n;
-      expect(distinct).toBeGreaterThan(1_000);
+      for (const n of [1, 2, 3]) {
+        const { first, recheck } = degenerate(n);
+        expect(first, `${n} distinct stamps / first: ${first}`).not.toMatch(/\bSCAN\b/);
+        expect(recheck, `${n} distinct stamps / recheck: ${recheck}`).not.toMatch(/\bSCAN\b/);
+      }
     });
   });
 });

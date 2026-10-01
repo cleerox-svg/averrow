@@ -34,6 +34,7 @@ import {
   buildPageEvidenceDetails,
   clearsLookalikeAlertFloor,
   pageVerdictClearsPhishingBar,
+  normalizeThreatLevel as normalizeLevel,
   THREAT_LEVEL_RANK as LEVEL_ORDER,
   LOOKALIKE_ALERT_SEVERITY_FLOOR,
 } from '../lib/lookalike-alert-policy';
@@ -144,10 +145,12 @@ export interface PageAnalysisSummary {
   selected_reanalysis: number;
 }
 
-function normalizeLevel(raw: string | null): PageThreatLevel {
-  const v = (raw ?? 'LOW').toUpperCase();
-  return v === 'MEDIUM' || v === 'HIGH' || v === 'CRITICAL' ? (v as PageThreatLevel) : 'LOW';
-}
+// `normalizeLevel` is the shared `normalizeThreatLevel` from lib/
+// lookalike-alert-policy.ts, aliased to keep this module's existing call
+// sites unchanged. It used to be a private copy here; the checker's
+// re-entrant compositor needs the same function, and a second copy of a
+// defaulting rule that decides what a monotonic persist may not go below
+// is the kind that drifts silently.
 
 /**
  * Never-analyzed rows. No `ORDER BY`: every row in this cohort shares

@@ -85,6 +85,25 @@ export const THREAT_LEVEL_RANK: Record<PageThreatLevel, number> = {
 };
 
 /**
+ * A stored `lookalike_domains.threat_level` as a typed level.
+ *
+ * NULL / an unrecognised value floors to LOW rather than to the table's
+ * `DEFAULT 'LOW'` by coincidence: both producers use this value as the
+ * BASELINE a monotonic persist may never go below, so the safe default
+ * is the one that cannot suppress a later escalation.
+ *
+ * Shared because both producers need it and a second copy would be the
+ * third: `scanners/lookalike-page-analysis.ts` had a private
+ * `normalizeLevel` and the checker's re-entrant compositor needs the
+ * same function, which is how THREAT_LEVEL_RANK came to have three
+ * copies before it moved here.
+ */
+export function normalizeThreatLevel(raw: string | null): PageThreatLevel {
+  const v = (raw ?? 'LOW').toUpperCase();
+  return v === 'MEDIUM' || v === 'HIGH' || v === 'CRITICAL' ? (v as PageThreatLevel) : 'LOW';
+}
+
+/**
  * The severity floor for `lookalike_domain_active` alerts.
  *
  * Below this level NO alert row is created — on producers 1-3 of the
