@@ -1,0 +1,19 @@
+# Gitleaks config — used by .github/workflows/secret-scan.yml.
+# Extends the default ruleset; only known, reviewed false positives are
+# allowlisted here. Never allowlist a real credential — rotate it instead.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed false positives (2026-10-01 secret audit)"
+paths = [
+  # PEM header/footer regex used to strip a key, not a key itself.
+  '''packages/(averrow-worker|trust-radar)/src/lib/google-service-account\.ts''',
+  # Test generates a throwaway RSA key at runtime.
+  '''packages/(averrow-worker|trust-radar)/test/google-service-account\.test\.ts''',
+]
+commits = [
+  # imprsn8 default-admin hash (decommissioned in 2a021e28; credential dead).
+  "1a8cf652e11b28cddcb2de5b513509f50ec213da",
+]
