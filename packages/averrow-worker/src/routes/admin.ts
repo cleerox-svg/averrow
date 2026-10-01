@@ -1078,6 +1078,15 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   });
 
+  // Brand-link cleanup — super_admin twin of POST /api/internal/brand-links/cleanup.
+  // Mass data mutation in apply mode, hence super_admin (not admin).
+  router.post("/api/admin/brand-links/cleanup", async (request: Request, env: Env) => {
+    const ctx = await requireSuperAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleBrandLinkCleanup } = await import("../handlers/admin/brand-link-cleanup");
+    return handleBrandLinkCleanup(new URL(request.url), env, `user:${ctx.userId}`);
+  });
+
   router.post("/api/admin/alerts/backfill-triage", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;

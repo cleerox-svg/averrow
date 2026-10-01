@@ -408,10 +408,15 @@ export function fuzzyMatchBrand(haystacks: string[], brands: BrandRow[]): string
   return fuzzyMatchBrandDetailed(haystacks, brands)?.brandId ?? null;
 }
 
+/** True when the input is a hostname or bare name the matcher can evaluate. */
+export function isMatchableInput(raw: string): boolean {
+  return hostParts(raw) !== null;
+}
+
 /**
  * Load all brands from DB.
  */
-async function loadBrands(db: D1Database): Promise<BrandRow[]> {
+export async function loadBrands(db: D1Database): Promise<BrandRow[]> {
   const rows = await db.prepare("SELECT id, name, canonical_domain FROM brands").all<BrandRow>();
   return rows.results;
 }
