@@ -183,6 +183,21 @@ export interface PlatformAbuseClassifierSilentVars {
   oldest_pending_hours: number;
 }
 
+export interface PlatformAiCallsFailingVars {
+  /** Hours since the newest budget_ledger row, or null when the ledger
+   *  is completely empty (no AI call has ever been billed). */
+  hours_since_last_call: number | null;
+  /** Threshold (hours) of ledger silence above which we alert. */
+  threshold_hours: number;
+  /** Agents whose recent runs recorded attempted > 0 and succeeded = 0. */
+  failing_agents: Array<{
+    agent_id: string;
+    attempted: number;
+    first_failure_kind: string | null;
+    first_error: string | null;
+  }>;
+}
+
 export interface PlatformAiSpendBurstVars {
   spent_24h_usd: number;
   threshold_usd: number;
@@ -609,6 +624,65 @@ export function renderPlatformAbuseClassifierSilent(v: PlatformAbuseClassifierSi
     link: PLATFORM_AGENTS_LINK,
     group_key: `platform_abuse_classifier_silent:${todayKey()}`,
     audience: 'super_admin',
+    severity: 'high',
+  };
+}
+
+/**
+ * Every Anthropic call the platform attempted is failing.
+ *
+ * The incident this exists for: the Anthropic bill went unpaid, every call
+ * started returning `HTTP 400 — "Your credit balance is too low to access
+ * the Anthropic API."`, and the platform ran ~3 months on rule-based
+ * fallbacks with nothing alerting. budget_ledger's last row was
+ * 2026-07-10. Every agent reported `severity: "info"` / `status: success`
+ * the whole time.
+ *
+ * Fires only on the conjunction of a silent ledger AND a non-zero
+ * attempted-with-zero-succeeded count, so a genuinely quiet platform (no
+ * eligible work → no calls → silent ledger → zero attempts) never alerts.
+ */
+export function renderPlatformAiCallsFailing(v: PlatformAiCallsFailingVars): RenderedTemplate {
+  const silence = v.hours_since_last_call === null
+    ? 'never (budget_ledger is empty)'
+    : `${v.hours_since_last_call.toFixed(1)}h ago`;
+  const attempted = v.failing_agents.reduce((s, a) => s + a.attempted, 0);
+  const agentList = v.failing_agents.length > 0
+    ? v.failing_agents.map((a) => `${a.agent_id} (${a.attempted} attempted, 0 succeeded)`).join(', ')
+    : 'unknown';
+  const firstKind = v.failing_agents.find((a) => a.first_failure_kind !== null)?.first_failure_kind ?? 'unknown';
+  const firstError = v.failing_agents.find((a) => a.first_error !== null)?.first_error ?? 'see agent_outputs details';
+
+  return {
+    title: `AI calls failing — ${attempted} attempted, 0 succeeded`,
+    message:
+      `Last billed Anthropic call: ${silence} (threshold ${v.threshold_hours}h). ` +
+      `Agents still attempting and failing: ${agentList}. ` +
+      `First failure kind: ${firstKind} — ${truncate(firstError, 300)}. ` +
+      `Affected agents are silently falling through to their rule-based paths, so threat ` +
+      `classification, brand matching and provider scoring are running UNSCORED by AI.`,
+    reason_text:
+      `Platform alert — operational only. Internal degradation, not a customer-facing outage: ` +
+      `the rule-based fallbacks keep the pipeline moving, so no tenant-visible surface is down.`,
+    recommended_action:
+      `1) CHECK THE ANTHROPIC ACCOUNT HAS CREDIT — console.anthropic.com → Billing. An unpaid ` +
+      `balance returns HTTP 400 "Your credit balance is too low to access the Anthropic API" on ` +
+      `every call, which is the failure that caused the ~3-month silent outage this alert exists ` +
+      `to catch. 2) Read aiFirstError in agent_outputs details for the exact HTTP status: ` +
+      `SELECT agent_id, summary, details FROM agent_outputs WHERE json_extract(details, ` +
+      `'$.aiCallsAttempted') > 0 AND json_extract(details, '$.aiCallsSucceeded') = 0 ORDER BY ` +
+      `created_at DESC LIMIT 5; — a 401 is a bad/rotated ANTHROPIC_API_KEY, a 429 is rate ` +
+      `limiting, a 5xx is upstream. 3) Confirm ANTHROPIC_API_KEY is still set on the Worker and ` +
+      `the AI Gateway route resolves. 4) Re-check the ai_health block in ` +
+      `./scripts/platform-diagnostics.sh after the fix — hours_since_last_call should drop to ~0.`,
+    link: PLATFORM_AGENTS_LINK,
+    group_key: `platform_ai_calls_failing:${todayKey()}`,
+    audience: 'super_admin',
+    // 'high', not 'critical', DELIBERATELY: emitPlatformNotification
+    // auto-creates an incident for 'critical', and that incident path
+    // surfaces on the PUBLIC /status page. An unpaid-bill AI outage is an
+    // internal degradation, not customer-facing availability. One-word
+    // change to 'critical' if an operator later wants incident tracking.
     severity: 'high',
   };
 }

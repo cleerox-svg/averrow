@@ -52,19 +52,44 @@ export async function collectOpsTelemetry(env: Env): Promise<OpsTelemetry> {
 
   const telemetryWarnings: string[] = [];
 
-  // budget_ledger writes are wired through lib/anthropic.ts:238 — every
-  // successful Anthropic call (direct or via lib/haiku.ts) records a row
-  // via BudgetManager.recordCost(). An empty ledger today means call
-  // sites are short-circuiting (cost guards, no eligible work, gated AI
-  // paths), not that logging is missing.
+  // budget_ledger writes are wired through lib/anthropic.ts — every
+  // SUCCESSFUL Anthropic call (direct or via lib/haiku.ts) records a row
+  // via BudgetManager.recordCost(). A FAILED call writes nothing.
+  //
+  // So an empty ledger is AMBIGUOUS and has exactly two causes:
+  //   (a) BENIGN — call sites short-circuited: budget cost guards, the
+  //       per-agent token cap, or simply no eligible work this window.
+  //   (b) OUTAGE — calls were made and every one of them failed. This is
+  //       what actually happened for ~3 months (last ledger row
+  //       2026-07-10 11:10:20 UTC): an unpaid Anthropic balance returned
+  //       `HTTP 400 — "Your credit balance is too low to access the
+  //       Anthropic API."` on every request, agents fell through to their
+  //       rule-based paths, and nothing alerted.
+  //
+  // This comment and the warning below previously asserted (a) as fact,
+  // which made them part of the silence. Do NOT read an empty ledger as
+  // benign. Disambiguate with the strictly-API counters:
+  //   - `ai_health` in GET /api/internal/platform-diagnostics (per-agent
+  //     attempted / succeeded; attempted > 0 && succeeded = 0 = outage,
+  //     attempted = 0 = genuinely quiet), and
+  //   - the `platform_ai_calls_failing` notification Flight Control
+  //     raises on exactly that conjunction.
   const budgetLedgerHasRows = await ledgerHasRows(env);
   if (!budgetLedgerHasRows) {
     telemetryWarnings.push(
       "budget_ledger has no rows in the window — AI cost metrics " +
         "(ai_cost_usd_7d, ai_gateway.total_cost_usd_7d, ai_gateway.model_mix) " +
         "will report zero. Logging is wired (lib/anthropic.ts → " +
-        "BudgetManager.recordCost), so this means AI call sites are " +
-        "short-circuiting via cost guards or gated AI paths.",
+        "BudgetManager.recordCost) and only SUCCESSFUL calls write a row, " +
+        "so this is ambiguous: either AI call sites short-circuited " +
+        "(cost guards / per-agent cap / no eligible work), OR every AI " +
+        "call failed and the agents silently fell back to rule-based " +
+        "paths. Do not assume the benign reading — an unpaid Anthropic " +
+        "balance (HTTP 400) emptied this ledger for ~3 months. " +
+        "Disambiguate via the `ai_health` block in " +
+        "/api/internal/platform-diagnostics (attempted > 0 with " +
+        "succeeded = 0 means outage; attempted = 0 means genuinely " +
+        "quiet) and the platform_ai_calls_failing notification.",
     );
   }
 

@@ -57,6 +57,7 @@ export type NotificationEventKey =
   | 'platform_dns_queue_stalled'
   | 'platform_dns_queue_reaper_stalled'
   | 'platform_abuse_classifier_silent'
+  | 'platform_ai_calls_failing'
   | 'platform_spam_trap_seeding_stalled'
   | 'platform_spam_trap_capture_stale'
   | 'platform_ai_spend_burst'
@@ -382,6 +383,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_abuse_classifier_silent',
     label: 'Abuse Mailbox Classifier Silent',
     description: 'Pending abuse-mailbox rows exist but classifier has not run successfully in >2h',
+    dedupWindow: '-1 hour',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_ai_calls_failing',
+    label: 'AI Calls Failing',
+    description: 'Agents are attempting Anthropic calls but none are succeeding — budget_ledger silent while attempts are non-zero',
     dedupWindow: '-1 hour',
     defaultEnabled: true,
     userToggleable: false,

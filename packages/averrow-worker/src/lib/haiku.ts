@@ -71,12 +71,103 @@ export interface HaikuProviderScore {
   response_assessment?: string;
 }
 
-interface HaikuResponse<T> {
+/**
+ * Why a failure happened, so a caller can tell a DELIBERATE SKIP from an
+ * OUTAGE.
+ *
+ * Before this discriminator existed, every helper here collapsed both into
+ * `{ success: false, error: string }`. Callers do `if (!result.success)
+ * useHeuristic()` — which is correct for a budget throttle and catastrophic
+ * for an HTTP 400. The platform ran ~3 months on rule-based fallbacks with
+ * zero working AI and every agent reporting success, because nothing could
+ * see the difference (last budget_ledger row 2026-07-10, root cause
+ * `Anthropic HTTP 400 — "Your credit balance is too low"`).
+ *
+ *   throttled    — OUR choice. BudgetManager hard/emergency throttle told
+ *                  non-critical callers to skip. No API call was made.
+ *                  Expected, self-inflicted, not an incident.
+ *   budget_cap   — OUR choice. The per-agent monthlyTokenCap pre-flight in
+ *                  callAnthropic refused the call. No API call was made.
+ *   api_error    — THEIR refusal (or ours misconfigured): HTTP 4xx/5xx, or
+ *                  no API key configured. This is the outage class.
+ *   network      — fetch threw / timed out. Nothing reached Anthropic.
+ *   parse_error  — the call billed and returned 2xx, but the body wasn't
+ *                  usable (no text block, no JSON payload, malformed JSON).
+ *
+ * `api_error`, `network` and `parse_error` all mean "AI is not working".
+ * `throttled` and `budget_cap` mean "AI was intentionally skipped".
+ */
+export type HaikuFailureKind =
+  | 'throttled'
+  | 'budget_cap'
+  | 'api_error'
+  | 'parse_error'
+  | 'network';
+
+export interface HaikuResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
   model?: string;
   tokens_used?: number;
+  /** Set only when `success === false`. Additive — `success` and `error`
+   *  stay byte-identical so no existing call site changes behaviour. */
+  failure_kind?: HaikuFailureKind;
+}
+
+/**
+ * Message prefixes thrown by lib/anthropic.ts for the non-HTTP failure
+ * modes. AnthropicError carries `.status` for HTTP failures (the typed
+ * field we prefer), but the transport / response-shape failures carry no
+ * typed discriminator, so these are matched on `.message`.
+ *
+ * Keep in sync with the throw sites in lib/anthropic.ts:
+ *   - `Anthropic fetch failed:`            callAnthropic fetch catch
+ *   - `budget_cap_exceeded:`               callAnthropic budget pre-flight
+ *   - `Anthropic response JSON parse failed:`  callAnthropic JSON.parse catch
+ *   - `Anthropic response had no text block`   callAnthropicJSON
+ *   - `Anthropic response had no JSON payload` callAnthropicJSON
+ *   - `Anthropic JSON parse failed:`           callAnthropicJSON
+ */
+const BUDGET_CAP_PREFIX = 'budget_cap_exceeded:';
+const NETWORK_PREFIX = 'Anthropic fetch failed:';
+const PARSE_MARKERS = [
+  'Anthropic response JSON parse failed',
+  'Anthropic response had no text block',
+  'Anthropic response had no JSON payload',
+  'Anthropic JSON parse failed',
+] as const;
+
+/**
+ * Bucket a thrown wrapper error into a HaikuFailureKind.
+ *
+ * Defaults to `api_error` rather than a "don't know" bucket: an
+ * unrecognised throw out of the Anthropic client means AI is not working,
+ * and the whole point of this field is that an unknown failure must never
+ * read as a deliberate skip. `resolveApiKey`'s "No API key configured"
+ * throw lands here too, which is correct — a missing key is an outage.
+ */
+/**
+ * True when a failure_kind means WE CHOSE to skip the call, so no request
+ * ever reached Anthropic.
+ *
+ * Agents use this to keep their strictly-API counters honest: a throttled
+ * or budget-capped result must NOT count as an attempted API call, or a
+ * deliberate cost throttle would read identically to an outage and trip
+ * `platform_ai_calls_failing`.
+ */
+export function isDeliberateAiSkip(kind: HaikuFailureKind | null | undefined): boolean {
+  return kind === 'throttled' || kind === 'budget_cap';
+}
+
+function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+  if (!(err instanceof AnthropicError)) return 'api_error';
+  // Typed field first — an HTTP status is unambiguous.
+  if (typeof err.status === 'number') return 'api_error';
+  if (err.message.startsWith(BUDGET_CAP_PREFIX)) return 'budget_cap';
+  if (err.message.startsWith(NETWORK_PREFIX)) return 'network';
+  if (PARSE_MARKERS.some((m) => err.message.includes(m))) return 'parse_error';
+  return 'api_error';
 }
 
 // ─── Cost guard (BudgetManager-backed) ───────────────────────────
@@ -150,7 +241,7 @@ async function callJsonSafe<T>(
   // Global AI throttle gate — covers every agent on the hot path.
   const throttled = await isAiThrottled(env);
   if (throttled) {
-    return { success: false, error: `throttled: ${throttled}` };
+    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
   }
 
   try {
@@ -170,7 +261,7 @@ async function callJsonSafe<T>(
     };
   } catch (err) {
     const msg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
-    return { success: false, error: msg };
+    return { success: false, error: msg, failure_kind: classifyAnthropicFailure(err) };
   }
 }
 
@@ -182,11 +273,18 @@ export async function callHaikuRaw(
   systemPrompt: string,
   userMessage: string,
   maxTokens = 16,
-): Promise<{ success: boolean; text?: string; error?: string; tokens_used?: number }> {
+): Promise<{
+  success: boolean;
+  text?: string;
+  error?: string;
+  tokens_used?: number;
+  /** See HaikuFailureKind — set only when `success === false`. Additive. */
+  failure_kind?: HaikuFailureKind;
+}> {
   // Global AI throttle gate — same path as callJsonSafe.
   const throttled = await isAiThrottled(env);
   if (throttled) {
-    return { success: false, error: `throttled: ${throttled}` };
+    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
   }
 
   try {
@@ -206,7 +304,11 @@ export async function callHaikuRaw(
       tokens_used: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
     };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+      failure_kind: classifyAnthropicFailure(err),
+    };
   }
 }
 

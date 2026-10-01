@@ -32,6 +32,7 @@ import {
   renderPlatformDnsQueueStalled,
   renderPlatformDnsQueueReaperStalled,
   renderPlatformAbuseClassifierSilent,
+  renderPlatformAiCallsFailing,
   renderPlatformSpamTrapSeedingStalled,
   renderPlatformSpamTrapCaptureStale,
   renderPlatformGeoipRefreshStalled,
@@ -374,6 +375,11 @@ export const flightControlAgent: AgentModule = {
     // PR-AY: abuse mailbox classifier silence check reads pending
     // count + oldest received_at, then budget_ledger for last
     // classifier Haiku timestamp.
+    //
+    // budget_ledger is also read (MAX(created_at), account-wide) by the
+    // silent-AI-failure check — see platform_ai_calls_failing below.
+    // That check's second leg reads the strictly-API counters out of
+    // agent_outputs.details, already declared above.
     { kind: "d1_table", name: "abuse_inbox_messages" },
     { kind: "d1_table", name: "budget_ledger" },
     // Spam-trap silent-failure monitor (2026-06): reads MAX(seeded_at)
@@ -1072,6 +1078,119 @@ export const flightControlAgent: AgentModule = {
       }
     } catch (err) {
       console.warn('[flight-control] abuse classifier silence check failed:', err);
+    }
+
+    // ── Silent-AI-failure check (platform_ai_calls_failing) ──────────
+    // The incident this guards: the Anthropic bill went unpaid, every
+    // call returned `HTTP 400 — "Your credit balance is too low"`, and
+    // the platform ran ~3 MONTHS on rule-based fallbacks with nothing
+    // alerting. Last budget_ledger row: 2026-07-10 11:10:20 UTC.
+    //
+    // Shaped on the platform_abuse_classifier_silent precedent ("work
+    // pending but no successful run in >2h"), with the same 2h
+    // threshold. budget_ledger is ground truth for "a call SUCCEEDED":
+    // lib/anthropic.ts writes exactly one row per successful call and
+    // nothing on failure.
+    //
+    // FALSE-POSITIVE PROOFING — both conditions must hold:
+    //   1. the ledger has been silent past the threshold, AND
+    //   2. at least one recent run recorded aiCallsAttempted > 0 with
+    //      aiCallsSucceeded = 0.
+    // Condition 2 alone is what makes this safe. A genuinely quiet
+    // platform (no unclassified threats, no unmatched brands) makes no
+    // AI calls, so its ledger is silent too — but its attempted count
+    // is zero and it must not alert. Equally, a deliberate budget
+    // throttle counts as skipped, not attempted, in the agents'
+    // counters, so cost-guard quiet periods don't alert either.
+    //
+    // Per CLAUDE.md §8: FC runs hourly, so the bare MAX(created_at) read
+    // is correct here — cachedCount would never hit within its TTL and
+    // would add a KV read on top of the same D1 read. Both reads are
+    // index-served (budget_ledger(created_at) from migration 0050,
+    // agent_outputs(created_at DESC) from migration 0123).
+    try {
+      const AI_SILENCE_THRESHOLD_HOURS = 2;
+      // One hour of grace past the threshold so an hourly FC tick can't
+      // land in a window where the failing run has aged out.
+      const AI_ATTEMPT_WINDOW_HOURS = AI_SILENCE_THRESHOLD_HOURS + 1;
+
+      const ledgerRow = await db.prepare(`
+        SELECT MAX(created_at) AS last_at FROM budget_ledger
+      `).first<{ last_at: string | null }>();
+
+      const lastAt = ledgerRow?.last_at ?? null;
+      // null = the ledger has never recorded a call. Treated as silent
+      // (condition 1 satisfied); condition 2 still has to fire.
+      const hoursSinceLastCall = lastAt
+        ? (Date.now() - Date.parse(lastAt.replace(' ', 'T') + 'Z')) / 3_600_000
+        : null;
+
+      if (hoursSinceLastCall === null || hoursSinceLastCall > AI_SILENCE_THRESHOLD_HOURS) {
+        // Strictly-API counters, written into agent_outputs.details by
+        // the instrumented agents (analyst, sentinel). Agent-agnostic on
+        // purpose: any agent that starts emitting aiCallsAttempted /
+        // aiCallsSucceeded is picked up here with no change.
+        //
+        // The json_valid() CASE wrapper is load-bearing, not decorative:
+        // json_extract() RAISES on a malformed JSON payload, which would
+        // abort the whole query and leave this check permanently dead —
+        // the exact failure class being fixed here. Every agent_outputs
+        // writer goes through JSON.stringify today, but this query must
+        // not depend on that staying true, and SQLite does not guarantee
+        // left-to-right short-circuiting of AND terms (CASE branches, by
+        // contrast, are documented not to evaluate unselected arms).
+        // Rows surviving the WHERE all have valid JSON, so the SELECT-list
+        // extracts need no wrapper.
+        //
+        // Written flat rather than as a CTE on purpose: the resource-drift
+        // extractor (architect/collectors/repo-fs.ts extractReadTables)
+        // matches the uppercase SQL verbs followed by an identifier, with
+        // no CTE awareness — so selecting out of a named CTE registers
+        // that CTE's name as a phantom d1 table and fails
+        // `npm run check:resource-drift`. It scans comments too, so this
+        // note deliberately avoids spelling the verb out next to a word.
+        const failingRows = await db.prepare(`
+          SELECT agent_id,
+                 SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
+                 SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
+                 MAX(json_extract(details, '$.aiFirstFailureKind')) AS first_failure_kind,
+                 MAX(json_extract(details, '$.aiFirstError'))       AS first_error
+            FROM agent_outputs
+           WHERE created_at >= datetime('now', ?)
+             AND (CASE WHEN json_valid(details)
+                       THEN json_extract(details, '$.aiCallsAttempted')
+                       ELSE NULL END) IS NOT NULL
+           GROUP BY agent_id
+          HAVING SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) > 0
+             AND SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) = 0
+           ORDER BY attempted DESC
+        `).bind(`-${AI_ATTEMPT_WINDOW_HOURS} hours`).all<{
+          agent_id: string;
+          attempted: number;
+          succeeded: number;
+          first_failure_kind: string | null;
+          first_error: string | null;
+        }>();
+
+        const failing = failingRows.results ?? [];
+        if (failing.length > 0) {
+          await emitPlatformNotification(env, 'platform_ai_calls_failing',
+            renderPlatformAiCallsFailing({
+              hours_since_last_call: hoursSinceLastCall,
+              threshold_hours: AI_SILENCE_THRESHOLD_HOURS,
+              failing_agents: failing.map((r) => ({
+                agent_id: r.agent_id,
+                attempted: r.attempted,
+                first_failure_kind: r.first_failure_kind,
+                first_error: r.first_error,
+              })),
+            })
+          );
+        }
+      }
+    } catch (err) {
+      // Notification failures never break FC.
+      console.warn('[flight-control] AI call-failure check failed:', err);
     }
 
     // ─── Spam-trap silent-failure guard ──────────────────────────────

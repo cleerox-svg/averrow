@@ -107,6 +107,23 @@ export interface AgentResult {
   approvals?: ApprovalRequest[];
   /** Agent outputs to persist in agent_outputs table */
   agentOutputs?: AgentOutputEntry[];
+  /** Set by an agent that COMPLETED its work but in a degraded mode —
+   *  e.g. every Anthropic call failed and it fell through to its
+   *  rule-based path. Finalizes `agent_runs.status` as 'partial' instead
+   *  of 'success'.
+   *
+   *  'failed' would be dishonest (the agent did real work and did not
+   *  throw) and 'success' is what let three months of zero working AI
+   *  read as healthy. 'partial' is the existing honest value — the
+   *  diagnostics endpoint, /v2/agents ("degraded"), and the admin
+   *  metrics rollups all already split success/partial/failed.
+   *
+   *  Safe with respect to the orphan sweeps: every orphan predicate
+   *  additionally requires `completed_at IS NULL`, and the finalize
+   *  UPDATE below always stamps completed_at. See
+   *  lib/agent-runs-reaper.ts and flightControl.ts computeIsStalled /
+   *  isOrphanedRun. */
+  degraded?: { reason: string };
 }
 
 export interface AgentOutputEntry {
@@ -454,7 +471,15 @@ export async function executeAgent(
       }
     }
 
-    const finalStatus: RunStatus = result.approvals?.length ? "partial" : "success";
+    // 'partial' for two distinct honest reasons: work is held pending
+    // approval, or the agent completed in a degraded mode (see
+    // AgentResult.degraded). Both stamp completed_at below, so neither
+    // trips the 'partial' + completed_at IS NULL orphan predicates.
+    if (result.degraded) {
+      console.warn(`[agentRunner] ${agentId}: run degraded — ${result.degraded.reason}`);
+    }
+    const finalStatus: RunStatus =
+      result.approvals?.length || result.degraded ? "partial" : "success";
 
     // Finalize under retry: the agent body succeeded, so a transient D1
     // blip on THIS write must not leave the run stuck at 'partial' (which

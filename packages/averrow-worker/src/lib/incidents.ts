@@ -129,6 +129,7 @@ export function inferAffectedComponents(
     type === "platform_dns_queue_stalled" ||
     type === "platform_dns_queue_reaper_stalled" ||
     type === "platform_abuse_classifier_silent" ||
+    type === "platform_ai_calls_failing" ||
     type === "platform_ai_spend_burst"
   ) {
     out.push("category:processing");

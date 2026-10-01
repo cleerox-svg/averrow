@@ -12,7 +12,7 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { classifyThreat } from "../lib/haiku";
+import { classifyThreat, isDeliberateAiSkip, type HaikuFailureKind } from "../lib/haiku";
 import { callAnthropicJSON } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
@@ -278,6 +278,51 @@ export const sentinelAgent: AgentModule = {
     let haikuFailures = 0;
     let aiSkippedByRules = 0;
 
+    // ── Strictly-API AI counters (silent-AI-failure guard) ──────────
+    // DO NOT key any health check on haikuSuccesses above: it is
+    // incremented for the rules-based skip below (`haikuSuccesses++;
+    // // count as success for stats`), which makes NO API call at all.
+    // So `haiku=N/0` in the summary string can mean "zero Anthropic
+    // calls were made" — which is exactly why this agent's telemetry
+    // read as healthy through three months of total AI outage. Its
+    // semantics are left untouched because the summary string and
+    // agent_runs details are read by operators today.
+    //
+    // These count ONLY real round-trips to Anthropic, and are
+    // incremented inside getOrClassify at the point a call is actually
+    // INITIATED — not per threat. Sibling threats share one promise via
+    // classificationCache, so a per-threat increment would count one
+    // API call many times and let succeeded exceed attempted.
+    //
+    // A throttled / budget-capped result counts as skipped, never
+    // attempted: no request left the Worker, and a deliberate cost
+    // throttle must not look like an outage.
+    let aiCallsAttempted = 0;
+    let aiCallsSucceeded = 0;
+    let aiCallsSkipped = 0;
+    // FIRST failure only — one line, not accumulated per item.
+    let aiFirstFailureKind: HaikuFailureKind | null = null;
+    let aiFirstError: string | null = null;
+
+    /** Record the outcome of ONE real wrapper call. */
+    const recordAiOutcome = (r: { success: boolean; error?: string; failure_kind?: HaikuFailureKind }, ok: boolean): void => {
+      if (ok) {
+        aiCallsAttempted++;
+        aiCallsSucceeded++;
+        return;
+      }
+      if (isDeliberateAiSkip(r.failure_kind)) {
+        aiCallsSkipped++;
+        return;
+      }
+      aiCallsAttempted++;
+      if (aiFirstError === null) {
+        aiFirstFailureKind = r.failure_kind ?? null;
+        aiFirstError = r.error ?? "no data returned";
+        console.error(`[sentinel] FIRST AI FAILURE — kind=${aiFirstFailureKind ?? "unknown"}, error: ${aiFirstError}`);
+      }
+    };
+
     // Pre-fetch the suspicious / impersonation social_profiles set
     // ONCE per batch, then match in-memory inside the per-threat
     // loop. Replaces the previous per-threat double-LIKE query that
@@ -331,12 +376,18 @@ export const sentinelAgent: AgentModule = {
         aiSkippedBySibling++;
         return existing;
       }
+      // Instrumented here — this is the ONE place a classification call
+      // is actually initiated. Cache hits above return this same promise
+      // and must not re-count it.
       const p = classifyThreat(env, callCtx, {
         malicious_url: threat.malicious_url,
         malicious_domain: threat.malicious_domain,
         ip_address: threat.ip_address,
         source_feed: threat.source_feed,
         ioc_value: threat.ioc_value,
+      }).then((r) => {
+        recordAiOutcome(r, r.success && !!r.data);
+        return r;
       });
       classificationCache.set(key, p);
       return p;
@@ -521,28 +572,11 @@ export const sentinelAgent: AgentModule = {
       }
     }
 
-    // Always generate a summary output so agent_outputs gets populated
-    outputs.push({
-      type: "classification",
-      summary: itemsProcessed > 0
-        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, haiku=${haikuSuccesses}/${haikuFailures}, aiSkippedByRules=${aiSkippedByRules}, aiSkippedBySibling=${aiSkippedBySibling})`
-        : `Sentinel found 0 unclassified threats (${totalCount?.n ?? 0} total in DB, ${nullCount?.n ?? 0} with NULL confidence)`,
-      severity: "info",
-      details: {
-        processed: itemsProcessed,
-        updated: itemsUpdated,
-        impersonationsFound,
-        haikuSuccesses,
-        haikuFailures,
-        aiSkippedByRules,
-        aiSkippedBySibling,
-        totalThreats: totalCount?.n ?? 0,
-        nullConfidenceThreats: nullCount?.n ?? 0,
-        anthropicApiConfigured: !!env.ANTHROPIC_API_KEY,
-      },
-    });
-
     // ─── APT pattern detection (if batch >= 10 threats) ─────────
+    // NOTE: the per-run summary output used to be pushed ABOVE this
+    // block. It now sits BELOW it, because the APT detector makes its
+    // own Anthropic call and the summary's AI-health verdict has to see
+    // every call the run made. Do not move it back up.
     let aptHits = 0;
     if (itemsProcessed >= 10) {
       try {
@@ -557,6 +591,7 @@ export const sentinelAgent: AgentModule = {
             `Given these new threat domains: ${JSON.stringify(recentDomains)}. Do any match known state-sponsored phishing patterns (typosquats of government/military/financial domains)? Reply JSON: [{domain, apt_pattern, confidence: "high"|"medium"|"low", notes}]. Only include high/medium confidence. Empty array if none.`,
             512,
           );
+          recordAiOutcome(aptResult, aptResult.success && !!aptResult.text);
           if (aptResult.success && aptResult.text) {
             if (aptResult.tokens_used) totalTokens += aptResult.tokens_used;
             const jsonMatch = aptResult.text.match(/\[[\s\S]*\]/);
@@ -589,6 +624,46 @@ export const sentinelAgent: AgentModule = {
       }
     }
 
+    // Every Anthropic round-trip this run made came back unusable. The
+    // agent still classified threats — ruleBasedClassify is the fallback
+    // and is unaffected — so this is a DEGRADED run, not a failed one.
+    // What it must not be is `severity: "info"`.
+    const aiAllFailing = aiCallsAttempted > 0 && aiCallsSucceeded === 0;
+
+    // Always generate a summary output so agent_outputs gets populated
+    outputs.push({
+      type: "classification",
+      summary: aiAllFailing
+        ? `AI CALLS ALL FAILING — sentinel made ${aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${aiFirstFailureKind ?? "unknown"} — ${aiFirstError ?? "unknown"}). ${itemsUpdated} threats classified by rules only (${itemsProcessed} processed).`
+        : itemsProcessed > 0
+        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, haiku=${haikuSuccesses}/${haikuFailures}, aiSkippedByRules=${aiSkippedByRules}, aiSkippedBySibling=${aiSkippedBySibling})`
+        : `Sentinel found 0 unclassified threats (${totalCount?.n ?? 0} total in DB, ${nullCount?.n ?? 0} with NULL confidence)`,
+      // 'high', not 'critical': the rule-based path keeps classification
+      // moving. agent_outputs.severity CHECK allows
+      // critical/high/medium/low/info (migration 0061).
+      severity: aiAllFailing ? "high" : "info",
+      details: {
+        processed: itemsProcessed,
+        updated: itemsUpdated,
+        impersonationsFound,
+        haikuSuccesses,
+        haikuFailures,
+        // Strictly-API counters — Flight Control's
+        // platform_ai_calls_failing check reads these two back via
+        // json_extract. Renaming them means updating that query.
+        aiCallsAttempted,
+        aiCallsSucceeded,
+        aiCallsSkipped,
+        aiFirstFailureKind,
+        aiFirstError,
+        aiSkippedByRules,
+        aiSkippedBySibling,
+        totalThreats: totalCount?.n ?? 0,
+        nullConfidenceThreats: nullCount?.n ?? 0,
+        anthropicApiConfigured: !!env.ANTHROPIC_API_KEY,
+      },
+    });
+
     return {
       itemsProcessed,
       itemsCreated: 0,
@@ -597,6 +672,15 @@ export const sentinelAgent: AgentModule = {
       model,
       tokensUsed: totalTokens,
       agentOutputs: outputs,
+      // See AgentResult.degraded — finalizes agent_runs.status as
+      // 'partial', not 'success' and not 'failed'.
+      ...(aiAllFailing
+        ? {
+            degraded: {
+              reason: `all ${aiCallsAttempted} Anthropic call(s) failed (first: ${aiFirstFailureKind ?? "unknown"} — ${aiFirstError ?? "unknown"})`,
+            },
+          }
+        : {}),
     };
   },
 };
