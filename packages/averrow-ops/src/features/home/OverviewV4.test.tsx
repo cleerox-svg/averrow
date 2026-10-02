@@ -31,9 +31,9 @@ const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
 function route(opts: { alerts: 'ok' | 'fail'; incidents: 'ok' | 'fail' }) {
   get.mockImplementation(async (url: string) => {
-    if (url.startsWith('/api/alerts')) {
+    if (url.startsWith('/api/alerts/triage-summary')) {
       if (opts.alerts === 'fail') throw new Error('alerts down');
-      return { success: true, data: [], total: 42 };
+      return { success: true, data: { new_count: 42, critical_count: 1 } };
     }
     if (url.startsWith('/api/admin/incidents')) {
       if (opts.incidents === 'fail') throw new Error('incidents down');

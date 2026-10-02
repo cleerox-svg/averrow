@@ -57,7 +57,7 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
         </div>
         <div className="min-w-0">
           <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-            {user?.name ?? 'User'}
+            {user?.display_name ?? user?.name ?? 'User'}
           </p>
           <p className="text-[11px] text-white/40 truncate">
             {user?.email}
@@ -118,13 +118,15 @@ export function UserAvatar() {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-150 touch-target"
+        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-150 touch-target"
         style={{
           background: SELF_AVATAR_COLOR,
           color: 'var(--text-on-amber, #0A0F1E)',
           border: '1px solid var(--border-strong)',
         }}
-        aria-label="User menu"
+        aria-label={`User menu, ${user?.display_name ?? user?.name ?? user?.email ?? 'account'}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         {initials}
       </button>

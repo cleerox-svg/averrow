@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
@@ -10,7 +9,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
-import { api } from '@/lib/api';
+import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
@@ -110,20 +109,9 @@ const NAV_ACTIVE_STYLE: React.CSSProperties = {
 
 export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: SidebarProps) {
   const { user, logout, isSuperAdmin, isBrandAdmin } = useAuth();
-  const [alertCount, setAlertCount] = useState(0);
+  const { data: alertCount = 0 } = useOpenAlertCount();
   const location = useLocation();
   const isRail = mode === 'rail';
-
-  useEffect(() => {
-    const fetchAlerts = () => {
-      api.get<unknown>('/api/alerts?status=open&limit=1')
-        .then(d => setAlertCount(d.total ?? 0))
-        .catch(() => {});
-    };
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 60_000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Phase D D2b: averrow-ops is now staff-only. The brand-admin
   // sidebar that used to live here was just a thin customer

@@ -178,6 +178,10 @@ export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
   const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const sideRef = useRef<HTMLElement>(null);
+  const wasDrawerOpen = useRef(false);
+  const skipFocusRestore = useRef(false);
   const openAlerts = useOpenAlertCount();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -202,6 +206,8 @@ export function ShellV4() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        skipFocusRestore.current = true; // palette takes focus, not the hamburger
+        setDrawerOpen(false);
         setPaletteOpen(o => !o);
       }
     };
@@ -209,26 +215,68 @@ export function ShellV4() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Drawer: close on route change, and on Escape (returning focus to the
-  // hamburger so keyboard users land where they started).
+  // Drawer: close on route change, on Escape, and when the viewport widens
+  // past the drawer breakpoint (the desktop rail is never hidden/inert).
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
   useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setDrawerOpen(false);
-        hamburgerRef.current?.focus();
-      }
+      if (e.key === 'Escape') setDrawerOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
+  useEffect(() => {
+    if (!drawerOpen || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(min-width: 901px)');
+    const onChange = (e: MediaQueryListEvent) => { if (e.matches) setDrawerOpen(false); };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [drawerOpen]);
 
-  const openPalette = () => { setDrawerOpen(false); setPaletteOpen(true); };
+  // Focus management lives here once, so EVERY close path (Escape, X,
+  // backdrop, nav click, route change) restores focus to the hamburger and
+  // every open moves focus into the drawer.
+  useEffect(() => {
+    if (drawerOpen) {
+      closeBtnRef.current?.focus();
+    } else if (wasDrawerOpen.current) {
+      if (skipFocusRestore.current) skipFocusRestore.current = false;
+      else hamburgerRef.current?.focus();
+    }
+    wasDrawerOpen.current = drawerOpen;
+  }, [drawerOpen]);
+
+  // Simple focus trap while the drawer is open.
+  const onDrawerKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!drawerOpen || e.key !== 'Tab') return;
+    const focusables = Array.from(
+      sideRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [],
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !sideRef.current?.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !sideRef.current?.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const openPalette = () => { skipFocusRestore.current = true; setDrawerOpen(false); setPaletteOpen(true); };
 
   return (
     <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>
-      <aside className="v4-side">
+      <aside
+        id="v4-drawer"
+        ref={sideRef}
+        className="v4-side"
+        onKeyDown={onDrawerKeyDown}
+        {...(drawerOpen ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Main navigation' } : {})}
+      >
         <div className="v4-brand">
           <svg width="34" height="34" viewBox="0 0 32 32" fill="none" style={{ flex: '0 0 auto', boxShadow: '0 0 22px rgba(200,60,60,.45)', borderRadius: 9 }}>
             <defs>
@@ -245,7 +293,7 @@ export function ShellV4() {
             <div className="name">AVERROW</div>
             <div className="sub">THREAT INTERCEPTOR</div>
           </div>
-          <button type="button" className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
+          <button type="button" ref={closeBtnRef} className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
             <X size={18} strokeWidth={2} />
           </button>
         </div>
@@ -260,9 +308,12 @@ export function ShellV4() {
                   <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
                     <Icon strokeWidth={2} /> {item.label}
                     {item.count != null && item.count > 0 && (
-                      <span className="count" aria-label={`${item.count} open alerts`}>
-                        {item.count > 99 ? '99+' : item.count}
-                      </span>
+                      <>
+                        <span className="count" aria-hidden="true">
+                          {item.count > 99 ? '99+' : item.count}
+                        </span>
+                        <span className="sr-only">{item.count} alerts awaiting triage</span>
+                      </>
                     )}
                   </NavLink>
                 );
@@ -284,7 +335,7 @@ export function ShellV4() {
 
       <section className="v4-main">
         <header className="v4-top">
-          <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu">
+          <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu" aria-expanded={drawerOpen} aria-controls="v4-drawer">
             <Menu size={18} strokeWidth={2} />
           </button>
           <button type="button" className="v4-cmdk" onClick={openPalette} aria-label="Open command palette">

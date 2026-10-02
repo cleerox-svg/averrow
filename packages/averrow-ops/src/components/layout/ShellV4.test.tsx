@@ -97,49 +97,52 @@ describe('ShellV4 topbar', () => {
   });
 });
 
+const visibleCount = () => consoleLink().querySelector('.count') as HTMLElement;
+
 describe('ShellV4 Console alert badge', () => {
-  it('shows the open-alert count', () => {
+  it('shows the triage count with an sr-only description', () => {
     setCount({ isSuccess: true, data: 7 });
     renderShell();
-    const badge = within(consoleLink()).getByLabelText('7 open alerts');
-    expect(badge).toHaveTextContent('7');
+    expect(visibleCount()).toHaveTextContent('7');
+    expect(visibleCount()).toHaveAttribute('aria-hidden', 'true');
+    expect(within(consoleLink()).getByText('7 alerts awaiting triage')).toHaveClass('sr-only');
   });
 
   it('shows 99 as-is (cap boundary)', () => {
     setCount({ isSuccess: true, data: 99 });
     renderShell();
-    expect(within(consoleLink()).getByLabelText('99 open alerts')).toHaveTextContent(/^99$/);
+    expect(visibleCount()).toHaveTextContent(/^99$/);
   });
 
-  it('caps display at 99+ above 99 but keeps the real number in aria-label', () => {
+  it('caps display at 99+ above 99 but keeps the real number in the sr-only text', () => {
     setCount({ isSuccess: true, data: 1234 });
     renderShell();
-    const badge = within(consoleLink()).getByLabelText('1234 open alerts');
-    expect(badge).toHaveTextContent('99+');
+    expect(visibleCount()).toHaveTextContent('99+');
+    expect(within(consoleLink()).getByText('1234 alerts awaiting triage')).toBeInTheDocument();
   });
 
   it('shows 99+ at 100', () => {
     setCount({ isSuccess: true, data: 100 });
     renderShell();
-    expect(within(consoleLink()).getByLabelText('100 open alerts')).toHaveTextContent('99+');
+    expect(visibleCount()).toHaveTextContent('99+');
   });
 
   it('is absent at 0', () => {
     setCount({ isSuccess: true, data: 0 });
     renderShell();
-    expect(within(consoleLink()).queryByLabelText(/open alerts/)).not.toBeInTheDocument();
+    expect(within(consoleLink()).queryByText(/alerts awaiting triage/)).not.toBeInTheDocument();
   });
 
   it('is absent while loading', () => {
     setCount({ isSuccess: false, isLoading: true, data: undefined });
     renderShell();
-    expect(within(consoleLink()).queryByLabelText(/open alerts/)).not.toBeInTheDocument();
+    expect(within(consoleLink()).queryByText(/alerts awaiting triage/)).not.toBeInTheDocument();
   });
 
   it('is absent on error, even if stale data is present', () => {
     setCount({ isSuccess: false, isError: true, data: 42 });
     renderShell();
-    expect(within(consoleLink()).queryByLabelText(/open alerts/)).not.toBeInTheDocument();
+    expect(within(consoleLink()).queryByText(/alerts awaiting triage/)).not.toBeInTheDocument();
   });
 });
 
@@ -176,6 +179,45 @@ describe('ShellV4 drawer', () => {
 
     expect(shellRoot(container)).not.toHaveClass('drawer-open');
     expect(document.activeElement).toBe(hamburger);
+  });
+
+  it('exposes dialog semantics, focuses the close button, and wires aria-expanded', () => {
+    const { container } = renderShell();
+    const hamburger = screen.getByRole('button', { name: 'Open menu' });
+    expect(hamburger).toHaveAttribute('aria-expanded', 'false');
+    expect(hamburger).toHaveAttribute('aria-controls', 'v4-drawer');
+    const side = container.querySelector('aside') as HTMLElement;
+    expect(side).not.toHaveAttribute('role');
+    fireEvent.click(hamburger);
+    expect(hamburger).toHaveAttribute('aria-expanded', 'true');
+    expect(side).toHaveAttribute('role', 'dialog');
+    expect(side).toHaveAttribute('aria-modal', 'true');
+    expect(side).toHaveAttribute('aria-label', 'Main navigation');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close menu' }));
+  });
+
+  it('returns focus to the hamburger on X and backdrop close', () => {
+    const { container } = renderShell();
+    const hamburger = screen.getByRole('button', { name: 'Open menu' });
+    fireEvent.click(hamburger);
+    fireEvent.click(screen.getByRole('button', { name: 'Close menu' }));
+    expect(document.activeElement).toBe(hamburger);
+    fireEvent.click(hamburger);
+    fireEvent.click(container.querySelector('.v4-backdrop') as HTMLElement);
+    expect(document.activeElement).toBe(hamburger);
+  });
+
+  it('traps Tab inside the open drawer', () => {
+    const { container } = renderShell();
+    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    const side = container.querySelector('aside') as HTMLElement;
+    const items = side.querySelectorAll<HTMLElement>('a[href], button:not([disabled])');
+    const last = items[items.length - 1];
+    last.focus();
+    fireEvent.keyDown(last, { key: 'Tab' });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0], { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
   });
 
   it('does not steal focus on Escape when the drawer is closed', () => {
