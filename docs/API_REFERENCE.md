@@ -975,7 +975,6 @@ free text. They remain on `lookalike_domains` for staff
 | POST | `/api/admin/backfill-brand-enrichment` | Admin | Populate brand logo_url, website_url, hq_lat/lng/country via Clearbit + DNS + ipapi (50/call) |
 | POST | `/api/admin/backfill-brand-sector` | Admin | Classify brand sector via Haiku + fetch RDAP registrant data (20/call) |
 | POST | `/api/admin/backfill-safe-domains` | SuperAdmin | Backfill safe domains |
-| POST | `/api/admin/backfill-ai-attribution` | SuperAdmin | Backfill AI attribution |
 | POST | `/api/admin/backfill-social-config` | SuperAdmin | Backfill brand social-monitoring config |
 | GET | `/api/admin/brand-candidates` | Admin | List brand candidates awaiting promotion |
 | POST | `/api/admin/brand-candidates/aggregate` | Admin | Aggregate candidate brands from threat data |

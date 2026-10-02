@@ -9,7 +9,6 @@
 
 import { generatePermutations } from '../lib/dnstwist';
 import { createAlert } from '../lib/alerts';
-import { analyzeWithHaiku } from '../lib/haiku';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
@@ -78,7 +77,7 @@ const INLINE_PAGE_BUDGET_MS = 60_000;
 //
 // `LOOKALIKE_BATCH_LIMIT` itself now lives in `lib/lookalike-budget.ts`
 // — Flight Control needs it, and importing it from this module dragged
-// `lib/haiku` / `email-security` / `lib/page-fetch` into FC's import
+// `email-security` / `lib/page-fetch` into FC's import
 // graph for the sake of one integer.
 const FIRST_CONTACT_SLOTS = 30;
 const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
@@ -93,67 +92,6 @@ const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
  * handler came to encode it as the magic number `-25 hours`.
  */
 const CHECK_CADENCE_MODIFIER = '+24 hours';
-
-/**
- * HARD CEILING on Haiku calls ONE run may make.
- *
- * ── Why this is the only real cost bound ────────────────────────────
- *
- * The platform's AI metering is dead: `agent_budget_rollups` holds no
- * rows for the current month, so `getMonthlySpend()` returns 0, the
- * $150/mo platform cap never throttles, and `lookalike_scanner`'s own
- * `monthlyTokenCap: 20_000_000` under `costGuard: "enforced"` is equally
- * unenforced. So a per-run cap in this function is not defence in depth;
- * it is the defence.
- *
- * ── Why 12 ─────────────────────────────────────────────────────────
- *
- * Measured, 2026-10: of the 42 registered rows in production, 26 carry
- * BOTH mail and web — 62%. Mail+web is the gate on every Haiku call
- * below, so the modelled worst case per tick is
- *
- *     50 rows x 35% (top of the observed resolve band) x 62% = 10.9
- *
- * 12 therefore does not bite in the modelled steady state, which is what
- * a budget should do: bound the tail, not the expected case. It bounds
- * the tail to 12 x 24 = 288 calls/day ≈ 8,640/month; at the ~700 tokens
- * a call of this shape costs that is ~6M tokens/month, 30% of the
- * agent's own (unenforced) 20M declaration and well inside a $150 cap
- * even if nothing enforced it at all.
- *
- * The 62% share is a 4-marquee-brand sample and so is probably HIGH for
- * obscure brands — which makes 12 conservative in the right direction.
- * Nothing logged it before; `observed_mail_and_web` /
- * `observed_registered` in the run summary now do, so the next person to
- * size this has a measurement rather than this paragraph.
- *
- * Every call is additionally gated on a GUARDED CLAIM over
- * `ai_assessment IS NULL` (see `claimHaikuCall`), so it is once per row
- * per LIFETIME, not once per pass. The decrement is synchronous and
- * taken BEFORE the claim's await, same shape and same race argument as
- * INLINE_PAGE_FETCH_CAP (JS is single-threaded between awaits, so the
- * CONCURRENCY below cannot overspend it); a claim that loses the race
- * refunds it.
- *
- * ── WHAT "DEFERRED, NOT DROPPED" ACTUALLY MEANS ────────────────────
- *
- * A capped or failed row is left CLAIMABLE — `ai_assessment` stays NULL
- * and the claim is released — but it is NOT retried "on its next due
- * pass", which is what this paragraph used to say. `compositeAndPersist`
- * is reached only from `first_contact`, `registration_gained` or an
- * mx/web GAIN; a row that has already baselined with mail+web present
- * yields the `none` transition on every later pass and never re-enters
- * the compositor. So the retry arrives on the row's next TRANSITION,
- * which for a stable row may be never.
- *
- * That is a limit of the compositor's dispatch, not of the budget or the
- * claim, and it is left as-is here because widening the dispatch to run
- * on `none` would open a new spend surface. It is stated because the
- * previous wording promised a cadence the code does not have —
- * `test/lookalike-review-fixes.test.ts`'s `webFlap` helper carries the
- * same note at the test end.
- */
-const HAIKU_CALLS_PER_RUN = 12;
 
 /**
  * HARD CEILING on BIMI DNS lookups ONE run may make.
@@ -175,91 +113,18 @@ const HAIKU_CALLS_PER_RUN = 12;
 const BIMI_LOOKUPS_PER_RUN = 25;
 
 /**
- * How old a Haiku claim must be before another pass may take it over.
- *
- * ── Why the lifetime gate is a CLAIM and not a read ─────────────────
- *
- * The gate used to be `row.ai_assessment === null` read off the SELECT
- * snapshot — a read-then-act, where BIMI (which costs nothing but a DNS
- * lookup) already used a guarded claim. Concurrent `checkLookalikeBatch`
- * runs over first-contact rows, which is exactly what repeated "Scan
- * now" presses produce, can each read NULL and each spend a token call
- * on the same row; and with `agent_budget_rollups` empty there is
- * nothing below the per-run cap to catch it (see HAIKU_CALLS_PER_RUN).
- *
- * ── Why a DEDICATED column and not a sentinel in `ai_assessment` ────
- *
- * The symmetric move — claim `ai_assessment` itself with a sentinel,
- * release on failure, as the BIMI lane claims its own deliverable —
- * introduces a NEW silent-loss path rather than closing one. A worker
- * killed between the claim and the persist would leave the sentinel
- * behind, and the sentinel is not NULL, so: the gate never fires again,
- * `aiAttempted` is false on every later pass, the compositor's base is
- * the STORED level (LOW on a row that never got one), and both
- * infrastructure boosts are MEDIUM-only — so a mail+web row sits at LOW
- * forever and never clears the alert floor. A dedicated column keeps the
- * gate on `ai_assessment IS NULL` and makes the claim recoverable.
- *
- * Staleness has to be keyed on a column NOTHING ELSE WRITES, which is
- * the other half of the argument: `updated_at` is refreshed by
- * `persistCheckFacts` on every pass BEFORE the claim is attempted, so a
- * stale claim keyed on it could never be detected as stale. One hour is
- * two orders of magnitude above any single run's wall-clock budget and
- * far inside the row's own cadence.
- */
-const HAIKU_CLAIM_STALE_MODIFIER = '-1 hour';
-
-/**
- * Take the row's once-per-lifetime Haiku call, or report that someone
- * else holds it. Guarded in SQL — `changes === 1` is the claim.
- *
- * `ai_assessment IS NULL` is restated here rather than trusted from the
- * caller's snapshot: the whole point is that the snapshot may be stale.
- */
-async function claimHaikuCall(env: Env, id: string): Promise<boolean> {
-  const res = await env.DB.prepare(
-    `UPDATE lookalike_domains
-     SET ai_claimed_at = datetime('now')
-     WHERE id = ?
-       AND ai_assessment IS NULL
-       AND (ai_claimed_at IS NULL OR ai_claimed_at <= datetime('now', ?))`,
-  ).bind(id, HAIKU_CLAIM_STALE_MODIFIER).run();
-  return (res.meta.changes ?? 0) === 1;
-}
-
-/**
- * Give the claim back when the pass produced no assessment — a throw, a
- * malformed answer, or an empty assessment string.
- *
- * This restores exactly the pre-claim behaviour for that case: the row
- * is DEFERRED, not retired, and is eligible again on its next due pass.
- * Never throws; a failed release costs the row nothing worse than
- * waiting out `HAIKU_CLAIM_STALE_MODIFIER`.
- */
-async function releaseHaikuClaim(env: Env, id: string): Promise<void> {
-  try {
-    await env.DB.prepare(
-      `UPDATE lookalike_domains SET ai_claimed_at = NULL WHERE id = ?`,
-    ).bind(id).run();
-  } catch {
-    // Deliberately silent and uncounted: the claim self-heals on its
-    // own staleness window, so this is not a loss path.
-  }
-}
-
-/**
  * Budgets for ONE run of the shared row processor.
  *
  * Two named sets, because the two entry points have different risk
  * profiles: the cron tick owns a whole Worker invocation, while
  * `checkLookalikeBatchForBrand` runs INSIDE AN HTTP REQUEST and must not
- * be able to hold one open while it spends 50 DoH queries, 12 Haiku
- * calls and 10 page fetches.
+ * be able to hold one open while it spends 50 DoH queries and 10 page
+ * fetches. (There is no AI budget: the threat level is rule-composed —
+ * see `compositeAndPersist` — and this pass makes no model calls.)
  */
 export interface CheckRunLimits {
   /** Rows the run may process. */
   rows: number;
-  haikuCalls: number;
   bimiLookups: number;
   inlinePageFetches: number;
   pageBudgetMs: number;
@@ -267,7 +132,6 @@ export interface CheckRunLimits {
 
 export const CRON_CHECK_LIMITS: CheckRunLimits = {
   rows: LOOKALIKE_BATCH_LIMIT,
-  haikuCalls: HAIKU_CALLS_PER_RUN,
   bimiLookups: BIMI_LOOKUPS_PER_RUN,
   inlinePageFetches: INLINE_PAGE_FETCH_CAP,
   pageBudgetMs: INLINE_PAGE_BUDGET_MS,
@@ -289,7 +153,6 @@ export const CRON_CHECK_LIMITS: CheckRunLimits = {
  */
 export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
   rows: 10,
-  haikuCalls: 3,
   bimiLookups: 5,
   inlinePageFetches: 2,
   pageBudgetMs: 15_000,
@@ -309,7 +172,7 @@ export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
  * ── THE SWALLOWED-ERROR COUNTERS ────────────────────────────────────
  *
  * `row_errors` was the ONLY defect counter, and per-row isolation plus
- * the BEC lane's own try/catch left FIVE independently-swallowed failure
+ * the BEC lane's own try/catch left FOUR independently-swallowed failure
  * paths that it cannot see — each one `logger.error` and nothing else.
  * CLAUDE.md §11 is explicit that operator-visible failure belongs on
  * `agent_runs`, not the log stream, so each gets a counter and
@@ -332,10 +195,6 @@ export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
  *                                re-selected on the very next tick —
  *                                the hot-loop shape per-row isolation
  *                                exists to prevent.
- *   ai_assessment_errors         A Haiku throw leaves `aiLevel` at its
- *                                'MEDIUM' initial value, which the
- *                                mail+web boost then lifts to HIGH — so
- *                                an AI OUTAGE manufactures HIGH alerts.
  *   inline_page_errors           Page evidence silently absent from the
  *                                alert. `fetchSuspectPage` returns
  *                                `{ok: false}` for every ordinary
@@ -363,15 +222,19 @@ export interface LookalikeCheckSummary {
   rows_parked: number;
   /** Parked rows this tick RE-ADMITTED to the queue. */
   rows_unparked: number;
-  // ── The five swallowed-error paths. All DEFECT counts; see the
+  // ── The four swallowed-error paths. All DEFECT counts; see the
   // interface docstring for what each one costs.
   bimi_alert_errors: number;
   bimi_claim_release_failures: number;
   cooldown_stamp_failures: number;
-  ai_assessment_errors: number;
   inline_page_errors: number;
-  haiku_calls: number;
-  haiku_cap_hit: boolean;
+  /**
+   * `none`-transition rows re-composited because their EFFECTIVE state is
+   * mail+web while the stored level is below HIGH — the one-time catch-up
+   * for rows a former Haiku verdict held at LOW/MEDIUM. Self-extinguishing:
+   * the compositor raises them to HIGH, after which they no longer qualify.
+   */
+  mail_web_level_lifts: number;
   /** `has_mx 0 -> 1` on an already-registered row. */
   mx_gained: number;
   /** `has_web 0 -> 1` on an already-registered row. */
@@ -383,10 +246,11 @@ export interface LookalikeCheckSummary {
   /** Linked takedowns stamped `verification_status = 'down'`. */
   takedowns_verified_down: number;
   // ── The mail+web share, MEASURED ─────────────────────────────────
-  // `HAIKU_CALLS_PER_RUN` is sized against this ratio and nothing used
-  // to record it, so the only number available to size it was a
-  // one-off manual query (26 of 42 registered rows, 62%). These four
-  // counters make it a per-run observation on the agent diagnostic.
+  // The share of registered rows that are operational (mail AND web),
+  // which is the rule that lifts a row to HIGH. Nothing used to record
+  // it, so the only number available was a one-off manual query (26 of
+  // 42 registered rows, 62%). These four counters make it a per-run
+  // observation on the agent diagnostic.
   observed_registered: number;
   observed_mail_and_web: number;
   observed_mx_only: number;
@@ -413,10 +277,8 @@ function emptySummary(): LookalikeCheckSummary {
     bimi_alert_errors: 0,
     bimi_claim_release_failures: 0,
     cooldown_stamp_failures: 0,
-    ai_assessment_errors: 0,
     inline_page_errors: 0,
-    haiku_calls: 0,
-    haiku_cap_hit: false,
+    mail_web_level_lifts: 0,
     mx_gained: 0,
     web_gained: 0,
     mail_or_web_lost: 0,
@@ -436,14 +298,14 @@ function emptySummary(): LookalikeCheckSummary {
  *
  * PURE, exported and unit-tested so the agent's severity decision is not
  * a hand-maintained `||` chain that drifts the next time a counter is
- * added. The six members are exactly the paths that are invisible
- * without it: the row-level throw plus the five independently-swallowed
+ * added. The five members are exactly the paths that are invisible
+ * without it: the row-level throw plus the four independently-swallowed
  * `logger.error` sites enumerated in `LookalikeCheckSummary`'s
  * docstring.
  *
  * Deliberately NOT a member: `checks_unresolved` (an orderly DNS
  * non-answer), `rows_parked` / `rows_unparked` (the ladder working as
- * designed), `haiku_cap_hit` / `bimi_cap_hit` (budgets biting, which is
+ * designed), `bimi_cap_hit` (a budget biting, which is
  * what a budget is for) and `alerts_withheld_below_floor` (policy).
  */
 export function lookalikeCheckDefects(s: LookalikeCheckSummary): number {
@@ -451,7 +313,6 @@ export function lookalikeCheckDefects(s: LookalikeCheckSummary): number {
     + s.bimi_alert_errors
     + s.bimi_claim_release_failures
     + s.cooldown_stamp_failures
-    + s.ai_assessment_errors
     + s.inline_page_errors;
 }
 
@@ -465,13 +326,15 @@ export function lookalikeCheckDefects(s: LookalikeCheckSummary): number {
  * beyond `registered`. That is why every capability in this file was
  * reachable exactly ONCE per row: the only transition it could detect
  * was `registered 0 -> 1`, and `registered` is monotone in practice, so
- * once a row flipped to 1 the alert branch, the Haiku call, the BIMI
+ * once a row flipped to 1 the alert branch, the BIMI
  * probe and the compositor were all unreachable forever.
  *
  * `has_mx` / `has_web` make MX and web APPEARANCE detectable.
- * `threat_level` / `ai_assessment` make the compositor re-entrant
- * without blanking what a previous pass (or the page pass, or an
- * analyst) established. `alert_id` bounds the MX/WEB re-composite path
+ * `threat_level` makes the compositor re-entrant without lowering what a
+ * previous pass (or the page pass, or an analyst) established.
+ * `ai_assessment` is READ ONLY — a historical Haiku note this scanner no
+ * longer writes (AI_STRATEGY_2026-10 Phase 1 #18); it is carried onto the
+ * alert when present and is otherwise inert. `alert_id` bounds the MX/WEB re-composite path
  * to one alert (and ONLY that path — a `registration_gained` after a
  * lapse re-alerts by design; see that branch).
  * `baseline_established_at` is the first-contact
@@ -673,7 +536,7 @@ async function unparkOldestRows(env: Env, limit: number): Promise<number> {
  * derived it again from the LIVE column. Those agree only if nothing
  * wrote the column in between — and `persistCheckFacts` sets
  * `check_attempts = 0` and runs BEFORE the BIMI lane, the compositor,
- * Haiku, the page fetch, `createAlert` and `recordTakedownDown`, i.e.
+ * the page fetch, `createAlert` and `recordTakedownDown`, i.e.
  * before every throw the per-row catch exists to absorb.
  *
  * So for any throw past that point the two derivations diverged and the
@@ -1144,7 +1007,7 @@ export async function generateAndStoreLookalikes(
  * on-demand API handler, so the cron checker had an empty candidate pool
  * for nearly every brand and produced no findings.
  *
- * Generation is cheap (permutation inserts only — DNS/AI happens later in
+ * Generation is cheap (permutation inserts only — DNS happens later in
  * the throttled checker), so we seed up to `brandLimit` un-seeded brands
  * per tick. Returns brands + candidates seeded.
  *
@@ -1192,71 +1055,98 @@ export async function seedLookalikesForOrgBrands(
 // ─── The compositor ─────────────────────────────────────────────
 
 interface RunBudgets {
-  haiku: { remaining: number; cap: number };
   bimi: { remaining: number; cap: number };
   page: { remaining: number; cap: number; runStart: number; budgetMs: number };
+}
+
+/**
+ * The rule-only part of the level composition. PURE — exported so the
+ * rule table is unit-testable without the D1/fetch harness.
+ *
+ * Applied in order, starting from the STORED level; every step only
+ * RAISES (the persist is monotonic as well, so nothing here can lower a
+ * row):
+ *
+ *   1. mail AND web (the EFFECTIVE probe state — an unanswered probe
+ *      carries the stored value, per `classifyLookalikeTransitions`'
+ *      precondition) and below HIGH  ->  HIGH.
+ *   2. a BIMI record is known and below HIGH  ->  HIGH.
+ *
+ * The page verdict (`escalateThreatLevelForPage`) is step 3 and runs in
+ * `compositeAndPersist`, because it needs a fetch.
+ *
+ * ── WHY RULE 1 LIFTS LOW, NOT ONLY MEDIUM ───────────────────────────
+ *
+ * The mail+web boost used to be MEDIUM-only, which was what let a Haiku
+ * LOW veto it. With the AI verdict gone (AI_STRATEGY_2026-10 Phase 1
+ * #18, threat-intel approved) a MEDIUM-only boost would be a SILENT MISS:
+ * a fresh row's stored level is LOW, so an operational squat — the exact
+ * shape first contact alerts on — would never clear the HIGH alert floor.
+ * Mail+web is the deterministic statement that the domain is
+ * OPERATIONAL, and HIGH is the level the alert asserts.
+ */
+export function composeRuleLevel(
+  storedLevel: PageThreatLevel,
+  signals: { hasMx: boolean; hasWeb: boolean; bimiKnown: boolean },
+): PageThreatLevel {
+  let level = storedLevel;
+  if (signals.hasMx && signals.hasWeb && THREAT_LEVEL_RANK[level] < THREAT_LEVEL_RANK.HIGH) {
+    level = 'HIGH';
+  }
+  // ── THE BIMI BOOST ───────────────────────────────────────────────
+  // A BIMI-publishing squat used to keep `threat_level = 'LOW'` while
+  // this file filed a FIXED-HIGH `typosquat_bimi` alert about it, and
+  // `agents/sparrow.ts` gates takedown eligibility on `threat_level IN
+  // ('HIGH','CRITICAL')` — so the single most damning email signal this
+  // scanner can find could not reach the takedown queue. Filing a HIGH
+  // alert IS the assertion that the row is HIGH, so the level follows
+  // the alert. RAISES to HIGH, never lowers a CRITICAL.
+  if (signals.bimiKnown && THREAT_LEVEL_RANK[level] < THREAT_LEVEL_RANK.HIGH) level = 'HIGH';
+  return level;
 }
 
 /**
  * Compose a threat level from the row's stored state plus whatever this
  * pass learned, persist it MONOTONICALLY, and optionally alert.
  *
- * ── THE TWO BUGS RE-ENTRANCY MADE LIVE ──────────────────────────────
+ * ── RULES ONLY — NO MODEL CALL ──────────────────────────────────────
  *
- * This used to be straight-line code inside the one-shot
- * `registered 0 -> 1` branch, and both of these were survivable only
- * because it ran at most once per row:
+ * The level is `composeRuleLevel` (mail+web, BIMI) followed by the
+ * deterministic page verdict. This pass makes NO AI call and writes NO
+ * `ai_assessment` (AI_STRATEGY_2026-10 Phase 1 #18). The Haiku verdict
+ * it replaced was dead in production for months (every call HTTP 400),
+ * and its error path silently lifted the MEDIUM seed to HIGH — so the
+ * mail+web rule is what the platform had effectively been running on.
  *
- *   * `threat_level` was seeded fresh at `'MEDIUM'` each pass and
- *     written back UNCONDITIONALLY. A row sitting at CRITICAL from a
- *     page escalation would be written DOWN to HIGH on any pass where
- *     the inline page budget was exhausted — and `agents/sparrow.ts`
- *     reads `threat_level` for takedown ELIGIBILITY and PRIORITY, so
- *     that silently de-queues a confirmed credential-harvest kit. The
- *     persisted write now never lowers a stored level; the comparison is
- *     done IN SQL (same shape as `applyEscalation`'s alert bump) so it
- *     cannot be lost to a concurrent writer between read and write.
- *   * `ai_assessment` was written unconditionally from a variable
- *     initialised `''`, so a failed or throttled Haiku call BLANKED a
- *     good assessment — which `agents/sparrow.ts` embeds in the takedown
- *     evidence packet. It is now written only when this pass actually
- *     produced one.
+ * ── RE-ENTRANCY: THE STORED LEVEL IS THE BASE ───────────────────────
  *
- * ── WHAT A RE-ENTRANT PASS COMPUTES, AND THE HAIKU VETO ─────────────
- *
- * The user was asked whether a Haiku `LOW` may veto the deterministic
- * mail+web signal and chose to leave it as-is, so Haiku keeps its veto.
- * There is deliberately NO `max(deterministic, ai)`.
- *
- * Honouring that under re-entrancy turns on ONE line: the compositor's
- * base level is the AI verdict ONLY when a Haiku call was ATTEMPTED this
- * pass, and the STORED level otherwise. Without that, a re-composite
- * would re-seed at `'MEDIUM'`, the mail+web boost would fire, and a row
- * the model deliberately rated LOW would drift to HIGH on a pass that
- * learned nothing new about it — silently undoing the user's choice.
- *
- * With it, a Haiku-vetoed LOW row on a later pass computes: base = LOW
- * (stored, no new call because the lifetime claim is spent), the mail+web
- * boost does not fire (it is MEDIUM-only, exactly as before), and the
- * monotonic persist writes nothing. It stays LOW. TWO things can raise
- * it, and neither is an AI signal: `escalateThreatLevelForPage` (a
- * deterministic page verdict, monotonic by construction) and the BIMI
- * boost, which is no longer MEDIUM-only — see its comment below for why
- * leaving a BIMI-publishing squat at LOW while filing a fixed-HIGH alert
- * about it was incoherent.
+ * `threat_level` was once seeded fresh at `'MEDIUM'` each pass and
+ * written back UNCONDITIONALLY. A row sitting at CRITICAL from a page
+ * escalation would be written DOWN to HIGH on any pass where the inline
+ * page budget was exhausted — and `agents/sparrow.ts` reads
+ * `threat_level` for takedown ELIGIBILITY and PRIORITY, so that silently
+ * de-queues a confirmed credential-harvest kit. The base is now the
+ * STORED level and the persisted write never lowers it; the comparison
+ * is done IN SQL (same shape as `applyEscalation`'s alert bump) so it
+ * cannot be lost to a concurrent writer between read and write.
  *
  * ── MEDIUM IS REACHABLE AS A PERSISTED VERDICT ──────────────────────
  *
- * Worth stating because the opposite was assumed. MEDIUM is not only
- * `aiLevel`'s initial value: `escalateThreatLevelForPage` escalates from
- * LOW, not only from MEDIUM, so a `web_gained` row with no MX and a page
- * score of 30-59 — or a bare anti-bot wall — persists MEDIUM. What is
- * true is that NOTHING READS MEDIUM: `agents/sparrow.ts`'s takedown
+ * `escalateThreatLevelForPage` escalates from LOW, so a `web_gained`
+ * row with no MX and a page score of 30-59 — or a bare anti-bot wall —
+ * persists MEDIUM. NOTHING READS MEDIUM: `agents/sparrow.ts`'s takedown
  * eligibility, `handlers/tenantDomainModule.ts`'s per-brand rollups and
  * `agents/trademarkMonitor.ts` all test HIGH/CRITICAL only, and
  * `LOOKALIKE_ALERT_SEVERITY_FLOOR` is HIGH. So a MEDIUM row is a row an
- * analyst can sort and filter and nothing else — which is the intent,
- * but for a different reason than "MEDIUM cannot happen".
+ * analyst can sort and filter and nothing else.
+ *
+ * ── ALERTS FIRE ON TRANSITIONS, NOT REASSESSMENTS ───────────────────
+ *
+ * This function is reached only from a TRANSITION (first contact,
+ * registration gained, an mx/web gain) or from the one-time `none`-path
+ * catch-up for a mail+web row stored below HIGH. A stable row already at
+ * HIGH yields `none` and never re-enters, so it cannot re-alert.
+ * `allowAlert` is decided per path by the dispatch in `runCheckRows`.
  */
 async function compositeAndPersist(
   env: Env,
@@ -1271,146 +1161,22 @@ async function compositeAndPersist(
 
   const storedLevel = normalizeThreatLevel(row.threat_level);
 
-  // ── AI assessment — gated three ways ──────────────────────────────
-  //   1. mail AND web. The cheap deterministic statement that this
-  //      domain is OPERATIONAL. Either alone is ordinary (parked squats
-  //      serve registrar landers; several registrars set MX by default),
-  //      and at the seeder's population a per-appearance Haiku call is
-  //      the cost problem this whole change exists to avoid.
-  //   2. a GUARDED CLAIM on `ai_assessment IS NULL` — once per row per
-  //      LIFETIME, not once per pass, and not a read-then-act: see
-  //      `claimHaikuCall` for why the snapshot read it replaced could be
-  //      spent twice on one row by concurrent runs.
-  //   3. the per-run cap. See HAIKU_CALLS_PER_RUN: with metering dead
-  //      this is the only real bound, so it is enforced here and not
-  //      deferred.
-  //
-  // ORDER MATTERS, twice over. The cap is checked BEFORE the claim (a
-  // row that burned its claim and then hit the cap would be deferred
-  // with a claim nobody releases until it goes stale), and the budget
-  // decrement is taken SYNCHRONOUSLY before the claim's await — JS is
-  // single-threaded between awaits, so that is what keeps CONCURRENCY
-  // from overspending the cap. A claim that loses the race REFUNDS the
-  // decrement, because no call was made.
-  let aiAttempted = false;
-  let aiLevel: PageThreatLevel = 'MEDIUM';
-  let newAssessment: string | null = null;
+  // Rules 1 + 2 — see `composeRuleLevel`.
+  let level: PageThreatLevel = composeRuleLevel(storedLevel, {
+    hasMx: observed.hasMx,
+    hasWeb: observed.hasWeb,
+    bimiKnown: opts.bimiKnown,
+  });
 
-  if (observed.hasMx && observed.hasWeb && row.ai_assessment === null) {
-    if (budgets.haiku.remaining <= 0) {
-      counters.haiku_cap_hit = true;
-      logger.warn('lookalike_haiku_cap_hit', {
-        domain: row.domain,
-        lookalike_id: row.id,
-        cap: budgets.haiku.cap,
-      });
-    } else {
-      budgets.haiku.remaining -= 1;
-      const claimed = await claimHaikuCall(env, row.id);
-      if (!claimed) {
-        // Another pass owns this row's one call. No spend, so the
-        // decrement is given back.
-        budgets.haiku.remaining += 1;
-      } else {
-        counters.haiku_calls += 1;
-        aiAttempted = true;
-        try {
-          const aiResult = await analyzeWithHaiku(env, { agentId: "lookalike_scanner", runId: null },
-            `Assess the threat level of this newly registered lookalike domain. Is it likely malicious brand impersonation or benign?
-               Respond with JSON: {"threat_level": "LOW|MEDIUM|HIGH|CRITICAL", "assessment": "brief explanation", "indicators": ["list of suspicious indicators"]}`,
-            {
-              lookalike_domain: row.domain,
-              original_domain: brand.domain,
-              brand_name: brand.brand_name,
-              permutation_type: row.permutation_type,
-              resolves_to_ip: observed.ip,
-              has_mx_records: observed.hasMx,
-              has_web_server: observed.hasWeb,
-            },
-          );
-
-          if (aiResult.success && aiResult.data) {
-            const structured = aiResult.data.structured as {
-              threat_level?: string;
-              assessment?: string;
-            } | undefined;
-            const responseText = aiResult.data.response ?? '';
-
-            if (structured?.threat_level) {
-              const level = structured.threat_level.toUpperCase();
-              if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
-                aiLevel = level as PageThreatLevel;
-              }
-            }
-            const text = structured?.assessment ?? responseText;
-            // Only a NON-EMPTY assessment is a result worth persisting.
-            // The old code wrote `''` here and so blanked whatever a
-            // previous pass had established.
-            if (text) newAssessment = text;
-          }
-        } catch (err) {
-          // COUNTED, not only logged. The consequence is specific and
-          // worth an operator seeing: `aiLevel` stays at its 'MEDIUM'
-          // initial value and `aiAttempted` is already true, so the
-          // mail+web boost below lifts it to HIGH — i.e. a sustained AI
-          // outage manufactures HIGH alerts out of rows nothing assessed.
-          // Left as-is deliberately: the alternative (fall back to the
-          // stored level) turns the outage into a SILENT MISS, because
-          // both infrastructure boosts are MEDIUM-only and a fresh row's
-          // stored level is LOW. Erring toward the notification is the
-          // better failure, but only if it is visible.
-          counters.ai_assessment_errors += 1;
-          logger.error('lookalike_ai_assessment_error', {
-            domain: row.domain,
-            lookalike_id: row.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-        // No assessment produced -> give the claim back, so the row is
-        // DEFERRED rather than retired. Exactly the behaviour the
-        // pre-claim `ai_assessment IS NULL` read had for this case.
-        if (newAssessment === null) await releaseHaikuClaim(env, row.id);
-      }
-    }
-  }
-
-  // THE line the veto turns on — see this function's docstring.
-  let level: PageThreatLevel = aiAttempted ? aiLevel : storedLevel;
-
-  // The mail+web boost stays MEDIUM-ONLY, unchanged: that is precisely
-  // what lets a Haiku LOW stand against the deterministic mail+web
-  // signal, which is the veto the user chose to keep. Nothing below
-  // reopens it.
-  if (observed.hasMx && observed.hasWeb && level === 'MEDIUM') level = 'HIGH';
-
-  // ── THE BIMI BOOST IS NOT MEDIUM-ONLY ────────────────────────────
-  //
-  // It was, and that produced an incoherent row: a Haiku-vetoed LOW row
-  // that publishes a BIMI record kept `threat_level = 'LOW'` while this
-  // file filed a FIXED-HIGH `typosquat_bimi` alert about it. And
-  // `agents/sparrow.ts` gates takedown eligibility on `threat_level IN
-  // ('HIGH','CRITICAL')` — so the single most damning email signal this
-  // scanner can find could not reach the takedown queue, on the strength
-  // of a model verdict about a page.
-  //
-  // Filing a HIGH alert IS the assertion that the row is HIGH, so the
-  // level follows the alert rather than contradicting it. Monotonic like
-  // every other write here: it RAISES to HIGH and never lowers a
-  // CRITICAL that a page verdict established.
-  //
-  // Pre-existing, not a regression introduced by the recurring lane —
-  // but the lane is what makes it reachable on rows other than first
-  // contact, which is why it is fixed here. Flagged in the commit so it
-  // can be reversed on its own.
-  if (opts.bimiKnown && THREAT_LEVEL_RANK[level] < THREAT_LEVEL_RANK.HIGH) level = 'HIGH';
-
-  // Deterministic page-content analysis (D6 / S2.4). Slots the page
-  // phishing score into the same compositor: a credential-form-off-domain
-  // page escalates MEDIUM→HIGH/CRITICAL (monotonic — never downgrades).
-  // Inline only for has_web domains and capped per run; the throttled
-  // analyzeLookalikePages pass re-checks the broader registered set and
-  // picks up whatever this cap defers. All fetches funnel through the
-  // SSRF-safe fetchSuspectPage.
+  // Rule 3 — deterministic page-content analysis (D6 / S2.4). Slots the
+  // page phishing score into the same compositor: credential harvest ->
+  // CRITICAL, score >= 60 -> HIGH, >= 30 or an anti-bot wall -> MEDIUM
+  // (monotonic — never downgrades). Lane 3 shadow signals do NOT feed the
+  // level: only score / credentialHarvest / the anti-bot-wall flag are
+  // passed. Inline only for has_web domains and capped per run; the
+  // throttled analyzeLookalikePages pass re-checks the broader registered
+  // set and picks up whatever this cap defers. All fetches funnel through
+  // the SSRF-safe fetchSuspectPage.
   let pagePhishing: PagePhishingResult | null = null;
   if (
     observed.hasWeb &&
@@ -1474,8 +1240,7 @@ async function compositeAndPersist(
   // rather than skipped, which is a no-op on a real value and is what
   // materializes a level on a row whose `threat_level` is NULL (the 0031
   // DEFAULT is 'LOW', but a NULL would otherwise be unreachable by a LOW
-  // verdict and stay NULL forever). `ai_assessment` is written only when
-  // this pass produced one.
+  // verdict and stay NULL forever). `ai_assessment` is never written here.
   await env.DB.prepare(
     `UPDATE lookalike_domains
      SET threat_level = CASE
@@ -1485,14 +1250,11 @@ async function compositeAndPersist(
                         WHEN 'MEDIUM' THEN 1
                         ELSE 0 END)
              THEN ? ELSE threat_level END,
-         ai_assessment = CASE WHEN ? = 1 THEN ? ELSE ai_assessment END,
          updated_at = datetime('now')
      WHERE id = ?`,
   ).bind(
     THREAT_LEVEL_RANK[level],
     level,
-    newAssessment === null ? 0 : 1,
-    newAssessment,
     row.id,
   ).run();
 
@@ -1546,7 +1308,8 @@ async function compositeAndPersist(
     },
     sourceType: 'lookalike_scanner',
     sourceId: row.id,
-    aiAssessment: newAssessment ?? row.ai_assessment ?? undefined,
+    // Historical note from the retired Haiku pass, when one exists.
+    aiAssessment: row.ai_assessment ?? undefined,
     aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(effective)
       ? [
           'Investigate the domain for brand impersonation content',
@@ -1618,7 +1381,7 @@ async function recordTakedownDown(env: Env, takedownId: string): Promise<boolean
  *
  * So the two cases get two paths. FIRST CONTACT is BASELINE
  * ESTABLISHMENT: it records everything and alerts only when a real
- * signal is present. With no signal it spends NO Haiku tokens and files
+ * signal is present. With no signal it files
  * NO `lookalike_domain_active` alert.
  */
 async function runCheckRows(
@@ -1632,7 +1395,6 @@ async function runCheckRows(
   // synchronous decrement taken before each await is race-free even
   // under the concurrency below.
   const budgets: RunBudgets = {
-    haiku: { remaining: limits.haikuCalls, cap: limits.haikuCalls },
     bimi: { remaining: limits.bimiLookups, cap: limits.bimiLookups },
     page: {
       remaining: limits.inlinePageFetches,
@@ -1671,7 +1433,7 @@ async function runCheckRows(
         // exactly as it does for a clean NXDOMAIN. Writing that value
         // over a stored `registered = 1` manufactures a lapse, and the
         // next successful check then reads as a 0 -> 1 registration: a
-        // false `first_seen`, a Haiku call, and a permanent
+        // false `first_seen` and a permanent
         // un-triageable alert, from a transient resolver blip.
         //
         // So an unresolved check writes NO registration state at all.
@@ -1706,8 +1468,7 @@ async function runCheckRows(
           ip: result.aAnswered ? result.ip : undefined,
         };
 
-        // The mail+web share, measured per run — the ratio
-        // HAIKU_CALLS_PER_RUN is sized against.
+        // The mail+web share, measured per run.
         if (observed.registered) {
           counters.observed_registered += 1;
           if (observed.hasMx && observed.hasWeb) counters.observed_mail_and_web += 1;
@@ -1755,11 +1516,10 @@ async function runCheckRows(
           counters.baselines_established += 1;
 
           if (!(observed.hasMx && observed.hasWeb)) {
-            // NO HAIKU CALL AND NO `lookalike_domain_active` ALERT. At a
-            // 10-35% resolve rate over the seeder backlog this early
-            // return is the difference between thousands of Haiku calls
-            // plus the same number of permanent alerts, and zero of
-            // either. The BEC lane above already ran, so a mail-only
+            // NO `lookalike_domain_active` ALERT. At a 10-35% resolve
+            // rate over the seeder backlog this early return is the
+            // difference between thousands of permanent alerts and
+            // zero. The BEC lane above already ran, so a mail-only
             // baseline with a BIMI record is NOT silent.
             counters.baselines_suppressed += 1;
             logger.info('lookalike_baseline_no_signal', {
@@ -1875,6 +1635,34 @@ async function runCheckRows(
         // 'none' — including a `resolves_to` change, which the UPDATE
         // above has already persisted. Recorded, never a trigger: a
         // squat moving between hosts is NEXUS's input, not an alert.
+        //
+        // ── ONE-TIME CATCH-UP: mail+web stored below HIGH ─────────
+        //
+        // The rule table (`composeRuleLevel`) lifts an operational
+        // (mail+web) row to HIGH, but rows a retired Haiku verdict held
+        // at LOW/MEDIUM never re-enter the compositor through a
+        // transition. Re-composite them once here. SELF-EXTINGUISHING:
+        // the compositor raises the row to HIGH and the monotonic persist
+        // keeps it there, so on every later pass this predicate is false
+        // and an already-HIGH row is never reassessed or re-alerted.
+        // Sized in prod at 90 rows (84 LOW, 6 MEDIUM).
+        //
+        // The alert is the LEVEL transition (below HIGH -> HIGH), so it
+        // is allowed — but only on a row carrying no alert yet, the same
+        // bound the mx/web path uses, so a row that was alerted on by
+        // another lane is not alerted twice.
+        if (
+          observed.registered &&
+          observed.hasMx &&
+          observed.hasWeb &&
+          THREAT_LEVEL_RANK[normalizeThreatLevel(row.threat_level)] < THREAT_LEVEL_RANK.HIGH
+        ) {
+          counters.mail_web_level_lifts += 1;
+          await compositeAndPersist(env, row, observed, {
+            allowAlert: row.alert_id === null,
+            bimiKnown, budgets, counters,
+          });
+        }
       } catch (err) {
         counters.row_errors += 1;
         logger.error('lookalike_check_row_error', {
@@ -1977,9 +1765,7 @@ function logCheckSummary(
   logger.info(event, {
     ...extra,
     ...summary,
-    // The measured mail+web share, which is what
-    // HAIKU_CALLS_PER_RUN is sized against and what nothing recorded
-    // before. Emitted as a percentage so an operator does not have to
+    // The measured mail+web share, which nothing recorded before. Emitted as a percentage so an operator does not have to
     // divide; null below n=1 rather than a fake 0.
     observed_mail_web_pct: summary.observed_registered > 0
       ? Math.round((summary.observed_mail_and_web / summary.observed_registered) * 100)
@@ -2047,7 +1833,7 @@ export async function checkLookalikeBatch(
  *
  * Exists because the handler used to `await checkLookalikeBatch(env)`,
  * the GLOBAL batch, from inside an HTTP request: up to 100 DoH queries,
- * 50 HEAD probes, 50 Haiku calls and 10 page fetches per button press,
+ * 50 HEAD probes, 50 (since-retired) Haiku calls and 10 page fetches per button press,
  * on rows belonging to brands the caller never asked about, with no rate
  * limit of any kind in front of it. Brand-scoped and small-budgeted
  * (`SCAN_NOW_CHECK_LIMITS`) removes that amplifier; the rest of the

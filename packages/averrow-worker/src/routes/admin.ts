@@ -9,7 +9,7 @@ import {
   handleBackfillClassifications, handleBackfillGeo, handleBackfillDomainGeo, handleBackfillBrandMatch,
   handleBackfillBrandEnrichment, handleBackfillBrandSector,
   handleBackfillSafeDomains, handleImportTranco, handleAdminListBrands,
-  handleBulkMonitor, handleBulkDeleteBrands, handleBackfillAiAttribution,
+  handleBulkMonitor, handleBulkDeleteBrands,
   handleBackfillSocialConfig, handleBackfillSaasTechniques,
   handleBudgetLedgerHealth,
   handleCubeBackfill,
@@ -1303,11 +1303,6 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBackfillSafeDomains(request, env);
-  });
-  router.post("/api/admin/backfill-ai-attribution", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleBackfillAiAttribution(request, env);
   });
   router.post("/api/admin/import-tranco", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);

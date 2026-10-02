@@ -4,7 +4,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import {
-  Mail, Rss, Download, Brain, Zap, AlertTriangle, Loader2, Check, X,
+  Mail, Rss, Download, Zap, AlertTriangle, Loader2, Check, X,
   ChevronDown, ChevronUp, BellRing, Activity, Database, Cpu, Shield, DollarSign,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -477,13 +477,6 @@ const OPERATIONS: OperationConfig[] = [
     badge: 'Import from Tranco list',
     confirmText: 'Import top 10K brands from Tranco domain list. May take several minutes.',
     endpoint: '/api/admin/import-tranco',
-  },
-  {
-    label: 'AI Attribution',
-    icon: Brain,
-    badge: 'Haiku-powered brand attribution',
-    confirmText: 'Run AI attribution on unattributed threats.',
-    endpoint: '/api/admin/backfill-ai-attribution',
   },
   {
     label: 'Run 10× Feeds',

@@ -31,17 +31,15 @@ import { applyLookalikeSchema } from "./lookalike-schema";
 
 // ─── Collaborator mocks ───────────────────────────────────────────
 
-const { checkDomainSpy, analyzeWithHaikuSpy, checkBIMISpy, createAlertSpy, pageAnalysisSpy } =
+const { checkDomainSpy, checkBIMISpy, createAlertSpy, pageAnalysisSpy } =
   vi.hoisted(() => ({
     checkDomainSpy: vi.fn(),
-    analyzeWithHaikuSpy: vi.fn(),
     checkBIMISpy: vi.fn(),
     createAlertSpy: vi.fn(),
     pageAnalysisSpy: vi.fn(),
   }));
 
 vi.mock("../src/lib/domain-checker", () => ({ checkDomain: checkDomainSpy }));
-vi.mock("../src/lib/haiku", () => ({ analyzeWithHaiku: analyzeWithHaikuSpy }));
 vi.mock("../src/email-security", () => ({ checkBIMIExists: checkBIMISpy }));
 vi.mock("../src/lib/alerts", () => ({ createAlert: createAlertSpy }));
 vi.mock("../src/scanners/lookalike-page-analysis", async (importOriginal) => {
@@ -117,7 +115,7 @@ interface Harness {
    * a throw that happens AFTER `persistCheckFacts` has reset the column.
    * Mocking a collaborator cannot produce that: `checkDomain` throws
    * BEFORE the reset, and every other collaborator past it
-   * (`checkBIMIExists`, `analyzeWithHaiku`, `runPageAnalysisForDomain`,
+   * (`checkBIMIExists`, `runPageAnalysisForDomain`,
    * `createAlert` on the BIMI path) is caught by a narrower try/catch.
    * The BEC lane's guarded CLAIM is the statement that is deliberately
    * un-caught, and it runs on every due pass of a registered + MX row.
@@ -252,13 +250,6 @@ const NO_ANSWER = {
   aAnswered: false, mxAnswered: false, webAnswered: false,
 };
 
-function haikuSays(level: string) {
-  return {
-    success: true,
-    data: { response: "", structured: { threat_level: level, assessment: `assessed ${level}` } },
-  };
-}
-
 const STALE = "2026-09-01 00:00:00";
 
 /**
@@ -295,15 +286,9 @@ async function emptyLikeSummary(): Promise<LookalikeCheckSummary> {
  * `compositeAndPersist` runs only on `first_contact`,
  * `registration_gained` or an mx/web GAIN. A row that has already
  * baselined with mail+web present yields the `none` transition on every
- * later pass, so a deferred Haiku call (capped, thrown, or empty) is NOT
- * in fact retried "on its next due pass" — it is retried on its next
- * TRANSITION, which for a stable row may be never.
- *
- * That is a real limitation of the compositor's dispatch and not of the
- * claim (the claim is released either way, which is what keeps the row
- * CLAIMABLE); it is recorded in `HAIKU_CALLS_PER_RUN`'s docstring rather
- * than papered over here, and these tests drive the transition
- * explicitly rather than asserting a cadence the code does not have.
+ * later pass (unless it is stored below HIGH, which the one-time
+ * mail+web catch-up handles), so these tests drive a transition
+ * explicitly when they need a second compositor pass.
  */
 async function webFlap(h: Harness, id: string): Promise<void> {
   await h.env.DB.prepare(
@@ -324,7 +309,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   checkBIMISpy.mockResolvedValue(false);
   createAlertSpy.mockResolvedValue("alert_1");
-  analyzeWithHaikuSpy.mockResolvedValue(haikuSays("MEDIUM"));
   pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
 });
 
@@ -445,7 +429,7 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
   it("a genuine registration on a RESCANNED brand is still a registration, not a baseline", async () => {
     // The endpoint's two earlier forms both wrote `last_checked`: first
     // NULL (which CLAIMED we had never looked, so the 0 -> 1 that
-    // followed was reclassified as BASELINE — no `first_seen`, no Haiku,
+    // followed was reclassified as BASELINE — no `first_seen`,
     // no alert unless MX and web happened to coincide, and 0267's column
     // re-stamped), then a `CASE` working around that. Scheduling has its
     // own column now, so there is nothing left to work around.
@@ -458,16 +442,16 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
     checkDomainSpy.mockResolvedValue(
       answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
     );
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
 
     const res = await handleScanLookalikes(req(), h.env, "b1", ctx);
     expect(res.status).toBe(200);
 
     const row = h.row(id);
-    // The transition path ran: a real appearance, a real assessment.
+    // The transition path ran: a real appearance, and the mail+web rule
+    // composed it to HIGH.
     expect(row.first_seen).not.toBeNull();
-    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
     expect(row.threat_level).toBe("HIGH");
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
     // And 0267's column is untouched — single-write, structurally.
     expect(row.baseline_established_at).toBe("2026-06-01 00:00:00");
   });
@@ -496,13 +480,9 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
     expect(h.row(never).baseline_established_at).toBeNull();
   });
 
-  it("a BARE registration spends no Haiku — the mail+web gate applies to transitions too", async () => {
-    // A DELIBERATE NARROWING in this change, pinned so it is not
-    // mistaken for a regression. Haiku used to run on EVERY observed
-    // 0 -> 1 regardless of infrastructure. It is now gated on mail+web
-    // (and on `ai_assessment IS NULL`) on every path, including this
-    // one. What is given up is a Haiku-only HIGH on a registration with
-    // neither mail nor web; what covers that case instead is the
+  it("a BARE registration keeps the stored level and files no alert", async () => {
+    // Neither mail nor web: no rule fires, so the level is the stored
+    // one and stays below the floor. What covers this case is the
     // deterministic page pass, which sees any row with a web server one
     // pass later and can raise the alert itself.
     const h = harness();
@@ -511,9 +491,9 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
 
     await checkLookalikeBatch(h.env);
 
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
-    // The transition itself is still RECORDED — withholding the token
-    // spend is not withholding the finding.
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(h.row(id).threat_level).toBe("LOW");
+    // The transition itself is still RECORDED.
     expect(h.row(id).first_seen).not.toBeNull();
   });
 
@@ -525,9 +505,8 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
     await handleScanLookalikes(req(), h.env, "b1", ctx);
 
     const row = h.row(id);
-    // Baseline establishment: web only is not a signal, so no tokens
-    // and no alert, and `first_seen` stays NULL.
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    // Baseline establishment: web only is not a signal, so no alert,
+    // and `first_seen` stays NULL.
     expect(createAlertSpy).not.toHaveBeenCalled();
     expect(row.first_seen).toBeNull();
     expect(row.baseline_established_at).not.toBeNull();
@@ -643,9 +622,8 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — mail-only first contact",
     expect(calls[0]!.alertType).toBe("typosquat_bimi");
     expect(calls[0]!.severity).toBe("HIGH");
 
-    // Cost discipline is intact: no Haiku, no page fetch. One DNS
+    // Cost discipline is intact: no page fetch. One DNS
     // lookup is the entire price of admitting this lane.
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(pageAnalysisSpy).not.toHaveBeenCalled();
 
     const row = h.row(id);
@@ -669,7 +647,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — mail-only first contact",
 
     expect(checkBIMISpy).toHaveBeenCalledTimes(1);
     expect(createAlertSpy).not.toHaveBeenCalled();
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
   });
 
   it("does NOT spend a BIMI lookup on a web-only baseline", async () => {
@@ -731,7 +708,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     expect(row.resolves_to).toBe("5.6.7.8");
     expect(row.last_checked).toBe(STALE);
     expect(row.last_check_failed_at).not.toBeNull();
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(createAlertSpy).not.toHaveBeenCalled();
 
     // ── Tick 2: the resolver recovers. Re-admit the row, because the
@@ -745,7 +721,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     row = h.row(id);
     // Nothing "appeared" — it never went away.
     expect(row.first_seen).toBe("2026-01-15 00:00:00");
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(createAlertSpy).not.toHaveBeenCalled();
     expect(row.last_check_failed_at).toBeNull();
     expect(row.last_checked).not.toBe(STALE);
@@ -776,7 +751,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — registered -> DNS failure
     // Baseline, not appearance — the classification survived the blip.
     expect(row.baseline_established_at).not.toBeNull();
     expect(row.first_seen).toBeNull();
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
     expect(createAlertSpy).not.toHaveBeenCalled();
   });
 
@@ -958,7 +932,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     checkDomainSpy.mockResolvedValue(
       answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
     );
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     // The unguarded await that made this reachable in production.
     createAlertSpy.mockImplementation(async (_db: unknown, p: { sourceId?: string }) => {
       if (p.sourceId === bad) throw new Error("alerts table is having a day");
@@ -984,7 +957,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     const h = harness();
     const bad = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     createAlertSpy.mockRejectedValue(new Error("boom"));
 
     await checkLookalikeBatch(h.env);
@@ -1018,7 +990,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — per-row error isolation",
     const id = h.seed({ ...BASELINED, registered: 0 });
     const other = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }));
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     const badDomain = h.row(id).domain as string;
     // BIMI is present on the bad row only, so only it reaches the lane's
     // alert path.
@@ -1218,30 +1189,25 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — re-entrant compositor, re
     }
   });
 
-  it("a Haiku verdict BELOW the stored level does not lower it", async () => {
-    // The veto applies to the INITIAL assessment; the monotonic persist
-    // applies to the stored value. They only meet when a stored level
-    // already EXCEEDS the model's verdict, and there the deterministic
-    // page escalation that produced it wins.
+  it("the mail+web rule (HIGH) does not lower a stored CRITICAL", async () => {
+    // The rules only RAISE, and the persist is monotonic in SQL: a
+    // composed HIGH meeting a stored CRITICAL leaves CRITICAL.
     const h = harness();
     const id = critical(h, { ai_assessment: null, has_mx: 0 });
     checkDomainSpy.mockResolvedValue(
       answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
     );
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("LOW"));
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
 
     await checkLookalikeBatchForBrand(h.env, "b1");
 
-    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
     const row = h.row(id);
     expect(row.threat_level).toBe("CRITICAL");
-    // The assessment itself IS recorded — the verdict is data even when
-    // it does not move the level.
-    expect(row.ai_assessment).toBe("assessed LOW");
+    // And nothing writes an assessment any more.
+    expect(row.ai_assessment).toBeNull();
   });
 
-  it("a failed Haiku call does not blank the stored assessment", async () => {
+  it("a re-composite never blanks or rewrites the stored (historical) assessment", async () => {
     const h = harness();
     const id = critical(h);
     checkDomainSpy.mockResolvedValue(
@@ -1251,11 +1217,41 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — re-entrant compositor, re
 
     await checkLookalikeBatchForBrand(h.env, "b1");
 
-    // `ai_assessment` is already set, so no call is even attempted —
-    // and the text `agents/sparrow.ts` embeds in the takedown evidence
-    // packet survives.
-    expect(analyzeWithHaikuSpy).not.toHaveBeenCalled();
+    // The text `agents/sparrow.ts` embeds in the takedown evidence
+    // packet survives, untouched, in real SQLite.
     expect(h.row(id).ai_assessment).toBe("credential harvest kit");
+    expect(h.row(id).ai_claimed_at).toBeNull();
+  });
+
+  it("lifts a stable mail+web row stored at LOW to HIGH exactly once (real SQLite)", async () => {
+    // The one-time `none`-path catch-up for rows a retired Haiku verdict
+    // held below HIGH (prod: 84 LOW + 6 MEDIUM). Alerts on the LEVEL
+    // transition only — the second pass re-assesses nothing.
+    const h = harness();
+    const id = h.seed({
+      ...BASELINED, registered: 1, resolves_to: "5.6.7.8", has_mx: 1, has_web: 1,
+      threat_level: "LOW", ai_assessment: "assessed LOW",
+    });
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+
+    const first = await checkLookalikeBatch(h.env);
+    expect(first.mail_web_level_lifts).toBe(1);
+    expect(h.row(id).threat_level).toBe("HIGH");
+    expect(h.row(id).alert_id).toBe("alert_1");
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+    await makeDue(h, id);
+    const second = await checkLookalikeBatch(h.env);
+    expect(second.checked).toBe(1);
+    expect(second.mail_web_level_lifts).toBe(0);
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(h.row(id).threat_level).toBe("HIGH");
   });
 
   it("an answered lapse stamps the linked takedown down, reusing Sparrow's contract", async () => {
@@ -1596,89 +1592,12 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — swallowed failures are CO
     expect(summary.row_errors).toBe(0);
   });
 
-  it("a Haiku throw is counted — an AI outage must not raise HIGH alerts invisibly", async () => {
-    const h = harness();
-    h.seed({ ...BASELINED, registered: 0 });
-    checkDomainSpy.mockResolvedValue(
-      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
-    );
-    analyzeWithHaikuSpy.mockRejectedValue(new Error("gateway 529"));
-
-    const summary = await checkLookalikeBatch(h.env);
-
-    expect(summary.ai_assessment_errors).toBe(1);
-    expect(summary.haiku_calls, "the spend was attempted and must be reported").toBe(1);
-    expect(summary.row_errors).toBe(0);
-  });
-
-  it("a Haiku throw RELEASES the claim, so the row is deferred and not retired", async () => {
-    // The claim's own failure mode, and the reason the claim lives in
-    // its OWN column rather than as a sentinel in `ai_assessment`: a
-    // claim nobody gives back permanently retires the row from the
-    // lane, and `aiAttempted` is then false on every later pass — so the
-    // compositor's base falls back to the stored LOW and BOTH
-    // infrastructure boosts are MEDIUM-only. A mail+web row would sit at
-    // LOW forever and never clear the HIGH alert floor.
-    //
-    // Mutation-checked: deleting the `releaseHaikuClaim` call makes the
-    // retry spend nothing and the row stay at LOW.
-    //
-    // The retry is driven by a web FLAP rather than a bare re-check,
-    // and that is not test convenience — see
-    // `webFlap` below for the real limit it works around.
-    const h = harness();
-    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0, resolves_to: "5.6.7.8" });
-    checkDomainSpy.mockResolvedValue(
-      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
-    );
-    analyzeWithHaikuSpy.mockRejectedValue(new Error("gateway 529"));
-
-    await checkLookalikeBatch(h.env);
-    expect(analyzeWithHaikuSpy, "the pass did spend").toHaveBeenCalledTimes(1);
-    expect(h.row(id).ai_claimed_at, "the claim was given back").toBeNull();
-    expect(h.row(id).ai_assessment).toBeNull();
-
-    // A later pass claims again and succeeds.
-    await webFlap(h, id);
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("CRITICAL"));
-    const retry = await checkLookalikeBatch(h.env);
-
-    expect(retry.haiku_calls).toBe(1);
-    expect(retry.ai_assessment_errors).toBe(0);
-    expect(h.row(id).ai_assessment).toBe("assessed CRITICAL");
-    expect(h.row(id).threat_level).toBe("CRITICAL");
-  });
-
-  it("an assessment that LANDED keeps the claim, so the lifetime bound holds", async () => {
-    // The other direction: the release must be conditional on "this pass
-    // produced nothing", or the claim buys nothing at all. Driven
-    // through a second COMPOSITOR pass (not a bare re-check, which
-    // would not reach the gate at all — see `webFlap`), so this tests
-    // the gate rather than the dispatch.
-    const h = harness();
-    const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 0, resolves_to: "5.6.7.8" });
-    checkDomainSpy.mockResolvedValue(
-      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
-    );
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
-
-    await checkLookalikeBatch(h.env);
-    expect(h.row(id).ai_claimed_at).not.toBeNull();
-    expect(h.row(id).ai_assessment).toBe("assessed HIGH");
-
-    await webFlap(h, id);
-    const second = await checkLookalikeBatch(h.env);
-    expect(second.haiku_calls, "once per row per LIFETIME").toBe(0);
-    expect(analyzeWithHaikuSpy).toHaveBeenCalledTimes(1);
-  });
-
   it("an inline page-analysis throw is counted", async () => {
     const h = harness();
     h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(
       answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
     );
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     pageAnalysisSpy.mockRejectedValue(new Error("page write failed"));
 
     const summary = await checkLookalikeBatch(h.env);
@@ -1712,13 +1631,13 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — swallowed failures are CO
     expect(lookalikeCheckDefects(clean)).toBe(0);
     for (const k of [
       "row_errors", "bimi_alert_errors", "bimi_claim_release_failures",
-      "cooldown_stamp_failures", "ai_assessment_errors", "inline_page_errors",
+      "cooldown_stamp_failures", "inline_page_errors",
     ] as const) {
       expect(lookalikeCheckDefects({ ...clean, [k]: 3 }), k).toBe(3);
     }
     for (const k of [
       "checks_unresolved", "rows_parked", "rows_unparked",
-      "alerts_withheld_below_floor", "baselines_suppressed",
+      "alerts_withheld_below_floor", "baselines_suppressed", "mail_web_level_lifts",
     ] as const) {
       expect(lookalikeCheckDefects({ ...clean, [k]: 3 }), k).toBe(0);
     }
@@ -1863,7 +1782,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — lapse then re-registratio
     // test exercised this cycle at all before now.
     const h = harness();
     const id = h.seed({ ...BASELINED, registered: 1, has_mx: 1, has_web: 1, resolves_to: "5.6.7.8" });
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
     createAlertSpy.mockResolvedValue("alert_first");
 
     // ── The lapse. An ANSWERED 1 -> 0.
@@ -1908,7 +1826,6 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — lapse then re-registratio
       ...BASELINED, registered: 1, has_mx: 1, has_web: 1,
       first_seen: "2026-03-04 05:06:07",
     });
-    analyzeWithHaikuSpy.mockResolvedValue(haikuSays("HIGH"));
 
     checkDomainSpy.mockResolvedValue(answer({ registered: false }));
     await checkLookalikeBatch(h.env);
