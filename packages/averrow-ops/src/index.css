@@ -20,7 +20,7 @@
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
   }
 
@@ -358,7 +358,7 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(229,168,50,0.55);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 [data-theme="light"] .section-label {
   color: var(--amber-text);
@@ -399,14 +399,14 @@
 
 /* ── METRIC NUMBER ───────────────────────────── */
 .metric-xl {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 2rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
 }
 .metric-lg {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1;
@@ -421,7 +421,7 @@
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--sev-info);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 [data-theme="light"] .live-indicator {
   color: var(--sev-info-text);
@@ -457,7 +457,7 @@
 /* ── TABULAR NUMS ────────────────────────────── */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 /* ── EVENT TICKER ───────────────────────────── */
@@ -491,7 +491,7 @@
   /* Reads as a badge/tag rather than plain text. */
   background: var(--amber-glow);
   border-right: 1px solid rgba(229, 168, 50, 0.2);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.15em;
@@ -531,7 +531,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 24px;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 0.65rem;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.7);

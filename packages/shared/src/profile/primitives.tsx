@@ -50,7 +50,7 @@ export function ProfileSectionLabel({ children, className }: SectionLabelProps) 
       className={className}
       style={{
         fontSize:     11,
-        fontFamily:   'monospace',
+        fontFamily:   'var(--font-mono)',
         textTransform: 'uppercase',
         letterSpacing: '0.16em',
         fontWeight:   700,
@@ -75,7 +75,7 @@ export function ProfileFieldLabel({ children, htmlFor }: FieldLabelProps) {
       style={{
         display:       'block',
         fontSize:      10,
-        fontFamily:    'monospace',
+        fontFamily:    'var(--font-mono)',
         textTransform: 'uppercase',
         letterSpacing: '0.14em',
         color:         'var(--text-tertiary)',
@@ -100,7 +100,7 @@ export function ProfileFieldHelper({ children, tone = 'default' }: FieldHelperPr
     <p style={{
       marginTop:  6,
       fontSize:   11,
-      fontFamily: 'monospace',
+      fontFamily: 'var(--font-mono)',
       color,
       lineHeight: 1.5,
     }}>{children}</p>
@@ -198,7 +198,7 @@ export function ProfileButton({
         ...palette,
         padding,
         fontSize,
-        fontFamily:    'monospace',
+        fontFamily:    'var(--font-mono)',
         textTransform: 'uppercase',
         letterSpacing: '0.10em',
         fontWeight:    700,
@@ -235,7 +235,7 @@ export function ProfilePill({ children, tone = 'neutral' }: PillProps) {
       padding:       '2px 10px',
       borderRadius:  99,
       fontSize:      10,
-      fontFamily:    'monospace',
+      fontFamily:    'var(--font-mono)',
       textTransform: 'uppercase',
       letterSpacing: '0.10em',
       fontWeight:    700,

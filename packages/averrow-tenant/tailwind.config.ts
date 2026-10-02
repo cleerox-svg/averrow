@@ -79,8 +79,32 @@ const config: Config = {
         'sev-low-text':      'var(--sev-low-text)',
         'sev-info-text':     'var(--sev-info-text)',
       },
+      // Averrow scale tokens (shared/src/theme/tokens.css). Radius keys are
+      // `ds-*` so they don't shadow Tailwind's built-in rounded-sm/md/lg/xl.
+      borderRadius: {
+        'ds-xs':   'var(--radius-xs)',
+        'ds-sm':   'var(--radius-sm)',
+        'ds-md':   'var(--radius-md)',
+        'ds-lg':   'var(--radius-lg)',
+        'ds-xl':   'var(--radius-xl)',
+        'ds-pill': 'var(--radius-pill)',
+      },
+      transitionDuration: {
+        instant: 'var(--dur-instant)',
+        fast:    'var(--dur-fast)',
+        base:    'var(--dur-base)',
+        slow:    'var(--dur-slow)',
+        slower:  'var(--dur-slower)',
+      },
+      transitionTimingFunction: {
+        'ds-standard':   'var(--ease-standard)',
+        'ds-out':        'var(--ease-out)',
+        'ds-emphasized': 'var(--ease-emphasized)',
+      },
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        sans: ['var(--font-sans)'],
+        display: ['var(--font-display)'],
+        mono: ['var(--font-mono)'],
       },
     },
   },

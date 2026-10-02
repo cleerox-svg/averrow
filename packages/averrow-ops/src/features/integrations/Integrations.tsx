@@ -67,7 +67,7 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
                 : <Send size={15} style={{ color: 'var(--text-secondary)' }} />}
               <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{it.label}</span>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3, fontFamily: 'monospace' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3, fontFamily: 'var(--font-mono)' }}>
               {it.kind}
             </div>
           </div>

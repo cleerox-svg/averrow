@@ -59,7 +59,7 @@ export function ProfilePage(props: ProfilePageProps) {
           <p style={{
             margin:        '4px 0 0',
             fontSize:      10,
-            fontFamily:    'monospace',
+            fontFamily:    'var(--font-mono)',
             textTransform: 'uppercase',
             letterSpacing: '0.18em',
             fontWeight:    700,

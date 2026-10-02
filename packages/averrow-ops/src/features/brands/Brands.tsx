@@ -296,7 +296,7 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
           }} />
           <div style={{ position: 'relative', marginTop: 4 }}>
             <div style={{
-              fontSize: 9, fontFamily: 'monospace', letterSpacing: '0.20em',
+              fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
               color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8,
             }}>
               {t.label}
@@ -375,7 +375,7 @@ function SectorDonut({ breakdown, totalTracked }: {
               <RTooltip
                 contentStyle={{
                   background: 'var(--bg-card)', border: '1px solid var(--border-base)',
-                  borderRadius: 6, fontSize: 11, fontFamily: 'monospace',
+                  borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
                 }}
               />
             </PieChart>
@@ -471,7 +471,7 @@ function ThreatTypeBreakdown({ stats }: { stats: any }) {
                 ]}
                 contentStyle={{
                   background: 'var(--bg-card)', border: '1px solid var(--border-base)',
-                  borderRadius: 6, fontSize: 11, fontFamily: 'monospace',
+                  borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
                 }}
               />
             </PieChart>
@@ -1162,7 +1162,7 @@ function CompositionMixCard({ data }: { data: CompositionAggregate | null | unde
             <span key={s.source} style={{
               padding: '2px 8px', borderRadius: 3,
               background: 'rgba(255,255,255,0.04)',
-              fontSize: 10, fontFamily: 'monospace',
+              fontSize: 10, fontFamily: 'var(--font-mono)',
               color: 'var(--text-tertiary)',
             }}>
               {s.source.replace(/_/g, ' ')} <span className="text-[var(--text-muted)]">{formatNumber(s.count)}</span>

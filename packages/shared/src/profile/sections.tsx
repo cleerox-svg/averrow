@@ -66,7 +66,7 @@ export function IdentitySection({ user }: { user: ProfileUser }) {
             fontSize: 12,
             color:    'var(--text-secondary)',
             margin:   '2px 0 0',
-            fontFamily: 'monospace',
+            fontFamily: 'var(--font-mono)',
           }}>{user.email}</p>
           <div style={{ marginTop: 8 }}>
             <ProfilePill tone="amber">{role}</ProfilePill>
@@ -263,7 +263,7 @@ export function PreferencesSection({ user, apiClient, onUserUpdated, onToast }: 
                 style={{
                   padding:    '8px 18px',
                   fontSize:   11,
-                  fontFamily: 'monospace',
+                  fontFamily: 'var(--font-mono)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.12em',
                   fontWeight: 700,
@@ -420,7 +420,7 @@ export function PasskeysSection({ passkeyAdapter, onUserUpdated, onToast }: Pass
                       </div>
                       <div style={{
                         fontSize: 10,
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--font-mono)',
                         color: 'var(--text-tertiary)',
                         marginTop: 2,
                       }}>
@@ -495,7 +495,7 @@ export function NotificationsSection({ onNavigate, href }: NotificationsProps) {
           <p style={{
             margin:    '4px 0 0',
             fontSize:  12,
-            fontFamily: 'monospace',
+            fontFamily: 'var(--font-mono)',
             color:     'var(--text-secondary)',
           }}>
             Manage events, channels, quiet hours, and your subscribed devices.
@@ -523,7 +523,7 @@ export function BillingSection({ onNavigate, href, user }: BillingProps) {
           <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
             Billing
           </h3>
-          <p style={{ margin: '4px 0 0', fontSize: 12, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+          <p style={{ margin: '4px 0 0', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
             Plan, monthly total, active modules, trial / billing status.
           </p>
         </div>
@@ -592,7 +592,7 @@ export function SecuritySection({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <p style={{ fontSize: 13, color: 'var(--text-primary)', margin: 0 }}>Active sessions</p>
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '2px 0 0', fontFamily: 'monospace' }}>
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '2px 0 0', fontFamily: 'var(--font-mono)' }}>
             {data?.total ?? 0} active session{data?.total === 1 ? '' : 's'}
           </p>
         </div>
@@ -619,7 +619,7 @@ export function SecuritySection({
                 margin: 0,
                 fontSize: 11,
                 color: 'var(--text-tertiary)',
-                fontFamily: 'monospace',
+                fontFamily: 'var(--font-mono)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -629,7 +629,7 @@ export function SecuritySection({
               <span style={{
                 fontSize: 10,
                 color: 'var(--text-tertiary)',
-                fontFamily: 'monospace',
+                fontFamily: 'var(--font-mono)',
                 flexShrink: 0,
               }}>
                 {new Date(s.issued_at).toLocaleString()}
@@ -652,7 +652,7 @@ export function SignOutSection({ onLogout }: { onLogout: () => void }) {
           <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
             Sign out
           </h3>
-          <p style={{ margin: '4px 0 0', fontSize: 12, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+          <p style={{ margin: '4px 0 0', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
             Ends this session. Other devices stay signed in unless you revoke them above.
           </p>
         </div>

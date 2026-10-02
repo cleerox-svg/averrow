@@ -84,7 +84,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, boxShadow: `0 0 8px ${palette.glow}` }} />
         </div>
         <span style={{
-          fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+          fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
           letterSpacing: '0.14em', color: palette.text,
           textShadow: `0 0 10px ${palette.glow.replace('0.9', '0.5')}`,
         }}>

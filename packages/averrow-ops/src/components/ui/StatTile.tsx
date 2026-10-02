@@ -143,7 +143,7 @@ export function StatTile({
           padding: '2px 8px',
           fontSize: 9, fontWeight: 800,
           color: '#fff',
-          fontFamily: 'monospace',
+          fontFamily: 'var(--font-mono)',
           boxShadow: '0 2px 8px rgba(239,68,68,0.5), inset 0 1px 0 var(--border-strong)',
           border: '1px solid rgba(239,68,68,0.5)',
         }}>
@@ -153,14 +153,14 @@ export function StatTile({
       <div style={{ marginTop: 16 }}>
         <div style={{
           fontSize: 30, fontWeight: 900, lineHeight: 1,
-          fontFamily: 'monospace', letterSpacing: -1,
+          fontFamily: 'var(--font-mono)', letterSpacing: -1,
           color: isLoading ? 'var(--text-tertiary)' : accent,
           textShadow: isLoading ? 'none' : `0 0 20px ${accent}60, 0 0 40px ${accent}30`,
         }}>
           {display}
         </div>
         <div style={{
-          fontSize: 9, fontFamily: 'monospace',
+          fontSize: 9, fontFamily: 'var(--font-mono)',
           letterSpacing: '0.20em',
           color: 'var(--text-tertiary)',
           marginTop: 7,

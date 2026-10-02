@@ -197,7 +197,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           <AreaChart data={chartData} margin={{ top: 14, right: 8, bottom: 16, left: 0 }}>
             <XAxis
               dataKey="bucket"
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
               axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
               tickFormatter={(v: string) => formatAxisTick(v, window)}
@@ -205,7 +205,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
               minTickGap={32}
             />
             <YAxis
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               width={48}

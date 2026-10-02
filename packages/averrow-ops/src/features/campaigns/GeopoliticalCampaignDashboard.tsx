@@ -96,7 +96,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         return (
           <g key={tick}>
             <line x1={padX} x2={w - padX} y1={y} y2={y} stroke="var(--border-base)" />
-            <text x={padX - 6} y={y + 3} textAnchor="end" fill="var(--text-muted)" fontSize="8" fontFamily="monospace">
+            <text x={padX - 6} y={y + 3} textAnchor="end" fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)">
               {tick}
             </text>
           </g>
@@ -116,7 +116,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         const x = padX + (i / Math.max(labels.length - 1, 1)) * chartW;
         const short = label.slice(5); // strip year prefix, show MM-DD
         return (
-          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="var(--text-muted)" fontSize="7" fontFamily="monospace">
+          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="var(--text-muted)" fontSize="7" fontFamily="var(--font-mono)">
             {short}
           </text>
         );

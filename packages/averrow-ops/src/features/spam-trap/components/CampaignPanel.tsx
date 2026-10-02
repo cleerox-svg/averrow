@@ -162,7 +162,7 @@ function CaptureTimeline() {
                 border: '1px solid rgba(0,212,255,0.2)',
                 borderRadius: 8,
                 fontSize: 10,
-                fontFamily: 'JetBrains Mono, monospace',
+                fontFamily: 'var(--font-mono)',
               }}
               labelStyle={{ color: 'var(--text-tertiary)' }}
               itemStyle={{ color: '#E5A832' }}

@@ -432,7 +432,7 @@ const icons: Record<string, (size: number) => JSX.Element> = {
       <rect x="14.5" y="20" width="3" height="3" fill="currentColor" opacity="0.85" />
       <rect x="20" y="20" width="3" height="3" stroke="currentColor" strokeWidth="0.8" opacity="0.6" />
       {/* tiny @ symbol in the highlighted (filled) window */}
-      <text x="14.7" y="22.7" fontSize="3" fill="white" fontWeight="700" style={{ fontFamily: 'monospace' }}>@</text>
+      <text x="14.7" y="22.7" fontSize="3" fill="white" fontWeight="700" style={{ fontFamily: 'var(--font-mono)' }}>@</text>
       {/* door */}
       <rect x="15.5" y="25" width="5" height="6" stroke="currentColor" strokeWidth="0.8" opacity="0.5" />
     </svg>
@@ -787,7 +787,7 @@ const icons: Record<string, (size: number) => JSX.Element> = {
         fontWeight="700"
         fill="currentColor"
         textAnchor="middle"
-        style={{ fontFamily: 'monospace' }}
+        style={{ fontFamily: 'var(--font-mono)' }}
       >
         ?
       </text>

@@ -22,7 +22,7 @@ export function SeverityPill({ severity }: SeverityPillProps) {
   return (
     <span
       style={{
-        fontSize: 9, fontFamily: 'monospace', fontWeight: 800,
+        fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 800,
         textTransform: 'uppercase', letterSpacing: '0.12em',
         padding: '3px 8px', borderRadius: 99,
         background: s.bg,

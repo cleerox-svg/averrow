@@ -47,7 +47,7 @@ export function GlowNumber({
       style={{
         fontSize:      sz.fontSize,
         fontWeight:    900,
-        fontFamily:    'monospace',
+        fontFamily:    'var(--font-mono)',
         letterSpacing: sz.letterSpacing,
         color,
         textShadow:    `0 0 20px ${color}60, 0 0 40px ${color}30`,
