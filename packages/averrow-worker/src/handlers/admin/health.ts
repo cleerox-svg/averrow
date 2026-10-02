@@ -51,7 +51,6 @@ const EXPECTED_LEDGER_AGENT_IDS = [
   "architect",
   // Lib helpers + admin call sites
   "admin-classify",
-  "ai-attribution",
   "brand-analysis",
   "brand-deep-scan",
   "brand-enricher",
