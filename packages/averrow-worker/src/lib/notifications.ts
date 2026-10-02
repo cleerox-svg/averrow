@@ -30,7 +30,14 @@ import {
   type NotificationEventKey,
   type NotificationSeverity,
 } from '@averrow/shared';
-import { dispatchPush, isInQuietHours, type QuietHoursPrefs } from './push';
+import {
+  dispatchPush,
+  isInQuietHours,
+  isStickyPushType,
+  pushDeliveryOutcome,
+  type PushPayload,
+  type QuietHoursPrefs,
+} from './push';
 
 // Re-exported for callers that already imported these names.
 export type NotificationType = NotificationEventKey;
@@ -121,6 +128,42 @@ const SEVERITY_RANK: Record<string, number> = {
 const TENANT_ONLY_TYPES: ReadonlySet<string> = new Set([
   'intel_recommended_action',
 ]);
+
+/**
+ * Synthetic service users are never recipients of AUDIENCE fan-out. They
+ * have no devices and no human reading the inbox, so every broadcast just
+ * wrote dead in-app rows plus (before the delivery-audit fix) false push
+ * "succeeded" audit rows. The marker is the fixed id prefix used by
+ * handleMintServiceJwt (`service_account_mcp`, handlers/auth.ts). The row's
+ * stored role is an `analyst` placeholder (and was `super_admin` before
+ * SECURITY_AUDIT O1), so role filters alone don't keep it out of the
+ * 'team' / 'super_admin' audiences. An explicit `opts.userId` is honoured
+ * as-is — this only filters audience resolution.
+ */
+export const SERVICE_ACCOUNT_ID_PREFIX = 'service_account_';
+
+export function isServiceAccountUserId(id: string): boolean {
+  return id.startsWith(SERVICE_ACCOUNT_ID_PREFIX);
+}
+
+/** Push payload for one notification row. Sticky (`requireInteraction`)
+ *  only for STICKY_PUSH_TYPES — the key is omitted otherwise. */
+export function buildNotificationPushPayload(
+  opts: Pick<CreateNotificationOpts, 'title' | 'message' | 'link' | 'severity' | 'type'>,
+  notificationId: string,
+): PushPayload {
+  const payload: PushPayload = {
+    title: opts.title,
+    body: opts.message,
+    url: opts.link,
+    tag: `${opts.type}-${notificationId}`,
+    notificationId,
+    severity: opts.severity,
+    type: opts.type,
+  };
+  if (isStickyPushType(opts.type)) payload.requireInteraction = true;
+  return payload;
+}
 
 export async function createNotification(env: Env, opts: CreateNotificationOpts): Promise<number> {
   // Defense-in-depth: refuse unknown event keys before we hit the SQL CHECK.
@@ -287,6 +330,12 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     }
   }
 
+  // Audience fan-out never targets synthetic service accounts (see
+  // SERVICE_ACCOUNT_ID_PREFIX). Explicit opts.userId is left untouched.
+  if (!opts.userId) {
+    userIds = userIds.filter((id) => !isServiceAccountUserId(id));
+  }
+
   // The last silent no-op in the chain. Every gate above returns 0 for a
   // reason it can state, but an EMPTY recipient list just falls through
   // this loop: no row, no throw, no log, and `created = 0` is
@@ -373,16 +422,15 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
       // resolves. dispatchPush's own per-device telemetry lives in
       // push_devices / push_delivery_log.
       await recordDelivery(env, notificationId, uid, "push", "attempted", null);
-      dispatchPush(env, uid, {
-        title: opts.title,
-        body: opts.message,
-        url: opts.link,
-        tag: `${opts.type}-${notificationId}`,
-        notificationId,
-        severity: opts.severity,
-        type: opts.type,
-      }).then(
-        () => recordDelivery(env, notificationId, uid, "push", "succeeded", null),
+      // The final status comes from dispatchPush's counts, not from the
+      // promise merely resolving — dispatchPush never throws, so the old
+      // "resolved => succeeded" rule stamped `succeeded` for users with
+      // zero devices and for sends every device rejected.
+      dispatchPush(env, uid, buildNotificationPushPayload(opts, notificationId)).then(
+        (result) => {
+          const outcome = pushDeliveryOutcome(result);
+          return recordDelivery(env, notificationId, uid, "push", outcome.status, outcome.reason);
+        },
         (err: unknown) => {
           const reason = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
           return recordDelivery(env, notificationId, uid, "push", "failed", reason);

@@ -148,6 +148,31 @@ export interface PushPayload {
    * undefined → SW renders default Snooze/Done.
    */
   actions?: Array<{ action: string; title: string; icon?: string }>;
+  /**
+   * Keep the OS notification on screen until the user acts on it. The SW
+   * (averrow-ops/public/sw.js) ORs this with its own `severity === 'critical'`
+   * rule. Set only for types in STICKY_PUSH_TYPES — omitted (not `false`)
+   * otherwise so the payload shape is unchanged for every other type.
+   */
+  requireInteraction?: boolean;
+}
+
+/**
+ * Notification types whose push must stay on screen (requireInteraction)
+ * WITHOUT raising their severity. Platform-health alerts are deliberately
+ * `high`, not `critical` — `critical` auto-creates an incident that surfaces
+ * on the public status page (CLAUDE.md §6 "AI-call health") — but as a
+ * transient toast they were missed: `platform_ai_calls_failing` fired 58
+ * times and reached the owner's devices without being seen. Add a type here
+ * only when a missed push is an operational failure.
+ */
+export const STICKY_PUSH_TYPES: ReadonlySet<string> = new Set([
+  'platform_ai_calls_failing',
+]);
+
+/** True when a push for `type` must carry `requireInteraction: true`. */
+export function isStickyPushType(type: string | null | undefined): boolean {
+  return !!type && STICKY_PUSH_TYPES.has(type);
 }
 
 export interface SendResult {
@@ -193,7 +218,10 @@ export async function sendPushTo(
         'Content-Length': String(body.byteLength),
         'TTL': '86400',
         'Authorization': `vapid t=${jwt}, k=${publicKey}`,
-        'Urgency': payload.severity === 'critical' ? 'high' : 'normal',
+        // Sticky (platform-health) pushes also ask the push service for
+        // prompt delivery — a held/batched sticky alert defeats the point.
+        'Urgency': payload.severity === 'critical' || payload.requireInteraction === true
+          ? 'high' : 'normal',
       },
       body: body as BodyInit,
     });
@@ -215,6 +243,18 @@ export async function sendPushTo(
 
 // ─── Fan-out across all of a user's subscriptions ──────────────────────
 
+export interface DispatchPushResult {
+  sent: number;
+  expired: number;
+  failed: number;
+  /** False when push is disabled platform-wide or VAPID isn't configured
+   *  (no send was attempted). Additive — lets the delivery audit tell
+   *  "not configured" apart from "user has no devices". */
+  configured: boolean;
+  /** Number of the user's push subscriptions at dispatch time. */
+  subscriptions: number;
+}
+
 /** Dispatch a push to every device the user has subscribed.
  *  Auto-deletes any subscription that returns 404/410 (subscription
  *  expired — user uninstalled the PWA or revoked permission). Bumps
@@ -227,12 +267,12 @@ export async function dispatchPush(
   env: Env,
   userId: string,
   payload: PushPayload,
-): Promise<{ sent: number; expired: number; failed: number }> {
+): Promise<DispatchPushResult> {
   const cfg = await getPushConfig(env);
-  if (!cfg) return { sent: 0, expired: 0, failed: 0 };
+  if (!cfg) return { sent: 0, expired: 0, failed: 0, configured: false, subscriptions: 0 };
 
   const subs = await getUserSubscriptions(env.DB, userId);
-  if (subs.length === 0) return { sent: 0, expired: 0, failed: 0 };
+  if (subs.length === 0) return { sent: 0, expired: 0, failed: 0, configured: true, subscriptions: 0 };
 
   let sent = 0, expired = 0, failed = 0;
   const now = new Date().toISOString();
@@ -257,5 +297,43 @@ export async function dispatchPush(
     }
   }
 
-  return { sent, expired, failed };
+  return { sent, expired, failed, configured: true, subscriptions: subs.length };
+}
+
+export interface PushDeliveryOutcome {
+  status: 'succeeded' | 'failed' | 'skipped';
+  reason: string | null;
+}
+
+/**
+ * Map a dispatchPush result onto a `notification_deliveries` row. Statuses
+ * are limited to the migration-0131 CHECK set (attempted / succeeded /
+ * failed / skipped); `reason` is free text.
+ *
+ *   sent > 0                       → succeeded (reason notes partial loss)
+ *   push not configured            → skipped 'push_not_configured'
+ *   no subscriptions (no devices)  → skipped 'no_subscriptions'
+ *   every device failed / expired  → failed  'all_devices_failed …'
+ *
+ * Accepts the legacy 3-field shape (no `configured` / `subscriptions`) and
+ * treats it as configured with `sent + expired + failed` subscriptions.
+ */
+export function pushDeliveryOutcome(
+  r: Pick<DispatchPushResult, 'sent' | 'expired' | 'failed'> &
+    Partial<Pick<DispatchPushResult, 'configured' | 'subscriptions'>>,
+): PushDeliveryOutcome {
+  const subscriptions = r.subscriptions ?? r.sent + r.expired + r.failed;
+  if (r.sent > 0) {
+    const lost = r.expired + r.failed;
+    return {
+      status: 'succeeded',
+      reason: lost > 0 ? `partial: sent=${r.sent} failed=${r.failed} expired=${r.expired}` : null,
+    };
+  }
+  if (r.configured === false) return { status: 'skipped', reason: 'push_not_configured' };
+  if (subscriptions === 0) return { status: 'skipped', reason: 'no_subscriptions' };
+  return {
+    status: 'failed',
+    reason: `all_devices_failed: failed=${r.failed} expired=${r.expired}`,
+  };
 }

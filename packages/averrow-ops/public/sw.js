@@ -30,7 +30,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-06-10.1';
+const VERSION = '2026-10-02.1';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 
@@ -239,7 +239,8 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
 self.addEventListener('push', (event) => {
   // Payload shape comes from src/lib/push.ts on the worker:
-  //   { title, body, url?, tag?, notificationId?, severity?, type? }
+  //   { title, body, url?, tag?, notificationId?, severity?, type?,
+  //     requireInteraction? }
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
@@ -270,7 +271,12 @@ self.addEventListener('push', (event) => {
     },
     // High severity gets a vibration cue on Android; iOS ignores this.
     vibrate: data.severity === 'critical' ? [200, 100, 200, 100, 200] : [120, 80, 120],
-    requireInteraction: data.severity === 'critical',
+    // Sticky when critical, OR when the server flags the payload
+    // (`requireInteraction: true` — set for platform-health types in
+    // STICKY_PUSH_TYPES, lib/push.ts on the worker, which stay at `high`
+    // severity so they don't auto-create a public status incident).
+    // Payloads without the flag behave exactly as before.
+    requireInteraction: data.severity === 'critical' || data.requireInteraction === true,
     // Inline action buttons (W3C Web Push). Chrome + Firefox honor;
     // iOS Safari (PWA) ignores `actions` and shows a single tap zone.
     // The server-side payload may opt out by setting `actions: []`.
