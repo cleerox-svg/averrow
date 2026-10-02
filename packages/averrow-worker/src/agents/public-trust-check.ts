@@ -35,6 +35,7 @@
 import { z } from "zod";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { callAnthropicText, AnthropicError } from "../lib/anthropic";
+import { classifyAnthropicFailure, isDeliberateAiSkip } from "../lib/haiku";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 
 // ─── Input contract ─────────────────────────────────────────────
@@ -253,13 +254,18 @@ export const publicTrustCheckAgent: AgentModule = {
       // Cost guard rejection, network blip, model timeout — fall
       // through to the deterministic text. NEVER throw upstream:
       // the homepage caller must always get a response.
-      const errMsg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
-      agentOutputs.push({
-        type: "diagnostic",
-        summary: `public_trust_check AI call failed, using deterministic fallback`,
-        severity: "medium",
-        details: { error: errMsg, promptVersion: PROMPT_VERSION },
-      });
+      // AI_MODE=rules_only (AiDisabledError) and budget throttles are
+      // deliberate skips — the deterministic text IS the intended answer,
+      // so don't write a medium diagnostic row per anonymous homepage hit.
+      if (!isDeliberateAiSkip(classifyAnthropicFailure(err))) {
+        const errMsg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `public_trust_check AI call failed, using deterministic fallback`,
+          severity: "medium",
+          details: { error: errMsg, promptVersion: PROMPT_VERSION },
+        });
+      }
       assessmentText = deterministicFallback(input);
     }
 

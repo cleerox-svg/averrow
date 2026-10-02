@@ -17,7 +17,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  newAiCallCounters, recordAiCall, mergeAiCallCounters, isAiAllFailing,
+  newAiCallCounters, recordAiCall, isAiAllFailing,
   isDeliberateAiSkip, AI_OUTAGE_MIN_ATTEMPTS,
 } from "../src/lib/haiku";
 
@@ -113,31 +113,6 @@ describe("isAiAllFailing", () => {
   });
 });
 
-describe("mergeAiCallCounters", () => {
-  it("sums the counts and prefers the FIRST argument's first-failure", () => {
-    const required = newAiCallCounters();
-    recordAiCall(required, { success: false, error: "required path died", failure_kind: "api_error" }, false);
-    const opportunistic = newAiCallCounters();
-    recordAiCall(opportunistic, { success: false, error: "best-effort died", failure_kind: "network" }, false);
-
-    const merged = mergeAiCallCounters(required, opportunistic);
-    expect(merged).toMatchObject({ aiCallsAttempted: 2, aiCallsSucceeded: 0 });
-    expect(merged.aiFirstError).toBe("required path died");
-    expect(merged.aiFirstFailureKind).toBe("api_error");
-  });
-
-  it("falls back to the second argument's failure when the first path never failed", () => {
-    const required = newAiCallCounters();
-    recordAiCall(required, { success: true }, true);
-    const opportunistic = newAiCallCounters();
-    recordAiCall(opportunistic, { success: false, error: "apt died", failure_kind: "api_error" }, false);
-
-    const merged = mergeAiCallCounters(required, opportunistic);
-    expect(merged).toMatchObject({ aiCallsAttempted: 2, aiCallsSucceeded: 1 });
-    expect(merged.aiFirstError).toBe("apt died");
-  });
-});
-
 /**
  * Which agents are instrumented. AI_STRATEGY_2026-10 Phase 1 (Batch B)
  * moved sentinel and cartographer onto rules: neither makes an Anthropic
@@ -167,8 +142,8 @@ describe("which agents record strictly-API counters", () => {
       const code = src(file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       expect(code, `${file} must not import lib/haiku`).not.toMatch(/from ["']\.\.\/lib\/haiku["']/);
       expect(code).not.toMatch(/import\(["']\.\.\/lib\/haiku["']\)/);
-      for (const sym of ["recordAiCall", "newAiCallCounters", "isAiAllFailing", "mergeAiCallCounters",
-        "classifyThreat", "scoreProvider", "scoreProvidersBatch", "callHaikuRaw"]) {
+      for (const sym of ["recordAiCall", "newAiCallCounters", "isAiAllFailing",
+        "classifyThreat", "callHaikuRaw"]) {
         expect(code, `${file} still references ${sym}`).not.toMatch(new RegExp(`\\b${sym}\\b`));
       }
       // Counters are not spread into the summary details any more.

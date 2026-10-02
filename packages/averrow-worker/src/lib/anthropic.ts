@@ -227,7 +227,7 @@ export function isAiRulesOnly(env: { AI_MODE?: string }): boolean {
 }
 
 /**
- * Thrown by callAnthropic (and the batch submitter) when AI_MODE is
+ * Thrown by callAnthropic when AI_MODE is
  * "rules_only". Nothing — no network request, no budget pre-flight D1
  * read, no ledger write — happens before it is thrown. Subclass of
  * AnthropicError so every existing `catch` that narrows on AnthropicError

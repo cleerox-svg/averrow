@@ -26,7 +26,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../types';
-import { callAnthropicJSON, AnthropicError } from './anthropic';
+import { callAnthropicJSON, AnthropicError, AiDisabledError, isAiRulesOnly } from './anthropic';
 import { HOT_PATH_HAIKU } from './ai-models';
 import { detectDeviceCodePhishing } from './device-code-detector';
 import {
@@ -234,7 +234,10 @@ export function severityFor(
  */
 export type ClassifyOutcome =
   | { ok: true; verdict: ClassifyResult }
-  | { ok: false; error: string };
+  // `aiDisabled` — AI_MODE=rules_only refused the call before any request
+  // left. A deliberate platform skip, not a classification failure: the
+  // caller must NOT spend a retry attempt or graduate the row on it.
+  | { ok: false; error: string; aiDisabled?: true };
 
 export async function classifyAbuseMessageWithAI(
   env: Env,
@@ -255,6 +258,9 @@ export async function classifyAbuseMessageWithAI(
     }
     return { ok: true, verdict };
   } catch (err) {
+    if (err instanceof AiDisabledError) {
+      return { ok: false, error: err.message.slice(0, 500), aiDisabled: true };
+    }
     const message = err instanceof AnthropicError ? err.message
                   : err instanceof Error           ? err.message
                   : String(err);
@@ -281,6 +287,12 @@ export interface ClassifyBackfillResult {
   classified: number;
   failed:     number;
   by_classification: Record<AbuseClassification | 'parse_error', number>;
+  /**
+   * True when the pass was skipped because AI_MODE=rules_only. Pending
+   * rows are left untouched (no attempt bump, no graduation, no
+   * determination email) so they classify once AI is re-enabled.
+   */
+  skipped_rules_only?: boolean;
 }
 
 interface MessageRow {
@@ -344,6 +356,23 @@ export async function runAbuseClassifierBackfill(
 ): Promise<ClassifyBackfillResult> {
   const limit  = Math.min(200, opts?.limit  ?? 50);
   const offset = Math.max(0,   opts?.offset ?? 0);
+
+  // AI_MODE=rules_only — there is no rule-based classifier for forwarded
+  // mail, so skip the whole pass BEFORE touching any row. Bumping
+  // classification_attempts here would burn the retry budget on a
+  // deliberate skip and graduate every pending report to 'ambiguous'
+  // within three ticks; leaving them 'pending' means they classify (and
+  // the reporter gets a real determination email) once AI returns.
+  if (isAiRulesOnly(env)) {
+    return {
+      scanned: 0, classified: 0, failed: 0,
+      by_classification: {
+        phishing: 0, spam: 0, benign: 0, malware: 0,
+        ambiguous: 0, follow_up: 0, parse_error: 0,
+      },
+      skipped_rules_only: true,
+    };
+  }
 
   // PR-AT: skip rate-limited rows. Each row carries forensic evidence
   // of the flood but doesn't pay for Haiku classification or the
@@ -443,6 +472,21 @@ export async function runAbuseClassifierBackfill(
       sender_ip:             m.sender_ip,
       correlated_threats_count: correlatedIds.length,
     });
+
+    if (!outcome.ok && outcome.aiDisabled) {
+      // Defensive: AI was switched off mid-pass. Undo this row's attempt
+      // bump so the deliberate skip doesn't count against its retry
+      // budget, leave it 'pending', and stop — every remaining call in
+      // this pass would be refused the same way.
+      await env.DB.prepare(`
+        UPDATE abuse_inbox_messages
+        SET classification_attempts = ?,
+            updated_at = datetime('now')
+        WHERE id = ? AND classification = 'pending'
+      `).bind(m.classification_attempts ?? 0, m.id).run();
+      result.skipped_rules_only = true;
+      break;
+    }
 
     if (!outcome.ok) {
       result.failed += 1;

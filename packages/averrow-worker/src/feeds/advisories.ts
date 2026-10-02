@@ -17,7 +17,7 @@
 
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
-import { callAnthropicJSON } from "../lib/anthropic";
+import { callAnthropicJSON, isAiRulesOnly } from "../lib/anthropic";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 
 const DEFAULT_FEED_URL = "https://www.cisa.gov/cybersecurity-advisories/all.xml";
@@ -68,6 +68,15 @@ export const advisories: FeedModule = {
     let itemsDuplicate = 0;
     let itemsError = 0;
     let aiCalls = 0;
+
+    // AI_MODE=rules_only — extraction is AI-only, so every call would throw
+    // AiDisabledError and log a warning per relevant advisory. Skip the
+    // extraction loop entirely. Nothing is marked processed, so these
+    // advisories are extracted on the first run after AI is re-enabled.
+    // The fetch above still runs so the feed's pull health stays truthful.
+    if (isAiRulesOnly(ctx.env)) {
+      return { itemsFetched: items.length, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    }
 
     for (const item of items) {
       if (aiCalls >= MAX_AI_EXTRACTIONS) break;
