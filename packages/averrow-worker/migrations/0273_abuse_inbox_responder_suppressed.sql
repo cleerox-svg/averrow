@@ -1,0 +1,24 @@
+-- Migration 0273: abuse_inbox_messages.responder_suppressed_reason
+--
+-- Records WHY the abuse-mailbox responder deliberately sent no email
+-- (ack or determination) for a captured report. Two writers:
+--
+--   1. handlers/abuseMailboxEmail.ts — the backscatter guard. The ack /
+--      determination go to the header-From address of the forward. When
+--      that header-From's domain does not match the SMTP envelope sender's
+--      domain, or the outer DMARC result is present and not `pass`, the
+--      header-From may be forged and replying to it would make Averrow a
+--      backscatter source. The row is still captured; the reason is stamped
+--      here (e.g. 'backscatter:from_envelope_mismatch',
+--      'backscatter:outer_dmarc_fail').
+--   2. lib/abuse-mailbox-determination.ts — permanent responder
+--      suppressions discovered at send time ('determination:opted-out',
+--      'determination:own-domain-loop', ...), so the hourly determination
+--      sweeper stops re-claiming a row that will never be emailed.
+--
+-- NULL = no suppression recorded (the normal case). Additive only.
+-- DEPLOY ORDER: apply before deploying the Worker that reads it — the
+-- determination claim UPDATE filters on this column (fails closed — no
+-- determination email — until the column exists).
+
+ALTER TABLE abuse_inbox_messages ADD COLUMN responder_suppressed_reason TEXT;

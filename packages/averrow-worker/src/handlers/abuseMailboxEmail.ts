@@ -12,12 +12,13 @@
 //      "On <date>, <sender> wrote:" pattern + From:/Subject:
 //      header injection that Outlook/Gmail/Apple Mail use)
 //   4. Inserts an abuse_inbox_messages row with
-//      classification='pending'. Sprint follow-ups will:
-//        a. Call Haiku for AI classification (sets
-//           classification + ai_action + ai_assessment)
-//        b. Send the instant ack email back to the forwarder
-//        c. After classification, send the determination email
-//           (24h flow per the customer-facing copy)
+//      classification='pending', then:
+//        a. Applies the backscatter guard (header-From vs envelope
+//           sender + outer DMARC) — no email to an untrusted From
+//        b. Sends the instant ack email back to the forwarder
+//        c. Dispatches the per-message AbuseMailboxTriageWorkflow:
+//           rules-based verdict → ~2 min → determination email
+//           (the hourly `17 * * * *` agent is the sweeper)
 //
 // We accept the email even if alias lookup fails — bouncing
 // pisses off email providers and we'd rather have an unbound
@@ -227,9 +228,9 @@ export async function handleAbuseMailboxEmail(
   // Reads per-sender + per-domain rolling-60-min counts. When fired,
   // the row is still INSERTed (forensic capture preserved) but the
   // downstream cost paths skip:
-  //   - sendAck below
-  //   - the AI classifier (filters throttled rows in runAbuseClassifierBackfill)
-  //   - the determination email (gated on classification completing)
+  //   - sendAck + the triage Workflow dispatch below
+  //   - the rules pass and the AI classifier (both filter throttled rows)
+  //   - the determination email (the claim refuses throttled rows)
   const throttle = await decideAbuseMailboxThrottle(env, forwardedBy);
   const forwardedByDomain = extractSenderDomain(forwardedBy);
   if (throttle.throttled) {
@@ -346,6 +347,35 @@ export async function handleAbuseMailboxEmail(
     initialSeverity,
   ).run();
 
+  // ─── Backscatter guard ─────────────────────────────────────────
+  //
+  // forwardedBy prefers the header From, which a sender can forge. Only
+  // email (ack or determination) when the header-From's registrable
+  // domain matches the SMTP envelope sender's AND our receiving MTA's
+  // outer DMARC verdict, when present, is pass. Otherwise the row stays
+  // captured (and is still classified by the hourly rules pass), but no
+  // email ever goes out — responder_suppressed_reason records why, and the
+  // determination claim refuses rows carrying it.
+  const { decideBackscatterGuard } = await import("../lib/abuse-mailbox-responder");
+  const outerAuth = parseAuthResults(outerHeaders);
+  const backscatter = decideBackscatterGuard({
+    headerFrom:   forwardedBy,
+    envelopeFrom: parseEmailAddress(message.from),
+    outerDmarc:   outerAuth.dmarc,
+  });
+  if (!backscatter.send) {
+    console.warn(`[abuse-mailbox] responder suppressed for ${messageId}: ${backscatter.reason}`);
+    try {
+      await env.DB.prepare(
+        `UPDATE abuse_inbox_messages SET responder_suppressed_reason = ? WHERE id = ?`,
+      ).bind(backscatter.reason, messageId).run();
+    } catch (err) {
+      // Pre-migration-0273: the determination claim filters on the same
+      // column, so it fails closed (no email) until the column exists.
+      console.warn("[abuse-mailbox] responder suppression stamp failed:", err);
+    }
+  }
+
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
   //
   // Sends within ~1 minute of receipt per the marketing report-abuse
@@ -354,8 +384,8 @@ export async function handleAbuseMailboxEmail(
   // so the operator UI can show ack state per message and so the
   // determination path knows the ack already fired.
   //
-  // We DON'T retry on failure — the determination email arrives
-  // within 24h regardless, and Resend transient failures are rare.
+  // We DON'T retry on failure — the determination email follows
+  // regardless (per-message Workflow, hourly sweeper as backstop).
   //
   // PR-AT: skip when throttle.throttled. Sending an ack to a flooding
   // sender just gives them feedback that the alias is live and burns
@@ -365,7 +395,10 @@ export async function handleAbuseMailboxEmail(
   // to one of our previous emails — they're already in conversation.
   // Auto-acking their reply would generate the "got it!" -> "you
   // got it!" loop that abuse-mailbox responders are notorious for.
-  if (!throttle.throttled && !isFollowUp) {
+  //
+  // Backscatter: skip when the header-From can't be trusted (above).
+  const responderEligible = !throttle.throttled && !isFollowUp && backscatter.send;
+  if (responderEligible) {
     try {
       const { sendAck } = await import("../lib/abuse-mailbox-responder");
       const ackResult = await sendAck(env, forwardedBy, {
@@ -381,6 +414,30 @@ export async function handleAbuseMailboxEmail(
       // Suppression / failure logged inside sendAck; no extra noise here.
     } catch (err) {
       console.warn("[abuse-mailbox] ack send threw:", err);
+    }
+  }
+
+  // ─── Per-message triage Workflow ───────────────────────────────
+  //
+  // Rules verdict now → ~2 min sleep → exactly-once determination email
+  // (workflows/abuseMailboxTriage.ts). Only for rows the responder may
+  // email at all (not throttled, not a follow-up, passes shouldRespond +
+  // the backscatter guard). Dispatch failure must never break ingest —
+  // the hourly `17 * * * *` sweeper classifies and emails anything the
+  // Workflow didn't. Instance id is per message, so a re-delivery of the
+  // same Workflow create is a no-op rather than a second email.
+  if (responderEligible && env.ABUSE_MAILBOX_TRIAGE) {
+    try {
+      const { shouldRespond } = await import("../lib/abuse-mailbox-responder");
+      if (shouldRespond(forwardedBy).send) {
+        const { abuseTriageInstanceId } = await import("../lib/abuse-mailbox-triage-pipeline");
+        await env.ABUSE_MAILBOX_TRIAGE.create({
+          id: abuseTriageInstanceId(messageId),
+          params: { messageId },
+        });
+      }
+    } catch (err) {
+      console.warn("[abuse-mailbox] triage workflow dispatch failed (hourly sweeper will cover):", err);
     }
   }
 
@@ -427,8 +484,8 @@ export async function handleAbuseMailboxEmail(
     }
   }
 
-  // Sprint follow-ups: AI classification + ack email + determination
-  // email all hang off this row; they're separate cron / queue work.
+  // Verdict + determination email are produced by the triage Workflow
+  // dispatched above (or by the hourly sweeper) — not inline here.
 }
 
 // ─── Wave-2 PR-AC: in-process cache of the self-org id ──────────

@@ -69,6 +69,12 @@ Migrations are also run automatically by the deploy workflow.
 - 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
 
+### Migration 0273 + the `ABUSE_MAILBOX_TRIAGE` Workflow binding (abuse-mailbox rules determinations)
+
+- `0273_abuse_inbox_responder_suppressed.sql` adds `abuse_inbox_messages.responder_suppressed_reason`. Apply it **before** the Worker: the determination claim (`lib/abuse-mailbox-determination.ts`) filters on it and fails closed (no determination email) until it exists. Ingest is unaffected — the backscatter stamp is a separate, caught UPDATE.
+- `wrangler.toml` adds `[[workflows]] abuse-mailbox-triage` → `ABUSE_MAILBOX_TRIAGE` / `AbuseMailboxTriageWorkflow` (exported from `src/index.ts`). `wrangler deploy` creates it; no manual provisioning. The binding is optional in `Env` — staging/dev (no `[[workflows]]` there) and any deploy without it fall back to the hourly `17 * * * *` sweeper.
+- Verify after deploy: forward a test report; within ~2 min `abuse_inbox_messages.classified_by = 'rules'` and `determination_sent_at` is set; `npx wrangler workflows instances list abuse-mailbox-triage` shows the `abuse-<messageId>` instance.
+
 ## Manual Deploy
 
 ```bash

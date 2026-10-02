@@ -41,6 +41,7 @@ export { CartographerMainWorkflow } from "./workflows/cartographerMain";
 export { NexusWorkflow } from "./workflows/nexusRun";
 export { CampaignHunterWorkflow } from "./workflows/campaignHunter";
 export { GeoipRefreshWorkflow } from "./workflows/geoipRefresh";
+export { AbuseMailboxTriageWorkflow } from "./workflows/abuseMailboxTriage";
 
 // ─── Honeypot Domain Server ─────────────────────────────────────────
 async function serveHoneypotDomain(url: URL, env: Env): Promise<Response> {

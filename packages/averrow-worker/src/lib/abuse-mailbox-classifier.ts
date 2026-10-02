@@ -1,9 +1,18 @@
 // Averrow — Abuse Mailbox AI classifier
 //
-// Per-message Haiku call that classifies forwarded suspicious emails
-// sitting in `abuse_inbox_messages` with classification='pending'.
+// Per-message Haiku call that classifies forwarded suspicious emails.
 // Pairs with the Email Worker in `handlers/abuseMailboxEmail.ts`
 // which inserts those rows.
+//
+// Ordering (2026-10): the deterministic rules pass
+// (lib/abuse-mailbox-rules-runner.ts) runs FIRST — per message in the
+// AbuseMailboxTriageWorkflow and hourly in the abuse_mailbox_classifier
+// agent — and works under AI_MODE=rules_only. This AI pass is the
+// optional second opinion. It selects rows that are still 'pending' OR
+// that the rules sent to review (classification='ambiguous' AND
+// classified_by='rules'). It never touches a rules MALICIOUS verdict and
+// never auto-graduates a rules row (a rules review row that exhausts its
+// AI retries simply stays a rules review row).
 //
 // Cost shape: 1 Haiku call per message (~$0.001/message). At a
 // realistic customer scale (5-20 forwarded mails/day across the
@@ -33,6 +42,7 @@ import {
   loadNamedThreatCatalog, matchNamedThreat, recordNamedThreatMatch,
   type NamedThreatEntry,
 } from './named-threat-matcher';
+import { notifyAbuseVerdict, notifyNamedThreatIdentified } from './abuse-mailbox-notify';
 
 // ─── Public types ────────────────────────────────────────────────
 
@@ -320,6 +330,8 @@ interface MessageRow {
   correlated_threat_ids: string | null;
   // NX-poison-pill (migration 0196): retry budget for Haiku-failing rows.
   classification_attempts: number | null;
+  // 'rules' when the row is a rules REVIEW verdict awaiting AI; NULL when pending.
+  classified_by:         string | null;
 }
 
 /**
@@ -352,17 +364,25 @@ interface BrandRow {
  */
 export async function runAbuseClassifierBackfill(
   env:   Env,
-  opts?: { limit?: number; offset?: number },
+  opts?: {
+    limit?: number;
+    offset?: number;
+    /** Classify exactly this row (per-message Workflow). */
+    messageId?: string;
+    /** Skip the inline determination send — the caller (the Workflow)
+     *  sends it later via deliverAbuseDetermination. */
+    deferDetermination?: boolean;
+  },
 ): Promise<ClassifyBackfillResult> {
   const limit  = Math.min(200, opts?.limit  ?? 50);
   const offset = Math.max(0,   opts?.offset ?? 0);
 
-  // AI_MODE=rules_only — there is no rule-based classifier for forwarded
-  // mail, so skip the whole pass BEFORE touching any row. Bumping
-  // classification_attempts here would burn the retry budget on a
-  // deliberate skip and graduate every pending report to 'ambiguous'
-  // within three ticks; leaving them 'pending' means they classify (and
-  // the reporter gets a real determination email) once AI returns.
+  // AI_MODE=rules_only — skip this AI pass entirely BEFORE touching any
+  // row. The deterministic rules pass (lib/abuse-mailbox-rules-runner.ts)
+  // runs ahead of this gate in both the per-message Workflow and the
+  // hourly agent, so reports still get a verdict + determination email.
+  // Bumping classification_attempts here would burn the retry budget on
+  // a deliberate skip and graduate rows within three ticks.
   if (isAiRulesOnly(env)) {
     return {
       scanned: 0, classified: 0, failed: 0,
@@ -386,19 +406,29 @@ export async function runAbuseClassifierBackfill(
   // the attempts filter is belt-and-suspenders for any row whose
   // attempts column drifts past cap without a graduation (e.g. concurrent
   // backfill, manual operator UPDATE).
+  //
+  // Eligible = still 'pending', or a rules REVIEW row. Rules MALICIOUS
+  // rows (classified_by='rules', classification phishing/malware) are
+  // never selected, so the AI can't overwrite them.
   const rows = await env.DB.prepare(`
     SELECT id, org_id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
            forwarded_by_email, inbound_alias, determination_sent_at,
            extracted_urls, attachment_names, auth_results, sender_ip,
-           correlated_threat_ids, classification_attempts
+           correlated_threat_ids, classification_attempts, classified_by
     FROM abuse_inbox_messages
-    WHERE classification = 'pending'
+    WHERE (classification = 'pending'
+           OR (classification = 'ambiguous' AND classified_by = 'rules'))
       AND COALESCE(throttled, 0) = 0
       AND COALESCE(classification_attempts, 0) < ?
+      AND (? IS NULL OR id = ?)
     ORDER BY received_at ASC
     LIMIT ? OFFSET ?
-  `).bind(MAX_CLASSIFY_ATTEMPTS, limit, offset).all<MessageRow>();
+  `).bind(
+    MAX_CLASSIFY_ATTEMPTS,
+    opts?.messageId ?? null, opts?.messageId ?? null,
+    limit, offset,
+  ).all<MessageRow>();
 
   // Bulk-load brand metadata for the batch in one query so we can
   // include the customer's brand name in the prompt for every
@@ -455,7 +485,9 @@ export async function runAbuseClassifierBackfill(
       UPDATE abuse_inbox_messages
       SET classification_attempts = ?,
           updated_at = datetime('now')
-      WHERE id = ? AND classification = 'pending'
+      WHERE id = ?
+        AND (classification = 'pending'
+             OR (classification = 'ambiguous' AND classified_by = 'rules'))
     `).bind(attemptN, m.id).run();
 
     const outcome = await classifyAbuseMessageWithAI(env, {
@@ -482,7 +514,9 @@ export async function runAbuseClassifierBackfill(
         UPDATE abuse_inbox_messages
         SET classification_attempts = ?,
             updated_at = datetime('now')
-        WHERE id = ? AND classification = 'pending'
+        WHERE id = ?
+          AND (classification = 'pending'
+               OR (classification = 'ambiguous' AND classified_by = 'rules'))
       `).bind(m.classification_attempts ?? 0, m.id).run();
       result.skipped_rules_only = true;
       break;
@@ -498,7 +532,9 @@ export async function runAbuseClassifierBackfill(
         UPDATE abuse_inbox_messages
         SET last_classify_error = ?,
             updated_at = datetime('now')
-        WHERE id = ? AND classification = 'pending'
+        WHERE id = ?
+          AND (classification = 'pending'
+               OR (classification = 'ambiguous' AND classified_by = 'rules'))
       `).bind(outcome.error, m.id).run();
 
       // Graduate at the retry cap so the orchestrator's next tick
@@ -508,6 +544,9 @@ export async function runAbuseClassifierBackfill(
       // conservative landing zone — same as Haiku returns when it
       // can't decide on its own — and the operator can re-trigger
       // by setting classification='pending' + classification_attempts=0.
+      // The `classification = 'pending'` guard below means a rules
+      // review row is never auto-graduated — it stays classified_by=
+      // 'rules' (and drops out of the selector at the attempt cap).
       if (attemptN >= MAX_CLASSIFY_ATTEMPTS) {
         await env.DB.prepare(`
           UPDATE abuse_inbox_messages
@@ -534,7 +573,7 @@ export async function runAbuseClassifierBackfill(
     const aiAssessment =
       `[AI ${verdict.classification} @${verdict.confidence}%] ${verdict.reasoning}`;
 
-    await env.DB.prepare(`
+    const verdictUpdate = await env.DB.prepare(`
       UPDATE abuse_inbox_messages
       SET classification            = ?,
           classified_by             = 'ai',
@@ -545,7 +584,8 @@ export async function runAbuseClassifierBackfill(
           severity                  = ?,
           updated_at                = datetime('now')
       WHERE id = ?
-        AND classification = 'pending'
+        AND (classification = 'pending'
+             OR (classification = 'ambiguous' AND classified_by = 'rules'))
     `).bind(
       verdict.classification,
       verdict.confidence,
@@ -555,6 +595,14 @@ export async function runAbuseClassifierBackfill(
       severity,
       m.id,
     ).run();
+    // Lost a race (a concurrent pass or an operator changed the row) —
+    // no side effects for a verdict that did not land.
+    if (typeof verdictUpdate.meta?.changes === "number" && verdictUpdate.meta.changes === 0) {
+      continue;
+    }
+    // A rules review row already had its detectors stamped, named-threat
+    // match recorded and operator notified by the rules pass.
+    const fromRulesReview = m.classified_by === "rules";
 
     // ─── Kali365 detection: device-code technique + named threat ──
     //
@@ -592,37 +640,20 @@ export async function runAbuseClassifierBackfill(
         console.warn(`[abuse-mailbox-classifier] technique stamp failed for ${m.id}:`, err);
       }
     }
-    if (namedThreatId) {
+    if (namedThreatId && !fromRulesReview) {
       try { await recordNamedThreatMatch(env, namedThreatId); } catch { /* telemetry only */ }
       // High-signal operator alert: we identified a named threat by name.
       // Deduped per named threat per day so a campaign doesn't flood.
-      try {
-        const { createNotification } = await import("./notifications");
-        const today = new Date().toISOString().slice(0, 10);
-        await createNotification(env, {
-          type: "named_threat_identified",
-          severity: namedMatch?.severity === "critical" ? "high" : "medium",
-          title: `Named threat identified: ${namedThreatName}`,
-          message: `Abuse-mailbox submission matched ${namedThreatName}` +
-            (detectedTechnique ? ` (${detectedTechnique.replace(/_/g, " ")})` : "") +
-            `. Verdict: ${verdict.classification} @ ${verdict.confidence}%.`,
-          link: "/admin/abuse-mailbox",
-          audience: "super_admin",
-          groupKey: `named_threat_identified:${namedThreatId}:${today}`,
-          reasonText: "An incoming abuse-mailbox report matched a known named threat in the catalog.",
-          recommendedAction: "Review the captured message and any promoted indicators in the Abuse Mailbox.",
-          metadata: {
-            message_id: m.id,
-            named_threat_id: namedThreatId,
-            named_threat_name: namedThreatName,
-            technique: detectedTechnique,
-            device_code_score: deviceCode.score,
-            device_code_signals: deviceCode.signals,
-          },
-        });
-      } catch (err) {
-        console.warn(`[abuse-mailbox-classifier] named-threat notification failed for ${m.id}:`, err);
-      }
+      await notifyNamedThreatIdentified(env, {
+        messageId: m.id,
+        namedThreatId,
+        namedThreatName,
+        namedThreatSeverity: namedMatch?.severity ?? null,
+        technique: detectedTechnique,
+        verdictLabel: `${verdict.classification} @ ${verdict.confidence}%`,
+        deviceCodeScore: deviceCode.score,
+        deviceCodeSignals: deviceCode.signals,
+      });
     }
 
     // ─── PR-AX: promote to platform threats ─────────────────────
@@ -722,102 +753,42 @@ export async function runAbuseClassifierBackfill(
       }
     }
 
-    // ─── Wave-3 PR-AD: 24h determination email ─────────────────
+    // ─── Determination email ───────────────────────────────────
     //
-    // Fires immediately after the AI verdict lands. Skips rows that
-    // already have determination_sent_at set (defensive — the
-    // backfill is idempotent and could be replayed). Suppression for
-    // empty/own-domain submitters is handled inside sendDetermination.
-    //
-    // PR-AY: pass the richer context (auth, counts, correlations,
-    // promotion result) so the email can render the "What we found"
-    // + "What you should do" sections in plain English.
-    if (!m.determination_sent_at && m.forwarded_by_email) {
-      try {
-        const { sendDetermination } = await import("./abuse-mailbox-responder");
-        const { loadAbuseBranding } = await import("./abuse-mailbox-branding");
-        const branding = await loadAbuseBranding(env, m.org_id);
-        const detResult = await sendDetermination(env, m.forwarded_by_email, {
-          messageId:       m.id,
-          inboundAlias:    m.inbound_alias,
-          originalSubject: m.original_subject,
-          classification:  verdict.classification,
-          confidence:      verdict.confidence,
-          reasoning:       verdict.reasoning,
-          action:          verdict.action,
-          authResults:     authResults,
-          urlCount:        m.url_count,
-          attachmentCount: m.attachment_count,
-          correlatedCount: correlatedIds.length,
-          promotedCount:   promotedIds.length,
-          deepAnalysisExternal,
-        }, branding);
-        if (detResult.ok) {
-          await env.DB.prepare(
-            `UPDATE abuse_inbox_messages SET determination_sent_at = datetime('now') WHERE id = ?`,
-          ).bind(m.id).run();
-        }
-        // Failures / suppressions logged inside sendDetermination.
-      } catch (err) {
-        console.warn(`[abuse-mailbox-classifier] determination send threw for ${m.id}:`, err);
-      }
+    // Exactly-once via deliverAbuseDetermination's atomic
+    // determination_sent_at claim, so this, the per-message Workflow and
+    // the hourly sweeper can never double-send. The per-message Workflow
+    // passes deferDetermination and sends after its own short sleep.
+    // Rows whose determination already went out (e.g. a rules review
+    // email) are skipped by the claim.
+    if (!opts?.deferDetermination && !m.determination_sent_at && m.forwarded_by_email) {
+      const { deliverAbuseDetermination } = await import("./abuse-mailbox-determination");
+      await deliverAbuseDetermination(env, m.id);
     }
 
     // ─── PR-AW: in-app notification for HIGH/CRITICAL verdicts ─────
     //
     // Fires only for the verdicts that justify operator attention:
     // phishing or malware at HIGH/CRITICAL severity. Benign / spam /
-    // ambiguous stay visible in the inbox UI without nagging.
-    //
-    // Audience routing:
-    //   - brand-bound capture → 'tenant' (notification_subscriptions
-    //     resolves to the brand's watchers in createNotification)
-    //   - unbound capture     → 'super_admin' (covers the Averrow
-    //     self-org, and any tenant submission the classifier couldn't
-    //     bind to a known brand — both surfaces want admins to know)
-    //
-    // Dedup: per-message via group_key — each verdict is unique, no
-    // time window collapsing needed.
+    // ambiguous stay visible in the inbox UI without nagging. Audience
+    // routing + dedup live in notifyAbuseVerdict.
     if (
       (verdict.classification === "phishing" || verdict.classification === "malware") &&
       (severity === "HIGH" || severity === "CRITICAL")
     ) {
-      try {
-        const { createNotification } = await import("./notifications");
-        const audience: "tenant" | "super_admin" = m.brand_id ? "tenant" : "super_admin";
-        // Link paths are basename-relative because both SPAs use
-        // <BrowserRouter basename="..."> — `/v2/admin/...` would
-        // get double-prefixed to `/v2/v2/admin/...` and 404. User
-        // bug 2026-05-17.
-        const link = audience === "super_admin"
-          ? `/admin/abuse-mailbox#msg-${m.id}`
-          : `/modules/abuse-mailbox#msg-${m.id}`;
-        const subjectPreview = (m.original_subject ?? "(no subject)").slice(0, 80);
-        await createNotification(env, {
-          type: "abuse_mailbox_verdict",
-          severity: severity === "CRITICAL" ? "critical" : "high",
-          title: `${verdict.classification === "phishing" ? "Phishing" : "Malware"} confirmed — ${subjectPreview}`,
-          message: verdict.reasoning,
-          link,
-          audience,
-          brandId: m.brand_id,
-          orgId: String(m.org_id),
-          groupKey: `abuse_mailbox_verdict:${m.id}`,
-          reasonText: m.brand_id
-            ? "A capture targeting one of your monitored brands was classified as a confirmed threat."
-            : "A capture sent to your abuse alias was classified as a confirmed threat.",
-          recommendedAction: "Open the message in the Abuse Mailbox to review indicators and take action.",
-          metadata: {
-            message_id: m.id,
-            inbound_alias: m.inbound_alias,
-            classification: verdict.classification,
-            confidence: verdict.confidence,
-            ai_action: verdict.action,
-          },
-        });
-      } catch (err) {
-        console.warn(`[abuse-mailbox-classifier] verdict notification failed for ${m.id}:`, err);
-      }
+      await notifyAbuseVerdict(env, {
+        messageId: m.id,
+        orgId: m.org_id,
+        brandId: m.brand_id,
+        inboundAlias: m.inbound_alias,
+        originalSubject: m.original_subject,
+        classification: verdict.classification,
+        severity,
+        confidence: verdict.confidence,
+        action: verdict.action,
+        message: verdict.reasoning,
+        classifiedBy: "ai",
+      });
     }
   }
 
