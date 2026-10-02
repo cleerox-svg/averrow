@@ -21,8 +21,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "reads": [],
       "writes": [],
       "ai_models_referenced": [],
-      "loc": 88,
-      "last_modified": "2026-10-02T03:12:21.354Z"
+      "loc": 91,
+      "last_modified": "2026-10-02T03:43:14.902Z"
     },
     {
       "name": "admin-classify",
