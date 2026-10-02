@@ -1,9 +1,19 @@
 /**
- * Narrator Agent — AI-powered threat narrative generation.
+ * Narrator Agent — threat narrative generation.
  *
  * Correlates multiple threat signals (phishing, lookalike domains, social
- * impersonation, email security, CT certificates) for a brand into a
- * coherent attack narrative with stage identification and recommendations.
+ * impersonation, email security, CT certificates, app stores, dark web)
+ * for a brand into a coherent attack narrative.
+ *
+ * AI Strategy Phase 1 (#10, docs/AI_STRATEGY_2026-10.md): SEVERITY IS
+ * RULE-DERIVED. `computeNarrativeSeverity` scores the gathered signals
+ * deterministically; that value is what lands in
+ * `threat_narratives.severity` and what gates alert creation. The model
+ * only writes prose (title / narrative / summary / attack stage /
+ * recommendations) — any severity it returns is ignored. When the prose
+ * call fails or is skipped (cost guard), title + summary + narrative come
+ * from a deterministic template, the alert's ai_assessment stays NULL and
+ * attack_stage falls back to 'reconnaissance'.
  */
 
 import type { Env } from "../types";
@@ -15,32 +25,215 @@ import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from ".
 
 // ─── Types ────────────────────────────────────────────────────────
 
-interface NarrativeContext {
-  threats: any[];
-  emailSecurity: any;
-  socialFindings: any[];
-  lookalikes: any[];
-  ctCertificates: any[];
-  appStoreListings: any[];
-  darkWebMentions: any[];
+export interface NarrativeThreatRow {
+  id: string;
+  threat_type: string | null;
+  malicious_domain: string | null;
+  malicious_url: string | null;
+  severity: string | null;
+  status: string | null;
+  source_feed: string | null;
+  created_at: string | null;
 }
 
-interface NarrativeResult {
+export interface NarrativeEmailSecurityRow {
+  email_security_grade: string | null;
+  email_security_score: number | null;
+  email_security_scanned_at: string | null;
+}
+
+export interface NarrativeSocialRow {
+  platform: string | null;
+  suspicious_account_name: string | null;
+  suspicious_account_url: string | null;
+  impersonation_score: number | null;
+  status: string | null;
+  created_at: string | null;
+}
+
+export interface NarrativeLookalikeRow {
+  domain: string;
+  registered: number | null;
+  resolves_to: string | null;
+  has_web: number | null;
+  has_mx: number | null;
+  first_seen: string | null;
+}
+
+export interface NarrativeCtCertRow {
+  domain: string | null;
+  issuer: string | null;
+  not_before: string | null;
+  suspicious: number | null;
+  san_count: number | null;
+}
+
+export interface NarrativeAppStoreRow {
+  store: string | null;
+  app_name: string | null;
+  developer_name: string | null;
+  bundle_id: string | null;
+  app_url: string | null;
+  impersonation_score: number | null;
+  severity: string | null;
+  classification: string | null;
+  last_checked: string | null;
+}
+
+export interface NarrativeDarkWebRow {
+  source: string | null;
+  source_url: string | null;
+  match_type: string | null;
+  matched_terms: string | null;
+  severity: string | null;
+  classification: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface NarrativeContext {
+  threats: NarrativeThreatRow[];
+  emailSecurity: NarrativeEmailSecurityRow | null;
+  socialFindings: NarrativeSocialRow[];
+  lookalikes: NarrativeLookalikeRow[];
+  ctCertificates: NarrativeCtCertRow[];
+  appStoreListings: NarrativeAppStoreRow[];
+  darkWebMentions: NarrativeDarkWebRow[];
+}
+
+/** Model-written prose. Severity is deliberately absent — see header. */
+interface NarrativeProse {
   title: string;
   narrative: string;
   summary: string;
-  severity: string;
   attackStage: string;
   recommendations: string[];
 }
 
+export type NarrativeSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
+const DEFAULT_ATTACK_STAGE = "reconnaissance";
+const ATTACK_STAGES = new Set(["reconnaissance", "weaponization", "delivery", "exploitation"]);
+/** Matches the per-brand threats query's LIMIT. */
+const THREAT_QUERY_LIMIT = 50;
+
+// ─── Rule-based severity ──────────────────────────────────────────
+
+function lc(v: string | null | undefined): string {
+  return (v ?? "").toLowerCase();
+}
+
+/**
+ * Deterministic narrative severity. Pure — no I/O.
+ *
+ * Points (only status='active' threats count):
+ *   threats:   any critical +3, else any high +2
+ *              active count >= 50 (query limit) +2, else >= 10 +1
+ *   lookalike: any with has_mx && has_web +2, else any +1
+ *   social:    max impersonation_score >= 0.8 +2, else >= 0.5 +1
+ *   app store: any classification 'impersonation' +2, else 'suspicious' +1
+ *   dark web:  any classification 'confirmed' +2, else 'suspicious' +1
+ *   CT:        any suspicious cert +1
+ *   email_degradation signal +1
+ *   +1 per signal type beyond 2
+ * Map: >= 8 CRITICAL, >= 5 HIGH, >= 3 MEDIUM, else LOW.
+ */
+export function computeNarrativeSeverity(
+  ctx: NarrativeContext,
+  signalTypes: string[],
+): NarrativeSeverity {
+  let points = 0;
+
+  const active = ctx.threats.filter((t) => lc(t.status) === "active");
+  if (active.some((t) => lc(t.severity) === "critical")) points += 3;
+  else if (active.some((t) => lc(t.severity) === "high")) points += 2;
+  if (active.length >= THREAT_QUERY_LIMIT) points += 2;
+  else if (active.length >= 10) points += 1;
+
+  if (ctx.lookalikes.some((d) => Boolean(d.has_mx) && Boolean(d.has_web))) points += 2;
+  else if (ctx.lookalikes.length > 0) points += 1;
+
+  const maxSocial = ctx.socialFindings.reduce(
+    (m, s) => Math.max(m, Number(s.impersonation_score) || 0),
+    0,
+  );
+  if (maxSocial >= 0.8) points += 2;
+  else if (maxSocial >= 0.5) points += 1;
+
+  if (ctx.appStoreListings.some((a) => lc(a.classification) === "impersonation")) points += 2;
+  else if (ctx.appStoreListings.some((a) => lc(a.classification) === "suspicious")) points += 1;
+
+  if (ctx.darkWebMentions.some((m) => lc(m.classification) === "confirmed")) points += 2;
+  else if (ctx.darkWebMentions.some((m) => lc(m.classification) === "suspicious")) points += 1;
+
+  if (ctx.ctCertificates.some((c) => Boolean(c.suspicious))) points += 1;
+
+  if (signalTypes.includes("email_degradation")) points += 1;
+
+  points += Math.max(0, signalTypes.length - 2);
+
+  if (points >= 8) return "CRITICAL";
+  if (points >= 5) return "HIGH";
+  if (points >= 3) return "MEDIUM";
+  return "LOW";
+}
+
+/** True when any status='active' threat in the context is critical. */
+export function hasActiveCriticalThreat(ctx: NarrativeContext): boolean {
+  return ctx.threats.some((t) => lc(t.status) === "active" && lc(t.severity) === "critical");
+}
+
+/**
+ * Alert gate: rule severity HIGH/CRITICAL AND either cross-channel
+ * corroboration (>= 2 signal types) or an active critical threat.
+ */
+export function shouldCreateNarrativeAlert(
+  severity: NarrativeSeverity,
+  signalTypes: string[],
+  activeCriticalThreat: boolean,
+): boolean {
+  if (severity !== "HIGH" && severity !== "CRITICAL") return false;
+  return signalTypes.length >= 2 || activeCriticalThreat;
+}
+
+const SIGNAL_LABELS: Record<string, string> = {
+  threats: "threats",
+  email_degradation: "weak email authentication",
+  social_impersonation: "social impersonation",
+  lookalike_domains: "lookalike domains",
+  ct_certificates: "suspicious certificates",
+  app_store_impersonation: "app-store impersonation",
+  dark_web_mention: "dark-web mentions",
+};
+
+/** Deterministic prose used when the AI call fails or is skipped. */
+export function buildTemplateNarrative(
+  brandLabel: string,
+  ctx: NarrativeContext,
+  signalTypes: string[],
+  severity: NarrativeSeverity,
+): { title: string; summary: string; narrative: string } {
+  const labels = signalTypes.map((s) => SIGNAL_LABELS[s] ?? s);
+  const activeThreats = ctx.threats.filter((t) => lc(t.status) === "active").length;
+  const title = signalTypes.length >= 2
+    ? `Multi-signal activity targeting ${brandLabel} (${signalTypes.length} channels)`
+    : `Elevated threat volume targeting ${brandLabel}`;
+  const summary =
+    `${severity} rule-scored activity against ${brandLabel} over the last 7 days: ` +
+    `${ctx.threats.length} threat${ctx.threats.length === 1 ? "" : "s"} (${activeThreats} active)` +
+    (labels.length > 0 ? ` across ${labels.join(", ")}.` : ".");
+  const narrative = `${summary}\n\n${buildSignalSummary(ctx)}`;
+  return { title, summary, narrative };
+}
+
 // ─── Core narrative generation ────────────────────────────────────
 
+/** AI prose only. Throws on any API/parse failure — callers fall back to the template. */
 export async function generateThreatNarrative(
   env: Env,
   brandId: string,
   context: NarrativeContext,
-): Promise<NarrativeResult> {
+): Promise<NarrativeProse> {
   const signalSummary = buildSignalSummary(context);
 
   const systemPrompt = `You are a senior threat intelligence analyst writing an internal threat narrative for a brand protection team.
@@ -61,7 +254,6 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
   "title": "Short descriptive title (e.g., 'Coordinated Phishing Campaign Targeting Brand X')",
   "narrative": "Full 3-5 paragraph narrative connecting the signals into a story. Include specific domains, counts, and timelines.",
   "summary": "2-3 sentence executive summary.",
-  "severity": "CRITICAL | HIGH | MEDIUM | LOW",
   "attack_stage": "reconnaissance | weaponization | delivery | exploitation",
   "recommendations": ["Specific action item 1", "Specific action item 2", ...]
 }`;
@@ -72,7 +264,6 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
     title: string;
     narrative: string;
     summary: string;
-    severity: string;
     attack_stage: string;
     recommendations: string[];
   }>(env, {
@@ -85,26 +276,27 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
     timeoutMs: 45_000,
   });
 
+  if (
+    typeof parsed?.title !== "string" || !parsed.title ||
+    typeof parsed.narrative !== "string" || !parsed.narrative
+  ) {
+    throw new Error("narrator: AI response missing title/narrative");
+  }
+  const stage = lc(parsed.attack_stage);
   return {
     title: parsed.title,
     narrative: parsed.narrative,
-    summary: parsed.summary,
-    severity: parsed.severity || "MEDIUM",
-    attackStage: parsed.attack_stage || "reconnaissance",
-    recommendations: parsed.recommendations || [],
+    summary: typeof parsed.summary === "string" ? parsed.summary : "",
+    attackStage: ATTACK_STAGES.has(stage) ? stage : DEFAULT_ATTACK_STAGE,
+    recommendations: Array.isArray(parsed.recommendations)
+      ? parsed.recommendations.filter((r): r is string => typeof r === "string")
+      : [],
   };
 }
 
 // ─── Brand-level narrative orchestrator ───────────────────────────
 
 export async function generateNarrativesForBrand(env: Env, brandId: string): Promise<void> {
-  // Cost guard: narrator is non-critical
-  const blocked = await checkCostGuard(env, false);
-  if (blocked) {
-    console.warn(`[narrator] ${blocked}`);
-    return;
-  }
-
   // 1. Gather recent signals (last 7 days)
   const [threats, emailSecurity, socialFindings, lookalikes, ctCertificates, appStoreListings, darkWebMentions] = await Promise.all([
     env.DB.prepare(
@@ -112,19 +304,19 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
        FROM threats
        WHERE target_brand_id = ? AND created_at >= datetime('now', '-7 days')
        ORDER BY created_at DESC LIMIT 50`
-    ).bind(brandId).all(),
+    ).bind(brandId).all<NarrativeThreatRow>(),
 
     env.DB.prepare(
-      `SELECT email_security_grade, email_security_score, email_security_scanned_at
+      `SELECT name, email_security_grade, email_security_score, email_security_scanned_at
        FROM brands WHERE id = ?`
-    ).bind(brandId).first(),
+    ).bind(brandId).first<NarrativeEmailSecurityRow & { name: string | null }>(),
 
     env.DB.prepare(
       `SELECT platform, suspicious_account_name, suspicious_account_url, impersonation_score, status, created_at
        FROM social_monitor_results
        WHERE brand_id = ? AND created_at >= datetime('now', '-7 days')
        ORDER BY created_at DESC LIMIT 30`
-    ).bind(brandId).all().catch(() => ({ results: [] })),
+    ).bind(brandId).all<NarrativeSocialRow>().catch(() => ({ results: [] as NarrativeSocialRow[] })),
 
     // `first_seen`, not `created_at`: the latter is when the SEEDER
     // inserted the candidate, so with the monitored-brand seeder running
@@ -148,14 +340,14 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
        FROM lookalike_domains
        WHERE brand_id = ? AND registered = 1 AND first_seen >= datetime('now', '-7 days')
        ORDER BY first_seen DESC LIMIT 30`
-    ).bind(brandId).all().catch(() => ({ results: [] })),
+    ).bind(brandId).all<NarrativeLookalikeRow>().catch(() => ({ results: [] as NarrativeLookalikeRow[] })),
 
     env.DB.prepare(
       `SELECT domain, issuer, not_before, suspicious, san_count
        FROM ct_certificates
        WHERE brand_id = ? AND suspicious = 1 AND not_before >= datetime('now', '-7 days')
        ORDER BY not_before DESC LIMIT 20`
-    ).bind(brandId).all().catch(() => ({ results: [] })),
+    ).bind(brandId).all<NarrativeCtCertRow>().catch(() => ({ results: [] as NarrativeCtCertRow[] })),
 
     // App-store impersonations — confirmed 'impersonation' classification, or 'suspicious'
     // promoted by Haiku — in the 7-day window. Indexed by (brand_id, severity) WHERE status='active'.
@@ -167,7 +359,7 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
          AND COALESCE(last_checked, first_seen) >= datetime('now', '-7 days')
        ORDER BY severity = 'CRITICAL' DESC, severity = 'HIGH' DESC, impersonation_score DESC
        LIMIT 10`
-    ).bind(brandId).all().catch(() => ({ results: [] })),
+    ).bind(brandId).all<NarrativeAppStoreRow>().catch(() => ({ results: [] as NarrativeAppStoreRow[] })),
 
     // Dark-web mentions — confirmed or Haiku-promoted suspicious — in the 7-day window.
     env.DB.prepare(
@@ -178,13 +370,13 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
          AND COALESCE(last_seen, first_seen) >= datetime('now', '-7 days')
        ORDER BY severity = 'CRITICAL' DESC, severity = 'HIGH' DESC, last_seen DESC
        LIMIT 10`
-    ).bind(brandId).all().catch(() => ({ results: [] })),
+    ).bind(brandId).all<NarrativeDarkWebRow>().catch(() => ({ results: [] as NarrativeDarkWebRow[] })),
   ]);
 
   // 2. Count distinct signal types
   const signalTypes: string[] = [];
   if (threats.results.length > 0) signalTypes.push("threats");
-  if (emailSecurity?.email_security_grade && ["D", "F"].includes(emailSecurity.email_security_grade as string)) {
+  if (emailSecurity?.email_security_grade && ["D", "F"].includes(emailSecurity.email_security_grade)) {
     signalTypes.push("email_degradation");
   }
   if (socialFindings.results.length > 0) signalTypes.push("social_impersonation");
@@ -205,10 +397,9 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     return;
   }
 
-  // 3. Generate the narrative
   const context: NarrativeContext = {
     threats: threats.results,
-    emailSecurity,
+    emailSecurity: emailSecurity ?? null,
     socialFindings: socialFindings.results,
     lookalikes: lookalikes.results,
     ctCertificates: ctCertificates.results,
@@ -216,17 +407,33 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     darkWebMentions: darkWebMentions.results,
   };
 
-  let result: NarrativeResult;
-  try {
-    result = await generateThreatNarrative(env, brandId, context);
-  } catch (err) {
-    console.error(`[narrator] Narrative generation failed for brand ${brandId}:`, err);
-    return;
-  }
+  // 3. Severity from rules — never from the model (AI Strategy #10).
+  const severity = computeNarrativeSeverity(context, signalTypes);
 
-  // 4. Store in threat_narratives table
+  // 4. Prose: AI when available, deterministic template otherwise.
+  let prose: NarrativeProse | null = null;
+  const blocked = await checkCostGuard(env, false);
+  if (blocked) {
+    console.warn(`[narrator] AI prose skipped: ${blocked}`);
+  } else {
+    try {
+      prose = await generateThreatNarrative(env, brandId, context);
+    } catch (err) {
+      console.warn(`[narrator] AI prose failed for brand ${brandId}; using template:`, err);
+    }
+  }
+  const template = buildTemplateNarrative(emailSecurity?.name || brandId, context, signalTypes, severity);
+  const result = {
+    title: prose?.title ?? template.title,
+    narrative: prose?.narrative ?? template.narrative,
+    summary: prose?.summary || template.summary,
+    attackStage: prose?.attackStage ?? DEFAULT_ATTACK_STAGE,
+    recommendations: prose?.recommendations ?? [],
+  };
+
+  // 5. Store in threat_narratives table
   const narrativeId = crypto.randomUUID();
-  const threatIds = threats.results.map((t: any) => t.id);
+  const threatIds = threats.results.map((t) => t.id);
 
   try {
     await env.DB.prepare(
@@ -240,7 +447,7 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
       result.summary,
       JSON.stringify(threatIds),
       JSON.stringify(signalTypes),
-      result.severity,
+      severity,
       signalTypes.length >= 4 ? 85 : signalTypes.length >= 3 ? 70 : 55,
       result.attackStage,
       JSON.stringify(result.recommendations),
@@ -251,8 +458,9 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     return;
   }
 
-  // 5. Create an alert if severity is HIGH or CRITICAL
-  if (result.severity === "HIGH" || result.severity === "CRITICAL") {
+  // 6. Alert gate — rule severity HIGH/CRITICAL AND (>= 2 signal types
+  //    OR an active critical threat). See shouldCreateNarrativeAlert.
+  if (shouldCreateNarrativeAlert(severity, signalTypes, hasActiveCriticalThreat(context))) {
     try {
       // brand_profiles retired (2026-05-07, R3). Alerts are now
       // tenant-scoped via brand_id → org_brands at read time, so we
@@ -266,18 +474,21 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
         brandId,
         userId,
         alertType: "phishing_detected",
-        severity: result.severity as "HIGH" | "CRITICAL",
+        severity,
         title: result.title,
         summary: result.summary,
         details: {
           narrative_id: narrativeId,
           attack_stage: result.attackStage,
           signal_types: signalTypes,
+          severity_source: "rules",
+          prose_source: prose ? "ai" : "template",
         },
         sourceType: "threat_narrative",
         sourceId: narrativeId,
-        aiAssessment: result.narrative,
-        aiRecommendations: result.recommendations,
+        // Template prose is not an AI assessment — leave the column NULL.
+        aiAssessment: prose ? prose.narrative : undefined,
+        aiRecommendations: prose ? prose.recommendations : undefined,
       });
 
     } catch (err) {
@@ -320,15 +531,10 @@ export const narratorAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env } = ctx;
 
-    const blocked = await checkCostGuard(env, false);
-    if (blocked) {
-      return {
-        itemsProcessed: 0,
-        itemsCreated: 0,
-        itemsUpdated: 0,
-        output: { skipped: true, reason: blocked },
-      };
-    }
+    // No run-level cost-guard early return: severity is rule-based and
+    // the prose falls back to a template, so a budget-blocked run still
+    // produces narratives. The guard is checked per brand before the AI
+    // prose call (generateNarrativesForBrand).
 
     // PR-C (2026-05-16 audit fix #13): pre-screen also includes the
     // email-security-grade and high-volume-threat signal channels, both
@@ -445,7 +651,8 @@ function buildSignalSummary(context: NarrativeContext): string {
     const byType: Record<string, number> = {};
     const domains = new Set<string>();
     for (const t of context.threats) {
-      byType[t.threat_type] = (byType[t.threat_type] || 0) + 1;
+      const tt = t.threat_type ?? "unknown";
+      byType[tt] = (byType[tt] || 0) + 1;
       if (t.malicious_domain) domains.add(t.malicious_domain);
     }
     const typeStr = Object.entries(byType).map(([k, v]) => `${k}: ${v}`).join(", ");
@@ -453,7 +660,7 @@ function buildSignalSummary(context: NarrativeContext): string {
 Count: ${context.threats.length}
 Types: ${typeStr}
 Domains involved: ${Array.from(domains).slice(0, 15).join(", ")}
-Sources: ${[...new Set(context.threats.map((t: any) => t.source_feed))].join(", ")}`);
+Sources: ${[...new Set(context.threats.map((t) => t.source_feed).filter(Boolean))].join(", ")}`);
   }
 
   // Email security
@@ -467,12 +674,12 @@ Last scanned: ${es.email_security_scanned_at ?? "Never"}`);
 
   // Social impersonation
   if (context.socialFindings.length > 0) {
-    const platforms = [...new Set(context.socialFindings.map((s: any) => s.platform))];
-    const active = context.socialFindings.filter((s: any) => s.status === "active").length;
+    const platforms = [...new Set(context.socialFindings.map((s) => s.platform).filter(Boolean))];
+    const active = context.socialFindings.filter((s) => s.status === "active").length;
     parts.push(`## Social Impersonation
 Findings: ${context.socialFindings.length} (${active} active)
 Platforms: ${platforms.join(", ")}
-Accounts: ${context.socialFindings.slice(0, 10).map((s: any) => `@${s.suspicious_account_name ?? 'unknown'} on ${s.platform} (impersonation score: ${Math.round((Number(s.impersonation_score) || 0) * 100)}%)`).join(", ")}`);
+Accounts: ${context.socialFindings.slice(0, 10).map((s) => `@${s.suspicious_account_name ?? 'unknown'} on ${s.platform} (impersonation score: ${Math.round((Number(s.impersonation_score) || 0) * 100)}%)`).join(", ")}`);
   }
 
   // Lookalike domains
@@ -481,27 +688,27 @@ Accounts: ${context.socialFindings.slice(0, 10).map((s: any) => `@${s.suspicious
     // this filtered on — see the SELECT's comment. Both are 0/1 INTEGER
     // columns, so a truthiness filter is the right shape; `mx_records`
     // was a string test against a column that has never existed.
-    const withWeb = context.lookalikes.filter((d: any) => d.has_web).length;
-    const withMx = context.lookalikes.filter((d: any) => d.has_mx).length;
+    const withWeb = context.lookalikes.filter((d) => d.has_web).length;
+    const withMx = context.lookalikes.filter((d) => d.has_mx).length;
     parts.push(`## Lookalike Domains (registered)
 Count: ${context.lookalikes.length} (${withWeb} with a web server, ${withMx} with MX records)
-Domains: ${context.lookalikes.slice(0, 15).map((d: any) => d.domain).join(", ")}`);
+Domains: ${context.lookalikes.slice(0, 15).map((d) => d.domain).join(", ")}`);
   }
 
   // CT certificates
   if (context.ctCertificates.length > 0) {
     parts.push(`## Suspicious CT Certificates
 Count: ${context.ctCertificates.length}
-Certificates: ${context.ctCertificates.slice(0, 10).map((c: any) => `${c.domain} (issuer: ${c.issuer}, SANs: ${c.san_count})`).join("; ")}`);
+Certificates: ${context.ctCertificates.slice(0, 10).map((c) => `${c.domain} (issuer: ${c.issuer}, SANs: ${c.san_count})`).join("; ")}`);
   }
 
   // App-store impersonations — iOS today; Google Play / 3rd-party stores later.
   if (context.appStoreListings.length > 0) {
-    const confirmed = context.appStoreListings.filter((a: any) => a.classification === "impersonation").length;
-    const suspicious = context.appStoreListings.filter((a: any) => a.classification === "suspicious").length;
+    const confirmed = context.appStoreListings.filter((a) => lc(a.classification) === "impersonation").length;
+    const suspicious = context.appStoreListings.filter((a) => lc(a.classification) === "suspicious").length;
     parts.push(`## App-Store Impersonations
 Count: ${context.appStoreListings.length} (${confirmed} confirmed impersonation, ${suspicious} suspicious)
-Apps: ${context.appStoreListings.slice(0, 5).map((a: any) =>
+Apps: ${context.appStoreListings.slice(0, 5).map((a) =>
   `"${a.app_name}" on ${a.store} by "${a.developer_name ?? "unknown dev"}" (severity ${a.severity}, score ${Math.round((Number(a.impersonation_score) || 0) * 100)}%)`
 ).join("; ")}`);
   }
@@ -511,7 +718,8 @@ Apps: ${context.appStoreListings.slice(0, 5).map((a: any) =>
     const bySource: Record<string, number> = {};
     const byMatch: Record<string, number> = {};
     for (const m of context.darkWebMentions) {
-      bySource[m.source] = (bySource[m.source] || 0) + 1;
+      const src = m.source ?? "unknown";
+      bySource[src] = (bySource[src] || 0) + 1;
       if (m.match_type) byMatch[m.match_type] = (byMatch[m.match_type] || 0) + 1;
     }
     const srcStr = Object.entries(bySource).map(([k, v]) => `${k}: ${v}`).join(", ");
@@ -520,7 +728,7 @@ Apps: ${context.appStoreListings.slice(0, 5).map((a: any) =>
 Count: ${context.darkWebMentions.length}
 Sources: ${srcStr}
 Match types: ${matchStr}
-Top: ${context.darkWebMentions.slice(0, 5).map((m: any) =>
+Top: ${context.darkWebMentions.slice(0, 5).map((m) =>
   `${m.source} ${m.match_type ?? "?"} match (severity ${m.severity}, ${m.classification})`
 ).join("; ")}`);
   }
