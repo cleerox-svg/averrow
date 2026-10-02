@@ -27,12 +27,27 @@ export function Console() {
   const resolved   = useTenantAlerts({ status: 'resolved', limit: 6 });
   const drafts     = useTenantTakedowns({ status: 'draft' });
 
+  const signalsFailed = newSignals.isError && !newSignals.data;
+  const draftsFailed  = drafts.isError && !drafts.data;
+  const handledFailed = resolved.isError && !resolved.data;
+  const needsFailed   = signalsFailed || draftsFailed;
+
   const signalCount  = newSignals.data?.total ?? 0;
   const draftRows    = drafts.data?.takedowns ?? [];
   const draftCount   = drafts.data?.totals.by_status?.draft ?? draftRows.length;
   const inFlight     = drafts.data?.totals.active ?? 0;
   const handledCount = resolved.data?.total ?? 0;
   const needsTotal   = signalCount + draftCount;
+  // A failed query must not read as 0 / "all clear" — show "—" instead.
+  const needsValue   = needsFailed ? null : needsTotal;
+  const draftsValue  = draftsFailed ? null : draftCount;
+  const inFlightValue = draftsFailed ? null : inFlight;
+  const handledValue = handledFailed ? null : handledCount;
+  const needsFetching = newSignals.isFetching || drafts.isFetching;
+  const retryNeeds   = () => {
+    if (signalsFailed) void newSignals.refetch();
+    if (draftsFailed) void drafts.refetch();
+  };
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -44,17 +59,19 @@ export function Console() {
       </header>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Needs you" value={needsTotal} icon={Inbox} tone={needsTotal > 0 ? 'warn' : 'ok'} />
-        <Kpi label="Drafts to approve" value={draftCount} icon={Send} tone={draftCount > 0 ? 'warn' : 'neutral'} />
-        <Kpi label="Takedowns in flight" value={inFlight} icon={ShieldAlert} tone="neutral" />
-        <Kpi label="Handled" value={handledCount} icon={CheckCircle2} tone="ok" />
+        <Kpi label="Needs you" value={needsValue} icon={Inbox} tone={needsValue == null ? 'neutral' : needsValue > 0 ? 'warn' : 'ok'} />
+        <Kpi label="Drafts to approve" value={draftsValue} icon={Send} tone={draftsValue != null && draftsValue > 0 ? 'warn' : 'neutral'} />
+        <Kpi label="Takedowns in flight" value={inFlightValue} icon={ShieldAlert} tone="neutral" />
+        <Kpi label="Handled" value={handledValue} icon={CheckCircle2} tone={handledValue == null ? 'neutral' : 'ok'} />
       </div>
 
       {/* ① Needs you */}
       <section className="space-y-3">
-        <StreamHeader icon={Inbox} title="Needs you" subtitle="Approvals and new signals awaiting a human" count={needsTotal} />
+        <StreamHeader icon={Inbox} title="Needs you" subtitle="Approvals and new signals awaiting a human" count={needsValue} />
 
         {(newSignals.isLoading || drafts.isLoading) && <Loading />}
+
+        {needsFailed && <ErrorCard title="Couldn't load items needing you" onRetry={retryNeeds} retrying={needsFetching} />}
 
         {!drafts.isLoading && draftRows.length > 0 && (
           <div className="space-y-2">
@@ -76,16 +93,17 @@ export function Console() {
           </div>
         )}
 
-        {!newSignals.isLoading && !drafts.isLoading && needsTotal === 0 && (
+        {!newSignals.isLoading && !drafts.isLoading && !needsFailed && needsTotal === 0 && (
           <EmptyCard icon={CheckCircle2} title="You're all caught up" sub="No drafts to approve and no new signals. The automation has the rest." />
         )}
       </section>
 
       {/* ② Recently handled */}
       <section className="space-y-3">
-        <StreamHeader icon={Bot} title="Recently handled" subtitle="Resolved by auto-triage or an analyst" count={handledCount} />
+        <StreamHeader icon={Bot} title="Recently handled" subtitle="Resolved by auto-triage or an analyst" count={handledValue} />
         {resolved.isLoading && <Loading />}
-        {!resolved.isLoading && (resolved.data?.alerts.length ?? 0) === 0 && (
+        {handledFailed && <ErrorCard title="Couldn't load handled signals" onRetry={() => void resolved.refetch()} retrying={resolved.isFetching} />}
+        {!resolved.isLoading && !handledFailed && (resolved.data?.alerts.length ?? 0) === 0 && (
           <EmptyCard icon={Bot} title="Nothing handled yet" sub="Resolved signals will show here with how they were dispositioned." />
         )}
         {!resolved.isLoading && (resolved.data?.alerts.length ?? 0) > 0 && (
@@ -161,24 +179,25 @@ function HandledRow({ alert: a }: { alert: Alert }) {
 
 // ─── small parts ─────────────────────────────────────────────
 
-function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number; icon: LucideIcon; tone: 'warn' | 'ok' | 'neutral' }) {
+function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number | null; icon: LucideIcon; tone: 'warn' | 'ok' | 'neutral' }) {
   const accent = tone === 'warn' ? 'text-amber' : tone === 'ok' ? 'text-green/85' : 'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
         <Icon size={11} /><span className="truncate">{label}</span>
       </div>
-      <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value}</div>
+      <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value ?? '—'}</div>
+      {value == null && <div role="status" className="text-[11px] text-white/40 mt-0.5">Couldn't load</div>}
     </div>
   );
 }
 
-function StreamHeader({ icon: Icon, title, subtitle, count }: { icon: LucideIcon; title: string; subtitle: string; count: number }) {
+function StreamHeader({ icon: Icon, title, subtitle, count }: { icon: LucideIcon; title: string; subtitle: string; count: number | null }) {
   return (
     <div className="flex items-center gap-2.5">
       <Icon size={16} className="text-white/55" />
       <h2 className="text-[15px] font-bold text-white/90">{title}</h2>
-      <span className="text-[11px] font-mono text-white/35">{count}</span>
+      <span className="text-[11px] font-mono text-white/35">{count ?? '—'}</span>
       <span className="text-[11px] text-white/40 hidden sm:inline">· {subtitle}</span>
     </div>
   );
@@ -227,6 +246,30 @@ function EmptyCard({ icon: Icon, title, sub }: { icon: LucideIcon; title: string
       <Icon size={26} className="mx-auto text-white/30 mb-2" />
       <p className="text-sm text-white/70">{title}</p>
       <p className="text-[11px] text-white/40 mt-1">{sub}</p>
+    </div>
+  );
+}
+
+function ErrorCard({ title, onRetry, retrying }: { title: string; onRetry: () => void; retrying?: boolean }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-xl p-5 flex items-center justify-between gap-4"
+      style={{ border: '1px solid var(--sev-critical-border)', background: 'var(--sev-critical-bg)' }}
+    >
+      <div>
+        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</p>
+        <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>This is not the same as nothing to do. Try again.</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={retrying}
+        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-mono disabled:opacity-50 disabled:cursor-not-allowed"
+        style={{ border: '1px solid var(--sev-critical-border)', color: 'var(--text-primary)' }}
+      >
+        {retrying ? 'Retrying…' : 'Retry'}
+      </button>
     </div>
   );
 }

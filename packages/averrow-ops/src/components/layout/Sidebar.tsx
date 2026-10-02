@@ -167,7 +167,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         { label: 'Feeds',        path: '/feeds',             icon: Rss },
         { label: 'Dashboard',    path: '/admin',             icon: LayoutDashboard, exact: true },
         { label: 'Team', path: '/admin/users?tab=members', icon: Users, matchPrefixes: ['/admin/users'] },
-        ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers', '/admin/organizations'] }] : []),
+        ...(isSuperAdmin ? [{ label: 'Customers', path: '/admin/customers', icon: Building2, matchPrefixes: ['/admin/customers'] }] : []),
         ...(roleHasPermission(user?.role, 'view_billing') ? [{ label: 'Pricing', path: '/admin/pricing', icon: DollarSign }] : []),
         { label: 'Audit Log',    path: '/admin/audit',       icon: ClipboardList },
         { label: 'Attribution Backlog', path: '/admin/agents/attribution-backlog', icon: Target },

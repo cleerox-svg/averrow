@@ -5,7 +5,7 @@
 // it every session (audit Batch 2, W6). This is the generic store; each
 // surface supplies its own filter shape `T` and a storage key.
 //
-// Follows the codebase localStorage convention (useCardStyle): SSR guard,
+// Follows the codebase localStorage convention (useShellVersion in design-system/hooks): SSR guard,
 // try/catch for blocked storage, cross-tab sync via the `storage` event.
 
 import { useCallback, useEffect, useState } from 'react';

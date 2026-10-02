@@ -204,9 +204,9 @@ export type ResourceDecl =
   | { kind: "queue"; name: string }
   | { kind: "binding"; name: string }
   // External HTTP dependencies (DNS resolvers, third-party APIs we
-  // call directly, etc.). Surfaced in the AgentDeclarationsPanel
-  // so operators can see the off-platform endpoints an agent depends
-  // on. Not extracted by the SQL drift checker — declared manually.
+  // call directly, etc.). Declared so a future UI can show the
+  // off-platform endpoints an agent depends on; not currently surfaced
+  // anywhere. Not extracted by the SQL drift checker — declared manually.
   | { kind: "external"; name: string; url?: string };
 
 export interface AgentBudget {

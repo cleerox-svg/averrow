@@ -332,9 +332,9 @@ Adds:
 - Manual trigger button (if `trigger: 'manual'` or operator role)
 - Cost gauge (this month spent vs `budget.monthlyTokenCap`)
 
-### 7.3 Agent config view (`features/agents/AgentConfig.tsx`)
+### 7.3 Agent config view (target spec — not currently built)
 
-Edit form for `agent_configs` runtime parameters. Layout:
+No UI renders this today. The former `features/agents/AgentConfig.tsx` page was unrouted and has been deleted. The data layer remains: `useAgentConfig()` in `hooks/useAgents.ts` (`GET /api/admin/agents/config`) has no consumer in `packages/averrow-ops/src`. Target layout for an edit form over `agent_configs` runtime parameters if it is rebuilt:
 - **Identity header** (icon + displayName + codename + status)
 - **Schedule section** (cadence + last run + next run)
 - **Parameters** (one row per `agent_configs` field, type-aware editor)

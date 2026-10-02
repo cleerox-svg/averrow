@@ -240,7 +240,7 @@ function BrandsTab({ brands, maxBrands }: {
       </div>
       <p className="text-[10px] font-mono text-white/40 -mt-2">
         Member-side brand add lands in v3. Today: super-admins assign brands via{' '}
-        <span style={{ color: 'var(--amber)' }}>/admin/organizations</span>.
+        <span style={{ color: 'var(--amber)' }}>/admin/customers</span>.
       </p>
 
       {brands.length === 0 ? (

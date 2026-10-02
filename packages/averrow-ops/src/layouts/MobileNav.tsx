@@ -109,7 +109,7 @@ export function MobileNav() {
           ...s,
           items: [
             ...s.items,
-            { icon: '🏢', label: 'Organizations', path: '/admin/organizations' },
+            { icon: '🏢', label: 'Customers', path: '/admin/customers' },
           ],
         }
       : s

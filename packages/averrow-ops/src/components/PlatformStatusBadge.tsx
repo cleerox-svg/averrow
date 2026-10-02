@@ -11,14 +11,11 @@
 // Color palette uses --sev-* tokens already defined in tokens.css so
 // light/dark themes track without overrides.
 
-import { Link } from 'react-router-dom';
 import type { CategoryStatus } from '@averrow/shared';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
 
 interface Props {
   variant?: 'compact' | 'prominent';
-  /** When true, the pill links to /v2/admin/diagnostics. Default false. */
-  linkToDiagnostics?: boolean;
 }
 
 interface PaletteEntry {
@@ -62,7 +59,7 @@ const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
   },
 };
 
-export function PlatformStatusBadge({ variant = 'compact', linkToDiagnostics = false }: Props) {
+export function PlatformStatusBadge({ variant = 'compact' }: Props) {
   const { data, isLoading } = usePlatformStatus();
   const status: CategoryStatus | 'loading' = isLoading || !data ? 'loading' : data.overall;
   // Defensive: status should always be a known PALETTE key, but fall back to
@@ -95,9 +92,7 @@ export function PlatformStatusBadge({ variant = 'compact', linkToDiagnostics = f
         </span>
       </div>
     );
-    return linkToDiagnostics
-      ? <Link to="/admin/diagnostics" style={{ textDecoration: 'none' }}>{content}</Link>
-      : content;
+    return content;
   }
 
   // Compact variant — used on desktop Home. Smaller pill, no pulse
@@ -123,7 +118,5 @@ export function PlatformStatusBadge({ variant = 'compact', linkToDiagnostics = f
       </span>
     </div>
   );
-  return linkToDiagnostics
-    ? <Link to="/admin/diagnostics" style={{ textDecoration: 'none' }}>{content}</Link>
-    : content;
+  return content;
 }

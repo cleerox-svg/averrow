@@ -596,7 +596,8 @@
    remain). Two ops inputs originally used unconditional `outline-none`
    (suppressing the outline in ALL states, not just :focus, so this
    selector never matched them and they had no keyboard ring at all):
-   `components/agents/ConfigView.tsx` and `features/threats/Threats.tsx`.
+   `components/agents/ConfigView.tsx` (since deleted) and
+   `features/threats/Threats.tsx`.
    Both were converted to `focus:outline-none` so this rule now covers
    them for free — no other call-site change needed.
    Targeting the generated class name directly gives every current AND

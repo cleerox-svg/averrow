@@ -8,8 +8,6 @@ export type { BadgeProps, Severity, BadgeStatus, BadgeSize, LegacyVariant } from
 
 export { DeepCard } from './DeepCard';
 export type { DeepCardProps, DeepVariant } from './DeepCard';
-export { DimensionalCard } from './DimensionalCard';
-export type { DimensionalCardProps, DimensionalCardVariant } from './DimensionalCard';
 export { Avatar } from './Avatar';
 export type { AvatarProps, AvatarSeverity } from './Avatar';
 export { DimensionalAvatar } from './DimensionalAvatar';
