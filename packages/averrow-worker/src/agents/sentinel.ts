@@ -1,73 +1,30 @@
 /**
  * Sentinel Agent — Certificate & domain surveillance.
  *
- * Runs on every feed ingestion event. Classifies new threats
- * via Haiku AI and assigns confidence scores + severity.
- * Falls back to rule-based classification when Haiku is unavailable.
+ * Runs on every feed ingestion event. Classifies new threats with
+ * deterministic rules (`ruleBasedClassify`) and assigns confidence
+ * scores + severity. No AI call sits on the classification path
+ * (AI_STRATEGY_2026-10 Phase 1, Batch B): confidence comes from the
+ * source feed's track record, severity from the threat type, and the
+ * escalations below are all string/set checks.
  *
  * Also performs:
- * - Source-quality confidence boosting (merged from triage agent)
+ * - Source-quality confidence (merged from triage agent)
  * - Homoglyph & brand-squatting detection (merged from impersonation-detector agent)
+ * - Credential-path escalation (brand-matched URL whose path/query
+ *   carries a login/verify/wallet-style token)
+ *
+ * The one remaining AI call in this file is `runSentinelSocialAssessment`,
+ * a separate orchestrator-invoked helper — not part of `execute()`.
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { classifyThreat, newAiCallCounters, recordAiCall, isAiAllFailing, mergeAiCallCounters } from "../lib/haiku";
 import { callAnthropicJSON } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { cachedCount } from "../lib/cached-count";
 import { withD1Retry } from "../lib/d1-retry";
-
-// ─── Sibling-domain dedup (Lever #3) ─────────────────────────────
-
-/**
- * Extract the registrable / apex domain (eTLD+1) from a hostname.
- * "login.fake-paypal.com" → "fake-paypal.com"
- * "abc.def.gov.uk"       → "def.gov.uk"
- *
- * Used for sibling-domain dedup at the Haiku-classification step:
- * two threats with the same (apex_domain, source_feed, asn) are
- * almost certainly the same campaign, and the classifier returns
- * the same threat_type / severity / confidence for both. Sharing
- * the result eliminates the duplicate AI call.
- *
- * Per-threat enrichment (homoglyph detect, brand squat, Iranian APT
- * escalation) still runs INDIVIDUALLY on every threat — only the
- * base classification is shared. So sibling subdomains can still
- * land at different severities if one happens to match a homoglyph.
- *
- * Inlined here instead of importing from analyst.ts to avoid coupling
- * two agents through a util file.
- */
-function getApexDomain(domain: string): string {
-  const parts = domain.split(".");
-  if (parts.length <= 2) return domain;
-  const sld = parts[parts.length - 2] ?? "";
-  const knownSlds = new Set(["co", "com", "org", "net", "gov", "edu", "ac", "ltd", "plc"]);
-  if (sld.length > 0 && sld.length <= 3 && knownSlds.has(sld)) {
-    return parts.slice(-3).join(".");
-  }
-  return parts.slice(-2).join(".");
-}
-
-/**
- * Compose the dedup key for sibling-domain classification sharing.
- * Threats sharing this tuple inherit the same Haiku classification.
- *
- * When malicious_domain is null (IP-only threats), we still group by
- * (source_feed, asn) — different feeds emit IP threats with different
- * default semantics, and same-feed/same-ASN clusters are almost always
- * the same campaign.
- */
-function classificationGroupKey(threat: {
-  malicious_domain: string | null;
-  source_feed: string;
-  asn: string | null;
-}): string {
-  const apex = threat.malicious_domain ? getApexDomain(threat.malicious_domain) : "";
-  return `${apex}|${threat.source_feed}|${threat.asn ?? ""}`;
-}
 
 // ─── Homoglyph & brand-squatting detection ──────────────────────
 
@@ -166,15 +123,16 @@ export function findSocialMatchesForDomain(
 export const sentinelAgent: AgentModule = {
   name: "sentinel",
   displayName: "Sentinel",
-  description: "Certificate & domain surveillance — classifies new threats via AI",
+  description: "Certificate & domain surveillance — classifies new threats with source/type rules",
   color: "#C83C3C",
   trigger: "event",
   requiresApproval: false,
   stallThresholdMinutes: 75,
   parallelMax: 1,
   costGuard: "enforced",
-  // Per-tick high volume — classifies each new threat from feed
-  // ingestion. Sized for ~50-200 calls per hourly run.
+  // execute() makes no AI call since Phase 1 (rules only). The cap still
+  // governs runSentinelSocialAssessment, which bills under agentId
+  // "sentinel" — ~20 Haiku calls per social-monitor batch.
   budget: { monthlyTokenCap: 100_000_000 },
   reads: [
     { kind: "d1_table", name: "brands" },
@@ -197,8 +155,7 @@ export const sentinelAgent: AgentModule = {
   pipelinePosition: 1,
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
-    const { env, runId } = ctx;
-    const callCtx = { agentId: "sentinel", runId };
+    const { env } = ctx;
 
     // Load monitored brand keywords from DB, fall back to hardcoded list
     const monitoredBrands = await env.DB.prepare(
@@ -227,7 +184,7 @@ export const sentinelAgent: AgentModule = {
           id: string; malicious_url: string | null; malicious_domain: string | null;
           ip_address: string | null; asn: string | null; country_code: string | null;
           source_feed: string; ioc_value: string | null;
-          threat_type: string; target_brand_id: string | null;
+          threat_type: string | null; target_brand_id: string | null;
         }>(),
       { label: "sentinel unclassified-threats read" },
     );
@@ -271,42 +228,8 @@ export const sentinelAgent: AgentModule = {
     let itemsProcessed = 0;
     let itemsUpdated = 0;
     let impersonationsFound = 0;
+    let credentialPathEscalations = 0;
     const outputs: AgentOutputEntry[] = [];
-    let totalTokens = 0;
-    let model: string | undefined;
-    let haikuSuccesses = 0;
-    let haikuFailures = 0;
-    let aiSkippedByRules = 0;
-
-    // ── Strictly-API AI counters (silent-AI-failure guard) ──────────
-    // DO NOT key any health check on haikuSuccesses above: it is
-    // incremented for the rules-based skip below (`haikuSuccesses++;
-    // // count as success for stats`), which makes NO API call at all.
-    // So `haiku=N/0` in the summary string can mean "zero Anthropic
-    // calls were made" — which is exactly why this agent's telemetry
-    // read as healthy through three months of total AI outage. Its
-    // semantics are left untouched because the summary string and
-    // agent_runs details are read by operators today.
-    //
-    // See lib/haiku.ts AiCallCounters for the contract. Incremented
-    // inside getOrClassify at the point a call is actually INITIATED —
-    // not per threat. Sibling threats share one promise via
-    // classificationCache, so a per-threat increment would count one API
-    // call many times and let succeeded exceed attempted.
-    // `ai` is the REQUIRED path: per-threat classification, the work this
-    // agent exists to do. The run's degraded verdict is computed from this
-    // one alone.
-    const ai = newAiCallCounters();
-    // `aiOpportunistic` is the batch-level APT detector — one best-effort
-    // call per run, only when the batch is >= 10 threats, whose failure
-    // costs the run nothing (no APT hits is a normal outcome). Kept
-    // separate so a single transient failure there cannot mark a whole
-    // run degraded, which was a real false positive: with >= 10
-    // rule-skipped threats it is the ONLY call of the run, so one 529
-    // meant attempted=1 / succeeded=0 and a 'partial' finalize. Both sets
-    // are merged into the persisted counters below, so Flight Control and
-    // the diagnostics still see every request that actually left.
-    const aiOpportunistic = newAiCallCounters();
 
     // Pre-fetch the suspicious / impersonation social_profiles set
     // ONCE per batch, then match in-memory inside the per-threat
@@ -332,105 +255,44 @@ export const sentinelAgent: AgentModule = {
       console.warn("[sentinel] social profile prefetch failed:", err);
     }
 
-    // Concurrent fan-out cap. The prior implementation processed
-    // threats serially with one Haiku call + 3 inner DB reads per
-    // iteration — 50-threat batches routinely hit the 15-min
-    // navigator reaper threshold (21% of runs killed over 48h per
-    // diagnostics). Five at a time keeps any single Haiku stall
-    // localized to its wave instead of blocking the whole batch.
-    // Same prompts, same JSON parsing — zero classification-quality
-    // risk. Increments to itemsProcessed / counters and pushes to
-    // outputs[] are race-free because JS is single-threaded between
-    // awaits.
+    // Concurrent fan-out cap. Classification itself is now pure CPU
+    // (ruleBasedClassify), but each threat still does up to ~4 D1
+    // round-trips (Iranian-APT actor bumps + the final UPDATE). Five at
+    // a time keeps a slow D1 write localized to its wave. Counter
+    // increments and outputs[] pushes are race-free because JS is
+    // single-threaded between awaits.
     const SENTINEL_CONCURRENCY = 5;
     const threatList = threats.results;
 
-    // Lever #3: sibling-domain classification cache. Threats sharing
-    // (apex_domain, source_feed, asn) reuse the FIRST caller's Haiku
-    // result — the next caller awaits the same promise instead of firing
-    // its own call. Per-threat enrichment still runs individually below.
-    // Map keys go in as soon as the call is initiated (not resolved) so
-    // concurrent wave-mates don't race into duplicate Haiku calls.
-    type ClassificationResult = Awaited<ReturnType<typeof classifyThreat>>;
-    const classificationCache = new Map<string, Promise<ClassificationResult>>();
-    let aiSkippedBySibling = 0;
-    const getOrClassify = (threat: typeof threatList[number]): Promise<ClassificationResult> => {
-      const key = classificationGroupKey(threat);
-      const existing = classificationCache.get(key);
-      if (existing) {
-        aiSkippedBySibling++;
-        return existing;
-      }
-      // Instrumented here — this is the ONE place a classification call
-      // is actually initiated. Cache hits above return this same promise
-      // and must not re-count it.
-      const p = classifyThreat(env, callCtx, {
-        malicious_url: threat.malicious_url,
-        malicious_domain: threat.malicious_domain,
-        ip_address: threat.ip_address,
-        source_feed: threat.source_feed,
-        ioc_value: threat.ioc_value,
-      }).then((r) => {
-        recordAiCall(ai, r, r.success && !!r.data, "[sentinel]");
-        return r;
-      });
-      classificationCache.set(key, p);
-      return p;
-    };
-
     for (let i = 0; i < threatList.length; i += SENTINEL_CONCURRENCY) {
       const wave = threatList.slice(i, i + SENTINEL_CONCURRENCY);
-      await Promise.all(wave.map((threat) => processThreat(threat, getOrClassify)));
+      await Promise.all(wave.map((threat) => processThreat(threat)));
     }
 
-    async function processThreat(
-      threat: typeof threats.results[number],
-      getOrClassify: (t: typeof threats.results[number]) => Promise<Awaited<ReturnType<typeof classifyThreat>>>,
-    ): Promise<void> {
+    async function processThreat(threat: typeof threatList[number]): Promise<void> {
       itemsProcessed++;
 
-      // Pre-filter: high-confidence feeds with known threat types skip AI
-      const ruleResult = ruleBasedClassify(threat.source_feed, threat.threat_type);
-      const skipAI = ruleResult.confidence >= 85 && threat.threat_type && threat.threat_type !== 'unknown';
+      const domain = threat.malicious_domain;
+      const squattedBrand = domain ? detectBrandSquatting(domain, brandKeywords) : null;
 
-      let confidence: number;
-      let severity: string;
-
-      if (skipAI) {
-        // High-confidence feed with known threat type — trust the feed
-        confidence = ruleResult.confidence;
-        severity = ruleResult.severity;
-        haikuSuccesses++; // count as success for stats
-        aiSkippedByRules++;
-      } else {
-        // Try Haiku classification. Lever #3: routed through
-        // getOrClassify so sibling threats share a single AI call —
-        // the first caller fires it, subsequent callers in the same
-        // tick (same apex_domain + source_feed + asn) await the same
-        // promise.
-        const result = await getOrClassify(threat);
-
-        if (result.success && result.data) {
-          haikuSuccesses++;
-          confidence = result.data.confidence;
-          severity = result.data.severity;
-          if (result.tokens_used) totalTokens += result.tokens_used;
-          if (result.model) model = result.model;
-        } else {
-          haikuFailures++;
-          // Fallback: rule-based scoring with source-quality boosting
-          const fb = ruleBasedClassify(threat.source_feed, threat.threat_type);
-          confidence = fb.confidence;
-          severity = fb.severity;
-        }
-      }
+      // Rules are the only classifier (AI_STRATEGY_2026-10 Phase 1).
+      // `brandMatched` drives the credential-path escalation: either the
+      // domain carries a monitored brand keyword (and is not the brand's
+      // own apex), or the threat was already attributed to a brand.
+      const rule = ruleBasedClassify({
+        sourceFeed: threat.source_feed,
+        threatType: threat.threat_type,
+        maliciousUrl: threat.malicious_url,
+        brandMatched: squattedBrand !== null || !!threat.target_brand_id,
+      });
+      let confidence = rule.confidence;
+      let severity: string = rule.severity;
+      if (rule.credentialPathEscalated) credentialPathEscalations++;
 
       // Impersonation detection on domain
       let threatType = threat.threat_type;
-      const domain = threat.malicious_domain;
       if (domain) {
         const hasHomoglyphs = detectHomoglyphs(domain);
-        const squattedBrand = detectBrandSquatting(domain, brandKeywords);
 
         if (hasHomoglyphs || squattedBrand) {
           impersonationsFound++;
@@ -557,114 +419,31 @@ export const sentinelAgent: AgentModule = {
       }
     }
 
-    // ─── APT pattern detection (if batch >= 10 threats) ─────────
-    // NOTE: the per-run summary output used to be pushed ABOVE this
-    // block. It now sits BELOW it, because the APT detector makes its
-    // own Anthropic call and the summary's AI-health verdict has to see
-    // every call the run made. Do not move it back up.
-    let aptHits = 0;
-    if (itemsProcessed >= 10) {
-      try {
-        const recentDomains = threats.results
-          .filter(t => t.malicious_domain)
-          .map(t => t.malicious_domain)
-          .slice(0, 30);
-        if (recentDomains.length >= 10) {
-          const { callHaikuRaw } = await import("../lib/haiku");
-          const aptResult = await callHaikuRaw(env, callCtx,
-            "You detect state-sponsored phishing patterns. Reply ONLY with valid JSON array, no markdown.",
-            `Given these new threat domains: ${JSON.stringify(recentDomains)}. Do any match known state-sponsored phishing patterns (typosquats of government/military/financial domains)? Reply JSON: [{domain, apt_pattern, confidence: "high"|"medium"|"low", notes}]. Only include high/medium confidence. Empty array if none.`,
-            512,
-          );
-          // `ok` is aptResult.success alone, NOT `success && text` —
-          // deliberate (test-engineer raised it). A 2xx whose text block
-          // is empty is a degenerate MODEL answer, not a dead API: the
-          // call was billed and wrote a budget_ledger row, so counting it
-          // as a failed attempt would contradict leg 1 of the Flight
-          // Control gate (which reads that same ledger as proof AI is
-          // alive) and would surface as a first-failure with
-          // failure_kind=undefined → "unknown". The parse below already
-          // treats empty text as "no APT hits", which is the right
-          // product behaviour.
-          //
-          // This one opportunistic call per run is also why
-          // AI_OUTAGE_MIN_ATTEMPTS exists: a lone transient failure here
-          // must not be an outage. The floor handles that, so the APT
-          // call still counts in the raw counters (operators should see
-          // every real request) without being able to trip the verdict
-          // by itself.
-          recordAiCall(aiOpportunistic, aptResult, aptResult.success, "[sentinel]");
-          if (aptResult.success && aptResult.text) {
-            if (aptResult.tokens_used) totalTokens += aptResult.tokens_used;
-            const jsonMatch = aptResult.text.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              const hits = JSON.parse(jsonMatch[0]) as Array<{
-                domain: string; apt_pattern: string; confidence: string; notes: string;
-              }>;
-              for (const hit of hits) {
-                if (hit.confidence !== 'high' && hit.confidence !== 'medium') continue;
-                aptHits++;
-                // Escalate matching threats
-                const matchingThreat = threats.results.find(t => t.malicious_domain === hit.domain);
-                if (matchingThreat) {
-                  await env.DB.prepare(
-                    "UPDATE threats SET severity = 'critical' WHERE id = ? AND severity != 'critical'"
-                  ).bind(matchingThreat.id).run();
-                }
-                outputs.push({
-                  type: "classification",
-                  summary: `**APT Pattern Detected** — ${hit.domain} matches ${hit.apt_pattern} pattern (${hit.confidence} confidence). ${hit.notes}`,
-                  severity: "critical",
-                  details: { domain: hit.domain, apt_pattern: hit.apt_pattern, confidence: hit.confidence },
-                });
-              }
-            }
-          }
-        }
-      } catch (aptErr) {
-        console.error("[sentinel] APT detection error:", aptErr);
-      }
-    }
+    // The state-sponsored "APT pattern" batch guess that used to sit here
+    // (one Haiku call over the batch's domains) was deleted in Phase 1:
+    // it asked the model to recognise typosquats from a bare domain list,
+    // which the homoglyph / brand-squat / IRANIAN_APT_ASNS rules above
+    // already do deterministically. Attribution belongs to NEXUS +
+    // attributor, not a per-batch guess.
 
-    // Every Anthropic round-trip this run made came back unusable (with
-    // the AI_OUTAGE_MIN_ATTEMPTS noise floor applied). The agent still
-    // classified threats — ruleBasedClassify is the fallback and is
-    // unaffected — so this is a DEGRADED run, not a failed one. What it
-    // must not be is `severity: "info"`.
-    const aiAllFailing = isAiAllFailing(ai);
-    // What gets persisted: required + opportunistic, so the raw counters
-    // account for every real request. The verdict above does not.
-    const aiTotals = mergeAiCallCounters(ai, aiOpportunistic);
-
-    // Always generate a summary output so agent_outputs gets populated
+    // Always generate a summary output so agent_outputs gets populated.
+    // No aiCalls* counters: execute() makes no Anthropic call, so it is
+    // not one of the counter-instrumented agents Flight Control's
+    // platform_ai_calls_failing check or diagnostics ai_health read.
     outputs.push({
       type: "classification",
-      summary: aiAllFailing
-        ? `AI CALLS ALL FAILING — sentinel made ${aiTotals.aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${aiTotals.aiFirstFailureKind ?? "unknown"} — ${aiTotals.aiFirstError ?? "unknown"}). ${itemsUpdated} threats classified by rules only (${itemsProcessed} processed).`
-        : itemsProcessed > 0
-        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, haiku=${haikuSuccesses}/${haikuFailures}, aiSkippedByRules=${aiSkippedByRules}, aiSkippedBySibling=${aiSkippedBySibling})`
+      summary: itemsProcessed > 0
+        ? `Sentinel classified ${itemsUpdated} threats (${itemsProcessed} processed, ${impersonationsFound} impersonations, rules=${itemsProcessed}, credentialPathEscalations=${credentialPathEscalations})`
         : `Sentinel found 0 unclassified threats (${totalCount?.n ?? 0} total in DB, ${nullCount?.n ?? 0} with NULL confidence)`,
-      // 'high', not 'critical': the rule-based path keeps classification
-      // moving. agent_outputs.severity CHECK allows
-      // critical/high/medium/low/info (migration 0061).
-      severity: aiAllFailing ? "high" : "info",
+      severity: "info",
       details: {
         processed: itemsProcessed,
         updated: itemsUpdated,
         impersonationsFound,
-        haikuSuccesses,
-        haikuFailures,
-        // Strictly-API counters — Flight Control's
-        // platform_ai_calls_failing check and the diagnostics ai_health
-        // block read these key names back via json_extract. Spread so
-        // the key names come from AiCallCounters and cannot drift
-        // between the three instrumented agents.
-        ...aiTotals,
-        aiSkippedByRules,
-        aiSkippedBySibling,
+        rulesClassified: itemsProcessed,
+        credentialPathEscalations,
         totalThreats: totalCount?.n ?? 0,
         nullConfidenceThreats: nullCount?.n ?? 0,
-        anthropicApiConfigured: !!env.ANTHROPIC_API_KEY,
       },
     });
 
@@ -672,19 +451,9 @@ export const sentinelAgent: AgentModule = {
       itemsProcessed,
       itemsCreated: 0,
       itemsUpdated,
-      output: { classified: itemsUpdated, impersonationsFound, aptHits },
-      model,
-      tokensUsed: totalTokens,
+      output: { classified: itemsUpdated, impersonationsFound, credentialPathEscalations },
+      tokensUsed: 0,
       agentOutputs: outputs,
-      // See AgentResult.degraded — finalizes agent_runs.status as
-      // 'partial', not 'success' and not 'failed'.
-      ...(aiAllFailing
-        ? {
-            degraded: {
-              reason: `all ${aiTotals.aiCallsAttempted} Anthropic call(s) failed (first: ${aiTotals.aiFirstFailureKind ?? "unknown"} — ${aiTotals.aiFirstError ?? "unknown"})`,
-            },
-          }
-        : {}),
     };
   },
 };
@@ -717,7 +486,8 @@ interface SocialAssessmentAI {
 /**
  * AI-assess open HIGH/CRITICAL social monitoring results that lack an ai_assessment.
  * Called by the cron orchestrator after runSocialMonitorBatch completes.
- * Uses the same callAnthropic pattern as the main sentinel classification loop.
+ * Routed through callAnthropicJSON (budget_ledger + AI Gateway). This is
+ * sentinel's only remaining AI call; execute() is rules-only.
  */
 export async function runSentinelSocialAssessment(env: Env): Promise<void> {
   // Fetch unassessed HIGH/CRITICAL results.
@@ -834,24 +604,146 @@ export async function runSentinelSocialAssessment(env: Env): Promise<void> {
 
 }
 
-function ruleBasedClassify(
-  sourceFeed: string,
-  threatType: string,
-): { confidence: number; severity: string } {
-  const highConfidence = ["phishtank", "threatfox", "feodo", "cisa_kev"];
-  const medConfidence = ["urlhaus", "openphish"];
-  const socialSources = ["tweetfeed", "mastodon_ioc"];
+// ─── Rule-based classification ──────────────────────────────────
 
-  let confidence = 60;
-  if (highConfidence.includes(sourceFeed)) confidence = 90;
-  else if (medConfidence.includes(sourceFeed)) confidence = 80;
-  else if (socialSources.includes(sourceFeed)) confidence = 70;
+/**
+ * Source-feed confidence tiers. Keys are the literal `threats.source_feed`
+ * strings the feed modules write (src/feeds/*.ts). `mastodon_ioc` is an
+ * archived feed (src/feeds/_archive) kept so historical rows still score
+ * as a social source.
+ */
+const FEED_CONFIDENCE_90 = new Set([
+  "phishtank", "threatfox", "feodo", "sslbl", "malwarebazaar", "cisa_iran_iocs",
+]);
+const FEED_CONFIDENCE_80 = new Set([
+  "urlhaus", "openphish", "phishing_database", "phishstats",
+]);
+const FEED_CONFIDENCE_70 = new Set([
+  "tweetfeed", "mastodon_ioc", "otx_alienvault", "digitalside_osint", "circl_osint", "urlscanio",
+]);
+// Speculative sources: certificate transparency, generated typosquat
+// permutations and newly-registered-domain lists name candidates, not
+// observed malicious activity.
+const FEED_CONFIDENCE_50 = new Set(["ct_logs", "typosquat_scanner", "nrd_hagezi"]);
+const DEFAULT_FEED_CONFIDENCE = 60;
+const UNKNOWN_TYPE_PENALTY = 10;
+const CONFIDENCE_FLOOR = 40;
 
-  let severity = "medium";
-  if (threatType === "malware_distribution" || threatType === "credential_harvesting") severity = "high";
-  if (threatType === "c2" || threatType === "botnet") severity = "critical";
-  if (sourceFeed === "feodo") severity = "critical";
-  if (sourceFeed === "cisa_kev") severity = "critical";
+/**
+ * Tokens that mark a credential-capture page when they appear in a
+ * brand-matched URL's path or query. Plain substring checks, lowercased.
+ */
+export const CREDENTIAL_PATH_TOKENS = [
+  "login", "signin", "verify", "account", "wallet", "password", "2fa", "secure",
+] as const;
 
-  return { confidence, severity };
+export type RuleSeverity = "critical" | "high" | "medium" | "low";
+
+const SEVERITY_RANK: Record<RuleSeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+
+export interface RuleClassifyInput {
+  sourceFeed: string;
+  threatType: string | null;
+  maliciousUrl?: string | null;
+  /** The threat's domain matched a monitored brand keyword, or it is already brand-attributed. */
+  brandMatched?: boolean;
+}
+
+export interface RuleClassifyResult {
+  confidence: number;
+  severity: RuleSeverity;
+  /** The credential-path escalation raised severity (it was below high). */
+  credentialPathEscalated: boolean;
+}
+
+function feedConfidence(sourceFeed: string): number {
+  if (FEED_CONFIDENCE_90.has(sourceFeed)) return 90;
+  if (FEED_CONFIDENCE_80.has(sourceFeed)) return 80;
+  if (FEED_CONFIDENCE_70.has(sourceFeed)) return 70;
+  if (FEED_CONFIDENCE_50.has(sourceFeed)) return 50;
+  return DEFAULT_FEED_CONFIDENCE;
+}
+
+function typeSeverity(sourceFeed: string, threatType: string | null): RuleSeverity {
+  if (sourceFeed === "feodo") return "critical";
+  switch (threatType) {
+    case "c2":
+    case "botnet":
+      return "critical";
+    case "malware_distribution":
+    case "credential_harvesting":
+      return "high";
+    case "phishing":
+    case "impersonation":
+    case "typosquatting":
+      return "medium";
+    case "malicious_ip":
+    case "scanning":
+      return "low";
+    default:
+      return "medium";
+  }
+}
+
+/**
+ * The path + query portion of a URL, lowercased. Tolerates scheme-less
+ * values (`evil.com/login`) by retrying with an `http://` prefix. The
+ * host is deliberately excluded so a token in the hostname
+ * (`secure-paypal.com`) cannot satisfy the path check on its own.
+ * Returns "" when the value cannot be parsed as a URL.
+ */
+export function urlPathAndQuery(rawUrl: string): string {
+  const candidates = rawUrl.includes("://") ? [rawUrl] : [`http://${rawUrl}`];
+  for (const c of candidates) {
+    try {
+      const u = new URL(c);
+      return `${u.pathname}${u.search}`.toLowerCase();
+    } catch {
+      // unparseable — fall through
+    }
+  }
+  return "";
+}
+
+export function hasCredentialPathToken(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  const pq = urlPathAndQuery(rawUrl);
+  if (!pq) return false;
+  for (const token of CREDENTIAL_PATH_TOKENS) {
+    if (pq.includes(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * Sentinel's sole classifier. Pure — exported for tests.
+ *
+ *   confidence = source-feed tier (90/80/70/50, default 60),
+ *                −10 when threat_type is NULL/'unknown', floor 40
+ *   severity   = by threat_type (feodo is always critical), then
+ *                raised to at least 'high' when the threat is
+ *                brand-matched AND its URL path/query carries a
+ *                credential token (login, verify, wallet, …)
+ *
+ * The homoglyph / brand-squat / Iranian-APT-ASN / social-correlation
+ * escalations run after this in processThreat and are unchanged.
+ */
+export function ruleBasedClassify(input: RuleClassifyInput): RuleClassifyResult {
+  let confidence = feedConfidence(input.sourceFeed);
+  if (!input.threatType || input.threatType === "unknown") {
+    confidence = Math.max(CONFIDENCE_FLOOR, confidence - UNKNOWN_TYPE_PENALTY);
+  }
+
+  let severity = typeSeverity(input.sourceFeed, input.threatType);
+  let credentialPathEscalated = false;
+  if (
+    input.brandMatched
+    && SEVERITY_RANK[severity] < SEVERITY_RANK.high
+    && hasCredentialPathToken(input.maliciousUrl)
+  ) {
+    severity = "high";
+    credentialPathEscalated = true;
+  }
+
+  return { confidence, severity, credentialPathEscalated };
 }

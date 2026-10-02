@@ -65,22 +65,6 @@ vi.mock("../src/lib/geoip", async () => {
   };
 });
 
-// Lever #6 batches API poll/submit — real network + KV state otherwise.
-vi.mock("../src/lib/cartographer-batch", () => ({
-  pollAndIngestCartographerBatches: vi.fn(async () => ({
-    polled: 0,
-    ingested_batches: 0,
-    ingested_providers: 0,
-    cost_usd: 0,
-    errors: [] as string[],
-  })),
-  submitCartographerScoringBatch: vi.fn(async () => ({
-    submitted: 0,
-    batch_id: null,
-    skipped_reason: "test-noop",
-  })),
-}));
-
 // ─── Fake D1 ─────────────────────────────────────────────────────────
 
 interface CapturedWrite {

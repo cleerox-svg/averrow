@@ -43,14 +43,14 @@ import { emitPlatformNotification } from "../src/lib/platform-templates";
 import { flightControlAgent } from "../src/agents/flightControl";
 import { parseNewestFailure, AI_OUTAGE_MIN_ATTEMPTS } from "../src/lib/haiku";
 import { executeAgent } from "../src/lib/agentRunner";
-import { sentinelAgent } from "../src/agents/sentinel";
+import { analystAgent } from "../src/agents/analyst";
 import {
   hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, sqlContaining, sqliteTimestampHoursAgo,
   type SqliteDb, type StatementLogEntry,
 } from "./sqlite-d1-harness";
 import {
-  SENTINEL_TABLES, CLASSIFICATION_JSON, CREDIT_BALANCE_400, anthropicOk,
-  RULE_SKIPPED, seedThreats, distinct, type SeedThreat,
+  ANALYST_TABLES, CREDIT_BALANCE_400, anthropicOk, brandMatchJson,
+  seedKeywordBrand, keywordMatched, routedFetch, seedThreats, distinct, type SeedThreat,
 } from "./ai-fixtures";
 
 const readSrc = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -63,7 +63,7 @@ const LEDGER_SQL = sqlContaining(FC_SRC, ["SELECT MAX(created_at) AS last_at FRO
 const FAILING_SQL = sqlContaining(FC_SRC, ["FROM agent_outputs", "HAVING", "$.aiCallsAttempted"]);
 const DIAG_AI_HEALTH_SQL = sqlContaining(DIAG_SRC, ["FROM agent_outputs", "$.aiCallsSkipped", "GROUP BY agent_id"]);
 
-const TABLES = [...SENTINEL_TABLES];
+const TABLES = [...ANALYST_TABLES];
 
 /** Statements that are the unit under test — their errors must never be swallowed. */
 const swallowOnlyAbsentUnrelatedTables = (_sql: string, err: Error): boolean => /no such table/i.test(err.message);
@@ -155,21 +155,25 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
   }
 
   /**
-   * Run the REAL sentinel through executeAgent against this same database, so
+   * Run the REAL analyst through executeAgent against this same database, so
    * the agent_outputs rows Flight Control reads are the ones the writer
    * actually produces (writer/reader key parity), not hand-seeded JSON.
+   * (Was sentinel until AI_STRATEGY_2026-10 Phase 1 moved sentinel onto
+   * rules; analyst is the remaining counter-instrumented writer.)
    */
-  async function runRealSentinel(opts: { threats: SeedThreat[]; fetchImpl?: () => Promise<Response> }): Promise<void> {
-    raw.exec(`INSERT OR IGNORE INTO agent_approvals (agent_id, state, requested_at) VALUES ('sentinel', 'approved', datetime('now'))`);
+  async function runRealAnalyst(opts: { threats: SeedThreat[]; anthropic?: () => Response | Promise<Response> }): Promise<void> {
+    raw.exec(`INSERT OR IGNORE INTO agent_approvals (agent_id, state, requested_at) VALUES ('analyst', 'approved', datetime('now'))`);
     seedThreats(raw, opts.threats);
-    globalThis.fetch = vi.fn(opts.fetchImpl ?? (async () => anthropicOk(CLASSIFICATION_JSON))) as unknown as typeof fetch;
+    const net = routedFetch({ anthropic: opts.anthropic ?? (() => anthropicOk(brandMatchJson(90))) });
+    globalThis.fetch = net.fn;
     const env = {
       DB: d1FromSqlite(raw),
       CACHE: fakeKv({ "ai:throttle_reason": "" }),
       ANTHROPIC_API_KEY: "sk-ant-test",
     } as never;
-    const out = await executeAgent(env, sentinelAgent);
+    const out = await executeAgent(env, analystAgent);
     expect(out.runId).not.toBe("");
+    expect(net.unrouted, "analyst called a URL the stub has no route for").toEqual([]);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -213,11 +217,13 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
       expectCheckRanCleanly({ failingQueryShouldRun: true });
     });
 
-    it("ledger silent, and the only agent output is a rules-skip run written by the REAL sentinel: no emit", async () => {
-      // Writer/reader contract: not seeded by hand — produced by sentinel itself,
-      // so renaming a counter in sentinel.ts without updating the FC query fails here.
+    it("ledger silent, and the only agent output is a keyword-pre-match run written by the REAL analyst: no emit", async () => {
+      // Writer/reader contract: not seeded by hand — produced by analyst itself,
+      // so renaming a counter in analyst.ts without updating the FC query fails here.
+      // Every threat pre-matches a brand keyword, so NO Anthropic call is made.
       ledgerRowHoursAgo(5);
-      await runRealSentinel({ threats: distinct(6, RULE_SKIPPED) });
+      seedKeywordBrand(raw);
+      await runRealAnalyst({ threats: keywordMatched(6) });
 
       await runFlightControl();
 
@@ -247,11 +253,11 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
       expectRollupQualified(1);
     });
 
-    it("emits from a REAL sentinel run whose every Anthropic call returned HTTP 400 (writer/reader parity)", async () => {
+    it("emits from a REAL analyst run whose every Anthropic call returned HTTP 400 (writer/reader parity)", async () => {
       ledgerRowHoursAgo(5);
-      await runRealSentinel({
+      await runRealAnalyst({
         threats: distinct(3),
-        fetchImpl: async () => new Response(CREDIT_BALANCE_400, { status: 400 }),
+        anthropic: () => new Response(CREDIT_BALANCE_400, { status: 400 }),
       });
 
       await runFlightControl();

@@ -1,84 +1,88 @@
 /**
- * Strictly-API AI counters + honest run status — sentinel, driven end to end
- * through `executeAgent` against a REAL SQLite instance whose schema is
- * derived from migrations/, with only `fetch` stubbed.
+ * Strictly-API AI counters + honest run status — the agent-agnostic outage
+ * contract, driven end to end through `executeAgent` against a REAL SQLite
+ * instance whose schema is derived from migrations/, with only `fetch`
+ * stubbed.
  *
- * Each describe block pins one trap that was found while building the
- * silent-AI-failure guard. They are the reason the fix is correct, so they
- * are what must not regress:
+ * This lane used to drive sentinel. AI_STRATEGY_2026-10 Phase 1 (Batch B)
+ * moved sentinel onto rules — it makes no Anthropic call any more (see
+ * phase1-rules-no-anthropic.test.ts) — so the traps below are now driven
+ * through ANALYST, the remaining counter-instrumented agent. The
+ * sentinel-only traps (rules-skip inflating `haikuSuccesses`, the sibling
+ * classification cache, the opportunistic APT call) went away with the code
+ * that had them. Analyst-specific shapes (keyword pre-match, confidence < 70,
+ * DoH routing) live in analyst-ai-counters.test.ts.
  *
- *   2. Sentinel increments the legacy `haikuSuccesses` for a rules-based
- *      skip that makes NO API call (`// count as success for stats`), which
- *      is why `haiku=N/0` read healthy through three months of total outage.
- *      The NEW counters must read zero attempts for a run that made no call.
- *   3. A deliberate throttle / budget cap must count as SKIPPED, never
+ * What must not regress:
+ *
+ *   3. A deliberate throttle / budget cap counts as SKIPPED, never
  *      ATTEMPTED — otherwise the cost guard doing its job raises the alert.
- *   4. `getOrClassify` shares ONE promise across sibling threats; counting
- *      per threat would let `succeeded` exceed `attempted`.
  *   6. A run where AI was attempted and wholly failed finalizes
  *      `status='partial'` with `completed_at` stamped: not 'success' (the
- *      defect), not 'failed' (dishonest — the rule-based fallback did real
- *      work). `completed_at` is what keeps it out of the orphan/stall paths.
+ *      defect), not 'failed' (dishonest — the fallback did real work).
+ *      `completed_at` is what keeps it out of the orphan/stall paths.
  *
  * Case 5 (the Flight Control conjunction gate) lives in
- * flight-control-ai-calls-failing.test.ts; this file produces the real
- * writer output that file's reader is also checked against.
+ * flight-control-ai-calls-failing.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { executeAgent } from "../src/lib/agentRunner";
-import { sentinelAgent } from "../src/agents/sentinel";
+import { analystAgent } from "../src/agents/analyst";
 import { computeIsStalled, isOrphanedRun } from "../src/agents/flightControl";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import {
-  SENTINEL_TABLES, CLASSIFICATION_JSON, CREDIT_BALANCE_400, anthropicOk,
-  RULE_SKIPPED, MODEL_BOUND, seedThreats, distinct, type SeedThreat,
+  ANALYST_TABLES, CREDIT_BALANCE_400, anthropicOk, brandMatchJson,
+  routedFetch, seedThreats, distinct, type RoutedFetch,
 } from "./ai-fixtures";
 
 interface Run {
-  runId: string;
   status: string;
   result: Awaited<ReturnType<typeof executeAgent>>["result"];
   runRow: { status: string; completed_at: string | null; error_message: string | null };
-  /** `details` of the sentinel summary output (the one carrying the AI counters). */
+  /** `details` of the analyst summary diagnostic (the one carrying the AI counters). */
   details: Record<string, unknown>;
   summary: { summary: string; severity: string | null };
 }
 
-describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status (real SQLite, stubbed fetch)", () => {
+describe.skipIf(!hasSqlite())("strictly-API counters and run status — analyst (real SQLite, stubbed fetch)", () => {
   let raw: SqliteDb;
-  let fetchSpy: ReturnType<typeof vi.fn>;
+  let net: RoutedFetch;
+
+  const useFetch = (opts: Parameters<typeof routedFetch>[0] = {}): void => {
+    net = routedFetch(opts);
+    globalThis.fetch = net.fn;
+  };
 
   beforeEach(() => {
-    raw = openDerivedDb(SENTINEL_TABLES);
-    raw.exec(`INSERT INTO agent_approvals (agent_id, state, requested_at) VALUES ('sentinel', 'approved', datetime('now'))`);
-    fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    raw = openDerivedDb(ANALYST_TABLES);
+    raw.exec(`INSERT INTO agent_approvals (agent_id, state, requested_at) VALUES ('analyst', 'approved', datetime('now'))`);
+    useFetch();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    expect(net.unrouted, "analyst called a URL the stub has no route for").toEqual([]);
+    vi.restoreAllMocks();
+  });
 
-  async function runSentinel(throttleReason = ""): Promise<Run> {
+  async function runAnalyst(throttleReason = ""): Promise<Run> {
     const env = {
       DB: d1FromSqlite(raw),
       CACHE: fakeKv({ "ai:throttle_reason": throttleReason }),
       ANTHROPIC_API_KEY: "sk-ant-test",
     } as never;
-    const out = await executeAgent(env, sentinelAgent);
+    const out = await executeAgent(env, analystAgent);
     expect(out.runId, "executeAgent refused to run (circuit/approval gate)").not.toBe("");
 
     const runRow = raw.prepare(`SELECT status, completed_at, error_message FROM agent_runs WHERE id = ?`).all(out.runId)[0] as Run["runRow"];
-    // The summary output is the one with the strictly-API counters; Iranian-APT /
-    // social / APT-pattern rows share type='classification' but carry other details.
     const rows = raw
-      .prepare(`SELECT summary, severity, details FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'classification'`)
+      .prepare(`SELECT summary, severity, details FROM agent_outputs WHERE agent_id = 'analyst' AND type = 'diagnostic'`)
       .all() as Array<{ summary: string; severity: string | null; details: string }>;
     const summaryRow = rows.find((r) => "aiCallsAttempted" in (JSON.parse(r.details) as object));
-    expect(summaryRow, "no sentinel summary output carrying aiCallsAttempted was persisted").toBeDefined();
+    expect(summaryRow, "no analyst summary output carrying aiCallsAttempted was persisted").toBeDefined();
     return {
-      runId: out.runId,
       status: out.status,
       result: out.result,
       runRow,
@@ -88,199 +92,39 @@ describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // 2. The rules-skip counter trap
-  // ═══════════════════════════════════════════════════════════════════
-  describe("every threat is rule-skipped (NO API call is made)", () => {
-    it("the NEW counters read attempted === 0 even though the legacy haikuSuccesses is inflated", async () => {
-      seedThreats(raw, distinct(6, RULE_SKIPPED));
-
-      const run = await runSentinel();
-
-      // Precondition that makes this THE trap: the legacy counter reads
-      // "6 successes, 0 failures" for a run in which Anthropic was never called.
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(run.details.aiSkippedByRules).toBe(6);
-      expect(run.details.haikuSuccesses).toBe(6);
-      expect(run.details.haikuFailures).toBe(0);
-
-      // The property under test: the strictly-API counters are NOT fooled.
-      expect(run.details.aiCallsAttempted).toBe(0);
-      expect(run.details.aiCallsSucceeded).toBe(0);
-      expect(run.details.aiCallsSkipped).toBe(0);
-    });
-
-    it("therefore the alert condition does not fire: not degraded, severity info, status 'success'", async () => {
-      seedThreats(raw, distinct(6, RULE_SKIPPED));
-
-      const run = await runSentinel();
-
-      // attempted > 0 && succeeded === 0 is the alert predicate; with
-      // attempted === 0 it is false, so nothing downstream sees an outage.
-      const attempted = run.details.aiCallsAttempted as number;
-      const succeeded = run.details.aiCallsSucceeded as number;
-      expect(attempted > 0 && succeeded === 0).toBe(false);
-      expect(run.result?.degraded).toBeUndefined();
-      expect(run.summary.severity).toBe("info");
-      expect(run.summary.summary).not.toMatch(/AI CALLS ALL FAILING/);
-      expect(run.status).toBe("success");
-      expect(run.runRow.status).toBe("success");
-    });
-
-    it("the batch-level APT detector IS a real call: >= 10 rule-skipped threats + HTTP 400 is COUNTED as attempted, but alone does NOT degrade the run", async () => {
-      // The summary output is pushed AFTER the APT block precisely so its
-      // counters see this call ("Do not move it back up"). If the summary
-      // were computed before the APT call, this run would read as
-      // attempted === 0 and the only real API call of the run would be
-      // invisible.
-      //
-      // The run nevertheless finalizes 'success', NOT 'partial'. The APT
-      // detector is ONE opportunistic best-effort call per run whose
-      // failure costs the run nothing (no APT hits is a normal outcome),
-      // so sentinel records it in a separate counter set and computes its
-      // degraded verdict from the REQUIRED path (per-threat
-      // classification) alone. Before that split, a single transient 529
-      // here was enough to mark a whole run degraded and emit a
-      // severity-high output — with every threat rule-skipped it is the
-      // only call of the run, so attempted=1 / succeeded=0 looked exactly
-      // like a total outage. Raw counters stay honest for Flight Control
-      // (which has its own AI_OUTAGE_MIN_ATTEMPTS floor); only the
-      // per-run verdict ignores it.
-      seedThreats(raw, distinct(10, RULE_SKIPPED));
-      fetchSpy.mockImplementation(async () => new Response(CREDIT_BALANCE_400, { status: 400 }));
-
-      const run = await runSentinel();
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1); // the APT call only; all 10 classifications were rule-skipped
-      expect(run.details.aiCallsAttempted).toBe(1);
-      expect(run.details.aiCallsSucceeded).toBe(0);
-      expect(run.details.haikuSuccesses).toBe(10); // legacy counter still reads healthy
-      // Counted, but not an outage on its own.
-      expect(run.runRow.status).toBe("success");
-      expect(run.details.aiFirstFailureKind).toBe("api_error");
-    });
-
-    it("an empty text block from the APT detector is a MODEL answer, not a dead API: counted as a success", async () => {
-      // callHaikuRaw returns { success: true, text: "" } when the response
-      // carries no text block. The call was still billed and wrote a
-      // budget_ledger row, so counting it as a failed attempt would
-      // contradict leg 1 of the Flight Control gate (which reads that same
-      // ledger as proof AI is alive) and would surface a first-failure
-      // with failure_kind undefined => "unknown".
-      seedThreats(raw, distinct(10, RULE_SKIPPED));
-      fetchSpy.mockImplementation(async () => anthropicOk(""));
-
-      const run = await runSentinel();
-
-      expect(run.details.aiCallsAttempted).toBe(1);
-      expect(run.details.aiCallsSucceeded).toBe(1);
-      expect(run.details.aiFirstError).toBeNull();
-      expect(run.runRow.status).toBe("success");
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
   // 3. A deliberate throttle must not look like an outage
   // ═══════════════════════════════════════════════════════════════════
   describe("deliberate skips are SKIPPED, never ATTEMPTED", () => {
     it("global budget throttle: attempted === 0, skipped incremented, no request leaves, no alert condition", async () => {
       seedThreats(raw, distinct(3));
 
-      const run = await runSentinel("budget hard throttle (97% of $21.33)");
+      const run = await runAnalyst("budget hard throttle (97% of $21.33)");
 
-      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(net.anthropicCalls).toHaveLength(0);
       expect(run.details.aiCallsAttempted).toBe(0);
       expect(run.details.aiCallsSucceeded).toBe(0);
       expect(run.details.aiCallsSkipped).toBe(3);
-      // The legacy counter DOES see failures here (3) — which is exactly why it
-      // cannot be the signal. The strictly-API counters do not.
-      expect(run.details.haikuFailures).toBe(3);
       expect(run.details.aiFirstError).toBeNull();
       expect(run.details.aiFirstFailureKind).toBeNull();
-
       expect(run.result?.degraded).toBeUndefined();
       expect(run.summary.severity).toBe("info");
       expect(run.status).toBe("success");
     });
 
-    it("throttle also covers the APT detector: 12 distinct threats -> 12 classification skips + 1 APT skip, still attempted === 0", async () => {
-      seedThreats(raw, distinct(12));
-
-      const run = await runSentinel("budget emergency throttle (99.5% of $21.33)");
-
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(run.details.aiCallsAttempted).toBe(0);
-      expect(run.details.aiCallsSkipped).toBe(13);
-      expect(run.status).toBe("success");
-    });
-
     it("per-agent monthly token cap (budget_cap): attempted === 0, skipped incremented, no request leaves", async () => {
       const { agentModules } = await import("../src/agents");
-      const cap = agentModules.sentinel!.budget.monthlyTokenCap;
+      const cap = agentModules.analyst!.budget.monthlyTokenCap;
       raw.prepare(
         `INSERT INTO agent_budget_rollups (agent_id, year_month, total_input_tokens, total_output_tokens, total_cost_usd, call_count)
-         VALUES ('sentinel', strftime('%Y-%m', 'now'), ?, 0, 1, 1)`,
+         VALUES ('analyst', strftime('%Y-%m', 'now'), ?, 0, 1, 1)`,
       ).run(cap + 1);
       seedThreats(raw, distinct(2));
 
-      const run = await runSentinel();
+      const run = await runAnalyst();
 
-      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(net.anthropicCalls).toHaveLength(0);
       expect(run.details.aiCallsAttempted).toBe(0);
       expect(run.details.aiCallsSkipped).toBe(2);
-      expect(run.result?.degraded).toBeUndefined();
-      expect(run.status).toBe("success");
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 4. Sibling-cache accounting
-  // ═══════════════════════════════════════════════════════════════════
-  describe("sibling threats share ONE in-flight call", () => {
-    const siblings = (apex: string, n: number, prefix: string): SeedThreat[] =>
-      Array.from({ length: n }, (_, i) => ({ id: `${prefix}${i}`, domain: `host${i}.${apex}`, ...MODEL_BOUND }));
-
-    it("5 siblings, call succeeds: exactly 1 attempted / 1 succeeded (succeeded <= attempted)", async () => {
-      seedThreats(raw, siblings("shared-apex.net", 5, "s"));
-      fetchSpy.mockImplementation(async () => anthropicOk(CLASSIFICATION_JSON));
-
-      const run = await runSentinel();
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(run.details.aiSkippedBySibling).toBe(4);
-      expect(run.details.aiCallsAttempted).toBe(1);
-      expect(run.details.aiCallsSucceeded).toBe(1);
-      expect(run.details.aiCallsSucceeded as number).toBeLessThanOrEqual(run.details.aiCallsAttempted as number);
-      // Per-threat bookkeeping is what the legacy counter does (5 successes
-      // for ONE call) — the strictly-API pair must not follow it.
-      expect(run.details.haikuSuccesses).toBe(5);
-    });
-
-    it("5 siblings, call fails: still exactly 1 attempted / 0 succeeded", async () => {
-      seedThreats(raw, siblings("shared-apex.net", 5, "s"));
-      fetchSpy.mockImplementation(async () => new Response(CREDIT_BALANCE_400, { status: 400 }));
-
-      const run = await runSentinel();
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(run.details.aiCallsAttempted).toBe(1);
-      expect(run.details.aiCallsSucceeded).toBe(0);
-      expect(run.details.haikuFailures).toBe(5); // per-threat, legacy
-    });
-
-    it("two sibling groups, one answered and one failing: attempted 2 / succeeded 1 — AI is alive, so no degraded run", async () => {
-      seedThreats(raw, [...siblings("alive-apex.net", 3, "a"), ...siblings("dead-apex.net", 2, "b")]);
-      fetchSpy.mockImplementation(async (_url: string, init: { body: string }) =>
-        init.body.includes("alive-apex")
-          ? anthropicOk(CLASSIFICATION_JSON)
-          : new Response("upstream exploded", { status: 500 }),
-      );
-
-      const run = await runSentinel();
-
-      expect(fetchSpy).toHaveBeenCalledTimes(2);
-      expect(run.details.aiCallsAttempted).toBe(2);
-      expect(run.details.aiCallsSucceeded).toBe(1);
-      expect(run.details.aiCallsSucceeded as number).toBeLessThanOrEqual(run.details.aiCallsAttempted as number);
       expect(run.result?.degraded).toBeUndefined();
       expect(run.status).toBe("success");
     });
@@ -291,29 +135,23 @@ describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status
   // ═══════════════════════════════════════════════════════════════════
   describe("a run where AI was attempted and wholly failed", () => {
     beforeEach(() => {
-      seedThreats(raw, distinct(2));
-      fetchSpy.mockImplementation(async () => new Response(CREDIT_BALANCE_400, { status: 400 }));
+      seedThreats(raw, distinct(3));
+      useFetch({ anthropic: () => new Response(CREDIT_BALANCE_400, { status: 400 }) });
     });
 
     it("finalizes status 'partial' — not 'success' (the defect) and not 'failed' (dishonest)", async () => {
-      const run = await runSentinel();
+      const run = await runAnalyst();
 
       expect(run.status).toBe("partial");
       expect(run.runRow.status).toBe("partial");
-      expect(run.runRow.status).not.toBe("success");
-      expect(run.runRow.status).not.toBe("failed");
-      // It did not throw: no error recorded, and the rule-based fallback did real work.
+      // It did not throw: no error recorded.
       expect(run.runRow.error_message).toBeNull();
-      const classified = raw.prepare(`SELECT COUNT(*) AS n FROM threats WHERE confidence_score IS NOT NULL`).all()[0] as { n: number };
-      expect(classified.n).toBe(2);
     });
 
     it("stamps completed_at, which is what keeps the run out of the orphan / stall paths", async () => {
-      const run = await runSentinel();
+      const run = await runAnalyst();
 
       expect(run.runRow.completed_at).not.toBeNull();
-      // Same predicates Flight Control and the reaper apply: a 'partial' is an
-      // orphan ONLY when completed_at is NULL.
       expect(isOrphanedRun({ status: run.runRow.status, completedAt: run.runRow.completed_at })).toBe(false);
       const stalledAt50Min = (completedAt: string | null): boolean =>
         computeIsStalled({
@@ -324,30 +162,29 @@ describe.skipIf(!hasSqlite())("sentinel — strictly-API counters and run status
           lastRunCompletedAt: completedAt,
         });
       expect(stalledAt50Min(run.runRow.completed_at)).toBe(false);
-      // Contrast: the SAME run with completed_at missing WOULD be recovered,
-      // so the stamp is genuinely what protects it.
+      // Contrast: the SAME run with completed_at missing WOULD be recovered.
       expect(stalledAt50Min(null)).toBe(true);
       expect(isOrphanedRun({ status: run.runRow.status, completedAt: null })).toBe(true);
     });
 
     it("records the honest diagnosis: counters, first failure, severity 'high' and an AI-CALLS-ALL-FAILING summary", async () => {
-      const run = await runSentinel();
+      const run = await runAnalyst();
 
-      expect(run.details.aiCallsAttempted).toBe(2);
+      expect(run.details.aiCallsAttempted).toBe(3);
       expect(run.details.aiCallsSucceeded).toBe(0);
       expect(run.details.aiFirstFailureKind).toBe("api_error");
       expect(String(run.details.aiFirstError)).toMatch(/HTTP 400.*credit balance/);
       expect(run.summary.severity).toBe("high");
       expect(run.summary.summary).toMatch(/^AI CALLS ALL FAILING/);
-      expect(run.result?.degraded?.reason).toMatch(/all 2 Anthropic call\(s\) failed/);
+      expect(run.result?.degraded?.reason).toMatch(/all 3 Anthropic call\(s\) failed/);
     });
   });
 
   it("control: a healthy run (every call answered) finalizes 'success' with attempted === succeeded", async () => {
     seedThreats(raw, distinct(2));
-    fetchSpy.mockImplementation(async () => anthropicOk(CLASSIFICATION_JSON));
+    useFetch({ anthropic: () => anthropicOk(brandMatchJson(90)) });
 
-    const run = await runSentinel();
+    const run = await runAnalyst();
 
     expect(run.details.aiCallsAttempted).toBe(2);
     expect(run.details.aiCallsSucceeded).toBe(2);

@@ -1,18 +1,17 @@
 /**
  * The shared strictly-API counter contract in `lib/haiku.ts`.
  *
- * analyst, sentinel and cartographer all record through `recordAiCall`, and
- * Flight Control + the diagnostics `ai_health` block read the resulting key
- * names back out of `agent_outputs.details` via json_extract. So this is
+ * Instrumented agents record through `recordAiCall` (analyst today —
+ * sentinel and cartographer were moved onto rules in AI_STRATEGY_2026-10
+ * Phase 1), and Flight Control + the diagnostics `ai_health` block read the
+ * resulting key names back out of `agent_outputs.details` via json_extract. So this is
  * the single definition of "did a request actually leave, and did it come
  * back usable" — the question three months of outage went unanswered.
  *
- * End-to-end coverage for sentinel lives in ai-outage-counters.test.ts and
- * for the reader in flight-control-ai-calls-failing.test.ts. This file
- * pins the contract itself plus the ONE invariant that cannot be checked
- * at runtime without standing up cartographer's whole provider pipeline:
- * that each agent records at the site a call is INITIATED, never per
- * processed item.
+ * End-to-end coverage lives in analyst-ai-counters.test.ts /
+ * ai-outage-counters.test.ts (writer) and
+ * flight-control-ai-calls-failing.test.ts (reader). This file pins the
+ * contract itself plus which agents may carry the counters at all.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -140,47 +139,46 @@ describe("mergeAiCallCounters", () => {
 });
 
 /**
- * Where each agent records. These are static because the trap is
- * structural: all three agents have a per-ITEM post-processing function
- * that is NOT one-to-one with API calls, and recording there would inflate
- * the counters and break `succeeded <= attempted`.
+ * Which agents are instrumented. AI_STRATEGY_2026-10 Phase 1 (Batch B)
+ * moved sentinel and cartographer onto rules: neither makes an Anthropic
+ * call from `execute()` any more, so neither may carry the counters — a
+ * permanent `aiCallsAttempted: 0` from an agent that CANNOT call AI would
+ * dilute the Flight Control / ai_health rollups with rows that look like
+ * "quiet" but are really "not applicable". Analyst is the remaining
+ * instrumented agent.
  */
-describe("agents record at the call site, not per processed item", () => {
-  it("cartographer records at BOTH real call sites and NOT inside processOneAiProvider", () => {
+describe("which agents record strictly-API counters", () => {
+  it("analyst records at the one site a call is initiated", () => {
+    const analyst = src("../src/agents/analyst.ts");
+    expect(analyst).toMatch(/recordAiCall\(ai, result, result\.success && !!result\.data\)/);
+  });
+
+  it("analyst persists the counters under the key names the readers json_extract", () => {
+    // `...ai` spreads AiCallCounters, so the field names come from one
+    // type. A hand-written literal could drift from the queries in
+    // flightControl.ts and diagnostics.ts silently.
+    expect(src("../src/agents/analyst.ts")).toMatch(/\n\s*\.\.\.ai,\n/);
+  });
+
+  it.each(["../src/agents/sentinel.ts", "../src/agents/cartographer.ts"])(
+    "%s has no haiku import, no counter helpers and no AI-classification path",
+    (file) => {
+      // Code only — comments may legitimately narrate the removed AI path.
+      const code = src(file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect(code, `${file} must not import lib/haiku`).not.toMatch(/from ["']\.\.\/lib\/haiku["']/);
+      expect(code).not.toMatch(/import\(["']\.\.\/lib\/haiku["']\)/);
+      for (const sym of ["recordAiCall", "newAiCallCounters", "isAiAllFailing", "mergeAiCallCounters",
+        "classifyThreat", "scoreProvider", "scoreProvidersBatch", "callHaikuRaw"]) {
+        expect(code, `${file} still references ${sym}`).not.toMatch(new RegExp(`\\b${sym}\\b`));
+      }
+      // Counters are not spread into the summary details any more.
+      expect(code).not.toMatch(/\n\s*\.\.\.(ai|aiTotals),\n/);
+    },
+  );
+
+  it("cartographer no longer reaches the Message Batches path", () => {
     const cart = src("../src/agents/cartographer.ts");
-
-    // Two sites where a request actually leaves: the 5-at-a-time batch,
-    // and the per-provider fallback taken when a batch comes back short.
-    expect(cart).toMatch(/const batchResult = await scoreProvidersBatch\([\s\S]{0,1200}?recordAiCall\(ai, batchResult, batchOk/);
-    expect(cart).toMatch(/const oneResult = await scoreProvider\([\s\S]{0,600}?recordAiCall\(ai, oneResult/);
-
-    // processOneAiProvider runs once per PROVIDER. On the batch-success
-    // path it is handed a synthetic `{ success: true, data: score }`
-    // envelope per index — five calls to it for ONE API call — so
-    // recording there would report 5 successes for 1 request.
-    const body = cart.slice(cart.indexOf("async function processOneAiProvider"));
-    const end = body.indexOf("\n    }\n");
-    expect(body.slice(0, end)).not.toMatch(/recordAiCall/);
-  });
-
-  it("sentinel records inside getOrClassify, where the shared promise is created", () => {
-    const sent = src("../src/agents/sentinel.ts");
-    // Sibling threats await the SAME promise; recording per threat would
-    // count one API call many times.
-    expect(sent).toMatch(/classificationCache\.set\(key, p\)/);
-    expect(sent).toMatch(/\}\)\.then\(\(r\) => \{\s*recordAiCall\(ai, r,/);
-    // The opportunistic APT detector records into its own counter set so a
-    // lone transient failure there cannot mark the whole run degraded.
-    expect(sent).toMatch(/recordAiCall\(aiOpportunistic, aptResult, aptResult\.success/);
-  });
-
-  it("all three agents persist the counters under the key names the readers json_extract", () => {
-    // `...ai` / `...aiTotals` spreads AiCallCounters, so the field names
-    // come from one type. A hand-written literal could drift from the
-    // queries in flightControl.ts and diagnostics.ts silently.
-    for (const f of ["../src/agents/analyst.ts", "../src/agents/sentinel.ts", "../src/agents/cartographer.ts"]) {
-      expect(src(f), `${f} must spread the shared counters into its output details`)
-        .toMatch(/\n\s*\.\.\.(ai|aiTotals),\n/);
-    }
+    expect(cart).not.toMatch(/cartographer-batch/);
+    expect(cart).not.toMatch(/anthropic-batches/);
   });
 });
