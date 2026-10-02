@@ -40,8 +40,6 @@ export type { GradeBadgeProps, Grade } from '../../components/ui/GradeBadge';
 export { SignalBreakdownCard, PAGE_SIGNAL_WEIGHTS, SHADOW_SIGNAL_WEIGHTS } from '../../components/ui/SignalBreakdownCard';
 export type { SignalBreakdownCardProps } from '../../components/ui/SignalBreakdownCard';
 
-export { DimensionalCard } from '../../components/ui/DimensionalCard';
-export type { DimensionalCardProps, DimensionalCardVariant } from '../../components/ui/DimensionalCard';
 
 export { BrandAvatar } from '../../components/ui/BrandAvatar';
 export type { BrandAvatarProps } from '../../components/ui/BrandAvatar';

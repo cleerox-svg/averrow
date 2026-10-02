@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/lib/auth';
 import { Shell } from '@/layout/Shell';
 import { Modules } from '@/features/modules/Modules';
-import { ModulePlaceholder } from '@/features/modules/ModulePlaceholder';
 import { Settings, TakedownAuthorizationPage } from '@/features/settings/Settings';
 import { AutomationPolicy } from '@/features/settings/AutomationPolicy';
 import { MonitoringRules } from '@/features/settings/MonitoringRules';
