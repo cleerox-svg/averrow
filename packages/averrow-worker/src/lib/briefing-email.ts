@@ -587,6 +587,73 @@ export async function sendBriefingEmail(
   return { sent: result.ok, id: result.id, error: result.error, recipient };
 }
 
+/**
+ * Out-of-band email for a platform notification that must reach a human
+ * even when nobody is watching the in-app inbox or push (AI strategy
+ * Phase 0: `platform_ai_calls_failing`). Same transport + recipient as the
+ * daily briefing — `sendViaResend` to `BRIEFING_RECIPIENT` — so there is
+ * one sender identity and one recipient knob to maintain.
+ *
+ * Never throws: a transport failure comes back as `{ sent: false, error }`
+ * so the caller (the notification emit path) can record it and move on.
+ */
+export async function sendPlatformEscalationEmail(
+  env: Env,
+  alert: {
+    title: string;
+    message: string;
+    recommended_action: string;
+    severity: string;
+    link: string;
+  },
+): Promise<{ sent: boolean; id?: string; error?: string; recipient: string }> {
+  const recipient = (env.BRIEFING_RECIPIENT?.trim() || RECIPIENT_DEFAULT);
+
+  if (!env.RESEND_API_KEY) {
+    logger.warn("platform_escalation_email_skip", { reason: "RESEND_API_KEY not configured" });
+    return { sent: false, error: "RESEND_API_KEY not configured", recipient };
+  }
+
+  const subject = `[Averrow ${alert.severity.toUpperCase()}] ${alert.title}`;
+  // Notification links are SPA-relative (React Router basename "/v2").
+  const link = alert.link.startsWith("http") ? alert.link : `https://averrow.com/v2${alert.link}`;
+  const body = `
+<div style="background:${COLOR.bgCard};border:1px solid ${COLOR.borderHard};border-radius:12px;padding:20px;">
+  <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.orange};margin-bottom:8px;">PLATFORM ALERT · ${escapeHtml(alert.severity.toUpperCase())}</div>
+  <div style="font-size:18px;font-weight:600;color:${COLOR.text};margin-bottom:12px;">${escapeHtml(alert.title)}</div>
+  <div style="font-size:14px;line-height:1.55;color:${COLOR.textDim};margin-bottom:16px;">${escapeHtml(alert.message)}</div>
+  <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.amber};margin-bottom:6px;">RECOMMENDED ACTION</div>
+  <div style="font-size:13px;line-height:1.55;color:${COLOR.text};margin-bottom:16px;">${escapeHtml(alert.recommended_action)}</div>
+  <a href="${escapeHtml(link)}" style="color:${COLOR.amber};font-size:13px;">Open in Averrow</a>
+</div>`;
+
+  try {
+    const html = emailShell({
+      title: alert.title,
+      preheader: alert.title,
+      accent: COLOR.orange,
+      tagline: "PLATFORM ALERT",
+      headerBadge: headerStatusBadge(alert.severity.toUpperCase(), "alert"),
+      body,
+    });
+    const result = await sendViaResend(env, env.RESEND_API_KEY, recipient, subject, html);
+    if (result.ok) {
+      logger.info("platform_escalation_email_sent", { to: recipient, resendId: result.id });
+    } else {
+      logger.error("platform_escalation_email_failed", {
+        to: recipient,
+        error: result.error,
+        statusCode: result.statusCode,
+      });
+    }
+    return { sent: result.ok, id: result.id, error: result.error, recipient };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("platform_escalation_email_failed", { to: recipient, error });
+    return { sent: false, error, recipient };
+  }
+}
+
 // Exported for the preview/render scripts to render the body without sending.
 export function renderBriefingHtmlForPreview(
   briefing: ComprehensiveBriefing,

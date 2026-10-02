@@ -14,7 +14,14 @@
  */
 
 import type { Env } from "../types";
-import { callAnthropic, callAnthropicJSON, AnthropicError } from "./anthropic";
+import {
+  callAnthropic,
+  callAnthropicJSON,
+  AnthropicError,
+  AiDisabledError,
+  AI_RULES_ONLY_PREFIX,
+  isAiRulesOnly,
+} from "./anthropic";
 import { BudgetManager } from "./budgetManager";
 import { HOT_PATH_HAIKU } from "./ai-models";
 
@@ -84,7 +91,9 @@ export interface HaikuProviderScore {
  * `Anthropic HTTP 400 — "Your credit balance is too low"`).
  *
  *   throttled    — OUR choice. BudgetManager hard/emergency throttle told
- *                  non-critical callers to skip. No API call was made.
+ *                  non-critical callers to skip, OR the platform-wide
+ *                  `AI_MODE=rules_only` switch is on (AiDisabledError).
+ *                  No API call was made.
  *                  Expected, self-inflicted, not an incident.
  *   budget_cap   — OUR choice. The per-agent monthlyTokenCap pre-flight in
  *                  callAnthropic refused the call. No API call was made.
@@ -324,8 +333,12 @@ export function parseNewestFailure(
   }
 }
 
-function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+export function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+  // AI_MODE=rules_only — a deliberate platform-wide skip, never an outage.
+  // Checked before the generic AnthropicError branch (it is a subclass).
+  if (err instanceof AiDisabledError) return 'throttled';
   if (!(err instanceof AnthropicError)) return 'api_error';
+  if (err.message.startsWith(AI_RULES_ONLY_PREFIX)) return 'throttled';
   // Typed field first — an HTTP status is unambiguous.
   if (typeof err.status === 'number') return 'api_error';
   if (err.message.startsWith(BUDGET_CAP_PREFIX)) return 'budget_cap';
@@ -391,6 +404,11 @@ async function isAiThrottled(env: Env): Promise<string | null> {
   return blocked;
 }
 
+/** The envelope every helper returns when AI_MODE=rules_only. */
+function rulesOnlySkip(): { success: false; error: string; failure_kind: HaikuFailureKind } {
+  return { success: false, error: 'throttled: AI_MODE=rules_only', failure_kind: 'throttled' };
+}
+
 /**
  * Convert thrown wrapper errors / parse failures into the legacy
  * { success, data, error } envelope every public helper here returns.
@@ -402,6 +420,11 @@ async function callJsonSafe<T>(
   userMessage: string,
   maxTokens = 1024,
 ): Promise<HaikuResponse<T>> {
+  // AI_MODE=rules_only — answer before the budget gate so a disabled
+  // platform spends no KV/D1 read either. callAnthropic enforces the same
+  // switch for direct callers; this is just the cheaper early exit.
+  if (isAiRulesOnly(env)) return rulesOnlySkip();
+
   // Global AI throttle gate — covers every agent on the hot path.
   const throttled = await isAiThrottled(env);
   if (throttled) {
@@ -445,6 +468,8 @@ export async function callHaikuRaw(
   /** See HaikuFailureKind — set only when `success === false`. Additive. */
   failure_kind?: HaikuFailureKind;
 }> {
+  if (isAiRulesOnly(env)) return rulesOnlySkip();
+
   // Global AI throttle gate — same path as callJsonSafe.
   const throttled = await isAiThrottled(env);
   if (throttled) {

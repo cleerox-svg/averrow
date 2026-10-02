@@ -10,7 +10,8 @@
  * (CLAUDE.md §10) for non-actionable visibility.
  */
 
-import { createNotification } from './notifications';
+import { createNotification, recordDelivery } from './notifications';
+import { sendPlatformEscalationEmail } from './briefing-email';
 import type { Env } from '../types';
 import type { NotificationType } from './notifications';
 import type { RenderedTemplate } from './intel-templates';
@@ -838,7 +839,93 @@ export async function emitPlatformNotification<T extends NotificationType>(
     }
   }
 
+  // Out-of-band email for the narrow set of platform alerts that must
+  // reach a human even when nobody is looking at the inbox or has push
+  // enabled. `created > 0` means createNotification's dedupe let a NEW
+  // row through (it returns 0 when deduped), so this runs at most once
+  // per dedupe window; escalateByEmail additionally caps it to one email
+  // per group_key. Severity is untouched — still 'high', so no incident
+  // and nothing on the public /status page.
+  if (created > 0 && EMAIL_ESCALATION_TYPES.has(type)) {
+    await escalateByEmail(env, type, rendered);
+  }
+
   return created;
+}
+
+// ─── Email escalation (AI strategy Phase 0) ──────────────────────────
+
+/**
+ * Platform notification types that ALSO send one email to
+ * BRIEFING_RECIPIENT. Kept deliberately narrow: an email is the channel of
+ * last resort for "the platform is silently degraded and the in-app
+ * signal can be missed" — the ~3-month AI outage was exactly that. Do not
+ * grow this into a general mirror of the inbox.
+ */
+export const EMAIL_ESCALATION_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
+  'platform_ai_calls_failing',
+]);
+
+/**
+ * Send one escalation email for a just-created platform notification and
+ * record it in notification_deliveries (channel 'email') against the
+ * newest notification row for the (type, group_key).
+ *
+ * Cadence: the in-app dedupe window for platform_ai_calls_failing is
+ * -50 minutes, so `created > 0` recurs every hourly Flight Control tick
+ * while an outage persists. An hourly email would be noise, so this also
+ * skips when an email delivery for the same (type, group_key) is already
+ * 'attempted' or 'succeeded'. The group_key is day-scoped
+ * (`platform_ai_calls_failing:YYYY-MM-DD`), so the result is at most one
+ * email per UTC day; a 'failed' send does not block the next tick's retry.
+ *
+ * Never throws — the in-app notification already landed and is the source
+ * of truth; a broken email path must not break the emitter.
+ */
+async function escalateByEmail(
+  env: Env,
+  type: NotificationType,
+  rendered: RenderedTemplate,
+): Promise<void> {
+  try {
+    if (!rendered.group_key) return;
+
+    const alreadyEmailed = await env.DB.prepare(
+      `SELECT 1 AS hit
+         FROM notification_deliveries d
+         JOIN notifications n ON n.id = d.notification_id
+        WHERE n.type = ? AND n.group_key = ?
+          AND d.channel = 'email'
+          AND d.status IN ('attempted', 'succeeded')
+        LIMIT 1`,
+    ).bind(type, rendered.group_key).first<{ hit: number }>();
+    if (alreadyEmailed) return;
+
+    const anchor = await env.DB.prepare(
+      `SELECT id, user_id FROM notifications
+        WHERE type = ? AND group_key = ?
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    ).bind(type, rendered.group_key).first<{ id: string; user_id: string }>();
+    if (!anchor) return;
+
+    await recordDelivery(env, anchor.id, anchor.user_id, 'email', 'attempted', null);
+    const result = await sendPlatformEscalationEmail(env, {
+      title: rendered.title,
+      message: rendered.message,
+      recommended_action: rendered.recommended_action,
+      severity: rendered.severity,
+      link: rendered.link,
+    });
+    await recordDelivery(
+      env, anchor.id, anchor.user_id, 'email',
+      result.sent ? 'succeeded' : 'failed',
+      result.sent ? null : (result.error ?? 'unknown error').slice(0, 200),
+    );
+  } catch (err) {
+    console.error('[emitPlatformNotification] email escalation failed:',
+      err instanceof Error ? err.message : String(err));
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
