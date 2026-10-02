@@ -14,7 +14,7 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
 | Worker legacy `/admin/organizations` redirect | Point it at `/v2/admin/customers`, matching the SPA. |
 | Font pair | Plus Jakarta Sans and JetBrains Mono everywhere, including the shared login. FarmTrack must adopt the same pair to stay identical (SHARED_LOGIN_SPEC). |
 | Daily briefing | Use one briefing component with two data sources. Home shows the intelligence briefing; the `/admin` Briefing tab shows the ops briefing. |
-| Phone landscape navigation in ops | Port the classic bottom tab bar into the v4 shell. |
+| Phone navigation in ops | The v4 slide-out menu only, in both orientations. The classic bottom tab bar is not ported. (Revised the same day; the first answer was to port it.) |
 
 ## Phase 1 PRs
 
@@ -24,7 +24,7 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
    - PlatformAlertBanner
    - the theme toggle
    - the open-alert badge via `useOpenAlertCount`
-   - the landscape bottom tabs
+   - a check that the slide-out menu works on phones in both orientations
 
    Classic is not switched off yet.
 3. **Switch to v4.** Make v4 the only shell and delete the classic one: Shell, Sidebar, TopBar, MobileNav, the drawer, DeepBackground, PageTransition, `useShellVersion`, the "Try v4" pill, `HomeUnified` and `framer-motion`. Also delete `BrandAdminDashboard` and the unused frozen components.
