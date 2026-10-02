@@ -131,7 +131,7 @@ describe.skipIf(!hasSqlite())("sentinel — rules only, zero Anthropic requests 
 // it touches (email security, DMARC, geopolitical, cubes) is absent and
 // answered as empty via the harness's "no such table" swallow.
 const CARTOGRAPHER_TABLES = [
-  "threats", "hosting_providers", "brands", "provider_threat_stats",
+  "threats", "hosting_providers", "brands", "provider_threat_stats", "threat_cube_provider",
   "agent_runs", "agent_outputs", "agent_configs", "agent_approvals",
   "budget_ledger", "budget_config", "agent_budget_rollups",
 ];
@@ -155,9 +155,20 @@ describe.skipIf(!hasSqlite())("cartographer — heuristic scoring, zero Anthropi
     ).run(id, `Provider ${id}`, `AS${id.replace(/\D/g, "") || "1"}`, active, total, t7, t30, lastScore);
   };
 
+  const sqlLog: Array<{ sql: string }> = [];
+
+  /** Insert a provider-cube row (active threats by hour). */
+  const cube = (providerId: string, threatType: string, count: number, hoursAgo = 1): void => {
+    raw.prepare(
+      `INSERT INTO threat_cube_provider (hour_bucket, hosting_provider_id, threat_type, severity, source_feed, threat_count)
+       VALUES (strftime('%Y-%m-%d %H:00:00', 'now', ?), ?, ?, 'high', 'openphish', ?)`,
+    ).run(`-${hoursAgo} hours`, providerId, threatType, count);
+  };
+
   async function run() {
+    sqlLog.length = 0;
     const env = {
-      DB: d1FromSqlite(raw, { swallow: (_sql: string, err: Error) => /no such table/i.test(err.message) }),
+      DB: d1FromSqlite(raw, { log: sqlLog, swallow: (_sql: string, err: Error) => /no such table/i.test(err.message) }),
       CACHE: fakeKv(),
       ANTHROPIC_API_KEY: "sk-ant-test",
     } as never;
@@ -176,6 +187,13 @@ describe.skipIf(!hasSqlite())("cartographer — heuristic scoring, zero Anthropi
          VALUES (?, 'openphish', 'phishing', ?, 'hp1', ?, 'active', datetime('now'), datetime('now'))`,
       ).run(`th${i}`, `d${i}-zq.net`, `camp${i}`);
     }
+    // Top-type breakdowns come from the provider cube (summed across hour
+    // buckets), never a GROUP BY over raw threats.
+    cube("hp1", "phishing", 3, 1);
+    cube("hp1", "phishing", 2, 5);
+    cube("hp1", "malware", 4, 2);
+    cube("hp1", "unknown", 99, 1); // NULL threat_type in the cube — skipped
+    cube("hp3", "c2", 7, 1);       // non-emitting provider
 
     const out = await run();
 
@@ -196,7 +214,7 @@ describe.skipIf(!hasSqlite())("cartographer — heuristic scoring, zero Anthropi
     // hp2 moved 36 → 50 (>= 10) so it IS news; hp3 is good.
     expect(insights.map((i) => JSON.parse(i.details).provider).sort()).toEqual(["Provider hp1", "Provider hp2"]);
     const hp1 = insights.find((i) => i.summary.startsWith("Provider hp1"))!;
-    expect(hp1.summary).toBe("Provider hp1: reputation 35/100 [REPEAT OFFENDER] — 60 active / 400 total; top types: phishing; 4 campaigns");
+    expect(hp1.summary).toBe("Provider hp1: reputation 35/100 [REPEAT OFFENDER] — 60 active / 400 total; top types: phishing, malware; 4 campaigns");
     expect(hp1.severity).toBe("high");
     expect(JSON.parse(hp1.details).risk_factors).toEqual(["active_threats_over_50", "total_volume_over_100", "repeat_offender", "surge_7d"]);
 
@@ -205,6 +223,32 @@ describe.skipIf(!hasSqlite())("cartographer — heuristic scoring, zero Anthropi
     expect(summaryDetails).toBeDefined();
     expect(Object.keys(summaryDetails!).filter((k) => k.startsWith("aiCalls"))).toEqual([]);
     expect(summaryDetails!.provider_insights_emitted).toBe(2);
+  });
+
+  it("fetches threat-type breakdowns ONLY for emitting providers, from the cube", async () => {
+    provider("hp1", 60, 400, null, 30, 40); // emits (first score)
+    provider("hp2", 60, 400, 58);           // stable bad → no insight
+    provider("hp3", 3, 3, null);            // good → no insight
+    provider("hp4", 60, 400, null);         // emits (first score)
+
+    await run();
+
+    const breakdownSql = sqlLog.filter((l) => /GROUP BY hosting_provider_id, threat_type/.test(l.sql));
+    expect(breakdownSql).toHaveLength(1);
+    expect(breakdownSql[0]!.sql).toMatch(/FROM threat_cube_provider/);
+    expect(breakdownSql[0]!.sql).toMatch(/SUM\(threat_count\)/);
+    // One placeholder per EMITTING provider (hp1, hp4) — not all four.
+    expect((breakdownSql[0]!.sql.match(/\?/g) ?? []).length).toBe(2);
+    // And no raw-threats type breakdown anywhere.
+    expect(sqlLog.some((l) => /FROM threats[\s\S]*GROUP BY hosting_provider_id, threat_type/.test(l.sql))).toBe(false);
+  });
+
+  it("skips the breakdown query entirely when nothing emits", async () => {
+    provider("hp9", 60, 400, 58);
+
+    await run();
+
+    expect(sqlLog.some((l) => /GROUP BY hosting_provider_id, threat_type/.test(l.sql))).toBe(false);
   });
 
   it("a stable bad provider does not re-announce itself", async () => {

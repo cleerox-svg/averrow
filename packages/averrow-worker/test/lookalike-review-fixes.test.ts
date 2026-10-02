@@ -1254,6 +1254,114 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — re-entrant compositor, re
     expect(h.row(id).threat_level).toBe("HIGH");
   });
 
+  const MAIL_WEB = { ...BASELINED, registered: 1, resolves_to: "5.6.7.8", has_mx: 1, has_web: 1 } as const;
+  const mailWebAnswer = () =>
+    checkDomainSpy.mockResolvedValue(
+      answer({ registered: true, ip: "5.6.7.8", hasMx: true, hasWeb: true }),
+    );
+
+  it.each(["benign", "taken_down"])(
+    "catch-up NEVER re-raises an analyst-dispositioned row (status=%s)",
+    async (status) => {
+      const h = harness();
+      const id = h.seed({ ...MAIL_WEB, threat_level: "LOW", ai_assessment: "assessed LOW", status });
+      mailWebAnswer();
+
+      const summary = await checkLookalikeBatch(h.env);
+
+      expect(summary.checked).toBe(1);
+      expect(summary.mail_web_level_lifts).toBe(0);
+      expect(h.row(id).threat_level).toBe("LOW");
+      expect(createAlertSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("catch-up skips a below-HIGH mail+web row that carries NO Haiku verdict", async () => {
+    // Not the population the catch-up was written for — something other
+    // than the retired model put it below HIGH.
+    const h = harness();
+    const id = h.seed({ ...MAIL_WEB, threat_level: "MEDIUM", ai_assessment: null });
+    mailWebAnswer();
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.mail_web_level_lifts).toBe(0);
+    expect(h.row(id).threat_level).toBe("MEDIUM");
+    expect(createAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("catch-up still lifts a confirmed_threat row", async () => {
+    const h = harness();
+    const id = h.seed({
+      ...MAIL_WEB, threat_level: "LOW", ai_assessment: "assessed LOW", status: "confirmed_threat",
+    });
+    mailWebAnswer();
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.mail_web_level_lifts).toBe(1);
+    expect(h.row(id).threat_level).toBe("HIGH");
+  });
+
+  it("catch-up lifts a BIMI-alerted row but files NO duplicate alert", async () => {
+    // The BEC lane already filed a fixed-HIGH typosquat_bimi alert for
+    // this domain; a lookalike_domain_active alert would be a duplicate.
+    const h = harness();
+    const id = h.seed({
+      ...MAIL_WEB, threat_level: "LOW", ai_assessment: "assessed LOW",
+      bimi_first_seen_at: STALE,
+    });
+    mailWebAnswer();
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.mail_web_level_lifts).toBe(1);
+    expect(h.row(id).threat_level).toBe("HIGH");
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(h.row(id).alert_id).toBeNull();
+  });
+
+  it("catch-up files no duplicate when the BEC lane files BIMI on the SAME pass", async () => {
+    const h = harness();
+    const id = h.seed({ ...MAIL_WEB, threat_level: "LOW", ai_assessment: "assessed LOW" });
+    mailWebAnswer();
+    checkBIMISpy.mockResolvedValue(true);
+
+    const summary = await checkLookalikeBatch(h.env);
+
+    expect(summary.bimi_alerts).toBe(1);
+    expect(summary.mail_web_level_lifts).toBe(1);
+    // Exactly one alert: the typosquat_bimi one.
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1].alertType).toBe("typosquat_bimi");
+    expect(h.row(id).threat_level).toBe("HIGH");
+  });
+
+  it("a thrown catch-up alert leaves the row below HIGH so the next pass retries", async () => {
+    // The catch-up predicate is false once the row is HIGH, so persisting
+    // the level BEFORE a failed alert would lose the notification forever.
+    const h = harness();
+    const id = h.seed({ ...MAIL_WEB, threat_level: "LOW", ai_assessment: "assessed LOW" });
+    mailWebAnswer();
+    createAlertSpy.mockRejectedValue(new Error("alerts insert failed"));
+
+    const first = await checkLookalikeBatch(h.env);
+    expect(first.row_errors).toBe(1);
+    expect(h.row(id).threat_level).toBe("LOW");
+    expect(h.row(id).alert_id).toBeNull();
+
+    vi.clearAllMocks();
+    mailWebAnswer();
+    createAlertSpy.mockResolvedValue("alert_retry");
+    await makeDue(h, id);
+    const second = await checkLookalikeBatch(h.env);
+
+    expect(second.mail_web_level_lifts).toBe(1);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(h.row(id).threat_level).toBe("HIGH");
+    expect(h.row(id).alert_id).toBe("alert_retry");
+  });
+
   it("an answered lapse stamps the linked takedown down, reusing Sparrow's contract", async () => {
     // Same two columns Sparrow's Phase F writes on its own 7-day
     // cadence, from the same `checkDomain` observation arriving via the

@@ -231,7 +231,8 @@ export interface LookalikeCheckSummary {
   /**
    * `none`-transition rows re-composited because their EFFECTIVE state is
    * mail+web while the stored level is below HIGH — the one-time catch-up
-   * for rows a former Haiku verdict held at LOW/MEDIUM. Self-extinguishing:
+   * for rows a former Haiku verdict held at LOW/MEDIUM (`ai_assessment`
+   * set, status not benign/taken_down). Self-extinguishing:
    * the compositor raises them to HIGH, after which they no longer qualify.
    */
   mail_web_level_lifts: number;
@@ -363,6 +364,12 @@ interface LookalikeCheckRow {
   bimi_first_seen_at: string | null;
   check_attempts: number;
   takedown_id: string | null;
+  /**
+   * Analyst disposition (migration 0031: monitoring | confirmed_threat |
+   * benign | taken_down). Read ONLY by the mail+web catch-up, which must
+   * never re-raise a row an analyst marked benign or already actioned.
+   */
+  status: string | null;
 }
 
 /**
@@ -392,7 +399,7 @@ function selectFirstContactRows(env: Env, limit: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
      FROM lookalike_domains ld
      WHERE ld.baseline_established_at IS NULL
        AND ld.check_due_at IS NOT NULL
@@ -415,7 +422,7 @@ function selectRecheckRows(env: Env, limit: number, offset: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
      FROM lookalike_domains ld
      WHERE ld.baseline_established_at IS NOT NULL
        AND ld.check_due_at IS NOT NULL
@@ -441,7 +448,7 @@ function selectBrandDueRows(env: Env, brandId: string, limit: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
      FROM lookalike_domains ld
      WHERE ld.brand_id = ?
        AND ld.check_due_at IS NOT NULL
@@ -1152,7 +1159,20 @@ async function compositeAndPersist(
   env: Env,
   row: LookalikeCheckRow,
   observed: LookalikeObservedState & { ip?: string },
-  opts: { allowAlert: boolean; bimiKnown: boolean; budgets: RunBudgets; counters: LookalikeCheckSummary },
+  opts: {
+    allowAlert: boolean;
+    bimiKnown: boolean;
+    budgets: RunBudgets;
+    counters: LookalikeCheckSummary;
+    /**
+     * File (and link) the alert BEFORE persisting the level. Used only by
+     * the one-shot mail+web catch-up, whose predicate is false once the
+     * row is HIGH: persisting first would turn a `createAlert` throw into
+     * a permanently lost notification. Every other path keeps level-first
+     * so a failed alert never costs the row its level (Sparrow reads it).
+     */
+    alertFirst?: boolean;
+  },
 ): Promise<void> {
   const { budgets, counters } = opts;
   const brandRow = await loadBrandContext(env, row.brand_id);
@@ -1241,96 +1261,112 @@ async function compositeAndPersist(
   // materializes a level on a row whose `threat_level` is NULL (the 0031
   // DEFAULT is 'LOW', but a NULL would otherwise be unreachable by a LOW
   // verdict and stay NULL forever). `ai_assessment` is never written here.
-  await env.DB.prepare(
-    `UPDATE lookalike_domains
-     SET threat_level = CASE
-           WHEN ? >= (CASE threat_level
-                        WHEN 'CRITICAL' THEN 3
-                        WHEN 'HIGH' THEN 2
-                        WHEN 'MEDIUM' THEN 1
-                        ELSE 0 END)
-             THEN ? ELSE threat_level END,
-         updated_at = datetime('now')
-     WHERE id = ?`,
-  ).bind(
-    THREAT_LEVEL_RANK[level],
-    level,
-    row.id,
-  ).run();
-
-  if (!opts.allowAlert) return;
-
-  // Create alert via alerts pipeline. For IDN homoglyph variants the
-  // stored `domain` is punycode (xn--…); surface the human-readable
-  // unicode form (`аpple.com`) in the title so alerts aren't hostile.
-  const displayDomain = row.unicode_domain ?? row.domain;
-
-  // ── SEVERITY FLOOR ──────────────────────────────────────────────
-  // Below HIGH there is no `lookalike_domain_active` row. Everything
-  // above this point has already been persisted, so nothing is lost but
-  // the notification. The comparison lives in
-  // `lib/lookalike-alert-policy.ts` and is shared with the page-analysis
-  // producer; it is NOT restated here.
-  //
-  // Scoped to this alert type only, and NOT an early return: the BEC
-  // lane's `typosquat_bimi` alert is a different finding at a fixed HIGH
-  // severity, filed independently above.
-  if (!clearsLookalikeAlertFloor(effective)) {
-    counters.alerts_withheld_below_floor += 1;
-    logger.info('lookalike_alert_withheld_below_floor', {
-      domain: row.domain,
-      threat_level: effective,
-      floor: LOOKALIKE_ALERT_SEVERITY_FLOOR,
-    });
-    return;
-  }
-
-  const alertId = await createAlert(env.DB, {
-    brandId: row.brand_id,
-    userId: brand.user_id,
-    alertType: 'lookalike_domain_active',
-    severity: effective,
-    title: `Lookalike domain registered: ${displayDomain}`,
-    summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${observed.hasWeb ? 'It has a web server.' : ''} ${observed.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
-    details: {
-      lookalike_domain: row.domain,
-      unicode_domain: row.unicode_domain ?? undefined,
-      original_domain: brand.domain,
-      permutation_type: row.permutation_type,
-      resolves_to: observed.ip,
-      has_mx: observed.hasMx,
-      has_web: observed.hasWeb,
-      // Page-content evidence when the inline analysis ran and scored;
-      // spreads to nothing otherwise so alert creation is never
-      // regressed by a skipped/failed fetch. Descriptive only — does not
-      // influence `severity` above, which is the composited level.
-      ...buildPageEvidenceDetails(pagePhishing),
-    },
-    sourceType: 'lookalike_scanner',
-    sourceId: row.id,
-    // Historical note from the retired Haiku pass, when one exists.
-    aiAssessment: row.ai_assessment ?? undefined,
-    aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(effective)
-      ? [
-          'Investigate the domain for brand impersonation content',
-          'Consider filing a UDRP complaint or takedown request',
-          'Monitor for phishing emails from this domain',
-          'Alert customers if the domain is actively being used for phishing',
-        ]
-      : [
-          'Continue monitoring for content changes',
-          'Check periodically for brand impersonation',
-        ],
-  });
-
-  // Link the alert back to the lookalike record. Guarded on a non-null
-  // id: both the floor above and `createAlert`'s NX2 tier gate can
-  // legitimately produce no alert, and `alert_id IS NULL` is precisely
-  // the state `analyzeLookalikePages` keys its own alert path on.
-  if (alertId) {
+  const persistLevel = async (): Promise<void> => {
     await env.DB.prepare(
-      `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
-    ).bind(alertId, row.id).run();
+      `UPDATE lookalike_domains
+       SET threat_level = CASE
+             WHEN ? >= (CASE threat_level
+                          WHEN 'CRITICAL' THEN 3
+                          WHEN 'HIGH' THEN 2
+                          WHEN 'MEDIUM' THEN 1
+                          ELSE 0 END)
+               THEN ? ELSE threat_level END,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    ).bind(
+      THREAT_LEVEL_RANK[level],
+      level,
+      row.id,
+    ).run();
+  };
+
+  const fileAlert = async (): Promise<void> => {
+    if (!opts.allowAlert) return;
+
+    // Create alert via alerts pipeline. For IDN homoglyph variants the
+    // stored `domain` is punycode (xn--…); surface the human-readable
+    // unicode form (`аpple.com`) in the title so alerts aren't hostile.
+    const displayDomain = row.unicode_domain ?? row.domain;
+
+    // ── SEVERITY FLOOR ──────────────────────────────────────────────
+    // Below HIGH there is no `lookalike_domain_active` row. The level is
+    // persisted by `persistLevel` either way, so nothing is lost but the
+    // notification. The comparison lives in
+    // `lib/lookalike-alert-policy.ts` and is shared with the page-analysis
+    // producer; it is NOT restated here.
+    //
+    // Scoped to this alert type only, and NOT an early return: the BEC
+    // lane's `typosquat_bimi` alert is a different finding at a fixed HIGH
+    // severity, filed independently above.
+    if (!clearsLookalikeAlertFloor(effective)) {
+      counters.alerts_withheld_below_floor += 1;
+      logger.info('lookalike_alert_withheld_below_floor', {
+        domain: row.domain,
+        threat_level: effective,
+        floor: LOOKALIKE_ALERT_SEVERITY_FLOOR,
+      });
+      return;
+    }
+
+    const alertId = await createAlert(env.DB, {
+      brandId: row.brand_id,
+      userId: brand.user_id,
+      alertType: 'lookalike_domain_active',
+      severity: effective,
+      title: `Lookalike domain registered: ${displayDomain}`,
+      summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${observed.hasWeb ? 'It has a web server.' : ''} ${observed.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
+      details: {
+        lookalike_domain: row.domain,
+        unicode_domain: row.unicode_domain ?? undefined,
+        original_domain: brand.domain,
+        permutation_type: row.permutation_type,
+        resolves_to: observed.ip,
+        has_mx: observed.hasMx,
+        has_web: observed.hasWeb,
+        // Page-content evidence when the inline analysis ran and scored;
+        // spreads to nothing otherwise so alert creation is never
+        // regressed by a skipped/failed fetch. Descriptive only — does not
+        // influence `severity` above, which is the composited level.
+        ...buildPageEvidenceDetails(pagePhishing),
+      },
+      sourceType: 'lookalike_scanner',
+      sourceId: row.id,
+      // Historical note from the retired Haiku pass, when one exists.
+      aiAssessment: row.ai_assessment ?? undefined,
+      aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(effective)
+        ? [
+            'Investigate the domain for brand impersonation content',
+            'Consider filing a UDRP complaint or takedown request',
+            'Monitor for phishing emails from this domain',
+            'Alert customers if the domain is actively being used for phishing',
+          ]
+        : [
+            'Continue monitoring for content changes',
+            'Check periodically for brand impersonation',
+          ],
+    });
+
+    // Link the alert back to the lookalike record. Guarded on a non-null
+    // id: both the floor above and `createAlert`'s NX2 tier gate can
+    // legitimately produce no alert, and `alert_id IS NULL` is precisely
+    // the state `analyzeLookalikePages` keys its own alert path on.
+    if (alertId) {
+      await env.DB.prepare(
+        `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
+      ).bind(alertId, row.id).run();
+    }
+  };
+
+  if (opts.alertFirst) {
+    // A throw from `fileAlert` leaves the level unwritten, so the caller's
+    // predicate still holds and the next pass retries. A throw from
+    // `persistLevel` AFTER a linked alert leaves `alert_id` set, so the
+    // retry persists the level without alerting again.
+    await fileAlert();
+    await persistLevel();
+  } else {
+    await persistLevel();
+    await fileAlert();
   }
 }
 
@@ -1641,25 +1677,54 @@ async function runCheckRows(
         // The rule table (`composeRuleLevel`) lifts an operational
         // (mail+web) row to HIGH, but rows a retired Haiku verdict held
         // at LOW/MEDIUM never re-enter the compositor through a
-        // transition. Re-composite them once here. SELF-EXTINGUISHING:
-        // the compositor raises the row to HIGH and the monotonic persist
-        // keeps it there, so on every later pass this predicate is false
-        // and an already-HIGH row is never reassessed or re-alerted.
-        // Sized in prod at 90 rows (84 LOW, 6 MEDIUM).
+        // transition. Re-composite them once here. Sized in prod at 90
+        // rows (84 LOW, 6 MEDIUM).
         //
-        // The alert is the LEVEL transition (below HIGH -> HIGH), so it
-        // is allowed — but only on a row carrying no alert yet, the same
-        // bound the mx/web path uses, so a row that was alerted on by
-        // another lane is not alerted twice.
+        // SCOPED TO EXACTLY THAT POPULATION — three gates, all required:
+        //
+        //   * `ai_assessment IS NOT NULL` — the row carries a Haiku
+        //     verdict, i.e. it is one the retired model held down. A
+        //     mail+web row below HIGH WITHOUT one got there some other
+        //     way (an analyst, a lapse/re-registration history) and this
+        //     catch-up was not written for it.
+        //   * `status NOT IN ('benign','taken_down')` (statuses per
+        //     migration 0031 / `handlers/lookalikeDomains.ts` PATCH) — an
+        //     analyst-downgraded or already-actioned row is NEVER
+        //     re-raised. A human decision outranks the rule table.
+        //   * stored level below HIGH.
+        //
+        // SELF-EXTINGUISHING: the compositor raises the row to HIGH and
+        // the monotonic persist keeps it there, so on every later pass
+        // this predicate is false and an already-HIGH row is never
+        // reassessed or re-alerted.
+        //
+        // ALERT BOUND: the alert is the LEVEL transition (below HIGH ->
+        // HIGH), filed only on a row carrying no `lookalike_domain_active`
+        // alert yet (`alert_id IS NULL`, the bound the mx/web path uses)
+        // AND no BIMI finding (`bimi_first_seen_at IS NULL` at read time,
+        // and not just filed by the BEC lane above — `bimiKnown`). A BIMI
+        // row already has its fixed-HIGH `typosquat_bimi` alert, so a
+        // second alert for the same domain would be a duplicate.
+        //
+        // ALERT FIRST, THEN LEVEL (`alertFirst`). This path runs once per
+        // row: once the level is HIGH the predicate is false forever. If
+        // the level persisted first and `createAlert` then threw, the
+        // notification would be lost permanently. Alert-first means a
+        // throw leaves the row below HIGH, so the next pass (after the
+        // row-error backoff) retries the whole catch-up.
         if (
           observed.registered &&
           observed.hasMx &&
           observed.hasWeb &&
+          row.ai_assessment !== null &&
+          row.status !== 'benign' &&
+          row.status !== 'taken_down' &&
           THREAT_LEVEL_RANK[normalizeThreatLevel(row.threat_level)] < THREAT_LEVEL_RANK.HIGH
         ) {
           counters.mail_web_level_lifts += 1;
           await compositeAndPersist(env, row, observed, {
-            allowAlert: row.alert_id === null,
+            allowAlert: row.alert_id === null && row.bimi_first_seen_at === null && !bimiKnown,
+            alertFirst: true,
             bimiKnown, budgets, counters,
           });
         }

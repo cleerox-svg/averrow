@@ -32,8 +32,11 @@ export const lookalikeScannerAgent: AgentModule = {
   requiresApproval: false,
   stallThresholdMinutes: 120,
   parallelMax: 1,
-  costGuard: "enforced",
-  budget: { monthlyTokenCap: 20_000_000 },
+  // No AI calls: the lookalike level is rule-composed (AI_STRATEGY_2026-10
+  // Phase 1 #18) and page analysis is deterministic. Cap 0 surfaces any
+  // regression that reintroduces a model call.
+  costGuard: "exempt",
+  budget: { monthlyTokenCap: 0 },
   // Delegates to scanners/lookalike-domains.ts checkLookalikeBatch.
   reads: [],
   writes: [],

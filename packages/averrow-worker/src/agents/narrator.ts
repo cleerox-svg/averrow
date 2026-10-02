@@ -196,6 +196,57 @@ export function shouldCreateNarrativeAlert(
   return signalTypes.length >= 2 || activeCriticalThreat;
 }
 
+const NARRATIVE_SEVERITY_RANK: Record<string, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+};
+
+/** A recent open `threat_narrative` alert, as read for the dedupe gate. */
+export interface PriorNarrativeAlert {
+  severity: string | null;
+  /** `alerts.details.signal_types` — a JSON array string, or NULL. */
+  signal_types: string | null;
+}
+
+function parseSignalTypes(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Alert dedupe. Pure — no I/O.
+ *
+ * Narratives regenerate every 24h per brand, and a brand under sustained
+ * attack produces the same HIGH/CRITICAL picture day after day — one
+ * alert per day for an unchanged situation is noise. A new alert is
+ * warranted only on ESCALATION (severity above every open prior) or a
+ * NEW CHANNEL (a signal type no open prior already covered).
+ *
+ * Returns true (suppress) when some open prior alert from the window has
+ * severity >= the current one AND already covers every current signal
+ * type (same set, or a superset — a channel going quiet is not news).
+ */
+export function isDuplicateNarrativeAlert(
+  severity: NarrativeSeverity,
+  signalTypes: string[],
+  priors: PriorNarrativeAlert[],
+): boolean {
+  const rank = NARRATIVE_SEVERITY_RANK[lc(severity)] ?? 0;
+  return priors.some((p) => {
+    const priorRank = NARRATIVE_SEVERITY_RANK[lc(p.severity)];
+    if (priorRank === undefined || priorRank < rank) return false;
+    const covered = new Set(parseSignalTypes(p.signal_types));
+    return signalTypes.every((t) => covered.has(t));
+  });
+}
+
 const SIGNAL_LABELS: Record<string, string> = {
   threats: "threats",
   email_degradation: "weak email authentication",
@@ -462,6 +513,23 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
   //    OR an active critical threat). See shouldCreateNarrativeAlert.
   if (shouldCreateNarrativeAlert(severity, signalTypes, hasActiveCriticalThreat(context))) {
     try {
+      // 6a. Dedupe — open (not resolved / false_positive, per
+      //     `AlertStatus`) narrative alerts for this brand from the last
+      //     7 days. Driven by `idx_alerts_brand`; the brand's alert set
+      //     is small, so the residual filters are cheap. Alert only on
+      //     escalation or a new channel — see isDuplicateNarrativeAlert.
+      const priors = await env.DB.prepare(
+        `SELECT severity, json_extract(details, '$.signal_types') AS signal_types
+         FROM alerts
+         WHERE brand_id = ?
+           AND source_type = 'threat_narrative'
+           AND status NOT IN ('resolved', 'false_positive')
+           AND created_at >= datetime('now', '-7 days')`
+      ).bind(brandId).all<PriorNarrativeAlert>();
+      if (isDuplicateNarrativeAlert(severity, signalTypes, priors.results ?? [])) {
+        return;
+      }
+
       // brand_profiles retired (2026-05-07, R3). Alerts are now
       // tenant-scoped via brand_id → org_brands at read time, so we
       // attribute creation to a stable 'system' userId. The legacy
@@ -511,6 +579,7 @@ export const narratorAgent: AgentModule = {
   costGuard: "enforced",
   budget: { monthlyTokenCap: 5_000_000 },
   reads: [
+    { kind: "d1_table", name: "alerts" },
     { kind: "d1_table", name: "app_store_listings" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "ct_certificates" },
