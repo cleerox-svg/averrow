@@ -43,7 +43,7 @@ export const RESEND_REJECTED_REASON = "determination:resend_rejected";
 export type DeliveryOutcome =
   | "sent"
   | "already_sent"
-  | "not_ready"           // still pending / follow_up / throttled / suppressed / backlog / no forwarder
+  | "not_ready"           // still pending / follow_up / throttled / suppressed / backlog / no forwarder / pre-guard row
   | "claimed_elsewhere"   // a concurrent caller won the claim
   | "suppressed"          // permanent responder suppression recorded
   | "send_failed";        // transient failure; claim released for retry
@@ -64,7 +64,7 @@ interface DeterminationRow {
   attachment_count:          number | null;
   correlated_threat_ids:     string | null;
   promoted_threat_ids:       string | null;
-  deep_analysis:             string | null;
+  responder_guard_version:   number | null;
   determination_sent_at:     string | null;
   throttled:                 number | null;
   responder_suppressed_reason: string | null;
@@ -88,7 +88,7 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
              classification, classified_by, classification_confidence,
              classification_reason, ai_action, auth_results, url_count,
              attachment_count, correlated_threat_ids, promoted_threat_ids,
-             deep_analysis, determination_sent_at, throttled,
+             responder_guard_version, determination_sent_at, throttled,
              responder_suppressed_reason,
              ${IS_ATTACHMENT_FORWARD_SQL} AS is_attachment_forward
       FROM abuse_inbox_messages
@@ -106,6 +106,10 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
   if ((row.throttled ?? 0) !== 0 || row.responder_suppressed_reason || !row.forwarded_by_email) {
     return "not_ready";
   }
+  // Rows without the guard-version marker were inserted by a Worker that
+  // predates the backscatter guard (e.g. in the window between migration
+  // 0273 and the new deploy): never email them.
+  if (row.responder_guard_version === null) return "not_ready";
 
   // Atomic claim — only the caller that flips NULL → now sends. Rows older
   // than the response lookback are backlog and are never emailed.
@@ -116,6 +120,7 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
       WHERE id = ?
         AND determination_sent_at IS NULL
         AND responder_suppressed_reason IS NULL
+        AND responder_guard_version IS NOT NULL
         AND COALESCE(throttled, 0) = 0
         AND classification NOT IN ('pending', 'follow_up')
         AND received_at >= datetime('now', ?)
@@ -132,8 +137,6 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
 
   const isRules = row.classified_by === "rules";
   const authResults = parseJsonSafe<AuthTriple>(row.auth_results);
-  const deep = parseJsonSafe<{ external_narrative?: unknown }>(row.deep_analysis);
-  const deepExternal = !isRules && typeof deep?.external_narrative === "string" ? deep.external_narrative : null;
 
   let result: { ok: boolean; reason: string; permanent?: boolean };
   try {
@@ -165,7 +168,8 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
       // the rules verdict UPDATE stored exactly the qualifying threat ids.
       correlatedCount: isRules && rule !== "M1" ? 0 : jsonArrayLength(row.correlated_threat_ids),
       promotedCount:   jsonArrayLength(row.promoted_threat_ids),
-      deepAnalysisExternal: deepExternal,
+      // deep_analysis (Sonnet investigator narrative) is deliberately NOT
+      // passed: model output stays in the operator/admin UI only.
     }, branding);
   } catch (err) {
     result = { ok: false, reason: err instanceof Error ? err.message : String(err) };
@@ -219,13 +223,15 @@ export async function sweepAbuseDeterminations(env: Env, opts?: { limit?: number
   const limit = Math.max(1, Math.min(200, opts?.limit ?? 50));
   const out: SweepResult = { candidates: 0, sent: 0, other: 0 };
   try {
-    // The first two predicates repeat idx_abuse_inbox_undelivered's partial
-    // WHERE (migration 0273) so the planner can use it.
+    // The first three predicates repeat idx_abuse_inbox_undelivered's
+    // partial WHERE (migration 0273) so the planner can use it. The
+    // guard-version marker excludes rows a pre-guard Worker inserted.
     const rows = await env.DB.prepare(`
       SELECT id
       FROM abuse_inbox_messages
       WHERE determination_sent_at IS NULL
         AND responder_suppressed_reason IS NULL
+        AND responder_guard_version IS NOT NULL
         AND COALESCE(throttled, 0) = 0
         AND forwarded_by_email IS NOT NULL
         AND classification NOT IN ('pending', 'follow_up')

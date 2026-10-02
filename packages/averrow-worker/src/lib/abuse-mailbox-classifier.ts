@@ -45,6 +45,16 @@ import {
 import { notifyAbuseVerdict, notifyNamedThreatIdentified } from './abuse-mailbox-notify';
 import { ABUSE_RESPONSE_LOOKBACK, parseJsonSafe } from './abuse-mailbox-shared';
 
+/** Fixed operator-facing notification sentence per AI verdict — the AI
+ *  counterpart of RULES_OPERATOR_NOTE (abuse-mailbox-rules-runner.ts).
+ *  The model's reasoning never goes in a notification: it is shaped by
+ *  attacker-controlled message content (prompt-injection) and stays in
+ *  classification_reason, visible in the Abuse Mailbox detail view. */
+export const AI_OPERATOR_NOTE: Record<"phishing" | "malware", string> = {
+  phishing: "Automated triage classified this report as phishing. Open it in the Abuse Mailbox to review the indicators.",
+  malware:  "Automated triage classified this report as malware delivery. Open it in the Abuse Mailbox to review the indicators.",
+};
+
 // ─── Public types ────────────────────────────────────────────────
 
 export type AbuseClassification =
@@ -792,7 +802,10 @@ export async function runAbuseClassifierBackfill(
         severity,
         confidence: verdict.confidence,
         action: verdict.action,
-        message: verdict.reasoning,
+        // Fixed copy — never verdict.reasoning. Notification text surfaces
+        // in push / lock screens / tenant UIs; model reasoning is shaped by
+        // attacker-controlled content and stays in classification_reason.
+        message: AI_OPERATOR_NOTE[verdict.classification],
         classifiedBy: "ai",
       });
     }

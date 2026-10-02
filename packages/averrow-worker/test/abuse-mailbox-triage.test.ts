@@ -76,6 +76,9 @@ function insertMessage(raw: SqliteDb, id: string, over: Record<string, unknown> 
     correlated_threat_ids: "[]",
     sender_ip: "198.51.100.7",
     classification: "pending",
+    // Rows written by the guard-aware INSERT carry the marker; a pre-guard
+    // (old-Worker) row is simulated with { responder_guard_version: null }.
+    responder_guard_version: 1,
     ...over,
   };
   const cols = Object.keys(row);
@@ -245,6 +248,23 @@ describe.skipIf(!hasSqlite())("abuse-mailbox triage workflow pipeline", () => {
     expect(resendCalls).toHaveLength(0);
   });
 
+  it("an old-style row (NULL guard-version marker) is classified but never emailed by any path", async () => {
+    insertThreat(raw);
+    // Inserted by the pre-guard Worker between migration 0273 and the new
+    // deploy: no suppression reason, no marker.
+    insertMessage(raw, "old1", { responder_guard_version: null });
+    insertMessage(raw, "old2", { responder_guard_version: null });
+    const out = await runAbuseTriagePipeline(env, { messageId: "old1" }, mockStep());
+    expect(out).toMatchObject({ rules: "malicious", delivery: "not_ready" });
+    await runAbuseRulesPass(env);
+    expect(readRow(raw, "old2")).toMatchObject({ classified_by: "rules" });
+    expect(await deliverAbuseDetermination(env, "old2")).toBe("not_ready");
+    expect(await sweepAbuseDeterminations(env)).toMatchObject({ candidates: 0, sent: 0 });
+    expect(readRow(raw, "old1").determination_sent_at).toBeNull();
+    expect(readRow(raw, "old2").determination_sent_at).toBeNull();
+    expect(resendCalls).toHaveLength(0);
+  });
+
   it("backlog row older than 2 days: classified, but no promotion, notification or email", async () => {
     const log: StatementLogEntry[] = [];
     ({ raw, env } = setup(log));
@@ -360,6 +380,29 @@ describe.skipIf(!hasSqlite())("AI determination copy", () => {
       expect(body).toContain("Reported to our threat team");
     }
   });
+
+  it("never puts the Sonnet deep_analysis narrative in the submitter email", async () => {
+    const { raw, env } = setup();
+    const narrative = "zz-deep-narrative-token The sender spoofed the brand; reply to claim your refund.";
+    insertMessage(raw, "ai2", {
+      classification: "phishing", classified_by: "ai", classification_confidence: 95,
+      classification_reason: "lookalike", ai_action: "escalate", severity: "CRITICAL",
+      deep_analysis: JSON.stringify({
+        internal_narrative: "zz-deep-internal-token",
+        external_narrative: narrative,
+        recommended_action: "zz-deep-action-token",
+      }),
+    });
+    expect(await deliverAbuseDetermination(env, "ai2")).toBe("sent");
+    const { html, text, subject } = resendCalls[0]!;
+    for (const body of [html, text, subject]) {
+      expect(body).not.toContain("zz-deep-");
+      expect(body).not.toContain("Investigator findings");
+    }
+    // Still stored for the operator / admin UI.
+    const stored = raw.prepare(`SELECT deep_analysis FROM abuse_inbox_messages WHERE id = 'ai2'`).all()[0] as { deep_analysis: string };
+    expect(stored.deep_analysis).toContain("zz-deep-narrative-token");
+  });
 });
 
 describe.skipIf(!hasSqlite())("abuse classifier cron gate (cron/orchestrator.ts)", () => {
@@ -377,6 +420,29 @@ describe.skipIf(!hasSqlite())("abuse classifier cron gate (cron/orchestrator.ts)
     expect(gate(raw)).toBe(0);
     insertMessage(raw, "work");
     expect(gate(raw)).toBeGreaterThan(0);
+  });
+
+  it("ignores a classified, undelivered row with a NULL guard-version marker (pre-guard Worker)", () => {
+    const { raw } = setup();
+    insertMessage(raw, "old", {
+      classification: "ambiguous", classified_by: "rules", responder_guard_version: null,
+    });
+    expect(gate(raw)).toBe(0);
+    insertMessage(raw, "new", { classification: "ambiguous", classified_by: "rules" });
+    expect(gate(raw)).toBeGreaterThan(0);
+  });
+});
+
+describe.skipIf(!hasSqlite())("determination claim SQL (lib/abuse-mailbox-determination.ts)", () => {
+  const src = readFileSync(new URL("../src/lib/abuse-mailbox-determination.ts", import.meta.url), "utf8");
+  const claimSql = sqlContaining(src, ["SET determination_sent_at = datetime('now')"]);
+
+  it("refuses a NULL-marker (pre-guard) row even if the row-level check were bypassed", () => {
+    const { raw } = setup();
+    insertMessage(raw, "old", { classification: "ambiguous", classified_by: "rules", responder_guard_version: null });
+    insertMessage(raw, "new", { classification: "ambiguous", classified_by: "rules" });
+    expect(raw.prepare(claimSql).run("old", "-2 days").changes).toBe(0);
+    expect(raw.prepare(claimSql).run("new", "-2 days").changes).toBe(1);
   });
 });
 
@@ -415,6 +481,7 @@ describe.skipIf(!hasSqlite())("migration 0273 indexes", () => {
         AND COALESCE(throttled, 0) = 0 ORDER BY received_at DESC LIMIT 5`)).toContain("idx_abuse_inbox_triage_queue");
     expect(plan(raw, `SELECT id FROM abuse_inbox_messages
       WHERE determination_sent_at IS NULL AND responder_suppressed_reason IS NULL
+        AND responder_guard_version IS NOT NULL
         AND COALESCE(throttled, 0) = 0 AND received_at >= datetime('now', ?)
       ORDER BY received_at ASC LIMIT 5`, "-2 days")).toContain("idx_abuse_inbox_undelivered");
     expect(plan(raw, `SELECT COUNT(*) FROM (SELECT 1 FROM abuse_inbox_messages

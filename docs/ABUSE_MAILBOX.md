@@ -65,17 +65,57 @@ ONLY when all of these hold, and the decision is written by the INSERT itself
    malformed `<…>` rejects). That normalized address is stored as
    `forwarded_by_email` and is the exact Resend `to`.
 2. Its registrable domain equals the SMTP envelope sender's.
-3. The TOPMOST `Authentication-Results` header whose authserv-id is
-   `mx.cloudflare.net` (fallback: topmost such `ARC-Authentication-Results`)
-   exists — headers with any other authserv-id are attacker-suppliable and
-   ignored — and reports `dmarc=pass` with `header.from` equal to the From
-   domain. Prod check (2026-10): 100% of messages carry the Cloudflare
-   headers; ~90% are dmarc=pass.
+3. The FIRST (topmost) plain `Authentication-Results` header has authserv-id
+   exactly `mx.cloudflare.net` and reports `dmarc=pass` with `header.from`
+   equal to the From domain. If the topmost instance carries any other
+   authserv-id, or there is no `Authentication-Results` at all → suppressed
+   (`backscatter:no_trusted_auth`). The guard never searches further down
+   for a CF-labelled instance (everything below the topmost arrived with the
+   message and can carry any label), and **never** reads
+   `ARC-Authentication-Results` (sender-suppliable unless the whole ARC chain
+   is validated, which we don't do). Prod evidence (read-only D1, last 50
+   `raw_headers` JSON maps, 2026-10): 50/50 carry a plain
+   `authentication-results` starting with `mx.cloudflare.net`, never joined
+   with a second instance; the upstream provider's results (e.g.
+   `mx.google.com`) appear only in `arc-authentication-results` — Cloudflare
+   Email Routing always prepends its own AR at the top. Headers are read in
+   wire order from the raw header block (`extractHeaderInstances`), not
+   `message.headers` — `Headers.get()` joins duplicates with `", "`, which
+   loses instance boundaries.
 
 Reason codes in `responder_suppressed_reason`: `backscatter:invalid_recipient`,
 `backscatter:domain_mismatch`, `backscatter:no_trusted_auth`,
 `backscatter:dmarc_not_pass`. Suppressed rows are still classified (the
 Workflow runs) but never emailed.
+
+**Guard-version marker.** The guard-aware INSERT also writes
+`responder_guard_version = 1` (`RESPONDER_GUARD_VERSION`). The determination
+claim, the sweeper, the `17 * * * *` cron gate and
+`idx_abuse_inbox_undelivered` all require it `IS NOT NULL`, so a row inserted
+by a pre-guard Worker (e.g. between migration 0273 and the Worker deploy —
+`responder_suppressed_reason` and the marker both NULL) is classified but
+never emailed. The ack is sent only inline by that same INSERT path.
+
+#### Security notes / residual risk
+
+- **DMARC authenticates the domain, not the mailbox.** `dmarc=pass` proves
+  the message was sent by infrastructure authorized for the From *domain*;
+  it does not prove the sender controls the specific From *mailbox*. On a
+  shared-tenant domain (a large mailbox provider, a university, any domain
+  where many unrelated users can send authenticated mail), user A can send a
+  report with `From: userB@samedomain` that still passes SPF/DKIM alignment
+  if the provider doesn't enforce mailbox-level From binding — and our ack /
+  determination would go to user B. Impact is bounded: at most one ack + one
+  determination per report, fixed non-model copy, subject defanged, per
+  sender / registrable-domain / org / global flood throttle, and
+  List-Unsubscribe honoured. Not mitigated further by design (no per-mailbox
+  verification step); revisit if abuse is observed.
+- **No model text reaches a submitter.** Analyst notes are fixed copy
+  (`RULES_EMAIL_NOTE` / `AI_EMAIL_NOTE`); the Sonnet deep-analysis narrative
+  (`deep_analysis`, "Investigator findings") is shown only in the operator /
+  admin UI and is never put in the determination email; the
+  `abuse_mailbox_verdict` notification `message` is fixed copy per verdict
+  (`RULES_OPERATOR_NOTE` / `AI_OPERATOR_NOTE`), never the model's reasoning.
 
 ### Rules evidence
 
@@ -111,6 +151,8 @@ one sentence per rule (`RULES_EMAIL_NOTE`) or per AI classification
 (`AI_EMAIL_NOTE`); model reasoning is never emailed (prompt-injection). An
 automated verdict never says "Takedown initiated" — it reads "Reported to our
 threat team". The echoed subject is defanged (scheme stripped, `.` → `[.]`).
+The Sonnet deep-analysis narrative ("Investigator findings") is never in the
+email for any verdict source — operator / admin UI only.
 
 ### Backlog
 
@@ -137,7 +179,9 @@ permanent rejection: `responder_suppressed_reason='determination:resend_rejected
 captures go to brand subscribers who are ACTIVE `org_members` of the
 reporting org (`createNotification`'s `restrictToOrgMembers`), plus opted-in
 super_admins; unbound captures go to super_admins. The forwarded subject is
-never in the title.
+never in the title, and the `message` is fixed copy (`RULES_OPERATOR_NOTE`
+for rules verdicts, `AI_OPERATOR_NOTE` for AI verdicts) — never model
+reasoning.
 
 Ingestion routing (`src/index.ts:137`): local-parts matching `verify-*`,
 `verify_*`, `report-*`, `abuse-*`, or the platform set
@@ -214,7 +258,7 @@ Primary table `abuse_inbox_messages`, base migration
 | `0188` | `deep_analysis` |
 | `0196` | retry: `classification_attempts`, `last_classify_error` |
 | `0206` | named threats: `detected_technique`, `named_threat_id`, `named_threat_name` |
-| `0273` | `responder_suppressed_reason` — why no ack/determination email is sent (`backscatter:*`, `determination:*`, `backlog:stale`, `legacy:pre_guard` backfill for every undelivered pre-0273 row); `forwarded_by_reg_domain` (throttle key); indexes `idx_abuse_inbox_reg_domain_recent`, `idx_abuse_inbox_received_at`, partial `idx_abuse_inbox_triage_queue` (`classification IN ('pending','ambiguous')`), partial `idx_abuse_inbox_undelivered` (`determination_sent_at IS NULL AND responder_suppressed_reason IS NULL`) |
+| `0273` | `responder_suppressed_reason` — why no ack/determination email is sent (`backscatter:*`, `determination:*`, `backlog:stale`, `legacy:pre_guard` backfill for every undelivered pre-0273 row); `forwarded_by_reg_domain` (throttle key); `responder_guard_version` (guard-version marker — `1` written only by the guard-aware INSERT; NULL = pre-guard row, never emailed); indexes `idx_abuse_inbox_reg_domain_recent`, `idx_abuse_inbox_received_at`, partial `idx_abuse_inbox_triage_queue` (`classification IN ('pending','ambiguous')`), partial `idx_abuse_inbox_undelivered` (`determination_sent_at IS NULL AND responder_suppressed_reason IS NULL AND responder_guard_version IS NOT NULL`) |
 
 `classified_by` ∈ `ai | rules | manual | auto_graduated` (no CHECK).
 

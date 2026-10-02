@@ -103,20 +103,27 @@ export async function handleAbuseMailboxEmail(
   // The ack / determination go to the header-From, which a sender can
   // forge. decideBackscatterGuard parses that header ONCE with a strict
   // single-mailbox validator and requires POSITIVE authentication: the
-  // topmost Authentication-Results (or ARC-Authentication-Results) header
-  // whose authserv-id is our own MTA (mx.cloudflare.net) must report
-  // dmarc=pass for the header-From domain, and that domain must match the
-  // SMTP envelope sender's registrable domain. Headers carrying any other
-  // authserv-id are attacker-suppliable and ignored. The decision is
-  // written by the INSERT itself (responder_suppressed_reason) — there is
-  // no window in which a suppressed row looks email-eligible.
-  const { decideBackscatterGuard } = await import("../lib/abuse-mailbox-responder");
+  // FIRST (topmost) plain Authentication-Results header must carry our own
+  // MTA's authserv-id (mx.cloudflare.net) and report dmarc=pass for the
+  // header-From domain, and that domain must match the SMTP envelope
+  // sender's registrable domain. A different topmost authserv-id, no
+  // Authentication-Results, or an ARC-only message → suppressed; lower
+  // instances and ARC-Authentication-Results are never consulted (they
+  // arrived with the message). The decision is written by the INSERT
+  // itself (responder_suppressed_reason + responder_guard_version) —
+  // there is no window in which a suppressed row looks email-eligible.
+  //
+  // Header source: the RAW header block, via extractHeaderInstances, in
+  // wire order (topmost first). NOT message.headers: Headers.get() joins
+  // duplicate fields with ", " — and ',' is legal inside an
+  // Authentication-Results value — so instance boundaries (and therefore
+  // "which one is topmost") cannot be recovered from it reliably.
+  const { decideBackscatterGuard, RESPONDER_GUARD_VERSION } = await import("../lib/abuse-mailbox-responder");
   const rawFromHeader = outerHeaders["from"] ?? null;
   const backscatter = decideBackscatterGuard({
     headerFrom:   rawFromHeader ?? message.from,
     envelopeFrom: message.from,
-    authResultsHeaders:    extractHeaderInstances(rawText, "authentication-results"),
-    arcAuthResultsHeaders: extractHeaderInstances(rawText, "arc-authentication-results"),
+    authResultsHeaders: extractHeaderInstances(rawText, "authentication-results"),
   });
   // The strictly-parsed recipient is the stored forwarded_by_email and the
   // exact Resend `to`. When the From header is not a single valid mailbox,
@@ -358,9 +365,9 @@ export async function handleAbuseMailboxEmail(
        throttled, throttle_reason,
        auth_results, sender_ip, correlated_threat_ids,
        classification, severity, status,
-       responder_suppressed_reason, forwarded_by_reg_domain,
+       responder_suppressed_reason, forwarded_by_reg_domain, responder_guard_version,
        created_at, updated_at
-     ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
@@ -387,6 +394,9 @@ export async function handleAbuseMailboxEmail(
     initialSeverity,
     backscatter.send ? null : backscatter.reason,
     throttle.sender_reg_domain,
+    // Marks this row as decided by the guard above (migration 0273); rows a
+    // pre-guard Worker inserted stay NULL and are never emailed.
+    RESPONDER_GUARD_VERSION,
   ).run();
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
@@ -577,9 +587,17 @@ function extractHeaders(rawText: string): Record<string, string> {
 
 /**
  * Every instance of one header in the OUTER header block, in message order
- * (topmost first), unfolded. extractHeaders() merges repeats with "; ",
- * which loses the boundaries between Authentication-Results headers — the
- * backscatter guard needs each one separately to find our MTA's own.
+ * (topmost first), unfolded. extractHeaders() merges repeats with "; " and
+ * message.headers.get() with ", ", both of which lose the boundaries
+ * between Authentication-Results headers — the backscatter guard needs the
+ * topmost one on its own.
+ *
+ * Ordering assumption: index 0 is the header nearest the top of the wire
+ * message, i.e. the one our receiving MTA prepended last. Prod evidence
+ * (raw_headers JSON maps, built by extractHeaders from this same raw
+ * block): every row's `authentication-results` starts with
+ * `mx.cloudflare.net` and is never "; "-joined with another instance, so
+ * Cloudflare Email Routing's own header is always this array's [0].
  */
 export function extractHeaderInstances(rawText: string, name: string): string[] {
   let headerEnd = rawText.indexOf("\r\n\r\n");

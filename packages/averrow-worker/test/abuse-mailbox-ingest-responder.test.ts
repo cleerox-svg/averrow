@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { handleAbuseMailboxEmail, extractHeaderInstances } from "../src/handlers/abuseMailboxEmail";
 import {
   decideBackscatterGuard, parseSingleRecipient, parseAuthResultsHeader, ackExplainer,
+  RESPONDER_GUARD_VERSION,
 } from "../src/lib/abuse-mailbox-responder";
 import type { Env } from "../src/types";
 
@@ -90,11 +91,18 @@ function insertOf(captured: CapturedRun[]): CapturedRun {
   if (!insert) throw new Error("no INSERT captured");
   return insert;
 }
-/** responder_suppressed_reason is the second-to-last INSERT bind. */
+/** INSERT tail binds: responder_suppressed_reason, forwarded_by_reg_domain,
+ *  responder_guard_version. */
 function suppressedReasonOf(captured: CapturedRun[]): unknown {
   const b = insertOf(captured).binds;
-  return b[b.length - 2];
+  return b[b.length - 3];
 }
+function guardVersionOf(captured: CapturedRun[]): unknown {
+  const b = insertOf(captured).binds;
+  return b[b.length - 1];
+}
+/** Index of raw_headers in the INSERT binds (column order in the handler). */
+const RAW_HEADERS_BIND = 12;
 
 // ─── Pure guard ──────────────────────────────────────────────────
 
@@ -137,7 +145,6 @@ describe("decideBackscatterGuard — positive authentication", () => {
   const base = {
     headerFrom: "Alice <alice@acme.com>",
     envelopeFrom: "bounce@mail.acme.com",
-    arcAuthResultsHeaders: [] as string[],
   };
   const cf = (dmarc: string, from = "acme.com") => `mx.cloudflare.net; spf=pass; dmarc=${dmarc} header.from=${from}`;
 
@@ -153,12 +160,19 @@ describe("decideBackscatterGuard — positive authentication", () => {
     expect(d).toMatchObject({ send: false, reason: "backscatter:no_trusted_auth" });
   });
 
-  it("a forged pass ABOVE our header is ignored — our topmost CF header decides", () => {
+  it("topmost AR from a different authserv → no_trusted_auth, even with a CF-labelled pass below it", () => {
     const d = decideBackscatterGuard({
       ...base,
-      authResultsHeaders: ["evil.example; dmarc=pass header.from=acme.com", cf("fail")],
+      authResultsHeaders: ["evil.example; dmarc=pass header.from=acme.com", cf("pass")],
     });
-    expect(d.reason).toBe("backscatter:dmarc_not_pass");
+    expect(d).toMatchObject({ send: false, reason: "backscatter:no_trusted_auth" });
+  });
+
+  it("authserv-id must be exactly mx.cloudflare.net (no suffix / lookalike match)", () => {
+    for (const id of ["mx.cloudflare.net.evil.example", "evil-mx.cloudflare.net", "cloudflare.net"]) {
+      const d = decideBackscatterGuard({ ...base, authResultsHeaders: [`${id}; dmarc=pass header.from=acme.com`] });
+      expect(d.reason).toBe("backscatter:no_trusted_auth");
+    }
   });
 
   it("only the TOPMOST CF header counts (a lower forged CF-labelled pass is ignored)", () => {
@@ -187,13 +201,6 @@ describe("decideBackscatterGuard — positive authentication", () => {
     expect(d.reason).toBe("backscatter:domain_mismatch");
   });
 
-  it("falls back to the CF ARC-Authentication-Results header", () => {
-    const d = decideBackscatterGuard({
-      ...base, authResultsHeaders: [],
-      arcAuthResultsHeaders: ["i=1; mx.cloudflare.net; dmarc=pass header.from=acme.com"],
-    });
-    expect(d.send).toBe(true);
-  });
 
   it("comma / multi-address From → invalid_recipient", () => {
     for (const headerFrom of ["alice@acme.com, bob@acme.com", "victim@bank.com <alice@acme.com>"]) {
@@ -236,8 +243,10 @@ describe("handleAbuseMailboxEmail — responder guards + workflow dispatch", () 
     expect(insert.binds[3]).toBe("alice@acme.com");
     expect(resendCalls[0]!.to).toEqual(["alice@acme.com"]);
     expect(suppressedReasonOf(captured)).toBeNull();
-    // Registrable-domain throttle key is written by the INSERT too.
-    expect(insert.binds[insert.binds.length - 1]).toBe("acme.com");
+    // Registrable-domain throttle key + guard-version marker are written by
+    // the INSERT too.
+    expect(insert.binds[insert.binds.length - 2]).toBe("acme.com");
+    expect(guardVersionOf(captured)).toBe(RESPONDER_GUARD_VERSION);
     expect(resendHeaders[0]!["Idempotency-Key"]).toBe(`abuse-ack/${String(insert.binds[0])}`);
 
     expect(create).toHaveBeenCalledTimes(1);
@@ -259,6 +268,91 @@ describe("handleAbuseMailboxEmail — responder guards + workflow dispatch", () 
     expect(captured.some((c) => c.sql.startsWith("UPDATE") && c.sql.includes("responder_suppressed_reason"))).toBe(false);
     // Verdict still lands within minutes; the send step is a no-op for it.
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── Prod-shaped Authentication-Results fixtures ─────────────────
+  //
+  // Shape taken from prod (read-only D1, last 50 rows of
+  // abuse_inbox_messages.raw_headers): a JSON map whose plain
+  // `authentication-results` is a single mx.cloudflare.net value (never
+  // "; "-joined with another instance) and whose upstream provider's
+  // results appear only under `arc-authentication-results`.
+  const PROD_HEADER_MAP: Record<string, string> = {
+    "arc-authentication-results":
+      "i=1; mx.google.com; dkim=pass header.i=@acme.com; spf=pass smtp.mailfrom=alice@acme.com; dmarc=pass (p=REJECT) header.from=acme.com",
+    "authentication-results":
+      "mx.cloudflare.net; dkim=pass header.d=acme.com header.s=google; spf=pass smtp.mailfrom=alice@acme.com; dmarc=pass header.from=acme.com",
+    "from": "Alice <alice@acme.com>",
+    "to": "verify-acme@averrow.com",
+    "subject": "Fwd: Account Verification",
+    "content-type": "text/plain; charset=UTF-8",
+  };
+  /** Render a header map + forwarded body as a wire message. CF prepends
+   *  its Authentication-Results at the very top, so it goes first. */
+  function rawFromMap(map: Record<string, string>): string {
+    const order = ["authentication-results", ...Object.keys(map).filter((k) => k !== "authentication-results")];
+    return [
+      ...order.filter((k) => map[k] !== undefined).map((k) => `${k}: ${map[k]}`),
+      "",
+      "---------- Forwarded message ----------",
+      "From: Notifications <notify@bad-acme.example>",
+      "Subject: Account Verification Required",
+      "",
+      "Click https://bad-acme.example/verify now.",
+    ].join("\r\n");
+  }
+
+  it("prod-shaped headers (CF plain AR dmarc=pass + Google ARC-AR) → acks, and the stored map round-trips", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv(captured);
+    await handleAbuseMailboxEmail(
+      makeMessage("verify-acme@averrow.com", "alice@acme.com", rawFromMap(PROD_HEADER_MAP)), env);
+    expect(resendCalls).toHaveLength(1);
+    expect(resendCalls[0]!.to).toEqual(["alice@acme.com"]);
+    expect(suppressedReasonOf(captured)).toBeNull();
+    const stored = JSON.parse(String(insertOf(captured).binds[RAW_HEADERS_BIND])) as Record<string, string>;
+    expect(stored["authentication-results"]).toBe(PROD_HEADER_MAP["authentication-results"]);
+    expect(stored["arc-authentication-results"]).toContain("mx.google.com");
+  });
+
+  it("forged CF-labelled pass BELOW the real CF AR (dmarc=fail) → suppressed; joined map keeps CF first", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv(captured);
+    const realFail = "mx.cloudflare.net; dkim=none; spf=softfail smtp.mailfrom=alice@acme.com; dmarc=fail header.from=acme.com";
+    const forged   = "mx.cloudflare.net; dkim=pass header.d=acme.com; spf=pass; dmarc=pass header.from=acme.com";
+    await handleAbuseMailboxEmail(makeMessage("verify-acme@averrow.com", "alice@acme.com",
+      raw("Alice <alice@acme.com>", [`Authentication-Results: ${realFail}`, `Authentication-Results: ${forged}`])), env);
+    expect(resendCalls).toHaveLength(0);
+    expect(suppressedReasonOf(captured)).toBe("backscatter:dmarc_not_pass");
+    // How the two instances look in the stored JSON map (extractHeaders
+    // joins repeats with "; " in wire order): topmost first.
+    const stored = JSON.parse(String(insertOf(captured).binds[RAW_HEADERS_BIND])) as Record<string, string>;
+    expect(stored["authentication-results"]).toBe(`${realFail}; ${forged}`);
+  });
+
+  it("only a forged CF-labelled AR, below a topmost AR from a different authserv → suppressed", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv(captured);
+    await handleAbuseMailboxEmail(makeMessage("verify-acme@averrow.com", "alice@acme.com",
+      raw("alice@acme.com", [
+        "Authentication-Results: mx.other-relay.example; dmarc=pass header.from=acme.com",
+        "Authentication-Results: mx.cloudflare.net; dmarc=pass header.from=acme.com",
+      ])), env);
+    expect(resendCalls).toHaveLength(0);
+    expect(suppressedReasonOf(captured)).toBe("backscatter:no_trusted_auth");
+  });
+
+  it("ARC-only (CF-labelled ARC-AR dmarc=pass, no plain AR) → suppressed", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv(captured);
+    await handleAbuseMailboxEmail(makeMessage("verify-acme@averrow.com", "alice@acme.com",
+      raw("alice@acme.com", [
+        "ARC-Authentication-Results: i=1; mx.cloudflare.net; dkim=pass; spf=pass; dmarc=pass header.from=acme.com",
+      ])), env);
+    expect(resendCalls).toHaveLength(0);
+    expect(suppressedReasonOf(captured)).toBe("backscatter:no_trusted_auth");
+    // Still marked as guard-decided (it is suppressed, not pre-guard).
+    expect(guardVersionOf(captured)).toBe(RESPONDER_GUARD_VERSION);
   });
 
   it("CF dmarc=none: suppressed", async () => {

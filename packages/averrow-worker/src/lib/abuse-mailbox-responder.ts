@@ -110,10 +110,17 @@ export function parseSingleRecipient(value: string | null | undefined): string |
   return addr;
 }
 
-/** Our receiving MTA's authserv-id. Only Authentication-Results headers
- *  carrying it are trusted — any other authserv-id (including headers that
- *  arrived inside the message) is attacker-suppliable. */
+/** Our receiving MTA's authserv-id. Only the TOPMOST Authentication-Results
+ *  header is trusted, and only when it carries this id — every lower
+ *  instance (and every ARC-Authentication-Results) arrived with the message
+ *  and is attacker-suppliable, whatever authserv-id it claims. */
 export const TRUSTED_AUTHSERV_ID = "mx.cloudflare.net";
+
+/** abuse_inbox_messages.responder_guard_version written by the
+ *  guard-aware INSERT (migration 0273). The determination claim, sweeper
+ *  and cron gate only consider rows carrying it, so rows inserted by a
+ *  pre-guard Worker (NULL) are never emailed. */
+export const RESPONDER_GUARD_VERSION = 1;
 
 interface ParsedAuthHeader {
   authservId: string;
@@ -121,7 +128,8 @@ interface ParsedAuthHeader {
   dmarcHeaderFrom: string | null;
 }
 
-/** Parse one Authentication-Results / ARC-Authentication-Results value. */
+/** Parse one Authentication-Results value (an ARC "i=N;" instance tag, if
+ *  present, is skipped — kept for robustness; the guard never reads ARC). */
 export function parseAuthResultsHeader(value: string): ParsedAuthHeader | null {
   // Comments (RFC 8601 CFWS) can contain ';' — drop them first.
   let flat = value.replace(/\s+/g, " ");
@@ -151,14 +159,29 @@ export function parseAuthResultsHeader(value: string): ParsedAuthHeader | null {
  *
  *   1. the header-From parses as exactly one mailbox (parseSingleRecipient);
  *   2. its registrable domain equals the SMTP envelope sender's;
- *   3. the TOPMOST Authentication-Results header whose authserv-id is
- *      mx.cloudflare.net (falling back to the topmost such
- *      ARC-Authentication-Results) exists — every header with any other
- *      authserv-id is ignored — and
- *   4. it reports dmarc=pass with header.from equal to the header-From
- *      domain.
+ *   3. the FIRST (topmost) plain Authentication-Results header has
+ *      authserv-id exactly mx.cloudflare.net — if the topmost instance
+ *      carries any other id, or there is no Authentication-Results at all,
+ *      suppress. We never search further down for a CF-labelled instance
+ *      (anything below the topmost arrived with the message and can be
+ *      forged with any label), and ARC-Authentication-Results is never
+ *      consulted (an ARC set is sender-suppliable unless its whole chain is
+ *      validated, which we do not do) — and
+ *   4. that header reports dmarc=pass with header.from equal to the
+ *      header-From domain.
  *
- * Headers are passed in message order (topmost first). Pure. `reason` is a
+ * Why "topmost": Cloudflare Email Routing PREPENDS its own
+ * Authentication-Results above every header the message arrived with
+ * (RFC 8601 §5 — the receiving MTA adds its header at the top). Prod
+ * evidence (read-only D1, last 50 abuse_inbox_messages.raw_headers JSON
+ * maps): 50/50 carry a plain `authentication-results` value starting with
+ * `mx.cloudflare.net` and never joined with a second instance; the
+ * upstream provider's results (e.g. mx.google.com) appear only inside
+ * `arc-authentication-results`. So the topmost AR is always CF's own.
+ *
+ * Headers are passed in message order, topmost first — see
+ * extractHeaderInstances (handlers/abuseMailboxEmail.ts), which reads the
+ * raw RFC 5322 header block, not message.headers. Pure. `reason` is a
  * fixed code stamped into abuse_inbox_messages.responder_suppressed_reason
  * when `send` is false; `recipient` is the single normalized address to
  * store and to hand to Resend.
@@ -166,8 +189,8 @@ export function parseAuthResultsHeader(value: string): ParsedAuthHeader | null {
 export function decideBackscatterGuard(input: {
   headerFrom:   string | null | undefined;
   envelopeFrom: string | null | undefined;
-  authResultsHeaders:    ReadonlyArray<string>;
-  arcAuthResultsHeaders: ReadonlyArray<string>;
+  /** Every plain Authentication-Results instance, topmost first. */
+  authResultsHeaders: ReadonlyArray<string>;
 }): { send: boolean; reason: string; recipient: string | null } {
   const recipient = parseSingleRecipient(input.headerFrom);
   if (!recipient) return { send: false, reason: "backscatter:invalid_recipient", recipient: null };
@@ -179,15 +202,12 @@ export function decideBackscatterGuard(input: {
     return { send: false, reason: "backscatter:domain_mismatch", recipient };
   }
 
-  const trusted = (headers: ReadonlyArray<string>): ParsedAuthHeader | null => {
-    for (const h of headers) {
-      const p = parseAuthResultsHeader(h);
-      if (p && p.authservId === TRUSTED_AUTHSERV_ID) return p;
-    }
-    return null;
-  };
-  const auth = trusted(input.authResultsHeaders) ?? trusted(input.arcAuthResultsHeaders);
-  if (!auth) return { send: false, reason: "backscatter:no_trusted_auth", recipient };
+  // Topmost instance only — never a fallback to a lower or ARC header.
+  const topmost = input.authResultsHeaders[0];
+  const auth = topmost !== undefined ? parseAuthResultsHeader(topmost) : null;
+  if (!auth || auth.authservId !== TRUSTED_AUTHSERV_ID) {
+    return { send: false, reason: "backscatter:no_trusted_auth", recipient };
+  }
   if (auth.dmarc !== "pass") return { send: false, reason: "backscatter:dmarc_not_pass", recipient };
   if (auth.dmarcHeaderFrom !== fromDomain) {
     return { send: false, reason: "backscatter:domain_mismatch", recipient };
@@ -640,13 +660,10 @@ interface DeterminationContext {
   attachmentCount?: number | null;
   correlatedCount?: number | null;   // platform threats this submission already matches
   promotedCount?: number | null;     // platform threats this submission CREATED
-  // PR-BC — sanitized investigator narrative from the Sonnet deep
-  // analyzer. Only populated on HIGH/CRITICAL phishing/malware
-  // verdicts where the Sonnet pass succeeded. The deep analyzer
-  // already strips IPs/URLs/emails before this gets here, and the
-  // sanitizeForExternalEmail helper below is a defense-in-depth
-  // second pass in case the model leaked anything past the prompt.
-  deepAnalysisExternal?: string | null;
+  // No deep-analysis field either: the Sonnet "Investigator findings"
+  // narrative (abuse_inbox_messages.deep_analysis) is model output shaped
+  // by attacker-controlled message content, so it stays in the operator /
+  // admin UI and is never put in a submitter-facing email.
   /** abuse_inbox_messages.classified_by. 'rules' switches the email to
    *  the deterministic-verdict copy: no confidence %, a FIXED analyst
    *  note per rule, never the stored reason codes. */
@@ -798,12 +815,11 @@ const VERDICT_COPY: Record<string, VerdictDef> = {
 
 // ─── PR-BC external-narrative sanitizer ─────────────────────────
 //
-// Belt-and-suspenders pass on any string we're about to embed in
-// an outbound email. The deep analyzer's Sonnet prompt explicitly
-// forbids IPs/URLs/emails in the external narrative AND the
-// analyzer itself runs a regex scrub before storing the result.
-// This is a third gate at the email-send boundary — anything that
-// slips through both upstream layers gets caught here.
+// Scrubber for model-written narrative text. NOTE: the determination
+// email no longer embeds the deep analyzer's external narrative at all
+// (model output never reaches the submitter), so nothing on the email
+// path calls this today; it is kept as the shared scrub for any future
+// display of that narrative outside the operator UI.
 //
 // Patterns scrubbed:
 //   IPv4 / IPv6  → "[ip]"
@@ -954,19 +970,6 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
        </div>`
     : "";
 
-  // PR-BC investigator narrative — only present on HIGH/CRITICAL
-  // confirmed verdicts where the Sonnet deep analyzer succeeded.
-  // Triple-sanitized by this point (prompt + analyzer regex + final
-  // email-boundary scrub) — IPs / URLs / sender emails are guaranteed
-  // not to appear in the rendered output.
-  const investigatorClean = sanitizeForExternalEmail(ctx.deepAnalysisExternal);
-  const investigatorBlock = investigatorClean
-    ? `<div style="margin:16px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
-         <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Investigator findings</div>
-         <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(investigatorClean)}</p>
-       </div>`
-    : "";
-
   // Rules verdicts are deterministic — a confidence % would be invented.
   const pillText = isRulesVerdict(ctx) ? "Verdict" : `Verdict · ${ctx.confidence}% confidence`;
   const body = `
@@ -974,7 +977,6 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
     <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.lead)}</p>
     ${echoSubject}
     ${findingsBlock}
-    ${investigatorBlock}
     ${nextStepsBlock}
     <div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
       <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Analyst notes</div>
@@ -1014,17 +1016,12 @@ function determinationText(ctx: DeterminationContext, b: AbuseBranding): string 
     ? "\n\nWhat you should do:\n" + steps.map((s) => `  - ${s}`).join("\n")
     : "";
 
-  const investigatorClean = sanitizeForExternalEmail(ctx.deepAnalysisExternal);
-  const investigatorBlock = investigatorClean
-    ? `\n\nInvestigator findings:\n${investigatorClean}`
-    : "";
-
   const headline = isRulesVerdict(ctx)
     ? `Determination: ${v.label}`
     : `Determination: ${v.label} (${ctx.confidence}% confidence)`;
   return `${headline}
 
-${v.lead}${echo}${findingsBlock}${investigatorBlock}${nextStepsBlock}
+${v.lead}${echo}${findingsBlock}${nextStepsBlock}
 
 Analyst notes: ${analystNote(ctx)}
 Action taken: ${humanizeAction(ctx.action, ctx.classifiedBy)}

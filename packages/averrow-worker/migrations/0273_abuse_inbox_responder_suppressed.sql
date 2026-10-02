@@ -8,8 +8,9 @@
 --   1. handlers/abuseMailboxEmail.ts — the backscatter guard, computed
 --      BEFORE the INSERT and written by the INSERT itself (fail-closed: a
 --      row is never briefly email-eligible). The responder replies only
---      when the topmost Authentication-Results (or ARC-Authentication-
---      Results) header from our own MTA (authserv-id mx.cloudflare.net)
+--      when the FIRST (topmost) plain Authentication-Results header has
+--      authserv-id exactly mx.cloudflare.net (Cloudflare Email Routing
+--      prepends it; ARC-Authentication-Results is never consulted) and
 --      reports dmarc=pass for the header-From domain, and that domain's
 --      registrable domain matches the SMTP envelope sender's. Codes:
 --      'backscatter:invalid_recipient', 'backscatter:domain_mismatch',
@@ -24,6 +25,17 @@
 --
 -- NULL = no suppression recorded (the normal case). Additive only.
 --
+-- ─── abuse_inbox_messages.responder_guard_version ─────────────────
+-- Guard-version marker. Written as 1 ONLY by the backscatter-guard-aware
+-- INSERT in handlers/abuseMailboxEmail.ts (RESPONDER_GUARD_VERSION). The
+-- determination claim, the hourly sweeper, its `17 * * * *` cron gate and
+-- idx_abuse_inbox_undelivered all require it to be NOT NULL. Closes the
+-- deploy-window gap: rows the OLD Worker inserts between this migration
+-- and the new Worker deploy carry responder_suppressed_reason = NULL (the
+-- old INSERT doesn't name it) but also responder_guard_version = NULL, so
+-- they are never emailed. The ack is sent only inline by the same new
+-- INSERT path, after the guard. NULL = pre-guard row.
+--
 -- ─── abuse_inbox_messages.forwarded_by_reg_domain ─────────────────
 -- Registrable domain of the forwarder (lib/abuse-mailbox-throttle.ts), the
 -- key of the per-domain flood throttle, so rotating subdomains of one
@@ -31,11 +43,13 @@
 -- 60 minutes, so no backfill is needed).
 --
 -- DEPLOY ORDER: apply BEFORE deploying the Worker — the email handler's
--- INSERT names both new columns (ingest fails until they exist), and the
--- determination claim + sweeper filter on responder_suppressed_reason.
+-- INSERT names all three new columns (ingest fails until they exist), and
+-- the determination claim + sweeper filter on responder_suppressed_reason
+-- and responder_guard_version.
 
 ALTER TABLE abuse_inbox_messages ADD COLUMN responder_suppressed_reason TEXT;
 ALTER TABLE abuse_inbox_messages ADD COLUMN forwarded_by_reg_domain TEXT;
+ALTER TABLE abuse_inbox_messages ADD COLUMN responder_guard_version INTEGER;
 
 -- Pre-guard rows were captured without the positive-authentication
 -- backscatter guard: never let the determination sweeper email them.
@@ -58,7 +72,8 @@ CREATE INDEX IF NOT EXISTS idx_abuse_inbox_triage_queue
   ON abuse_inbox_messages (received_at)
   WHERE classification IN ('pending', 'ambiguous');
 
--- Undelivered-determination sweep + cron gate.
+-- Undelivered-determination sweep + cron gate. Guard-marked rows only.
 CREATE INDEX IF NOT EXISTS idx_abuse_inbox_undelivered
   ON abuse_inbox_messages (received_at)
-  WHERE determination_sent_at IS NULL AND responder_suppressed_reason IS NULL;
+  WHERE determination_sent_at IS NULL AND responder_suppressed_reason IS NULL
+    AND responder_guard_version IS NOT NULL;

@@ -323,6 +323,7 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
          + EXISTS (SELECT 1 FROM abuse_inbox_messages
                     WHERE determination_sent_at IS NULL
                       AND responder_suppressed_reason IS NULL
+                      AND responder_guard_version IS NOT NULL
                       AND COALESCE(throttled, 0) = 0
                       AND forwarded_by_email IS NOT NULL
                       AND classification NOT IN ('pending', 'follow_up')
