@@ -195,7 +195,11 @@
   --z-modal:         400;
   --z-toast:         500;
 
-  /* ── Radius scale ── (--card-radius aliases --radius-lg = 16px) */
+  /* ── Radius scale ── (--card-radius aliases --radius-lg = 16px).
+     Aliases (--card-radius, --font-display, --transition-*) resolve at
+     :root, where they are declared: a scoped override of --radius-lg /
+     --font-sans / --dur-* on a descendant will NOT propagate to them.
+     Override the alias itself where needed. */
   --radius-xs:   4px;
   --radius-sm:   8px;
   --radius-md:   12px;
@@ -211,7 +215,7 @@
   --dur-slower:  500ms;
   --ease-standard:   cubic-bezier(0.2, 0, 0, 1);
   --ease-out:        cubic-bezier(0, 0, 0.2, 1);
-  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1.2);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 
   /* ── Transitions (legacy shorthand; built from the motion tokens.
      Timing curve stays `ease` so existing behaviour is unchanged.) ── */
@@ -708,9 +712,18 @@
 [data-theme="light"] .hover\:bg-white\/\[0\.02\]:hover   { background-color: rgba(15,20,35,0.02); }
 
 /* ── Reduced motion (global) ──
-   Collapses animation/transition durations to near-zero rather than
-   `none`, so animationend / transitionend still fire and anything
-   keyed on them keeps working. Loaded by both apps via theme.css. */
+   Transitions collapse to near-zero (not `none`, so transitionend still
+   fires). Generic animations collapse to 0.01ms / 1 iteration so
+   animationend still fires. Three classes of animation must NOT be
+   collapsed — each has an explicit exception below, using !important
+   plus a class/attribute selector (specificity above the `*` rule):
+     1. Loading spinners keep a slow rotation, otherwise loading looks hung.
+     2. The intel ticker is a scrolling marquee; frozen at -50% half its
+        items would be unreachable, so it is made manually scrollable.
+     3. Ping rings animate to opacity 0, so a collapsed run strands them
+        on an invisible/odd frame; the ring is hidden and the solid dot
+        alone conveys LIVE.
+   Loaded by both apps via theme.css. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -719,4 +732,51 @@
     transition-delay: 0s !important;
     scroll-behavior: auto !important;
   }
+
+  /* 1. Spinners: slow, still-readable rotation (Tailwind `animate-spin`
+        and the ops `spin` keyframe). */
+  .animate-spin {
+    animation: spin 1.6s linear infinite !important;
+  }
+
+  /* 2. Ticker: no auto-scroll; the track is shown static and its
+        overflow container (an inline-styled `overflow:hidden` div, matched
+        structurally) scrolls horizontally. NOTE: EventTicker renders the
+        event list twice for the seamless loop, so with animation off the
+        duplicated items appear after the originals — acceptable. */
+  .ticker-track {
+    animation: none !important;
+    transform: none !important;
+  }
+  .event-ticker > div:has(> .ticker-track) {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  /* 3. Ping rings (inline-styled `live-ping` / `chip-ping`, Tailwind
+        `animate-ping`): hide the ring entirely; the solid dot remains. */
+  [style*="live-ping"],
+  [style*="chip-ping"],
+  .animate-ping {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+}
+
+/* ── Ligatures off for monospace (IOC safety) ──
+   JetBrains Mono ships programming ligatures under `calt` (on by default)
+   that merge `::`, `://`, `!=`, `www` into single glyphs, which can
+   misrepresent URLs, IPv6 addresses and hashes. Threat indicators must
+   render character-for-character.
+   Robust approach: `calt` is disabled on :root so it inherits everywhere,
+   including the many inline-style `fontFamily: var(--font-mono)` users
+   that no selector could enumerate. Plus Jakarta Sans' standard `liga`
+   (e.g. `fi`) is untouched, and its `calt` carries nothing we rely on.
+   Known mono elements additionally disable `liga` explicitly. */
+:root {
+  font-feature-settings: "calt" 0;
+}
+code, kbd, samp, pre, .font-mono, .tt-mono {
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0;
 }

@@ -129,8 +129,10 @@ shared theme tokens (`packages/shared/src/theme/tokens.css`):
 | Sans / display | `--font-sans` (`--font-display` aliases it) | Plus Jakarta Sans, then system-ui fallbacks |
 | Mono (taglines, labels, buttons, data) | `--font-mono` | JetBrains Mono, then ui-monospace fallbacks |
 
+`--font-display`, `--card-radius` and `--transition-*` are aliases that resolve at `:root`: a scoped override of `--font-sans`, `--radius-lg` or `--dur-*` on a descendant will not propagate to them. Override the alias itself. Programming ligatures (`calt`) are disabled globally so IOCs (`::`, `://`, `!=`) render literally.
+
 Each host app's `index.html` must preconnect to Google Fonts and load
-`Plus Jakarta Sans` (400-800) + `JetBrains Mono` (400/500/700). Components
+`Plus Jakarta Sans` (400-800) + `JetBrains Mono` (400/500/700/800; its max weight is 800, so 900 usages render 800). Components
 reference the tokens (or the Tailwind `font-sans` / `font-mono` classes mapped
 to them), never a literal family. **FarmTrack must adopt this pair (and the
 same tokens) to stay identical to Averrow** — this replaces the previous

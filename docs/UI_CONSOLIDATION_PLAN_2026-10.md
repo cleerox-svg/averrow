@@ -18,7 +18,7 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
 
 ## Phase 1 PRs
 
-1. **Foundations.** Add the font pair, a radius scale, motion tokens and a global reduced-motion rule to `packages/shared/src/theme/tokens.css`, and wire both apps to them.
+1. **Foundations.** Add the font pair, a radius scale, motion tokens and a global reduced-motion rule to `packages/shared/src/theme/tokens.css`, and wire both apps to them. The font pair applies to the ops and tenant SPAs and the shared login. Worker-rendered public templates and marketing still use IBM Plex and are out of scope for now.
 2. **v4 parity.** Add these to `ShellV4.tsx`:
    - NotificationBell and the avatar menu
    - PlatformAlertBanner
