@@ -27,6 +27,7 @@ interface QState {
   data?: unknown;
   isLoading?: boolean;
   isError?: boolean;
+  isFetching?: boolean;
   refetch?: ReturnType<typeof vi.fn>;
 }
 
@@ -34,6 +35,7 @@ const q = (s: QState = {}) => ({
   data: undefined,
   isLoading: false,
   isError: false,
+  isFetching: false,
   refetch: vi.fn(),
   ...s,
 });
@@ -132,5 +134,37 @@ describe('Console — error states', () => {
 
     expect(resolved.refetch).toHaveBeenCalledTimes(1);
     expect(signals.refetch).not.toHaveBeenCalled();
+  });
+
+  it('KPI tiles and stream counts show "—" + "Couldn\'t load" instead of 0 on failure', () => {
+    setup({
+      signals: { data: undefined, isError: true },
+      drafts: { data: undefined, isError: true },
+      resolved: { data: undefined, isError: true },
+    });
+    renderWithProviders(<Console />);
+
+    // Needs you, Drafts, In flight, Handled tiles
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(4);
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('keeps showing real counts when a background refetch fails but data is cached', () => {
+    setup({ signals: { data: EMPTY_ALERTS, isError: true } });
+    renderWithProviders(<Console />);
+
+    expect(screen.queryByText("Couldn't load items needing you")).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
+    expect(screen.getByText("You're all caught up")).toBeInTheDocument();
+  });
+
+  it('disables Retry and shows "Retrying…" while the failed query is fetching', () => {
+    setup({ signals: { data: undefined, isError: true, isFetching: true } });
+    renderWithProviders(<Console />);
+
+    const btn = screen.getByRole('button', { name: 'Retrying…' });
+    expect(btn).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });

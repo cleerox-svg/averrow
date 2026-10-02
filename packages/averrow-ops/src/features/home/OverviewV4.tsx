@@ -8,11 +8,10 @@
 // provider movers all stay). Sections are the same shared components, so the
 // classic Home is unaffected.
 
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import CountUp from 'react-countup';
 import { useAuth } from '@/lib/auth';
-import { api } from '@/lib/api';
+import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { StatusRow } from '@/features/home/sections/StatusRow';
 import { StatGrid } from '@/features/home/sections/StatGrid';
@@ -58,13 +57,7 @@ function V4Hero() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const { data: openSignals = null, isError: signalsError } = useQuery({
-    queryKey: ['home-v4-open-alerts'],
-    queryFn: async () => {
-      const d = await api.get<unknown>('/api/alerts?status=open&limit=1');
-      return d.total ?? 0;
-    },
-  });
+  const { data: openSignals = null, isError: signalsError } = useOpenAlertCount();
   const { data: incidents, isError: incidentsError } = useIncidents({ onlyOpen: true });
   const openIncidents = incidents?.length ?? null;
   const criticalIncidents = incidents ? incidents.filter(i => i.severity === 'critical').length : null;

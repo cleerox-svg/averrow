@@ -5,12 +5,12 @@
 // @averrow/shared/ui + live data — no page-logic rewrites. The hero is the
 // "this is clearly v4" surface (matches the approved prototype).
 
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CountUp from 'react-countup';
 import { AlertTriangle, Crosshair, Siren, Gavel } from 'lucide-react';
 import { Button } from '@averrow/shared/ui';
-import { api } from '@/lib/api';
+import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { ConsoleIncidents } from './views/ConsoleIncidents';
 import './console.css';
@@ -48,17 +48,11 @@ export function Console() {
   const [params, setParams] = useSearchParams();
   const initial: ConsoleTab = isTab(params.get('tab')) ? (params.get('tab') as ConsoleTab) : 'signals';
   const [tab, setTab] = useState<ConsoleTab>(initial);
-  const [openSignals, setOpenSignals] = useState<number | null>(null);
+  const { data: openSignals = null, isError: signalsError } = useOpenAlertCount();
 
-  const { data: incidents } = useIncidents({ onlyOpen: true });
+  const { data: incidents, isError: incidentsError } = useIncidents({ onlyOpen: true });
   const openIncidents = incidents?.length ?? null;
   const criticalIncidents = incidents ? incidents.filter(i => i.severity === 'critical').length : null;
-
-  useEffect(() => {
-    api.get<unknown>('/api/alerts?status=open&limit=1')
-      .then(d => setOpenSignals(d.total ?? 0))
-      .catch(() => {});
-  }, []);
 
   function selectTab(next: ConsoleTab) {
     setTab(next);
@@ -82,9 +76,9 @@ export function Console() {
 
       {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
       <div className="kpi-grid">
-        <KpiTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('signals')} />
-        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} />
-        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} />
+        <KpiTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('signals')} error={signalsError} />
+        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />
+        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} error={incidentsError} />
       </div>
 
       {/* deep-linkable tab bar */}
@@ -124,7 +118,7 @@ function TabLoading() {
   );
 }
 
-function KpiTile({ tone, label, value, sub, onClick }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; onClick?: () => void }) {
+function KpiTile({ tone, label, value, sub, onClick, error }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; onClick?: () => void; error?: boolean }) {
   const inner = (
     <>
       <div className="kpi-glow" aria-hidden />
@@ -132,7 +126,9 @@ function KpiTile({ tone, label, value, sub, onClick }: { tone: 'amber' | 'red' |
       <div className="kpi-num">
         {value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}
       </div>
-      {sub && <div className="kpi-sub">{sub}</div>}
+      {error && value == null
+        ? <div className="kpi-sub" role="status" style={{ color: 'var(--text-tertiary)' }}>Couldn't load</div>
+        : sub && <div className="kpi-sub">{sub}</div>}
       {onClick && <span className="kpi-go" aria-hidden>View →</span>}
     </>
   );
