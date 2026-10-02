@@ -306,8 +306,18 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
   // page. Bounded at 50 rows per tick (Haiku ~$0.001/row).
   if (event.cron === '17 * * * *') {
     try {
+      // Work = pending rows (rules pass) OR recent verdicts whose
+      // determination email the per-message Workflow didn't deliver
+      // (sweeper). Same predicates as sweepAbuseDeterminations, minus the
+      // suppression column so this gate works before migration 0273.
       const pendingCount = await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
+        `SELECT COUNT(*) AS n FROM abuse_inbox_messages
+         WHERE classification = 'pending'
+            OR (determination_sent_at IS NULL
+                AND COALESCE(throttled, 0) = 0
+                AND forwarded_by_email IS NOT NULL
+                AND classified_by IN ('rules', 'ai')
+                AND received_at >= datetime('now', '-2 days'))`,
       ).first<{ n: number }>();
       if ((pendingCount?.n ?? 0) > 0) {
         // First-class dispatch: route through executeAgent so the run lands

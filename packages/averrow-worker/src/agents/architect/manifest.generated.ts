@@ -21,8 +21,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "reads": [],
       "writes": [],
       "ai_models_referenced": [],
-      "loc": 74,
-      "last_modified": "2026-10-01T00:48:48.041Z"
+      "loc": 88,
+      "last_modified": "2026-10-02T03:12:21.354Z"
     },
     {
       "name": "admin-classify",
@@ -1922,6 +1922,7 @@ export const REPO_MANIFEST: RepoInventory = {
       "name": "averrow-worker",
       "path": "packages/averrow-worker/src/index.ts",
       "bindings": [
+        "ABUSE_MAILBOX_TRIAGE",
         "ARCHITECT_BUNDLES",
         "AUDIT_DB",
         "CACHE",

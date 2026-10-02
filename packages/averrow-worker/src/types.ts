@@ -41,6 +41,11 @@ export interface Env {
    *  geoip support keep typechecking. The agent gracefully
    *  reports an unconfigured workflow when this is undefined. */
   GEOIP_REFRESH?: Workflow;
+  /** Per-message abuse-mailbox triage (workflows/abuseMailboxTriage.ts):
+   *  rules verdict → ~2 min sleep → exactly-once determination email.
+   *  Optional so tests / scripts without the binding typecheck; when
+   *  absent the hourly `17 * * * *` sweeper handles every report. */
+  ABUSE_MAILBOX_TRIAGE?: Workflow;
   // Workers Analytics Engine — per-endpoint D1 read attribution.
   // Optional so non-instrumented Worker entry points (tests, scripts)
   // don't have to bind it.

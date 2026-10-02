@@ -218,6 +218,21 @@ const SHARED_HOSTS: ReadonlySet<string> = new Set([
   "w3s.link", "nftstorage.link", "4everland.io",
 ]);
 
+/**
+ * True when `raw` (domain, URL, or IOC) sits on shared hosting — a shared
+ * content gateway (SHARED_HOSTS) or a tenant-subdomain platform
+ * (PLATFORM_SUFFIXES, either the platform apex itself or any subdomain of
+ * it). A domain-level match on such a host says nothing about the operator
+ * of a DIFFERENT URL on the same host, so domain-level correlation must
+ * not treat it as evidence. Used by the abuse-mailbox rules verdict.
+ */
+export function isSharedHostingHost(raw: string): boolean {
+  const host = hostOf(raw);
+  if (!host) return false;
+  if (SHARED_HOSTS.has(host)) return true;
+  return PLATFORM_SUFFIXES.some((p) => host === p || host.endsWith(`.${p}`));
+}
+
 function suffixLabelCount(host: string): number {
   for (const p of PLATFORM_SUFFIXES) {
     if (host.endsWith(`.${p}`)) return p.split(".").length;

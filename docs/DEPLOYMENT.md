@@ -73,12 +73,18 @@ Migrations are also run automatically by the deploy workflow.
 
 ### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
 
-No migration is required. Expect, once, after the first deploy:
+Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside it needs 0273 — see the next section). Expect, once, after the first deploy:
 
 - **Up to ~90 lookalike `HIGH` alerts.** The lookalike scanner's one-time catch-up re-composites mail+web rows that a retired Haiku verdict held below HIGH (prod sizing: 84 LOW + 6 MEDIUM; rows with `status` `benign`/`taken_down` are excluded). They alert as they are re-checked, then the predicate goes false. This is not a regression.
 - **Up to ~50 provider insight rows from Cartographer.** `hosting_providers.last_score` still holds the old Haiku scores; the first rule-based score moves past the emit threshold for providers whose heuristic differs, then converges.
 - **Possibly one spurious `platform_ai_calls_failing` notification and email.** Pre-deploy `agent_outputs` rows carry `aiCallsAttempted > 0` with 0 successes inside the 2h window; Flight Control may fire once before they age out. Under `rules_only` no new attempts are recorded, so it does not recur. It is escalated by email at most once per UTC day.
 - **Service worker update.** `packages/averrow-ops/public/sw.js` `VERSION` is `2026-10-02.1`; old shell/runtime caches are evicted on activate. Bump `VERSION` on any further `sw.js` change.
+
+### Migration 0273 + the `ABUSE_MAILBOX_TRIAGE` Workflow binding (abuse-mailbox rules determinations)
+
+- `0273_abuse_inbox_responder_suppressed.sql` adds `abuse_inbox_messages.responder_suppressed_reason`. Apply it **before** the Worker: the determination claim (`lib/abuse-mailbox-determination.ts`) filters on it and fails closed (no determination email) until it exists. Ingest is unaffected — the backscatter stamp is a separate, caught UPDATE.
+- `wrangler.toml` adds `[[workflows]] abuse-mailbox-triage` → `ABUSE_MAILBOX_TRIAGE` / `AbuseMailboxTriageWorkflow` (exported from `src/index.ts`). `wrangler deploy` creates it; no manual provisioning. The binding is optional in `Env` — staging/dev (no `[[workflows]]` there) and any deploy without it fall back to the hourly `17 * * * *` sweeper.
+- Verify after deploy: forward a test report; within ~2 min `abuse_inbox_messages.classified_by = 'rules'` and `determination_sent_at` is set; `npx wrangler workflows instances list abuse-mailbox-triage` shows the `abuse-<messageId>` instance.
 
 ## Manual Deploy
 

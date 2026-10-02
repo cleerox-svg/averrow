@@ -160,6 +160,17 @@ name = "geoip-refresh"
 binding = "GEOIP_REFRESH"
 class_name = "GeoipRefreshWorkflow"
 
+# Per-message abuse-mailbox triage — dispatched by the Email Worker
+# (handlers/abuseMailboxEmail.ts) right after a report is stored + acked.
+# Steps: rules verdict (+ AI second opinion only when AI_MODE allows and
+# the rules said review) → sleep ~2 min → exactly-once determination email
+# (atomic determination_sent_at claim). Instance id `abuse-<messageId>`.
+# The hourly `17 * * * *` cron remains the sweeper for anything missed.
+[[workflows]]
+name = "abuse-mailbox-triage"
+binding = "ABUSE_MAILBOX_TRIAGE"
+class_name = "AbuseMailboxTriageWorkflow"
+
 # ─── Queues (legacy ARCHITECT consumer — kept until CLI cleanup) ──
 # The architect-analysis queue is no longer enqueued to (Phase 4 Step 1).
 # The consumer binding MUST stay here until the Cloudflare-side consumer

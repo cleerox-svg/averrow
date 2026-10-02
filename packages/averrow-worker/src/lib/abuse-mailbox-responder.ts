@@ -1,11 +1,11 @@
 /**
  * Averrow — Abuse Mailbox responder
  *
- * Wave-3 PR-AD: ack-on-receipt + 24h determination emails for the
+ * Wave-3 PR-AD: ack-on-receipt + determination emails for the
  * abuse_inbox_messages flow. Pairs with:
  *   - handlers/abuseMailboxEmail.ts  (calls sendAck after INSERT)
- *   - lib/abuse-mailbox-classifier.ts (calls sendDetermination after
- *     classification completes)
+ *   - lib/abuse-mailbox-determination.ts (calls sendDetermination once a
+ *     verdict exists — rules or AI — behind an atomic exactly-once claim)
  *
  * Both paths are best-effort: a Resend failure stamps an error
  * breadcrumb to console.warn but never propagates — losing an
@@ -21,12 +21,14 @@
  * The submitter SLA from the marketing report-abuse page is:
  *   "instant ack + determination within 24 hours"
  * Ack runs synchronously from the email handler (typical latency
- * ~1-3 seconds end-to-end). Determination runs after the classifier
- * lands; since the classifier is a backfill batch (not real-time),
- * the realistic latency is the backfill cadence — well under 24h.
+ * ~1-3 seconds end-to-end). The determination is sent by the
+ * per-message AbuseMailboxTriageWorkflow a couple of minutes after
+ * receipt (rules-based verdict, no AI required); the hourly
+ * `17 * * * *` sweeper delivers anything the Workflow missed.
  */
 import type { Env } from "../types";
 import { logger } from "./logger";
+import { registrableDomain } from "./domain-utils";
 import {
   type AbuseBranding,
   DEFAULT_ABUSE_BRANDING,
@@ -61,6 +63,39 @@ export function shouldRespond(toAddress: string | null | undefined): { send: boo
   // platforms (Gmail group forwards) use 'noreply' in the From line
   // but accept replies. Reverse: a forwarded message FROM noreply
   // is fine to reply to since the human operator set up the forward.
+  return { send: true, reason: "ok" };
+}
+
+/**
+ * Backscatter guard. The ack / determination are addressed to the
+ * header-From of the forward, which a sender can forge freely; replying
+ * to a forged From would make us a backscatter source. Only respond when
+ * the header-From's registrable domain equals the SMTP envelope sender's
+ * registrable domain AND the outer DMARC verdict (from our receiving MTA's
+ * Authentication-Results), when present, is `pass`.
+ *
+ * Pure. `reason` is a fixed code stamped into
+ * abuse_inbox_messages.responder_suppressed_reason when `send` is false.
+ */
+export function decideBackscatterGuard(input: {
+  headerFrom:   string | null | undefined;
+  envelopeFrom: string | null | undefined;
+  outerDmarc:   string | null | undefined;
+}): { send: boolean; reason: string } {
+  const domainOf = (addr: string | null | undefined): string | null => {
+    if (!addr) return null;
+    const a = addr.trim().toLowerCase();
+    const at = a.lastIndexOf("@");
+    if (at < 1 || at === a.length - 1) return null;
+    const d = a.slice(at + 1).replace(/[>\s].*$/, "").replace(/\.$/, "");
+    return registrableDomain(d) ?? d;
+  };
+  const h = domainOf(input.headerFrom);
+  const e = domainOf(input.envelopeFrom);
+  if (!h || !e) return { send: false, reason: "backscatter:missing_sender" };
+  if (h !== e) return { send: false, reason: "backscatter:from_envelope_mismatch" };
+  const dmarc = input.outerDmarc?.trim().toLowerCase() || null;
+  if (dmarc !== null && dmarc !== "pass") return { send: false, reason: "backscatter:outer_dmarc_not_pass" };
   return { send: true, reason: "ok" };
 }
 
@@ -328,18 +363,28 @@ interface AckContext {
   inboundAlias: string;
 }
 
+/**
+ * Ack body copy (shared by HTML + text). Honest about what happens next:
+ * indicators are checked against threat intelligence by deterministic
+ * rules; a match yields a determination within minutes, anything else
+ * goes to an analyst and the reporter is told so. No AI claim — the
+ * determination does not depend on an AI call.
+ */
+export function ackExplainer(productName: string): string {
+  return `The ${productName} platform extracts indicators (links, sender headers, sending IP, attachments) ` +
+    `and checks them against our threat-intelligence feeds. If they match known malicious activity, ` +
+    `you'll receive a determination email shortly. Otherwise your report goes to an analyst for review ` +
+    `and you'll get an email confirming that.`;
+}
+
 function ackHtml(ctx: AckContext, b: AbuseBranding): string {
-  // PR-AN: brand-aligned ack copy. Honest about automation per the
-  // marketing page promise — submission goes through automated AI
-  // triage, determination email follows within ~1 hour, not 24h or
-  // via a human analyst.
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we received</div>
        <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid #E5A832;background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
     : "";
   const body = `
     <p style="margin:0 0 14px;">Thanks for the report. Your submission is in our system and queued for automated inspection.</p>
-    <p style="margin:0 0 14px;color:#4A5868;">The ${escapeHtml(b.productName)} platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.</p>
+    <p style="margin:0 0 14px;color:#4A5868;">${escapeHtml(ackExplainer(b.productName))}</p>
     ${echoSubject}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
       <tr>
@@ -364,7 +409,7 @@ function ackText(ctx: AckContext, b: AbuseBranding): string {
   const echo = ctx.originalSubject ? `\n\nSubject we received:\n  ${ctx.originalSubject}` : "";
   return `Thanks — your report is in.
 
-Your submission is queued for automated inspection. The ${b.productName} platform extracts indicators (URLs, sender headers, sending IP, payload signatures), classifies the message via AI, and correlates against our threat-intel feeds. You'll receive a determination email back — typically within the hour — with the verdict and any action we've taken.${echo}
+Your submission is queued for automated inspection. ${ackExplainer(b.productName)}${echo}
 
 Reference: ${ctx.messageId}
 Inbox: ${ctx.inboundAlias}
@@ -447,7 +492,7 @@ async function isOptedOut(env: Env, email: string): Promise<boolean> {
   }
 }
 
-// ─── 24h determination ──────────────────────────────────────────
+// ─── Determination ──────────────────────────────────────────────
 
 interface DeterminationContext {
   messageId: string;
@@ -477,6 +522,56 @@ interface DeterminationContext {
   // sanitizeForExternalEmail helper below is a defense-in-depth
   // second pass in case the model leaked anything past the prompt.
   deepAnalysisExternal?: string | null;
+  /** abuse_inbox_messages.classified_by. 'rules' switches the email to
+   *  the deterministic-verdict copy: no confidence %, a FIXED analyst
+   *  note per rule, never the stored reason codes. */
+  classifiedBy?: string | null;
+  /** Primary rule for a rules verdict (M1–M4) or 'review'. */
+  rulesRule?: "M1" | "M2" | "M3" | "M4" | "review" | null;
+}
+
+/** Fixed recipient-facing analyst note per rule. Never includes message
+ *  content, matched strings, or reason codes. */
+export const RULES_EMAIL_NOTE: Record<"M1" | "M2" | "M3" | "M4" | "review", string> = {
+  M1: "Links in this message match infrastructure already confirmed malicious in our threat intelligence.",
+  M2: "This message matches the signature of a known, named phishing campaign.",
+  M3: "This message contains a device-code sign-in lure, a known account-takeover technique.",
+  M4: "This message carries an executable or disk-image attachment type commonly used to deliver malware.",
+  review: "Automated checks found no match against known malicious activity, so an analyst will review your report.",
+};
+
+/** First next-step for a rules review verdict. */
+export const RULES_REVIEW_FIRST_STEP =
+  "An analyst will review your report; we'll only contact you if we need more context.";
+
+/** Human-readable "Action taken" for an ai_action value. */
+export function humanizeAction(action: string | null | undefined): string {
+  switch (action) {
+    case "takedown": return "Takedown initiated";
+    case "escalate": return "Reported to our threat team";
+    case "review":   return "Queued for analyst review";
+    case "safe":     return "No action needed";
+    default:         return "Recorded";
+  }
+}
+
+function isRulesVerdict(ctx: DeterminationContext): boolean {
+  return ctx.classifiedBy === "rules";
+}
+
+/** Analyst-notes text: fixed per-rule sentence for rules verdicts,
+ *  sanitized AI reasoning otherwise. */
+function analystNote(ctx: DeterminationContext): string {
+  if (isRulesVerdict(ctx)) return RULES_EMAIL_NOTE[ctx.rulesRule ?? "review"];
+  return sanitizeForExternalEmail(ctx.reasoning) ?? "";
+}
+
+/** Per-verdict next steps; rules review rows lead with the analyst line. */
+function nextStepsFor(ctx: DeterminationContext, v: VerdictDef): ReadonlyArray<string> {
+  if (isRulesVerdict(ctx) && (ctx.rulesRule ?? "review") === "review") {
+    return [RULES_REVIEW_FIRST_STEP, ...v.nextSteps.slice(1)];
+  }
+  return v.nextSteps;
 }
 
 interface VerdictDef {
@@ -704,11 +799,12 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
        </div>`
     : "";
 
-  const nextStepsBlock = v.nextSteps.length > 0
+  const steps = nextStepsFor(ctx, v);
+  const nextStepsBlock = steps.length > 0
     ? `<div style="margin:16px 0 0;padding:16px 18px;background:#FFFFFF;border:1px solid ${v.pillBorder};border-radius:8px;border-left:4px solid ${v.accent};">
          <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${v.pillFg};margin-bottom:10px;">What you should do</div>
          <ul style="margin:0;padding:0 0 0 18px;list-style:disc;color:#1A2536;font-size:14px;line-height:1.6;">
-           ${v.nextSteps.map((s) => `<li style="margin:0 0 6px;">${escapeHtml(s)}</li>`).join("")}
+           ${steps.map((s) => `<li style="margin:0 0 6px;">${escapeHtml(s)}</li>`).join("")}
          </ul>
        </div>`
     : "";
@@ -726,8 +822,10 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
        </div>`
     : "";
 
+  // Rules verdicts are deterministic — a confidence % would be invented.
+  const pillText = isRulesVerdict(ctx) ? "Verdict" : `Verdict · ${ctx.confidence}% confidence`;
   const body = `
-    <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Verdict · ${ctx.confidence}% confidence</div>
+    <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">${escapeHtml(pillText)}</div>
     <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.lead)}</p>
     ${echoSubject}
     ${findingsBlock}
@@ -735,12 +833,12 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
     ${nextStepsBlock}
     <div style="margin:20px 0 0;padding:16px 18px;background:#FAFBFC;border:1px solid #E5E8EE;border-radius:8px;">
       <div style="font-size:11px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:#8895AA;margin-bottom:8px;">Analyst notes</div>
-      <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(ctx.reasoning)}</p>
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#1A2536;">${escapeHtml(analystNote(ctx))}</p>
     </div>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
       <tr>
         <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Action taken</td>
-        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#0F1828;">${escapeHtml(ctx.action)}</td>
+        <td style="padding:4px 0;font-size:12px;color:#0F1828;">${escapeHtml(humanizeAction(ctx.action))}</td>
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Reference</td>
@@ -766,8 +864,9 @@ function determinationText(ctx: DeterminationContext, b: AbuseBranding): string 
     ? "\n\nWhat we found:\n" + findings.map((f) => `  - ${f}`).join("\n")
     : "";
 
-  const nextStepsBlock = v.nextSteps.length > 0
-    ? "\n\nWhat you should do:\n" + v.nextSteps.map((s) => `  - ${s}`).join("\n")
+  const steps = nextStepsFor(ctx, v);
+  const nextStepsBlock = steps.length > 0
+    ? "\n\nWhat you should do:\n" + steps.map((s) => `  - ${s}`).join("\n")
     : "";
 
   const investigatorClean = sanitizeForExternalEmail(ctx.deepAnalysisExternal);
@@ -775,12 +874,15 @@ function determinationText(ctx: DeterminationContext, b: AbuseBranding): string 
     ? `\n\nInvestigator findings:\n${investigatorClean}`
     : "";
 
-  return `Determination: ${v.label} (${ctx.confidence}% confidence)
+  const headline = isRulesVerdict(ctx)
+    ? `Determination: ${v.label}`
+    : `Determination: ${v.label} (${ctx.confidence}% confidence)`;
+  return `${headline}
 
 ${v.lead}${echo}${findingsBlock}${investigatorBlock}${nextStepsBlock}
 
-Analyst notes: ${ctx.reasoning}
-Action taken: ${ctx.action}
+Analyst notes: ${analystNote(ctx)}
+Action taken: ${humanizeAction(ctx.action)}
 
 Reference: ${ctx.messageId}
 
@@ -790,9 +892,10 @@ ${b.reportUrl}
 }
 
 /**
- * Send the 24h determination email. Triggered after the classifier
- * has stamped classification/confidence/action on the row. Caller
- * is responsible for marking determination_sent_at on success.
+ * Send the determination email. Triggered once a verdict (rules or AI)
+ * is stamped on the row. Exactly-once bookkeeping (the
+ * determination_sent_at claim) lives in lib/abuse-mailbox-determination.ts
+ * — call deliverAbuseDetermination rather than this directly.
  */
 export async function sendDetermination(
   env: Env,

@@ -27,17 +27,32 @@ Inbound email (Cloudflare Email Routing)
       • match monitored brands
       • per-sender/per-domain throttle
       • INSERT abuse_inbox_messages (classification='pending')
+      • backscatter guard: header-From registrable domain must equal the
+        envelope sender's, and outer DMARC (when present) must pass —
+        otherwise no email ever, responder_suppressed_reason stamped
       • send instant ack email
-  → runAbuseClassifierBackfill()            src/lib/abuse-mailbox-classifier.ts
-      (orchestrator hourly cron when pending > 0, or manual endpoint)
-      • Haiku classification → phishing/spam/benign/malware/ambiguous
-      • action → safe/review/escalate/takedown, severity computed in code
-      • on HIGH/CRITICAL phishing|malware:
-          - promote URLs → threats
-          - Sonnet deep analysis → deep_analysis
-          - send 24h determination email
-          - fire in-app notifications
+      • dispatch AbuseMailboxTriageWorkflow (id abuse-<messageId>)
+  → AbuseMailboxTriageWorkflow              src/workflows/abuseMailboxTriage.ts
+      (steps in src/lib/abuse-mailbox-triage-pipeline.ts)
+      1. rules verdict                       src/lib/abuse-mailbox-rules(-runner).ts
+           M1 intel correlation / M2 named-threat IOC|regex /
+           M3 device-code ≥0.85 → phishing HIGH;  M4 risky attachment →
+           malware CRITICAL;  else ambiguous / review (never benign/spam)
+         + AI second opinion only when AI_MODE allows and rules said review
+      2. sleep ~2 minutes
+      3. deliverAbuseDetermination — atomic determination_sent_at claim
+  → hourly `17 * * * *` agent (Sifter) — the sweeper
+      • rules pass over pending rows (≤50)
+      • runAbuseClassifierBackfill (AI; skipped under rules_only) — only
+        pending rows and rules REVIEW rows; never a rules malicious row
+      • sweepAbuseDeterminations — emails verdicts the Workflow missed
 ```
+
+Rules verdicts (`classified_by='rules'`) promote only URLs on the matched
+infrastructure (M1–M3, cap 20), skip the Sonnet deep analyzer, and their
+determination email shows no confidence % and a fixed analyst note per
+rule — never the stored reason codes. AI verdicts keep the original flow
+(promotion + Sonnet deep analysis on HIGH/CRITICAL).
 
 Ingestion routing (`src/index.ts:137`): local-parts matching `verify-*`,
 `verify_*`, `report-*`, `abuse-*`, or the platform set
@@ -57,8 +72,12 @@ bounce).
 | IOC parsing (SPF/DKIM/DMARC, sender IP) | `src/lib/abuse-mailbox-iocs.ts` |
 | Brand matching | `src/lib/abuse-mailbox-brand-match.ts` |
 | Sender/domain throttle | `src/lib/abuse-mailbox-throttle.ts` |
-| Ack / determination emails | `src/lib/abuse-mailbox-responder.ts` |
-| Classifier (Haiku) | `src/lib/abuse-mailbox-classifier.ts` |
+| Ack / determination emails, backscatter guard | `src/lib/abuse-mailbox-responder.ts` |
+| Rules verdict (pure) | `src/lib/abuse-mailbox-rules.ts` |
+| Rules pass (I/O, promotion, notifications) | `src/lib/abuse-mailbox-rules-runner.ts` |
+| Exactly-once determination delivery + sweeper | `src/lib/abuse-mailbox-determination.ts` |
+| Per-message Workflow (`ABUSE_MAILBOX_TRIAGE`) | `src/workflows/abuseMailboxTriage.ts` |
+| Classifier (Haiku, optional second opinion) | `src/lib/abuse-mailbox-classifier.ts` |
 | Deep analysis (Sonnet) | `src/lib/abuse-mailbox-deep-analyzer.ts` |
 | Named-threat catalog match | `src/lib/named-threat-matcher.ts` |
 | One-click unsubscribe (RFC 8058) | `src/handlers/abuseMailboxUnsubscribe.ts` |
@@ -70,10 +89,11 @@ bounce).
 
 The classifier is a registered first-class `AgentModule` —
 **`abuse_mailbox_classifier`** (display name **Sifter**),
-`src/agents/abuseMailboxClassifier.ts`. It wraps the batch
-`runAbuseClassifierBackfill` and is dispatched via `executeAgent` from the
-dedicated `17 * * * *` cron (`src/cron/orchestrator.ts`, only when pending
-> 0), so every run writes `agent_runs` + emits `agent_events` and surfaces
+`src/agents/abuseMailboxClassifier.ts`. It runs the rules pass, then the
+batch `runAbuseClassifierBackfill`, then the determination sweeper, and is
+dispatched via `executeAgent` from the dedicated `17 * * * *` cron
+(`src/cron/orchestrator.ts`, only when there are pending rows or recent
+undelivered determinations), so every run writes `agent_runs` + emits `agent_events` and surfaces
 in Flight Control, platform-diagnostics, and the `/v2/agents` mesh. It can
 also be triggered manually via `/api/internal/agents/abuse_mailbox_classifier/run`.
 
@@ -86,8 +106,9 @@ Cost is ~$0.001/message via Haiku; declared `monthlyTokenCap` is 10M
 (`costGuard: 'enforced'`).
 
 Poison-pill protection: a per-message retry cap of 3 auto-graduates a
-message to `ambiguous` rather than looping (`classification_attempts`,
-`last_classify_error`).
+`pending` message to `ambiguous` rather than looping (`classification_attempts`,
+`last_classify_error`). Rules review rows are never auto-graduated — they
+stay `classified_by='rules'` and drop out of the AI selector at the cap.
 
 ---
 
@@ -105,6 +126,9 @@ Primary table `abuse_inbox_messages`, base migration
 | `0188` | `deep_analysis` |
 | `0196` | retry: `classification_attempts`, `last_classify_error` |
 | `0206` | named threats: `detected_technique`, `named_threat_id`, `named_threat_name` |
+| `0273` | `responder_suppressed_reason` — why no ack/determination email was sent (`backscatter:*`, `determination:opted-out`, …) |
+
+`classified_by` ∈ `ai | rules | manual | auto_graduated` (no CHECK).
 
 `classification` ∈ `pending | phishing | spam | benign | malware |
 ambiguous | follow_up`. `status` ∈ `new | investigating | resolved |
@@ -188,7 +212,9 @@ for a customer org is operational, not engineering:
    accepted prefixes (`verify-*`, `report-*`, `abuse-*`) or the platform
    set, so `src/index.ts` routes it to the abuse-mailbox handler.
 4. The customer then forwards suspicious mail to their alias; ack is
-   instant, determination follows within ~24h for escalations.
+   instant; the determination follows ~2 minutes later via the per-message
+   Workflow (malicious verdict on a rules match, otherwise an "analyst will
+   review" determination), with the hourly sweeper as backstop.
 
 ---
 
