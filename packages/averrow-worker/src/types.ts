@@ -122,6 +122,13 @@ export interface Env {
    *  'live' → Monday digest cron sends org-scoped weekly emails.
    *  Any other value (default 'off') → cron is a no-op. */
   TENANT_DIGEST_MODE?: string;
+  /** Platform-wide AI switch (AI strategy Phase 0, docs/AI_STRATEGY_2026-10.md).
+   *  'rules_only' → callAnthropic / the haiku.ts helpers / the batch
+   *  submitter make NO request and report a deliberate skip
+   *  (failure_kind 'throttled'), so agents run their rule-based paths and
+   *  Flight Control's platform_ai_calls_failing stays quiet.
+   *  'enabled' or unset (the default) → AI calls proceed as normal. */
+  AI_MODE?: 'rules_only' | 'enabled' | (string & {});
   /** Override the daily-briefing recipient. Defaults to claude.leroux@averrow.com when unset. */
   BRIEFING_RECIPIENT?: string;
   /** HMAC secret for List-Unsubscribe one-click tokens

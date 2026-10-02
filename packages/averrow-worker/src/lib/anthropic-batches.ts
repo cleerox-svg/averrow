@@ -23,6 +23,7 @@
  */
 
 import { BudgetManager } from "./budgetManager";
+import { AiDisabledError, isAiRulesOnly } from "./anthropic";
 import type { Env } from "../types";
 
 const ANTHROPIC_API_VERSION = "2023-06-01";
@@ -33,7 +34,7 @@ const BATCH_DISCOUNT = 0.5;
 
 export type AnthropicBatchesEnv = Pick<
   Env,
-  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB"
+  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB" | "AI_MODE"
 >;
 
 export interface BatchRequestParams {
@@ -104,6 +105,10 @@ export async function submitMessageBatch(
   opts: { useGateway?: boolean; timeoutMs?: number } = {},
 ): Promise<BatchSubmitResponse> {
   if (requests.length === 0) throw new Error("[anthropic-batches] submitMessageBatch: empty requests array");
+  // AI_MODE=rules_only — same switch as callAnthropic. Only SUBMIT is
+  // gated: polling/ingesting a batch submitted before the switch flipped
+  // costs nothing new and lets in-flight work land.
+  if (isAiRulesOnly(env)) throw new AiDisabledError("batch_submit");
   const apiKey = resolveApiKey(env);
   const baseUrl = resolveBaseUrl(env, opts.useGateway ?? true);
 

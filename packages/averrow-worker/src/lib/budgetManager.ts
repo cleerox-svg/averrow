@@ -38,21 +38,83 @@ export const COST_PER_MILLION: Record<string, { input: number; output: number }>
 };
 
 /**
- * Compute the USD cost of a single Anthropic call. Throws on an unknown
- * model rather than silently defaulting — a missing entry means the
- * pricing table is stale and ledger numbers will be wrong, which is
- * exactly the bug the wrapper refactor exists to fix. Callers inside
- * the canonical wrapper should treat a throw here as a "catch and log
- * loudly, don't write to the ledger" situation.
+ * Rate used when a model is not in COST_PER_MILLION (even after prefix
+ * matching). Deliberately the MOST EXPENSIVE known tier (Sonnet) so an
+ * unpriced model over-reports spend rather than under-reports it — the
+ * budget throttle then errs toward pausing AI, never toward overspending.
+ */
+export const FALLBACK_COST_PER_MILLION: { input: number; output: number } = Object.values(COST_PER_MILLION)
+  .reduce(
+    (max, r) => (r.input + r.output > max.input + max.output ? r : max),
+    { input: 0, output: 0 },
+  );
+
+/** Unknown models already warned about in this isolate (warn once each). */
+const warnedUnknownModels = new Set<string>();
+
+/**
+ * Resolve the rate card for a model ID.
+ *
+ * 1. Exact match.
+ * 2. Prefix match, either direction, longest key wins — Anthropic returns
+ *    dated IDs (`claude-haiku-4-5-20251001`) where we may hold an alias
+ *    (`claude-sonnet-4-6`), and vice versa; e.g. `claude-sonnet-4-6-20260101`
+ *    resolves to `claude-sonnet-4-6`.
+ * 3. Otherwise null (caller applies FALLBACK_COST_PER_MILLION).
+ */
+function resolveRates(model: string): { input: number; output: number } | null {
+  const exact = COST_PER_MILLION[model];
+  if (exact) return exact;
+  let best: { key: string; rates: { input: number; output: number } } | null = null;
+  for (const [key, rates] of Object.entries(COST_PER_MILLION)) {
+    // Strip a trailing -YYYYMMDD so a dated key also matches its alias.
+    const keyAlias = key.replace(/-\d{8}$/, '');
+    const modelAlias = model.replace(/-\d{8}$/, '');
+    const matches = model.startsWith(`${key}-`) || modelAlias === keyAlias;
+    if (matches && (!best || key.length > best.key.length)) best = { key, rates };
+  }
+  return best?.rates ?? null;
+}
+
+/**
+ * Compute the USD cost of a single Anthropic call, plus whether the rate
+ * came from the pricing table (`rateKnown: true`, exact or prefix match)
+ * or from the conservative fallback (`rateKnown: false`).
+ *
+ * Never throws. An unknown model used to throw here, and because
+ * callAnthropic swallows recordCost errors, a stale pricing table meant
+ * a successful (billed) call wrote NO ledger row — the ledger is what
+ * Flight Control reads as "AI is alive", so that read as an outage.
+ * Now the row is always written, priced at the most expensive known
+ * tier, and a warning is logged once per model per isolate.
+ */
+export function estimateCostDetailed(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): { cost: number; rateKnown: boolean } {
+  let rates = resolveRates(model);
+  const rateKnown = rates !== null;
+  if (!rates) {
+    rates = FALLBACK_COST_PER_MILLION;
+    if (!warnedUnknownModels.has(model)) {
+      warnedUnknownModels.add(model);
+      console.warn(
+        `[budgetManager] estimateCost: unknown model "${model}" — priced at fallback ` +
+        `$${rates.input}/$${rates.output} per 1M; add it to COST_PER_MILLION in lib/budgetManager.ts`,
+      );
+    }
+  }
+  const cost = (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
+  return { cost, rateKnown };
+}
+
+/**
+ * Compute the USD cost of a single Anthropic call. Never throws — see
+ * estimateCostDetailed for the unknown-model fallback.
  */
 export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const rates = COST_PER_MILLION[model];
-  if (!rates) {
-    throw new Error(
-      `[budgetManager] estimateCost: unknown model "${model}" — add it to COST_PER_MILLION in lib/budgetManager.ts`,
-    );
-  }
-  return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
+  return estimateCostDetailed(model, inputTokens, outputTokens).cost;
 }
 
 // ─── Types ──────────────────────────────────────────────────────

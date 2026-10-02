@@ -341,6 +341,15 @@ TAKEDOWN_SEND_MODE = "live"
 # 'off'  = digest cron is a no-op (safe default — outward email ships dark).
 # 'live' = Monday 14:24 UTC cron emails each org with digest-enabled brands.
 TENANT_DIGEST_MODE = "off"
+# Platform-wide AI switch (AI strategy Phase 0, docs/AI_STRATEGY_2026-10.md).
+# 'rules_only' = callAnthropic / lib/haiku.ts helpers / batch submit make NO
+#                request; each call reports a deliberate skip (failure_kind
+#                'throttled'), agents run their rule-based paths, and Flight
+#                Control's platform_ai_calls_failing alert stays quiet.
+# 'enabled'    = AI calls proceed normally (also the behavior when unset).
+# Set to rules_only while the Anthropic account is unfunded; flip back to
+# 'enabled' only after credit is restored (or Workers AI lands in Phase 2).
+AI_MODE = "rules_only"
 
 # ─── Secrets (set via: wrangler secret put <NAME>) ────────────
 # ANTHROPIC_API_KEY        — Anthropic API key for Claude Haiku AI analysis

@@ -473,8 +473,9 @@ function getRateKey(opts: CreateNotificationOpts): string | null {
 }
 
 /** Per-channel delivery audit. Failures here must never break the
- *  notification flow — wrap and swallow. Migration 0131. */
-async function recordDelivery(
+ *  notification flow — wrap and swallow. Migration 0131. Exported for the
+ *  platform email-escalation path (lib/platform-templates.ts). */
+export async function recordDelivery(
   env: Env,
   notificationId: string,
   userId: string,
