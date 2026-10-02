@@ -133,10 +133,15 @@ export function useTenantAlerts(filters: AlertsFilters = {}) {
       // — total + severity_breakdown live at the response ROOT, not inside
       // data. We pivot here to the AlertsResponse shape the page expects.
       const res = await apiGet<Alert[]>(`/api/orgs/${orgId}/alerts?${params}`) as unknown as {
+        success?:            boolean;
+        error?:              string;
         data:                Alert[];
         total:               number;
         severity_breakdown:  SeverityBreakdown[];
       };
+      // apiFetch already throws on non-2xx; also guard a 2xx envelope that
+      // reports { success:false } so it never reads as an empty list.
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load signals');
       return {
         alerts:              res.data ?? [],
         total:               res.total ?? 0,

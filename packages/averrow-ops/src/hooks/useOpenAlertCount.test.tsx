@@ -34,6 +34,26 @@ describe('useOpenAlertCount', () => {
     expect(result.current.data).toBeUndefined();
   });
 
+  it('reports isError on a JSON { success:false } 500 with nothing cached', async () => {
+    get.mockResolvedValue({ success: false, error: 'boom' });
+    const { result } = renderHook(() => useOpenAlertCount(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it('keeps the last good value when a refetch returns { success:false }', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    get.mockResolvedValueOnce({ success: true, data: { new_count: 5, critical_count: 0 } });
+    const { result } = renderHook(() => useOpenAlertCount(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.data).toBe(5));
+    get.mockResolvedValue({ success: false, error: 'boom' });
+    await qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(result.current.data).toBe(5);
+    expect(result.current.isError).toBe(false);
+  });
+
   it('keeps the last good value when a refetch fails', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     get.mockResolvedValueOnce({ success: true, data: { new_count: 5, critical_count: 0 } });

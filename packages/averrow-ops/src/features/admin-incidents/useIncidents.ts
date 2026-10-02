@@ -65,6 +65,7 @@ export function useIncidents(opts: { onlyOpen?: boolean; enabled?: boolean } = {
     queryFn: async (): Promise<Incident[]> => {
       const qs = opts.onlyOpen ? '?status=open' : '';
       const res = await api.get<Incident[]>(`/api/admin/incidents${qs}`);
+      if (!res.success) throw new Error(res.error ?? 'Failed to load incidents');
       return res.data ?? [];
     },
     refetchInterval: 30_000,
@@ -84,6 +85,7 @@ export function useIncident(id: string | undefined) {
         updates: IncidentUpdate[];
         telemetry_count?: number;
       }>(`/api/admin/incidents/${id}`);
+      if (!res.success) throw new Error(res.error ?? 'Failed to load incident');
       return res.data ?? null;
     },
     enabled: !!id,

@@ -102,6 +102,7 @@ export function useTenantTakedowns(filters: TakedownsFilters = {}) {
     queryKey: ['tenant-takedowns', orgId, filters.status ?? null, filters.module ?? null, filters.brandId ?? null],
     queryFn: async () => {
       const res = await apiGet<TakedownsList>(`/api/orgs/${orgId}/takedowns${buildQuery(filters)}`);
+      if (!res.success || !res.data) throw new Error('Failed to load takedowns');
       return res.data;
     },
     enabled: hasOrg && !!orgId,
