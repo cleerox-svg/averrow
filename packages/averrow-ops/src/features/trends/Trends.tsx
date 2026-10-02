@@ -383,12 +383,12 @@ function ThreatVolumeChart({ window }: { window: string }) {
             <AreaChart data={volume}>
               <XAxis
                 dataKey="date"
-                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
                 axisLine={{ stroke: 'var(--border-base)' }}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -578,14 +578,14 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
           <BarChart data={totals} layout="vertical" margin={{ left: 120, right: 20, top: 5, bottom: 5 }}>
             <XAxis
               type="number"
-              tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+              tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
               axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
             />
             <YAxis
               type="category"
               dataKey="name"
-              tick={{ fill: '#F0EDE8', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' }}
+              tick={{ fill: '#F0EDE8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               width={115}

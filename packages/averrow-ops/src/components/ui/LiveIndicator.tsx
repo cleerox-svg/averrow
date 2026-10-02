@@ -44,7 +44,7 @@ export function LiveIndicator({
       {label && (
         <span style={{
           fontSize,
-          fontFamily:    'monospace',
+          fontFamily:    'var(--font-mono)',
           letterSpacing: '0.18em',
           textTransform: 'uppercase',
           color:         active ? 'var(--text-tertiary)' : 'var(--text-muted)',

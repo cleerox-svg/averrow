@@ -247,7 +247,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
                 <span
                   style={{
                     fontSize: 9,
-                    fontFamily: 'monospace',
+                    fontFamily: 'var(--font-mono)',
                     letterSpacing: '0.22em',
                     color: 'var(--text-tertiary)',
                     textTransform: 'uppercase',
@@ -366,7 +366,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         {!isRail && (
           <div
             className="truncate"
-            style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}
+            style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}
           >
             {user?.email}
           </div>
@@ -374,7 +374,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         {!isRail && (
           <div
             title={`${VERSION_LABEL} · ${BUILD_SHA}`}
-            style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '0.08em', marginTop: 4 }}
+            style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginTop: 4 }}
           >
             {VERSION_LABEL} · {BUILD_SHA}
           </div>
@@ -409,7 +409,7 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
               fontSize: 10,
               color: 'var(--text-muted)',
               cursor: 'pointer',
-              fontFamily: 'monospace',
+              fontFamily: 'var(--font-mono)',
               letterSpacing: '0.12em',
               textAlign: 'left',
               background: 'transparent',

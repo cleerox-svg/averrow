@@ -251,7 +251,7 @@ function UnderlineTabs({
                 padding:       '12px 16px',
                 fontSize:      11,
                 fontWeight:    700,
-                fontFamily:    'system-ui, -apple-system, sans-serif',
+                fontFamily:    'var(--font-sans)',
                 background:    'none',
                 border:        'none',
                 borderBottom:  `2px solid ${active ? 'var(--amber)' : 'transparent'}`,

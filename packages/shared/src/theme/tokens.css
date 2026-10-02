@@ -106,7 +106,7 @@
   --card-bg:     linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%);
   --card-rim:    inset 0 1px 0 var(--border-strong), inset 0 -1px 0 rgba(0, 0, 0, 0.40);
   --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.60);
-  --card-radius: 16px;
+  --card-radius: var(--radius-lg);
 
   /* ── Card active-variant accent mix (S2.3 follow-up, MED) ──
      Card.tsx mixes the caller's `accent` into these three surfaces via
@@ -180,8 +180,12 @@
   --pill-active-border:     rgba(229, 168, 50, 0.25);
 
   /* ── Typography ── */
-  --font-sans: system-ui, -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
+  /* Single font pair for every Averrow surface (and FarmTrack — see
+     docs/SHARED_LOGIN_SPEC.md "Typography"). Each app's index.html loads
+     the two Google Fonts; the stacks below degrade to system faces. */
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-display: var(--font-sans);
 
   /* ── Z-index ── */
   --z-base:            0;
@@ -191,10 +195,29 @@
   --z-modal:         400;
   --z-toast:         500;
 
-  /* ── Transitions ── */
-  --transition-fast:   all 0.12s ease;
-  --transition-base:   all 0.18s ease;
-  --transition-slow:   all 0.30s ease;
+  /* ── Radius scale ── (--card-radius aliases --radius-lg = 16px) */
+  --radius-xs:   4px;
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-xl:   24px;
+  --radius-pill: 9999px;
+
+  /* ── Motion ── */
+  --dur-instant: 80ms;
+  --dur-fast:    120ms;
+  --dur-base:    180ms;
+  --dur-slow:    300ms;
+  --dur-slower:  500ms;
+  --ease-standard:   cubic-bezier(0.2, 0, 0, 1);
+  --ease-out:        cubic-bezier(0, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1.2);
+
+  /* ── Transitions (legacy shorthand; built from the motion tokens.
+     Timing curve stays `ease` so existing behaviour is unchanged.) ── */
+  --transition-fast:   all var(--dur-fast) ease;
+  --transition-base:   all var(--dur-base) ease;
+  --transition-slow:   all var(--dur-slow) ease;
 }
 
 /* ============================================================
@@ -683,3 +706,17 @@
 [data-theme="light"] .hover\:bg-white\/\[0\.03\]:hover   { background-color: rgba(15,20,35,0.03); }
 [data-theme="light"] .hover\:bg-white\/\[0\.025\]:hover  { background-color: rgba(15,20,35,0.025); }
 [data-theme="light"] .hover\:bg-white\/\[0\.02\]:hover   { background-color: rgba(15,20,35,0.02); }
+
+/* ── Reduced motion (global) ──
+   Collapses animation/transition durations to near-zero rather than
+   `none`, so animationend / transitionend still fire and anything
+   keyed on them keeps working. Loaded by both apps via theme.css. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

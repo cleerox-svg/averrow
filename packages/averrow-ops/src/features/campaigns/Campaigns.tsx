@@ -362,7 +362,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                     border: '1px solid var(--border-base)',
                     borderRadius: '8px',
                     fontSize: '11px',
-                    fontFamily: 'IBM Plex Mono, monospace',
+                    fontFamily: 'var(--font-mono)',
                   }}
                   labelStyle={{ color: '#78A0C8' }}
                   itemStyle={{ color: '#00D4FF' }}

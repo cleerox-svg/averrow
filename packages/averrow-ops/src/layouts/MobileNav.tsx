@@ -314,7 +314,7 @@ export function MobileNav() {
                   display:      'flex',
                   alignItems:   'center',
                   justifyContent: 'center',
-                  fontFamily:   'monospace',
+                  fontFamily:   'var(--font-mono)',
                   boxShadow:    `0 2px 8px ${RED}60`,
                   padding:      '0 2px',
                 }}>
@@ -330,7 +330,7 @@ export function MobileNav() {
               </span>
               <span style={{
                 fontSize:      9,
-                fontFamily:    'monospace',
+                fontFamily:    'var(--font-mono)',
                 letterSpacing: '0.08em',
                 textTransform: 'uppercase',
                 color:         active ? AMBER : 'var(--text-muted)',
@@ -379,7 +379,7 @@ export function MobileNav() {
           </span>
           <span style={{
             fontSize:      9,
-            fontFamily:    'monospace',
+            fontFamily:    'var(--font-mono)',
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
             color:         moreIsActive ? AMBER : 'var(--text-muted)',

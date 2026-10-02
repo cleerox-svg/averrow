@@ -179,7 +179,7 @@ export function BrandDetailV3() {
             <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: -0.5, lineHeight: 1.1 }}>
               {brand.name}
             </h1>
-            <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-tertiary)', marginTop: 3 }}>
+            <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 3 }}>
               {brand.canonical_domain}
               {timeAgo(brand.first_seen) && (
                 <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
@@ -1481,7 +1481,7 @@ function ScoreCard({
           <span style={{
             padding: '2px 8px', borderRadius: 4,
             background: 'rgba(60,184,120,0.10)', color: 'var(--green)',
-            fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+            fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
           }}>{grade}</span>
         )}
       </div>
@@ -1593,7 +1593,7 @@ function HealthExposureQuadrant({
           {quadrants.map(q => (
             <text key={q.label}
               x={q.x * 100} y={q.y * 100}
-              fontSize="6" fontFamily="monospace"
+              fontSize="6" fontFamily="var(--font-mono)"
               fill="var(--text-muted)" textAnchor="middle"
               dominantBaseline="middle"
             >{q.label}</text>

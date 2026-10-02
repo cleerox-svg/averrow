@@ -37,7 +37,7 @@ export function GradeBadge({ grade }: GradeBadgeProps) {
   const g = GRADE_CFG[grade as Grade] ?? GRADE_CFG['F'];
   return (
     <span style={{
-      fontSize: 10, fontFamily: 'monospace', fontWeight: 900,
+      fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 900,
       padding: '3px 10px', borderRadius: 8,
       background: g.bg,
       border: `1px solid ${g.border}`,

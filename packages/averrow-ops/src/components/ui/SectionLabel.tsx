@@ -55,7 +55,7 @@ export function SectionLabel({
         <div>
           <span style={{
             fontSize:      9,
-            fontFamily:    'monospace',
+            fontFamily:    'var(--font-mono)',
             letterSpacing: '0.20em',
             color:         'var(--text-tertiary)',
             textTransform: 'uppercase',
@@ -66,7 +66,7 @@ export function SectionLabel({
           {attribution && (
             <span style={{
               fontSize:   8,
-              fontFamily: 'monospace',
+              fontFamily: 'var(--font-mono)',
               color:      'var(--text-muted)',
               marginLeft: 10,
             }}>
