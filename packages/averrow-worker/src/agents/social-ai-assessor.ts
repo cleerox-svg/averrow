@@ -44,6 +44,7 @@
 import { z } from "zod";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { callAnthropicJSON, AnthropicError } from "../lib/anthropic";
+import { classifyAnthropicFailure, isDeliberateAiSkip } from "../lib/haiku";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 
 // ─── Input contract ─────────────────────────────────────────────
@@ -339,13 +340,18 @@ export const socialAiAssessorAgent: AgentModule = {
         }
       }
     } catch (err) {
-      const errMsg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
-      agentOutputs.push({
-        type: "diagnostic",
-        summary: "social_ai_assessor AI call failed, using algorithmic fallback",
-        severity: "medium",
-        details: { error: errMsg, promptVersion: PROMPT_VERSION },
-      });
+      // A deliberate skip (AI_MODE=rules_only / budget throttle) means no
+      // request left — use the fallback quietly. Only a real failure
+      // warrants the medium diagnostic row.
+      if (!isDeliberateAiSkip(classifyAnthropicFailure(err))) {
+        const errMsg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: "social_ai_assessor AI call failed, using algorithmic fallback",
+          severity: "medium",
+          details: { error: errMsg, promptVersion: PROMPT_VERSION },
+        });
+      }
       result = algorithmicFallback(input);
     }
 

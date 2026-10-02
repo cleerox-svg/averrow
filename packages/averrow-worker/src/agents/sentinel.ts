@@ -20,7 +20,7 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { callAnthropicJSON } from "../lib/anthropic";
+import { callAnthropicJSON, isAiRulesOnly } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 import { cachedCount } from "../lib/cached-count";
@@ -490,6 +490,11 @@ interface SocialAssessmentAI {
  * sentinel's only remaining AI call; execute() is rules-only.
  */
 export async function runSentinelSocialAssessment(env: Env): Promise<void> {
+  // AI_MODE=rules_only — every call below would throw AiDisabledError and
+  // log one console.error per row. Return before the SELECT: rows keep
+  // ai_assessment NULL and are assessed once AI is re-enabled.
+  if (isAiRulesOnly(env)) return;
+
   // Fetch unassessed HIGH/CRITICAL results.
   // brand_profiles retired (R3, 2026-05-07) — query the brands
   // table directly. Pre-deprecation rows whose brand_id is a stale

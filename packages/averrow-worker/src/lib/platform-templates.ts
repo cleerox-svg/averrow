@@ -648,6 +648,10 @@ export function renderPlatformAbuseClassifierSilent(v: PlatformAbuseClassifierSi
  * attempted-with-zero-succeeded count, so a genuinely quiet platform (no
  * eligible work → no calls → silent ledger → zero attempts) never alerts.
  */
+/** Shown in place of a parse_error's raw first_error (see below). */
+export const PARSE_ERROR_FIXED_TEXT =
+  'model output did not parse as the expected JSON (raw text withheld — read aiFirstError in agent_outputs details)';
+
 export function renderPlatformAiCallsFailing(v: PlatformAiCallsFailingVars): RenderedTemplate {
   const silence = v.hours_since_last_call === null
     ? 'never (budget_ledger is empty)'
@@ -657,7 +661,16 @@ export function renderPlatformAiCallsFailing(v: PlatformAiCallsFailingVars): Ren
     ? v.failing_agents.map((a) => `${a.agent_id} (${a.attempted} attempted, 0 succeeded)`).join(', ')
     : 'unknown';
   const firstKind = v.failing_agents.find((a) => a.first_failure_kind !== null)?.first_failure_kind ?? 'unknown';
-  const firstError = v.failing_agents.find((a) => a.first_error !== null)?.first_error ?? 'see agent_outputs details';
+  // A parse_error's raw text can carry the model's output, which may echo
+  // attacker-controlled input (phishing bodies, page text). This message
+  // goes to the inbox AND the escalation email, so never interpolate it —
+  // the operator reads the raw text from agent_outputs instead.
+  // Checks both the headline kind and the kind of the agent whose error
+  // text would be shown, since the two finds can land on different agents.
+  const errorAgent = v.failing_agents.find((a) => a.first_error !== null);
+  const firstError = firstKind === 'parse_error' || errorAgent?.first_failure_kind === 'parse_error'
+    ? PARSE_ERROR_FIXED_TEXT
+    : errorAgent?.first_error ?? 'see agent_outputs details';
 
   return {
     title: `AI calls failing — ${attempted} attempted, 0 succeeded`,
@@ -867,6 +880,13 @@ export const EMAIL_ESCALATION_TYPES: ReadonlySet<NotificationType> = new Set<Not
 ]);
 
 /**
+ * How long an 'attempted' escalation email blocks a retry. Past this an
+ * 'attempted' row with no terminal status is a send whose worker died
+ * mid-flight, not one still in progress. SQLite datetime() modifier.
+ */
+export const ESCALATION_ATTEMPT_STALE_WINDOW = '-15 minutes';
+
+/**
  * Send one escalation email for a just-created platform notification and
  * record it in notification_deliveries (channel 'email') against the
  * newest notification row for the (type, group_key).
@@ -874,10 +894,16 @@ export const EMAIL_ESCALATION_TYPES: ReadonlySet<NotificationType> = new Set<Not
  * Cadence: the in-app dedupe window for platform_ai_calls_failing is
  * -50 minutes, so `created > 0` recurs every hourly Flight Control tick
  * while an outage persists. An hourly email would be noise, so this also
- * skips when an email delivery for the same (type, group_key) is already
- * 'attempted' or 'succeeded'. The group_key is day-scoped
+ * skips when an email delivery for the same (type, group_key) has
+ * 'succeeded', or is 'attempted' within the last 15 minutes (a send that
+ * may still be in flight). The group_key is day-scoped
  * (`platform_ai_calls_failing:YYYY-MM-DD`), so the result is at most one
- * email per UTC day; a 'failed' send does not block the next tick's retry.
+ * delivered email per UTC day; a 'failed' send does not block the next
+ * tick's retry, and neither does a STALE 'attempted' row — that is what a
+ * worker killed between the two recordDelivery calls leaves behind, and
+ * letting it count would suppress the escalation for the rest of the day.
+ * notification_deliveries has no created_at/updated_at; `attempted_at` is
+ * its insert timestamp (migration 0131, `datetime('now')` format).
  *
  * Never throws — the in-app notification already landed and is the source
  * of truth; a broken email path must not break the emitter.
@@ -896,9 +922,11 @@ async function escalateByEmail(
          JOIN notifications n ON n.id = d.notification_id
         WHERE n.type = ? AND n.group_key = ?
           AND d.channel = 'email'
-          AND d.status IN ('attempted', 'succeeded')
+          AND (d.status = 'succeeded'
+               OR (d.status = 'attempted'
+                   AND d.attempted_at > datetime('now', ?)))
         LIMIT 1`,
-    ).bind(type, rendered.group_key).first<{ hit: number }>();
+    ).bind(type, rendered.group_key, ESCALATION_ATTEMPT_STALE_WINDOW).first<{ hit: number }>();
     if (alreadyEmailed) return;
 
     const anchor = await env.DB.prepare(

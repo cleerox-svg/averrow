@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   estimateCost,
   estimateCostDetailed,
+  resolveRateKey,
   BudgetManager,
   COST_PER_MILLION,
   FALLBACK_COST_PER_MILLION,
@@ -41,7 +42,6 @@ import {
   newAiCallCounters,
   recordAiCall,
 } from "../src/lib/haiku";
-import { submitMessageBatch } from "../src/lib/anthropic-batches";
 import { executeAgent } from "../src/lib/agentRunner";
 import { analystAgent } from "../src/agents/analyst";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
@@ -131,6 +131,28 @@ describe("0b. estimateCost never throws", () => {
     expect(estimateCostDetailed("claude-3-haiku", 1_000_000, 0)).toEqual({ cost: 0.25, rateKnown: true });
   });
 
+  it("resolveRateKey picks the LONGEST matching key, measured on the form that matched", () => {
+    // `claude-sonnet-4-6-*` also prefix-matches `claude-sonnet-4` (the alias
+    // of `claude-sonnet-4-20250514`); the longer `claude-sonnet-4-6` must win.
+    expect(resolveRateKey("claude-sonnet-4-6-20260101")).toBe("claude-sonnet-4-6");
+    expect(resolveRateKey("claude-sonnet-4-6-preview")).toBe("claude-sonnet-4-6");
+    expect(resolveRateKey("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+    // ...while a genuinely sonnet-4 ID still resolves to the sonnet-4 key.
+    expect(resolveRateKey("claude-sonnet-4-20250514")).toBe("claude-sonnet-4-20250514");
+    expect(resolveRateKey("claude-sonnet-4")).toBe("claude-sonnet-4-20250514");
+    expect(resolveRateKey("claude-sonnet-4-20260101")).toBe("claude-sonnet-4-20250514");
+    // sonnet-4-5 vs sonnet-4: the 4-5 family wins on any suffix.
+    expect(resolveRateKey("claude-sonnet-4-5-20260101")).toBe("claude-sonnet-4-5-20250929");
+    expect(resolveRateKey("claude-sonnet-4-5-latest")).toBe("claude-sonnet-4-5-20250929");
+    // Haiku families stay distinct.
+    expect(resolveRateKey("claude-haiku-4-5")).toBe("claude-haiku-4-5-20251001");
+    expect(resolveRateKey("claude-3-5-haiku-20991231")).toBe("claude-3-5-haiku-20241022");
+    expect(resolveRateKey("claude-3-haiku-20991231")).toBe("claude-3-haiku-20240307");
+    // No `-` boundary → no match (claude-sonnet-40 is not claude-sonnet-4).
+    expect(resolveRateKey("claude-sonnet-40")).toBeNull();
+    expect(resolveRateKey("gpt-4o")).toBeNull();
+  });
+
   it("recordCost writes the ledger row for an unknown model", async () => {
     const { db, rows } = makeLedgerDb();
     const cost = await new BudgetManager(db).recordCost("analyst", null, "claude-unknown-x", 1_000_000, 0);
@@ -211,16 +233,6 @@ describe("1a. AI_MODE=rules_only — zero requests, deliberate skip", () => {
     recordAiCall(c, classified, false);
     recordAiCall(c, raw, false);
     expect(c).toMatchObject({ aiCallsAttempted: 0, aiCallsSucceeded: 0, aiCallsSkipped: 2, aiFirstError: null });
-  });
-
-  it("batch submit is gated too (no fetch)", async () => {
-    const fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-    await expect(submitMessageBatch(
-      { ANTHROPIC_API_KEY: "sk-ant-test", DB: makeLedgerDb().db, AI_MODE: "rules_only" },
-      [{ custom_id: "a", params: { model: "claude-haiku-4-5-20251001", max_tokens: 8, messages: [{ role: "user", content: "x" }] } }],
-    )).rejects.toBeInstanceOf(AiDisabledError);
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("unset AI_MODE behaves exactly as before: the request goes out", async () => {

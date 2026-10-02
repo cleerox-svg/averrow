@@ -56,24 +56,37 @@ const warnedUnknownModels = new Set<string>();
  * Resolve the rate card for a model ID.
  *
  * 1. Exact match.
- * 2. Prefix match, either direction, longest key wins — Anthropic returns
- *    dated IDs (`claude-haiku-4-5-20251001`) where we may hold an alias
- *    (`claude-sonnet-4-6`), and vice versa; e.g. `claude-sonnet-4-6-20260101`
- *    resolves to `claude-sonnet-4-6`.
+ * 2. Prefix match on a `-` boundary against each key AND its undated alias
+ *    (key minus a trailing -YYYYMMDD), plus alias equality — Anthropic
+ *    returns dated IDs (`claude-haiku-4-5-20251001`) where we may hold an
+ *    alias (`claude-sonnet-4-6`), and vice versa.
+ *    The LONGEST matched form wins, measured on the form that actually
+ *    matched (not the raw key, whose date suffix would inflate it): so
+ *    `claude-sonnet-4-6-xxx` resolves to `claude-sonnet-4-6` (17 chars),
+ *    never to `claude-sonnet-4-20250514` via its 15-char alias
+ *    `claude-sonnet-4`. Object key order cannot change the result.
  * 3. Otherwise null (caller applies FALLBACK_COST_PER_MILLION).
  */
-function resolveRates(model: string): { input: number; output: number } | null {
-  const exact = COST_PER_MILLION[model];
-  if (exact) return exact;
-  let best: { key: string; rates: { input: number; output: number } } | null = null;
-  for (const [key, rates] of Object.entries(COST_PER_MILLION)) {
-    // Strip a trailing -YYYYMMDD so a dated key also matches its alias.
+export function resolveRateKey(model: string): string | null {
+  if (COST_PER_MILLION[model]) return model;
+  const modelAlias = model.replace(/-\d{8}$/, '');
+  let best: { key: string; len: number } | null = null;
+  for (const key of Object.keys(COST_PER_MILLION)) {
     const keyAlias = key.replace(/-\d{8}$/, '');
-    const modelAlias = model.replace(/-\d{8}$/, '');
-    const matches = model.startsWith(`${key}-`) || modelAlias === keyAlias;
-    if (matches && (!best || key.length > best.key.length)) best = { key, rates };
+    for (const form of key === keyAlias ? [key] : [key, keyAlias]) {
+      const matches = modelAlias === form || model.startsWith(`${form}-`);
+      if (!matches) continue;
+      // Tie on length (a dated key and an undated key sharing an alias):
+      // keep the first-seen key deterministically by requiring strict >.
+      if (!best || form.length > best.len) best = { key, len: form.length };
+    }
   }
-  return best?.rates ?? null;
+  return best?.key ?? null;
+}
+
+function resolveRates(model: string): { input: number; output: number } | null {
+  const key = resolveRateKey(model);
+  return key ? COST_PER_MILLION[key] ?? null : null;
 }
 
 /**
@@ -143,7 +156,6 @@ export interface BudgetStatus {
 
 export interface AgentBudgetLimits {
   analyst_batch: number;
-  cartographer_batch: number;
   skip_observer: boolean;
   skip_curator: boolean;
   pause_all_ai: boolean;
@@ -360,7 +372,6 @@ export class BudgetManager {
       case 'soft':
         return {
           analyst_batch: 10,
-          cartographer_batch: 20,
           skip_observer: false,
           skip_curator: false,
           pause_all_ai: false,
@@ -368,7 +379,6 @@ export class BudgetManager {
       case 'hard':
         return {
           analyst_batch: 5,
-          cartographer_batch: 10,
           skip_observer: true,
           skip_curator: true,
           pause_all_ai: false,
@@ -376,7 +386,6 @@ export class BudgetManager {
       case 'emergency':
         return {
           analyst_batch: 0,
-          cartographer_batch: 0,
           skip_observer: true,
           skip_curator: true,
           pause_all_ai: true,
@@ -384,7 +393,6 @@ export class BudgetManager {
       default:
         return {
           analyst_batch: 30,
-          cartographer_batch: 50,
           skip_observer: false,
           skip_curator: false,
           pause_all_ai: false,
