@@ -115,7 +115,10 @@ export function useAlertTriageSummary() {
     queryKey: ['alert-triage-summary'],
     queryFn: async () => {
       const res = await api.get<AlertTriageSummary>('/api/alerts/triage-summary');
-      return res.data ?? { new_count: 0, critical_count: 0 };
+      // A JSON 4xx/5xx resolves as { success:false } — throw so the query
+      // lands in its error path instead of reporting a fake "0 to triage".
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Failed to load alert triage summary');
+      return res.data;
     },
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,

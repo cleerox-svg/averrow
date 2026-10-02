@@ -1,20 +1,19 @@
-import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Globe, Shield, Server, Activity, TrendingUp, Crosshair,
   Gavel, Bell, Inbox, Mail, Target, Siren, AlertTriangle,
   Cpu, Rss, LayoutDashboard, Users, ClipboardList, Building2,
   Smartphone, EyeOff, BellRing, DollarSign, Award,
-  Sun, Moon, Laptop, PanelLeftClose, PanelLeftOpen, LogOut, Plug,
+  PanelLeftClose, PanelLeftOpen, LogOut, Plug,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
-import { api } from '@/lib/api';
+import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { AverrowLogo } from '@/components/brand/AverrowLogo';
 import { Badge } from '@/design-system/components';
-import { useTheme } from '@/design-system/hooks';
+import { ThemeCycleButton } from './ThemeCycleButton';
 
 interface NavItem {
   label: string;
@@ -110,20 +109,9 @@ const NAV_ACTIVE_STYLE: React.CSSProperties = {
 
 export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: SidebarProps) {
   const { user, logout, isSuperAdmin, isBrandAdmin } = useAuth();
-  const [alertCount, setAlertCount] = useState(0);
+  const { data: alertCount = 0 } = useOpenAlertCount();
   const location = useLocation();
   const isRail = mode === 'rail';
-
-  useEffect(() => {
-    const fetchAlerts = () => {
-      api.get<unknown>('/api/alerts?status=open&limit=1')
-        .then(d => setAlertCount(d.total ?? 0))
-        .catch(() => {});
-    };
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 60_000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Phase D D2b: averrow-ops is now staff-only. The brand-admin
   // sidebar that used to live here was just a thin customer
@@ -422,40 +410,5 @@ export function Sidebar({ onNavigate, mode = 'expanded', onToggleMode }: Sidebar
         )}
       </div>
     </aside>
-  );
-}
-
-// Sidebar header theme cycler. Single click cycles
-// auto → dark → light → auto. Mirror of the tenant sidebar's
-// toggle so both products carry the same canonical surface
-// (per SHARED_LOGIN_SPEC). Profile Preferences is the explicit
-// picker; this button is the quick-access affordance.
-function ThemeCycleButton() {
-  const { theme, cycle } = useTheme();
-  const Icon = theme === 'auto' ? Laptop : theme === 'light' ? Sun : Moon;
-  const label =
-    theme === 'auto'  ? 'Theme: auto (follows OS) — click for dark' :
-    theme === 'dark'  ? 'Theme: dark — click for light' :
-                        'Theme: light — click for auto';
-  return (
-    <button
-      type="button"
-      onClick={cycle}
-      aria-label={label}
-      title={label}
-      style={{
-        padding: 6,
-        borderRadius: 6,
-        background: 'transparent',
-        border: 'none',
-        color: 'var(--text-tertiary)',
-        cursor: 'pointer',
-        transition: 'color 120ms ease',
-      }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)'; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; }}
-    >
-      <Icon size={14} />
-    </button>
   );
 }

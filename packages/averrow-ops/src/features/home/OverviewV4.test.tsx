@@ -29,14 +29,16 @@ import { api } from '@/lib/api';
 
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
-function route(opts: { alerts: 'ok' | 'fail'; incidents: 'ok' | 'fail' }) {
+function route(opts: { alerts: 'ok' | 'fail' | 'json500'; incidents: 'ok' | 'fail' | 'json500' }) {
   get.mockImplementation(async (url: string) => {
-    if (url.startsWith('/api/alerts')) {
+    if (url.startsWith('/api/alerts/triage-summary')) {
       if (opts.alerts === 'fail') throw new Error('alerts down');
-      return { success: true, data: [], total: 42 };
+      if (opts.alerts === 'json500') return { success: false, error: 'internal' };
+      return { success: true, data: { new_count: 42, critical_count: 1 } };
     }
     if (url.startsWith('/api/admin/incidents')) {
       if (opts.incidents === 'fail') throw new Error('incidents down');
+      if (opts.incidents === 'json500') return { success: false, error: 'internal' };
       return {
         success: true,
         data: [
@@ -84,6 +86,14 @@ describe('OverviewV4 — KPI tile error states', () => {
     await waitFor(() => expect(screen.getAllByText("Couldn't load")).toHaveLength(1));
     expect(screen.getByText('need eyes now')).toBeInTheDocument();
     expect(screen.getByText('platform & ops')).toBeInTheDocument();
+    expect(screen.queryByText('awaiting triage')).not.toBeInTheDocument();
+  });
+
+  it('treats JSON { success:false } 500s as failures, not zeros', async () => {
+    route({ alerts: 'json500', incidents: 'json500' });
+    renderWithProviders(<OverviewV4 />);
+
+    await waitFor(() => expect(screen.getAllByText("Couldn't load")).toHaveLength(3));
     expect(screen.queryByText('awaiting triage')).not.toBeInTheDocument();
   });
 

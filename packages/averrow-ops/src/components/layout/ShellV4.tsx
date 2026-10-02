@@ -9,36 +9,40 @@
 // Responsive: desktop = fixed rail; <=900px = off-canvas drawer + hamburger,
 // single-column. Mostly CSS-driven (shell-v4.css); JS only tracks the drawer.
 
-import { useEffect, useState } from 'react';
-import { Outlet, NavLink } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
   Search, Sparkles, RotateCcw, Menu, X,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
-  LogOut, UserCircle, ShieldAlert, Bug, Network, Megaphone, Server,
+  ShieldAlert, Bug, Network, Megaphone, Server,
   Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
-import { parseInitials } from '@/lib/avatar';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { Shell } from './Shell';
 import { useShellVersion } from '@/design-system/hooks/useShellVersion';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
+import { NotificationBell } from '@/components/NotificationBell';
+import { UserAvatar } from '@/components/UserAvatar';
+import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
+import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
+import { ThemeCycleButton } from './ThemeCycleButton';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
 import './shell-v4.css';
 
-interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; }
+interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; count?: number; }
 interface NavGroup { label: string; items: NavItem[]; }
 
 // Nav is built per-render so it can role-gate sensitive PLATFORM items
 // (Customers → super_admin, Pricing → view_billing), matching the classic
 // Sidebar. Anything not gated is visible to every staff role.
-function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefined }): NavGroup[] {
-  const { isSuperAdmin, role } = opts;
+function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefined; openAlerts?: number }): NavGroup[] {
+  const { isSuperAdmin, openAlerts } = opts;
 
   // PLATFORM — consolidated rows (admin-console redesign). The four flat
   // ops pages (Agents / Feeds / Takedown Integrations / Attribution
@@ -76,7 +80,7 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
         // routes stay live for deep links). Abuse Mailbox + Spam Trap are NOT
         // Console tabs, so they remain standalone here — but both pages
         // hard-bounce non-super-admins, so their rows are gated to match.
-        { label: 'Console',       to: '/console',              icon: SquareTerminal },
+        { label: 'Console',       to: '/console',              icon: SquareTerminal, count: openAlerts },
         { label: 'Overview',      to: '/',                     icon: LayoutDashboard, end: true },
         ...(isSuperAdmin
           ? [
@@ -171,12 +175,22 @@ function buildPaletteCommands(
 }
 
 export function ShellV4() {
-  const { user, isSuperAdmin, logout } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
+  const location = useLocation();
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const sideRef = useRef<HTMLElement>(null);
+  const wasDrawerOpen = useRef(false);
+  const skipFocusRestore = useRef(false);
+  const openAlerts = useOpenAlertCount();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const closeDrawer = () => setDrawerOpen(false);
-  const nav = buildV4Nav({ isSuperAdmin, role: user?.role });
+  const nav = buildV4Nav({
+    isSuperAdmin,
+    role: user?.role,
+    openAlerts: openAlerts.isSuccess ? openAlerts.data : undefined,
+  });
   const commands = buildPaletteCommands(nav, { isSuperAdmin, role: user?.role });
   // H-3 (AUTH_AUDIT_2026-06): mirrors Shell.tsx's gate, which this shell
   // never got when it was added. A privileged user on an enrollment-scoped
@@ -192,6 +206,8 @@ export function ShellV4() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        skipFocusRestore.current = true; // palette takes focus, not the hamburger
+        setDrawerOpen(false);
         setPaletteOpen(o => !o);
       }
     };
@@ -199,11 +215,68 @@ export function ShellV4() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const openPalette = () => { setDrawerOpen(false); setPaletteOpen(true); };
+  // Drawer: close on route change, on Escape, and when the viewport widens
+  // past the drawer breakpoint (the desktop rail is never hidden/inert).
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+  useEffect(() => {
+    if (!drawerOpen || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(min-width: 901px)');
+    const onChange = (e: MediaQueryListEvent) => { if (e.matches) setDrawerOpen(false); };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [drawerOpen]);
+
+  // Focus management lives here once, so EVERY close path (Escape, X,
+  // backdrop, nav click, route change) restores focus to the hamburger and
+  // every open moves focus into the drawer.
+  useEffect(() => {
+    if (drawerOpen) {
+      closeBtnRef.current?.focus();
+    } else if (wasDrawerOpen.current) {
+      if (skipFocusRestore.current) skipFocusRestore.current = false;
+      else hamburgerRef.current?.focus();
+    }
+    wasDrawerOpen.current = drawerOpen;
+  }, [drawerOpen]);
+
+  // Simple focus trap while the drawer is open.
+  const onDrawerKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!drawerOpen || e.key !== 'Tab') return;
+    const focusables = Array.from(
+      sideRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [],
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !sideRef.current?.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !sideRef.current?.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const openPalette = () => { skipFocusRestore.current = true; setDrawerOpen(false); setPaletteOpen(true); };
 
   return (
     <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>
-      <aside className="v4-side">
+      <aside
+        id="v4-drawer"
+        ref={sideRef}
+        className="v4-side"
+        onKeyDown={onDrawerKeyDown}
+        {...(drawerOpen ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Main navigation' } : {})}
+      >
         <div className="v4-brand">
           <svg width="34" height="34" viewBox="0 0 32 32" fill="none" style={{ flex: '0 0 auto', boxShadow: '0 0 22px rgba(200,60,60,.45)', borderRadius: 9 }}>
             <defs>
@@ -220,7 +293,7 @@ export function ShellV4() {
             <div className="name">AVERROW</div>
             <div className="sub">THREAT INTERCEPTOR</div>
           </div>
-          <button type="button" className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
+          <button type="button" ref={closeBtnRef} className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
             <X size={18} strokeWidth={2} />
           </button>
         </div>
@@ -234,6 +307,14 @@ export function ShellV4() {
                 return (
                   <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
                     <Icon strokeWidth={2} /> {item.label}
+                    {item.count != null && item.count > 0 && (
+                      <>
+                        <span className="count" aria-hidden="true">
+                          {item.count > 99 ? '99+' : item.count}
+                        </span>
+                        <span className="sr-only">{item.count} alerts awaiting triage</span>
+                      </>
+                    )}
                   </NavLink>
                 );
               })}
@@ -242,21 +323,7 @@ export function ShellV4() {
         </nav>
 
         <div className="v4-foot">
-          <NavLink to="/profile" className="v4-foot-id" onClick={closeDrawer} title="Your profile">
-            <div className="v4-avatar">{initials}</div>
-            <div className="v4-foot-meta">
-              <div className="v4-foot-name">
-                {user?.display_name ?? user?.name ?? user?.email ?? 'Signed in'}
-              </div>
-              <div className="v4-foot-role">{user?.role}</div>
-            </div>
-          </NavLink>
-          <NavLink to="/profile" className="v4-foot-btn" onClick={closeDrawer} aria-label="Profile" title="Profile">
-            <UserCircle size={17} strokeWidth={2} />
-          </NavLink>
-          <button type="button" className="v4-foot-btn" onClick={() => logout()} aria-label="Sign out" title="Sign out">
-            <LogOut size={17} strokeWidth={2} />
-          </button>
+          <ThemeCycleButton />
         </div>
         <div className="v4-verline" title={`${VERSION_LABEL} · ${BUILD_SHA}`}>
           {VERSION_LABEL}<span style={{ opacity: 0.5 }}> · {BUILD_SHA}</span>
@@ -268,7 +335,7 @@ export function ShellV4() {
 
       <section className="v4-main">
         <header className="v4-top">
-          <button type="button" className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu">
+          <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu" aria-expanded={drawerOpen} aria-controls="v4-drawer">
             <Menu size={18} strokeWidth={2} />
           </button>
           <button type="button" className="v4-cmdk" onClick={openPalette} aria-label="Open command palette">
@@ -277,8 +344,14 @@ export function ShellV4() {
             <kbd>⌘K</kbd>
           </button>
           <div className="v4-live"><span className="dot" />LIVE</div>
+          <NotificationBell />
+          <UserAvatar />
         </header>
         <div className="v4-outlet">
+          {/* Self-gates on its own paths + unread state. The wrapper hides
+              itself via :empty when the banner renders nothing, so no stray
+              mobile padding appears on other routes. */}
+          <div className="v4-banner-wrap"><PlatformAlertBanner /></div>
           {enrollmentLocked ? null : <Outlet />}
         </div>
       </section>

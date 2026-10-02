@@ -19,14 +19,16 @@ import { api } from '@/lib/api';
 
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
-function route(opts: { alerts: 'ok' | 'fail'; incidents: 'ok' | 'fail' }) {
+function route(opts: { alerts: 'ok' | 'fail' | 'json500'; incidents: 'ok' | 'fail' | 'json500' }) {
   get.mockImplementation(async (url: string) => {
-    if (url.startsWith('/api/alerts')) {
+    if (url.startsWith('/api/alerts/triage-summary')) {
       if (opts.alerts === 'fail') throw new Error('alerts down');
-      return { success: true, data: [], total: 42 };
+      if (opts.alerts === 'json500') return { success: false, error: 'internal' };
+      return { success: true, data: { new_count: 42, critical_count: 1 } };
     }
     if (url.startsWith('/api/admin/incidents')) {
       if (opts.incidents === 'fail') throw new Error('incidents down');
+      if (opts.incidents === 'json500') return { success: false, error: 'internal' };
       return { success: true, data: [{ id: 'a', severity: 'critical' }, { id: 'b', severity: 'low' }] };
     }
     throw new Error(`unexpected url ${url}`);
@@ -49,6 +51,13 @@ describe('Console — KPI tile error states', () => {
 
   it('flags every tile when both queries fail', async () => {
     route({ alerts: 'fail', incidents: 'fail' });
+    renderWithProviders(<Console />);
+
+    await waitFor(() => expect(screen.getAllByText("Couldn't load")).toHaveLength(3));
+  });
+
+  it('flags every tile on JSON { success:false } 500s', async () => {
+    route({ alerts: 'json500', incidents: 'json500' });
     renderWithProviders(<Console />);
 
     await waitFor(() => expect(screen.getAllByText("Couldn't load")).toHaveLength(3));
