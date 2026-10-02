@@ -34,6 +34,7 @@
 
 import type { AgentModule, AgentResult, AgentContext } from "../lib/agentRunner";
 import { checkCostGuard } from "../lib/haiku";
+import { isAiRulesOnly } from "../lib/anthropic";
 import { upsertActorByName } from "../lib/otx-attribution";
 import { parseRss, type RssItem } from "../lib/rss-parser";
 import { extractFromArticle, type NewsExtraction } from "../lib/news-extractor";
@@ -189,6 +190,20 @@ export const newsWatcherAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, runId } = ctx;
     const callCtx = { agentId: "news_watcher", runId };
+
+    // AI_MODE=rules_only — extraction is the agent's whole job and has no
+    // rule-based path. extractFromArticle would return EMPTY for every
+    // item and the INSERT below would persist each article as
+    // 'no_actors' — which the article_url dedup then treats as done, so
+    // those articles would never be extracted once AI returns. Skip the
+    // pass before fetching or inserting anything; the feeds keep a rolling
+    // window, so the same items are picked up on a later AI-enabled run.
+    if (isAiRulesOnly(env)) {
+      return {
+        itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0,
+        output: { skipped: true, reason: "AI_MODE=rules_only — extraction skipped, no articles ingested" },
+      };
+    }
 
     const guard = await checkCostGuard(env, false);
     if (guard) {

@@ -30,7 +30,14 @@ import {
   type NotificationEventKey,
   type NotificationSeverity,
 } from '@averrow/shared';
-import { dispatchPush, isInQuietHours, type QuietHoursPrefs } from './push';
+import {
+  dispatchPush,
+  isInQuietHours,
+  isStickyPushType,
+  pushDeliveryOutcome,
+  type PushPayload,
+  type QuietHoursPrefs,
+} from './push';
 
 // Re-exported for callers that already imported these names.
 export type NotificationType = NotificationEventKey;
@@ -65,6 +72,15 @@ interface CreateNotificationOpts {
   audience?: 'tenant' | 'super_admin' | 'team' | 'all';
   brandId?: string | null;
   orgId?: string | null;
+  /**
+   * Optional recipient filter for audience='tenant'. When set, brand
+   * subscribers are additionally required to be ACTIVE org_members of this
+   * org — for events whose payload belongs to one org (e.g. an abuse-mailbox
+   * capture) even though it is keyed by a brand other orgs also monitor.
+   * The opted-in super_admin firehose half of the tenant audience is
+   * unaffected. Ignored for every other audience.
+   */
+  restrictToOrgMembers?: string | number | null;
   /**
    * Static template fields (Q5). Surfaced in the UI as "Why am I seeing
    * this?" / "What should I do?".
@@ -121,6 +137,42 @@ const SEVERITY_RANK: Record<string, number> = {
 const TENANT_ONLY_TYPES: ReadonlySet<string> = new Set([
   'intel_recommended_action',
 ]);
+
+/**
+ * Synthetic service users are never recipients of AUDIENCE fan-out. They
+ * have no devices and no human reading the inbox, so every broadcast just
+ * wrote dead in-app rows plus (before the delivery-audit fix) false push
+ * "succeeded" audit rows. The marker is the fixed id prefix used by
+ * handleMintServiceJwt (`service_account_mcp`, handlers/auth.ts). The row's
+ * stored role is an `analyst` placeholder (and was `super_admin` before
+ * SECURITY_AUDIT O1), so role filters alone don't keep it out of the
+ * 'team' / 'super_admin' audiences. An explicit `opts.userId` is honoured
+ * as-is — this only filters audience resolution.
+ */
+export const SERVICE_ACCOUNT_ID_PREFIX = 'service_account_';
+
+export function isServiceAccountUserId(id: string): boolean {
+  return id.startsWith(SERVICE_ACCOUNT_ID_PREFIX);
+}
+
+/** Push payload for one notification row. Sticky (`requireInteraction`)
+ *  only for STICKY_PUSH_TYPES — the key is omitted otherwise. */
+export function buildNotificationPushPayload(
+  opts: Pick<CreateNotificationOpts, 'title' | 'message' | 'link' | 'severity' | 'type'>,
+  notificationId: string,
+): PushPayload {
+  const payload: PushPayload = {
+    title: opts.title,
+    body: opts.message,
+    url: opts.link,
+    tag: `${opts.type}-${notificationId}`,
+    notificationId,
+    severity: opts.severity,
+    type: opts.type,
+  };
+  if (isStickyPushType(opts.type)) payload.requireInteraction = true;
+  return payload;
+}
 
 export async function createNotification(env: Env, opts: CreateNotificationOpts): Promise<number> {
   // Defense-in-depth: refuse unknown event keys before we hit the SQL CHECK.
@@ -235,13 +287,23 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     // super_admin getting 538 DMARC-hygiene notifications in 24h about
     // random unclaimed brands they have no power to fix.
     const includeSuperAdmins = !TENANT_ONLY_TYPES.has(opts.type);
-    const sql = includeSuperAdmins
-      ? `SELECT DISTINCT u.id
+    // restrictToOrgMembers: subscribers must also be active members of
+    // that org (see the option's doc). A bound parameter, never inlined.
+    const orgFilter = opts.restrictToOrgMembers !== undefined && opts.restrictToOrgMembers !== null;
+    const subscriberSql = `SELECT DISTINCT u.id
            FROM users u
            JOIN notification_subscriptions ns ON ns.user_id = u.id
           WHERE u.status = 'active'
             AND ns.brand_id = ?
-            AND ns.level != 'ignored'
+            AND ns.level != 'ignored'` + (orgFilter
+      ? `
+            AND EXISTS (SELECT 1 FROM org_members om
+                         WHERE om.user_id = u.id
+                           AND om.org_id = ?
+                           AND om.status = 'active')`
+      : '');
+    const sql = includeSuperAdmins
+      ? `${subscriberSql}
          UNION
          SELECT u.id
            FROM users u
@@ -249,13 +311,9 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
           WHERE u.status = 'active'
             AND u.role = 'super_admin'
             AND p.show_tenant_notifications = 1`
-      : `SELECT DISTINCT u.id
-           FROM users u
-           JOIN notification_subscriptions ns ON ns.user_id = u.id
-          WHERE u.status = 'active'
-            AND ns.brand_id = ?
-            AND ns.level != 'ignored'`;
-    const users = await db.prepare(sql).bind(brandId).all<{ id: string }>();
+      : subscriberSql;
+    const binds: unknown[] = orgFilter ? [brandId, opts.restrictToOrgMembers] : [brandId];
+    const users = await db.prepare(sql).bind(...binds).all<{ id: string }>();
     userIds = users.results.map(u => u.id);
   } else if (audience === 'team') {
     // Staff-wide: every non-client role. Used for cross-cutting agent
@@ -285,6 +343,12 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
       const users = await db.prepare("SELECT id FROM users WHERE status = 'active'").all<{ id: string }>();
       userIds = users.results.map(u => u.id);
     }
+  }
+
+  // Audience fan-out never targets synthetic service accounts (see
+  // SERVICE_ACCOUNT_ID_PREFIX). Explicit opts.userId is left untouched.
+  if (!opts.userId) {
+    userIds = userIds.filter((id) => !isServiceAccountUserId(id));
   }
 
   // The last silent no-op in the chain. Every gate above returns 0 for a
@@ -373,16 +437,15 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
       // resolves. dispatchPush's own per-device telemetry lives in
       // push_devices / push_delivery_log.
       await recordDelivery(env, notificationId, uid, "push", "attempted", null);
-      dispatchPush(env, uid, {
-        title: opts.title,
-        body: opts.message,
-        url: opts.link,
-        tag: `${opts.type}-${notificationId}`,
-        notificationId,
-        severity: opts.severity,
-        type: opts.type,
-      }).then(
-        () => recordDelivery(env, notificationId, uid, "push", "succeeded", null),
+      // The final status comes from dispatchPush's counts, not from the
+      // promise merely resolving — dispatchPush never throws, so the old
+      // "resolved => succeeded" rule stamped `succeeded` for users with
+      // zero devices and for sends every device rejected.
+      dispatchPush(env, uid, buildNotificationPushPayload(opts, notificationId)).then(
+        (result) => {
+          const outcome = pushDeliveryOutcome(result);
+          return recordDelivery(env, notificationId, uid, "push", outcome.status, outcome.reason);
+        },
         (err: unknown) => {
           const reason = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
           return recordDelivery(env, notificationId, uid, "push", "failed", reason);
@@ -473,8 +536,9 @@ function getRateKey(opts: CreateNotificationOpts): string | null {
 }
 
 /** Per-channel delivery audit. Failures here must never break the
- *  notification flow — wrap and swallow. Migration 0131. */
-async function recordDelivery(
+ *  notification flow — wrap and swallow. Migration 0131. Exported for the
+ *  platform email-escalation path (lib/platform-templates.ts). */
+export async function recordDelivery(
   env: Env,
   notificationId: string,
   userId: string,

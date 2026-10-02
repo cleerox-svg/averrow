@@ -32,6 +32,8 @@ Copy `.env.example` to `.env` and configure:
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
+`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`, set to `"rules_only"` for production, `[env.staging]` and `[env.dev]`. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); `enabled`, or unset, lets calls proceed. See `CLAUDE.md` §6 "AI-call health". `ANTHROPIC_API_KEY` is therefore not exercised while `rules_only` is set. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
+
 ## Local Development
 
 ```bash
@@ -68,6 +70,32 @@ Migrations are also run automatically by the deploy workflow.
 - **Verify before trusting the alert:** `pnpm run db:migrate:status:prod` should list 0272 as applied, and `SELECT sql FROM sqlite_master WHERE name = 'notifications'` should contain `platform_ai_calls_failing`. `test/notification-check-drift.test.ts` only proves the migration *file* covers the registry, not that production applied it.
 - 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
+
+### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
+
+Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside it needs 0273 — see the next section). Expect, once, after the first deploy:
+
+- **Up to ~90 lookalike `HIGH` alerts.** The lookalike scanner's one-time catch-up re-composites mail+web rows that a retired Haiku verdict held below HIGH (prod sizing: 84 LOW + 6 MEDIUM; rows with `status` `benign`/`taken_down` are excluded). They alert as they are re-checked, then the predicate goes false. This is not a regression.
+- **Up to ~50 provider insight rows from Cartographer.** `hosting_providers.last_score` still holds the old Haiku scores; the first rule-based score moves past the emit threshold for providers whose heuristic differs, then converges.
+- **Possibly one spurious `platform_ai_calls_failing` notification and email.** Pre-deploy `agent_outputs` rows carry `aiCallsAttempted > 0` with 0 successes inside the 2h window; Flight Control may fire once before they age out. Under `rules_only` no new attempts are recorded, so it does not recur. It is escalated by email at most once per UTC day.
+- **Service worker update.** `packages/averrow-ops/public/sw.js` `VERSION` is `2026-10-02.1`; old shell/runtime caches are evicted on activate. Bump `VERSION` on any further `sw.js` change.
+- **Post-deploy: re-run the analyst `key_prefix` redaction once.** Until this deploy the old Worker writes the first 8 chars of the Anthropic key into analyst diagnostic rows. 6,616 existing rows were redacted on 2026-10-02; rows written between then and the deploy need the same one-shot (idempotent):
+  ```sql
+  UPDATE agent_outputs
+     SET summary = replace(summary, 'key_prefix=' || json_extract(details,'$.key_prefix'), 'key_prefix=[redacted]'),
+         details = json_remove(details,'$.key_prefix')
+   WHERE agent_id='analyst' AND type='diagnostic'
+     AND json_valid(details) AND json_type(details,'$.key_prefix') IS NOT NULL;
+  ```
+  Rotate the Anthropic / `LRX_API_KEY` key regardless.
+
+### Migration 0273 + the `ABUSE_MAILBOX_TRIAGE` Workflow binding (abuse-mailbox rules determinations)
+
+- `0273_abuse_inbox_responder_suppressed.sql` adds `abuse_inbox_messages.responder_suppressed_reason`, `forwarded_by_reg_domain` and `responder_guard_version`, backfills `responder_suppressed_reason = 'legacy:pre_guard'` on every row with `determination_sent_at IS NULL` (pre-guard rows are never emailed by the sweeper), and creates four indexes (two partial). Apply it **before** the Worker — **ingest depends on it**: the email handler's INSERT names all three new columns (the backscatter decision is written by the INSERT itself), so a Worker deployed ahead of the migration fails every inbound report. The determination claim, sweeper, `17 * * * *` cron gate and the partial `idx_abuse_inbox_undelivered` index filter on `responder_suppressed_reason IS NULL AND responder_guard_version IS NOT NULL`.
+- **Deploy-window gap is closed by the marker — no manual backfill needed.** Rows captured by the OLD Worker between the migration and the Worker deploy are inserted with `responder_suppressed_reason = NULL` (they never passed the positive-authentication guard) but also `responder_guard_version = NULL`; only the new INSERT writes `responder_guard_version = 1`, so those rows are classified but never emailed. Optional, for operator clarity only: `UPDATE abuse_inbox_messages SET responder_suppressed_reason = 'legacy:pre_guard' WHERE responder_guard_version IS NULL AND determination_sent_at IS NULL AND responder_suppressed_reason IS NULL;`
+- Verify the marker after deploy: the newest row should have `responder_guard_version = 1` — `SELECT id, responder_guard_version, responder_suppressed_reason FROM abuse_inbox_messages ORDER BY received_at DESC LIMIT 5;`
+- `wrangler.toml` adds `[[workflows]] abuse-mailbox-triage` → `ABUSE_MAILBOX_TRIAGE` / `AbuseMailboxTriageWorkflow` (exported from `src/index.ts`). `wrangler deploy` creates it; no manual provisioning. The binding is optional in `Env` — staging/dev (no `[[workflows]]` there) and any deploy without it fall back to the hourly `17 * * * *` sweeper.
+- Verify after deploy: forward a test report from a DMARC-passing mailbox; within ~2 min `abuse_inbox_messages.classified_by = 'rules'` and `determination_sent_at` is set; `npx wrangler workflows instances list abuse-mailbox-triage` shows the `abuse-<messageId>` instance; `agent_activity_log` has an `abuse_mailbox_triage` / `abuse_triage_complete` row. A report from a domain without DMARC (`dmarc=none`) is classified but stamped `backscatter:dmarc_not_pass` and gets no ack — expected.
 
 ## Manual Deploy
 

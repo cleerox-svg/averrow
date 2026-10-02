@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   interpretAuth,
   buildFindings,
+  humanizeAction,
+  defangForEcho,
   type DeterminationContextForFindings,
 } from "../src/lib/abuse-mailbox-responder";
 
@@ -53,11 +55,29 @@ function mkCtx(over: Partial<DeterminationContextForFindings>): DeterminationCon
     originalSubject: "Test",
     classification: "phishing",
     confidence: 92,
-    reasoning: "looks bad",
     action: "takedown",
     ...over,
   };
 }
+
+describe("humanizeAction", () => {
+  it("never claims a takedown for an automated verdict", () => {
+    for (const by of ["rules", "ai", "auto_graduated", null, undefined]) {
+      expect(humanizeAction("takedown", by)).toBe("Reported to our threat team");
+    }
+    expect(humanizeAction("takedown", "manual")).toBe("Takedown initiated");
+    expect(humanizeAction("escalate", "ai")).toBe("Reported to our threat team");
+    expect(humanizeAction("review", "rules")).toBe("Queued for analyst review");
+  });
+});
+
+describe("defangForEcho", () => {
+  it("strips schemes and defangs domains / IPv4s", () => {
+    expect(defangForEcho("Verify at https://login.evil-bank.example/x from 203.0.113.9 now"))
+      .toBe("Verify at login[.]evil-bank[.]example/x from 203[.]0[.]113[.]9 now");
+    expect(defangForEcho("Invoice #123 overdue")).toBe("Invoice #123 overdue");
+  });
+});
 
 describe("buildFindings", () => {
   it("returns [] when no extra context is provided", () => {

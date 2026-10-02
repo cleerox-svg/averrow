@@ -306,7 +306,7 @@ export const analystAgent: AgentModule = {
 
       // On FIRST call, write diagnostic directly to agent_outputs for D1 querying
       if (itemsProcessed === 1) {
-        const diagSummary = `ANTHROPIC_API_KEY set=${!!env.ANTHROPIC_API_KEY}, LRX_API_KEY set=${!!env.LRX_API_KEY}, key_prefix=${apiKey ? apiKey.slice(0, 8) + "..." : "NONE"}, haiku_success=${result.success}, haiku_error=${result.error ?? "none"}, domain=${threat.malicious_domain}`;
+        const diagSummary = `ANTHROPIC_API_KEY set=${!!env.ANTHROPIC_API_KEY}, LRX_API_KEY set=${!!env.LRX_API_KEY}, key_source=${keySource}, haiku_success=${result.success}, haiku_error=${result.error ?? "none"}, domain=${threat.malicious_domain}`;
         try {
           await env.DB.prepare(
             `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
@@ -318,7 +318,6 @@ export const analystAgent: AgentModule = {
               anthropic_key_set: !!env.ANTHROPIC_API_KEY,
               lrx_key_set: !!env.LRX_API_KEY,
               key_source: keySource,
-              key_prefix: apiKey ? apiKey.slice(0, 8) + "..." : "NONE",
               haiku_success: result.success,
               haiku_error: result.error ?? null,
               // Distinguishes a deliberate throttle from an outage — the

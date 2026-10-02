@@ -12,6 +12,8 @@
  * - Failed calls do NOT write a ledger row (no tokens consumed) but
  *   are logged to console with the agentId so operators can trace
  *   them to the right caller.
+ * - When the `AI_MODE` var is "rules_only", every call throws
+ *   AiDisabledError before any network or D1 access (see isAiRulesOnly).
  * - Callers get the raw Anthropic response back, so code that needs
  *   usage.input_tokens / output_tokens / tool_use.input for its own
  *   logic still has everything it needs.
@@ -79,7 +81,7 @@ export interface AnthropicResponse {
  */
 export type AnthropicEnv = Pick<
   Env,
-  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB"
+  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB" | "AI_MODE"
 > & {
   // Optional KV — Phase 5.1's per-agent budget gate uses CACHE for
   // its 60s decision cache. Test fixtures + the retired architect
@@ -203,6 +205,42 @@ export class AnthropicError extends Error {
   }
 }
 
+// ─── Rules-only switch (AI_MODE) ─────────────────────────────────
+
+/**
+ * Message prefix of the error callAnthropic throws when AI is switched
+ * off platform-wide. lib/haiku.ts maps it to `failure_kind: 'throttled'`
+ * (a deliberate skip), so `recordAiCall` counts it as skipped rather than
+ * attempted and Flight Control's `platform_ai_calls_failing` never fires
+ * for a decision we made on purpose.
+ */
+export const AI_RULES_ONLY_PREFIX = "ai_rules_only:";
+
+/**
+ * True when the `AI_MODE` var says the platform runs rules-only. Only the
+ * literal "rules_only" disables AI — unset, empty or any other value
+ * means "enabled", so tests and environments that never declare the var
+ * behave exactly as before.
+ */
+export function isAiRulesOnly(env: { AI_MODE?: string }): boolean {
+  return env.AI_MODE?.trim() === "rules_only";
+}
+
+/**
+ * Thrown by callAnthropic when AI_MODE is
+ * "rules_only". Nothing — no network request, no budget pre-flight D1
+ * read, no ledger write — happens before it is thrown. Subclass of
+ * AnthropicError so every existing `catch` that narrows on AnthropicError
+ * keeps working, and typed so callers can discriminate it without
+ * matching on message text.
+ */
+export class AiDisabledError extends AnthropicError {
+  constructor(agentId: string) {
+    super(`${AI_RULES_ONLY_PREFIX} AI_MODE=rules_only — AI call skipped (agentId=${agentId})`, agentId);
+    this.name = "AiDisabledError";
+  }
+}
+
 // ─── Key + transport ─────────────────────────────────────────────
 
 function resolveApiKey(env: AnthropicEnv, agentId: string): string {
@@ -293,6 +331,14 @@ export async function callAnthropic(
     timeoutMs = DEFAULT_TIMEOUT_MS,
     useGateway = true,
   } = opts;
+
+  // Rules-only switch — checked FIRST so a disabled platform makes no
+  // network request, no per-agent budget D1 read and writes no ledger
+  // row. This is the single choke point: every direct callAnthropic
+  // caller, and every lib/haiku.ts helper, passes through here.
+  if (isAiRulesOnly(env)) {
+    throw new AiDisabledError(agentId);
+  }
 
   const apiKey = resolveApiKey(env, agentId);
   const baseUrl = resolveBaseUrl(env, useGateway);

@@ -1,8 +1,9 @@
 /**
  * Lookalike Scanner — scheduled agent (not synchronous) that checks
  * newly-registered lookalike-domain candidates from the typosquat
- * generator, runs DNS/HTTP/MX checks + a Haiku AI assessment, and
- * stores the results.
+ * generator, runs DNS/HTTP/MX/BIMI checks + deterministic page analysis,
+ * composes a rule-based threat level, and stores the results. No AI call
+ * (AI_STRATEGY_2026-10 Phase 1 #18 retired the per-row Haiku verdict).
  *
  * Phase 3.8 of agent audit. The audit (§5) initially categorised
  * this as a sync candidate; on closer read it's cron-driven (via
@@ -10,9 +11,7 @@
  * hourly tick), not handler-driven. Belongs to the scheduled class.
  *
  * Wraps the existing checkLookalikeBatch(env) function in scanners/
- * lookalike-domains.ts. Per-row AI calls remain inside that
- * function and stay attributed to 'lookalike_scanner' in
- * budget_ledger. ONE agent_runs row per hourly tick covers all
+ * lookalike-domains.ts. ONE agent_runs row per hourly tick covers all
  * rows scanned that tick.
  */
 
@@ -27,14 +26,17 @@ import { analyzeLookalikePages } from "../scanners/lookalike-page-analysis";
 export const lookalikeScannerAgent: AgentModule = {
   name: "lookalike_scanner",
   displayName: "Lookalike Scanner",
-  description: "Cron-driven scanner that classifies newly-registered typosquat candidates via DNS/HTTP/MX + Haiku AI assessment",
+  description: "Cron-driven scanner that classifies newly-registered typosquat candidates via DNS/HTTP/MX/BIMI + page-content rules",
   color: "#F59E0B",
   trigger: "scheduled",
   requiresApproval: false,
   stallThresholdMinutes: 120,
   parallelMax: 1,
-  costGuard: "enforced",
-  budget: { monthlyTokenCap: 20_000_000 },
+  // No AI calls: the lookalike level is rule-composed (AI_STRATEGY_2026-10
+  // Phase 1 #18) and page analysis is deterministic. Cap 0 surfaces any
+  // regression that reintroduces a model call.
+  costGuard: "exempt",
+  budget: { monthlyTokenCap: 0 },
   // Delegates to scanners/lookalike-domains.ts checkLookalikeBatch.
   reads: [],
   writes: [],
@@ -80,11 +82,10 @@ export const lookalikeScannerAgent: AgentModule = {
       // raises the diagnostic severity by itself.
       //
       // It is no longer the ONLY such counter. Per-row isolation plus
-      // the BEC lane's own try/catch left five MORE independently
+      // the BEC lane's own try/catch left four MORE independently
       // swallowed failure paths — a BIMI alert that never filed, a
       // RELEASED claim that itself failed (a permanently lost finding),
-      // an un-stamped cooldown (a row re-selected every tick), a Haiku
-      // throw (which manufactures HIGH out of an AI outage) and an
+      // an un-stamped cooldown (a row re-selected every tick) and an
       // inline page throw — each a `logger.error` and nothing else.
       // CLAUDE.md §11: operator-visible failure belongs on `agent_runs`,
       // not the log stream. `lookalikeCheckDefects` is the ONE place
@@ -101,7 +102,7 @@ export const lookalikeScannerAgent: AgentModule = {
             `${check.baselines_established} baseline(s) established ` +
             `(${check.baselines_suppressed} with no signal), ` +
             `${check.bimi_alerts} BIMI alert(s) from ${check.bimi_lookups} lookup(s), ` +
-            `${check.haiku_calls} Haiku call(s)${check.haiku_cap_hit ? ' (cap hit)' : ''}, ` +
+            `${check.mail_web_level_lifts} mail+web level lift(s), ` +
             `${check.alerts_withheld_below_floor} alert(s) withheld below the severity floor, ` +
             `${check.checks_unresolved} unresolved, ` +
             `${check.rows_parked} parked / ${check.rows_unparked} re-admitted, ` +
@@ -109,7 +110,6 @@ export const lookalikeScannerAgent: AgentModule = {
             `${check.bimi_alert_errors} BIMI alert, ` +
             `${check.bimi_claim_release_failures} BIMI claim release, ` +
             `${check.cooldown_stamp_failures} cooldown stamp, ` +
-            `${check.ai_assessment_errors} AI, ` +
             `${check.inline_page_errors} page]`,
           severity: defects > 0 ? "high" : "info",
           details: { ...check, defects } as Record<string, unknown>,
@@ -151,7 +151,7 @@ export const lookalikeScannerAgent: AgentModule = {
       });
       // Don't throw — let the standard runner mark the run 'success'
       // with a diagnostic. The scanner's failure modes are mostly
-      // per-row (DNS timeouts, AI throws) handled inside the lib;
+      // per-row (DNS timeouts, page-fetch throws) handled inside the lib;
       // a top-level throw means the loop didn't complete, which is
       // worth surfacing but not flagging as 'failed' since some
       // work likely landed. (Phase 4 partial-status work will

@@ -160,6 +160,17 @@ name = "geoip-refresh"
 binding = "GEOIP_REFRESH"
 class_name = "GeoipRefreshWorkflow"
 
+# Per-message abuse-mailbox triage — dispatched by the Email Worker
+# (handlers/abuseMailboxEmail.ts) right after a report is stored + acked.
+# Steps: rules verdict (+ AI second opinion only when AI_MODE allows and
+# the rules said review) → sleep ~2 min → exactly-once determination email
+# (atomic determination_sent_at claim). Instance id `abuse-<messageId>`.
+# The hourly `17 * * * *` cron remains the sweeper for anything missed.
+[[workflows]]
+name = "abuse-mailbox-triage"
+binding = "ABUSE_MAILBOX_TRIAGE"
+class_name = "AbuseMailboxTriageWorkflow"
+
 # ─── Queues (legacy ARCHITECT consumer — kept until CLI cleanup) ──
 # The architect-analysis queue is no longer enqueued to (Phase 4 Step 1).
 # The consumer binding MUST stay here until the Cloudflare-side consumer
@@ -341,6 +352,15 @@ TAKEDOWN_SEND_MODE = "live"
 # 'off'  = digest cron is a no-op (safe default — outward email ships dark).
 # 'live' = Monday 14:24 UTC cron emails each org with digest-enabled brands.
 TENANT_DIGEST_MODE = "off"
+# Platform-wide AI switch (AI strategy Phase 0, docs/AI_STRATEGY_2026-10.md).
+# 'rules_only' = callAnthropic / lib/haiku.ts helpers / batch submit make NO
+#                request; each call reports a deliberate skip (failure_kind
+#                'throttled'), agents run their rule-based paths, and Flight
+#                Control's platform_ai_calls_failing alert stays quiet.
+# 'enabled'    = AI calls proceed normally (also the behavior when unset).
+# Set to rules_only while the Anthropic account is unfunded; flip back to
+# 'enabled' only after credit is restored (or Workers AI lands in Phase 2).
+AI_MODE = "rules_only"
 
 # ─── Secrets (set via: wrangler secret put <NAME>) ────────────
 # ANTHROPIC_API_KEY        — Anthropic API key for Claude Haiku AI analysis
@@ -403,7 +423,7 @@ routes = [
   { pattern = "staging.averrow.com", custom_domain = true },
   { pattern = "staging.trustradar.ca", custom_domain = true }
 ]
-vars = { ENVIRONMENT = "staging" }
+vars = { ENVIRONMENT = "staging", AI_MODE = "rules_only" }
 
 # Isolated staging DBs — never the prod database (SECURITY_AUDIT O2). Empty
 # on creation; `wrangler deploy --env staging` applies migrations_dir on deploy.
@@ -424,7 +444,7 @@ migrations_dir = "migrations-audit"
 # ─── Local dev overrides ─────────────────────────────────────
 [env.dev]
 name = "averrow-worker-dev"
-vars = { ENVIRONMENT = "development" }
+vars = { ENVIRONMENT = "development", AI_MODE = "rules_only" }
 
 # Isolated dev DBs — never the prod database (SECURITY_AUDIT O2). Empty on
 # creation; `wrangler deploy --env dev` applies migrations_dir on deploy.

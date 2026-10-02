@@ -1,9 +1,47 @@
 # Averrow Platform Assessment & AI / Agentic Strategy — 2026-10
 
-**Status:** Proposal — open owner decisions in §8.
+**Status:** Phase 0 and Phase 1 implemented (2026-10-02, see "Status (2026-10-02)" below); Phases 2+ remain a proposal — open owner decisions in §8.
 **Date:** 2026-10-01
 **Method:** Five parallel assessment lanes, then a synthesis. The lanes were: purpose & outcomes (delivery-lead), AI call inventory (backend-engineer), live spend & health from read-only production D1 queries (platform-sre), Cloudflare AI platform research, and agentic opportunity mapping (threat-intel-analyst).
 **Supersedes the AI sections of:** `docs/IMPROVEMENT_PLAN_2026-07.md` and `docs/PLATFORM_ASSESSMENT_2026-07.md`. All other sections of those docs still stand.
+
+## Status (2026-10-02)
+
+**Phase 0 — done.** Production runs with `AI_MODE = "rules_only"`.
+
+- **`AI_MODE` switch** (`wrangler.toml` `[vars]`, also set for `staging` and `dev`; values `rules_only` | `enabled`, unset = `enabled`). Under `rules_only`, `callAnthropic` throws `AiDisabledError` before any network or D1 access and the `lib/haiku.ts` helpers return `failure_kind: 'throttled'` (a deliberate skip). Agents take their rule-based paths, and Flight Control's `platform_ai_calls_failing` stays quiet because nothing counts as an attempt.
+- **Key-prefix leak removed** from the analyst diagnostic (`key_source` only).
+- **`estimateCost` no longer throws** on an unknown model: prefix/alias matching, then a most-expensive-tier fallback rate with a once-per-model warning, so the ledger row is always written (`lib/budgetManager.ts`).
+- **Outage alert reaches a human:** `platform_ai_calls_failing` also emails `BRIEFING_RECIPIENT` (at most once per UTC day) and pushes as sticky (`STICKY_PUSH_TYPES`); severity stays `high`. The alert text never interpolates a `parse_error`'s raw model output.
+- **Push delivery audit is truthful:** `notification_deliveries` push status now comes from `dispatchPush`'s counts (`skipped` for no devices / push unconfigured, `failed` when every device failed); service accounts are excluded from audience fan-out.
+- Service worker `VERSION` bumped to `2026-10-02.1` (sticky-push payload flag).
+
+**Phase 1 — done.** These call sites no longer make AI calls:
+
+- #1 Cartographer provider score: `computeHeuristicScore` only (`costGuard: 'exempt'`). Batch API path deleted (`lib/anthropic-batches.ts`, `lib/cartographer-batch.ts`); FC `scaleAgents` no longer gates Cartographer on `pause_all_ai`.
+- #3 Sentinel classification: `ruleBasedClassify` only; #4 the "state-sponsored pattern" call is deleted.
+- #6 Attributor: no AI. Stamps `attribution_attempted_at` and runs OTX-to-cluster inheritance; never names an actor from free text.
+- #8 Strategist "coordinated campaigns" call deleted (NEXUS connected components cover it).
+- #13 Seed Strategist: three SQL rules (R1 `seed_brand`, R2 `review_channel`, R3 `expand_campaign`); recommendations only, it no longer inserts campaigns or addresses.
+- #18 Lookalike scanner threat level: `composeRuleLevel` plus the deterministic page verdict; `ai_assessment` is read-only history.
+- #27 Hourly orchestrator "AI attribution" step and `POST /api/admin/backfill-ai-attribution` removed.
+- #29 Architect analyzer/synthesizer and tests deleted. **Outstanding:** the `architect-analysis` queue binding is still declared in `wrangler.toml` (the wrangler CLI removal steps in its comment have not been run).
+- #10 Narrator: severity and the alert gate are rule-derived (`computeNarrativeSeverity`, `shouldCreateNarrativeAlert`); the model only writes prose, with a deterministic template when the call is skipped or fails. This is the "severity must come from rules" half of #10 only; the prose call stays on Claude.
+- Rules-only degradation for the paths with no rule equivalent: news watcher returns before fetching or inserting; advisories extraction is skipped without marking anything processed; `runSentinelSocialAssessment` returns before its SELECT. Evidence assembler, public trust check and social assessor treat a deliberate skip as a quiet fallback (no medium diagnostic row).
+
+**Still AI-dependent (all skipped under `rules_only`):** #2 analyst brand inference (keyword pre-match remains), #5 sentinel social assessment, #7 strategist campaign naming, #9 observer narrative, #10 narrator prose, #11 news extraction, #12 advisories, #14 watchdog, #16/#17 alert AI judge and deep analyzers, #19 dark-web and #20 app-store ambiguous-case classifiers, #21 social AI assessor, #22 brand enricher, #23 evidence assembler, #24 phantom enumerator, #25 Campaign Hunter, #26 pathfinder, and the retired-but-callable sync agents in #28.
+
+**Deviations from the §2 plan**
+
+- Cartographer insight rows take their top threat types from `threat_cube_provider` (active threats in the cube window), not a `GROUP BY` over raw `threats`; the breakdown is queried only for providers that emit an insight.
+- Lookalike scanner has a **one-time catch-up** for rows a retired Haiku verdict held below HIGH: mail+web, `ai_assessment IS NOT NULL`, status not `benign`/`taken_down`, stored level below HIGH. Sized at ~90 rows in prod (84 LOW, 6 MEDIUM). It is self-extinguishing and files the alert before persisting the level.
+- Narrator alert dedupe: a new `threat_narrative` alert is raised only on escalation or a new signal channel versus any open narrative alert for the brand in the last 7 days (`isDuplicateNarrativeAlert`).
+- Attribution Backlog now ranks clusters whose text mentions a known actor name/alias (`actor_hint`); an ordering hint only, never an attribution.
+- The AI-call counters are now emitted by analyst only.
+
+**Not started:** Phase 2 onward, including Unified Billing (deferred to Phase 2, §4.1) and the `[ai]` binding.
+
+---
 
 Path roots used below: `W/` = `packages/averrow-worker/src/`, `T/` = `packages/averrow-tenant/src/`.
 
@@ -107,12 +145,16 @@ All AI goes through `W/lib/anthropic.ts:280` (`callAnthropic`). There is no Work
 | 28 | Retired-but-callable agents: `public-trust-check`, `honeypot-generator`, `brand-deep-scan` (up to 200 yes/no calls per click), `admin-classify`, `url-scan`, `scan-report`, report narratives | — | ~0 | Narratives → CLAUDE / WORKERS AI. public-trust, honeypot → **WORKERS AI**. deep-scan, admin-classify, url-scan, scan-report → **RULES**. `brand_deep_scan` is replaced by Campaign Hunter. |
 | 29 | `W/agents/architect/analysis/analyzer.ts:120`, `synthesis/synthesizer.ts:111` | Reachable only from the retired Architect agent (`agents/architect/index.ts`), which `agents/index.ts` does not register | 0 | **DELETE**, along with the dead `architect-analysis` queue |
 
+*Status of the rows above as of 2026-10-02: #1, #3, #4, #6, #8, #13, #18, #27 and #29 are done (see "Status (2026-10-02)"); #10's severity is rule-derived, its prose is not. All other rows are unchanged.*
+
 **Totals.**
 - About 8 call sites go to rules. They were about 85% of former call volume and most of the cost.
 - About 13 move to Workers AI.
 - About 8 stay on Claude: all low-volume, roughly <$5/month at historical rates.
 
 ### Side findings (fix regardless of direction)
+
+*Status 2026-10-02: the key-prefix write, the `estimateCost` throw, the Batch API gateway bypass (file deleted) and the outage-alert reach (email + sticky push) are fixed. The stale file-header claims are not.*
 
 - `W/agents/analyst.ts:309` writes the first 8 characters of the API key into `agent_outputs`. Remove it; it is poor secret hygiene.
 - `W/lib/budgetManager.ts:48`: `estimateCost` throws on any model missing from its price table. A model swap then silently loses ledger rows, and the outage detector depends on the ledger.

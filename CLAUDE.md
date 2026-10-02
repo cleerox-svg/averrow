@@ -441,6 +441,7 @@ sub-hourly latency matters).
 
 ### AI usage rules:
 - Before adding or changing an AI call, read `docs/AI_STRATEGY_2026-10.md` — it classifies every existing call (keep-on-Claude / move-to-Workers-AI / replace-with-rules / delete) and sets the provider direction.
+- **Prod currently runs `AI_MODE = "rules_only"`** (AI_STRATEGY Phase 0/1 done, see its "Status" section): no Anthropic request leaves the Worker. Sentinel, cartographer, attributor, seed-strategist and the lookalike scanner have no AI path at all; narrator severity and the strategist coordination check are rule-based. Any new AI call must handle `AiDisabledError` / `failure_kind: 'throttled'` as a quiet fallback.
 - **Haiku:** classification, scoring, short summaries — high volume
 - **Sonnet:** threat actor narratives, cluster briefs — sparingly
 - **NEVER** use AI for what SQL `GROUP BY` can do in 50ms
@@ -460,32 +461,42 @@ The platform once ran ~3 months with zero working AI (last `budget_ledger`
 row 2026-07-10; every call `Anthropic HTTP 400 — credit balance too low`)
 while every agent reported `success`. Rules that came out of it:
 
+- **`AI_MODE` platform switch** (`wrangler.toml` `[vars]`, plus the
+  `staging` and `dev` envs; type `Env.AI_MODE`). Values `rules_only` |
+  `enabled`; **unset behaves as `enabled`**. Prod, staging and dev are all
+  set to `rules_only` today (AI_STRATEGY Phase 0/1). When `rules_only`,
+  `callAnthropic` (`lib/anthropic.ts`, `isAiRulesOnly()`) throws
+  `AiDisabledError` before any network or D1 access, and the `lib/haiku.ts`
+  helpers answer `failure_kind: 'throttled'` — a deliberate skip, not an
+  outage. Agents run their rule-based paths; the counters record skips, not
+  attempts, so Flight Control's `platform_ai_calls_failing` stays quiet. Flip
+  to `enabled` only after Anthropic credit is restored (or Workers AI lands,
+  Phase 2).
 - **`failure_kind` on `lib/haiku.ts` results** (additive; `success`/`error`
   unchanged). `throttled` / `budget_cap` = WE chose to skip, no request
-  left (`isDeliberateAiSkip()`). `api_error` / `network` / `parse_error` =
+  left (`isDeliberateAiSkip()`; `AI_MODE=rules_only` maps to `throttled`). `api_error` / `network` / `parse_error` =
   AI is not working. An unrecognised throw defaults to `api_error`, never
   to a skip.
 - **Strictly-API counters** — `newAiCallCounters()` / `recordAiCall()` in
   `lib/haiku.ts`, spread into `agent_outputs.details` as `aiCallsAttempted`,
   `aiCallsSucceeded`, `aiCallsSkipped`, `aiFirstFailureKind`, `aiFirstError`.
-  Instrumented today: analyst, sentinel, cartographer. Call `recordAiCall`
-  exactly once per real API call **at the site that initiates it, never per
-  processed item** (sentinel shares one promise across sibling threats;
-  cartographer's batch path post-processes 5 providers per call — per-item
-  counting lets `succeeded` exceed `attempted`). Flight Control and
+  Instrumented today: **analyst only** — sentinel and cartographer were
+  moved to rules in AI_STRATEGY Phase 1 and no longer make AI calls or emit
+  these keys. Call `recordAiCall` exactly once per real API call **at the
+  site that initiates it, never per processed item** (per-item counting lets
+  `succeeded` exceed `attempted` when one call serves several items).
+  Flight Control and
   `ai_health` read these key names back via `json_extract`; renaming one
   means updating both queries.
-- **Do NOT use the legacy counters for outage detection.** `haikuSuccesses`
-  / `haikuFailures` / `haikuSuccessCount` are left as-is for the summary
-  strings operators read, but they are not "is AI alive" tests: sentinel's
-  `haikuSuccesses` is incremented for a rules-based skip that makes **no
-  API call** (so `haiku=N/0` can mean zero calls were made — this is why the
-  outage read healthy); analyst's only increments after its confidence
-  gate; cartographer's counts post-processed providers, not requests.
+- **Do NOT use the legacy counters for outage detection.** Analyst's
+  `haikuSuccesses` / `haikuFailures` are left as-is for the summary string
+  operators read, but they are not an "is AI alive" test — they only
+  increment after its confidence gate. (The sentinel/cartographer legacy
+  counters that once read healthy through the outage are gone with their AI
+  paths.)
 - **`AgentResult.degraded: { reason }`** — set when the agent completed but
   every call on its required AI path failed (`isAiAllFailing()`:
-  `attempted > 0 && succeeded === 0`, no floor; sentinel's batch-level APT
-  call is tracked separately as opportunistic and excluded). `executeAgent`
+  `attempted > 0 && succeeded === 0`, no floor). `executeAgent`
   then finalizes `agent_runs.status = 'partial'` (not `failed` — the
   rule-based fallback did real work) and the agent's summary `agent_outputs`
   row goes out at `severity: 'high'`. **`partial` alone is ambiguous**:
@@ -498,6 +509,16 @@ while every agent reported `success`. Rules that came out of it:
   on the public status page) when `budget_ledger` has been silent >2h AND an
   agent logged `>= AI_OUTAGE_MIN_ATTEMPTS` (3) attempts with 0 successes in
   that 2h window. Deploy dependency: migration 0272 — see `docs/DEPLOYMENT.md`.
+  Severity stays `high`, but the alert is escalated out-of-band:
+  `emitPlatformNotification` (`lib/platform-templates.ts`,
+  `EMAIL_ESCALATION_TYPES`) also emails `BRIEFING_RECIPIENT` via
+  `sendPlatformEscalationEmail` (`lib/briefing-email.ts`) — at most one
+  delivered email per UTC day (day-scoped `group_key`; a failed or stale
+  `attempted` send does not block the retry), recorded in
+  `notification_deliveries` (channel `email`). The push is sticky
+  (`requireInteraction: true`) because the type is in `STICKY_PUSH_TYPES`
+  (`lib/push.ts`); the service worker ORs that flag with its own
+  `severity === 'critical'` rule.
 - **Public uptime** (`lib/platform-status.ts`): finished `partial` runs count
   as successes and in-flight rows (`completed_at IS NULL`) are excluded from
   the denominator, so a degraded-AI run does not surface on `/status`.
@@ -513,7 +534,7 @@ enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't shar
                              from orchestrator after PR-E because inline placement
                              was dropping ~30-50% of ticks.)
 cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with own
-                             worker budget. Maintains AI provider scoring + email
+                             worker budget. Maintains rule-based provider scoring + email
                              security scans + provider stats. FC scaleAgents still
                              fires ADDITIONAL instances on top for backlog drain.
                              Dedicated cron added in PR-F after 24% failure rate
@@ -592,16 +613,20 @@ Always (every tick):  Flight Control, Incident recovery sweep, CertStream health
                        S0.1 — see schedule above. Each now runs via `executeAgent` so it
                        writes `agent_runs`; no more inline tail dispatch / bare `runJob`.)
 Always (every tick):  Feed ingestion, brand match, email security, Cartographer, Analyst
+                      (The former hourly Haiku "AI attribution" batch step is gone — removed in
+                       AI_STRATEGY Phase 1 #27; rule-based brand match is the only attribution here.)
 Sentinel:             after feed ingestion if totalNew > 0 (inline await)
 Cartographer:         after Sentinel OR as fallback (dispatched as Workflow)
 Analyst:              every tick (ctx.waitUntil)
 NEXUS:                hour % 4 === 0 (dispatched as Workflow)
 Attributor:           hour % 4 === 1 (executeAgent — one tick after NEXUS's hour % 4 === 0
-                       cluster writes, giving new clusters a settling window before
-                       classification; orchestrator.ts:1247)
+                       cluster writes, giving new clusters a settling window.
+                       No AI since Phase 1: stamps attribution_attempted_at on pending
+                       clusters + OTX actor inheritance only, never names an actor from
+                       free text; orchestrator.ts:1243)
 News Watcher:         hour % 6 === 2 (executeAgent — jittered off NEXUS (%4===0) /
                        Attributor (%4===1) / Sparrow+Strategist (%6===0) so Haiku load
-                       doesn't stack on one tick; orchestrator.ts:1268)
+                       doesn't stack on one tick; orchestrator.ts:1264)
 Strategist:           NOT dispatched on this hourly tick — relocated to dedicated
                        `10 */6 * * *` cron in PR-Q (see schedule above); the
                        hour % 6 === 0 inline-await gate no longer exists in
@@ -611,7 +636,7 @@ Sparrow:              NOT dispatched on this hourly tick — relocated to dedica
                        rationale as Strategist (orchestrator.ts:358)
 Observer:             hour === 0 (inline await)
 Pathfinder:           NOT dispatched on this hourly tick — demoted to manual
-                       trigger 2026-04-29 (orchestrator.ts:1307; prior daily
+                       trigger 2026-04-29 (orchestrator.ts:1303; prior daily
                        hour === 3 dispatch produced 1 run/24h, 0 records/7d).
                        Call `POST /api/agents/pathfinder/trigger`; the weekly
                        KV throttle on Phase 1 lead creation still lives inside
@@ -1225,7 +1250,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |
 | `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd`. Says what AI *cost*, not whether it *works* — a zero-cost window is identical for "nothing to classify" and "every call HTTP 400". Read `ai_health` for that. |
-| `ai_health` | Is AI *working* (`ai_spend_24h` only says what it cost): `last_ledger_row_at`, `hours_since_last_call` (newest `budget_ledger` row = last SUCCESSFUL call; `null` = empty), `window_hours`, `per_agent[]` (`attempted`, `succeeded`, `skipped`, `last_run_at`, `first_failure_kind`, `first_error`), `agents_all_failing[]` (`attempted > 0`, `succeeded = 0`). Only counter-instrumented agents appear (analyst, sentinel, cartographer) — absent ≠ healthy. See §6 "AI-call health". |
+| `ai_health` | Is AI *working* (`ai_spend_24h` only says what it cost): `last_ledger_row_at`, `hours_since_last_call` (newest `budget_ledger` row = last SUCCESSFUL call; `null` = empty), `window_hours`, `per_agent[]` (`attempted`, `succeeded`, `skipped`, `last_run_at`, `first_failure_kind`, `first_error`), `agents_all_failing[]` (`attempted > 0`, `succeeded = 0`). Only counter-instrumented agents appear (analyst only) — absent ≠ healthy. Under `AI_MODE=rules_only` every call is a skip, so `attempted` stays 0 and `hours_since_last_call` grows without it being an outage. See §6 "AI-call health". |
 | `platform_totals` | `brands`, `providers`, `campaigns`, `clusters`, `feeds_enabled`, `feeds_disabled` |
 | `brand_count_drift` | Last cube_healer reconciliation of `brands.threat_count` AND `brands.active_threat_count` in one pass (`brandsChecked`, `drifted`, `fixed`, `checked_at`). Persistent large `drifted` = a brand-link writer is skipping the counter bump — see `lib/brand-count-reconciler.ts`. |
 | `page_analysis` | Page-content scorer health + Lane 3 shadow telemetry over the analyzed `lookalike_domains` population. Cloaking (Wave 3, rec 4): `walls_observed`, `wall_rate_pct`, `by_family[]` (GROUP BY `page_anti_bot_wall`, migration 0260) — rising `wall_rate_pct` = growing crawler blind spot. **`fetched_ok` is a misnomer kept for contract stability**: it counts every row the pass has touched, successes and failures alike — `by_fetch_outcome[]` is the actual success/failure split (inferred from `page_ai_signals` being non-NULL, so rows last analyzed before migration 0264 read as `not_scored_*` until their next pass). `truncated: true` means the population exceeded `PAGE_DIAG_ROW_LIMIT` and **every number in the block is then a lower bound**. Lane 3 shadow blocks (migration 0264), structurally separate by design: `ai_build.*` (`scored`, `any_fired`, `by_signal[]` with rates, `class_a_cap_hits`, `escalations_attributable` — the metric that decides whether Class A is promoted or demoted to metadata — `escalations_any`, `persisted_delta_drift`, which is stale-weight-table detection and should decay on the 24h cadence; a value that doesn't is a writer bug), `exfil.*` (`by_sink_host[]`, `distinct_sink_ids`, `sink_ids_per_firing` — far below 1.0 means one operator running many kits, the clustering finding this lane exists to produce), `generator.by_token[]` (builder mix, weight 0). No rate is actionable below n=30. See `lib/page-fetch.ts` / `lib/page-phishing-scorer.ts` and `docs/LANE3_AI_BUILD_ARTIFACTS_SPEC.md` §6. |

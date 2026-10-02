@@ -14,7 +14,14 @@
  */
 
 import type { Env } from "../types";
-import { callAnthropic, callAnthropicJSON, AnthropicError } from "./anthropic";
+import {
+  callAnthropic,
+  callAnthropicJSON,
+  AnthropicError,
+  AiDisabledError,
+  AI_RULES_ONLY_PREFIX,
+  isAiRulesOnly,
+} from "./anthropic";
 import { BudgetManager } from "./budgetManager";
 import { HOT_PATH_HAIKU } from "./ai-models";
 
@@ -59,18 +66,6 @@ export interface HaikuInsight {
   recommendations: string[];
 }
 
-export interface HaikuProviderScore {
-  provider_name: string;
-  reputation_score: number; // 0-100
-  // Prose fields are only requested when reputation_score < 70 — see
-  // scoreProvider() prompt. Cartographer's call site at agents/cartographer.ts
-  // also only consumes them on the < 70 path (line 733). Marked optional
-  // so the high-score path doesn't have to fake them.
-  reasoning?: string;
-  risk_factors?: string[];
-  response_assessment?: string;
-}
-
 /**
  * Why a failure happened, so a caller can tell a DELIBERATE SKIP from an
  * OUTAGE.
@@ -84,7 +79,9 @@ export interface HaikuProviderScore {
  * `Anthropic HTTP 400 — "Your credit balance is too low"`).
  *
  *   throttled    — OUR choice. BudgetManager hard/emergency throttle told
- *                  non-critical callers to skip. No API call was made.
+ *                  non-critical callers to skip, OR the platform-wide
+ *                  `AI_MODE=rules_only` switch is on (AiDisabledError).
+ *                  No API call was made.
  *                  Expected, self-inflicted, not an incident.
  *   budget_cap   — OUR choice. The per-agent monthlyTokenCap pre-flight in
  *                  callAnthropic refused the call. No API call was made.
@@ -244,26 +241,6 @@ export function recordAiCall(
 }
 
 /**
- * Sum two counter sets. Used to persist one merged view in
- * `agent_outputs.details` when an agent tracks its REQUIRED AI path and
- * its OPPORTUNISTIC calls separately (see sentinel's APT detector): the
- * raw counters operators and Flight Control read must account for every
- * real request, while the agent's own degraded-run verdict comes from the
- * required path alone.
- *
- * First-failure fields prefer `a`'s, so pass the required path first.
- */
-export function mergeAiCallCounters(a: AiCallCounters, b: AiCallCounters): AiCallCounters {
-  return {
-    aiCallsAttempted: a.aiCallsAttempted + b.aiCallsAttempted,
-    aiCallsSucceeded: a.aiCallsSucceeded + b.aiCallsSucceeded,
-    aiCallsSkipped: a.aiCallsSkipped + b.aiCallsSkipped,
-    aiFirstFailureKind: a.aiFirstFailureKind ?? b.aiFirstFailureKind,
-    aiFirstError: a.aiFirstError ?? b.aiFirstError,
-  };
-}
-
-/**
  * Minimum real API calls before "every call failed" is an outage rather
  * than noise, applied by Flight Control to its per-agent SUM over the
  * detection window.
@@ -324,8 +301,12 @@ export function parseNewestFailure(
   }
 }
 
-function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+export function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
+  // AI_MODE=rules_only — a deliberate platform-wide skip, never an outage.
+  // Checked before the generic AnthropicError branch (it is a subclass).
+  if (err instanceof AiDisabledError) return 'throttled';
   if (!(err instanceof AnthropicError)) return 'api_error';
+  if (err.message.startsWith(AI_RULES_ONLY_PREFIX)) return 'throttled';
   // Typed field first — an HTTP status is unambiguous.
   if (typeof err.status === 'number') return 'api_error';
   if (err.message.startsWith(BUDGET_CAP_PREFIX)) return 'budget_cap';
@@ -391,6 +372,11 @@ async function isAiThrottled(env: Env): Promise<string | null> {
   return blocked;
 }
 
+/** The envelope every helper returns when AI_MODE=rules_only. */
+function rulesOnlySkip(): { success: false; error: string; failure_kind: HaikuFailureKind } {
+  return { success: false, error: 'throttled: AI_MODE=rules_only', failure_kind: 'throttled' };
+}
+
 /**
  * Convert thrown wrapper errors / parse failures into the legacy
  * { success, data, error } envelope every public helper here returns.
@@ -402,6 +388,11 @@ async function callJsonSafe<T>(
   userMessage: string,
   maxTokens = 1024,
 ): Promise<HaikuResponse<T>> {
+  // AI_MODE=rules_only — answer before the budget gate so a disabled
+  // platform spends no KV/D1 read either. callAnthropic enforces the same
+  // switch for direct callers; this is just the cheaper early exit.
+  if (isAiRulesOnly(env)) return rulesOnlySkip();
+
   // Global AI throttle gate — covers every agent on the hot path.
   const throttled = await isAiThrottled(env);
   if (throttled) {
@@ -445,6 +436,8 @@ export async function callHaikuRaw(
   /** See HaikuFailureKind — set only when `success === false`. Additive. */
   failure_kind?: HaikuFailureKind;
 }> {
+  if (isAiRulesOnly(env)) return rulesOnlySkip();
+
   // Global AI throttle gate — same path as callJsonSafe.
   const throttled = await isAiThrottled(env);
   if (throttled) {
@@ -628,115 +621,6 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON) w
 ${JSON.stringify(context, null, 2)}`;
 
   return callJsonSafe<HaikuInsight>(env, ctx, systemPrompt, userMessage);
-}
-
-// ─── Provider Reputation Scoring ─────────────────────────────────
-
-export async function scoreProvider(
-  env: Env,
-  ctx: HaikuCallContext,
-  provider: {
-    name: string;
-    asn: string | null;
-    active_threats: number;
-    total_threats: number;
-    avg_response_time: number | null;
-    threat_types: Record<string, number>;
-    trend_7d: number;
-    trend_30d: number;
-  },
-): Promise<HaikuResponse<HaikuProviderScore>> {
-  // Conditional verbosity (Lever #1 of the AI cost-reduction plan):
-  // ~70% of providers score >= 70 and the prose fields go straight in
-  // the bin at agents/cartographer.ts:733 (only emitted to outputs[]
-  // when score < 70 OR repeatOffender). Asking the model for them
-  // anyway was paying for tokens we throw away. On Haiku 4.5, output
-  // is 5x input — output tokens were 83% of cartographer's bill.
-  //
-  // New prompt: score-only when low risk, full breakdown when notable.
-  // maxTokens dropped 1024 -> 384 to cap the verbose path (typical
-  // verbose response is ~250 tokens, leaving 50% headroom).
-  const systemPrompt = `You are a hosting provider reputation analyst. Score the hosting provider based on their threat hosting metrics.
-
-Respond with ONLY a JSON object (no markdown, no prose outside the JSON).
-
-If reputation_score >= 70 (low risk, "looks fine"):
-  {"provider_name":"...","reputation_score":NN}
-  Omit reasoning, risk_factors, response_assessment entirely.
-
-If reputation_score < 70 (notable risk):
-  {"provider_name":"...","reputation_score":NN,"reasoning":"<= 1 sentence, <= 200 chars","risk_factors":["...", "..."],"response_assessment":"<= 1 sentence, <= 150 chars"}
-  Cap risk_factors at 3 items. Each item <= 60 chars. No filler.
-
-100 = excellent abuse response, no recent threats. 0 = bulletproof / non-responsive / heavy threat hosting.`;
-
-  const userMessage = `Score this hosting provider's reputation:
-${JSON.stringify(provider, null, 2)}`;
-
-  return callJsonSafe<HaikuProviderScore>(env, ctx, systemPrompt, userMessage, 384);
-}
-
-/**
- * Batch version of scoreProvider — Lever #1b of the AI cost-reduction plan.
- *
- * Sends N providers per call instead of N calls. Amortizes the static
- * system prompt across the batch (saves ~150 input tokens × N-1 calls).
- * Per-item output savings are smaller because we still need one score
- * object per provider, but the structural overhead per item is reduced.
- *
- * Stacks with Lever #1 (which trims per-item output): batch responses
- * stay compact because most providers score >= 70 and emit only
- * {provider_name, reputation_score}.
- *
- * The model returns a JSON array of HaikuProviderScore, in the SAME
- * ORDER as the input. The caller is responsible for matching results
- * back to inputs by index. If the array length doesn't match, the
- * caller should fall back to per-provider scoring for the missing
- * entries (the cartographer call site does this).
- *
- * Batch size guidance: 5-10 providers per call works well on Haiku.
- * Larger batches risk the response being truncated by maxTokens or
- * the model losing track of the input order. The cartographer call
- * site batches in groups of 5.
- */
-export async function scoreProvidersBatch(
-  env: Env,
-  ctx: HaikuCallContext,
-  providers: Array<{
-    name: string;
-    asn: string | null;
-    active_threats: number;
-    total_threats: number;
-    avg_response_time: number | null;
-    threat_types: Record<string, number>;
-    trend_7d: number;
-    trend_30d: number;
-  }>,
-): Promise<HaikuResponse<HaikuProviderScore[]>> {
-  if (providers.length === 0) {
-    return { success: true, data: [] };
-  }
-
-  const systemPrompt = `You are a hosting provider reputation analyst. Score EACH provider in the input array.
-
-Respond with ONLY a JSON array (no markdown, no prose outside the JSON). The array MUST have exactly ${providers.length} elements, in the SAME ORDER as the input.
-
-For each provider where reputation_score >= 70 (low risk):
-  {"provider_name":"...","reputation_score":NN}
-  Omit reasoning, risk_factors, response_assessment.
-
-For each provider where reputation_score < 70 (notable risk):
-  {"provider_name":"...","reputation_score":NN,"reasoning":"<= 1 sentence, <= 200 chars","risk_factors":["...", "..."],"response_assessment":"<= 1 sentence, <= 150 chars"}
-  Cap risk_factors at 3 items. Each item <= 60 chars. No filler.
-
-100 = excellent abuse response, no recent threats. 0 = bulletproof / non-responsive / heavy threat hosting.`;
-
-  const userMessage = `Score these ${providers.length} hosting providers:
-${JSON.stringify(providers, null, 2)}`;
-
-  // maxTokens budget: ~200 tokens per high-risk item, ~30 per low-risk.
-  // Cap = 5 items × ~250 = 1250, rounded to 1024 (most batches skew low-risk).
-  return callJsonSafe<HaikuProviderScore[]>(env, ctx, systemPrompt, userMessage, 1024);
 }
 
 // ─── Batch Classification ────────────────────────────────────────

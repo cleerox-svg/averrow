@@ -9,7 +9,7 @@ import {
   handleBackfillClassifications, handleBackfillGeo, handleBackfillDomainGeo, handleBackfillBrandMatch,
   handleBackfillBrandEnrichment, handleBackfillBrandSector,
   handleBackfillSafeDomains, handleImportTranco, handleAdminListBrands,
-  handleBulkMonitor, handleBulkDeleteBrands, handleBackfillAiAttribution,
+  handleBulkMonitor, handleBulkDeleteBrands,
   handleBackfillSocialConfig, handleBackfillSaasTechniques,
   handleBudgetLedgerHealth,
   handleCubeBackfill,
@@ -1037,8 +1037,16 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0;
 
     try {
+      // Same order as the hourly agent: deterministic rules pass first
+      // (verdicts only — emails go out via the claimed determination path),
+      // then the optional AI pass, whose determination sends go through
+      // the same atomic determination_sent_at claim.
+      const { runAbuseRulesPass } = await import("../lib/abuse-mailbox-rules-runner");
       const { runAbuseClassifierBackfill } = await import("../lib/abuse-mailbox-classifier");
-      const result = await runAbuseClassifierBackfill(env, { limit, offset });
+      const rules = await runAbuseRulesPass(env, { limit });
+      const ai = await runAbuseClassifierBackfill(env, { limit, offset });
+      // `...ai` keeps the pre-existing top-level response fields.
+      const result = { ...ai, ai, rules };
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -1303,11 +1311,6 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBackfillSafeDomains(request, env);
-  });
-  router.post("/api/admin/backfill-ai-attribution", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleBackfillAiAttribution(request, env);
   });
   router.post("/api/admin/import-tranco", async (request: Request, env: Env) => {
     const ctx = await requireAdmin(request, env);

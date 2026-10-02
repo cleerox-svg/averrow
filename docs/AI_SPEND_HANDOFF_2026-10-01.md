@@ -8,6 +8,16 @@ session on AI cost strategy starts from facts rather than assumptions.
 Companion standing docs: `CLAUDE.md` §6 ("AI-call health"), §10 (`ai_health`),
 §13 (the SQL-vs-AI doctrine), and `docs/DEPLOYMENT.md` (0272 deploy order).
 
+> **Superseded in part (2026-10-02).** AI_STRATEGY Phase 0/1 changed several
+> items below: the Batch API path is deleted (`lib/anthropic-batches.ts` and
+> `lib/cartographer-batch.ts` no longer exist, so Batch-API cost ideas are moot);
+> `platform_ai_calls_failing` stays severity `high` (it now also emails once per
+> UTC day and pushes sticky, but is deliberately not `critical`); production runs
+> `AI_MODE = "rules_only"` instead of waiting on a top-up; and Cloudflare Unified
+> Billing is deferred to Phase 2 per `docs/AI_STRATEGY_2026-10.md` §4.1. Sentinel
+> and cartographer no longer call AI, so only analyst emits the `aiCalls*`
+> counters. Read `docs/AI_STRATEGY_2026-10.md` "Status (2026-10-02)" first.
+
 ---
 
 ## 1. State as of this handoff

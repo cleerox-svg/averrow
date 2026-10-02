@@ -241,6 +241,97 @@ export function matchNamedThreat(
   return best;
 }
 
+/** Technique whose regex signatures describe the LEGITIMATE device-login
+ *  endpoint the lure points at (microsoft.com/devicelogin) — a regex hit
+ *  for it is content scoring, which the device-code detector owns. */
+export const DEVICE_CODE_TECHNIQUE = "device_code_phishing";
+
+export interface StrongMatchOptions {
+  /** Domain IOC hits on hosts for which this returns true are ignored
+   *  (e.g. multi-tenant hosts where an IOC domain proves nothing). */
+  ignoreDomain?: (domain: string) => boolean;
+}
+
+/**
+ * Best catalog entry by STRONG evidence only — for callers that act on a
+ * match automatically (the abuse-mailbox rules verdict). Differs from
+ * matchNamedThreat, which is left unchanged for its other callers:
+ *
+ *   - Only IOC domain / IOC url / regex hits count. IP-only IOC hits do not
+ *     (a sender IP is shared infrastructure as often as not), and keyword /
+ *     technique scoring never does.
+ *   - A regex hit on a `device_code_phishing` entry does not count — those
+ *     signatures match the real Microsoft endpoint; the device-code
+ *     detector's threshold decides that case.
+ *   - Entries are ranked by strong-signal score (IOC 100, regex 60), so a
+ *     keyword-heavy entry can never outrank an IOC/regex entry.
+ *
+ * `reasons` lists only the qualifying strong reasons. Pure.
+ */
+export function matchStrongestNamedThreat(
+  catalog: ReadonlyArray<NamedThreatEntry>,
+  candidate: MatchCandidate,
+  opts: StrongMatchOptions = {},
+): NamedThreatMatch | null {
+  const haystack = [
+    candidate.subject ?? "",
+    candidate.body ?? "",
+    ...(candidate.urls?.map((u) => u.url) ?? []),
+  ]
+    .join("\n")
+    .toLowerCase();
+  const candDomains = new Set(
+    [
+      ...(candidate.domains ?? []),
+      ...(candidate.urls?.map((u) => u.domain ?? null) ?? []),
+    ]
+      .filter((d): d is string => !!d)
+      .map((d) => d.toLowerCase()),
+  );
+  const candUrls = new Set((candidate.urls?.map((u) => u.url.toLowerCase()) ?? []));
+
+  let best: NamedThreatMatch | null = null;
+  let bestScore = 0;
+  for (const entry of catalog) {
+    const reasons: string[] = [];
+    let score = 0;
+    for (const d of entry.ioc_domains) {
+      if (candDomains.has(d) && !(opts.ignoreDomain?.(d) ?? false)) {
+        score += 100;
+        reasons.push(`ioc_domain:${d}`);
+      }
+    }
+    for (const u of entry.ioc_urls) {
+      if (candUrls.has(u)) {
+        score += 100;
+        reasons.push("ioc_url");
+      }
+    }
+    if (entry.technique !== DEVICE_CODE_TECHNIQUE) {
+      for (const re of entry.regex_signatures) {
+        if (re.test(haystack)) {
+          score += 60;
+          reasons.push("regex");
+        }
+      }
+    }
+    if (score === 0) continue;
+    if (!best || score > bestScore) {
+      bestScore = score;
+      best = {
+        id: entry.id,
+        name: entry.name,
+        category: entry.category,
+        technique: entry.technique,
+        severity: entry.severity,
+        score: Math.min(1, score / 100),
+        reasons,
+      };
+    }
+  }
+  return best;
+}
+
 /**
  * Bump match_count / last_matched_at for a named threat. Fire-and-forget
  * from the caller (wrap in try/catch); failures are non-fatal telemetry.

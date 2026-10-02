@@ -48,10 +48,8 @@ const EXPECTED_LEDGER_AGENT_IDS = [
   "pathfinder",
   "watchdog",
   "seed_strategist",
-  "architect",
   // Lib helpers + admin call sites
   "admin-classify",
-  "ai-attribution",
   "brand-analysis",
   "brand-deep-scan",
   "brand-enricher",
@@ -59,7 +57,6 @@ const EXPECTED_LEDGER_AGENT_IDS = [
   "evidence_assembler",
   "geo_campaign_assessment",
   "honeypot-generator",
-  "lookalike-scanner",
   "public-trust-check",
   "scan-report",
   "social_ai_assessor",

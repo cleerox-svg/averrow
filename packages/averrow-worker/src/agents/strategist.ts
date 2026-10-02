@@ -15,10 +15,9 @@ import { createBrandAlertsForCampaign } from "../lib/alert-fanout";
 /**
  * Per-run wall-clock budget guard.
  *
- * Strategist issues up to ~36 SEQUENTIAL Haiku calls per run (20 IP-cluster
- * names + 10 registrar-cluster names + 5 retroactive renames + 1 coordination
- * detection), each with a multi-second gateway round-trip, on top of heavy
- * GROUP BY scans over the active-threats table. On slow-gateway ticks the
+ * Strategist issues up to ~35 SEQUENTIAL Haiku calls per run (20 IP-cluster
+ * names + 10 registrar-cluster names + 5 retroactive renames), each with a
+ * multi-second gateway round-trip, on top of heavy GROUP BY scans over the active-threats table. On slow-gateway ticks the
  * cumulative run exceeded the Worker's ~300s cpu_ms budget (wrangler.toml
  * cpu_ms=300000), so CF killed the invocation BEFORE agentRunner's completion
  * write could land — leaving `agent_runs` at status='partial',
@@ -64,7 +63,6 @@ export const strategistAgent: AgentModule = {
     { kind: "d1_table", name: "threats" },
   ],
   writes: [
-    { kind: "d1_table", name: "agent_outputs" },
     { kind: "d1_table", name: "campaigns" },
     { kind: "d1_table", name: "threats" },
   ],
@@ -677,77 +675,12 @@ export const strategistAgent: AgentModule = {
       });
     }
 
-    // ─── Coordination detection via Haiku ─────────────────────────
-    // Skip entirely when the run is already over budget — this is the single
-    // most expensive Haiku call (up to 20 campaigns of context + a 512-token
-    // completion) and must not push a slow run past the worker kill window.
-    let coordinationFound = 0;
-    if (!budgetHit && !isOverRunBudget(runStart, Date.now())) {
-    try {
-      const activeCampaigns = await env.DB.prepare(
-        `SELECT c.id, c.name, c.threat_count,
-                GROUP_CONCAT(DISTINCT t.target_brand_id) as brand_ids,
-                GROUP_CONCAT(DISTINCT t.hosting_provider_id) as provider_ids
-         FROM campaigns c
-         LEFT JOIN threats t ON t.campaign_id = c.id
-         WHERE c.status = 'active'
-         GROUP BY c.id
-         ORDER BY c.threat_count DESC LIMIT 20`
-      ).all<{ id: string; name: string; threat_count: number; brand_ids: string | null; provider_ids: string | null }>();
-
-      if (activeCampaigns.results.length >= 5) {
-        const blocked = await checkCostGuard(env, false);
-        if (!blocked) {
-          const campaignSummary = activeCampaigns.results.map(c => ({
-            id: c.id, name: c.name, threats: c.threat_count,
-            brands: c.brand_ids?.split(',').filter(Boolean).length ?? 0,
-            providers: c.provider_ids?.split(',').filter(Boolean).length ?? 0,
-          }));
-
-          const { callHaikuRaw } = await import("../lib/haiku");
-          const coordResult = await callHaikuRaw(env, callCtx,
-            "You detect coordinated phishing attack patterns. Reply ONLY with valid JSON array, no markdown.",
-            `Given these active phishing campaigns with their target brands and hosting providers:\n${JSON.stringify(campaignSummary)}\nIdentify any that appear coordinated (same actor, infrastructure reuse, timing patterns). Reply JSON array: [{campaign_ids: string[], coordination_type: string, confidence: "high"|"medium", evidence: string}]. Empty array if none.`,
-            512,
-          );
-
-          if (coordResult.success && coordResult.text) {
-            const jsonMatch = coordResult.text.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              const coordinations = JSON.parse(jsonMatch[0]) as Array<{
-                campaign_ids: string[]; coordination_type: string; confidence: string; evidence: string;
-              }>;
-              for (const coord of coordinations) {
-                if (coord.confidence !== 'high' && coord.confidence !== 'medium') continue;
-                coordinationFound++;
-                outputs.push({
-                  type: "correlation",
-                  summary: `**Coordinated Attack Detected** — ${coord.coordination_type}: ${coord.campaign_ids.length} campaigns appear linked. ${coord.evidence}`,
-                  severity: "high",
-                  details: {
-                    campaign_ids: coord.campaign_ids,
-                    coordination_type: coord.coordination_type,
-                    confidence: coord.confidence,
-                  },
-                });
-                // Store as agent_output type='correlation'
-                await env.DB.prepare(
-                  `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
-                   VALUES (?, 'strategist', 'correlation', ?, 'high', ?, datetime('now'))`
-                ).bind(
-                  crypto.randomUUID(),
-                  `Coordinated: ${coord.coordination_type} — ${coord.campaign_ids.length} campaigns`,
-                  JSON.stringify(coord),
-                ).run();
-              }
-            }
-          }
-        }
-      }
-    } catch (coordErr) {
-      console.error("[strategist] coordination detection error:", coordErr);
-    }
-    }
+    // Coordination detection: the former Haiku "are these campaigns
+    // coordinated?" call was removed in AI Strategy Phase 1 (#8,
+    // docs/AI_STRATEGY_2026-10.md). Infrastructure-linked campaign
+    // correlation is done deterministically by NEXUS's connected-
+    // components post-pass (lib/cluster-components.ts) — SQL does
+    // correlation, AI does narrative.
 
     return {
       itemsProcessed,

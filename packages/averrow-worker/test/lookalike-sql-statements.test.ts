@@ -129,22 +129,19 @@ const SQL = {
   /** The per-check UPDATE. Carries the single-write baseline CASE. */
   perCheckUpdate: () => sqlContaining(scannerSrc, ["SET registered = ?", "baseline_established_at = CASE"]),
   /**
-   * The MONOTONIC threat_level + non-blanking ai_assessment persist.
+   * The MONOTONIC threat_level persist. (It no longer writes
+   * `ai_assessment` — AI_STRATEGY_2026-10 Phase 1 #18.)
    *
-   * Markers are the two SET clauses, deliberately NOT the rank CASE's
+   * The marker is the SET clause, deliberately NOT the rank CASE's
    * contents: matching on those would make a deletion of the guard fail
    * at EXTRACTION rather than at the semantic assertions, which detects
    * exactly one edit and nothing else.
    */
-  compositePersist: () => sqlContaining(scannerSrc, ["SET threat_level = CASE", "ai_assessment = CASE"]),
+  compositePersist: () => sqlContaining(scannerSrc, ["SET threat_level = CASE"]),
   /** The recurring BEC lane's guarded claim. */
   bimiClaim: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = datetime('now')"]),
   /** The claim release, for any path that did not file the alert. */
   bimiRelease: () => sqlContaining(scannerSrc, ["SET bimi_first_seen_at = NULL"]),
-  /** The Haiku lifetime gate's guarded claim (replaces a snapshot read). */
-  haikuClaim: () => sqlContaining(scannerSrc, ["SET ai_claimed_at = datetime('now')"]),
-  /** Its release, for a pass that produced no assessment. */
-  haikuRelease: () => sqlContaining(scannerSrc, ["SET ai_claimed_at = NULL"]),
   /** The bounded un-park sweep — the ladder's only automatic way back. */
   unparkSweep: () => sqlContaining(scannerSrc, ["SET check_due_at = datetime('now')", "LIMIT ?"]),
   /** Sparrow's verification contract, reused from the lapse branch. */
@@ -613,23 +610,21 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   });
 
   // ═════════════════════════════════════════════════════════════════
-  // The monotonic persist + the non-blanking assessment
+  // The monotonic persist
   // ═════════════════════════════════════════════════════════════════
   //
   // Mutation-checked: replacing the rank CASE with a bare
-  // `threat_level = ?` fails three cases here; replacing the assessment
-  // CASE with a bare `ai_assessment = ?` fails two.
+  // `threat_level = ?` fails three cases here.
 
   describe("the compositor's persist UPDATE", () => {
     const RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
-    /** Bind order: newRank, newLevel, hasAssessment, assessment, id. */
-    const persist = (id: string, level: string, assessment: string | null) =>
-      db.prepare(SQL.compositePersist())
-        .run(RANK[level]!, level, assessment === null ? 0 : 1, assessment, id);
+    /** Bind order: newRank, newLevel, id. */
+    const persist = (id: string, level: string) =>
+      db.prepare(SQL.compositePersist()).run(RANK[level]!, level, id);
 
     it("raises a stored level", () => {
       const id = insert({ threat_level: "MEDIUM" });
-      persist(id, "HIGH", null);
+      persist(id, "HIGH");
       expect(fetch(id).threat_level).toBe("HIGH");
     });
 
@@ -641,13 +636,13 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // `agents/sparrow.ts` reads this column for takedown ELIGIBILITY
       // and PRIORITY.
       const id = insert({ threat_level: "CRITICAL" });
-      persist(id, "HIGH", null);
+      persist(id, "HIGH");
       expect(fetch(id).threat_level).toBe("CRITICAL");
     });
 
     it("restates an equal level rather than losing it", () => {
       const id = insert({ threat_level: "HIGH" });
-      persist(id, "HIGH", null);
+      persist(id, "HIGH");
       expect(fetch(id).threat_level).toBe("HIGH");
     });
 
@@ -657,24 +652,18 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // false — and the row would stay NULL forever, unreachable by the
       // only verdict that could ever describe it.
       const id = insert({ threat_level: null });
-      persist(id, "LOW", null);
+      persist(id, "LOW");
       expect(fetch(id).threat_level).toBe("LOW");
     });
 
-    it("does NOT blank a good ai_assessment when this pass produced none", () => {
-      // The second live bug. `ai_assessment` was written unconditionally
-      // from a variable initialised `''`, so a failed or throttled Haiku
-      // call erased the assessment `agents/sparrow.ts` embeds in the
-      // takedown evidence packet.
+    it("never touches ai_assessment — the historical note survives", () => {
+      // The level is rule-composed now; `agents/sparrow.ts` still embeds
+      // whatever text a retired Haiku pass left in the takedown evidence
+      // packet, so the persist must leave it exactly as it was.
       const id = insert({ ai_assessment: "a careful earlier verdict" });
-      persist(id, "HIGH", null);
+      persist(id, "HIGH");
       expect(fetch(id).ai_assessment).toBe("a careful earlier verdict");
-    });
-
-    it("writes an assessment this pass DID produce", () => {
-      const id = insert({ ai_assessment: null });
-      persist(id, "HIGH", "fresh verdict");
-      expect(fetch(id).ai_assessment).toBe("fresh verdict");
+      expect(SQL.compositePersist()).not.toMatch(/ai_assessment/);
     });
   });
 
@@ -743,65 +732,16 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
   });
 
   // ═════════════════════════════════════════════════════════════════
-  // The Haiku lifetime gate is a CLAIM, not a snapshot read
+  // The retired Haiku gate leaves no writer behind
   // ═════════════════════════════════════════════════════════════════
-  //
-  // The gate was `row.ai_assessment === null` off the SELECT snapshot —
-  // a read-then-act, where the BIMI lane (whose cost is a DNS lookup
-  // rather than tokens) already used a guarded claim. Two concurrent
-  // runs over the same first-contact row, which is what repeated
-  // "Scan now" presses produce, could both read NULL and both spend.
 
-  describe("the Haiku claim", () => {
-    /** Bind order: id, staleness modifier. */
-    const claim = (id: string, stale = "-1 hour") =>
-      db.prepare(SQL.haikuClaim()).run(id, stale);
-
-    it("exactly ONE of two concurrent claims on the same row succeeds", () => {
-      const id = insert();
-      expect(claim(id).changes, "first claim").toBe(1);
-      expect(claim(id).changes, "second claim").toBe(0);
-      expect(fetch(id).ai_claimed_at).not.toBeNull();
-    });
-
-    it("refuses a row that already HAS an assessment", () => {
-      // The lifetime bound itself. `ai_assessment IS NULL` is restated
-      // in the statement rather than trusted from the caller's snapshot,
-      // which is the whole point — the snapshot may be stale.
-      const id = insert({ ai_assessment: "assessed already" });
-      expect(claim(id).changes).toBe(0);
-      expect(fetch(id).ai_claimed_at).toBeNull();
-    });
-
-    it("the release makes the row claimable again", () => {
-      // A throttled or failed call must leave the row DEFERRED, not
-      // retired — exactly what the pre-claim read did for that case.
-      const id = insert();
-      expect(claim(id).changes).toBe(1);
-      db.prepare(SQL.haikuRelease()).run(id);
-      expect(fetch(id).ai_claimed_at).toBeNull();
-      expect(claim(id).changes).toBe(1);
-    });
-
-    it("a STALE claim is reclaimable, so a killed worker cannot retire the row", () => {
-      // Why this is a dedicated column and not a sentinel written into
-      // `ai_assessment`. A worker killed between claim and persist leaves
-      // the marker behind; with the marker in `ai_assessment` the gate
-      // would never fire again, the compositor's base would fall back to
-      // the stored LOW, and both infrastructure boosts are MEDIUM-only —
-      // so a mail+web row would sit at LOW forever and never clear the
-      // HIGH alert floor. Mutation-checked: deleting the
-      // `ai_claimed_at <= datetime('now', ?)` arm makes this 0.
-      const id = insert({ ai_claimed_at: "2020-01-01 00:00:00" });
-      expect(claim(id).changes).toBe(1);
-    });
-
-    it("a FRESH claim is not reclaimable", () => {
-      // The other direction: the staleness window must not be so loose
-      // that it defeats the claim it is protecting.
-      const id = insert();
-      expect(claim(id).changes).toBe(1);
-      expect(claim(id).changes).toBe(0);
+  describe("no AI-assessment writer remains in the scanner", () => {
+    it("no statement writes ai_assessment or ai_claimed_at", () => {
+      // AI_STRATEGY_2026-10 Phase 1 #18 removed the per-row Haiku call
+      // with its claim/release pair. The columns stay (never DROP); this
+      // pins that nothing in the scanner writes them any more.
+      expect(scannerSrc).not.toMatch(/SET\s+ai_claimed_at/);
+      expect(scannerSrc).not.toMatch(/ai_assessment\s*=\s*(CASE|\?)/);
     });
   });
 

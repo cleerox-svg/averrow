@@ -113,7 +113,7 @@ interface NavigatorHealth {
   status: 'healthy' | 'degraded' | 'stale' | 'dead';
 }
 
-interface Backlog {
+export interface Backlog {
   cartographer: number;
   analyst: number;
   totalUnlinked: number;
@@ -563,7 +563,8 @@ export const flightControlAgent: AgentModule = {
     //
     // Previously there was no createNotification() call at all for
     // budget events: a budget-triggered throttle could silently starve
-    // Cartographer scaling (limits.pause_all_ai gates scaleAgents) with
+    // AI-agent scaling (limits.pause_all_ai gates Analyst in scaleAgents;
+    // Cartographer is no longer gated — it makes no AI calls) with
     // nothing but an agent_activity_log row for anyone to notice. That
     // is the gap this block closes.
     try {
@@ -2903,7 +2904,8 @@ async function getNavigatorHealth(db: D1Database): Promise<NavigatorHealth> {
 
 // ─── Scaling ─────────────────────────────────────────────────────
 
-async function scaleAgents(
+/** Exported for tests (test/flight-control-scale-agents.test.ts). */
+export async function scaleAgents(
   db: D1Database,
   env: AgentContext['env'],
   ctx: AgentContext,
@@ -2928,9 +2930,13 @@ async function scaleAgents(
   // the old await behavior for backward compatibility.
   const execCtx = ctx.input._executionCtx as ExecutionContext | undefined;
 
-  // Scale Cartographer (geo enrichment is non-AI, but AI classification may be throttled)
+  // Scale Cartographer. NOT gated on limits.pause_all_ai: cartographer
+  // makes no AI calls since AI_STRATEGY_2026-10 Phase 1 (rule-based
+  // provider scoring, costGuard 'exempt'), so an AI-budget emergency is
+  // no reason to let the enrichment backlog grow. Analyst below keeps
+  // its gate.
   const cartBacklog = backlogs.cartographer;
-  if (cartBacklog > 0 && !limits.pause_all_ai) {
+  if (cartBacklog > 0) {
     const cfg = SCALING.cartographer;
     const instances = cartBacklog >= cfg.high ? cfg.max_parallel
       : cartBacklog >= cfg.medium ? 2
@@ -2964,17 +2970,6 @@ async function scaleAgents(
         { agent: 'cartographer', instances, backlog: cartBacklog }
       );
     }
-  } else if (cartBacklog > 0 && limits.pause_all_ai) {
-    // Budget emergency gate. scaleAgents would otherwise silently skip
-    // with no trace — the budget-transition notification goes out once,
-    // but once you're already in 'emergency' each subsequent tick has
-    // nothing saying "and Cartographer did not run this tick either."
-    // Log it every tick so the activity trail explains the enrichment
-    // queue growth while the throttle is in effect.
-    await logActivity(db, 'flight_control', 'warning', 'scaling_skipped',
-      `Cartographer scaling skipped — AI budget in emergency (pause_all_ai). Backlog: ${cartBacklog}`,
-      { agent: 'cartographer', reason: 'budget_pause_all_ai', backlog: cartBacklog }
-    );
   }
 
   // Cartographer geo backlog — trigger geo enrichment if geo backlog is large

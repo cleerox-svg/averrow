@@ -306,9 +306,30 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
   // page. Bounded at 50 rows per tick (Haiku ~$0.001/row).
   if (event.cron === '17 * * * *') {
     try {
+      // Work = non-throttled pending rows (rules pass) OR recent verdicts
+      // whose determination email the per-message Workflow didn't deliver
+      // (sweeper). Same predicates as runAbuseRulesPass /
+      // sweepAbuseDeterminations — throttled and suppressed rows are never
+      // work. Two EXISTS probes, each repeating its migration-0273 partial
+      // index predicate verbatim (idx_abuse_inbox_triage_queue /
+      // idx_abuse_inbox_undelivered) so neither scans the table.
+      const { ABUSE_RESPONSE_LOOKBACK } = await import('../lib/abuse-mailbox-shared');
       const pendingCount = await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM abuse_inbox_messages WHERE classification = 'pending'`,
-      ).first<{ n: number }>();
+        `SELECT
+           EXISTS (SELECT 1 FROM abuse_inbox_messages
+                    WHERE classification IN ('pending', 'ambiguous')
+                      AND classification = 'pending'
+                      AND COALESCE(throttled, 0) = 0)
+         + EXISTS (SELECT 1 FROM abuse_inbox_messages
+                    WHERE determination_sent_at IS NULL
+                      AND responder_suppressed_reason IS NULL
+                      AND responder_guard_version IS NOT NULL
+                      AND COALESCE(throttled, 0) = 0
+                      AND forwarded_by_email IS NOT NULL
+                      AND classification NOT IN ('pending', 'follow_up')
+                      AND classified_by IN ('rules', 'ai')
+                      AND received_at >= datetime('now', ?)) AS n`,
+      ).bind(ABUSE_RESPONSE_LOOKBACK).first<{ n: number }>();
       if ((pendingCount?.n ?? 0) > 0) {
         // First-class dispatch: route through executeAgent so the run lands
         // in agent_runs + agent_events and surfaces in Flight Control /
@@ -1142,28 +1163,10 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     logger.error('email_grade_change_detection_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // AI attribution (1 batch of 50)
-  try {
-    const unmatchedCount = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')"
-    ).first<{ n: number }>();
-    const unmatched = unmatchedCount?.n ?? 0;
-    if (unmatched > 500) {
-      const today = scheduledTime.toISOString().slice(0, 10);
-      const attrCallsToday = parseInt(await env.CACHE.get(`ai_attr_calls_${today}`) || '0', 10);
-      if (attrCallsToday < 20) {
-        const { runAiAttribution } = await import('../handlers/admin');
-        const attrResult = await runAiAttribution(env, 50);
-        logger.info('threat_feed_scan_ai_attribution', {
-          attributed: attrResult.attributed,
-          calls: attrResult.calls,
-          costUsd: attrResult.costUsd,
-        });
-      }
-    }
-  } catch (err) {
-    logger.error('threat_feed_scan_ai_attribution_error', { error: err instanceof Error ? err.message : String(err) });
-  }
+  // (The hourly Haiku "AI attribution" batch that ran here was removed in
+  // AI_STRATEGY_2026-10 Phase 1 #27 — it called a failing API every tick
+  // and spent a full-table COUNT(*) over threats to decide whether to.
+  // Rule-based brand attribution is the brand-match step above.)
 
   // Threat feed sync (PhishTank, URLhaus signals)
   try {

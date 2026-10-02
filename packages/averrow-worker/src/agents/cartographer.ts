@@ -3,7 +3,9 @@
  *
  * Runs every 15 minutes (clearing enrichment backlog) and on Sentinel trigger.
  * Maps threat infrastructure to hosting providers and computes
- * reputation scores via Haiku AI analysis.
+ * reputation scores with a deterministic heuristic
+ * (`computeHeuristicScore`) — no AI call since AI_STRATEGY_2026-10
+ * Phase 1 (Batch B).
  *
  * Enrichment pipeline:
  * - ip-api.com batch (100 IPs/req, 45 req/min free) → lat/lng/ASN/country
@@ -20,7 +22,6 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { scoreProvider, scoreProvidersBatch, newAiCallCounters, recordAiCall, isAiAllFailing } from "../lib/haiku";
 import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
@@ -92,7 +93,7 @@ async function enrichIpBatch(ips: string[]): Promise<Map<string, IpGeoResult>> {
   // We've seen the upstream get unresponsive in bursts (cf taxii_otx
   // 12-min timeout 2026-05-13). 60s is generous for the common path
   // (45 req/min rate-limit gate + 5 chunks ≈ 7s) and a hard ceiling
-  // for the pathological one. Cart's normal AI/email/stats work doesn't
+  // for the pathological one. Cart's normal scoring/email/stats work doesn't
   // depend on these results landing — empty map is the right fallback.
   const LOOP_CEILING_MS = 60_000;
   const PER_CHUNK_TIMEOUT_MS = 15_000;
@@ -165,8 +166,8 @@ export const cartographerAgent: AgentModule = {
   trigger: "scheduled",
   requiresApproval: false,
   // Cartographer runs 5 phases sequentially: Phase 0 (ip-api batch),
-  // 0.5 (GeoIP MMDB), 1 (ipinfo fallback), 2 (Haiku provider reputation
-  // scoring — top 50 providers), 3 (email security scans), 4 (DMARC
+  // 0.5 (GeoIP MMDB), 1 (ipinfo fallback), 2 (heuristic provider
+  // reputation scoring — top 50 providers), 3 (email security scans), 4 (DMARC
   // source IP geo), 5 (provider stats aggregation). Live diagnostics
   // 2026-05-12 showed avg run duration 67 min with the 75-min stall
   // threshold + 30-min buffer = 105-min reaper ceiling repeatedly
@@ -176,8 +177,10 @@ export const cartographerAgent: AgentModule = {
   // is the operator-relief change while that's planned.
   stallThresholdMinutes: 150,
   parallelMax: 1,
-  costGuard: "enforced",
-  budget: { monthlyTokenCap: 50_000_000 },
+  // No AI calls since AI_STRATEGY_2026-10 Phase 1 (rule-based scoring).
+  // Cap 0 makes any regression that reintroduces a model call visible.
+  costGuard: "exempt",
+  budget: { monthlyTokenCap: 0 },
   reads: [
     { kind: "kv", namespace: "CACHE" },
     { kind: "d1_table", name: "brands" },
@@ -204,65 +207,12 @@ export const cartographerAgent: AgentModule = {
   pipelinePosition: 3,
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
-    const { env, runId } = ctx;
-    const callCtx = { agentId: "cartographer", runId };
+    const { env } = ctx;
 
     let itemsProcessed = 0;
     let itemsUpdated = 0;
     let itemsCreated = 0;
-    let totalTokens = 0;
-    let model: string | undefined;
     const outputs: AgentOutputEntry[] = [];
-
-    // ─── Lever #6: Message Batches API for daily provider scoring ───
-    // Two pieces of the batched scoring flow run inside this hourly
-    // cartographer tick:
-    //   1. Always: poll any pending batch submissions. When Anthropic
-    //      reports a batch ended, download results and update
-    //      hosting_providers.reputation_score per provider — same shape
-    //      as the inline sync path's UPDATE. Ingestion is fully
-    //      idempotent (results carry the provider_id as custom_id).
-    //   2. Once per day at hour=2 UTC: submit a new batch covering all
-    //      AI-worthy providers that haven't been batch-scored in 25h.
-    //
-    // Both are no-ops when there's nothing to do (no pending batches,
-    // no eligible providers, or a recent submit). The inline sync
-    // scoring loop later in this function continues to run hourly but
-    // naturally skips providers that the batch ingestion just freshened
-    // (the upstream query gates on last_scored_at).
-    //
-    // Failure isolation: any failure here is logged + continued — the
-    // rest of the cartographer tick (IP enrichment, email security
-    // scans, inline scoring) must not be blocked by a batch hiccup.
-    let batchPollSummary: Awaited<ReturnType<typeof import("../lib/cartographer-batch").pollAndIngestCartographerBatches>> | null = null;
-    let batchSubmitSummary: Awaited<ReturnType<typeof import("../lib/cartographer-batch").submitCartographerScoringBatch>> | null = null;
-    try {
-      const { pollAndIngestCartographerBatches, submitCartographerScoringBatch } = await import("../lib/cartographer-batch");
-      try {
-        batchPollSummary = await pollAndIngestCartographerBatches(env, runId);
-        if (batchPollSummary.ingested_batches > 0) {
-          itemsUpdated += batchPollSummary.ingested_providers;
-        }
-      } catch (err) {
-        console.error("[cartographer] batch poll failed:", err);
-      }
-      // Daily submission window. The cartographer cron fires at :09
-      // UTC hourly per wrangler.toml; the hour gate matches the standard
-      // cron-audit rule (hour-only checks). The submit helper itself
-      // also enforces a 23h idempotency guard against double-fires, so
-      // a manual /api/internal/agents/cartographer/run during hour=2
-      // won't double-submit.
-      const scheduledHour = new Date().getUTCHours();
-      if (scheduledHour === 2) {
-        try {
-          batchSubmitSummary = await submitCartographerScoringBatch(env, runId);
-        } catch (err) {
-          console.error("[cartographer] batch submit failed:", err);
-        }
-      }
-    } catch (err) {
-      console.error("[cartographer] batch module import failed:", err);
-    }
 
     // ─── Phase 0: ip-api.com batch enrichment for unenriched threats ───
     // Process up to 3 batches of 500 (1,500 threats) per cron tick. 2026-05-12
@@ -714,10 +664,14 @@ export const cartographerAgent: AgentModule = {
       console.error("[cartographer] geo enrichment error:", err);
     }
 
-    // ─── Phase 2: Score hosting providers via Haiku AI ───
+    // ─── Phase 2: Score hosting providers (deterministic heuristic) ───
+    // `last_score` (migration 0078) is the score this provider got on its
+    // previous scoring pass — the hosting_providers write further down sets reputation_score
+    // and last_score with the same value, so reading it BEFORE the
+    // overwrite gives the prior score for the insight-emission gate.
     const providers = await env.DB.prepare(
       `SELECT hp.id, hp.name, hp.asn, hp.active_threat_count, hp.total_threat_count,
-              hp.avg_response_time, hp.trend_7d, hp.trend_30d
+              hp.avg_response_time, hp.trend_7d, hp.trend_30d, hp.last_score
        FROM hosting_providers hp
        WHERE hp.total_threat_count > 0
          AND (
@@ -729,7 +683,8 @@ export const cartographerAgent: AgentModule = {
     ).all<{
       id: string; name: string; asn: string | null;
       active_threat_count: number; total_threat_count: number;
-      avg_response_time: number | null; trend_7d: number; trend_30d: number;
+      avg_response_time: number | null; trend_7d: number | null; trend_30d: number | null;
+      last_score: number | null;
     }>();
 
     // Diagnostic counts — used for cartographer's per-run summary
@@ -823,44 +778,11 @@ export const cartographerAgent: AgentModule = {
       n: await peekCount(env, 'count.threats.active', DIAG_COUNT_TTL),
     };
 
-    let haikuSuccessCount = 0;
-    let haikuFailCount = 0;
+    let insightsEmitted = 0;
 
-    // ── Strictly-API AI counters (silent-AI-failure guard) ──────────
-    // Cartographer is 62% of all platform AI spend and runs on its own
-    // `9 * * * *` cron, so without this it was the largest blind spot in
-    // the detection: analyst and sentinel both have big non-AI paths
-    // (keyword pre-match / rules skip at confidence >= 85), so in a quiet
-    // window both honestly report attempted = 0 while cartographer burned
-    // failing calls invisibly and Flight Control's conjunction stayed
-    // silent.
-    //
-    // DO NOT key anything on haikuSuccessCount / haikuFailCount above:
-    // those count POST-PROCESSED PROVIDERS, and the batch path
-    // post-processes 5 providers per single API call (processOneAiProvider
-    // is even handed a synthetic `{success:true, data:score}` envelope per
-    // index). Counting there would inflate successes 5x and let succeeded
-    // exceed attempted. These are recorded at the two sites where a
-    // request actually leaves — see lib/haiku.ts AiCallCounters.
-    const ai = newAiCallCounters();
-
-    // Batch: threat type breakdowns for all providers
+    // Batch: campaign counts for all providers (an input to the score, so
+    // needed for every provider, unlike the type breakdown below).
     const providerIds = providers.results.map(p => p.id);
-    const allTypeBreakdowns = providerIds.length > 0 ? await env.DB.prepare(`
-      SELECT hosting_provider_id, threat_type, COUNT(*) as count
-      FROM threats
-      WHERE hosting_provider_id IN (${providerIds.map(() => '?').join(',')})
-      GROUP BY hosting_provider_id, threat_type
-    `).bind(...providerIds).all<{ hosting_provider_id: string; threat_type: string; count: number }>() : { results: [] as { hosting_provider_id: string; threat_type: string; count: number }[] };
-
-    const breakdownsByProvider = new Map<string, Record<string, number>>();
-    for (const row of allTypeBreakdowns.results) {
-      const existing = breakdownsByProvider.get(row.hosting_provider_id) ?? {};
-      existing[row.threat_type] = row.count;
-      breakdownsByProvider.set(row.hosting_provider_id, existing);
-    }
-
-    // Batch: campaign counts for all providers
     const allCampaignStats = providerIds.length > 0 ? await env.DB.prepare(`
       SELECT hosting_provider_id, COUNT(DISTINCT campaign_id) as campaign_count
       FROM threats
@@ -874,172 +796,94 @@ export const cartographerAgent: AgentModule = {
       campaignCountByProvider.set(row.hosting_provider_id, row.campaign_count);
     }
 
-    // Lever #1b: pre-bucket providers into heuristic-skip and AI-worthy
-    // before the loop. Heuristic-skip providers run per-item (no AI cost
-    // to amortize). AI-worthy providers are batched 5-at-a-time through
-    // scoreProvidersBatch so the static system prompt is sent once per
-    // batch instead of once per provider — ~150 input tokens × (N-1)
-    // calls saved per batch, plus per-item JSON wrapper overhead.
-    type AiInput = {
-      provider: typeof providers.results[number];
-      threatTypes: Record<string, number>;
-      campaignCount: number;
-      repeatOffender: boolean;
-    };
-    const aiQueue: AiInput[] = [];
+    // One deterministic pass per provider. computeHeuristicScore is the
+    // sole score (AI_STRATEGY_2026-10 Phase 1 removed the Haiku
+    // scoreProvider / scoreProvidersBatch path and the Message Batches
+    // ingest that could overwrite it). An insight row is emitted only on
+    // a meaningful change — see shouldEmitProviderInsight — so a stable
+    // bad provider does not re-announce itself every 6h.
+    //
+    // Scores (and the emit decision) are computed FIRST so the threat-type
+    // breakdown — needed only for the insight text — is fetched for the
+    // emitting providers alone, not all ~50 scored ones.
+    const scored = providers.results.map((provider) => {
+      const campaignCount = campaignCountByProvider.get(provider.id) ?? 0;
+      const heuristic = computeHeuristicScore({
+        activeThreats: provider.active_threat_count,
+        totalThreats: provider.total_threat_count,
+        avgResponseTime: provider.avg_response_time,
+        campaignCount,
+        trend7d: provider.trend_7d,
+        trend30d: provider.trend_30d,
+      });
+      const emit = shouldEmitProviderInsight(heuristic.score, provider.last_score, heuristic.repeatOffender);
+      return { provider, campaignCount, emit, ...heuristic };
+    });
 
-    for (const provider of providers.results) {
+    // Threat-type breakdowns for emitting providers only, from the
+    // provider OLAP cube (CLAUDE.md §8 — never GROUP BY over raw
+    // threats). The cube holds ACTIVE threats bucketed by hour over its
+    // rolling window, which is the population "top threat types" should
+    // describe. Driven by idx on (hosting_provider_id, hour_bucket).
+    // NULL threat_type is stored as 'unknown' by the cube builder and is
+    // skipped, matching the former raw-threats behaviour.
+    const emittingIds = scored.filter((s) => s.emit).map((s) => s.provider.id);
+    const breakdownsByProvider = new Map<string, Record<string, number>>();
+    if (emittingIds.length > 0) {
+      const typeRows = await env.DB.prepare(`
+        SELECT hosting_provider_id, threat_type, SUM(threat_count) AS count
+        FROM threat_cube_provider
+        WHERE hosting_provider_id IN (${emittingIds.map(() => '?').join(',')})
+        GROUP BY hosting_provider_id, threat_type
+      `).bind(...emittingIds).all<{ hosting_provider_id: string; threat_type: string | null; count: number }>();
+      for (const row of typeRows.results) {
+        if (!row.threat_type || row.threat_type === 'unknown') continue;
+        const existing = breakdownsByProvider.get(row.hosting_provider_id) ?? {};
+        existing[row.threat_type] = row.count;
+        breakdownsByProvider.set(row.hosting_provider_id, existing);
+      }
+    }
+
+    for (const { provider, campaignCount, emit, score, riskFactors, repeatOffender } of scored) {
       itemsProcessed++;
 
-      const threatTypes = breakdownsByProvider.get(provider.id) ?? {};
-      const campaignCount = campaignCountByProvider.get(provider.id) ?? 0;
-      const repeatOffender = campaignCount >= 3;
-
-      // AI cost gate (added 2026-05-16 platform audit): only call Haiku
-      // for providers that warrant actual reasoning. Providers with <5
-      // active threats AND no campaign history produce a flat "looks
-      // fine" 90-100 score that nobody reads — pure AI waste. Skip
-      // straight to the heuristic score for those.
-      const aiWorthScoring = provider.active_threat_count >= 5 || repeatOffender;
-
-      if (!aiWorthScoring) {
-        const heuristicScore = computeHeuristicScore(
-          provider.active_threat_count,
-          provider.total_threat_count,
-          provider.avg_response_time,
-        );
-        try {
-          await env.DB.prepare(
-            "UPDATE hosting_providers SET reputation_score = ?, last_scored_at = datetime('now'), last_score = ?, last_score_threat_count = ? WHERE id = ?"
-          ).bind(heuristicScore, heuristicScore, provider.active_threat_count, provider.id).run();
-          itemsUpdated++;
-        } catch (err) {
-          console.error(`[cartographer] heuristic update failed for ${provider.id}:`, err);
-        }
-        continue;
-      }
-
-      aiQueue.push({ provider, threatTypes, campaignCount, repeatOffender });
-    }
-
-    // Lever #1b: 5-at-a-time batching. Larger batches risk maxTokens
-    // truncation when several providers in the same batch score < 70
-    // (verbose-response path) and the model hits the output cap.
-    const CART_BATCH_SIZE = 5;
-    for (let i = 0; i < aiQueue.length; i += CART_BATCH_SIZE) {
-      const batch = aiQueue.slice(i, i + CART_BATCH_SIZE);
-      const batchInput = batch.map((entry) => ({
-        name: entry.provider.name,
-        asn: entry.provider.asn,
-        active_threats: entry.provider.active_threat_count,
-        total_threats: entry.provider.total_threat_count,
-        avg_response_time: entry.provider.avg_response_time,
-        threat_types: entry.threatTypes,
-        trend_7d: entry.provider.trend_7d,
-        trend_30d: entry.provider.trend_30d,
-      }));
-
-      const batchResult = await scoreProvidersBatch(env, callCtx, batchInput);
-      // Validate: success + array length matches input. A short or
-      // malformed response forces per-provider fallback so we don't
-      // silently drop scores on the floor.
-      const batchOk =
-        batchResult.success
-        && Array.isArray(batchResult.data)
-        && batchResult.data.length === batch.length;
-
-      // ONE real API call per batch, whatever its length. `batchOk` is
-      // the right notion of success here: a 2xx whose array is short or
-      // malformed is a usable-response failure, and it is also exactly
-      // what sends us down the per-provider fallback below (which then
-      // records its own calls), so attempted reflects every request that
-      // actually left.
-      recordAiCall(ai, batchResult, batchOk, "[cartographer]");
-
-      if (!batchOk) {
-        // Batch failed or partial — drop back to per-provider scoring
-        // for this batch. Preserves the old behavior exactly.
-        if (batchResult.tokens_used) totalTokens += batchResult.tokens_used;
-        for (const entry of batch) {
-          const oneResult = await scoreProvider(env, callCtx, {
-            name: entry.provider.name,
-            asn: entry.provider.asn,
-            active_threats: entry.provider.active_threat_count,
-            total_threats: entry.provider.total_threat_count,
-            avg_response_time: entry.provider.avg_response_time,
-            threat_types: entry.threatTypes,
-            trend_7d: entry.provider.trend_7d,
-            trend_30d: entry.provider.trend_30d,
-          });
-          recordAiCall(ai, oneResult, oneResult.success && !!oneResult.data, "[cartographer]");
-          await processOneAiProvider(entry, oneResult);
-        }
-        continue;
-      }
-
-      if (batchResult.tokens_used) totalTokens += batchResult.tokens_used;
-      if (batchResult.model) model = batchResult.model;
-      // Per-provider post-processing using the batch results, by index.
-      for (let j = 0; j < batch.length; j++) {
-        const entry = batch[j]!;
-        const score = batchResult.data![j];
-        await processOneAiProvider(entry, { success: true, data: score });
-      }
-    }
-
-    // Per-provider post-processing. Used by both the per-call fallback
-    // path (batch failure) and the per-index batch results. Identical
-    // logic to the pre-Lever-#1b code path — only the upstream Haiku
-    // call differs.
-    async function processOneAiProvider(
-      entry: AiInput,
-      result: Awaited<ReturnType<typeof scoreProvider>>,
-    ): Promise<void> {
-      const { provider, campaignCount, repeatOffender } = entry;
-      let reputationScore: number;
-
-      if (result.success && result.data) {
-        reputationScore = result.data.reputation_score;
-        haikuSuccessCount++;
-
-        if (reputationScore < 70 || repeatOffender) {
-          // Lever #1: scoreProvider() prompt only emits prose fields
-          // when score < 70. Synthesize a summary for the
-          // repeat_offender + score >= 70 edge case.
-          const reasoning = result.data.reasoning
-            ?? `repeat offender (${campaignCount} campaigns) — score ${reputationScore}/100`;
-          outputs.push({
-            type: "insight",
-            summary: `${provider.name}: reputation ${reputationScore}/100${repeatOffender ? ' [REPEAT OFFENDER]' : ''} — ${reasoning}`,
-            severity: reputationScore < 30 ? "critical" : reputationScore < 50 ? "high" : reputationScore < 70 ? "medium" : "info",
-            details: {
-              provider: provider.name,
-              score: reputationScore,
-              risk_factors: result.data.risk_factors ?? [],
-              response_assessment: result.data.response_assessment ?? null,
-              campaign_count: campaignCount,
-              repeat_offender: repeatOffender,
-            },
-            relatedProviderIds: [provider.id],
-          });
-        }
-      } else {
-        haikuFailCount++;
-        reputationScore = computeHeuristicScore(
-          provider.active_threat_count,
-          provider.total_threat_count,
-          provider.avg_response_time,
-        );
-        if (repeatOffender) reputationScore = Math.max(0, reputationScore - 15);
+      if (emit) {
+        const topTypes = topThreatTypes(breakdownsByProvider.get(provider.id) ?? {}, 3);
+        insightsEmitted++;
+        outputs.push({
+          type: "insight",
+          summary: renderProviderInsightSummary({
+            name: provider.name,
+            score,
+            repeatOffender,
+            activeThreats: provider.active_threat_count,
+            totalThreats: provider.total_threat_count,
+            topTypes,
+            campaignCount,
+          }),
+          severity: score < 30 ? "critical" : score < 50 ? "high" : score < 70 ? "medium" : "info",
+          details: {
+            provider: provider.name,
+            score,
+            previous_score: provider.last_score,
+            risk_factors: riskFactors,
+            top_threat_types: topTypes,
+            active_threats: provider.active_threat_count,
+            total_threats: provider.total_threat_count,
+            campaign_count: campaignCount,
+            repeat_offender: repeatOffender,
+          },
+          relatedProviderIds: [provider.id],
+        });
       }
 
       try {
         await env.DB.prepare(
           "UPDATE hosting_providers SET reputation_score = ?, last_scored_at = datetime('now'), last_score = ?, last_score_threat_count = ? WHERE id = ?"
-        ).bind(reputationScore, reputationScore, provider.active_threat_count, provider.id).run();
+        ).bind(score, score, provider.active_threat_count, provider.id).run();
         itemsUpdated++;
       } catch (err) {
-        console.error(`[cartographer] update failed for ${provider.id}:`, err);
+        console.error(`[cartographer] score update failed for ${provider.id}:`, err);
       }
     }
 
@@ -1230,39 +1074,24 @@ export const cartographerAgent: AgentModule = {
     }
     itemsCreated += statsCreated;
 
-    // Every Anthropic round-trip this run made came back unusable (with
-    // the AI_OUTAGE_MIN_ATTEMPTS noise floor applied). Provider scoring
-    // still produced numbers — computeHeuristicScore is the fallback and
-    // is unaffected — so this is a DEGRADED run, not a failed one. What
-    // it must not be is `severity: "info"`: cartographer is 62% of AI
-    // spend, and "providers scored (0 AI, N heuristic)" at info severity
-    // is how its share of the three-month outage stayed invisible.
-    const aiAllFailing = isAiAllFailing(ai);
-
     // Emit diagnostic output so cartographer never shows 0 outputs silently
     outputs.push({
       type: "diagnostic",
-      summary: aiAllFailing
-        ? `AI CALLS ALL FAILING — cartographer made ${ai.aiCallsAttempted} Anthropic call(s), 0 succeeded (first failure: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"}). All ${haikuFailCount} provider score(s) fell back to the heuristic.`
-        : `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (${haikuSuccessCount} AI, ${haikuFailCount} heuristic), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
-      // 'high' on an AI outage, else the existing provider-count rule.
+      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (rules, ${insightsEmitted} insights), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
       // agent_outputs.severity CHECK allows critical/high/medium/low/info
       // (migration 0061).
-      severity: aiAllFailing ? "high" : providers.results.length === 0 ? "medium" : "info",
+      severity: providers.results.length === 0 ? "medium" : "info",
       details: {
-        // Strictly-API counters — Flight Control's
-        // platform_ai_calls_failing check and the diagnostics ai_health
-        // block read these key names back via json_extract. Spread so
-        // the key names come from AiCallCounters and cannot drift
-        // between the three instrumented agents.
-        ...ai,
+        // No aiCalls* counters: cartographer makes no Anthropic call since
+        // Phase 1, so it is no longer read by Flight Control's
+        // platform_ai_calls_failing check or diagnostics ai_health.
         ip_api_enriched: batchGeoResponded,
         ip_api_geo_located: batchGeoLocated,
         rdap_enriched: rdapEnriched,
         providers_with_threats: providers.results.length,
         total_providers: totalProviders.n,
-        haiku_scored: haikuSuccessCount,
-        heuristic_scored: haikuFailCount,
+        heuristic_scored: providers.results.length,
+        provider_insights_emitted: insightsEmitted,
         stats_entries: statsCreated,
         email_security_scanned: emailScanned,
         email_security_errors: emailErrors,
@@ -1274,9 +1103,6 @@ export const cartographerAgent: AgentModule = {
         threats_with_provider: threatsWithProvider.n,
         threats_without_provider_but_with_ip: threatsWithoutProvider.n,
         diag_counts_computed_here: isMaintenanceRun,
-        // Lever #6: batches API metrics
-        batch_poll: batchPollSummary,
-        batch_submit: batchSubmitSummary,
       },
     });
 
@@ -1285,47 +1111,130 @@ export const cartographerAgent: AgentModule = {
       itemsCreated,
       itemsUpdated,
       output: { providersScored: providers.results.length, statsEntries: statsCreated, ipApiBatchEnriched: batchGeoResponded, ipApiGeoLocated: batchGeoLocated },
-      model,
-      tokensUsed: totalTokens,
+      tokensUsed: 0,
       agentOutputs: outputs,
-      // See AgentResult.degraded — finalizes agent_runs.status as
-      // 'partial', not 'success' and not 'failed'.
-      ...(aiAllFailing
-        ? {
-            degraded: {
-              reason: `all ${ai.aiCallsAttempted} Anthropic call(s) failed (first: ${ai.aiFirstFailureKind ?? "unknown"} — ${ai.aiFirstError ?? "unknown"})`,
-            },
-          }
-        : {}),
     };
   },
 };
 
-function computeHeuristicScore(
-  activeThreats: number,
-  totalThreats: number,
-  avgResponseTime: number | null,
-): number {
+// ─── Provider reputation heuristic (Phase 2) ──────────────────────
+
+/** Campaign count at which a provider is a repeat offender (−15). */
+export const REPEAT_OFFENDER_CAMPAIGNS = 3;
+/** Score below which a provider is "bad" for the insight gate. */
+export const PROVIDER_INSIGHT_SCORE_THRESHOLD = 70;
+/** Minimum |score − last_score| that counts as a meaningful move. */
+export const PROVIDER_INSIGHT_MIN_DELTA = 10;
+
+export interface ProviderHeuristicInput {
+  activeThreats: number;
+  totalThreats: number;
+  /** Hours. No writer populates hosting_providers.avg_response_time today, so this is normally null. */
+  avgResponseTime: number | null;
+  campaignCount?: number;
+  trend7d?: number | null;
+  trend30d?: number | null;
+}
+
+export interface ProviderHeuristicScore {
+  /** 0–100, higher is better. */
+  score: number;
+  /** Names of the rules that fired, in evaluation order. */
+  riskFactors: string[];
+  repeatOffender: boolean;
+}
+
+/**
+ * The sole provider reputation score. Pure — exported for tests.
+ *
+ *   start 100
+ *   active threats   >100 −40 | >50 −30 | >10 −20 | >0 −10
+ *   slow response    >168h −20 | >72h −15 | >24h −10   (no writer today)
+ *   total volume     >1000 −15 | >100 −10
+ *   repeat offender  campaigns >= 3 −15
+ *   7d surge         trend_7d >= 10 AND trend_7d × 30/7 > 1.5 × trend_30d −10
+ *   clamp 0..100
+ */
+export function computeHeuristicScore(input: ProviderHeuristicInput): ProviderHeuristicScore {
+  const riskFactors: string[] = [];
   let score = 100;
+  const penalize = (points: number, factor: string): void => {
+    score -= points;
+    riskFactors.push(factor);
+  };
 
-  // Penalize for active threats
-  if (activeThreats > 100) score -= 40;
-  else if (activeThreats > 50) score -= 30;
-  else if (activeThreats > 10) score -= 20;
-  else if (activeThreats > 0) score -= 10;
+  const active = input.activeThreats;
+  if (active > 100) penalize(40, "active_threats_over_100");
+  else if (active > 50) penalize(30, "active_threats_over_50");
+  else if (active > 10) penalize(20, "active_threats_over_10");
+  else if (active > 0) penalize(10, "active_threats_present");
 
-  // Penalize for slow response
-  if (avgResponseTime !== null) {
-    if (avgResponseTime > 168) score -= 20;      // > 1 week
-    else if (avgResponseTime > 72) score -= 15;   // > 3 days
-    else if (avgResponseTime > 24) score -= 10;   // > 1 day
+  const rt = input.avgResponseTime;
+  if (rt !== null) {
+    if (rt > 168) penalize(20, "slow_takedown_response_over_1w");
+    else if (rt > 72) penalize(15, "slow_takedown_response_over_3d");
+    else if (rt > 24) penalize(10, "slow_takedown_response_over_1d");
   }
 
-  // Penalize for high total volume
-  if (totalThreats > 1000) score -= 15;
-  else if (totalThreats > 100) score -= 10;
+  const total = input.totalThreats;
+  if (total > 1000) penalize(15, "total_volume_over_1000");
+  else if (total > 100) penalize(10, "total_volume_over_100");
 
-  return Math.max(0, Math.min(100, score));
+  const repeatOffender = (input.campaignCount ?? 0) >= REPEAT_OFFENDER_CAMPAIGNS;
+  if (repeatOffender) penalize(15, "repeat_offender");
+
+  // 7-day run-rate projected to 30 days vs the actual 30-day count. The
+  // absolute floor keeps a 1→3 blip on a tiny provider from reading as a
+  // surge.
+  // trend_7d is a cube-derived count; clamped at 0 so a negative from any
+  // future writer (e.g. a delta-encoded trend) can never read as a surge.
+  const t7 = Math.max(0, input.trend7d ?? 0);
+  const t30 = input.trend30d ?? 0;
+  if (t7 >= 10 && (t7 * 30) / 7 > 1.5 * t30) penalize(10, "surge_7d");
+
+  return { score: Math.max(0, Math.min(100, score)), riskFactors, repeatOffender };
+}
+
+/**
+ * Whether a scoring pass is worth an `insight` agent_outputs row.
+ * Pure — exported for tests.
+ *
+ * Only providers that are bad (score < 70) or repeat offenders are
+ * reportable at all, and of those only on a meaningful change: first
+ * score ever, a move of >= 10 points, or a crossing of the 70 line in
+ * either direction (a repeat offender recovering past 70 is news too).
+ */
+export function shouldEmitProviderInsight(
+  score: number,
+  lastScore: number | null,
+  repeatOffender: boolean,
+): boolean {
+  if (!(score < PROVIDER_INSIGHT_SCORE_THRESHOLD || repeatOffender)) return false;
+  if (lastScore === null) return true;
+  if (Math.abs(score - lastScore) >= PROVIDER_INSIGHT_MIN_DELTA) return true;
+  return (lastScore < PROVIDER_INSIGHT_SCORE_THRESHOLD) !== (score < PROVIDER_INSIGHT_SCORE_THRESHOLD);
+}
+
+/** Top-N threat types by count, ties broken alphabetically for stable output. */
+export function topThreatTypes(breakdown: Record<string, number>, n: number): string[] {
+  return Object.entries(breakdown)
+    .filter(([type, count]) => type && count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, n)
+    .map(([type]) => type);
+}
+
+export function renderProviderInsightSummary(p: {
+  name: string;
+  score: number;
+  repeatOffender: boolean;
+  activeThreats: number;
+  totalThreats: number;
+  topTypes: string[];
+  campaignCount: number;
+}): string {
+  const top = p.topTypes.length > 0 ? p.topTypes.join(", ") : "none";
+  return `${p.name}: reputation ${p.score}/100${p.repeatOffender ? " [REPEAT OFFENDER]" : ""} — ${p.activeThreats} active / ${p.totalThreats} total; top types: ${top}; ${p.campaignCount} campaigns`;
 }
 
 // Band classification for the boundary-crossing notification policy.
