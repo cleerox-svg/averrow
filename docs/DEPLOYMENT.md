@@ -79,6 +79,15 @@ Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside 
 - **Up to ~50 provider insight rows from Cartographer.** `hosting_providers.last_score` still holds the old Haiku scores; the first rule-based score moves past the emit threshold for providers whose heuristic differs, then converges.
 - **Possibly one spurious `platform_ai_calls_failing` notification and email.** Pre-deploy `agent_outputs` rows carry `aiCallsAttempted > 0` with 0 successes inside the 2h window; Flight Control may fire once before they age out. Under `rules_only` no new attempts are recorded, so it does not recur. It is escalated by email at most once per UTC day.
 - **Service worker update.** `packages/averrow-ops/public/sw.js` `VERSION` is `2026-10-02.1`; old shell/runtime caches are evicted on activate. Bump `VERSION` on any further `sw.js` change.
+- **Post-deploy: re-run the analyst `key_prefix` redaction once.** Until this deploy the old Worker writes the first 8 chars of the Anthropic key into analyst diagnostic rows. 6,616 existing rows were redacted on 2026-10-02; rows written between then and the deploy need the same one-shot (idempotent):
+  ```sql
+  UPDATE agent_outputs
+     SET summary = replace(summary, 'key_prefix=' || json_extract(details,'$.key_prefix'), 'key_prefix=[redacted]'),
+         details = json_remove(details,'$.key_prefix')
+   WHERE agent_id='analyst' AND type='diagnostic'
+     AND json_valid(details) AND json_type(details,'$.key_prefix') IS NOT NULL;
+  ```
+  Rotate the Anthropic / `LRX_API_KEY` key regardless.
 
 ### Migration 0273 + the `ABUSE_MAILBOX_TRIAGE` Workflow binding (abuse-mailbox rules determinations)
 
