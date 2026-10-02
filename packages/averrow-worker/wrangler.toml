@@ -412,7 +412,7 @@ routes = [
   { pattern = "staging.averrow.com", custom_domain = true },
   { pattern = "staging.trustradar.ca", custom_domain = true }
 ]
-vars = { ENVIRONMENT = "staging" }
+vars = { ENVIRONMENT = "staging", AI_MODE = "rules_only" }
 
 # Isolated staging DBs — never the prod database (SECURITY_AUDIT O2). Empty
 # on creation; `wrangler deploy --env staging` applies migrations_dir on deploy.
@@ -433,7 +433,7 @@ migrations_dir = "migrations-audit"
 # ─── Local dev overrides ─────────────────────────────────────
 [env.dev]
 name = "averrow-worker-dev"
-vars = { ENVIRONMENT = "development" }
+vars = { ENVIRONMENT = "development", AI_MODE = "rules_only" }
 
 # Isolated dev DBs — never the prod database (SECURITY_AUDIT O2). Empty on
 # creation; `wrangler deploy --env dev` applies migrations_dir on deploy.
