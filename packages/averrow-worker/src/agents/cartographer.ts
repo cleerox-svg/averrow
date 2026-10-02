@@ -177,8 +177,10 @@ export const cartographerAgent: AgentModule = {
   // is the operator-relief change while that's planned.
   stallThresholdMinutes: 150,
   parallelMax: 1,
-  costGuard: "enforced",
-  budget: { monthlyTokenCap: 50_000_000 },
+  // No AI calls since AI_STRATEGY_2026-10 Phase 1 (rule-based scoring).
+  // Cap 0 makes any regression that reintroduces a model call visible.
+  costGuard: "exempt",
+  budget: { monthlyTokenCap: 0 },
   reads: [
     { kind: "kv", namespace: "CACHE" },
     { kind: "d1_table", name: "brands" },
@@ -778,24 +780,9 @@ export const cartographerAgent: AgentModule = {
 
     let insightsEmitted = 0;
 
-    // Batch: threat type breakdowns for all providers
+    // Batch: campaign counts for all providers (an input to the score, so
+    // needed for every provider, unlike the type breakdown below).
     const providerIds = providers.results.map(p => p.id);
-    const allTypeBreakdowns = providerIds.length > 0 ? await env.DB.prepare(`
-      SELECT hosting_provider_id, threat_type, COUNT(*) as count
-      FROM threats
-      WHERE hosting_provider_id IN (${providerIds.map(() => '?').join(',')})
-      GROUP BY hosting_provider_id, threat_type
-    `).bind(...providerIds).all<{ hosting_provider_id: string; threat_type: string | null; count: number }>() : { results: [] as { hosting_provider_id: string; threat_type: string | null; count: number }[] };
-
-    const breakdownsByProvider = new Map<string, Record<string, number>>();
-    for (const row of allTypeBreakdowns.results) {
-      if (!row.threat_type) continue;
-      const existing = breakdownsByProvider.get(row.hosting_provider_id) ?? {};
-      existing[row.threat_type] = row.count;
-      breakdownsByProvider.set(row.hosting_provider_id, existing);
-    }
-
-    // Batch: campaign counts for all providers
     const allCampaignStats = providerIds.length > 0 ? await env.DB.prepare(`
       SELECT hosting_provider_id, COUNT(DISTINCT campaign_id) as campaign_count
       FROM threats
@@ -815,12 +802,13 @@ export const cartographerAgent: AgentModule = {
     // ingest that could overwrite it). An insight row is emitted only on
     // a meaningful change — see shouldEmitProviderInsight — so a stable
     // bad provider does not re-announce itself every 6h.
-    for (const provider of providers.results) {
-      itemsProcessed++;
-
-      const threatTypes = breakdownsByProvider.get(provider.id) ?? {};
+    //
+    // Scores (and the emit decision) are computed FIRST so the threat-type
+    // breakdown — needed only for the insight text — is fetched for the
+    // emitting providers alone, not all ~50 scored ones.
+    const scored = providers.results.map((provider) => {
       const campaignCount = campaignCountByProvider.get(provider.id) ?? 0;
-      const { score, riskFactors, repeatOffender } = computeHeuristicScore({
+      const heuristic = computeHeuristicScore({
         activeThreats: provider.active_threat_count,
         totalThreats: provider.total_threat_count,
         avgResponseTime: provider.avg_response_time,
@@ -828,9 +816,39 @@ export const cartographerAgent: AgentModule = {
         trend7d: provider.trend_7d,
         trend30d: provider.trend_30d,
       });
+      const emit = shouldEmitProviderInsight(heuristic.score, provider.last_score, heuristic.repeatOffender);
+      return { provider, campaignCount, emit, ...heuristic };
+    });
 
-      if (shouldEmitProviderInsight(score, provider.last_score, repeatOffender)) {
-        const topTypes = topThreatTypes(threatTypes, 3);
+    // Threat-type breakdowns for emitting providers only, from the
+    // provider OLAP cube (CLAUDE.md §8 — never GROUP BY over raw
+    // threats). The cube holds ACTIVE threats bucketed by hour over its
+    // rolling window, which is the population "top threat types" should
+    // describe. Driven by idx on (hosting_provider_id, hour_bucket).
+    // NULL threat_type is stored as 'unknown' by the cube builder and is
+    // skipped, matching the former raw-threats behaviour.
+    const emittingIds = scored.filter((s) => s.emit).map((s) => s.provider.id);
+    const breakdownsByProvider = new Map<string, Record<string, number>>();
+    if (emittingIds.length > 0) {
+      const typeRows = await env.DB.prepare(`
+        SELECT hosting_provider_id, threat_type, SUM(threat_count) AS count
+        FROM threat_cube_provider
+        WHERE hosting_provider_id IN (${emittingIds.map(() => '?').join(',')})
+        GROUP BY hosting_provider_id, threat_type
+      `).bind(...emittingIds).all<{ hosting_provider_id: string; threat_type: string | null; count: number }>();
+      for (const row of typeRows.results) {
+        if (!row.threat_type || row.threat_type === 'unknown') continue;
+        const existing = breakdownsByProvider.get(row.hosting_provider_id) ?? {};
+        existing[row.threat_type] = row.count;
+        breakdownsByProvider.set(row.hosting_provider_id, existing);
+      }
+    }
+
+    for (const { provider, campaignCount, emit, score, riskFactors, repeatOffender } of scored) {
+      itemsProcessed++;
+
+      if (emit) {
+        const topTypes = topThreatTypes(breakdownsByProvider.get(provider.id) ?? {}, 3);
         insightsEmitted++;
         outputs.push({
           type: "insight",
@@ -1168,7 +1186,9 @@ export function computeHeuristicScore(input: ProviderHeuristicInput): ProviderHe
   // 7-day run-rate projected to 30 days vs the actual 30-day count. The
   // absolute floor keeps a 1→3 blip on a tiny provider from reading as a
   // surge.
-  const t7 = input.trend7d ?? 0;
+  // trend_7d is a cube-derived count; clamped at 0 so a negative from any
+  // future writer (e.g. a delta-encoded trend) can never read as a surge.
+  const t7 = Math.max(0, input.trend7d ?? 0);
   const t30 = input.trend30d ?? 0;
   if (t7 >= 10 && (t7 * 30) / 7 > 1.5 * t30) penalize(10, "surge_7d");
 

@@ -18,8 +18,10 @@
  *   R2 review_channel   — seed channel with >= 10 active seeds and zero
  *                         captures on those seeds in 7d.
  *   R3 expand_campaign  — active seed campaign with catch_rate >= 2x the
- *                         median catch_rate of active campaigns, a non-zero
- *                         catch_rate, and addresses_seeded >= 3.
+ *                         median catch_rate, a non-zero catch_rate, and
+ *                         addresses_seeded >= 3. The median is taken over
+ *                         that same eligible set (active, >= 3 addresses,
+ *                         catch_rate > 0).
  *
  * The summary `insight` output's `details` carries
  * `{ recommendations, retired, items }` — `handlers/spamTrap.ts`
@@ -122,15 +124,19 @@ export function buildSeedRecommendations(input: {
     }
   }
 
-  // R3 — expand_campaign
-  const med = median(input.activeCampaigns.map(catchRate));
-  for (const c of input.activeCampaigns) {
+  // R3 — expand_campaign. The baseline median is taken over the SAME
+  // population a recommendation can come from: active campaigns with
+  // >= R3_MIN_ADDRESSES_SEEDED addresses and a non-zero catch rate. Tiny
+  // (1-2 address) campaigns have noisy rates, and zero-yield campaigns
+  // would drag the median to 0 and make every catching campaign look
+  // like a 2x outlier.
+  const eligible = input.activeCampaigns.filter(
+    (c) => (c.addresses_seeded ?? 0) >= R3_MIN_ADDRESSES_SEEDED && catchRate(c) > 0,
+  );
+  const med = median(eligible.map(catchRate));
+  for (const c of eligible) {
     const rate = catchRate(c);
-    if (
-      (c.addresses_seeded ?? 0) >= R3_MIN_ADDRESSES_SEEDED &&
-      rate > 0 &&
-      rate >= R3_MEDIAN_MULTIPLIER * med
-    ) {
+    if (rate >= R3_MEDIAN_MULTIPLIER * med) {
       items.push({
         rule: "expand_campaign",
         campaign_id: c.id,
@@ -225,21 +231,25 @@ export const seedStrategistAgent: AgentModule = {
 
       // R1 candidates: monitored brands (tier — never monitoring_status,
       // see lib/monitored-brands.ts) with zero 30d captures and no active
-      // seed address targeting them. LEFT JOIN + GROUP BY instead of a
-      // correlated per-brand subquery.
+      // seed address targeting them. Two NOT EXISTS anti-joins: each
+      // stops at the first matching row, where the former double LEFT
+      // JOIN + GROUP BY/HAVING materialized the captures × seeds cross
+      // product per brand only to count it to zero.
       env.DB.prepare(`
         SELECT b.id, b.name, b.active_threat_count
         FROM brands b
-        LEFT JOIN spam_trap_captures c
-          ON c.spoofed_brand_id = b.id
-         AND c.captured_at > datetime('now', '-30 days')
-        LEFT JOIN seed_addresses sa
-          ON sa.brand_target = b.id
-         AND sa.status = 'active'
         WHERE ${MONITORED_BRAND_PREDICATE_SQL}
           AND b.active_threat_count >= ?
-        GROUP BY b.id
-        HAVING COUNT(c.id) = 0 AND COUNT(sa.id) = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM spam_trap_captures c
+            WHERE c.spoofed_brand_id = b.id
+              AND c.captured_at > datetime('now', '-30 days')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM seed_addresses sa
+            WHERE sa.brand_target = b.id
+              AND sa.status = 'active'
+          )
         ORDER BY b.active_threat_count DESC
         LIMIT ?
       `).bind(R1_MIN_ACTIVE_THREATS, R1_LIMIT).all<UncoveredBrandRow>(),

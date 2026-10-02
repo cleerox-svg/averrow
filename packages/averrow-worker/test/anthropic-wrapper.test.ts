@@ -264,7 +264,7 @@ describe("callAnthropic — automatic ledger tracking", () => {
       verdict: string;
       confidence: number;
     }>(makeEnv(db), {
-      agentId: "cartographer",
+      agentId: "analyst",
       runId: null,
       model: "claude-haiku-4-5-20251001",
       messages: [{ role: "user", content: "classify" }],
@@ -275,7 +275,7 @@ describe("callAnthropic — automatic ledger tracking", () => {
     expect(parsed.confidence).toBe(92);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.agent_id).toBe("cartographer");
+    expect(rows[0]!.agent_id).toBe("analyst");
     expect(rows[0]!.run_id).toBeNull();
     expect(rows[0]!.input_tokens).toBe(500);
     expect(rows[0]!.output_tokens).toBe(120);

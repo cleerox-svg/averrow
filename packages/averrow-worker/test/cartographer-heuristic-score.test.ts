@@ -60,6 +60,10 @@ describe("computeHeuristicScore", () => {
       expect(r.riskFactors.includes("surge_7d")).toBe(fires);
     });
 
+    it("a negative trend_7d is clamped to 0 and never fires", () => {
+      expect(score({ trend7d: -50, trend30d: -500 }).riskFactors).not.toContain("surge_7d");
+    });
+
     it("null trends never fire", () => {
       expect(score({ trend7d: null, trend30d: null }).riskFactors).not.toContain("surge_7d");
     });

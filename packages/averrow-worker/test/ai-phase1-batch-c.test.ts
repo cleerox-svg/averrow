@@ -33,6 +33,7 @@ import {
   shouldCreateNarrativeAlert,
   hasActiveCriticalThreat,
   generateNarrativesForBrand,
+  isDuplicateNarrativeAlert,
   type NarrativeContext,
   type NarrativeThreatRow,
 } from "../src/agents/narrator";
@@ -270,7 +271,8 @@ describe("seed-strategist rules (pure)", () => {
     const items = buildSeedRecommendations({
       uncoveredBrands: [],
       channels: [],
-      // rates: 1, 1, 1, 4 (seeded 2 — excluded), 3 → median 1
+      // rates: 1, 1, 1, 4 (seeded 2 — excluded from median AND output), 3
+      // → median over the eligible set [1, 1, 1, 3] = 1
       activeCampaigns: [camp(1, 3, 3), camp(2, 3, 3), camp(3, 3, 3), camp(4, 8, 2), camp(5, 9, 3)],
     });
     expect(items.map((i) => i.rule === "expand_campaign" && i.campaign_id)).toEqual([5]);
@@ -286,6 +288,25 @@ describe("seed-strategist rules (pure)", () => {
       ],
     });
     expect(items).toEqual([]);
+  });
+
+  it("R3 median ignores zero-yield and tiny campaigns", () => {
+    const camp = (id: number, catches: number, seeded: number) =>
+      ({ id, name: `c${id}`, channel: "paste", total_catches: catches, addresses_seeded: seeded });
+    // Eligible rates: 1, 1, 3 → median 1 → threshold 2 → only #3.
+    // Under an all-campaigns median the four zero-yield rows would pull
+    // the median to 0 and flag every catching campaign.
+    const items = buildSeedRecommendations({
+      uncoveredBrands: [],
+      channels: [],
+      activeCampaigns: [
+        camp(1, 3, 3), camp(2, 3, 3), camp(3, 9, 3),
+        camp(4, 0, 5), camp(5, 0, 5), camp(6, 0, 5), camp(7, 0, 5),
+        camp(8, 50, 1),
+      ],
+    });
+    expect(items.map((i) => i.rule === "expand_campaign" && i.campaign_id)).toEqual([3]);
+    expect(items[0]).toMatchObject({ median_catch_rate: 1 });
   });
 
   it("severity is medium only when active seeds caught nothing in 7d", () => {
@@ -371,6 +392,30 @@ describe.skipIf(!hasSqlite())("seed-strategist run (real SQLite)", () => {
     // paste channel caught → no review_channel item.
     const details = insight!.details as { items: Array<{ rule: string }> };
     expect(details.items.some((i) => i.rule === "review_channel")).toBe(false);
+  });
+
+  it("R1 semantics: stale captures / retired seeds do not count as coverage; multiple rows don't duplicate", async () => {
+    // Capture OUTSIDE the 30d window → still uncovered.
+    raw.exec(`INSERT INTO brands (id, name, canonical_domain, tier, active_threat_count) VALUES ('b_old', 'Old', 'old.example', 'monitored', 25)`);
+    raw.exec(`INSERT INTO spam_trap_captures (trap_address, trap_domain, spoofed_brand_id, captured_at) VALUES ('y@averrow.com', 'averrow.com', 'b_old', datetime('now', '-40 days'))`);
+    // Only a RETIRED seed targets it → still uncovered.
+    raw.exec(`INSERT INTO brands (id, name, canonical_domain, tier, active_threat_count) VALUES ('b_ret', 'Ret', 'ret.example', 'monitored', 15)`);
+    raw.exec(`INSERT INTO seed_addresses (address, domain, channel, brand_target, status) VALUES ('ret-support@averrow.com', 'averrow.com', 'brand', 'b_ret', 'retired')`);
+    // Many captures AND many active seeds → covered, and must not blow up
+    // into a cross product or duplicate rows.
+    raw.exec(`INSERT INTO brands (id, name, canonical_domain, tier, active_threat_count) VALUES ('b_busy', 'Busy', 'busy.example', 'monitored', 90)`);
+    for (let i = 0; i < 3; i++) {
+      raw.exec(`INSERT INTO spam_trap_captures (trap_address, trap_domain, spoofed_brand_id, captured_at) VALUES ('z${i}@averrow.com', 'averrow.com', 'b_busy', datetime('now', '-1 day'))`);
+      raw.exec(`INSERT INTO seed_addresses (address, domain, channel, brand_target, status) VALUES ('busy${i}@averrow.com', 'averrow.com', 'brand', 'b_busy', 'active')`);
+    }
+    // Below the threshold → excluded.
+    raw.exec(`INSERT INTO brands (id, name, canonical_domain, tier, active_threat_count) VALUES ('b_low', 'Low', 'low.example', 'monitored', 9)`);
+
+    const result = await seedStrategistAgent.execute(makeCtx(makeEnv(raw), "seed_strategist"));
+    const insight = (result.agentOutputs ?? []).find((o) => o.type === "insight");
+    const items = (insight!.details as { items: Array<Record<string, unknown>> }).items;
+    const brandIds = items.filter((i) => i.rule === "seed_brand").map((i) => i.brand_id);
+    expect(brandIds).toEqual(["b_old", "b_mon", "b_ret"]);
   });
 
   it("source never filters on monitoring_status and has no AI path", () => {
@@ -530,5 +575,78 @@ describe.skipIf(!hasSqlite())("narrator template fallback (real SQLite, AI faili
     expect(alerts[0]!.ai_assessment).toBeNull();
     // The prose call was attempted (and failed) — severity didn't depend on it.
     expect(spy.urls.every((u) => /anthropic|gateway\.ai\.cloudflare/.test(u))).toBe(true);
+  });
+});
+
+describe("narrator alert dedupe (pure)", () => {
+  const prior = (severity: string, types: string[]) => ({ severity, signal_types: JSON.stringify(types) });
+
+  it("suppresses the same severity + same signal set", () => {
+    expect(isDuplicateNarrativeAlert("HIGH", ["threats", "email_degradation"],
+      [prior("high", ["email_degradation", "threats"])])).toBe(true);
+  });
+  it("suppresses when an open prior was MORE severe", () => {
+    expect(isDuplicateNarrativeAlert("HIGH", ["threats"], [prior("critical", ["threats"])])).toBe(true);
+  });
+  it("alerts on escalation", () => {
+    expect(isDuplicateNarrativeAlert("CRITICAL", ["threats"], [prior("high", ["threats"])])).toBe(false);
+  });
+  it("alerts on a new channel", () => {
+    expect(isDuplicateNarrativeAlert("HIGH", ["threats", "lookalike_domains"],
+      [prior("high", ["threats", "email_degradation"])])).toBe(false);
+  });
+  it("alerts with no priors, and treats unparseable details as no coverage", () => {
+    expect(isDuplicateNarrativeAlert("HIGH", ["threats"], [])).toBe(false);
+    expect(isDuplicateNarrativeAlert("HIGH", ["threats"], [{ severity: "high", signal_types: null }])).toBe(false);
+  });
+});
+
+describe.skipIf(!hasSqlite())("narrator alert dedupe (real SQLite)", () => {
+  function seed(raw: SqliteDb): void {
+    raw.exec(`INSERT INTO brands (id, name, canonical_domain, tier, email_security_grade) VALUES ('b1', 'Acme', 'acme.example', 'monitored', 'F')`);
+    for (let i = 0; i < 50; i++) {
+      raw.exec(`INSERT INTO threats (id, source_feed, threat_type, malicious_domain, severity, status, target_brand_id, created_at)
+                VALUES ('t${i}', 'feed', 'phishing', 'd${i}.example', '${i === 0 ? "critical" : "low"}', 'active', 'b1', datetime('now'))`);
+    }
+  }
+  const alertRows = (raw: SqliteDb) =>
+    raw.prepare(`SELECT severity, status FROM alerts ORDER BY created_at`).all() as Array<{ severity: string; status: string }>;
+
+  it("does not re-alert within 7d at the same severity + signals", async () => {
+    const raw = openDerivedDb(NARRATOR_TABLES);
+    seed(raw);
+    installFetchSpy();
+    const env = makeEnv(raw);
+    await generateNarrativesForBrand(env, "b1");
+    await generateNarrativesForBrand(env, "b1");
+    // Two narratives (the 24h gate lives in the agent loop), ONE alert.
+    expect((raw.prepare(`SELECT COUNT(*) AS n FROM threat_narratives`).all() as Array<{ n: number }>)[0]!.n).toBe(2);
+    expect(alertRows(raw)).toHaveLength(1);
+  });
+
+  it("re-alerts once the prior alert is resolved", async () => {
+    const raw = openDerivedDb(NARRATOR_TABLES);
+    seed(raw);
+    installFetchSpy();
+    const env = makeEnv(raw);
+    await generateNarrativesForBrand(env, "b1");
+    raw.exec(`UPDATE alerts SET status = 'resolved'`);
+    await generateNarrativesForBrand(env, "b1");
+    expect(alertRows(raw)).toHaveLength(2);
+  });
+
+  it("re-alerts on escalation (HIGH -> CRITICAL with a new channel)", async () => {
+    const raw = openDerivedDb(NARRATOR_TABLES);
+    seed(raw);
+    installFetchSpy();
+    const env = makeEnv(raw);
+    await generateNarrativesForBrand(env, "b1");
+    expect(alertRows(raw).map((a) => a.severity.toLowerCase())).toEqual(["high"]);
+    // An operational (mail+web) lookalike: +2 points, +1 signal type
+    // beyond 2 → 6 + 2 + 1 = 9 → CRITICAL.
+    raw.exec(`INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type, registered, has_mx, has_web, first_seen)
+              VALUES ('l1', 'b1', 'acrne.example', 'replacement', 1, 1, 1, datetime('now'))`);
+    await generateNarrativesForBrand(env, "b1");
+    expect(alertRows(raw).map((a) => a.severity.toLowerCase())).toEqual(["high", "critical"]);
   });
 });
