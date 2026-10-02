@@ -25,13 +25,14 @@ Inbound email (Cloudflare Email Routing)
       • parse SPF/DKIM/DMARC + sender IP
       • correlate URLs vs existing threats
       • match monitored brands
-      • per-sender/per-domain throttle
-      • INSERT abuse_inbox_messages (classification='pending')
-      • backscatter guard: header-From registrable domain must equal the
-        envelope sender's, and outer DMARC (when present) must pass —
-        otherwise no email ever, responder_suppressed_reason stamped
-      • send instant ack email
-      • dispatch AbuseMailboxTriageWorkflow (id abuse-<messageId>)
+      • backscatter guard (POSITIVE authentication — see below)
+      • throttle: per sender, per sender REGISTRABLE domain, per org,
+        global (rolling 60 min)
+      • INSERT abuse_inbox_messages (classification='pending') — the
+        INSERT itself carries responder_suppressed_reason (fail-closed)
+      • send instant ack email (guard passed, not throttled, not follow-up)
+      • dispatch AbuseMailboxTriageWorkflow (id abuse-<messageId>) for
+        EVERY non-throttled, non-follow-up row, suppressed or not
   → AbuseMailboxTriageWorkflow              src/workflows/abuseMailboxTriage.ts
       (steps in src/lib/abuse-mailbox-triage-pipeline.ts)
       1. rules verdict                       src/lib/abuse-mailbox-rules(-runner).ts
@@ -40,19 +41,103 @@ Inbound email (Cloudflare Email Routing)
            malware CRITICAL;  else ambiguous / review (never benign/spam)
          + AI second opinion only when AI_MODE allows and rules said review
       2. sleep ~2 minutes
-      3. deliverAbuseDetermination — atomic determination_sent_at claim
+      3. deliverAbuseDetermination — atomic determination_sent_at claim;
+         THROWS on a transient send failure so the step retries
+      4. agent_activity_log row (agent_id abuse_mailbox_triage,
+         event_type abuse_triage_complete)
   → hourly `17 * * * *` agent (Sifter) — the sweeper
-      • rules pass over pending rows (≤50)
+      • rules pass over pending rows (≤50, NEWEST first)
       • runAbuseClassifierBackfill (AI; skipped under rules_only) — only
         pending rows and rules REVIEW rows; never a rules malicious row
       • sweepAbuseDeterminations — emails verdicts the Workflow missed
+        (never throws; failures land in the run output)
 ```
 
-Rules verdicts (`classified_by='rules'`) promote only URLs on the matched
-infrastructure (M1–M3, cap 20), skip the Sonnet deep analyzer, and their
-determination email shows no confidence % and a fixed analyst note per
-rule — never the stored reason codes. AI verdicts keep the original flow
-(promotion + Sonnet deep analysis on HIGH/CRITICAL).
+### Backscatter guard (positive authentication)
+
+Acks and determinations go to the forward's header-From, which a sender can
+forge. `decideBackscatterGuard` (`src/lib/abuse-mailbox-responder.ts`) replies
+ONLY when all of these hold, and the decision is written by the INSERT itself
+— a row is never briefly email-eligible:
+
+1. The From header parses as exactly ONE mailbox (`parseSingleRecipient`:
+   quoted display names allowed; any other `,`/`;`, more than one `@`, or a
+   malformed `<…>` rejects). That normalized address is stored as
+   `forwarded_by_email` and is the exact Resend `to`.
+2. Its registrable domain equals the SMTP envelope sender's.
+3. The TOPMOST `Authentication-Results` header whose authserv-id is
+   `mx.cloudflare.net` (fallback: topmost such `ARC-Authentication-Results`)
+   exists — headers with any other authserv-id are attacker-suppliable and
+   ignored — and reports `dmarc=pass` with `header.from` equal to the From
+   domain. Prod check (2026-10): 100% of messages carry the Cloudflare
+   headers; ~90% are dmarc=pass.
+
+Reason codes in `responder_suppressed_reason`: `backscatter:invalid_recipient`,
+`backscatter:domain_mismatch`, `backscatter:no_trusted_auth`,
+`backscatter:dmarc_not_pass`. Suppressed rows are still classified (the
+Workflow runs) but never emailed.
+
+### Rules evidence
+
+- **M1** — an active, non-`abuse_mailbox` threat that either matches a message
+  URL EXACTLY (any feed), or lists the message HOST itself
+  (`malicious_domain` = host) from a domain-level phishing feed (`openphish`,
+  `phishtank`, `phishing_database`) or with VT malicious > 0 / GSB flagged.
+  `urlhaus` / `threatfox` count for exact URLs only. Domain-level matches never
+  count on multi-tenant / redirector hosts (`brandDetect.isMultiTenantHost`:
+  github.com, *.googleusercontent.com, dropbox, sharepoint, discord CDN,
+  pastebin, shorteners, safelinks / urldefense wrappers, google.com, …) — but a
+  platform TENANT subdomain (`x.pages.dev`, `x.workers.dev`, `x.duckdns.org`)
+  is single-tenant and does count; only the bare platform apex is shared. The
+  brand's own domain and `brand_safe_domains` (lib/safeDomains.ts, KV-cached)
+  never count. Outlook safelinks, Proofpoint urldefense (v1–v3),
+  `google.com/url` and `l.facebook.com` wrappers are unwrapped first.
+- **M2** — `matchStrongestNamedThreat`: IOC domain / IOC URL / regex only.
+  IP-only IOC hits don't qualify; regex hits on `device_code_phishing`
+  entries (they match the real microsoft.com/devicelogin) don't qualify —
+  M3 (≥0.85) owns that case; strong-signal entries outrank keyword scores.
+- **M4** — executable / script / disk-image extensions (`.com` excluded —
+  "amazon.com"-style filenames).
+
+Promotion to `threats`: EXACT matched URLs only (M1 exact-URL, M2 IOC-URL),
+cap 20, never the sender IP. Domain-level matches, M3 and M4 never promote.
+The M1 qualifying threat ids replace `correlated_threat_ids` in the same
+guarded verdict UPDATE (the determination's "N indicators match" count reads
+them).
+
+Rules verdicts skip the Sonnet deep analyzer. Determination emails show no
+confidence % for rules verdicts, and "Analyst notes" is ALWAYS fixed copy —
+one sentence per rule (`RULES_EMAIL_NOTE`) or per AI classification
+(`AI_EMAIL_NOTE`); model reasoning is never emailed (prompt-injection). An
+automated verdict never says "Takedown initiated" — it reads "Reported to our
+threat team". The echoed subject is defanged (scheme stripped, `.` → `[.]`).
+
+### Backlog
+
+Rows older than 2 days (`ABUSE_RESPONSE_LOOKBACK`) are classified but get no
+promotion, notification or email: the rules verdict UPDATE stamps
+`responder_suppressed_reason='backlog:stale'`, and the determination claim
+itself refuses rows older than the lookback.
+
+### Delivery semantics (at-most-once)
+
+`deliverAbuseDetermination` claims the row (`determination_sent_at = now`)
+and only then calls Resend. If the isolate dies between the claim and the
+release, the row stays claimed and that report gets no determination — an
+accepted at-most-once window, chosen over duplicates. A transient Resend
+failure releases the claim; the Workflow step throws and retries with
+backoff, and the hourly sweeper is the backstop. A lost response after
+Resend accepted the email is covered by the `Idempotency-Key`
+(`abuse-determination/<id>`; acks use `abuse-ack/<id>`). Resend 400/422 is a
+permanent rejection: `responder_suppressed_reason='determination:resend_rejected'`.
+
+### Notifications
+
+`abuse_mailbox_verdict` (HIGH/CRITICAL phishing|malware): brand-bound
+captures go to brand subscribers who are ACTIVE `org_members` of the
+reporting org (`createNotification`'s `restrictToOrgMembers`), plus opted-in
+super_admins; unbound captures go to super_admins. The forwarded subject is
+never in the title.
 
 Ingestion routing (`src/index.ts:137`): local-parts matching `verify-*`,
 `verify_*`, `report-*`, `abuse-*`, or the platform set
@@ -71,7 +156,7 @@ bounce).
 | Ingestion handler | `src/handlers/abuseMailboxEmail.ts` |
 | IOC parsing (SPF/DKIM/DMARC, sender IP) | `src/lib/abuse-mailbox-iocs.ts` |
 | Brand matching | `src/lib/abuse-mailbox-brand-match.ts` |
-| Sender/domain throttle | `src/lib/abuse-mailbox-throttle.ts` |
+| Flood throttle (sender 20/h, registrable domain 50/h, org 200/h, global 1000/h) | `src/lib/abuse-mailbox-throttle.ts` |
 | Ack / determination emails, backscatter guard | `src/lib/abuse-mailbox-responder.ts` |
 | Rules verdict (pure) | `src/lib/abuse-mailbox-rules.ts` |
 | Rules pass (I/O, promotion, notifications) | `src/lib/abuse-mailbox-rules-runner.ts` |
@@ -98,9 +183,12 @@ in Flight Control, platform-diagnostics, and the `/v2/agents` mesh. It can
 also be triggered manually via `/api/internal/agents/abuse_mailbox_classifier/run`.
 
 The standalone `POST /api/admin/abuse-mailbox/run-classifier` drain
-endpoint still calls `runAbuseClassifierBackfill` directly (bypassing the
-runner) — it's an operator tool for ad-hoc backlog draining and
-intentionally does not create an `agent_runs` row.
+endpoint runs the same order as the cron — `runAbuseRulesPass` then
+`runAbuseClassifierBackfill` — directly (bypassing the runner); every email
+it causes goes through the atomic determination claim. It's an operator tool
+for ad-hoc backlog draining and intentionally does not create an
+`agent_runs` row. Response: the AI pass's fields at the top level (unchanged)
+plus `rules` and `ai` sub-objects.
 
 Cost is ~$0.001/message via Haiku; declared `monthlyTokenCap` is 10M
 (`costGuard: 'enforced'`).
@@ -126,7 +214,7 @@ Primary table `abuse_inbox_messages`, base migration
 | `0188` | `deep_analysis` |
 | `0196` | retry: `classification_attempts`, `last_classify_error` |
 | `0206` | named threats: `detected_technique`, `named_threat_id`, `named_threat_name` |
-| `0273` | `responder_suppressed_reason` — why no ack/determination email was sent (`backscatter:*`, `determination:opted-out`, …) |
+| `0273` | `responder_suppressed_reason` — why no ack/determination email is sent (`backscatter:*`, `determination:*`, `backlog:stale`, `legacy:pre_guard` backfill for every undelivered pre-0273 row); `forwarded_by_reg_domain` (throttle key); indexes `idx_abuse_inbox_reg_domain_recent`, `idx_abuse_inbox_received_at`, partial `idx_abuse_inbox_triage_queue` (`classification IN ('pending','ambiguous')`), partial `idx_abuse_inbox_undelivered` (`determination_sent_at IS NULL AND responder_suppressed_reason IS NULL`) |
 
 `classified_by` ∈ `ai | rules | manual | auto_graduated` (no CHECK).
 

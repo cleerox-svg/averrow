@@ -253,7 +253,7 @@ export function matchAbuseMailboxBrand(
  * enough for typosquat detection where the SLD itself is the
  * impersonation surface.
  */
-function sldLabel(domain: string): string {
+export function sldLabel(domain: string): string {
   const parts = domain.split(".");
   if (parts.length < 2) return domain;
   // For "mcafee-secure-update.example" → "mcafee-secure-update"

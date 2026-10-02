@@ -73,6 +73,15 @@ interface CreateNotificationOpts {
   brandId?: string | null;
   orgId?: string | null;
   /**
+   * Optional recipient filter for audience='tenant'. When set, brand
+   * subscribers are additionally required to be ACTIVE org_members of this
+   * org — for events whose payload belongs to one org (e.g. an abuse-mailbox
+   * capture) even though it is keyed by a brand other orgs also monitor.
+   * The opted-in super_admin firehose half of the tenant audience is
+   * unaffected. Ignored for every other audience.
+   */
+  restrictToOrgMembers?: string | number | null;
+  /**
    * Static template fields (Q5). Surfaced in the UI as "Why am I seeing
    * this?" / "What should I do?".
    */
@@ -278,13 +287,23 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     // super_admin getting 538 DMARC-hygiene notifications in 24h about
     // random unclaimed brands they have no power to fix.
     const includeSuperAdmins = !TENANT_ONLY_TYPES.has(opts.type);
-    const sql = includeSuperAdmins
-      ? `SELECT DISTINCT u.id
+    // restrictToOrgMembers: subscribers must also be active members of
+    // that org (see the option's doc). A bound parameter, never inlined.
+    const orgFilter = opts.restrictToOrgMembers !== undefined && opts.restrictToOrgMembers !== null;
+    const subscriberSql = `SELECT DISTINCT u.id
            FROM users u
            JOIN notification_subscriptions ns ON ns.user_id = u.id
           WHERE u.status = 'active'
             AND ns.brand_id = ?
-            AND ns.level != 'ignored'
+            AND ns.level != 'ignored'` + (orgFilter
+      ? `
+            AND EXISTS (SELECT 1 FROM org_members om
+                         WHERE om.user_id = u.id
+                           AND om.org_id = ?
+                           AND om.status = 'active')`
+      : '');
+    const sql = includeSuperAdmins
+      ? `${subscriberSql}
          UNION
          SELECT u.id
            FROM users u
@@ -292,13 +311,9 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
           WHERE u.status = 'active'
             AND u.role = 'super_admin'
             AND p.show_tenant_notifications = 1`
-      : `SELECT DISTINCT u.id
-           FROM users u
-           JOIN notification_subscriptions ns ON ns.user_id = u.id
-          WHERE u.status = 'active'
-            AND ns.brand_id = ?
-            AND ns.level != 'ignored'`;
-    const users = await db.prepare(sql).bind(brandId).all<{ id: string }>();
+      : subscriberSql;
+    const binds: unknown[] = orgFilter ? [brandId, opts.restrictToOrgMembers] : [brandId];
+    const users = await db.prepare(sql).bind(...binds).all<{ id: string }>();
     userIds = users.results.map(u => u.id);
   } else if (audience === 'team') {
     // Staff-wide: every non-client role. Used for cross-cutting agent

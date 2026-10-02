@@ -873,7 +873,7 @@ free text. They remain on `lookalike_domains` for staff
 | PATCH | `/api/admin/abuse-mailbox/messages/bulk-status` | Super-admin | Bulk triage: `{ ids: string[], status }` — one UPDATE over up to 200 message ids (scoped to the Averrow self-org). Returns `{ requested, updated, status }`; unknown ids are skipped |
 | PATCH | `/api/admin/abuse-mailbox/messages/:id/status` | Super-admin | Update message status (new / investigating / resolved / dismissed) — PR-BD |
 | GET | `/api/admin/abuse-mailbox/intel` | Super-admin | Aggregated intel summary from `deep_analysis` rows: active campaigns, recent takedown recommendations, top hosting providers, 7d/30d analyzed counts (PR-BD) |
-| POST | `/api/admin/abuse-mailbox/run-classifier` | Admin | Run the abuse-mailbox AI classifier over the pending pile (`?limit=&offset=`). Idempotent on retry; parse-failure rows stay `pending` |
+| POST | `/api/admin/abuse-mailbox/run-classifier` | Admin | Drain the abuse-mailbox pile in cron order: deterministic rules pass (newest first), then the AI classifier (`?limit=&offset=`; offset applies to the AI pass). Idempotent on retry; parse-failure rows stay `pending`; emails only via the atomic determination claim. Response: AI-pass fields at top level plus `rules` and `ai` objects |
 
 ## Data Export
 

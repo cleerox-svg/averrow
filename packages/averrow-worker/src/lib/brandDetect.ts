@@ -219,18 +219,69 @@ const SHARED_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * True when `raw` (domain, URL, or IOC) sits on shared hosting — a shared
- * content gateway (SHARED_HOSTS) or a tenant-subdomain platform
- * (PLATFORM_SUFFIXES, either the platform apex itself or any subdomain of
- * it). A domain-level match on such a host says nothing about the operator
- * of a DIFFERENT URL on the same host, so domain-level correlation must
- * not treat it as evidence. Used by the abuse-mailbox rules verdict.
+ * Multi-tenant collaboration / file-share / code-hosting / shortener /
+ * redirector hosts. Unlike PLATFORM_SUFFIXES (where each subdomain is ONE
+ * tenant), many unrelated parties publish under the SAME host here — one
+ * attacker repo on github.com or one document on drive.google.com says
+ * nothing about another link on that host. Matched as the host itself or
+ * any subdomain of it (`*.safelinks.protection.outlook.com`, `*.google.com`).
+ */
+export const MULTI_TENANT_HOSTS: ReadonlyArray<string> = [
+  // Collaboration / file share
+  "docs.google.com", "drive.google.com", "sites.google.com", "forms.gle",
+  "storage.googleapis.com", "googleusercontent.com", "dropbox.com",
+  "dropboxusercontent.com", "1drv.ms", "onedrive.live.com", "sharepoint.com",
+  "forms.office.com", "box.com", "wetransfer.com", "we.tl", "notion.so",
+  "mediafire.com", "pastebin.com", "cdn.discordapp.com", "media.discordapp.net",
+  // Code hosting
+  "github.com", "gist.github.com", "raw.githubusercontent.com",
+  "objects.githubusercontent.com", "gitlab.com", "bitbucket.org",
+  // Cloud object / CDN endpoints addressed by path
+  "amazonaws.com", "azureedge.net", "core.windows.net",
+  // Shorteners / redirectors / link wrappers
+  "bit.ly", "t.co", "tinyurl.com", "ow.ly", "lnkd.in", "linktr.ee",
+  "safelinks.protection.outlook.com", "urldefense.com", "urldefense.proofpoint.com",
+  "l.facebook.com", "lm.facebook.com",
+  // google.com/url?q= open redirect (and every *.google.com service)
+  "google.com",
+];
+
+/**
+ * True when `raw` (domain, URL, or IOC) is a shared content gateway
+ * (SHARED_HOSTS) or the bare APEX of a tenant-subdomain platform
+ * (PLATFORM_SUFFIXES, e.g. "pages.dev" itself). A tenant subdomain such as
+ * "x.pages.dev" is NOT shared — it belongs to one tenant, so a feed listing
+ * it is evidence about that tenant.
  */
 export function isSharedHostingHost(raw: string): boolean {
   const host = hostOf(raw);
   if (!host) return false;
   if (SHARED_HOSTS.has(host)) return true;
-  return PLATFORM_SUFFIXES.some((p) => host === p || host.endsWith(`.${p}`));
+  return PLATFORM_SUFFIXES.includes(host);
+}
+
+/** True when `raw` is a single tenant's subdomain of a PLATFORM_SUFFIXES
+ *  platform ("x.pages.dev", "x.duckdns.org", "bucket.s3.amazonaws.com"). */
+export function isPlatformTenantHost(raw: string): boolean {
+  const host = hostOf(raw);
+  if (!host) return false;
+  return PLATFORM_SUFFIXES.some((p) => host.endsWith(`.${p}`));
+}
+
+/**
+ * Abuse-mailbox domain-level evidence gate: true when a domain-level
+ * threat-intel match on this host must NOT be treated as evidence about a
+ * different URL on the same host. Shared gateways, platform apexes and
+ * MULTI_TENANT_HOSTS (incl. subdomains) qualify; a platform TENANT
+ * subdomain never does (checked first, so "bucket.s3.amazonaws.com" stays
+ * single-tenant even though "amazonaws.com" is multi-tenant).
+ */
+export function isMultiTenantHost(raw: string): boolean {
+  const host = hostOf(raw);
+  if (!host) return false;
+  if (isPlatformTenantHost(host)) return false;
+  if (isSharedHostingHost(host)) return true;
+  return MULTI_TENANT_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
 }
 
 function suffixLabelCount(host: string): number {

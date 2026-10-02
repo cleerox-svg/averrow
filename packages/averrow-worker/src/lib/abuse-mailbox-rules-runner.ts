@@ -9,9 +9,15 @@
 // Two entry points:
 //   runAbuseRulesForMessage(env, id) — one row; called by the per-message
 //     AbuseMailboxTriageWorkflow minutes after receipt.
-//   runAbuseRulesPass(env, { limit }) — bounded sweep over 'pending' rows;
-//     called by the hourly `17 * * * *` abuse_mailbox_classifier agent so
-//     anything the Workflow missed still gets a verdict.
+//   runAbuseRulesPass(env, { limit }) — bounded sweep over 'pending' rows,
+//     NEWEST first; called by the hourly `17 * * * *` abuse_mailbox_classifier
+//     agent (and the admin run-classifier endpoint) so anything the
+//     Workflow missed still gets a verdict.
+//
+// Backlog: a row older than ABUSE_RESPONSE_LOOKBACK (2 days) is still
+// classified, but gets no promotion, no notification and no email — the
+// verdict UPDATE stamps responder_suppressed_reason='backlog:stale' so no
+// responder path can email it later.
 //
 // Concurrency: the verdict UPDATE is guarded by `classification =
 // 'pending'`, and side effects run only when that UPDATE changed the row,
@@ -19,24 +25,33 @@
 // exactly one verdict and one set of side effects.
 //
 // D1 cost: ≤ 20 indexed seeks on `idx_threats_domain` per message (one per
-// distinct URL host), plus one brand read and one named_threats read per
-// batch. The Sonnet deep analyzer is never called for rules verdicts.
+// distinct URL host), plus one brand read, one named_threats read and one
+// (KV-cached, hourly) brand_safe_domains read per batch. The Sonnet deep
+// analyzer is never called for rules verdicts.
 
 import type { Env } from "../types";
 import { logger } from "./logger";
+import { extractDomain } from "./domain-utils";
 import {
-  decideAbuseMailboxRulesVerdict, runContentDetectors, isSharedHost, isOwnBrandHost,
-  CORROBORATING_FEEDS, type RulesThreatCandidate, type RulesVerdict,
+  decideAbuseMailboxRulesVerdict, runContentDetectors, normalizeMessageUrls, normHost,
+  isSharedHost, isOwnBrandHost, DOMAIN_LEVEL_FEEDS,
+  type RulesThreatCandidate, type RulesVerdict,
 } from "./abuse-mailbox-rules";
 import {
   loadNamedThreatCatalog, recordNamedThreatMatch, type NamedThreatEntry,
 } from "./named-threat-matcher";
 import { notifyAbuseVerdict, notifyNamedThreatIdentified } from "./abuse-mailbox-notify";
+import {
+  ABUSE_RESPONSE_LOOKBACK, IS_ATTACHMENT_FORWARD_SQL, parseJsonSafe, type AuthTriple,
+} from "./abuse-mailbox-shared";
 
 /** Max distinct URL hosts looked up per message (mirrors correlateUrls). */
 const MAX_HOSTS_PER_MESSAGE = 20;
 /** Max exact URLs bound per host lookup. */
 const MAX_URLS_PER_HOST = 10;
+/** KV cache for the brand safe-domain set (slow-changing reference data). */
+const SAFE_DOMAINS_CACHE_KEY = "abuse_mailbox.safe_domains";
+const SAFE_DOMAINS_TTL_SECONDS = 3600;
 
 /** Fixed operator-facing sentence per rule (never includes message content). */
 export const RULES_OPERATOR_NOTE: Record<string, string> = {
@@ -46,6 +61,9 @@ export const RULES_OPERATOR_NOTE: Record<string, string> = {
   M4: "Message carries an executable or disk-image attachment type.",
   review: "No deterministic rule matched; queued for analyst review.",
 };
+
+/** responder_suppressed_reason stamped on backlog rows by the verdict UPDATE. */
+export const BACKLOG_SUPPRESSED_REASON = "backlog:stale";
 
 interface RulesRow {
   id:                    string;
@@ -60,20 +78,19 @@ interface RulesRow {
   auth_results:          string | null;
   sender_ip:             string | null;
   is_attachment_forward: number | null;
+  /** 1 when received_at is older than ABUSE_RESPONSE_LOOKBACK. */
+  is_stale:              number | null;
 }
 
-// `raw_headers` stores `_forwarded_inner` only when the report was a
-// forward-as-attachment (handlers/abuseMailboxEmail.ts). instr() rather
-// than json_* because the stored JSON can be truncated (capJson) and
-// SQLite's JSON functions throw on malformed input.
+// The single `?` is ABUSE_RESPONSE_LOOKBACK — bind it first.
 const ROW_COLUMNS = `
   id, org_id, brand_id, inbound_alias, original_from, original_subject,
   original_body_snippet, extracted_urls, attachment_names, auth_results, sender_ip,
-  CASE WHEN instr(COALESCE(raw_headers, ''), '"_forwarded_inner":') > 0 THEN 1 ELSE 0 END
-    AS is_attachment_forward`;
+  ${IS_ATTACHMENT_FORWARD_SQL} AS is_attachment_forward,
+  CASE WHEN received_at < datetime('now', ?) THEN 1 ELSE 0 END AS is_stale`;
 
 export type RulesMessageOutcome =
-  | { status: "classified"; verdict: RulesVerdict }
+  | { status: "classified"; verdict: RulesVerdict; stale: boolean }
   /** Row no longer pending (already classified, follow-up, throttled, or
    *  another runner won the race). Nothing written. */
   | { status: "not_pending" }
@@ -83,15 +100,12 @@ export interface RulesPassResult {
   scanned:   number;
   malicious: number;
   review:    number;
+  /** Of the classified rows, how many were backlog (no side effects). */
+  stale:     number;
   errors:    number;
 }
 
 interface BrandInfo { id: string; canonical_domain: string | null }
-
-function parseJsonSafe<T>(s: string | null | undefined): T | null {
-  if (!s) return null;
-  try { return JSON.parse(s) as T; } catch { return null; }
-}
 
 async function loadBrands(env: Env, ids: string[]): Promise<Map<string, BrandInfo>> {
   const out = new Map<string, BrandInfo>();
@@ -115,11 +129,30 @@ async function loadCatalogSafe(env: Env): Promise<NamedThreatEntry[]> {
   }
 }
 
+/** brand_safe_domains as a lib/safeDomains.ts lookup set, KV-cached. An
+ *  unavailable table degrades to an empty set (the own-brand check still
+ *  applies). */
+async function loadSafeDomainsSafe(env: Env): Promise<Set<string>> {
+  try {
+    const { cachedValue } = await import("./cached-value");
+    const { loadSafeDomainSet } = await import("./safeDomains");
+    const list = await cachedValue<string[]>(env, SAFE_DOMAINS_CACHE_KEY, SAFE_DOMAINS_TTL_SECONDS,
+      async () => Array.from(await loadSafeDomainSet(env.DB)));
+    return new Set(list);
+  } catch (err) {
+    logger.warn("abuse_rules_safe_domains_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return new Set();
+  }
+}
+
 /**
- * Look up the threat rows relevant to the M1 rule for a message's URLs.
- * One indexed seek per distinct host. The SQL pre-filters (active, not
- * abuse_mailbox-sourced, exact URL or corroborated) and the pure decider
- * re-applies every condition, so the rule stays testable without D1.
+ * Look up the threat rows relevant to the M1 rule for a message's URLs
+ * (already unwrapped — normalizeMessageUrls). One indexed seek per distinct
+ * host. The SQL pre-filters (active, not abuse_mailbox-sourced, exact URL or
+ * domain-level-corroborated; exact URL only on shared hosts) and the pure
+ * decider re-applies every condition, so the rule stays testable without D1.
  */
 export async function loadRulesThreatCandidates(
   env: Env,
@@ -128,21 +161,22 @@ export async function loadRulesThreatCandidates(
 ): Promise<RulesThreatCandidate[]> {
   const byHost = new Map<string, string[]>();
   for (const u of urls) {
-    const host = u.domain?.trim().toLowerCase() || null;
+    const host = normHost(u.domain);
     if (!host) continue;
     if (isOwnBrandHost(host, brandCanonical)) continue;
+    if (!byHost.has(host) && byHost.size >= MAX_HOSTS_PER_MESSAGE) continue;
     const list = byHost.get(host) ?? [];
     if (list.length < MAX_URLS_PER_HOST) list.push(u.url);
     byHost.set(host, list);
-    if (byHost.size >= MAX_HOSTS_PER_MESSAGE) break;
   }
 
-  const feeds = Array.from(CORROBORATING_FEEDS);
+  const feeds = Array.from(DOMAIN_LEVEL_FEEDS);
   const out = new Map<string, RulesThreatCandidate>();
   for (const [host, hostUrls] of byHost) {
     const urlPh = hostUrls.map(() => "?").join(",");
     const shared = isSharedHost(host);
-    // Shared hosting: only an exact URL match is evidence.
+    // Shared hosting: only an exact URL match is evidence. Otherwise exact
+    // URL rows sort first so the LIMIT never crowds them out.
     const sql = shared
       ? `SELECT id, malicious_url, malicious_domain, source_feed, status, vt_malicious, gsb_flagged
          FROM threats
@@ -160,8 +194,11 @@ export async function loadRulesThreatCandidates(
                 OR COALESCE(vt_malicious, 0) > 0
                 OR COALESCE(gsb_flagged, 0) = 1
                 OR source_feed IN (${feeds.map(() => "?").join(",")}))
+         ORDER BY (malicious_url IN (${urlPh})) DESC
          LIMIT 5`;
-    const binds: unknown[] = shared ? [host, ...hostUrls] : [host, ...hostUrls, ...feeds];
+    const binds: unknown[] = shared
+      ? [host, ...hostUrls]
+      : [host, ...hostUrls, ...feeds, ...hostUrls];
     const rows = await env.DB.prepare(sql).bind(...binds).all<RulesThreatCandidate>();
     for (const r of rows.results ?? []) out.set(r.id, r);
   }
@@ -173,10 +210,14 @@ async function applyRulesToRow(
   row: RulesRow,
   brand: BrandInfo | null,
   catalog: ReadonlyArray<NamedThreatEntry>,
+  safeDomains: ReadonlySet<string>,
 ): Promise<RulesMessageOutcome> {
-  const urls = parseJsonSafe<Array<{ url: string; domain: string | null }>>(row.extracted_urls) ?? [];
+  const urls = normalizeMessageUrls(
+    parseJsonSafe<Array<{ url: string; domain: string | null }>>(row.extracted_urls) ?? [],
+  );
   const attachments = parseJsonSafe<Array<{ filename: string; mime_type: string | null }>>(row.attachment_names) ?? [];
-  const authResults = parseJsonSafe<{ spf: string | null; dkim: string | null; dmarc: string | null }>(row.auth_results);
+  const authResults = parseJsonSafe<AuthTriple>(row.auth_results);
+  const stale = row.is_stale === 1;
 
   const threatCandidates = await loadRulesThreatCandidates(env, urls, brand?.canonical_domain ?? null);
   const detectors = runContentDetectors(catalog, {
@@ -188,6 +229,7 @@ async function applyRulesToRow(
 
   const verdict = decideAbuseMailboxRulesVerdict({
     brand: brand ? { id: brand.id, canonical_domain: brand.canonical_domain } : null,
+    safeDomains,
     originalFrom: row.original_from,
     urls,
     attachments,
@@ -195,7 +237,8 @@ async function applyRulesToRow(
     isAttachmentForward: row.is_attachment_forward === 1,
     threatCandidates,
     namedThreat: detectors.namedThreat,
-    namedThreatEntry: detectors.namedThreatEntry,
+    strongNamedThreat: detectors.strongNamedThreat,
+    strongNamedThreatEntry: detectors.strongNamedThreatEntry,
     deviceCode: detectors.deviceCode,
   });
 
@@ -203,9 +246,19 @@ async function applyRulesToRow(
   const label = verdict.kind === "malicious"
     ? `[Rules ${verdict.firedRules.join("+")} ${verdict.classification}]`
     : "[Rules review]";
+  // The match M2 acted on wins the stamp; otherwise the best-evidence one.
+  const stampedNamed = (verdict.kind === "malicious" && verdict.firedRules.includes("M2")
+    ? detectors.strongNamedThreat
+    : null) ?? detectors.namedThreat;
   const technique = detectors.deviceCode.detected
     ? detectors.deviceCode.technique
-    : (detectors.namedThreat?.technique ?? null);
+    : (stampedNamed?.technique ?? null);
+  // M1 evidence: the qualifying threats replace the intake correlation (the
+  // determination's "matches patterns we're tracking" count reads this).
+  // Other verdicts keep the intake value.
+  const correlatedJson = verdict.kind === "malicious" && verdict.qualifyingThreatIds.length > 0
+    ? JSON.stringify(verdict.qualifyingThreatIds)
+    : null;
 
   const upd = await env.DB.prepare(`
     UPDATE abuse_inbox_messages
@@ -219,6 +272,10 @@ async function applyRulesToRow(
         detected_technique        = ?,
         named_threat_id           = ?,
         named_threat_name         = ?,
+        correlated_threat_ids     = COALESCE(?, correlated_threat_ids),
+        responder_suppressed_reason = CASE WHEN ? = 1
+          THEN COALESCE(responder_suppressed_reason, ?)
+          ELSE responder_suppressed_reason END,
         updated_at                = datetime('now')
     WHERE id = ? AND classification = 'pending'
   `).bind(
@@ -229,22 +286,28 @@ async function applyRulesToRow(
     verdict.action,
     verdict.severity,
     technique,
-    detectors.namedThreat?.id ?? null,
-    detectors.namedThreat?.name ?? null,
+    stampedNamed?.id ?? null,
+    stampedNamed?.name ?? null,
+    correlatedJson,
+    stale ? 1 : 0,
+    BACKLOG_SUPPRESSED_REASON,
     row.id,
   ).run();
   const changes = typeof upd.meta?.changes === "number" ? upd.meta.changes : 1;
   if (changes === 0) return { status: "not_pending" };
 
+  // Backlog: classify only — no telemetry bumps, alerts, promotion or email.
+  if (stale) return { status: "classified", verdict, stale: true };
+
   // Named-threat telemetry + operator alert, on any catalog match (weak
   // matches included — an operator should still see them on review rows).
-  if (detectors.namedThreat) {
-    try { await recordNamedThreatMatch(env, detectors.namedThreat.id); } catch { /* telemetry only */ }
+  if (stampedNamed) {
+    try { await recordNamedThreatMatch(env, stampedNamed.id); } catch { /* telemetry only */ }
     await notifyNamedThreatIdentified(env, {
       messageId: row.id,
-      namedThreatId: detectors.namedThreat.id,
-      namedThreatName: detectors.namedThreat.name,
-      namedThreatSeverity: detectors.namedThreat.severity,
+      namedThreatId: stampedNamed.id,
+      namedThreatName: stampedNamed.name,
+      namedThreatSeverity: stampedNamed.severity,
       technique,
       verdictLabel: verdict.kind === "malicious"
         ? `${verdict.classification} (rules ${verdict.firedRules.join("+")})`
@@ -255,22 +318,22 @@ async function applyRulesToRow(
   }
 
   if (verdict.kind === "malicious") {
-    // Promote only URLs on matched infrastructure (M1–M3; M4 alone never
-    // promotes — an attachment says nothing about the links).
+    // Promote only the EXACT matched URLs (M1 exact-URL / M2 IOC-url). A
+    // domain-level match, M3 and M4 never promote. The sender IP is never
+    // copied onto promoted threats — it is the relay that delivered the
+    // lure, not the infrastructure the URL points at.
     if (verdict.promoteUrls.length > 0) {
       try {
         const { promoteToThreats } = await import("./abuse-mailbox-iocs");
-        const promoteSet = new Set(verdict.promoteUrls.map((u) => u.toLowerCase()));
-        const promoteList = urls.filter((u) => promoteSet.has(u.url.toLowerCase()));
         const promotedIds = await promoteToThreats(env, {
-          urls: promoteList.map((u) => ({ url: u.url, domain: u.domain, count: 1 })),
+          urls: verdict.promoteUrls.map((u) => ({ url: u, domain: extractDomain(u), count: 1 })),
           classification: verdict.classification,
           confidence: verdict.confidence,
           brandId: row.brand_id,
-          senderIp: row.sender_ip,
+          senderIp: null,
           messageId: row.id,
           technique,
-          namedThreatId: detectors.namedThreat?.id ?? null,
+          namedThreatId: stampedNamed?.id ?? null,
           excludeUrls: detectors.deviceCode.legitEndpointUrls,
         });
         if (promotedIds.length > 0) {
@@ -291,7 +354,6 @@ async function applyRulesToRow(
       orgId: row.org_id,
       brandId: row.brand_id,
       inboundAlias: row.inbound_alias,
-      originalSubject: row.original_subject,
       classification: verdict.classification,
       severity: verdict.severity,
       confidence: verdict.confidence,
@@ -301,7 +363,7 @@ async function applyRulesToRow(
     });
   }
 
-  return { status: "classified", verdict };
+  return { status: "classified", verdict, stale: false };
 }
 
 /** Rules verdict for one message (per-message Workflow entry point). */
@@ -311,11 +373,12 @@ export async function runAbuseRulesForMessage(env: Env, messageId: string): Prom
       SELECT ${ROW_COLUMNS}
       FROM abuse_inbox_messages
       WHERE id = ? AND classification = 'pending' AND COALESCE(throttled, 0) = 0
-    `).bind(messageId).first<RulesRow>();
+    `).bind(ABUSE_RESPONSE_LOOKBACK, messageId).first<RulesRow>();
     if (!row) return { status: "not_pending" };
     const brands = await loadBrands(env, row.brand_id ? [row.brand_id] : []);
     const catalog = await loadCatalogSafe(env);
-    return await applyRulesToRow(env, row, row.brand_id ? brands.get(row.brand_id) ?? null : null, catalog);
+    const safeDomains = await loadSafeDomainsSafe(env);
+    return await applyRulesToRow(env, row, row.brand_id ? brands.get(row.brand_id) ?? null : null, catalog, safeDomains);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.warn("abuse_rules_message_failed", { message_id: messageId, error });
@@ -323,30 +386,37 @@ export async function runAbuseRulesForMessage(env: Env, messageId: string): Prom
   }
 }
 
-/** Bounded rules sweep over pending rows (hourly cron entry point). */
+/** Bounded rules sweep over pending rows, newest first (hourly cron and
+ *  admin entry point). */
 export async function runAbuseRulesPass(env: Env, opts?: { limit?: number }): Promise<RulesPassResult> {
   const limit = Math.max(1, Math.min(200, opts?.limit ?? 50));
+  // `classification IN (...)` repeats the partial-index predicate of
+  // idx_abuse_inbox_triage_queue (migration 0273) so the planner can use it.
   const rows = await env.DB.prepare(`
     SELECT ${ROW_COLUMNS}
     FROM abuse_inbox_messages
-    WHERE classification = 'pending' AND COALESCE(throttled, 0) = 0
-    ORDER BY received_at ASC
+    WHERE classification IN ('pending', 'ambiguous')
+      AND classification = 'pending'
+      AND COALESCE(throttled, 0) = 0
+    ORDER BY received_at DESC
     LIMIT ?
-  `).bind(limit).all<RulesRow>();
+  `).bind(ABUSE_RESPONSE_LOOKBACK, limit).all<RulesRow>();
   const list = rows.results ?? [];
-  const result: RulesPassResult = { scanned: list.length, malicious: 0, review: 0, errors: 0 };
+  const result: RulesPassResult = { scanned: list.length, malicious: 0, review: 0, stale: 0, errors: 0 };
   if (list.length === 0) return result;
 
   const brandIds = Array.from(new Set(list.map((r) => r.brand_id).filter((b): b is string => !!b)));
   const brands = await loadBrands(env, brandIds);
   const catalog = await loadCatalogSafe(env);
+  const safeDomains = await loadSafeDomainsSafe(env);
 
   for (const row of list) {
     try {
-      const outcome = await applyRulesToRow(env, row, row.brand_id ? brands.get(row.brand_id) ?? null : null, catalog);
+      const outcome = await applyRulesToRow(env, row, row.brand_id ? brands.get(row.brand_id) ?? null : null, catalog, safeDomains);
       if (outcome.status === "classified") {
         if (outcome.verdict.kind === "malicious") result.malicious += 1;
         else result.review += 1;
+        if (outcome.stale) result.stale += 1;
       }
     } catch (err) {
       result.errors += 1;

@@ -43,6 +43,7 @@ import {
   type NamedThreatEntry,
 } from './named-threat-matcher';
 import { notifyAbuseVerdict, notifyNamedThreatIdentified } from './abuse-mailbox-notify';
+import { ABUSE_RESPONSE_LOOKBACK, parseJsonSafe } from './abuse-mailbox-shared';
 
 // ─── Public types ────────────────────────────────────────────────
 
@@ -283,13 +284,6 @@ export async function classifyAbuseMessageWithAI(
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────
-
-function parseJsonSafe<T>(s: string | null | undefined): T | null {
-  if (!s) return null;
-  try { return JSON.parse(s) as T; } catch { return null; }
-}
-
 // ─── Backfill ────────────────────────────────────────────────────
 
 export interface ClassifyBackfillResult {
@@ -332,6 +326,9 @@ interface MessageRow {
   classification_attempts: number | null;
   // 'rules' when the row is a rules REVIEW verdict awaiting AI; NULL when pending.
   classified_by:         string | null;
+  // 1 when received_at is older than ABUSE_RESPONSE_LOOKBACK: classify,
+  // but no promotion / deep analysis / notification / email.
+  is_stale:              number | null;
 }
 
 /**
@@ -410,14 +407,19 @@ export async function runAbuseClassifierBackfill(
   // Eligible = still 'pending', or a rules REVIEW row. Rules MALICIOUS
   // rows (classified_by='rules', classification phishing/malware) are
   // never selected, so the AI can't overwrite them.
+  //
+  // `classification IN ('pending','ambiguous')` repeats the partial-index
+  // predicate of idx_abuse_inbox_triage_queue (migration 0273).
   const rows = await env.DB.prepare(`
     SELECT id, org_id, brand_id, original_from, original_subject,
            original_body_snippet, url_count, attachment_count,
            forwarded_by_email, inbound_alias, determination_sent_at,
            extracted_urls, attachment_names, auth_results, sender_ip,
-           correlated_threat_ids, classification_attempts, classified_by
+           correlated_threat_ids, classification_attempts, classified_by,
+           CASE WHEN received_at < datetime('now', ?) THEN 1 ELSE 0 END AS is_stale
     FROM abuse_inbox_messages
-    WHERE (classification = 'pending'
+    WHERE classification IN ('pending', 'ambiguous')
+      AND (classification = 'pending'
            OR (classification = 'ambiguous' AND classified_by = 'rules'))
       AND COALESCE(throttled, 0) = 0
       AND COALESCE(classification_attempts, 0) < ?
@@ -425,6 +427,7 @@ export async function runAbuseClassifierBackfill(
     ORDER BY received_at ASC
     LIMIT ? OFFSET ?
   `).bind(
+    ABUSE_RESPONSE_LOOKBACK,
     MAX_CLASSIFY_ATTEMPTS,
     opts?.messageId ?? null, opts?.messageId ?? null,
     limit, offset,
@@ -566,9 +569,6 @@ export async function runAbuseClassifierBackfill(
     }
 
     const verdict = outcome.verdict;
-    result.classified += 1;
-    result.by_classification[verdict.classification] += 1;
-
     const severity = severityFor(verdict.classification, verdict.confidence);
     const aiAssessment =
       `[AI ${verdict.classification} @${verdict.confidence}%] ${verdict.reasoning}`;
@@ -600,9 +600,16 @@ export async function runAbuseClassifierBackfill(
     if (typeof verdictUpdate.meta?.changes === "number" && verdictUpdate.meta.changes === 0) {
       continue;
     }
+    // Count only verdicts that actually landed (a lost race is not a
+    // classification by this pass).
+    result.classified += 1;
+    result.by_classification[verdict.classification] += 1;
     // A rules review row already had its detectors stamped, named-threat
     // match recorded and operator notified by the rules pass.
     const fromRulesReview = m.classified_by === "rules";
+    // Backlog row (older than the response lookback): verdict + detector
+    // stamp only — no alerts, promotion, deep analysis or email.
+    const stale = m.is_stale === 1;
 
     // ─── Kali365 detection: device-code technique + named threat ──
     //
@@ -640,7 +647,7 @@ export async function runAbuseClassifierBackfill(
         console.warn(`[abuse-mailbox-classifier] technique stamp failed for ${m.id}:`, err);
       }
     }
-    if (namedThreatId && !fromRulesReview) {
+    if (namedThreatId && !fromRulesReview && !stale) {
       try { await recordNamedThreatMatch(env, namedThreatId); } catch { /* telemetry only */ }
       // High-signal operator alert: we identified a named threat by name.
       // Deduped per named threat per day so a campaign doesn't flood.
@@ -685,7 +692,7 @@ export async function runAbuseClassifierBackfill(
       verdictIsPhishingOrMalware && (severity === "HIGH" || severity === "CRITICAL");
     const deviceCodeQualifies =
       deviceCode.detected && deviceCode.score >= 0.8 && verdictIsPhishingOrMalware;
-    if ((verdictQualifies || deviceCodeQualifies) && urlList && urlList.length > 0) {
+    if (!stale && (verdictQualifies || deviceCodeQualifies) && urlList && urlList.length > 0) {
       try {
         const { promoteToThreats } = await import("./abuse-mailbox-iocs");
         const promoteClassification: "phishing" | "malware" =
@@ -720,8 +727,8 @@ export async function runAbuseClassifierBackfill(
     // context. Sonnet pass produces internal + external narratives plus
     // a specific recommended action. Severity-gated so cost stays
     // bounded (~10 confirmed/day × ~$0.003 = pennies/day).
-    let deepAnalysisExternal: string | null = null;
     if (
+      !stale &&
       (verdict.classification === "phishing" || verdict.classification === "malware") &&
       (severity === "HIGH" || severity === "CRITICAL")
     ) {
@@ -743,7 +750,6 @@ export async function runAbuseClassifierBackfill(
           correlated_threat_ids: correlatedIds,
         });
         if (deep) {
-          deepAnalysisExternal = deep.external_narrative;
           await env.DB.prepare(
             `UPDATE abuse_inbox_messages SET deep_analysis = ? WHERE id = ?`,
           ).bind(JSON.stringify(deep), m.id).run();
@@ -761,7 +767,7 @@ export async function runAbuseClassifierBackfill(
     // passes deferDetermination and sends after its own short sleep.
     // Rows whose determination already went out (e.g. a rules review
     // email) are skipped by the claim.
-    if (!opts?.deferDetermination && !m.determination_sent_at && m.forwarded_by_email) {
+    if (!stale && !opts?.deferDetermination && !m.determination_sent_at && m.forwarded_by_email) {
       const { deliverAbuseDetermination } = await import("./abuse-mailbox-determination");
       await deliverAbuseDetermination(env, m.id);
     }
@@ -773,6 +779,7 @@ export async function runAbuseClassifierBackfill(
     // ambiguous stay visible in the inbox UI without nagging. Audience
     // routing + dedup live in notifyAbuseVerdict.
     if (
+      !stale &&
       (verdict.classification === "phishing" || verdict.classification === "malware") &&
       (severity === "HIGH" || severity === "CRITICAL")
     ) {
@@ -781,7 +788,6 @@ export async function runAbuseClassifierBackfill(
         orgId: m.org_id,
         brandId: m.brand_id,
         inboundAlias: m.inbound_alias,
-        originalSubject: m.original_subject,
         classification: verdict.classification,
         severity,
         confidence: verdict.confidence,

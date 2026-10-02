@@ -20,8 +20,11 @@
  *
  * Dispatched from the dedicated `17 * * * *` cron (cron/orchestrator.ts) via
  * executeAgent, and manually via /api/internal/agents/abuse_mailbox_classifier/run.
- * The standalone /api/admin/abuse-mailbox/run-classifier drain endpoint stays
- * as a direct operator tool for the AI pass (it bypasses the runner).
+ * The standalone /api/admin/abuse-mailbox/run-classifier drain endpoint runs
+ * the same rules → AI order directly (it bypasses the runner).
+ *
+ * The sweeper never throws (failures come back in `sweep.error`), so a
+ * delivery problem can't fail the classification work done before it.
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";

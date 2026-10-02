@@ -7,30 +7,43 @@
 //   - the hourly sweeper (sweepAbuseDeterminations, run by the
 //     `17 * * * *` abuse_mailbox_classifier agent)
 //
-// Exactly-once: the send is preceded by an atomic claim —
+// Claim-then-send: the send is preceded by an atomic claim —
 //   UPDATE … SET determination_sent_at = now WHERE id = ? AND
 //   determination_sent_at IS NULL AND <eligible>
 // Only the caller whose UPDATE changed the row sends. A transient send
-// failure releases the claim (determination_sent_at back to NULL) so the
-// sweeper retries; a permanent suppression (opted-out, own-domain loop,
-// malformed address) releases it AND stamps responder_suppressed_reason so
-// the sweeper stops re-claiming the row.
+// failure releases the claim (determination_sent_at back to NULL) so a
+// retry (the Workflow's step retry, or the sweeper) can re-claim; a
+// permanent suppression (opted-out, own-domain loop, malformed address,
+// Resend 400/422 recipient rejection) releases it AND stamps
+// responder_suppressed_reason so nothing re-claims the row.
+//
+// AT-MOST-ONCE WINDOW: if the isolate dies after the claim UPDATE and
+// before the release (e.g. mid-Resend call), the row keeps
+// determination_sent_at and is never retried — that report gets no
+// determination email. We accept that rather than risk a duplicate. The
+// opposite race (Resend accepted the email but the response was lost, so
+// we release and retry) is closed by the Resend `Idempotency-Key`
+// (`abuse-determination/<id>`), which makes a retried POST within 24h a
+// no-op at Resend.
 
 import type { Env } from "../types";
 import { logger } from "./logger";
+import {
+  ABUSE_RESPONSE_LOOKBACK, IS_ATTACHMENT_FORWARD_SQL, parseJsonSafe, isAuthFail, type AuthTriple,
+} from "./abuse-mailbox-shared";
 
 /** sendDetermination reasons that will never succeed on retry. */
 const PERMANENT_SUPPRESSIONS = new Set([
   "no-address", "empty-address", "malformed-address", "own-domain-loop", "opted-out",
 ]);
 
-/** Sweeper looks back this far for undelivered determinations. */
-const SWEEP_LOOKBACK = "-2 days";
+/** responder_suppressed_reason when Resend rejects the recipient (400/422). */
+export const RESEND_REJECTED_REASON = "determination:resend_rejected";
 
 export type DeliveryOutcome =
   | "sent"
   | "already_sent"
-  | "not_ready"           // still pending / follow_up / throttled / suppressed / no forwarder
+  | "not_ready"           // still pending / follow_up / throttled / suppressed / backlog / no forwarder
   | "claimed_elsewhere"   // a concurrent caller won the claim
   | "suppressed"          // permanent responder suppression recorded
   | "send_failed";        // transient failure; claim released for retry
@@ -58,11 +71,6 @@ interface DeterminationRow {
   is_attachment_forward:     number | null;
 }
 
-function parseJsonSafe<T>(s: string | null | undefined): T | null {
-  if (!s) return null;
-  try { return JSON.parse(s) as T; } catch { return null; }
-}
-
 function jsonArrayLength(s: string | null | undefined): number {
   const v = parseJsonSafe<unknown>(s);
   return Array.isArray(v) ? v.length : 0;
@@ -82,8 +90,7 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
              attachment_count, correlated_threat_ids, promoted_threat_ids,
              deep_analysis, determination_sent_at, throttled,
              responder_suppressed_reason,
-             CASE WHEN instr(COALESCE(raw_headers, ''), '"_forwarded_inner":') > 0 THEN 1 ELSE 0 END
-               AS is_attachment_forward
+             ${IS_ATTACHMENT_FORWARD_SQL} AS is_attachment_forward
       FROM abuse_inbox_messages
       WHERE id = ?
     `).bind(messageId).first<DeterminationRow>();
@@ -100,7 +107,8 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
     return "not_ready";
   }
 
-  // Atomic claim — only the caller that flips NULL → now sends.
+  // Atomic claim — only the caller that flips NULL → now sends. Rows older
+  // than the response lookback are backlog and are never emailed.
   try {
     const claim = await env.DB.prepare(`
       UPDATE abuse_inbox_messages
@@ -110,7 +118,8 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
         AND responder_suppressed_reason IS NULL
         AND COALESCE(throttled, 0) = 0
         AND classification NOT IN ('pending', 'follow_up')
-    `).bind(messageId).run();
+        AND received_at >= datetime('now', ?)
+    `).bind(messageId, ABUSE_RESPONSE_LOOKBACK).run();
     const changes = typeof claim.meta?.changes === "number" ? claim.meta.changes : 1;
     if (changes === 0) return "claimed_elsewhere";
   } catch (err) {
@@ -122,11 +131,11 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
   }
 
   const isRules = row.classified_by === "rules";
-  const authResults = parseJsonSafe<{ spf: string | null; dkim: string | null; dmarc: string | null }>(row.auth_results);
+  const authResults = parseJsonSafe<AuthTriple>(row.auth_results);
   const deep = parseJsonSafe<{ external_narrative?: unknown }>(row.deep_analysis);
   const deepExternal = !isRules && typeof deep?.external_narrative === "string" ? deep.external_narrative : null;
 
-  let result: { ok: boolean; reason: string };
+  let result: { ok: boolean; reason: string; permanent?: boolean };
   try {
     const { sendDetermination } = await import("./abuse-mailbox-responder");
     const { loadAbuseBranding } = await import("./abuse-mailbox-branding");
@@ -139,9 +148,6 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
       originalSubject: row.original_subject,
       classification:  row.classification,
       confidence:      Math.round(row.classification_confidence ?? 0),
-      // Rules verdicts never pass their reason codes into the email —
-      // the responder renders a fixed sentence per rule instead.
-      reasoning:       isRules ? "" : (row.classification_reason ?? ""),
       action:          row.ai_action ?? "review",
       classifiedBy:    row.classified_by,
       rulesRule:       rule,
@@ -150,12 +156,13 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
       // pass it only then, and only when something failed.
       authResults: isRules
         ? (row.is_attachment_forward === 1 && authResults &&
-           [authResults.spf, authResults.dkim, authResults.dmarc].some((v) => v === "fail" || v === "softfail" || v === "permerror")
+           [authResults.spf, authResults.dkim, authResults.dmarc].some(isAuthFail)
             ? authResults : null)
         : authResults,
       urlCount:        row.url_count ?? 0,
       attachmentCount: row.attachment_count ?? 0,
-      // Rules: only claim "matches patterns we're tracking" when M1 fired.
+      // Rules: only claim "matches patterns we're tracking" when M1 fired;
+      // the rules verdict UPDATE stored exactly the qualifying threat ids.
       correlatedCount: isRules && rule !== "M1" ? 0 : jsonArrayLength(row.correlated_threat_ids),
       promotedCount:   jsonArrayLength(row.promoted_threat_ids),
       deepAnalysisExternal: deepExternal,
@@ -166,15 +173,19 @@ export async function deliverAbuseDetermination(env: Env, messageId: string): Pr
 
   if (result.ok) return "sent";
 
-  // Release the claim; record permanent suppressions so the sweeper stops.
-  const permanent = PERMANENT_SUPPRESSIONS.has(result.reason);
+  // Release the claim; record permanent suppressions so nothing re-claims.
+  // `result.permanent` = Resend rejected the recipient (HTTP 400/422).
+  const permanent = PERMANENT_SUPPRESSIONS.has(result.reason) || result.permanent === true;
+  const suppressedReason = PERMANENT_SUPPRESSIONS.has(result.reason)
+    ? `determination:${result.reason}`
+    : RESEND_REJECTED_REASON;
   try {
     await env.DB.prepare(`
       UPDATE abuse_inbox_messages
       SET determination_sent_at = NULL,
           responder_suppressed_reason = COALESCE(responder_suppressed_reason, ?)
       WHERE id = ?
-    `).bind(permanent ? `determination:${result.reason}` : null, messageId).run();
+    `).bind(permanent ? suppressedReason : null, messageId).run();
   } catch (err) {
     logger.warn("abuse_determination_release_failed", {
       message_id: messageId, error: err instanceof Error ? err.message : String(err),
@@ -190,35 +201,49 @@ export interface SweepResult {
   candidates: number;
   sent:       number;
   other:      number;
+  /** Set when the sweep itself failed (it never throws). */
+  error?:     string;
 }
 
 /**
  * Hourly sweeper: deliver determinations the per-message Workflow missed
- * (dispatch failed, binding absent, transient Resend failure). Bounded to
- * recent rows classified by the automated paths; 'manual' operator
- * verdicts are not auto-emailed (unchanged behaviour).
+ * (dispatch failed, binding absent, retries exhausted). Bounded to recent
+ * rows classified by the automated paths; 'manual' operator verdicts are
+ * not auto-emailed (unchanged behaviour). Suppressed, throttled and backlog
+ * rows are excluded.
+ *
+ * Never throws: a failure is returned in `error` so the agent run hosting
+ * the sweeper (rules pass → AI pass → sweep) still completes.
  */
 export async function sweepAbuseDeterminations(env: Env, opts?: { limit?: number }): Promise<SweepResult> {
   const limit = Math.max(1, Math.min(200, opts?.limit ?? 50));
-  const rows = await env.DB.prepare(`
-    SELECT id
-    FROM abuse_inbox_messages
-    WHERE determination_sent_at IS NULL
-      AND responder_suppressed_reason IS NULL
-      AND COALESCE(throttled, 0) = 0
-      AND forwarded_by_email IS NOT NULL
-      AND classification NOT IN ('pending', 'follow_up')
-      AND classified_by IN ('rules', 'ai')
-      AND received_at >= datetime('now', ?)
-    ORDER BY received_at ASC
-    LIMIT ?
-  `).bind(SWEEP_LOOKBACK, limit).all<{ id: string }>();
-  const ids = (rows.results ?? []).map((r) => r.id);
-  const out: SweepResult = { candidates: ids.length, sent: 0, other: 0 };
-  for (const id of ids) {
-    const outcome = await deliverAbuseDetermination(env, id);
-    if (outcome === "sent") out.sent += 1;
-    else out.other += 1;
+  const out: SweepResult = { candidates: 0, sent: 0, other: 0 };
+  try {
+    // The first two predicates repeat idx_abuse_inbox_undelivered's partial
+    // WHERE (migration 0273) so the planner can use it.
+    const rows = await env.DB.prepare(`
+      SELECT id
+      FROM abuse_inbox_messages
+      WHERE determination_sent_at IS NULL
+        AND responder_suppressed_reason IS NULL
+        AND COALESCE(throttled, 0) = 0
+        AND forwarded_by_email IS NOT NULL
+        AND classification NOT IN ('pending', 'follow_up')
+        AND classified_by IN ('rules', 'ai')
+        AND received_at >= datetime('now', ?)
+      ORDER BY received_at ASC
+      LIMIT ?
+    `).bind(ABUSE_RESPONSE_LOOKBACK, limit).all<{ id: string }>();
+    const ids = (rows.results ?? []).map((r) => r.id);
+    out.candidates = ids.length;
+    for (const id of ids) {
+      const outcome = await deliverAbuseDetermination(env, id);
+      if (outcome === "sent") out.sent += 1;
+      else out.other += 1;
+    }
+  } catch (err) {
+    out.error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    logger.warn("abuse_determination_sweep_failed", { error: out.error });
   }
   return out;
 }

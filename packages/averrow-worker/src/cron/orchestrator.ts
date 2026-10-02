@@ -306,19 +306,29 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
   // page. Bounded at 50 rows per tick (Haiku ~$0.001/row).
   if (event.cron === '17 * * * *') {
     try {
-      // Work = pending rows (rules pass) OR recent verdicts whose
-      // determination email the per-message Workflow didn't deliver
-      // (sweeper). Same predicates as sweepAbuseDeterminations, minus the
-      // suppression column so this gate works before migration 0273.
+      // Work = non-throttled pending rows (rules pass) OR recent verdicts
+      // whose determination email the per-message Workflow didn't deliver
+      // (sweeper). Same predicates as runAbuseRulesPass /
+      // sweepAbuseDeterminations — throttled and suppressed rows are never
+      // work. Two EXISTS probes, each repeating its migration-0273 partial
+      // index predicate verbatim (idx_abuse_inbox_triage_queue /
+      // idx_abuse_inbox_undelivered) so neither scans the table.
+      const { ABUSE_RESPONSE_LOOKBACK } = await import('../lib/abuse-mailbox-shared');
       const pendingCount = await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM abuse_inbox_messages
-         WHERE classification = 'pending'
-            OR (determination_sent_at IS NULL
-                AND COALESCE(throttled, 0) = 0
-                AND forwarded_by_email IS NOT NULL
-                AND classified_by IN ('rules', 'ai')
-                AND received_at >= datetime('now', '-2 days'))`,
-      ).first<{ n: number }>();
+        `SELECT
+           EXISTS (SELECT 1 FROM abuse_inbox_messages
+                    WHERE classification IN ('pending', 'ambiguous')
+                      AND classification = 'pending'
+                      AND COALESCE(throttled, 0) = 0)
+         + EXISTS (SELECT 1 FROM abuse_inbox_messages
+                    WHERE determination_sent_at IS NULL
+                      AND responder_suppressed_reason IS NULL
+                      AND COALESCE(throttled, 0) = 0
+                      AND forwarded_by_email IS NOT NULL
+                      AND classification NOT IN ('pending', 'follow_up')
+                      AND classified_by IN ('rules', 'ai')
+                      AND received_at >= datetime('now', ?)) AS n`,
+      ).bind(ABUSE_RESPONSE_LOOKBACK).first<{ n: number }>();
       if ((pendingCount?.n ?? 0) > 0) {
         // First-class dispatch: route through executeAgent so the run lands
         // in agent_runs + agent_events and surfaces in Flight Control /

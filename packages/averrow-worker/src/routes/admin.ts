@@ -1037,8 +1037,16 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0;
 
     try {
+      // Same order as the hourly agent: deterministic rules pass first
+      // (verdicts only — emails go out via the claimed determination path),
+      // then the optional AI pass, whose determination sends go through
+      // the same atomic determination_sent_at claim.
+      const { runAbuseRulesPass } = await import("../lib/abuse-mailbox-rules-runner");
       const { runAbuseClassifierBackfill } = await import("../lib/abuse-mailbox-classifier");
-      const result = await runAbuseClassifierBackfill(env, { limit, offset });
+      const rules = await runAbuseRulesPass(env, { limit });
+      const ai = await runAbuseClassifierBackfill(env, { limit, offset });
+      // `...ai` keeps the pre-existing top-level response fields.
+      const result = { ...ai, ai, rules };
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

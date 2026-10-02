@@ -60,7 +60,6 @@ export interface VerdictNotice {
   orgId:          number;
   brandId:        string | null;
   inboundAlias:   string | null;
-  originalSubject: string | null;
   classification: "phishing" | "malware";
   severity:       "HIGH" | "CRITICAL";
   confidence:     number;
@@ -72,8 +71,15 @@ export interface VerdictNotice {
 
 /**
  * In-app notification for HIGH/CRITICAL phishing|malware verdicts.
- * Audience: brand-bound capture → 'tenant'; unbound → 'super_admin'.
- * Dedup per message via group_key.
+ * Audience: brand-bound capture → 'tenant', restricted to active
+ * org_members of the message's org (plus opted-in super_admins, per the
+ * standard tenant rules) — a capture is the reporting org's data, so a
+ * subscriber to the same brand in ANOTHER org must never see it. Unbound
+ * capture → 'super_admin'. Dedup per message via group_key.
+ *
+ * The forwarded subject is attacker-controlled and is deliberately NOT
+ * put in the title (it would surface in push notifications and lock
+ * screens); the operator opens the message for details.
  */
 export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<void> {
   try {
@@ -85,16 +91,16 @@ export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<vo
     const link = audience === "super_admin"
       ? `/admin/abuse-mailbox#msg-${v.messageId}`
       : `/modules/abuse-mailbox#msg-${v.messageId}`;
-    const subjectPreview = (v.originalSubject ?? "(no subject)").slice(0, 80);
     await createNotification(env, {
       type: "abuse_mailbox_verdict",
       severity: v.severity === "CRITICAL" ? "critical" : "high",
-      title: `${v.classification === "phishing" ? "Phishing" : "Malware"} confirmed — ${subjectPreview}`,
+      title: `${v.classification === "phishing" ? "Phishing" : "Malware"} confirmed — abuse mailbox report`,
       message: v.message,
       link,
       audience,
       brandId: v.brandId,
       orgId: String(v.orgId),
+      restrictToOrgMembers: audience === "tenant" ? v.orgId : null,
       groupKey: `abuse_mailbox_verdict:${v.messageId}`,
       reasonText: v.brandId
         ? "A capture targeting one of your monitored brands was classified as a confirmed threat."

@@ -55,9 +55,11 @@ export function shouldRespond(toAddress: string | null | undefined): { send: boo
   if (!toAddress) return { send: false, reason: "no-address" };
   const trimmed = toAddress.trim().toLowerCase();
   if (!trimmed) return { send: false, reason: "empty-address" };
-  const at = trimmed.indexOf("@");
-  if (at < 1 || at === trimmed.length - 1) return { send: false, reason: "malformed-address" };
-  const domain = trimmed.slice(at + 1);
+  // Same strict single-address validator the ingest guard used — the
+  // recipient handed to Resend is always exactly one plain mailbox.
+  const parsed = parseSingleRecipient(trimmed);
+  if (!parsed || parsed !== trimmed) return { send: false, reason: "malformed-address" };
+  const domain = parsed.slice(parsed.indexOf("@") + 1);
   if (SELF_DOMAINS.has(domain)) return { send: false, reason: "own-domain-loop" };
   // Obvious noreply senders — we still send because some legit
   // platforms (Gmail group forwards) use 'noreply' in the From line
@@ -66,37 +68,131 @@ export function shouldRespond(toAddress: string | null | undefined): { send: boo
   return { send: true, reason: "ok" };
 }
 
+// RFC 5322 dot-atom local part (no quoted local parts) @ LDH hostname.
+const MAILBOX_RE = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
 /**
- * Backscatter guard. The ack / determination are addressed to the
- * header-From of the forward, which a sender can forge freely; replying
- * to a forged From would make us a backscatter source. Only respond when
- * the header-From's registrable domain equals the SMTP envelope sender's
- * registrable domain AND the outer DMARC verdict (from our receiving MTA's
- * Authentication-Results), when present, is `pass`.
+ * Strict single-mailbox parser for a From header value (or a bare
+ * address). Returns the lower-cased plain address, or null when the value
+ * is anything other than exactly ONE mailbox:
+ *   - quoted display names are removed first (so `"Doe, John" <j@x.com>` is
+ *     fine), then any remaining `,` / `;` (address lists, or several From
+ *     headers merged by the header parser) rejects;
+ *   - at most one `<…>` pair, and it must be the only `@`-bearing part;
+ *   - the address itself must be a plain dot-atom mailbox (MAILBOX_RE),
+ *     <= 254 chars.
+ * Pure. Used ONCE at ingest; the normalized value is stored as
+ * forwarded_by_email and is the exact Resend `to`.
+ */
+export function parseSingleRecipient(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let v = value.replace(/[\r\n]+/g, " ").trim();
+  if (!v) return null;
+  // Strip quoted display-name strings (with backslash escapes).
+  v = v.replace(/"(?:[^"\\]|\\.)*"/g, " ");
+  if (v.includes('"')) return null;               // unbalanced quote
+  if (/[,;]/.test(v)) return null;                // list / merged headers
+  if ((v.match(/@/g) ?? []).length !== 1) return null;
+  const opens = (v.match(/</g) ?? []).length;
+  const closes = (v.match(/>/g) ?? []).length;
+  let addr: string;
+  if (opens === 0 && closes === 0) {
+    addr = v.trim();
+  } else if (opens === 1 && closes === 1) {
+    const m = /^([^<>]*)<([^<>]*)>\s*$/.exec(v);
+    if (!m) return null;
+    addr = (m[2] ?? "").trim();
+  } else {
+    return null;
+  }
+  addr = addr.toLowerCase();
+  if (addr.length > 254 || !MAILBOX_RE.test(addr)) return null;
+  return addr;
+}
+
+/** Our receiving MTA's authserv-id. Only Authentication-Results headers
+ *  carrying it are trusted — any other authserv-id (including headers that
+ *  arrived inside the message) is attacker-suppliable. */
+export const TRUSTED_AUTHSERV_ID = "mx.cloudflare.net";
+
+interface ParsedAuthHeader {
+  authservId: string;
+  dmarc: string | null;
+  dmarcHeaderFrom: string | null;
+}
+
+/** Parse one Authentication-Results / ARC-Authentication-Results value. */
+export function parseAuthResultsHeader(value: string): ParsedAuthHeader | null {
+  // Comments (RFC 8601 CFWS) can contain ';' — drop them first.
+  let flat = value.replace(/\s+/g, " ");
+  for (let i = 0; i < 3; i++) flat = flat.replace(/\([^()]*\)/g, " ");
+  const parts = flat.split(";").map((p) => p.trim()).filter((p) => p.length > 0);
+  // ARC-Authentication-Results starts with the instance tag "i=N".
+  if (parts[0] && /^i\s*=\s*\d+$/i.test(parts[0])) parts.shift();
+  const authservId = (parts.shift() ?? "").split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (!authservId) return null;
+  let dmarc: string | null = null;
+  let dmarcHeaderFrom: string | null = null;
+  for (const p of parts) {
+    const m = /^dmarc\s*=\s*([a-z]+)/i.exec(p);
+    if (!m) continue;
+    dmarc = (m[1] ?? "").toLowerCase();
+    const hf = /\bheader\.from\s*=\s*([^\s;]+)/i.exec(p);
+    dmarcHeaderFrom = hf?.[1] ? hf[1].toLowerCase().replace(/\.$/, "") : null;
+    break;
+  }
+  return { authservId, dmarc, dmarcHeaderFrom };
+}
+
+/**
+ * Backscatter guard — POSITIVE authentication. The ack / determination go
+ * to the header-From of the forward, which a sender can forge; replying to
+ * a forged From would make us a backscatter source. Reply ONLY when:
  *
- * Pure. `reason` is a fixed code stamped into
- * abuse_inbox_messages.responder_suppressed_reason when `send` is false.
+ *   1. the header-From parses as exactly one mailbox (parseSingleRecipient);
+ *   2. its registrable domain equals the SMTP envelope sender's;
+ *   3. the TOPMOST Authentication-Results header whose authserv-id is
+ *      mx.cloudflare.net (falling back to the topmost such
+ *      ARC-Authentication-Results) exists — every header with any other
+ *      authserv-id is ignored — and
+ *   4. it reports dmarc=pass with header.from equal to the header-From
+ *      domain.
+ *
+ * Headers are passed in message order (topmost first). Pure. `reason` is a
+ * fixed code stamped into abuse_inbox_messages.responder_suppressed_reason
+ * when `send` is false; `recipient` is the single normalized address to
+ * store and to hand to Resend.
  */
 export function decideBackscatterGuard(input: {
   headerFrom:   string | null | undefined;
   envelopeFrom: string | null | undefined;
-  outerDmarc:   string | null | undefined;
-}): { send: boolean; reason: string } {
-  const domainOf = (addr: string | null | undefined): string | null => {
-    if (!addr) return null;
-    const a = addr.trim().toLowerCase();
-    const at = a.lastIndexOf("@");
-    if (at < 1 || at === a.length - 1) return null;
-    const d = a.slice(at + 1).replace(/[>\s].*$/, "").replace(/\.$/, "");
-    return registrableDomain(d) ?? d;
+  authResultsHeaders:    ReadonlyArray<string>;
+  arcAuthResultsHeaders: ReadonlyArray<string>;
+}): { send: boolean; reason: string; recipient: string | null } {
+  const recipient = parseSingleRecipient(input.headerFrom);
+  if (!recipient) return { send: false, reason: "backscatter:invalid_recipient", recipient: null };
+  const fromDomain = recipient.slice(recipient.indexOf("@") + 1);
+
+  const envelope = parseSingleRecipient(input.envelopeFrom);
+  const regOf = (d: string): string => registrableDomain(d) ?? d;
+  if (!envelope || regOf(envelope.slice(envelope.indexOf("@") + 1)) !== regOf(fromDomain)) {
+    return { send: false, reason: "backscatter:domain_mismatch", recipient };
+  }
+
+  const trusted = (headers: ReadonlyArray<string>): ParsedAuthHeader | null => {
+    for (const h of headers) {
+      const p = parseAuthResultsHeader(h);
+      if (p && p.authservId === TRUSTED_AUTHSERV_ID) return p;
+    }
+    return null;
   };
-  const h = domainOf(input.headerFrom);
-  const e = domainOf(input.envelopeFrom);
-  if (!h || !e) return { send: false, reason: "backscatter:missing_sender" };
-  if (h !== e) return { send: false, reason: "backscatter:from_envelope_mismatch" };
-  const dmarc = input.outerDmarc?.trim().toLowerCase() || null;
-  if (dmarc !== null && dmarc !== "pass") return { send: false, reason: "backscatter:outer_dmarc_not_pass" };
-  return { send: true, reason: "ok" };
+  const auth = trusted(input.authResultsHeaders) ?? trusted(input.arcAuthResultsHeaders);
+  if (!auth) return { send: false, reason: "backscatter:no_trusted_auth", recipient };
+  if (auth.dmarc !== "pass") return { send: false, reason: "backscatter:dmarc_not_pass", recipient };
+  if (auth.dmarcHeaderFrom !== fromDomain) {
+    return { send: false, reason: "backscatter:domain_mismatch", recipient };
+  }
+  return { send: true, reason: "ok", recipient };
 }
 
 interface ResendBody {
@@ -121,7 +217,10 @@ async function sendViaResend(
    *  classifier picks the reply up as a follow_up row. Null/undef
    *  → no reply_to in the payload (Resend defaults to From). */
   replyTo?: string | null,
-): Promise<{ ok: boolean; error?: string }> {
+  /** Resend Idempotency-Key: a retried POST with the same key within 24h
+   *  is not sent twice. */
+  idempotencyKey?: string,
+): Promise<{ ok: boolean; error?: string; status?: number }> {
   try {
     const body: Record<string, unknown> = {
       from: fromAddress,
@@ -136,12 +235,14 @@ async function sendViaResend(
     if (extraHeaders && Object.keys(extraHeaders).length > 0) {
       body.headers = extraHeaders;
     }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -153,12 +254,31 @@ async function sendViaResend(
         parsed.name ?? null,
         parsed.message ?? parsed.error ?? body.slice(0, 200),
       ].filter(Boolean).join(" / ");
-      return { ok: false, error: err };
+      return { ok: false, error: err, status: res.status };
     }
-    return { ok: true };
+    return { ok: true, status: res.status };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Resend statuses that mean the request (recipient / payload) itself is
+ *  invalid — retrying cannot succeed. 401/403 (our key) and 429/5xx are
+ *  transient from the row's point of view. */
+export function isPermanentResendStatus(status: number | undefined): boolean {
+  return status === 400 || status === 422;
+}
+
+/**
+ * Defang URLs / domains / IPv4s in attacker-controlled text we echo back
+ * (the forwarded subject): schemes are stripped and the dots of
+ * domain-like tokens become "[.]", so mail clients don't auto-link them.
+ */
+export function defangForEcho(s: string): string {
+  return s
+    .replace(/\b(?:h(?:tt|xx)ps?|ftp):\/\//gi, "")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, (ip) => ip.replace(/\./g, "[.]"))
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,63}\b/gi, (d) => d.replace(/\./g, "[.]"));
 }
 
 // ─── Brand layout (shared by ack + determination) ──────────────
@@ -380,7 +500,7 @@ export function ackExplainer(productName: string): string {
 function ackHtml(ctx: AckContext, b: AbuseBranding): string {
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we received</div>
-       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid #E5A832;background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
+       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid #E5A832;background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(defangForEcho(ctx.originalSubject))}</div>`
     : "";
   const body = `
     <p style="margin:0 0 14px;">Thanks for the report. Your submission is in our system and queued for automated inspection.</p>
@@ -406,7 +526,7 @@ function ackHtml(ctx: AckContext, b: AbuseBranding): string {
 }
 
 function ackText(ctx: AckContext, b: AbuseBranding): string {
-  const echo = ctx.originalSubject ? `\n\nSubject we received:\n  ${ctx.originalSubject}` : "";
+  const echo = ctx.originalSubject ? `\n\nSubject we received:\n  ${defangForEcho(ctx.originalSubject)}` : "";
   return `Thanks — your report is in.
 
 Your submission is queued for automated inspection. ${ackExplainer(b.productName)}${echo}
@@ -469,7 +589,10 @@ export async function sendAck(
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   } : undefined;
 
-  const res = await sendViaResend(env.RESEND_API_KEY, fromAddressFor(branding), cleanedTo, subject, html, text, extraHeaders, ctx.inboundAlias);
+  const res = await sendViaResend(
+    env.RESEND_API_KEY, fromAddressFor(branding), cleanedTo, subject, html, text, extraHeaders,
+    ctx.inboundAlias, `abuse-ack/${ctx.messageId}`,
+  );
   if (!res.ok) {
     logger.warn("abuse_mailbox_ack_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });
     return { ok: false, reason: res.error ?? "send-failed" };
@@ -505,7 +628,9 @@ interface DeterminationContext {
   originalSubject: string | null;
   classification: string;   // phishing | spam | benign | malware | ambiguous
   confidence: number;       // 0-100
-  reasoning: string;
+  // No model/rules reasoning field: "Analyst notes" is always FIXED copy
+  // (RULES_EMAIL_NOTE / AI_EMAIL_NOTE) so attacker-influenced model output
+  // can never reach the reporter (prompt-injection).
   action: string;           // safe | review | escalate | takedown
   // ── PR-AY: richer context surfaced in the determination email ──
   // All optional/nullable so legacy callers continue to work; absent
@@ -544,10 +669,30 @@ export const RULES_EMAIL_NOTE: Record<"M1" | "M2" | "M3" | "M4" | "review", stri
 export const RULES_REVIEW_FIRST_STEP =
   "An analyst will review your report; we'll only contact you if we need more context.";
 
-/** Human-readable "Action taken" for an ai_action value. */
-export function humanizeAction(action: string | null | undefined): string {
+/** Fixed recipient-facing analyst note per AI verdict. The model's own
+ *  reasoning is NEVER emailed — it is shaped by attacker-controlled
+ *  message content (prompt-injection), so only these sentences go out. */
+export const AI_EMAIL_NOTE: Record<string, string> = {
+  phishing:  "Automated analysis found the hallmarks of a phishing attempt in this message.",
+  malware:   "Automated analysis found indicators that this message delivers malicious software.",
+  spam:      "Automated analysis found this to be unsolicited bulk email rather than a targeted threat.",
+  benign:    "Automated analysis found no indicators of a threat in this message.",
+  ambiguous: "Automated analysis could not reach a confident verdict, so an analyst will review your report.",
+};
+
+/** Verdict sources that are automated (no human decided the action). */
+const AUTOMATED_SOURCES: ReadonlySet<string> = new Set(["rules", "ai", "auto_graduated"]);
+
+/**
+ * Human-readable "Action taken" for an ai_action value. An automated
+ * verdict never claims "Takedown initiated" — no takedown is filed without
+ * a human — it reads "Reported to our threat team" instead. Only a manual
+ * (operator) verdict may say a takedown was initiated.
+ */
+export function humanizeAction(action: string | null | undefined, classifiedBy?: string | null): string {
+  const automated = classifiedBy === undefined || classifiedBy === null || AUTOMATED_SOURCES.has(classifiedBy);
   switch (action) {
-    case "takedown": return "Takedown initiated";
+    case "takedown": return automated ? "Reported to our threat team" : "Takedown initiated";
     case "escalate": return "Reported to our threat team";
     case "review":   return "Queued for analyst review";
     case "safe":     return "No action needed";
@@ -559,11 +704,11 @@ function isRulesVerdict(ctx: DeterminationContext): boolean {
   return ctx.classifiedBy === "rules";
 }
 
-/** Analyst-notes text: fixed per-rule sentence for rules verdicts,
- *  sanitized AI reasoning otherwise. */
+/** Analyst-notes text: fixed per-rule sentence for rules verdicts, fixed
+ *  per-classification sentence otherwise. Never model output. */
 function analystNote(ctx: DeterminationContext): string {
   if (isRulesVerdict(ctx)) return RULES_EMAIL_NOTE[ctx.rulesRule ?? "review"];
-  return sanitizeForExternalEmail(ctx.reasoning) ?? "";
+  return AI_EMAIL_NOTE[ctx.classification] ?? AI_EMAIL_NOTE.ambiguous!;
 }
 
 /** Per-verdict next steps; rules review rows lead with the analyst line. */
@@ -786,7 +931,7 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we triaged</div>
-       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${v.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(ctx.originalSubject)}</div>`
+       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${v.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(defangForEcho(ctx.originalSubject))}</div>`
     : "";
 
   const findings = buildFindings(ctx);
@@ -838,7 +983,7 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;border-collapse:collapse;">
       <tr>
         <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Action taken</td>
-        <td style="padding:4px 0;font-size:12px;color:#0F1828;">${escapeHtml(humanizeAction(ctx.action))}</td>
+        <td style="padding:4px 0;font-size:12px;color:#0F1828;">${escapeHtml(humanizeAction(ctx.action, ctx.classifiedBy))}</td>
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Reference</td>
@@ -857,7 +1002,7 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
 
 function determinationText(ctx: DeterminationContext, b: AbuseBranding): string {
   const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
-  const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${ctx.originalSubject}` : "";
+  const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${defangForEcho(ctx.originalSubject)}` : "";
 
   const findings = buildFindings(ctx);
   const findingsBlock = findings.length > 0
@@ -882,7 +1027,7 @@ function determinationText(ctx: DeterminationContext, b: AbuseBranding): string 
 ${v.lead}${echo}${findingsBlock}${investigatorBlock}${nextStepsBlock}
 
 Analyst notes: ${analystNote(ctx)}
-Action taken: ${humanizeAction(ctx.action)}
+Action taken: ${humanizeAction(ctx.action, ctx.classifiedBy)}
 
 Reference: ${ctx.messageId}
 
@@ -902,7 +1047,7 @@ export async function sendDetermination(
   toAddress: string | null | undefined,
   ctx: DeterminationContext,
   branding: AbuseBranding = DEFAULT_ABUSE_BRANDING,
-): Promise<{ ok: boolean; reason: string }> {
+): Promise<{ ok: boolean; reason: string; permanent?: boolean }> {
   const decision = shouldRespond(toAddress);
   if (!decision.send) return { ok: false, reason: decision.reason };
   if (!env.RESEND_API_KEY) return { ok: false, reason: "no-resend-key" };
@@ -938,10 +1083,13 @@ export async function sendDetermination(
     determinationText(ctx, branding),
     extraHeaders,
     ctx.inboundAlias,
+    // A retry after a lost response (claim released, re-claimed) is a
+    // no-op at Resend — see lib/abuse-mailbox-determination.ts.
+    `abuse-determination/${ctx.messageId}`,
   );
   if (!res.ok) {
     logger.warn("abuse_mailbox_determination_send_failed", { error: res.error, to: toAddress, msg_id: ctx.messageId });
-    return { ok: false, reason: res.error ?? "send-failed" };
+    return { ok: false, reason: res.error ?? "send-failed", permanent: isPermanentResendStatus(res.status) };
   }
   return { ok: true, reason: "sent" };
 }

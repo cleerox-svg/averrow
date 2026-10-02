@@ -11,14 +11,17 @@
 //      the forwarded body (best-effort regex against the common
 //      "On <date>, <sender> wrote:" pattern + From:/Subject:
 //      header injection that Outlook/Gmail/Apple Mail use)
-//   4. Inserts an abuse_inbox_messages row with
-//      classification='pending', then:
-//        a. Applies the backscatter guard (header-From vs envelope
-//           sender + outer DMARC) — no email to an untrusted From
-//        b. Sends the instant ack email back to the forwarder
-//        c. Dispatches the per-message AbuseMailboxTriageWorkflow:
-//           rules-based verdict → ~2 min → determination email
-//           (the hourly `17 * * * *` agent is the sweeper)
+//   4. Decides the backscatter guard (strict single-mailbox From +
+//      envelope registrable-domain match + dmarc=pass from OUR MTA's
+//      Authentication-Results) and the flood throttle, then inserts an
+//      abuse_inbox_messages row with classification='pending' carrying
+//      both decisions, then:
+//        a. Sends the instant ack email back to the forwarder (only when
+//           the guard passed and the row isn't throttled / a follow-up)
+//        b. Dispatches the per-message AbuseMailboxTriageWorkflow for
+//           every non-throttled, non-follow-up row: rules-based verdict →
+//           ~2 min → determination email (suppressed rows get the verdict
+//           but no email; the hourly `17 * * * *` agent is the sweeper)
 //
 // We accept the email even if alias lookup fails — bouncing
 // pisses off email providers and we'd rather have an unbound
@@ -94,7 +97,31 @@ export async function handleAbuseMailboxEmail(
   // 3. Parse headers from the OUTER envelope (this is the forward,
   // not the original suspicious email).
   const outerHeaders = extractHeaders(rawText);
-  const forwardedBy = parseEmailAddress(outerHeaders["from"] ?? message.from);
+
+  // ─── Backscatter guard (computed BEFORE the INSERT) ─────────────
+  //
+  // The ack / determination go to the header-From, which a sender can
+  // forge. decideBackscatterGuard parses that header ONCE with a strict
+  // single-mailbox validator and requires POSITIVE authentication: the
+  // topmost Authentication-Results (or ARC-Authentication-Results) header
+  // whose authserv-id is our own MTA (mx.cloudflare.net) must report
+  // dmarc=pass for the header-From domain, and that domain must match the
+  // SMTP envelope sender's registrable domain. Headers carrying any other
+  // authserv-id are attacker-suppliable and ignored. The decision is
+  // written by the INSERT itself (responder_suppressed_reason) — there is
+  // no window in which a suppressed row looks email-eligible.
+  const { decideBackscatterGuard } = await import("../lib/abuse-mailbox-responder");
+  const rawFromHeader = outerHeaders["from"] ?? null;
+  const backscatter = decideBackscatterGuard({
+    headerFrom:   rawFromHeader ?? message.from,
+    envelopeFrom: message.from,
+    authResultsHeaders:    extractHeaderInstances(rawText, "authentication-results"),
+    arcAuthResultsHeaders: extractHeaderInstances(rawText, "arc-authentication-results"),
+  });
+  // The strictly-parsed recipient is the stored forwarded_by_email and the
+  // exact Resend `to`. When the From header is not a single valid mailbox,
+  // keep a best-effort parse for forensics — that row is suppressed.
+  const forwardedBy = backscatter.recipient ?? parseEmailAddress(rawFromHeader ?? message.from);
 
   const body = extractBody(rawText, RAW_BODY_SCAN_MAX);
 
@@ -225,54 +252,62 @@ export async function handleAbuseMailboxEmail(
 
   // 5b. Throttle decision (PR-AT bad-actor protection).
   //
-  // Reads per-sender + per-domain rolling-60-min counts. When fired,
-  // the row is still INSERTed (forensic capture preserved) but the
-  // downstream cost paths skip:
+  // Rolling-60-min caps per sender, per sender REGISTRABLE domain, per
+  // org and globally. When fired, the row is still INSERTed (forensic
+  // capture preserved) but the downstream cost paths skip:
   //   - sendAck + the triage Workflow dispatch below
   //   - the rules pass and the AI classifier (both filter throttled rows)
   //   - the determination email (the claim refuses throttled rows)
-  const throttle = await decideAbuseMailboxThrottle(env, forwardedBy);
+  const { throttleReasonLabel } = await import("../lib/abuse-mailbox-throttle");
+  const throttle = await decideAbuseMailboxThrottle(env, forwardedBy, { orgId: aliasRow.org_id });
   const forwardedByDomain = extractSenderDomain(forwardedBy);
   if (throttle.throttled) {
     console.warn(
       `[abuse-mailbox] throttled — reason=${throttle.reason} ` +
-      `sender=${forwardedBy} domain=${forwardedByDomain} ` +
+      `sender=${forwardedBy} domain=${throttle.sender_reg_domain} ` +
       `sender_count=${throttle.sender_count_last_window} ` +
-      `domain_count=${throttle.domain_count_last_window}`,
+      `domain_count=${throttle.domain_count_last_window} ` +
+      `org_count=${throttle.org_count_last_window} ` +
+      `global_count=${throttle.global_count_last_window}`,
     );
     // PR-AW: notify super_admins when the throttle fires. Group-key dedup
-    // is per-(reason|sender|domain), so a flood from one source produces
-    // one notification per hour — not one per inbound message. Failures
-    // here are non-fatal (the capture row + console.warn above remain
-    // the source of truth).
+    // is per-(reason|dimension), so a flood from one source produces one
+    // notification per hour — not one per inbound message. Failures here
+    // are non-fatal (the capture row + console.warn above remain the
+    // source of truth).
     try {
       const { createNotification } = await import("../lib/notifications");
-      const throttleDim = throttle.reason === "sender_rate_limit"
-        ? `sender:${forwardedBy}`
-        : `domain:${forwardedByDomain ?? "unknown"}`;
-      const reasonLabel = throttle.reason === "sender_rate_limit"
-        ? `Sender exceeded 20 messages in 60 minutes`
-        : `Sending domain exceeded 50 messages in 60 minutes`;
+      const throttleDim =
+        throttle.reason === "sender_rate_limit" ? `sender:${forwardedBy}`
+        : throttle.reason === "domain_rate_limit" ? `domain:${throttle.sender_reg_domain ?? "unknown"}`
+        : throttle.reason === "org_rate_limit" ? `org:${aliasRow.org_id}`
+        : "global";
+      const reasonLabel = throttleReasonLabel(throttle.reason);
       await createNotification(env, {
         type: "abuse_mailbox_flood_detected",
         severity: "medium",
         title: `Abuse mailbox flood detected — ${reasonLabel.toLowerCase()}`,
-        message: `${forwardedBy ?? "(no sender)"} via ${forwardedByDomain ?? "(no domain)"} — ` +
+        message: `${forwardedBy ?? "(no sender)"} via ${throttle.sender_reg_domain ?? "(no domain)"} — ` +
           `${throttle.sender_count_last_window} from this sender / ` +
-          `${throttle.domain_count_last_window} from this domain in the last hour.`,
+          `${throttle.domain_count_last_window} from this domain / ` +
+          `${throttle.org_count_last_window} to this org / ` +
+          `${throttle.global_count_last_window} overall in the last hour (counts capped at each limit).`,
         // Path is basename-relative — `/v2/admin/...` would get
         // double-prefixed by React Router's basename="/v2" and 404.
         link: "/admin/abuse-mailbox",
         audience: "super_admin",
-        groupKey: `abuse_mailbox_flood_detected:${throttleDim}`,
-        reasonText: "A single sender or sending domain is exceeding the per-hour capture limit on the public abuse aliases.",
-        recommendedAction: "Open the Abuse Mailbox — flooding captures are still recorded but skip ack + classifier to preserve quota.",
+        groupKey: `abuse_mailbox_flood_detected:${throttle.reason ?? "unknown"}:${throttleDim}`,
+        reasonText: "Abuse-alias captures are exceeding a per-hour limit (per sender, sending domain, organization, or overall).",
+        recommendedAction: "Open the Abuse Mailbox — flooding captures are still recorded but skip ack, triage and determination emails to preserve quota.",
         metadata: {
           throttle_reason: throttle.reason,
           sender_email: forwardedBy,
           sender_domain: forwardedByDomain,
+          sender_reg_domain: throttle.sender_reg_domain,
           sender_count_last_window: throttle.sender_count_last_window,
           domain_count_last_window: throttle.domain_count_last_window,
+          org_count_last_window: throttle.org_count_last_window,
+          global_count_last_window: throttle.global_count_last_window,
           inbound_alias: aliasRow.alias,
         },
       });
@@ -310,6 +345,10 @@ export async function handleAbuseMailboxEmail(
   const initialClassification = isFollowUp ? "follow_up" : "pending";
   const initialSeverity = "LOW";
 
+  if (!backscatter.send) {
+    console.warn(`[abuse-mailbox] responder suppressed for ${messageId}: ${backscatter.reason}`);
+  }
+
   await env.DB.prepare(
     `INSERT INTO abuse_inbox_messages (
        id, org_id, brand_id, received_at, forwarded_by_email, forwarded_by_domain, inbound_alias,
@@ -319,8 +358,9 @@ export async function handleAbuseMailboxEmail(
        throttled, throttle_reason,
        auth_results, sender_ip, correlated_threat_ids,
        classification, severity, status,
+       responder_suppressed_reason, forwarded_by_reg_domain,
        created_at, updated_at
-     ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', datetime('now'), datetime('now'))`,
+     ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, datetime('now'), datetime('now'))`,
   ).bind(
     messageId,
     aliasRow.org_id,
@@ -345,36 +385,9 @@ export async function handleAbuseMailboxEmail(
     correlatedIdsJson,
     initialClassification,
     initialSeverity,
+    backscatter.send ? null : backscatter.reason,
+    throttle.sender_reg_domain,
   ).run();
-
-  // ─── Backscatter guard ─────────────────────────────────────────
-  //
-  // forwardedBy prefers the header From, which a sender can forge. Only
-  // email (ack or determination) when the header-From's registrable
-  // domain matches the SMTP envelope sender's AND our receiving MTA's
-  // outer DMARC verdict, when present, is pass. Otherwise the row stays
-  // captured (and is still classified by the hourly rules pass), but no
-  // email ever goes out — responder_suppressed_reason records why, and the
-  // determination claim refuses rows carrying it.
-  const { decideBackscatterGuard } = await import("../lib/abuse-mailbox-responder");
-  const outerAuth = parseAuthResults(outerHeaders);
-  const backscatter = decideBackscatterGuard({
-    headerFrom:   forwardedBy,
-    envelopeFrom: parseEmailAddress(message.from),
-    outerDmarc:   outerAuth.dmarc,
-  });
-  if (!backscatter.send) {
-    console.warn(`[abuse-mailbox] responder suppressed for ${messageId}: ${backscatter.reason}`);
-    try {
-      await env.DB.prepare(
-        `UPDATE abuse_inbox_messages SET responder_suppressed_reason = ? WHERE id = ?`,
-      ).bind(backscatter.reason, messageId).run();
-    } catch (err) {
-      // Pre-migration-0273: the determination claim filters on the same
-      // column, so it fails closed (no email) until the column exists.
-      console.warn("[abuse-mailbox] responder suppression stamp failed:", err);
-    }
-  }
 
   // ─── Wave-3 PR-AD: ack-on-receipt ──────────────────────────────
   //
@@ -397,11 +410,11 @@ export async function handleAbuseMailboxEmail(
   // got it!" loop that abuse-mailbox responders are notorious for.
   //
   // Backscatter: skip when the header-From can't be trusted (above).
-  const responderEligible = !throttle.throttled && !isFollowUp && backscatter.send;
-  if (responderEligible) {
+  const triageEligible = !throttle.throttled && !isFollowUp;
+  if (triageEligible && backscatter.send && backscatter.recipient) {
     try {
       const { sendAck } = await import("../lib/abuse-mailbox-responder");
-      const ackResult = await sendAck(env, forwardedBy, {
+      const ackResult = await sendAck(env, backscatter.recipient, {
         messageId,
         originalSubject: original.subject,
         inboundAlias: aliasRow.alias,
@@ -419,23 +432,22 @@ export async function handleAbuseMailboxEmail(
 
   // ─── Per-message triage Workflow ───────────────────────────────
   //
-  // Rules verdict now → ~2 min sleep → exactly-once determination email
-  // (workflows/abuseMailboxTriage.ts). Only for rows the responder may
-  // email at all (not throttled, not a follow-up, passes shouldRespond +
-  // the backscatter guard). Dispatch failure must never break ingest —
-  // the hourly `17 * * * *` sweeper classifies and emails anything the
-  // Workflow didn't. Instance id is per message, so a re-delivery of the
-  // same Workflow create is a no-op rather than a second email.
-  if (responderEligible && env.ABUSE_MAILBOX_TRIAGE) {
+  // Rules verdict now → ~2 min sleep → at-most-once determination email
+  // (workflows/abuseMailboxTriage.ts). Dispatched for EVERY non-throttled,
+  // non-follow-up row — including rows whose emails are suppressed — so
+  // the verdict (and any promotion / tenant notification) lands within
+  // minutes instead of waiting for the hourly sweep; the send step is a
+  // no-op for suppressed rows (the claim refuses them). Dispatch failure
+  // must never break ingest — the hourly `17 * * * *` sweeper classifies
+  // and emails anything the Workflow didn't. Instance id is per message,
+  // so a re-delivery of the same Workflow create is a no-op.
+  if (triageEligible && env.ABUSE_MAILBOX_TRIAGE) {
     try {
-      const { shouldRespond } = await import("../lib/abuse-mailbox-responder");
-      if (shouldRespond(forwardedBy).send) {
-        const { abuseTriageInstanceId } = await import("../lib/abuse-mailbox-triage-pipeline");
-        await env.ABUSE_MAILBOX_TRIAGE.create({
-          id: abuseTriageInstanceId(messageId),
-          params: { messageId },
-        });
-      }
+      const { abuseTriageInstanceId } = await import("../lib/abuse-mailbox-triage-pipeline");
+      await env.ABUSE_MAILBOX_TRIAGE.create({
+        id: abuseTriageInstanceId(messageId),
+        params: { messageId },
+      });
     } catch (err) {
       console.warn("[abuse-mailbox] triage workflow dispatch failed (hourly sweeper will cover):", err);
     }
@@ -561,6 +573,28 @@ function extractHeaders(rawText: string): Record<string, string> {
     headers[name] = headers[name] ? headers[name] + "; " + value : value;
   }
   return headers;
+}
+
+/**
+ * Every instance of one header in the OUTER header block, in message order
+ * (topmost first), unfolded. extractHeaders() merges repeats with "; ",
+ * which loses the boundaries between Authentication-Results headers — the
+ * backscatter guard needs each one separately to find our MTA's own.
+ */
+export function extractHeaderInstances(rawText: string, name: string): string[] {
+  let headerEnd = rawText.indexOf("\r\n\r\n");
+  if (headerEnd < 0) headerEnd = rawText.indexOf("\n\n");
+  const section = headerEnd > 0 ? rawText.substring(0, headerEnd) : rawText.substring(0, 5000);
+  const unfolded = section.replace(/\r?\n(\s+)/g, " ");
+  const wanted = name.toLowerCase();
+  const out: string[] = [];
+  for (const line of unfolded.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon <= 0) continue;
+    if (line.substring(0, colon).trim().toLowerCase() !== wanted) continue;
+    out.push(line.substring(colon + 1).trim());
+  }
+  return out;
 }
 
 function extractBody(rawText: string, maxLen: number): string {
