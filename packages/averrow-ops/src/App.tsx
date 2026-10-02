@@ -204,9 +204,9 @@ export default function App() {
             card auto-expands instead of dropping the pivot to a bare list. */}
         <Route path="threat-actors/:actorId" element={<RedirectToActorFocus />} />
         <Route path="trends" element={lazyRoute(<Trends />)} />
-        {/* Alias — sidebar entry says "Intelligence"; keep /intelligence
-            navigable for bookmarks. Audit H8. */}
-        <Route path="intelligence" element={lazyRoute(<Trends />)} />
+        {/* Alias — redirects /intelligence to /trends so
+            bookmarks keep resolving. Audit H8. */}
+        <Route path="intelligence" element={<Navigate to="/trends" replace />} />
         <Route path="agents" element={lazyRoute(<Agents />)} />
         <Route path="agents/approvals" element={lazyRoute(<AgentApprovals />)} />
         <Route path="agents/:id/review" element={lazyRoute(<AgentReview />)} />
@@ -228,7 +228,7 @@ export default function App() {
         {/* Customers page (renamed from Organizations in v3 D Stripe sprint 1).
             Keep /admin/organizations as an alias so saved bookmarks resolve. */}
         <Route path="admin/customers" element={lazyRoute(<SuperAdminOrgs />)} />
-        <Route path="admin/organizations" element={lazyRoute(<SuperAdminOrgs />)} />
+        <Route path="admin/organizations" element={<Navigate to="/admin/customers" replace />} />
         <Route path="admin/pricing" element={lazyRoute(<PricingConfig />)} />
         <Route path="admin/audit" element={lazyRoute(<AdminAudit />)} />
         <Route path="admin/agents/attribution-backlog" element={lazyRoute(<AttributionBacklog />)} />

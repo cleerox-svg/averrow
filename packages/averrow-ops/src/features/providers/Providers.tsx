@@ -23,7 +23,6 @@ import {
   useProviderClusters,
 } from '@/hooks/useProviders';
 import type { Provider, Cluster } from '@/hooks/useProviders';
-import { useCardStyle } from '@/hooks/useCardStyle';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -166,23 +165,9 @@ function ClusterPanel({
   );
 }
 
-// ─── Provider Card (dispatcher: unified vs classic) ──────────
+// ─── Provider Card (matches Brands architecture) ───
 
-function ProviderCard(props: {
-  provider: Provider;
-  clusters: Cluster[];
-  isSelected: boolean;
-  onSelect: (id: string) => void;
-}) {
-  const style = useCardStyle();
-  return style === 'classic'
-    ? <ProviderCardClassic {...props} />
-    : <ProviderCardUnified {...props} />;
-}
-
-// ─── Provider Card (UNIFIED — matches Brands architecture) ───
-
-function ProviderCardUnified({
+function ProviderCard({
   provider,
   clusters,
   isSelected,
@@ -303,132 +288,6 @@ function ProviderCardUnified({
       {status === 'pivot' && (
         <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
           {'→'} Pivot detected {'—'} went silent recently
-        </div>
-      )}
-    </Card>
-  );
-}
-
-// ─── Provider Card (CLASSIC — preserved for rollback) ────────
-
-function ProviderCardClassic({
-  provider,
-  clusters,
-  isSelected,
-  onSelect,
-}: {
-  provider: Provider;
-  clusters: Cluster[];
-  isSelected: boolean;
-  onSelect: (id: string) => void;
-}) {
-  const status = getProviderStatus(provider);
-  const nexusLinked = hasNexusLink(provider, clusters);
-  const t7 = provider.trend_7d ?? 0;
-  const t30 = provider.trend_30d ?? 0;
-  const sparkData = provider.threat_history ?? [];
-
-  return (
-    <Card
-      variant={isSelected ? 'active' : 'base'}
-      onClick={() => onSelect(provider.id)}
-      padding="16px"
-      className="w-full text-left"
-    >
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base">{countryFlag(provider.country)}</span>
-          <div className="min-w-0">
-            <div className="font-display text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              {provider.name}
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                {provider.asn || 'No ASN'} {provider.country ? `\u00B7 ${provider.country}` : ''}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {nexusLinked && (
-            <Badge context="nexus" size="xs" />
-          )}
-          <StatusBadge status={status} />
-        </div>
-      </div>
-
-      {/* Metrics */}
-      <div className="grid grid-cols-3 gap-3 py-2 border-t border-b border-white/[0.06] my-2">
-        <div>
-          <div className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-            {provider.active_threat_count.toLocaleString()}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Active</div>
-        </div>
-        <div>
-          <div className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-            {t7.toLocaleString()}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>7d Trend</div>
-        </div>
-        <div>
-          <div className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-            {t30.toLocaleString()}
-          </div>
-          <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>30d Trend</div>
-        </div>
-      </div>
-
-      {/* Sparkline bar */}
-      <div className="mt-2">
-        {sparkData.length >= 2 ? (
-          <div style={{ position: 'relative' }}>
-            <TrendSparkline
-              data={sparkData}
-              fill
-              height={32}
-              color={
-                (provider.reputation_score ?? 50) < 30 ? 'var(--sev-critical)' :
-                (provider.reputation_score ?? 50) < 60 ? 'var(--sev-high)' :
-                'var(--text-muted)'
-              }
-            />
-            <span style={{
-              position: 'absolute', bottom: 1, right: 4,
-              fontSize: 8, fontFamily: 'var(--font-mono)',
-              color: 'var(--text-muted)', letterSpacing: '0.10em',
-              opacity: 0.6,
-            }}>14d</span>
-          </div>
-        ) : (
-          <div style={{
-            height: 32,
-            background: 'var(--border-base)',
-            borderRadius: 6,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <span style={{
-              fontSize: 9, color: 'var(--text-muted)',
-              fontFamily: 'var(--font-mono)',
-            }}>
-              insufficient data
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Status alert */}
-      {status === 'accelerating' && (
-        <div className="mt-2 font-mono text-[10px] text-amber-400">
-          {'\u26A0'} ACCELERATING: activity up &gt;50% vs prior week
-        </div>
-      )}
-      {status === 'pivot' && (
-        <div className="mt-2 font-mono text-[10px]" style={{ color: 'var(--blue)' }}>
-          {'\u2192'} PIVOT DETECTED: went silent {provider.trend_30d ?? 0 > 50 ? '7+ days ago' : 'recently'}
         </div>
       )}
     </Card>

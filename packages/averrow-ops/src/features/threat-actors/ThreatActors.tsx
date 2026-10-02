@@ -13,7 +13,6 @@ import { EntityListShell, type EntityListSort } from '@/design-system/components
 import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { useThreatActors, useThreatActorStats } from '@/hooks/useThreatActors';
 import type { ThreatActor } from '@/hooks/useThreatActors';
-import { useCardStyle } from '@/hooks/useCardStyle';
 import { saasTechniquesForTtps } from '@/lib/saas-techniques';
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -75,18 +74,9 @@ function ttpColor(ttp: string): string {
 
 // ─── Actor Card ───────────────────────────────────────────────
 
-// ─── ActorCard dispatcher: unified vs classic ────────────────
+// ─── ActorCard (matches Brands/Providers architecture) ──
 
-function ActorCard({ actor, isSelected, onClick }: { actor: ThreatActor; isSelected?: boolean; onClick: () => void }) {
-  const style = useCardStyle();
-  return style === 'classic'
-    ? <ActorCardClassic actor={actor} onClick={onClick} />
-    : <ActorCardUnified actor={actor} isSelected={isSelected} onClick={onClick} />;
-}
-
-// ─── ActorCard (UNIFIED — matches Brands/Providers architecture) ──
-
-function ActorCardUnified({ actor, isSelected = false, onClick }: { actor: ThreatActor; isSelected?: boolean; onClick: () => void }) {
+function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor; isSelected?: boolean; onClick: () => void }) {
   const aliases = parseJsonArray(actor.aliases);
   const ttps = parseJsonArray(actor.ttps);
   const flag = countryFlag(actor.country);
@@ -326,194 +316,6 @@ function formatLastSeen(iso: string): string {
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo ago`;
   return `${Math.floor(months / 12)}y ago`;
-}
-
-// ─── ActorCard (CLASSIC — preserved for rollback) ────────────
-
-function ActorCardClassic({ actor, onClick }: { actor: ThreatActor; onClick: () => void }) {
-  const aliases       = parseJsonArray(actor.aliases);
-  const ttps          = parseJsonArray(actor.ttps);
-  const sectors       = parseJsonArray(actor.target_sectors);
-  const flag          = countryFlag(actor.country);
-  const accColor      = attributionColor(actor.attribution);
-  const isActive      = actor.status === 'active';
-  const saasTechniques = saasTechniquesForTtps(ttps);
-
-  return (
-    <Card
-      variant={isActive ? 'active' : 'base'}
-      accent={isActive ? accColor : undefined}
-      onClick={onClick}
-      style={{ padding: '16px 20px', cursor: 'pointer' }}
-    >
-      {/* Header row: name + status + country */}
-      <div style={{
-        display: 'flex', alignItems: 'flex-start',
-        justifyContent: 'space-between', gap: 12, marginBottom: 10,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Actor name + status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{
-              fontSize: 15, fontWeight: 900,
-              color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
-              letterSpacing: -0.3,
-            }}>
-              {actor.name}
-            </span>
-            {actorStatusBadge(actor.status)}
-          </div>
-
-          {/* Aliases */}
-          {aliases.length > 0 && (
-            <div style={{
-              fontSize: 10, color: 'var(--text-muted)',
-              fontFamily: 'var(--font-mono)', marginTop: 3,
-            }}>
-              aka {aliases.slice(0, 3).join(', ')}
-              {aliases.length > 3 && ` +${aliases.length - 3}`}
-            </div>
-          )}
-        </div>
-
-        {/* Right: flag + attribution */}
-        <div style={{
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'flex-end', gap: 4, flexShrink: 0,
-        }}>
-          {/* Country flag + code */}
-          {actor.country && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '3px 8px', borderRadius: 6,
-              background: `${accColor}12`,
-              border: `1px solid ${accColor}30`,
-            }}>
-              {flag && <span style={{ fontSize: 14 }}>{flag}</span>}
-              <span style={{
-                fontSize: 9, fontFamily: 'var(--font-mono)',
-                fontWeight: 800, letterSpacing: '0.14em',
-                color: accColor, textTransform: 'uppercase',
-              }}>
-                {actor.country}
-              </span>
-            </div>
-          )}
-
-          {/* Attribution group */}
-          {actor.attribution && (
-            <span style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
-              color: accColor, letterSpacing: '0.10em',
-              textTransform: 'uppercase',
-            }}>
-              {actor.attribution}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Description */}
-      {actor.description && (
-        <p style={{
-          fontSize: 12, color: 'var(--text-secondary)',
-          lineHeight: 1.60, margin: '0 0 10px',
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-        } as React.CSSProperties}>
-          {actor.description}
-        </p>
-      )}
-
-      {/* TTP pills */}
-      {ttps.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
-          {ttps.slice(0, 6).map(ttp => {
-            const color = ttpColor(ttp);
-            return (
-              <span key={ttp} style={{
-                fontSize: 9, fontFamily: 'var(--font-mono)',
-                fontWeight: 700, letterSpacing: '0.08em',
-                padding: '3px 7px', borderRadius: 5,
-                background: `${color}10`,
-                border: `1px solid ${color}30`,
-                color,
-              }}>
-                {ttp}
-              </span>
-            );
-          })}
-          {ttps.length > 6 && (
-            <span style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
-              color: 'var(--text-muted)', padding: '3px 4px',
-            }}>
-              +{ttps.length - 6}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* SaaS attack techniques (PushSecurity taxonomy) derived from actor TTPs */}
-      {saasTechniques.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
-          {saasTechniques.slice(0, 4).map(t => (
-            <SaasTechniqueBadge
-              key={t.id}
-              techniqueId={t.id}
-              techniqueName={t.name}
-              phase={t.phase}
-              phaseLabel={t.phase_label}
-              severity={t.severity}
-              size="xs"
-            />
-          ))}
-          {saasTechniques.length > 4 && (
-            <span style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
-              color: 'var(--text-muted)', padding: '3px 4px',
-            }}>
-              +{saasTechniques.length - 4}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Footer: infra / targets / sectors / last seen */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 16,
-        paddingTop: 8,
-        borderTop: '1px solid var(--border-base)',
-        fontSize: 10, fontFamily: 'var(--font-mono)',
-        color: 'var(--text-muted)',
-      }}>
-        {actor.infra_count != null && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            <span style={{ color: 'var(--blue)' }}>◈</span>
-            <span>{actor.infra_count} infra</span>
-          </div>
-        )}
-        {actor.target_count != null && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            <span style={{ color: 'var(--amber)' }}>◉</span>
-            <span>{actor.target_count} targets</span>
-          </div>
-        )}
-        {sectors.length > 0 && (
-          <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {sectors.slice(0, 3).join(' · ')}
-          </div>
-        )}
-        {actor.last_seen && (
-          <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-            Last seen {new Date(actor.last_seen).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
 }
 
 // ─── Main Page ────────────────────────────────────────────────
