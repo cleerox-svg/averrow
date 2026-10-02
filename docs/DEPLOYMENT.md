@@ -32,6 +32,8 @@ Copy `.env.example` to `.env` and configure:
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
+`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`, set to `"rules_only"` for production, `[env.staging]` and `[env.dev]`. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); `enabled`, or unset, lets calls proceed. See `CLAUDE.md` §6 "AI-call health". `ANTHROPIC_API_KEY` is therefore not exercised while `rules_only` is set. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
+
 ## Local Development
 
 ```bash
@@ -68,6 +70,15 @@ Migrations are also run automatically by the deploy workflow.
 - **Verify before trusting the alert:** `pnpm run db:migrate:status:prod` should list 0272 as applied, and `SELECT sql FROM sqlite_master WHERE name = 'notifications'` should contain `platform_ai_calls_failing`. `test/notification-check-drift.test.ts` only proves the migration *file* covers the registry, not that production applied it.
 - 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
+
+### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
+
+No migration is required. Expect, once, after the first deploy:
+
+- **Up to ~90 lookalike `HIGH` alerts.** The lookalike scanner's one-time catch-up re-composites mail+web rows that a retired Haiku verdict held below HIGH (prod sizing: 84 LOW + 6 MEDIUM; rows with `status` `benign`/`taken_down` are excluded). They alert as they are re-checked, then the predicate goes false. This is not a regression.
+- **Up to ~50 provider insight rows from Cartographer.** `hosting_providers.last_score` still holds the old Haiku scores; the first rule-based score moves past the emit threshold for providers whose heuristic differs, then converges.
+- **Possibly one spurious `platform_ai_calls_failing` notification and email.** Pre-deploy `agent_outputs` rows carry `aiCallsAttempted > 0` with 0 successes inside the 2h window; Flight Control may fire once before they age out. Under `rules_only` no new attempts are recorded, so it does not recur. It is escalated by email at most once per UTC day.
+- **Service worker update.** `packages/averrow-ops/public/sw.js` `VERSION` is `2026-10-02.1`; old shell/runtime caches are evicted on activate. Bump `VERSION` on any further `sw.js` change.
 
 ## Manual Deploy
 

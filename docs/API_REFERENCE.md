@@ -224,7 +224,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/agents/approvals/:id/resolve` | Admin | Resolve approval |
 | GET | `/api/admin/agents/api-usage` | Admin | AI API usage stats |
 | GET | `/api/admin/agents/config` | Admin | Agent configuration |
-| GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor (dismissed rows excluded), sorted by threat count. `?q=` searches name/ASNs/countries; `limit`/`offset` paginate; totals include a `dismissed` count. KV cached 60s. Powers the Admin "Attribution Backlog" queue. |
+| GET | `/api/admin/agents/attribution-backlog` | Admin | Infrastructure clusters with no attributed actor (dismissed rows excluded), sorted by threat count. `?q=` searches name/ASNs/countries; `limit`/`offset` paginate; totals include a `dismissed` count. KV cached 60s (key `attribution-backlog:v3`). Each item carries `actor_hint` (boolean): true when the cluster's free text mentions a known `threat_actors` name/alias; hinted clusters are stably sorted to the top of the returned page (threat_count order kept within each group). Ordering hint only — nothing is attributed from it. Powers the Admin "Attribution Backlog" queue. |
 | POST | `/api/admin/clusters/:id/attribution` | Admin | Manually attribute a cluster: `{ actor_id }` sets `infrastructure_clusters.actor_id` and fans `threat_attributions` rows (source=`manual`, confidence=`confirmed`) out to every threat in the cluster. Audit-logged. |
 | POST | `/api/admin/clusters/:id/attribution/dismiss` | Admin | Mark an unattributed cluster as humanly unattributable (`attribution_dismissed_at`) — it leaves the backlog queue; the cluster row is otherwise untouched. Audit-logged. |
 | GET | `/api/admin/agents/approvals/pending` | Super Admin | List pending agent deployment approvals (AGENT_STANDARD §12.1, Phase 5.4a) |
@@ -1021,7 +1021,7 @@ free text. They remain on `lookalike_domains` for staff
 | POST | `/api/admin/push/generate-vapid-keys` | Super Admin | Generate a VAPID key pair for the Web Push backend (bootstrap) |
 | GET | `/api/admin/push/config` | Super Admin | Read Web Push config |
 | PUT | `/api/admin/push/config` | Super Admin | Update Web Push config |
-| POST | `/api/admin/push/test` | Super Admin | Send a test push to the caller |
+| POST | `/api/admin/push/test` | Super Admin | Send a test push to the caller; `data` is the dispatch result `{ sent, expired, failed, configured, subscriptions }` (`configured: false` = push disabled / VAPID incomplete; `subscriptions` = caller's device count) |
 
 ARCHITECT is now a standard agent triggered via `POST /api/agents/architect/trigger` (Admin auth, see [Agents section](#agents)). The full audit pipeline (collect → analyze → synthesize) runs inline in one execute() call. The markdown report, computed scorecard, and per-section analyses are stored in the latest `agent_outputs.details` row for `agent_id='architect'`; read them via `GET /api/agents/architect/outputs?limit=5`.
 
