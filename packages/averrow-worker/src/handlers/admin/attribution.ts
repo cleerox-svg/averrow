@@ -7,6 +7,7 @@ import { audit } from "../../lib/audit";
 import type { Env, UserRole, UserStatus } from "../../types";
 import { runSyncAgent } from "../../lib/agentRunner";
 import { adminClassifyAgent, type AdminClassifyOutput } from "../../agents/admin-classify";
+import { buildActorNeedles, clusterHasActorHint } from "../../agents/attributor";
 import { callAnthropicJSON } from "../../lib/anthropic";
 import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
@@ -61,10 +62,10 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
     const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10));
     const q = (url.searchParams.get("q") ?? "").trim().slice(0, 80);
 
-    // v2: pagination + q search + dismissed rows excluded. TTL dropped
+    // v3: + actor_hint ranking. v2: pagination + q search + dismissed rows excluded. TTL dropped
     // 300s → 60s so attribute/dismiss mutations surface quickly (the UI
     // also drops mutated rows optimistically).
-    const cacheKey = `attribution-backlog:v2:${limit}:${offset}:${q}`;
+    const cacheKey = `attribution-backlog:v3:${limit}:${offset}:${q}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -122,6 +123,22 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
       }>(),
     ]);
 
+    // Ranking hint (AI Strategy Phase 1): flag clusters whose free text
+    // mentions a known actor name/alias and float them to the top of the
+    // page for human review. The text is attacker-controlled, so this is
+    // ONLY an ordering hint — nothing here (or anywhere) attributes from
+    // it. See clusterHasActorHint in agents/attributor.ts. Needles are
+    // cached 1h; the catalog changes slowly.
+    const actorNeedles = await cachedValue<string[]>(
+      env, "attribution.actor_needles", 3600,
+      async () => {
+        const r = await env.DB.prepare(
+          "SELECT name, aliases FROM threat_actors WHERE status = 'active'",
+        ).all<{ name: string; aliases: string | null }>();
+        return buildActorNeedles(r.results ?? []);
+      },
+    );
+
     // Trim the noisier text fields to avoid bloating the payload;
     // operator drills into the cluster detail page for the full view.
     const items = (rowsRes.results ?? []).map(r => ({
@@ -137,7 +154,11 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
       attribution_attempted_at: r.attribution_attempted_at,
       nexus_brief_preview:      r.nexus_brief?.slice(0, 200) ?? null,
       agent_notes_preview:      r.agent_notes?.slice(0, 200) ?? null,
+      actor_hint:               clusterHasActorHint(r, actorNeedles),
     }));
+    // Stable sort: hinted clusters first, threat_count order preserved
+    // within each group (within the requested page).
+    items.sort((a, b) => Number(b.actor_hint) - Number(a.actor_hint));
 
     const body = {
       success: true,
