@@ -33,6 +33,11 @@ export function Console() {
   const inFlight     = drafts.data?.totals.active ?? 0;
   const handledCount = resolved.data?.total ?? 0;
   const needsTotal   = signalCount + draftCount;
+  const needsError   = newSignals.isError || drafts.isError;
+  const retryNeeds   = () => {
+    if (newSignals.isError) void newSignals.refetch();
+    if (drafts.isError) void drafts.refetch();
+  };
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -56,6 +61,8 @@ export function Console() {
 
         {(newSignals.isLoading || drafts.isLoading) && <Loading />}
 
+        {needsError && <ErrorCard title="Couldn't load items needing you" onRetry={retryNeeds} />}
+
         {!drafts.isLoading && draftRows.length > 0 && (
           <div className="space-y-2">
             <SubLabel>Takedown drafts <Muted>· {draftCount}</Muted></SubLabel>
@@ -76,7 +83,7 @@ export function Console() {
           </div>
         )}
 
-        {!newSignals.isLoading && !drafts.isLoading && needsTotal === 0 && (
+        {!newSignals.isLoading && !drafts.isLoading && !needsError && needsTotal === 0 && (
           <EmptyCard icon={CheckCircle2} title="You're all caught up" sub="No drafts to approve and no new signals. The automation has the rest." />
         )}
       </section>
@@ -85,7 +92,8 @@ export function Console() {
       <section className="space-y-3">
         <StreamHeader icon={Bot} title="Recently handled" subtitle="Resolved by auto-triage or an analyst" count={handledCount} />
         {resolved.isLoading && <Loading />}
-        {!resolved.isLoading && (resolved.data?.alerts.length ?? 0) === 0 && (
+        {resolved.isError && <ErrorCard title="Couldn't load handled signals" onRetry={() => void resolved.refetch()} />}
+        {!resolved.isLoading && !resolved.isError && (resolved.data?.alerts.length ?? 0) === 0 && (
           <EmptyCard icon={Bot} title="Nothing handled yet" sub="Resolved signals will show here with how they were dispositioned." />
         )}
         {!resolved.isLoading && (resolved.data?.alerts.length ?? 0) > 0 && (
@@ -227,6 +235,29 @@ function EmptyCard({ icon: Icon, title, sub }: { icon: LucideIcon; title: string
       <Icon size={26} className="mx-auto text-white/30 mb-2" />
       <p className="text-sm text-white/70">{title}</p>
       <p className="text-[11px] text-white/40 mt-1">{sub}</p>
+    </div>
+  );
+}
+
+function ErrorCard({ title, onRetry }: { title: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-xl p-5 flex items-center justify-between gap-4"
+      style={{ border: '1px solid var(--sev-critical-border)', background: 'var(--sev-critical-bg)' }}
+    >
+      <div>
+        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</p>
+        <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>This is not the same as nothing to do. Try again.</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-mono"
+        style={{ border: '1px solid var(--sev-critical-border)', color: 'var(--text-primary)' }}
+      >
+        Retry
+      </button>
     </div>
   );
 }

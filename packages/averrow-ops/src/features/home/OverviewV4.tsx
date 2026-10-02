@@ -3,18 +3,17 @@
 //
 // IMPORTANT: this reuses EVERY rich section from HomeUnified — only the header
 // is swapped for the bold cinematic hero (greeting + glowing count-up triage
-// KPIs). Nothing from the classic dashboard is dropped (milestone, status,
+// KPIs). Nothing from the classic dashboard is dropped (status,
 // stat grid, threat pulse, briefing, intel, activity, movers, module hub,
 // provider movers all stay). Sections are the same shared components, so the
 // classic Home is unaffected.
 
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import CountUp from 'react-countup';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
-import { MilestoneBanner } from '@/features/home/sections/MilestoneBanner';
 import { StatusRow } from '@/features/home/sections/StatusRow';
 import { StatGrid } from '@/features/home/sections/StatGrid';
 import { ThreatPulse } from '@/features/home/sections/ThreatPulse';
@@ -35,13 +34,15 @@ const SHELL_STYLE: React.CSSProperties = {
   paddingBottom: 24,
 };
 
-function KpiTile({ tone, label, value, sub, to }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; to?: string }) {
+function KpiTile({ tone, label, value, sub, to, error }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; to?: string; error?: boolean }) {
   const inner = (
     <>
       <div className="kpi-glow" aria-hidden />
       <div className="kpi-lbl">{label}</div>
       <div className="kpi-num">{value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}</div>
-      {sub && <div className="kpi-sub">{sub}</div>}
+      {error && value == null
+        ? <div className="kpi-sub" role="status" style={{ color: 'var(--text-tertiary)' }}>Couldn't load</div>
+        : sub && <div className="kpi-sub">{sub}</div>}
       {to && <span className="kpi-go" aria-hidden>View →</span>}
     </>
   );
@@ -57,16 +58,16 @@ function V4Hero() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const [openSignals, setOpenSignals] = useState<number | null>(null);
-  const { data: incidents } = useIncidents({ onlyOpen: true });
+  const { data: openSignals = null, isError: signalsError } = useQuery({
+    queryKey: ['home-v4-open-alerts'],
+    queryFn: async () => {
+      const d = await api.get<unknown>('/api/alerts?status=open&limit=1');
+      return d.total ?? 0;
+    },
+  });
+  const { data: incidents, isError: incidentsError } = useIncidents({ onlyOpen: true });
   const openIncidents = incidents?.length ?? null;
   const criticalIncidents = incidents ? incidents.filter(i => i.severity === 'critical').length : null;
-
-  useEffect(() => {
-    api.get<unknown>('/api/alerts?status=open&limit=1')
-      .then(d => setOpenSignals(d.total ?? 0))
-      .catch(() => {});
-  }, []);
 
   return (
     <div className="console-v4" style={{ paddingBottom: 6 }}>
@@ -78,9 +79,9 @@ function V4Hero() {
         <span className="console-live"><span className="dot" />LIVE</span>
       </div>
       <div className="kpi-grid">
-        <KpiTile tone="amber" label="Open alerts"         value={openSignals}       sub="awaiting triage" to="/alerts" />
-        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    to="/admin/incidents" />
-        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   to="/admin/incidents" />
+        <KpiTile tone="amber" label="Open alerts"         value={openSignals}       sub="awaiting triage" to="/alerts" error={signalsError} />
+        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    to="/admin/incidents" error={incidentsError} />
+        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   to="/admin/incidents" error={incidentsError} />
       </div>
     </div>
   );
@@ -90,7 +91,6 @@ export function OverviewV4() {
   return (
     <div style={SHELL_STYLE}>
       <V4Hero />
-      <MilestoneBanner />
       <StatusRow />
       <StatGrid />
       <ThreatPulse />
