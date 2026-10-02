@@ -57,6 +57,12 @@ vi.mock('@/components/ui/DeepBackground', () => ({ DeepBackground: () => null })
 vi.mock('@/components/ui/PageTransition', () => ({
   PageTransition: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
+vi.mock('@/components/NotificationBell', () => ({ NotificationBell: () => null }));
+vi.mock('@/components/UserAvatar', () => ({ UserAvatar: () => null }));
+vi.mock('@/hooks/useOpenAlertCount', () => ({
+  useOpenAlertCount: () => ({ isSuccess: false, data: undefined }),
+}));
+vi.mock('./ThemeCycleButton', () => ({ ThemeCycleButton: () => null }));
 vi.mock('@/components/PlatformAlertBanner', () => ({ PlatformAlertBanner: () => null }));
 vi.mock('@/design-system/hooks', () => ({
   useBreakpoint: () => ({ isMobile: false, isMobileVertical: false, isMobileHorizontal: false }),

@@ -19,7 +19,7 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const initials = parseInitials(user?.name, user?.email);
+  const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
 
   const roleName = user?.role === 'super_admin' ? 'Super Admin'
     : user?.role === 'admin' ? 'Admin'
@@ -110,7 +110,7 @@ export function UserAvatar() {
   const { user } = useAuth();
   const isMobile = useIsMobile();
 
-  const initials = parseInitials(user?.name, user?.email);
+  const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
 
   const handleClose = useCallback(() => setOpen(false), []);
 
