@@ -724,19 +724,7 @@
   transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── UI STANDARD v1.0 — live + chip ping ─────── */
-@keyframes live-ping {
-  75%, 100% {
-    transform: scale(2.2);
-    opacity: 0;
-  }
-}
-@keyframes chip-ping {
-  75%, 100% {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
+/* live-ping / chip-ping keyframes live in @averrow/shared theme tokens.css */
 
 /* ── data-row severity hover variants ────────── */
 .data-row[data-severity="critical"]:hover {

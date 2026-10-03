@@ -711,6 +711,28 @@
 [data-theme="light"] .hover\:bg-white\/\[0\.025\]:hover  { background-color: rgba(15,20,35,0.025); }
 [data-theme="light"] .hover\:bg-white\/\[0\.02\]:hover   { background-color: rgba(15,20,35,0.02); }
 
+/* ── Shared keyframes ──
+   Used by inline-styled shared UI (Badge pulse dot, Sparkline fade-in).
+   Moved here from the ops index.css so the tenant app gets them too.
+   The reduced-motion block below matches `live-ping` / `chip-ping` via
+   [style*="..."], so keep the names in sync. */
+@keyframes live-ping {
+  75%, 100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+@keyframes chip-ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+@keyframes shared-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* ── Reduced motion (global) ──
    Transitions collapse to near-zero (not `none`, so transitionend still
    fires). Generic animations collapse to 0.01ms / 1 iteration so

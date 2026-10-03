@@ -7,12 +7,38 @@
 // apps with no per-app Tailwind config changes. All primitives are fluid /
 // responsive by construction.
 //
-// Growth path (added wave by wave): Dialog, Sheet, Popover, Tooltip, Tabs,
-// Select, Command (⌘K), DataTable (TanStack), Toast.
+// Growth path (added wave by wave): Dialog, Sheet, Popover, Tooltip, Select,
+// Command (⌘K), Toast.
+//
+// Kit (Phase 1 PR5): Badge, StatTile, PageState, Sparkline, Avatar, Table,
+// Tabs, FilterBar, PageHeader. Named exports only; no `@/` or router imports.
 
 export { cn } from './cn';
 export { Button, buttonVariants, type ButtonProps } from './Button';
 export {
   Card, CardHeader, CardTitle, CardContent, CardFooter,
 } from './Card';
-export { Badge, badgeVariants, type BadgeProps } from './Badge';
+export {
+  Badge,
+  type BadgeProps, type BadgeSize, type BadgeStatus, type Severity,
+  type ContextTag, type VerdictTag, type Classification, type LegacyVariant,
+} from './Badge';
+export { StatTile, type StatTileProps, type StatTone } from './StatTile';
+export {
+  PageState, pageStateKind,
+  type PageStateProps, type PageStateKind, type PageStateLayout,
+  type PageStateAction, type PageStateActionSpec,
+} from './PageState';
+export { Sparkline, type SparklineProps } from './Sparkline';
+export { Avatar, type AvatarProps, type AvatarSeverity, type AvatarTone } from './Avatar';
+export {
+  Table, Th, Td, DataTable,
+  type TableProps, type Column, type DataTableProps, type SortState, type SortDir,
+  type RowSeverity, type TableDensity,
+} from './Table';
+export { Tabs, type Tab, type TabsProps } from './Tabs';
+export { FilterBar, type FilterBarProps, type FilterOption } from './FilterBar';
+export {
+  PageHeader, WorkspaceEmbedContext, WorkspaceEmbedProvider, useWorkspaceEmbed,
+  type PageHeaderProps,
+} from './PageHeader';
