@@ -37,7 +37,7 @@ const DIGEST_HEX_CHARS = 16;
  */
 export async function scopeCacheSegment(scope: OrgScope | null | undefined): Promise<string> {
   if (!scope) return GLOBAL_SCOPE_SEGMENT;
-  const ids = Array.from(new Set(scope.brand_ids.map(String))).sort();
+  const ids = Array.from(new Set(scope.brand_ids)).sort();
   if (ids.length === 0) return `org:${scope.org_id}:none`;
   const digest = await hashToken(ids.join(","));
   return `org:${scope.org_id}:${digest.slice(0, DIGEST_HEX_CHARS)}`;

@@ -193,6 +193,8 @@ All high-traffic page-load endpoints check KV before querying D1. Cache keys enc
 | `operations_stats` | 300s | Operations stats |
 | `brand_list:{tab}:{sort}:{limit}:{scopeSegment}` | 300s | Brands list (default view, reduced-cardinality key) |
 | `brand_stats` | 1800s | Brand stats (unscoped catalog stats) |
+| `threats_list:{filters…}:{scopeSegment}` | 300s | Threats list |
+| `cv:threat-agg:{scopeSegment}:{filters…}` | 300s | Threat aggregate (`cachedValue`) |
 | `providers_v2:{country}:{status}:{sort}:{limit}` | 300s | Providers v2 list (default view, reduced-cardinality key) |
 | `providers_intelligence` | 300s | Provider intelligence |
 | `threat_actors:{limit}:{offset}:{filters...}` | 300s | Threat actors list (read replicas, parallel queries) |
