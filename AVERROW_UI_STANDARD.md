@@ -385,7 +385,10 @@ export function SeverityChip({ severity, size = 'sm', pulse = false }: SeverityC
 
 ---
 
-### 4. GlowNumber — Animated metric with text shadow
+### 4. GlowNumber — Animated metric with text shadow (retired in PR6b)
+
+> `GlowNumber` and the ops `StatCard` were deleted; stat numbers are rendered by the
+> shared `StatTile` (`@averrow/shared/ui`). The spec below is kept for history.
 
 Used for: all stat tile numbers, threat counts, key metrics.
 
@@ -714,8 +717,17 @@ import {
 and Avatar straight from the kit, and exports an ops `PageHeader` adapter
 (`design-system/components/PageHeader.tsx`) that wraps the kit header and maps
 `back.to` to a router `navigate()` (the kit has no router import). Import all of
-these from the barrel; the remaining ops primitives (Card, StatCard, EmptyState,
-Table, ...) still live in `components/ui/` until PR6b/6c.
+these from the barrel. PR6b added `PageState`, `pageStateKind` and `StatTile`
+(the ops `EmptyState`, `StatCard`, `StatTile`, `GlowNumber` and `PageLoader` are
+gone) plus the ops-local `BreakdownCard` (titled headline-metric + breakdown rows,
+formerly `DetailStatCard`). The remaining ops primitives (Card, Table, ...) still
+live in `components/ui/` until PR6c.
+
+**List pages (PR6b):** never branch a list on `rows.length === 0` alone. Use
+`pageStateKind({ isLoading, isError, isEmpty })` (error beats loading beats empty)
+and pass `onRetry={refetch}`; if a refetch fails while data is on screen, keep the
+data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
+`value={null}` while loading (never `'—'`, `'...'` or `0`) and `error` on failure.
 
 ---
 
