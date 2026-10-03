@@ -187,10 +187,49 @@ describe.skipIf(!hasSqlite())("abuse-mailbox triage workflow pipeline", () => {
       malicious_url: "https://github.com/attacker/x/releases/download/a.exe",
     });
     insertMessage(raw, "mg", {
+      // Neutral copy so this isolates M1: the default fixture's lure wording
+      // would (correctly) score as H1 "likely phishing" on its own.
+      original_subject: "Project link",
+      original_body_snippet: "Here is the repository we discussed.",
       extracted_urls: JSON.stringify([{ url: "https://github.com/someone/project", domain: "github.com", count: 1 }]),
     });
     await runAbuseRulesPass(env);
     expect(readRow(raw, "mg")).toMatchObject({ classification: "ambiguous", classified_by: "rules", promoted_threat_ids: null });
+  });
+
+  it("H1: lure + lookalike sender + free-hosting link with no intel → likely phishing, nothing promoted", async () => {
+    raw.prepare(`INSERT INTO brands (id, name, canonical_domain) VALUES ('brand_acme', 'Acme', 'acme.com')`).run();
+    insertMessage(raw, "h1", {
+      brand_id: "brand_acme",
+      original_from: "security@acme-account-help.example",
+      original_subject: "LAST ALERT: your account has been suspended",
+      original_body_snippet: "Your account has been suspended. Verify your account within 24 hours or your files will be deleted.",
+      extracted_urls: JSON.stringify([{ url: "https://acme-restore.pages.dev/login", domain: "acme-restore.pages.dev", count: 1 }]),
+    });
+    await runAbuseRulesPass(env);
+    const row = readRow(raw, "h1");
+    expect(row).toMatchObject({
+      classification: "phishing", classified_by: "rules", severity: "HIGH", ai_action: "escalate",
+      promoted_threat_ids: null,
+    });
+    expect(String(row.classification_reason)).toMatch(/^h1_likely_phishing:\d+,/);
+    expect(Number(row.classification_confidence)).toBeLessThan(85);   // below every evidence rule
+    expect(String(row.classification_reason)).toContain("sender_lookalike_domain");
+  });
+
+  it("H1 never judges the reporter's own address as the sender", async () => {
+    raw.prepare(`INSERT INTO brands (id, name, canonical_domain) VALUES ('brand_acme', 'Acme', 'acme.com')`).run();
+    insertMessage(raw, "rep", {
+      brand_id: "brand_acme",
+      original_from: "reporter@customer.test",           // intake fallback = the reporter
+      original_subject: "Your account has been suspended",
+      original_body_snippet: "Verify your account immediately.",
+      extracted_urls: "[]",
+    });
+    await runAbuseRulesPass(env);
+    const reason = String(readRow(raw, "rep").classification_reason);
+    expect(reason).not.toContain("sender_not_brand");
+    expect(reason).not.toContain("sender_lookalike_domain");
   });
 
   it("is idempotent with the cron sweeper: replay + sweep never send twice", async () => {

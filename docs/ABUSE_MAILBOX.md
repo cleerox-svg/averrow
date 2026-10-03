@@ -38,7 +38,8 @@ Inbound email (Cloudflare Email Routing)
       1. rules verdict                       src/lib/abuse-mailbox-rules(-runner).ts
            M1 intel correlation / M2 named-threat IOC|regex /
            M3 device-code ≥0.85 → phishing HIGH;  M4 risky attachment →
-           malware CRITICAL;  else ambiguous / review (never benign/spam)
+           malware CRITICAL;  else H1 heuristic score → "likely phishing"
+           HIGH;  else ambiguous / review (never benign/spam)
          + AI second opinion only when AI_MODE allows and rules said review
       2. sleep ~2 minutes
       3. deliverAbuseDetermination — atomic determination_sent_at claim;
@@ -138,6 +139,20 @@ never emailed. The ack is sent only inline by that same INSERT path.
   M3 (≥0.85) owns that case; strong-signal entries outrank keyword scores.
 - **M4** — executable / script / disk-image extensions (`.com` excluded —
   "amazon.com"-style filenames).
+- **H1** — heuristic "likely phishing" (`lib/abuse-mailbox-heuristics.ts`),
+  only when M1–M4 did not fire. Scored signals in five families: *identity*
+  (sender isn't the claimed brand / lookalike sender domain), *lure*
+  (account-locked, data-deletion, verify-credentials, payment, sign-in alert,
+  delivery wording + urgency), *link* (raw IP, punycode, `user@host` trick,
+  free-hosting tenant or shared gateway, shortener, abused TLD, lookalike or
+  brand-in-foreign host, link ≠ sender), *attachment* (`.html`/`.svg`/macro
+  Office/`.one`…), *auth* (DMARC/SPF/DKIM fail, forward-as-attachment only).
+  Fires at score ≥ 5 across ≥ 2 families, one of them *lure* or
+  *attachment*. → phishing / HIGH / escalate, confidence 60–80 (below every
+  M rule). Never promotes. The email says **"Likely phishing"** with its own
+  fixed note, never "Phishing confirmed" (product decision 2026-10-03). The
+  reporter's own address is never scored as the sender. Below threshold,
+  review rows carry `h1_score:N` + the signal codes for operators.
 
 Promotion to `threats`: EXACT matched URLs only (M1 exact-URL, M2 IOC-URL),
 cap 20, never the sender IP. Domain-level matches, M3 and M4 never promote.

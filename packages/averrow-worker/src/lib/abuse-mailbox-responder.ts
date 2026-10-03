@@ -669,16 +669,17 @@ interface DeterminationContext {
    *  note per rule, never the stored reason codes. */
   classifiedBy?: string | null;
   /** Primary rule for a rules verdict (M1–M4) or 'review'. */
-  rulesRule?: "M1" | "M2" | "M3" | "M4" | "review" | null;
+  rulesRule?: "M1" | "M2" | "M3" | "M4" | "H1" | "review" | null;
 }
 
 /** Fixed recipient-facing analyst note per rule. Never includes message
  *  content, matched strings, or reason codes. */
-export const RULES_EMAIL_NOTE: Record<"M1" | "M2" | "M3" | "M4" | "review", string> = {
+export const RULES_EMAIL_NOTE: Record<"M1" | "M2" | "M3" | "M4" | "H1" | "review", string> = {
   M1: "Links in this message match infrastructure already confirmed malicious in our threat intelligence.",
   M2: "This message matches the signature of a known, named phishing campaign.",
   M3: "This message contains a device-code sign-in lure, a known account-takeover technique.",
   M4: "This message carries an executable or disk-image attachment type commonly used to deliver malware.",
+  H1: "This message shows several common phishing warning signs together, such as a sender that doesn't match the brand it claims to be, pressure to act on your account or payment, or links to unrelated sites.",
   review: "Automated checks found no match against known malicious activity, so an analyst will review your report.",
 };
 
@@ -813,6 +814,22 @@ const VERDICT_COPY: Record<string, VerdictDef> = {
   },
 };
 
+/** Rules H1: the "likely" tier — same advice as phishing, honest label. */
+const LIKELY_PHISHING_COPY: VerdictDef = {
+  label: "Likely phishing",
+  lead:
+    "This message has several hallmarks of a phishing attempt, though it doesn't match a campaign we've already " +
+    "confirmed. Treat it as phishing: don't click the links, don't reply, and don't act on what it asks for. Our " +
+    "threat team will look at it.",
+  nextSteps: VERDICT_COPY.phishing!.nextSteps,
+  accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
+};
+
+function verdictCopyFor(ctx: DeterminationContext): VerdictDef {
+  if (isRulesVerdict(ctx) && ctx.rulesRule === "H1") return LIKELY_PHISHING_COPY;
+  return VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
+}
+
 // ─── PR-BC external-narrative sanitizer ─────────────────────────
 //
 // Scrubber for model-written narrative text. NOTE: the determination
@@ -944,7 +961,7 @@ export function buildFindings(ctx: DeterminationContext): string[] {
 }
 
 function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string {
-  const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
+  const v = verdictCopyFor(ctx);
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we triaged</div>
        <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${v.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(defangForEcho(ctx.originalSubject))}</div>`
@@ -1003,7 +1020,7 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
 }
 
 function determinationText(ctx: DeterminationContext, b: AbuseBranding): string {
-  const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
+  const v = verdictCopyFor(ctx);
   const echo = ctx.originalSubject ? `\n\nSubject we triaged:\n  ${defangForEcho(ctx.originalSubject)}` : "";
 
   const findings = buildFindings(ctx);
@@ -1054,7 +1071,7 @@ export async function sendDetermination(
     return { ok: false, reason: "opted-out" };
   }
 
-  const v = VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
+  const v = verdictCopyFor(ctx);
   // PR-BC: same subject-content rationale as sendAck — the per-
   // verdict label (e.g. "Phishing confirmed") is brand-safe; the
   // forwarded original subject moves into the body's "Subject we
