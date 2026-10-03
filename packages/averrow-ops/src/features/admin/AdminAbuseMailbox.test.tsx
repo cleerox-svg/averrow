@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
-import { AdminAbuseMailbox } from './AdminAbuseMailbox';
+import { AdminAbuseMailbox, DeterminationPanel, DeterminationBadge } from './AdminAbuseMailbox';
 
 vi.mock('@/lib/auth', () => ({ useAuth: () => ({ isSuperAdmin: true, loading: false }) }));
 
@@ -79,5 +79,41 @@ describe('AdminAbuseMailbox messages / intel failure', () => {
     expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load intel highlights");
     await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load intel highlights" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DeterminationPanel', () => {
+  const d = {
+    label: 'Likely phishing',
+    tone: 'threat' as const,
+    lead: 'This message shows strong phishing indicators.',
+    analyst_note: 'Reviewed automatically.',
+    next_steps: ['Do not click links', 'Delete the message'],
+    action_label: 'Reported to our threat team',
+  };
+
+  it('renders verdict, note, next steps, action and sent time', () => {
+    renderWithProviders(<DeterminationPanel determination={d} sentAt="2026-10-01 10:00:00" />);
+    expect(screen.getByText('Likely phishing')).toBeInTheDocument();
+    expect(screen.getByText(d.lead)).toBeInTheDocument();
+    expect(screen.getByText('Analyst note')).toBeInTheDocument();
+    expect(screen.getByText('Do not click links')).toBeInTheDocument();
+    expect(screen.getByText('Reported to our threat team')).toBeInTheDocument();
+    expect(screen.getByText(/2026-10-01 10:00:00/)).toBeInTheDocument();
+  });
+
+  it('shows "Not sent yet" when no sent timestamp', () => {
+    renderWithProviders(<DeterminationPanel determination={d} sentAt={null} />);
+    expect(screen.getByText(/Not sent yet/)).toBeInTheDocument();
+  });
+
+  it('shows pending state when determination is null or missing', () => {
+    renderWithProviders(<DeterminationPanel determination={null} sentAt={null} />);
+    expect(screen.getByText(/Pending — no determination yet/)).toBeInTheDocument();
+  });
+
+  it('badge tolerates an unknown tone', () => {
+    renderWithProviders(<DeterminationBadge determination={{ ...d, tone: 'bogus' as never }} />);
+    expect(screen.getByTestId('determination-badge')).toHaveTextContent('Likely phishing');
   });
 });

@@ -44,6 +44,17 @@ export interface AbuseMailboxSummary {
   unbound: { total: number; pending: number };
 }
 
+export type DeterminationTone = 'threat' | 'review' | 'spam' | 'safe';
+
+export interface AbuseDetermination {
+  label:        string;
+  tone:         DeterminationTone;
+  lead:         string;
+  analyst_note: string;
+  next_steps:   string[];
+  action_label: string;
+}
+
 export interface AbuseInboxMessageRow {
   id:                       string;
   org_id:                   number;
@@ -69,6 +80,8 @@ export interface AbuseInboxMessageRow {
   determination_sent_at:    string | null;
   throttled:                number;        // 0 | 1 — PR-AT
   throttle_reason:          string | null; // 'sender_rate_limit' | 'domain_rate_limit' | null
+  /** What the reporter was emailed. null while pending / follow_up; absent on old cached responses. */
+  determination?:           AbuseDetermination | null;
 }
 
 export interface AbuseInboxMessages {
