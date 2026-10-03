@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react';
-import { FilterBar, Badge, Tabs, PageState } from '@/design-system/components';
+import { Card, FilterBar, Badge, Tabs, PageState, Table, Th, Td } from '@/design-system/components';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -175,7 +174,7 @@ function OrgListView({ onSelect, onCreate }: {
 
 function OrgListRow({ org, onClick }: { org: AdminOrg; onClick: () => void }) {
   return (
-    <Card hover={false} className="cursor-pointer hover:border-white/20 transition-colors" >
+    <Card className="cursor-pointer hover:border-white/20 transition-colors">
       <button type="button" onClick={onClick} className="w-full text-left">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -327,7 +326,7 @@ function DetailMembersTab({ orgId, members }: {
       </div>
 
       {showInvite && (
-        <Card hover={false}>
+        <Card>
           <div className="flex flex-col sm:flex-row gap-3">
             <Input
               type="email"
@@ -358,28 +357,28 @@ function DetailMembersTab({ orgId, members }: {
         <PageState kind="empty" layout="card" title="No members yet" description="Invite the first member to this organization." />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <Table className="w-full text-[11px]">
             <thead>
               <tr className="text-left text-white/55 font-mono uppercase tracking-wider border-b border-white/5">
-                <th className="pb-2 pr-4">Name</th>
-                <th className="pb-2 pr-4">Email</th>
-                <th className="pb-2 pr-4">Org Role</th>
-                <th className="pb-2 pr-4 hidden sm:table-cell">Last Active</th>
-                <th className="pb-2 text-right">Actions</th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Name</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Email</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Org Role</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4 hidden sm:table-cell">Last Active</Th>
+                <Th className="p-0 text-[11px] pb-2 text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
               {members.map((m) => (
                 <tr key={m.user_id} className="border-b border-white/[0.03]">
-                  <td className="py-3 pr-4 text-[color:var(--text-primary)] font-medium">{m.user_name}</td>
-                  <td className="py-3 pr-4 text-[color:var(--text-secondary)] font-mono">{m.email}</td>
-                  <td className="py-3 pr-4">
+                  <Td className="p-0 text-[11px] py-3 pr-4 text-[color:var(--text-primary)] font-medium">{m.user_name}</Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4 text-[color:var(--text-secondary)] font-mono">{m.email}</Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4">
                     <Badge variant={m.role === 'admin' || m.role === 'owner' ? 'info' : 'default'}>{m.role}</Badge>
-                  </td>
-                  <td className="py-3 pr-4 text-white/55 hidden sm:table-cell">
+                  </Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4 text-white/55 hidden sm:table-cell">
                     {m.last_active_at ? new Date(m.last_active_at).toLocaleDateString() : 'Never'}
-                  </td>
-                  <td className="py-3 text-right">
+                  </Td>
+                  <Td className="p-0 text-[11px] py-3 text-right">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -389,11 +388,11 @@ function DetailMembersTab({ orgId, members }: {
                     >
                       Remove
                     </Button>
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>
@@ -425,7 +424,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
       </div>
 
       {showSearch && (
-        <Card hover={false}>
+        <Card>
           <div className="space-y-3">
             <Input
               placeholder="Search brands by name or domain..."
@@ -467,7 +466,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
       ) : (
         <div className="space-y-3">
           {brands.map((b) => (
-            <Card key={b.brand_id} hover={false}>
+            <Card key={b.brand_id}>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -528,7 +527,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
   const [seeded, setSeeded] = useState(false);
 
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading branding…</div>;
-  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load branding: {error.message}</p></Card>;
+  if (error)     return <Card className="border-accent/20"><p className="text-sm text-accent">Couldn't load branding: {error.message}</p></Card>;
   if (!data)     return null;
 
   if (!seeded) {
@@ -568,7 +567,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-6">
       {/* Inbound alias */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">Inbound alias</SectionLabel>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -600,7 +599,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
       </Card>
 
       {/* Live preview */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">Preview</SectionLabel>
         <div className="rounded-xl overflow-hidden border border-white/10 max-w-md">
           <div style={{ background: previewHeader }} className="px-4 py-3 flex items-center gap-3">
@@ -623,7 +622,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
       </Card>
 
       {/* Editor */}
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionLabel className="mb-0">Responder branding</SectionLabel>
           <label className="flex items-center gap-2 text-[12px] text-[color:var(--text-secondary)] cursor-pointer">
@@ -708,7 +707,7 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
 
   return (
     <div className="space-y-6">
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-4">Organization Details</SectionLabel>
         <div className="space-y-4">
           <div>
@@ -760,7 +759,7 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
       </Card>
 
       {/* Danger Zone */}
-      <Card hover={false} className="border-accent/20">
+      <Card className="border-accent/20">
         <SectionLabel className="mb-3 text-accent">Danger Zone</SectionLabel>
         <Button variant="danger" size="sm" onClick={handleDeactivate} disabled={org.status === 'suspended'}>
           {org.status === 'suspended' ? 'Organization Suspended' : 'Deactivate Organization'}
@@ -788,7 +787,7 @@ function DetailPricingTab({ orgId }: { orgId: string }) {
   }
   if (error) {
     return (
-      <Card hover={false} className="border-accent/20">
+      <Card className="border-accent/20">
         <p className="text-sm text-accent">Couldn't load pricing: {error.message}</p>
       </Card>
     );
@@ -813,7 +812,7 @@ function PricingHeadline({ summary }: { summary: OrgPricingSummary }) {
     summary.billing_status === 'past_due' || summary.billing_status === 'cancelled' ? 'critical' :
                                             'default';
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <SectionLabel className="mb-1">Effective monthly</SectionLabel>
@@ -841,7 +840,7 @@ function PricingHeadline({ summary }: { summary: OrgPricingSummary }) {
 function PlanCard({ summary }: { summary: OrgPricingSummary }) {
   if (!summary.plan) {
     return (
-      <Card hover={false} className="border-accent/20">
+      <Card className="border-accent/20">
         <SectionLabel className="mb-2">Plan</SectionLabel>
         <p className="text-sm text-[color:var(--text-secondary)]">
           No plan assigned. Customer is on the unbilled track — assign a plan via
@@ -857,7 +856,7 @@ function PlanCard({ summary }: { summary: OrgPricingSummary }) {
   const isOverridden = tierOverride !== undefined;
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <SectionLabel className="mb-1">Plan</SectionLabel>
@@ -913,7 +912,7 @@ function PlanCard({ summary }: { summary: OrgPricingSummary }) {
 function ModuleAddOnsCard({ summary }: { summary: OrgPricingSummary }) {
   const moduleOverrides = summary.active_overrides.filter((o) => o.override_type === 'module_price');
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Module add-ons (à-la-carte)</SectionLabel>
       <div className="space-y-2">
         {summary.per_module_subscriptions.map((m) => {
@@ -946,7 +945,7 @@ function ModuleAddOnsCard({ summary }: { summary: OrgPricingSummary }) {
 function OverridesCard({ summary, orgId }: { summary: OrgPricingSummary; orgId: string }) {
   if (summary.active_overrides.length === 0) {
     return (
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-2">Active overrides</SectionLabel>
         <p className="text-sm text-[color:var(--text-secondary)]">
           None. List prices apply.
@@ -955,7 +954,7 @@ function OverridesCard({ summary, orgId }: { summary: OrgPricingSummary; orgId: 
     );
   }
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Active overrides ({summary.active_overrides.length})</SectionLabel>
       <div className="space-y-3">
         {summary.active_overrides.map((o) => (
@@ -1084,7 +1083,7 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
 
   if (!open) {
     return (
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between gap-3">
           <div>
             <SectionLabel className="mb-1">New override</SectionLabel>
@@ -1101,7 +1100,7 @@ function OverrideCreateCard({ orgId }: { orgId: string }) {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Create override</SectionLabel>
       <form onSubmit={submit} className="space-y-3">
         <div>
@@ -1253,7 +1252,7 @@ function DetailModulesTab({ orgId }: { orgId: string }) {
   const { data, isLoading, error } = useCustomerModules(orgId);
 
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading modules…</div>;
-  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load modules: {error.message}</p></Card>;
+  if (error)     return <Card className="border-accent/20"><p className="text-sm text-accent">Couldn't load modules: {error.message}</p></Card>;
   if (!data)     return null;
 
   const activeCount    = data.modules.filter((m) => m.status === 'active' || m.status === 'trial').length;
@@ -1263,7 +1262,7 @@ function DetailModulesTab({ orgId }: { orgId: string }) {
 
   return (
     <div className="space-y-4">
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <SectionLabel className="mb-1">Module entitlements</SectionLabel>
@@ -1317,7 +1316,7 @@ function ModuleRow({ orgId, module: m }: { orgId: string; module: CustomerModule
   const tone = statusBadgeTone(m.status);
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <div className="flex items-center gap-2">

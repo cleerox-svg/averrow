@@ -10,6 +10,7 @@ import {
   PageHeader,
   Input,
   Select,
+  Table, Th, Td,
 } from '@/design-system/components';
 import { MemberInviteSheet } from '@/features/admin/components/MemberInviteSheet';
 import { IntegrationCard } from '@/features/admin/components/IntegrationCard';
@@ -197,7 +198,7 @@ function OverviewTab({ brandCount, maxBrands, memberCount, maxMembers, integrati
       </div>
 
       {/* Plan Details */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">{plan.toUpperCase()} Plan</SectionLabel>
         <ul className="space-y-1.5 text-[11px] opacity-70">
           <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-positive" /> Unlimited threat monitoring</li>
@@ -222,7 +223,7 @@ function OverviewTab({ brandCount, maxBrands, memberCount, maxMembers, integrati
 
 function StatMiniCard({ label, value, pct }: { label: string; value: string; pct?: number }) {
   return (
-    <Card hover={false} className="p-3">
+    <Card className="p-3">
       <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-1">{label}</div>
       <div className="text-lg font-bold text-white/90 font-display">{value}</div>
       {pct !== undefined && (
@@ -272,7 +273,7 @@ function BrandsTab({ brands, maxBrands, loading, failed, onRetry }: {
       ) : (
         <div className="space-y-3">
           {brands.map((b) => (
-            <Card key={b.brand_id} hover={false}>
+            <Card key={b.brand_id}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -338,22 +339,22 @@ function MembersTab({ members, invites, onInvite, loading, failed, onRetry }: {
         <PageState kind="empty" layout="card" title="No members yet" action={{ label: 'Invite Member', onClick: onInvite }} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <Table className="w-full text-[11px]">
             <thead>
               <tr className="text-left text-white/55 font-mono uppercase tracking-wider border-b border-white/5">
-                <th className="pb-2 pr-4">Name</th>
-                <th className="pb-2 pr-4">Email</th>
-                <th className="pb-2 pr-4">Role</th>
-                <th className="pb-2 pr-4 hidden sm:table-cell">Last Active</th>
-                <th className="pb-2 text-right">Actions</th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Name</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Email</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Role</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4 hidden sm:table-cell">Last Active</Th>
+                <Th className="p-0 text-[11px] pb-2 text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
               {members.map((m) => (
                 <tr key={m.user_id} className="border-b border-white/[0.03]">
-                  <td className="py-3 pr-4 font-medium text-white/90">{m.user_name}</td>
-                  <td className="py-3 pr-4 text-white/55 font-mono">{m.email}</td>
-                  <td className="py-3 pr-4">
+                  <Td className="p-0 text-[11px] py-3 pr-4 font-medium text-white/90">{m.user_name}</Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4 text-white/55 font-mono">{m.email}</Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4">
                     <Select
                       value={m.role}
                       onChange={(e) => {
@@ -374,11 +375,11 @@ function MembersTab({ members, invites, onInvite, loading, failed, onRetry }: {
                         { value: 'viewer',  label: 'Viewer' },
                       ]}
                     />
-                  </td>
-                  <td className="py-3 pr-4 text-white/55 hidden sm:table-cell">
+                  </Td>
+                  <Td className="p-0 text-[11px] py-3 pr-4 text-white/55 hidden sm:table-cell">
                     {m.last_active_at ? new Date(m.last_active_at).toLocaleDateString() : 'never'}
-                  </td>
-                  <td className="py-3 text-right">
+                  </Td>
+                  <Td className="p-0 text-[11px] py-3 text-right">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -392,11 +393,11 @@ function MembersTab({ members, invites, onInvite, loading, failed, onRetry }: {
                     >
                       Remove
                     </Button>
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
 
@@ -577,15 +578,15 @@ function ApiKeysTab({ apiKeys, onCreate, loading, failed, onRetry }: {
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <Table className="w-full text-[11px]">
             <thead>
               <tr className="text-left text-white/55 font-mono uppercase tracking-wider border-b border-white/5">
-                <th className="pb-2 pr-4">Name</th>
-                <th className="pb-2 pr-4">Prefix</th>
-                <th className="pb-2 pr-4">Scopes</th>
-                <th className="pb-2 pr-4">Last Used</th>
-                <th className="pb-2 pr-4 hidden sm:table-cell">Created</th>
-                <th className="pb-2 text-right">Actions</th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Name</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Prefix</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Scopes</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4">Last Used</Th>
+                <Th className="p-0 text-[11px] pb-2 pr-4 hidden sm:table-cell">Created</Th>
+                <Th className="p-0 text-[11px] pb-2 text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -594,9 +595,9 @@ function ApiKeysTab({ apiKeys, onCreate, loading, failed, onRetry }: {
                 try { scopes = JSON.parse(k.scopes); } catch { /* empty */ }
                 return (
                   <tr key={k.id} className="border-b border-white/[0.03]">
-                    <td className="py-3 pr-4 font-medium text-white/90">{k.name}</td>
-                    <td className="py-3 pr-4 font-mono text-white/55">{k.key_prefix}...</td>
-                    <td className="py-3 pr-4">
+                    <Td className="p-0 text-[11px] py-3 pr-4 font-medium text-white/90">{k.name}</Td>
+                    <Td className="p-0 text-[11px] py-3 pr-4 font-mono text-white/55">{k.key_prefix}...</Td>
+                    <Td className="p-0 text-[11px] py-3 pr-4">
                       <div className="flex flex-wrap gap-1">
                         {scopes.map((s) => (
                           <span key={s} className="text-[9px] font-mono bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-white/40">
@@ -604,14 +605,14 @@ function ApiKeysTab({ apiKeys, onCreate, loading, failed, onRetry }: {
                           </span>
                         ))}
                       </div>
-                    </td>
-                    <td className="py-3 pr-4 text-white/55">
+                    </Td>
+                    <Td className="p-0 text-[11px] py-3 pr-4 text-white/55">
                       {k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'never'}
-                    </td>
-                    <td className="py-3 pr-4 text-white/55 hidden sm:table-cell">
+                    </Td>
+                    <Td className="p-0 text-[11px] py-3 pr-4 text-white/55 hidden sm:table-cell">
                       {new Date(k.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="py-3 text-right">
+                    </Td>
+                    <Td className="p-0 text-[11px] py-3 text-right">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -621,12 +622,12 @@ function ApiKeysTab({ apiKeys, onCreate, loading, failed, onRetry }: {
                       >
                         Revoke
                       </Button>
-                    </td>
+                    </Td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>
@@ -647,7 +648,7 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
   return (
     <div className="space-y-6">
       {/* Organization Details */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-4">Organization Details</SectionLabel>
         <div className="space-y-4">
           <div>
@@ -691,7 +692,7 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
       </Card>
 
       {/* SSO Configuration — now has its own tab */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">SSO Configuration</SectionLabel>
         <p className="text-[11px] text-white/40 mb-3">
           Configure Single Sign-On for your organization in the dedicated SSO tab.
@@ -699,7 +700,7 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
       </Card>
 
       {/* SCIM Provisioning */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">SCIM Provisioning</SectionLabel>
         <div className="space-y-2">
           <div className="flex items-center gap-3 text-[11px]">
@@ -713,7 +714,7 @@ function SettingsTab({ orgName, slug }: { orgName: string; slug: string }) {
       </Card>
 
       {/* Danger Zone */}
-      <Card hover={false} className="border-accent/20">
+      <Card className="border-accent/20">
         <SectionLabel className="mb-3 text-accent">Danger Zone</SectionLabel>
         <p className="mt-2 text-[10px] font-mono text-white/50">
           Self-serve deletion isn't wired yet. Email{' '}

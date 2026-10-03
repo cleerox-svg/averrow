@@ -136,6 +136,30 @@ describe('shared StatTile', () => {
     expect(container.firstChild).toHaveAttribute('aria-label', 'Open alerts: loading');
   });
 
+  it('a static tile with a state aria-label is a role=group so the name is exposed', () => {
+    const { rerender } = render(<StatTile label="Open alerts" value={null} error />);
+    expect(screen.getByRole('group', { name: "Open alerts: couldn't load" })).toBeInTheDocument();
+    rerender(<StatTile label="Open alerts" value={null} />);
+    expect(screen.getByRole('group', { name: 'Open alerts: loading' })).toBeInTheDocument();
+    // Healthy static tiles have no aria-label and no group role.
+    rerender(<StatTile label="Open alerts" value={4} />);
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+  });
+
+  it('dims the glow while loading or failed so it does not read as a live alert', () => {
+    const { container, rerender } = render(<StatTile label="A" value={null} accent="var(--red)" />);
+    expect(orb(container)).toHaveClass('opacity-20');
+    rerender(<StatTile label="A" value={null} error accent="var(--red)" />);
+    expect(orb(container)).toHaveClass('opacity-20');
+    rerender(<StatTile label="A" value={4} accent="var(--red)" />);
+    expect(orb(container)).toHaveClass('opacity-[0.55]');
+  });
+
+  it('keeps the sub-line visible on small screens (it can carry data)', () => {
+    render(<StatTile label="A" value={4} sub="3 critical · 1 new" />);
+    expect(screen.getByText('3 critical · 1 new').className).not.toContain('max-sm:hidden');
+  });
+
   it('keeps the content-derived name once loaded (no state aria-label)', () => {
     render(<StatTile label="Open alerts" value={4} onClick={() => {}} />);
     const btn = screen.getByRole('button');

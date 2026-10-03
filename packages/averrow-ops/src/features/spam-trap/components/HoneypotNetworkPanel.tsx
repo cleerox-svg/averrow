@@ -3,7 +3,7 @@ import { useSpamTrapAddresses, useSeedingSources, useRetireSeedAddress } from '@
 import type { SeedAddress, SeedingSource } from '@/hooks/useSpamTrap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Target, Search, ChevronDown, ChevronRight } from 'lucide-react';
-import { Input, PageState } from '@/design-system/components';
+import { Input, PageState, Table, Th, Td } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 
 // ─── Yield buckets ────────────────────────────────────────────────
@@ -248,24 +248,7 @@ export function HoneypotNetworkPanel() {
 
   if (isError) {
     return (
-      <div
-        className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3"
-        style={{
-          background: 'var(--bg-card)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          border: '1px solid var(--border-base)',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
-        }}
-      >
-        <span className="text-white/40 text-sm font-mono">Unable to load seed addresses</span>
-        <button
-          onClick={() => refetch()}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-mono text-white/60 transition-colors"
-        >
-          RETRY
-        </button>
-      </div>
+      <PageState kind="error" layout="card" compact title="Couldn't load seed addresses" onRetry={() => { void refetch(); }} />
     );
   }
 
@@ -626,16 +609,16 @@ export function HoneypotNetworkPanel() {
 
                     {isOpen && (
                       <div className="overflow-x-auto border-t border-white/[0.04]">
-                        <table className="w-full text-left">
+                        <Table className="w-full text-left">
                           <thead>
                             <tr className="border-b border-white/[0.06]">
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pl-3 pb-1.5 pt-1.5 pr-2">Address</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Channel</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Location</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Catches</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Last catch</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Seeded</th>
-                              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-3"></th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pl-3 pb-1.5 pt-1.5 pr-2">Address</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Channel</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Location</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Catches</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Last catch</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Seeded</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-3"></Th>
                             </tr>
                           </thead>
                           <tbody>
@@ -644,15 +627,15 @@ export function HoneypotNetworkPanel() {
                               const addrBucket = classifyAddress(addr, nowMs);
                               return (
                                 <tr key={addr.id} className="border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02] transition-colors">
-                                  <td className="py-1.5 pl-3 pr-2">
+                                  <Td className="p-0 py-1.5 pl-3 pr-2">
                                     <span
                                       className="font-mono text-[11px] text-[var(--text-secondary)] block truncate max-w-[200px]"
                                       title={addr.address}
                                     >
                                       {addr.address.length > 30 ? addr.address.slice(0, 30) + '…' : addr.address}
                                     </span>
-                                  </td>
-                                  <td className="py-1.5 pr-2">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-2">
                                     <span
                                       className="text-[10px] font-mono px-1.5 py-0.5 rounded"
                                       style={{
@@ -663,8 +646,8 @@ export function HoneypotNetworkPanel() {
                                     >
                                       {addr.channel}
                                     </span>
-                                  </td>
-                                  <td className="py-1.5 pr-2">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-2">
                                     <span
                                       className="text-[11px] text-white/40 block truncate max-w-[180px]"
                                       title={addr.seeded_location || ''}
@@ -675,31 +658,31 @@ export function HoneypotNetworkPanel() {
                                           : addr.seeded_location
                                         : '—'}
                                     </span>
-                                  </td>
-                                  <td className="py-1.5 pr-2">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-2">
                                     {addr.total_catches > 0 ? (
                                       <span className="font-mono text-[11px] text-red-400 font-semibold tabular-nums">{addr.total_catches}</span>
                                     ) : (
                                       <span className="font-mono text-[11px] text-white/30">—</span>
                                     )}
-                                  </td>
-                                  <td className="py-1.5 pr-2">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-2">
                                     <span
                                       className="font-mono text-[11px] text-white/55 tabular-nums"
                                       title={addr.last_catch_at ?? 'never'}
                                     >
                                       {daysAgo(addr.last_catch_at, Date.now())}
                                     </span>
-                                  </td>
-                                  <td className="py-1.5 pr-2">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-2">
                                     <span
                                       className="font-mono text-[11px] text-white/40 tabular-nums"
                                       title={addr.seeded_at ?? 'unknown'}
                                     >
                                       {daysAgo(addr.seeded_at, Date.now())}
                                     </span>
-                                  </td>
-                                  <td className="py-1.5 pr-3 text-right">
+                                  </Td>
+                                  <Td className="p-0 py-1.5 pr-3 text-right">
                                     <div className="inline-flex items-center gap-1.5">
                                       {/* Wave-1 PR-AB: REPLANT CTA on dead-seed rows.
                                           Soft-retires the address so the auto-seeder can recycle
@@ -722,12 +705,12 @@ export function HoneypotNetworkPanel() {
                                         title={`${BUCKET_LABEL[addrBucket]}: ${BUCKET_DESCRIPTION[addrBucket]}`}
                                       />
                                     </div>
-                                  </td>
+                                  </Td>
                                 </tr>
                               );
                             })}
                           </tbody>
-                        </table>
+                        </Table>
                       </div>
                     )}
                   </div>

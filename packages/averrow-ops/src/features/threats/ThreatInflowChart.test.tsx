@@ -8,8 +8,9 @@
 // crashing the whole root route via the ErrorBoundary (same class as the
 // platform-status badge crash).
 //
-// The fix added an isInflowResponse shape guard: malformed responses resolve
-// to `null`, which routes to the component's existing "No data" fallback.
+// The fix added an isInflowResponse shape guard. A malformed body is now a
+// failed load (query error): an error card with retry and a "—" headline, never
+// "No data" / "0 new indicators" (PR6c: error must not look like data).
 // Same renderHook/vi.mock('@/lib/api') pattern as usePlatformStatus.test.tsx.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -40,28 +41,38 @@ afterEach(() => {
   mocks.get.mockReset();
 });
 
-describe('ThreatInflowChart — malformed-response guard (isInflowResponse)', () => {
-  it('renders "No data" without throwing when the API returns the error envelope', async () => {
+describe('ThreatInflowChart — malformed-response guard (isInflowResponse) and failures', () => {
+  it('renders the error state without throwing when the API returns the error envelope', async () => {
     // The exact payload that caused the outage: a truthy object with no
     // `buckets`. Pre-fix this threw `Cannot read properties of undefined
     // (reading 'map')` at data.buckets.map(...).
     mocks.get.mockResolvedValue({ success: false, error: 'platform compute failed: boom' });
     renderChart();
-    // Title always renders; the guard routes the malformed body to "No data".
+    // Title always renders; the guard routes the malformed body to the error state.
     expect(screen.getByText('Threat Inflow')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('No data')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load threat inflow"));
+    expect(screen.queryByText('No data')).not.toBeInTheDocument();
   });
 
-  it('renders "No data" without throwing for an empty object', async () => {
+  it('renders the error state without throwing for an empty object', async () => {
     mocks.get.mockResolvedValue({});
     renderChart();
-    await waitFor(() => expect(screen.getByText('No data')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
   });
 
-  it('renders "No data" when buckets is present but not an array', async () => {
+  it('renders the error state when buckets is present but not an array', async () => {
     mocks.get.mockResolvedValue({ window: '24h', buckets: 'nope', series: [], total: 0 });
     renderChart();
-    await waitFor(() => expect(screen.getByText('No data')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  });
+
+  it('a rejected request shows the error with retry and "—", never 0 new indicators', async () => {
+    mocks.get.mockRejectedValue(new Error('HTTP 500'));
+    renderChart();
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load threat inflow"));
+    expect(screen.getByRole('button', { name: /^Try again/ })).toBeInTheDocument();
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
   });
 
   it('does not fall back to "No data" for a well-formed InflowResponse', async () => {

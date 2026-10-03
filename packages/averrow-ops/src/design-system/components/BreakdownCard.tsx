@@ -29,7 +29,8 @@ export function BreakdownCard({
   return (
     <Card
       data-testid="breakdown-card"
-      className={cn('detail-stat-card px-4 py-3.5', className)}
+      padding="14px 16px"
+      className={cn('detail-stat-card', className)}
       style={{ containerType: 'inline-size', ...style }}
     >
       <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">

@@ -21,8 +21,8 @@ import { useAuth } from '@/lib/auth';
 import {
   Card, Button, Badge, PageHeader, SectionLabel,
   StatTile, StatGrid, Select,
+  Table, Th, Td,
 } from '@/design-system/components';
-import { Table, Th, Td } from '@/components/ui/Table';
 import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
@@ -96,7 +96,7 @@ function StatsPanel({
   onWindowChange: (v: string) => void;
 }) {
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between mb-4">
         <SectionLabel>Activity Overview</SectionLabel>
         <Select value={windowHours} options={WINDOW_OPTIONS} onChange={(e) => onWindowChange(e.target.value)} />
@@ -166,7 +166,7 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Active mutes</SectionLabel>
       <p className="text-[12px] mb-4" style={{ color: 'var(--text-secondary)' }}>
         Silence a notification type platform-wide during an incident. Producers continue firing — only delivery is suppressed. Mutes self-clear on expiry; no need to remove manually.
@@ -263,7 +263,7 @@ function ActivityTable({
   }
 
   return (
-    <Card hover={false} className="p-0 overflow-hidden">
+    <Card className="p-0 overflow-hidden">
       <div className="px-5 pt-5 pb-3">
         <SectionLabel>Activity by type / audience</SectionLabel>
         <p className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>

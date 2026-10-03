@@ -32,8 +32,7 @@ import type { DashboardProvider } from '@/hooks/useProviders';
 import { useOperations } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import { useAgents } from '@/hooks/useAgents';
-import { Card } from '@/components/ui/Card';
-import { Badge, Avatar } from '@/design-system/components';
+import { Card, Badge, Avatar } from '@/design-system/components';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { relativeTime } from '@/lib/time';
 

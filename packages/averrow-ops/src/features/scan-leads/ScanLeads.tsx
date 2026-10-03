@@ -28,8 +28,7 @@ import {
   type ScanLeadIntel,
   type CorrelatedSalesLead,
 } from "@/hooks/useScanLeads";
-import { Card, Badge, Button, PageHeader, StatGrid, StatTile, PageState } from "@/design-system/components";
-import { Table, Th, Td } from "@/components/ui/Table";
+import { Card, Badge, Button, PageHeader, StatGrid, StatTile, PageState, Table, Th, Td } from '@/design-system/components';
 import { TableLoader } from "@/components/ui/ListLoaders";
 import { useToast } from "@/components/ui/Toast";
 import { relativeTime } from "@/lib/time";

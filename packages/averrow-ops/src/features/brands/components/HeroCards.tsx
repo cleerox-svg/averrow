@@ -21,28 +21,28 @@ import { BIMIStatusRow } from '@/components/ui/BIMIStatusRow';
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'] as const;
 
 const SEVERITY_TW: Record<string, { dot: string; text: string; hex: string }> = {
-  critical: { dot: 'bg-[#f87171]', text: 'text-[#f87171]', hex: '#f87171' },
-  high:     { dot: 'bg-[#fb923c]', text: 'text-[#fb923c]', hex: '#fb923c' },
-  medium:   { dot: 'bg-[#fbbf24]', text: 'text-[#fbbf24]', hex: '#fbbf24' },
+  critical: { dot: 'bg-[#f87171]', text: 'text-[var(--sev-critical-text)]', hex: '#f87171' },
+  high:     { dot: 'bg-[#fb923c]', text: 'text-[var(--sev-high-text)]', hex: '#fb923c' },
+  medium:   { dot: 'bg-[#fbbf24]', text: 'text-[var(--sev-medium-text)]', hex: '#fbbf24' },
   low:      { dot: 'bg-contrail/50', text: 'text-[var(--text-muted)]', hex: '#78A0C8' },
   info:     { dot: 'bg-contrail/50', text: 'text-[var(--text-muted)]', hex: '#78A0C8' },
 };
 
 const THREAT_TYPE_COLORS: Record<string, { bar: string; text: string }> = {
-  phishing:             { bar: 'bg-[#78A0C8]', text: 'text-[#78A0C8]' },
-  malware_distribution: { bar: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
-  c2:                   { bar: 'bg-[#f87171]', text: 'text-[#f87171]' },
-  credential_harvesting:{ bar: 'bg-[#f97316]', text: 'text-[#f97316]' },
-  typosquatting:        { bar: 'bg-[#fbbf24]', text: 'text-[#fbbf24]' },
-  impersonation:        { bar: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
+  phishing:             { bar: 'bg-[#78A0C8]', text: 'text-[var(--sev-low-text)]' },
+  malware_distribution: { bar: 'bg-[#fb923c]', text: 'text-[var(--sev-high-text)]' },
+  c2:                   { bar: 'bg-[#f87171]', text: 'text-[var(--sev-critical-text)]' },
+  credential_harvesting:{ bar: 'bg-[#f97316]', text: 'text-[var(--sev-high-text)]' },
+  typosquatting:        { bar: 'bg-[#fbbf24]', text: 'text-[var(--sev-medium-text)]' },
+  impersonation:        { bar: 'bg-[#fb923c]', text: 'text-[var(--sev-high-text)]' },
 };
 
 function getExposureTier(score: number | null) {
-  if (score === null || score === undefined) return { color: 'text-white/30', stroke: '#ffffff4d', label: 'NO DATA', arcClass: 'stroke-white/20' };
-  if (score >= 80) return { color: 'text-[#4ade80]', stroke: '#4ade80', label: 'LOW RISK', arcClass: 'stroke-[#4ade80]' };
-  if (score >= 60) return { color: 'text-[#fbbf24]', stroke: '#fbbf24', label: 'MEDIUM', arcClass: 'stroke-[#fbbf24]' };
-  if (score >= 40) return { color: 'text-[#fb923c]', stroke: '#fb923c', label: 'HIGH', arcClass: 'stroke-[#fb923c]' };
-  return { color: 'text-[#f87171]', stroke: '#f87171', label: 'CRITICAL', arcClass: 'stroke-[#f87171]' };
+  if (score === null || score === undefined) return { color: 'text-[var(--text-secondary)]', stroke: '#ffffff4d', label: 'NO DATA', arcClass: 'stroke-white/20' };
+  if (score >= 80) return { color: 'text-[var(--sev-info-text)]', stroke: '#4ade80', label: 'LOW RISK', arcClass: 'stroke-[#4ade80]' };
+  if (score >= 60) return { color: 'text-[var(--sev-medium-text)]', stroke: '#fbbf24', label: 'MEDIUM', arcClass: 'stroke-[#fbbf24]' };
+  if (score >= 40) return { color: 'text-[var(--sev-high-text)]', stroke: '#fb923c', label: 'HIGH', arcClass: 'stroke-[#fb923c]' };
+  return { color: 'text-[var(--sev-critical-text)]', stroke: '#f87171', label: 'CRITICAL', arcClass: 'stroke-[#f87171]' };
 }
 
 // ── Card 1: Exposure Index ──────────────────────────────────────────
@@ -93,10 +93,10 @@ export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any
     >
       <div className="space-y-2">
         {topTypes.length === 0 && (
-          <div className="font-mono text-[10px] text-white/40">No threats detected</div>
+          <div className="font-mono text-[10px] text-[var(--text-secondary)]">No threats detected</div>
         )}
         {topTypes.map(([type, count]) => {
-          const tc = THREAT_TYPE_COLORS[type] || { bar: 'bg-[#78A0C8]', text: 'text-[#78A0C8]' };
+          const tc = THREAT_TYPE_COLORS[type] || { bar: 'bg-[#78A0C8]', text: 'text-[var(--sev-low-text)]' };
           const pct = Math.max(count > 0 ? 4 : 0, Math.round((count / maxCount) * 100));
           return (
             <div key={type} className="space-y-0.5">
@@ -161,7 +161,7 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
           );
         })}
         <div className="border-t border-contrail/[0.08] pt-1.5 mt-1">
-          <span className="font-mono text-[9px] text-white/50">7-day window</span>
+          <span className="font-mono text-[9px] text-[var(--text-secondary)]">7-day window</span>
         </div>
       </div>
     </BreakdownCard>
@@ -215,22 +215,22 @@ function getEmailStatus(protocol: string, emailSec: any) {
 }
 
 const EMAIL_STATUS_CLASSES: Record<string, string> = {
-  PASS:    'bg-green-900/40 text-green-400 border-green-500/30',
-  FOUND:   'bg-green-900/40 text-green-400 border-green-500/30',
-  FAIL:    'bg-red-900/40 text-red-400 border-red-500/30',
-  MISSING: 'bg-red-900/40 text-red-400 border-red-500/30',
-  PARTIAL: 'bg-amber-900/40 text-amber-400 border-amber-500/30',
-  NONE:    'bg-amber-900/40 text-amber-400 border-amber-500/30',
+  PASS:    'bg-[var(--sev-info-bg)] text-[var(--sev-info-text)] border-[var(--sev-info-border)]',
+  FOUND:   'bg-[var(--sev-info-bg)] text-[var(--sev-info-text)] border-[var(--sev-info-border)]',
+  FAIL:    'bg-[var(--sev-critical-bg)] text-[var(--sev-critical-text)] border-[var(--sev-critical-border)]',
+  MISSING: 'bg-[var(--sev-critical-bg)] text-[var(--sev-critical-text)] border-[var(--sev-critical-border)]',
+  PARTIAL: 'bg-[var(--sev-medium-bg)] text-[var(--sev-medium-text)] border-[var(--sev-medium-border)]',
+  NONE:    'bg-[var(--sev-medium-bg)] text-[var(--sev-medium-text)] border-[var(--sev-medium-border)]',
 };
 
 function getGradeClass(grade: string | null): string {
   if (!grade) return 'text-[var(--text-muted)]';
   const g = grade.toUpperCase();
-  if (g === 'A+' || g === 'A') return 'text-[#4ade80]';
-  if (g.startsWith('B')) return 'text-[#78A0C8]';
-  if (g.startsWith('C')) return 'text-[#fbbf24]';
-  if (g.startsWith('D')) return 'text-[#fb923c]';
-  return 'text-[#f87171]';
+  if (g === 'A+' || g === 'A') return 'text-[var(--sev-info-text)]';
+  if (g.startsWith('B')) return 'text-[var(--sev-low-text)]';
+  if (g.startsWith('C')) return 'text-[var(--sev-medium-text)]';
+  if (g.startsWith('D')) return 'text-[var(--sev-high-text)]';
+  return 'text-[var(--sev-critical-text)]';
 }
 
 function deriveBimiGrade(brand: any, emailSec: any): string | null {
@@ -269,7 +269,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
     <BreakdownCard
       title={
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg className="w-4 h-4 text-[var(--sev-medium-text)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
           <span>Email Security</span>
@@ -284,7 +284,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
     >
       <div className="space-y-1">
         <div className="mb-3">
-          <div className="flex justify-between text-[10px] font-mono text-white/30 mb-1">
+          <div className="flex justify-between text-[10px] font-mono text-[var(--text-secondary)] mb-1">
             <span>{passing} of {totalChecks} protocols passing</span>
           </div>
           <div className="h-1 bg-white/10 rounded-full overflow-hidden">
@@ -305,7 +305,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
                 {status}
               </span>
               {hint && (
-                <span className="font-mono text-[9px] text-white/40 truncate">{hint}</span>
+                <span className="font-mono text-[9px] text-[var(--text-secondary)] truncate">{hint}</span>
               )}
             </div>
           );
@@ -329,7 +329,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
         </div>
 
         <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
-          <span className="text-white/40 text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-[var(--text-secondary)] text-[10px] font-mono uppercase tracking-wider">
             BIMI/VMC sub-grade
           </span>
           <BIMIGradeBadge grade={bimiGrade} size="sm" tooltip />
@@ -337,7 +337,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
 
         {brand?.bimi_svg_url && (
           <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-white/30 text-[10px] font-mono mb-2">BIMI LOGO</p>
+            <p className="text-[var(--text-secondary)] text-[10px] font-mono mb-2">BIMI LOGO</p>
             <div className="flex items-center gap-3">
               <img
                 src={brand.bimi_svg_url}
@@ -345,7 +345,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
                 className="w-8 h-8 rounded"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
               />
-              <p className="text-white/30 text-[10px] font-mono truncate">
+              <p className="text-[var(--text-secondary)] text-[10px] font-mono truncate">
                 {brand.bimi_svg_url}
               </p>
             </div>
@@ -354,7 +354,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
 
         {bimiGrade && ['B', 'C', 'D', 'F'].includes(bimiGrade) && (
           <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-white/40 text-[10px]">
+            <p className="text-[var(--text-secondary)] text-[10px]">
               {bimiGrade === 'B'
                 ? '→ Publish a BIMI record to reach grade A'
                 : bimiGrade === 'C'
@@ -367,7 +367,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
         {onViewDetails && (
           <button
             onClick={onViewDetails}
-            className="mt-3 w-full text-center text-[10px] text-white/30 transition-colors font-mono py-1 hover:[color:var(--amber)]"
+            className="mt-3 w-full text-center text-[10px] text-[var(--text-secondary)] transition-colors font-mono py-1 hover:[color:var(--amber)]"
           >
             View DNS Details &rarr;
           </button>
@@ -400,12 +400,12 @@ export function SocialRiskCard({
   const total = socialProfiles.length;
 
   const totalClass = impersonation > 0
-    ? 'text-[#f87171]'
+    ? 'text-[var(--sev-critical-text)]'
     : suspicious > 0
-      ? 'text-[#fb923c]'
+      ? 'text-[var(--sev-high-text)]'
       : total > 0
-        ? 'text-[#4ade80]'
-        : 'text-white/40';
+        ? 'text-[var(--sev-info-text)]'
+        : 'text-[var(--text-secondary)]';
 
   const scanDaysAgo = lastScan
     ? Math.max(0, Math.round((Date.now() - new Date(lastScan).getTime()) / 86400000))
@@ -423,20 +423,20 @@ export function SocialRiskCard({
     >
       <div>
         {([
-          { label: 'Impersonation', count: impersonation, dot: 'bg-[#f87171]', text: 'text-[#f87171]' },
-          { label: 'Suspicious', count: suspicious, dot: 'bg-[#fb923c]', text: 'text-[#fb923c]' },
-          { label: 'Official', count: official, dot: 'bg-green-500/50', text: 'text-green-400' },
+          { label: 'Impersonation', count: impersonation, dot: 'bg-[#f87171]', text: 'text-[var(--sev-critical-text)]' },
+          { label: 'Suspicious', count: suspicious, dot: 'bg-[#fb923c]', text: 'text-[var(--sev-high-text)]' },
+          { label: 'Official', count: official, dot: 'bg-green-500/50', text: 'text-[var(--sev-info-text)]' },
         ] as const).map(row => (
           <div key={row.label} className="flex items-center gap-2 py-1">
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${row.dot}`} />
-            <span className="flex-1 text-[11px] font-mono text-white/60 truncate">{row.label}</span>
-            <span className={`text-[11px] font-mono flex-shrink-0 ${row.count > 0 ? row.text : 'text-white/40'}`}>
+            <span className="flex-1 text-[11px] font-mono text-[var(--text-secondary)] truncate">{row.label}</span>
+            <span className={`text-[11px] font-mono flex-shrink-0 ${row.count > 0 ? row.text : 'text-[var(--text-secondary)]'}`}>
               {row.count}
             </span>
           </div>
         ))}
         <div className="border-t border-contrail/[0.08] pt-1.5 mt-1 space-y-1">
-          <span className="font-mono text-[9px] text-white/50 block">
+          <span className="font-mono text-[9px] text-[var(--text-secondary)] block">
             {total} profiles tracked{scanDaysAgo !== null ? ` · scanned ${scanDaysAgo}d ago` : ''}
           </span>
           <div className="flex gap-3">

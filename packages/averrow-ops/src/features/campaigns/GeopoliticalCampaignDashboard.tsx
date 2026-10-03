@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BreakdownCard } from '@/design-system/components';
+import { BreakdownCard, PageHeader, PageState, Table, Th, Td } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { severityColor, severityOpacity, threatTypeColor } from '@/lib/severityColor';
 import {
@@ -250,39 +250,39 @@ function AsnClusterTable({ asns }: { asns: Array<{ asn: string; provider_name: s
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[11px] font-mono">
+      <Table className="w-full text-[11px] font-mono">
         <thead>
           <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
-            <th className="pb-2 pr-4">ASN</th>
-            <th className="pb-2 pr-4">Provider</th>
-            <th className="pb-2 pr-4">Country</th>
-            <th className="pb-2 pr-4 text-right">Threats</th>
-            <th className="pb-2 pr-4 text-right">IPs</th>
-            <th className="pb-2 text-right">Domains</th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">ASN</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Provider</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Country</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4 text-right">Threats</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4 text-right">IPs</Th>
+            <Th className="p-0 text-[11px] pb-2 text-right">Domains</Th>
           </tr>
         </thead>
         <tbody>
           {asns.map(asn => (
             <tr key={asn.asn} className="data-row border-b border-white/5">
-              <td className="py-2 pr-4">
+              <Td className="p-0 text-[11px] py-2 pr-4">
                 <span className="text-[var(--text-primary)]">{asn.asn}</span>
                 {asn.is_known_adversary && (
                   <span className="ml-2 rounded bg-signal-red/20 px-1.5 py-0.5 text-[8px] text-red-400 border border-signal-red/30 uppercase">
                     adversary
                   </span>
                 )}
-              </td>
-              <td className="py-2 pr-4 text-white/70">{asn.provider_name}</td>
-              <td className="py-2 pr-4 text-white/70">{countryFlag(asn.country_code)} {asn.country_code ?? '—'}</td>
-              <td className="py-2 pr-4 text-right font-bold" style={{ color: severityColor(null, asn.threat_count) }}>
+              </Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{asn.provider_name}</Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{countryFlag(asn.country_code)} {asn.country_code ?? '—'}</Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-right font-bold" style={{ color: severityColor(null, asn.threat_count) }}>
                 {asn.threat_count}
-              </td>
-              <td className="py-2 pr-4 text-right text-white/60">{asn.unique_ips}</td>
-              <td className="py-2 text-right text-white/60">{asn.unique_domains}</td>
+              </Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-right text-white/60">{asn.unique_ips}</Td>
+              <Td className="p-0 text-[11px] py-2 text-right text-white/60">{asn.unique_domains}</Td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </Table>
     </div>
   );
 }
@@ -334,25 +334,25 @@ function RecentThreatsTable({ threats }: { threats: GeoCampaignThreat[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[11px] font-mono">
+      <Table className="w-full text-[11px] font-mono">
         <thead>
           <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
-            <th className="pb-2 pr-4">Domain</th>
-            <th className="pb-2 pr-4">Type</th>
-            <th className="pb-2 pr-4">Severity</th>
-            <th className="pb-2 pr-4">Brand</th>
-            <th className="pb-2 pr-4">Origin</th>
-            <th className="pb-2">Detected</th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Domain</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Type</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Severity</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Brand</Th>
+            <Th className="p-0 text-[11px] pb-2 pr-4">Origin</Th>
+            <Th className="p-0 text-[11px] pb-2">Detected</Th>
           </tr>
         </thead>
         <tbody>
           {threats.slice(0, 20).map(threat => (
             <tr key={threat.id} className="data-row border-b border-white/5">
-              <td className="py-2 pr-4 text-[var(--text-primary)] truncate max-w-[200px]">
+              <Td className="p-0 text-[11px] py-2 pr-4 text-[var(--text-primary)] truncate max-w-[200px]">
                 {threat.malicious_domain ?? '—'}
-              </td>
-              <td className="py-2 pr-4 text-white/70">{formatThreatType(threat.threat_type)}</td>
-              <td className="py-2 pr-4">
+              </Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{formatThreatType(threat.threat_type)}</Td>
+              <Td className="p-0 text-[11px] py-2 pr-4">
                 <span className="inline-flex items-center gap-1.5">
                   <span
                     className="w-1.5 h-1.5 rounded-full"
@@ -360,14 +360,14 @@ function RecentThreatsTable({ threats }: { threats: GeoCampaignThreat[] }) {
                   />
                   <span className="text-white/70">{threat.severity ?? 'unknown'}</span>
                 </span>
-              </td>
-              <td className="py-2 pr-4 text-white/60">{threat.brand_name ?? '—'}</td>
-              <td className="py-2 pr-4 text-white/60">{countryFlag(threat.country_code)} {threat.country_code ?? '—'}</td>
-              <td className="py-2 text-white/50">{formatDate(threat.created_at)}</td>
+              </Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-white/60">{threat.brand_name ?? '—'}</Td>
+              <Td className="p-0 text-[11px] py-2 pr-4 text-white/60">{countryFlag(threat.country_code)} {threat.country_code ?? '—'}</Td>
+              <Td className="p-0 text-[11px] py-2 text-white/50">{formatDate(threat.created_at)}</Td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </Table>
     </div>
   );
 }
@@ -424,7 +424,7 @@ export function GeopoliticalCampaignDashboard() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
 
-  const { data: campaign, isLoading: campaignLoading } = useGeopoliticalCampaign(slug ?? '');
+  const { data: campaign, isLoading: campaignLoading, isError: campaignError, isPlaceholderData: campaignStale, refetch: refetchCampaign } = useGeopoliticalCampaign(slug ?? '');
   const { data: stats } = useGeoCampaignStats(slug ?? '');
   const { data: timeline } = useGeoCampaignTimeline(slug ?? '');
   const { data: brands } = useGeoCampaignBrands(slug ?? '');
@@ -463,13 +463,20 @@ export function GeopoliticalCampaignDashboard() {
     );
   }
 
-  if (!campaign) {
+  // A failed request is an error with retry, never "not found".
+  if (!campaign || (campaignError && campaignStale)) {
     return (
-      <div className="p-6">
-        <button onClick={() => navigate('/explore?tab=campaigns')} className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors mb-4">
-          &larr; Back to Operations
-        </button>
-        <p className="text-[var(--text-tertiary)] font-mono">Geopolitical campaign not found.</p>
+      <div className="animate-fade-in p-6 space-y-4">
+        <PageHeader
+          title="Geopolitical campaign"
+          back={{ label: 'Back to Operations', onClick: () => navigate('/explore?tab=campaigns') }}
+          className="mb-0"
+        />
+        {campaignError ? (
+          <PageState kind="error" layout="card" title="Couldn't load this campaign" onRetry={() => { void refetchCampaign(); }} />
+        ) : (
+          <PageState kind="empty" layout="card" title="Campaign not found" description="It may have been removed, or the link is stale." />
+        )}
       </div>
     );
   }

@@ -18,7 +18,7 @@
 
 import type { CSSProperties } from 'react';
 import { TrendingUp, GitBranch, Settings, ArrowRight, AlertCircle } from 'lucide-react';
-import { Badge, Sparkline, StatTile } from '@/design-system/components';
+import { Badge, Sparkline, StatTile, Table, Th, Td } from '@/design-system/components';
 import type {
   SpamTrapInsights,
   SpamTrapInsightsTrendsWeek,
@@ -175,30 +175,30 @@ function CohortsCard({ cohorts }: { cohorts: SpamTrapInsightsCohort[] }) {
   return (
     <div className="rounded-xl p-4" style={GLASS_CARD}>
       <SectionLabel>Cohort time-to-first-catch · 8 weeks</SectionLabel>
-      <table className="mt-3 w-full text-left">
+      <Table className="mt-3 w-full text-left">
         <thead>
           <tr className="border-b border-white/[0.06]">
-            <th className="font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5">Cohort</th>
-            <th className="font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Seeds</th>
-            <th className="font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Caught</th>
-            <th className="font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Avg days</th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5">Cohort</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Seeds</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Caught</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Avg days</Th>
           </tr>
         </thead>
         <tbody>
           {cohorts.map((c) => (
             <tr key={c.cohort_week} className="border-b border-white/[0.03]">
-              <td className="py-1.5 font-mono text-[11px] text-white/65">{c.cohort_week}</td>
-              <td className="py-1.5 font-mono text-[11px] text-white/55 text-right tabular-nums">{c.seeds_in_cohort}</td>
-              <td className="py-1.5 font-mono text-[11px] text-right tabular-nums" style={{ color: c.caught > 0 ? '#4ADE80' : 'var(--text-muted)' }}>
+              <Td className="p-0 py-1.5 font-mono text-[11px] text-white/65">{c.cohort_week}</Td>
+              <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right tabular-nums">{c.seeds_in_cohort}</Td>
+              <Td className="p-0 py-1.5 font-mono text-[11px] text-right tabular-nums" style={{ color: c.caught > 0 ? '#4ADE80' : 'var(--text-muted)' }}>
                 {c.caught}
-              </td>
-              <td className="py-1.5 font-mono text-[11px] text-white/55 text-right tabular-nums">
+              </Td>
+              <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right tabular-nums">
                 {c.avg_days_to_first_catch != null ? c.avg_days_to_first_catch.toFixed(1) : '—'}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </Table>
     </div>
   );
 }

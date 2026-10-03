@@ -22,6 +22,8 @@ import {
   Card,
   EntityCard,
   MetricTile,
+  PageHeader,
+  PageState,
 } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ThreatAreaChart } from '@/components/ui/ThreatAreaChart';
@@ -99,22 +101,20 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle?: string }) 
   );
 }
 
-function CampaignNotFound({ onBack }: { onBack: () => void }) {
+// A failed request is an error with retry, never "not found" (a 500 must not
+// tell the operator the campaign was merged or dissolved).
+function CampaignUnavailable({ isError, onRetry, onBack }: { isError: boolean; onRetry: () => void; onBack: () => void }) {
   return (
     <div className="animate-fade-in space-y-4">
-      <button onClick={onBack} className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-        <ArrowLeft size={12} /> Back to Operations
-      </button>
-      <Card hover={false}>
-        <div className="py-8 text-center">
-          <div className="text-base font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-            Campaign not found
-          </div>
-          <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            The campaign may have been merged, dissolved, or attributed to a threat actor.
-          </div>
-        </div>
-      </Card>
+      <PageHeader title="Campaign" back={{ label: 'Back to Operations', onClick: onBack }} className="mb-0" />
+      {isError ? (
+        <PageState kind="error" layout="card" title="Couldn't load this campaign" onRetry={onRetry} />
+      ) : (
+        <PageState
+          kind="empty" layout="card" title="Campaign not found"
+          description="The campaign may have been merged, dissolved, or attributed to a threat actor."
+        />
+      )}
     </div>
   );
 }
@@ -126,7 +126,7 @@ export function CampaignDetail() {
   const navigate = useNavigate();
 
   const id = campaignId ?? '';
-  const { data: campaign, isLoading: campaignLoading } = useCampaignDetail(id);
+  const { data: campaign, isLoading: campaignLoading, isError: campaignError, isPlaceholderData: campaignStale, refetch: refetchCampaign } = useCampaignDetail(id);
   const { data: timeline, isLoading: timelineLoading } = useCampaignTimeline(id, '30d');
   const { data: threats, isLoading: threatsLoading } = useCampaignThreats(id, 25);
   const { data: infrastructure, isLoading: infraLoading } = useCampaignInfrastructure(id);
@@ -143,8 +143,14 @@ export function CampaignDetail() {
       </div>
     );
   }
-  if (!campaign) {
-    return <CampaignNotFound onBack={backToList} />;
+  if (!campaign || (campaignError && campaignStale)) {
+    return (
+      <CampaignUnavailable
+        isError={campaignError}
+        onRetry={() => { void refetchCampaign(); }}
+        onBack={backToList}
+      />
+    );
   }
 
   const { type: attackType, ip: clusterIp, threatTypes } = parseAttackType(campaign.attack_pattern);
@@ -243,7 +249,7 @@ export function CampaignDetail() {
       </EntityCard>
 
       {/* ─── Attack timeline ──────────────────────────────── */}
-      <Card hover={false} style={{ padding: '16px 18px' }}>
+      <Card style={{ padding: '16px 18px' }}>
         <PanelHeader title="Attack timeline" subtitle="last 30 days" />
         <div className="mt-3">
           {timelineLoading ? (
@@ -269,7 +275,7 @@ export function CampaignDetail() {
 
       {/* ─── Infrastructure graph (connected node-link view) ── */}
       {!infraLoading && infrastructure && (infrastructure.providers.length > 0 || infrastructure.domains.length > 0) && (
-        <Card hover={false} style={{ padding: '16px 18px' }}>
+        <Card style={{ padding: '16px 18px' }}>
           <PanelHeader title="Infrastructure graph" subtitle="campaign → provider → IP → domain · brands" />
           <div className="mt-3">
             <CampaignGraph
@@ -285,7 +291,7 @@ export function CampaignDetail() {
       {/* ─── Brand impact + Infrastructure (side-by-side) ──── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Brand impact */}
-        <Card hover={false} style={{ padding: '16px 18px' }}>
+        <Card style={{ padding: '16px 18px' }}>
           <PanelHeader title="Brands targeted" subtitle={`${brandImpact?.length ?? 0} affected`} />
           <div className="mt-3 space-y-1">
             {brandsLoading ? (
@@ -322,7 +328,7 @@ export function CampaignDetail() {
         </Card>
 
         {/* Hosting providers */}
-        <Card hover={false} style={{ padding: '16px 18px' }}>
+        <Card style={{ padding: '16px 18px' }}>
           <PanelHeader title="Hosting providers" subtitle={`${infrastructure?.providers.length ?? 0} in use`} />
           <div className="mt-3 space-y-1">
             {infraLoading ? (
@@ -355,7 +361,7 @@ export function CampaignDetail() {
       </div>
 
       {/* ─── Top IPs ──────────────────────────────────────── */}
-      <Card hover={false} style={{ padding: '16px 18px' }}>
+      <Card style={{ padding: '16px 18px' }}>
         <PanelHeader title="Top IPs" subtitle={`${infrastructure?.ips.length ?? 0} unique`} />
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {infraLoading ? (
@@ -387,7 +393,7 @@ export function CampaignDetail() {
       </Card>
 
       {/* ─── Recent threats ──────────────────────────────── */}
-      <Card hover={false} style={{ padding: '16px 18px' }}>
+      <Card style={{ padding: '16px 18px' }}>
         <PanelHeader title="Recent threats" subtitle={`showing ${threats?.length ?? 0}`} />
         <div className="mt-3 divide-y divide-white/[0.04]">
           {threatsLoading ? (

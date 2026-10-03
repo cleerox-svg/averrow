@@ -256,6 +256,7 @@ export function VerdictBand() {
           <PageState
             kind="error"
             layout="inline"
+            assertive
             title="Couldn't load platform health"
             onRetry={() => { void refetch(); }}
           />

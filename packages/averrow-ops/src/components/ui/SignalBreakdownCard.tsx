@@ -144,7 +144,7 @@ export function SignalBreakdownCard({
   );
 
   return (
-    <Card hover={false} padding={compact ? 14 : undefined}>
+    <Card padding={compact ? 14 : undefined}>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Page Signal Breakdown</SectionLabel>
         {score !== null && score !== undefined && (

@@ -25,25 +25,27 @@ describe('EntityListShell states', () => {
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(/couldn't load/i);
     expect(screen.queryByText('Nothing here')).not.toBeInTheDocument();
-    await userEvent.setup().click(within(alert).getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(within(alert).getByRole('button', { name: /^Try again/ }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('refreshError keeps the stale rows and adds the inline "Couldn\'t refresh" error with retry', async () => {
     const onRetry = vi.fn();
     render(shell({ refreshError: true, noun: 'campaigns', onRetry }));
-    const alert = screen.getByRole('alert');
+    // Stale-data banner: polite status, not an assertive alert.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    const alert = screen.getByRole('status');
     expect(alert).toHaveTextContent("Couldn't refresh campaigns");
     expect(alert).toHaveTextContent('Showing the last loaded list.');
     expect(screen.getByText('Alpha')).toBeInTheDocument();
     expect(screen.getByText('Beta')).toBeInTheDocument();
-    await userEvent.setup().click(within(alert).getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(within(alert).getByRole('button', { name: /^Try again/ }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('refreshError defaults the noun, and is ignored when isError already owns the error state', () => {
     const { rerender } = render(shell({ refreshError: true }));
-    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't refresh this list");
+    expect(screen.getByRole('status')).toHaveTextContent("Couldn't refresh this list");
     rerender(shell({ items: undefined, isError: true, refreshError: true }));
     expect(screen.getAllByRole('alert')).toHaveLength(1);
     expect(screen.getByRole('alert')).toHaveTextContent(/couldn't load/i);

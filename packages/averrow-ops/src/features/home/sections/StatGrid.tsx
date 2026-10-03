@@ -31,12 +31,13 @@ export function StatGrid() {
   // expose `isPending` — true only until the first successful fetch
   // settles (placeholderData: keepPreviousData keeps it false across
   // subsequent background refetches, so this never re-flashes).
-  const { data: obsStats, isLoading: obsPending }     = useObservatoryStats();
-  const { data: alertStats, isPending: alertPending } = useAlertStats();
-  const { data: opsStats, isPending: opsPending }     = useOperationsStats();
-  const { data: brandStats, isPending: brandPending } = useBrandStats();
-  const { data: agentData, isPending: agentsPending } = useAgents();
-  const { data: feedStats, isPending: feedsPending }  = useFeedStats();
+  const { data: obsStats, isLoading: obsPending, error: obsErr } = useObservatoryStats();
+  const obsError = !!obsErr;
+  const { data: alertStats, isPending: alertPending, isError: alertError } = useAlertStats();
+  const { data: opsStats, isPending: opsPending, isError: opsError } = useOperationsStats();
+  const { data: brandStats, isPending: brandPending, isError: brandError } = useBrandStats();
+  const { data: agentData, isPending: agentsPending, isError: agentsError } = useAgents();
+  const { data: feedStats, isPending: feedsPending, isError: feedsError } = useFeedStats();
   // Brands hook surfaces the live "new this week" count via stats,
   // but the headline number is brandStats.total_tracked. useBrands
   // here is just to gracefully no-op on the rare initial paint where
@@ -54,14 +55,24 @@ export function StatGrid() {
   const feedDisabled  = feedStats?.disabled ?? 0;
   const feedTotal     = feedActive + feedDisabled;
 
+  // A failed query with nothing to show is an error tile, never 0 (matches the
+  // KPI band above). Data already on screen wins over a failed refetch.
+  const obsFailed    = obsError && !obsStats;
+  const alertFailed  = alertError && !alertStats;
+  const opsFailed    = opsError && !opsStats;
+  const brandFailed  = brandError && !brandStats;
+  const agentsFailed = agentsError && !agentData;
+  const feedsFailed  = feedsError && !feedStats;
+
   return (
     <section className="home-stat-grid-section">
       <div className="home-stat-grid">
         <StatTile
           label="Mapped · 7d"
-          value={obsPending ? null : (obsStats?.threats_mapped ?? 0)}
+          value={obsStats ? obsStats.threats_mapped : (obsPending || obsError ? null : 0)}
+          error={obsFailed}
           sub={
-            obsPending
+            obsPending || obsFailed
               ? '—'
               : obsStats && obsStats.threats_total > 0
                 ? `${obsStats.geo_coverage_pct ?? 0}% of ${obsStats.threats_total.toLocaleString()} ingested`
@@ -72,37 +83,42 @@ export function StatGrid() {
         />
         <StatTile
           label="Alerts"
-          value={alertPending ? null : (alertStats?.total ?? 0)}
-          sub={alertPending ? '—' : `${criticalCount} critical · ${alertStats?.new_count ?? 0} new`}
+          value={alertStats ? alertStats.total : (alertPending || alertError ? null : 0)}
+          error={alertFailed}
+          sub={alertPending || alertFailed ? '—' : `${criticalCount} critical · ${alertStats?.new_count ?? 0} new`}
           accent={M.RED}
           critical={criticalCount}
           onClick={() => navigate('/console?tab=alerts')}
         />
         <StatTile
           label="Campaigns"
-          value={opsPending ? null : (opsStats?.campaigns_tracked ?? 0)}
-          sub={opsPending ? '—' : `${opsStats?.active_operations ?? 0} active ops`}
+          value={opsStats ? opsStats.campaigns_tracked : (opsPending || opsError ? null : 0)}
+          error={opsFailed}
+          sub={opsPending || opsFailed ? '—' : `${opsStats?.active_operations ?? 0} active ops`}
           accent={M.AMBER}
           onClick={() => navigate('/explore?tab=campaigns')}
         />
         <StatTile
           label="Brands"
-          value={brandPending ? null : (brandStats?.total_tracked ?? 0)}
-          sub={brandPending ? '—' : `${brandStats?.new_this_week ?? 0} new this week`}
+          value={brandStats ? brandStats.total_tracked : (brandPending || brandError ? null : 0)}
+          error={brandFailed}
+          sub={brandPending || brandFailed ? '—' : `${brandStats?.new_this_week ?? 0} new this week`}
           accent={M.AMBER}
           onClick={() => navigate('/explore?tab=brands')}
         />
         <StatTile
           label="Agents"
-          value={agentsPending ? null : agentsOnline}
-          sub={agentsPending ? '—' : `of ${agents.length || 0} online`}
+          value={agentData ? agentsOnline : (agentsPending || agentsError ? null : 0)}
+          error={agentsFailed}
+          sub={agentsPending || agentsFailed ? '—' : `of ${agents.length || 0} online`}
           accent={M.BLUE}
           onClick={() => navigate('/admin/operations?tab=agents')}
         />
         <StatTile
           label="Feeds"
-          value={feedsPending ? null : feedActive}
-          sub={feedsPending ? '—' : `of ${feedTotal || 0} active`}
+          value={feedStats ? feedActive : (feedsPending || feedsError ? null : 0)}
+          error={feedsFailed}
+          sub={feedsPending || feedsFailed ? '—' : `of ${feedTotal || 0} active`}
           accent={M.GREEN}
           onClick={() => navigate('/admin/operations?tab=feeds')}
         />

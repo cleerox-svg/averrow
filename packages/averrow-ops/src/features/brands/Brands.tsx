@@ -35,8 +35,7 @@ import {
   type BrandCandidate,
 } from '@/hooks/useBrandCandidates';
 import { BrandsGrid } from './components/BrandsGrid';
-import { Card } from '@/components/ui/Card';
-import { Badge, PageHeader, PageState, pageStateKind } from '@/design-system/components';
+import { Card, Badge, PageHeader, PageState, pageStateKind } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { timeAgo } from '@/lib/time';
@@ -109,21 +108,52 @@ export function BrandsV3() {
 // work. The visual rebuild lifts the surface from "stat tiles + plain
 // lists" (PR6 scaffold) to a chart-led intel surface with sector
 // donut, threat-type breakdown bars, and Card-treated stat hero.
+// Load state for one aggregate query. A failed query is an error card with
+// retry; it must never read as "no data yet", "Awaiting snapshot" or an
+// endless "Loading…" (data already on screen wins over a failed refetch).
+interface AggStatus { failed: boolean; loading: boolean; onRetry: () => void }
+function aggStatus(q: { data: unknown; isError: boolean; isLoading: boolean; refetch: () => unknown }): AggStatus {
+  return {
+    failed: q.isError && !q.data,
+    loading: q.isLoading,
+    onRetry: () => { void q.refetch(); },
+  };
+}
+
+/** Card-sized loading/error placeholder used by every aggregate card. */
+function AggCardState({ status, title }: { status: AggStatus; title: string }) {
+  return status.failed
+    ? <PageState kind="error" layout="card" compact title={`Couldn't load ${title}`} onRetry={status.onRetry} />
+    : <PageState kind="loading" layout="card" title={`Loading ${title}…`} />;
+}
+
 function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspects: () => void }) {
-  const { data: stats, isLoading: statsLoading } = useBrandStats();
-  const { data: movers, isLoading: moversLoading } = useBrandMovers();
-  const { data: emailAgg } = useEmailSecurityAggregate();
-  const { data: pressureAgg } = usePressureAggregate();
-  const { data: compositionAgg } = useCompositionAggregate();
-  const { data: postureAgg } = usePostureAggregate();
+  const statsQ = useBrandStats();
+  const moversQ = useBrandMovers();
+  const emailQ = useEmailSecurityAggregate();
+  const pressureQ = usePressureAggregate();
+  const compositionQ = useCompositionAggregate();
+  const postureQ = usePostureAggregate();
+  const { data: stats, isLoading: statsLoading } = statsQ;
+  const { data: movers, isLoading: moversLoading } = moversQ;
+  const { data: emailAgg } = emailQ;
+  const { data: pressureAgg } = pressureQ;
+  const { data: compositionAgg } = compositionQ;
+  const { data: postureAgg } = postureQ;
+  const statsS = aggStatus(statsQ);
+  const moversS = aggStatus(moversQ);
+  const emailS = aggStatus(emailQ);
+  const pressureS = aggStatus(pressureQ);
+  const compositionS = aggStatus(compositionQ);
+  const postureS = aggStatus(postureQ);
 
   return (
     <div className="space-y-5">
-      <HeroStrip stats={stats} loading={statsLoading} />
+      <HeroStrip stats={stats} loading={statsLoading} failed={statsS.failed} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <SectorDonut breakdown={stats?.sector_breakdown ?? null} totalTracked={stats?.total_tracked ?? 0} />
-        <ThreatTypeBreakdown stats={stats} />
+        <SectorDonut breakdown={stats?.sector_breakdown ?? null} totalTracked={stats?.total_tracked ?? 0} status={statsS} />
+        <ThreatTypeBreakdown stats={stats} status={statsS} />
         {isStaff
           ? <HotProspectsTeaser onViewAll={onViewProspects} />
           : <CatalogStatusCard stats={stats} />
@@ -133,8 +163,8 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
       {/* Defense panel — email-security grade distribution + DMARC mix */}
       <PanelHeader title="Defense" subtitle="Email-security posture across the catalog" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <EmailGradeCard data={emailAgg} />
-        <DmarcEnforcementCard data={emailAgg} />
+        <EmailGradeCard data={emailAgg} status={emailS} />
+        <DmarcEnforcementCard data={emailAgg} status={emailS} />
       </div>
 
       {/* Pressure panel — top brands by external attack signals */}
@@ -145,32 +175,36 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
           rows={pressureAgg?.top_lookalikes}
           accent="#E5A832"
           subtitle="Active typosquats"
+          status={pressureS}
         />
         <PressureLeaderboard
           title="Social impersonations"
           rows={pressureAgg?.top_social_imps}
           accent="#fb923c"
           subtitle="Suspicious or fake profiles"
+          status={pressureS}
         />
         <PressureLeaderboard
           title="App impersonations"
           rows={pressureAgg?.top_app_imps}
           accent="#C83C3C"
           subtitle="Fake mobile listings"
+          status={pressureS}
         />
         <PressureLeaderboard
           title="Dark-web mentions"
           rows={pressureAgg?.top_dark_web}
           accent="#9B59B6"
           subtitle="Confirmed paste / forum hits"
+          status={pressureS}
         />
       </div>
 
       {/* Composition panel — what does our catalog look like */}
       <PanelHeader title="Composition" subtitle="Catalog tier mix, source, prominence, geo" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CompositionMixCard data={compositionAgg} />
-        <GeoDistributionCard data={compositionAgg} />
+        <CompositionMixCard data={compositionAgg} status={compositionS} />
+        <GeoDistributionCard data={compositionAgg} status={compositionS} />
       </div>
 
       {/* Posture panel — Brand-Health + Brand-Exposure across catalog */}
@@ -180,12 +214,14 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
           title="Brand-Health distribution"
           data={postureAgg?.health_score_buckets}
           tone="ok"
+          status={postureS}
           subtitle={postureAgg ? `${formatNumber(postureAgg.total_scored)} brands scored` : 'Awaiting daily snapshot'}
         />
         <ScoreBucketCard
           title="Brand-Exposure distribution"
           data={postureAgg?.exposure_score_buckets}
           tone="crit"
+          status={postureS}
           subtitle="Higher = more attack pressure"
         />
       </div>
@@ -195,12 +231,14 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
           rows={postureAgg?.improving_brands}
           tone="ok"
           emptyMsg="No brand-health improvements detected this week"
+          status={postureS}
         />
         <PostureMoversCard
           title="Declining brands"
           rows={postureAgg?.declining_brands}
           tone="crit"
           emptyMsg="No brand-health declines detected this week"
+          status={postureS}
         />
       </div>
 
@@ -213,6 +251,7 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
           tone="crit"
           emptyMsg="No rising attack pressure this week"
           loading={moversLoading}
+          status={moversS}
         />
         <MoversCard
           title="Cooling down"
@@ -220,6 +259,7 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
           tone="ok"
           emptyMsg="No brands cooling significantly this week"
           loading={moversLoading}
+          status={moversS}
         />
       </div>
 
@@ -247,7 +287,7 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
 // 4 stat tiles using the active Card with accent gradients, big numbers,
 // and contextual sub-info. Replaces the flat 4-tile strip from the
 // PR6 scaffold which had no visual hierarchy.
-function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
+function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; failed: boolean }) {
   const tiles = [
     {
       label: 'Total tracked',
@@ -279,6 +319,7 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map((t, i) => (
         <Card key={t.label} variant="active" accent={t.accent}
+          role={failed ? 'group' : undefined} aria-label={failed ? `${t.label}: couldn't load` : undefined}
           style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
           <div style={{
             position: 'absolute', top: 12, left: 16,
@@ -308,7 +349,9 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
             }}>
               {loading ? '…' : t.value}
             </div>
-            {t.sub && (
+            {failed ? (
+              <div className="mt-1 text-[11px] font-mono text-[var(--text-secondary)] truncate">Couldn't load</div>
+            ) : t.sub && (
               <div className="mt-1 text-[11px] font-mono text-[var(--text-tertiary)] truncate">
                 {t.sub}
               </div>
@@ -330,17 +373,19 @@ const SECTOR_COLORS = [
   '#9B59B6', '#1ABC9C', '#34495E',
 ];
 
-function SectorDonut({ breakdown, totalTracked }: {
+function SectorDonut({ breakdown, totalTracked, status }: {
   breakdown: { sector: string; count: number }[] | null;
   totalTracked: number;
+  status: AggStatus;
 }) {
   const data = (breakdown ?? []).slice(0, 8);
   const sumClassified = data.reduce((s, x) => s + x.count, 0);
   const unclassified = Math.max(0, totalTracked - sumClassified);
 
+  if (status.failed || (status.loading && data.length === 0)) return <AggCardState status={status} title="sector mix" />;
   if (data.length === 0) {
     return (
-      <Card hover={false} style={{ minHeight: 220 }}>
+      <Card style={{ minHeight: 220 }}>
         <SectionLabel>Sector mix</SectionLabel>
         <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
           <span className="text-xs text-[var(--text-tertiary)]">
@@ -352,7 +397,7 @@ function SectorDonut({ breakdown, totalTracked }: {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Sector mix</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -424,15 +469,16 @@ const THREAT_TYPE_COLORS = [
   '#9B59B6', '#1ABC9C', '#34495E',
 ];
 
-function ThreatTypeBreakdown({ stats }: { stats: any }) {
+function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus }) {
   const raw: Array<{ threat_type: string; count: number; pct: number }> =
     stats?.threat_type_breakdown ?? [];
   const data = raw.slice(0, 8);
   const total = data.reduce((s, x) => s + x.count, 0);
 
+  if (status.failed || (status.loading && data.length === 0)) return <AggCardState status={status} title="attack types" />;
   if (data.length === 0) {
     return (
-      <Card hover={false} style={{ minHeight: 220 }}>
+      <Card style={{ minHeight: 220 }}>
         <SectionLabel>Attack types</SectionLabel>
         <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
           <span className="text-xs text-[var(--text-tertiary)]">
@@ -444,7 +490,7 @@ function ThreatTypeBreakdown({ stats }: { stats: any }) {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Attack types</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -510,7 +556,7 @@ function CatalogStatusCard({ stats }: { stats: any }) {
     { label: 'Firmographic enricher', schedule: 'Hourly' },
   ];
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>Catalog automation</SectionLabel>
       <div className="mt-3 space-y-2">
         {items.map(it => (
@@ -548,12 +594,13 @@ function CatalogStatusFooter() {
   );
 }
 
-function MoversCard({ title, rows, tone, emptyMsg, loading }: {
+function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
   title: string;
   rows: BrandMover[];
   tone: 'crit' | 'ok';
   emptyMsg: string;
   loading?: boolean;
+  status: AggStatus;
 }) {
   const navigate = useNavigate();
   const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
@@ -563,8 +610,10 @@ function MoversCard({ title, rows, tone, emptyMsg, loading }: {
     : 1;
   const top5 = rows.slice(0, 5);
 
+  if (status.failed) return <AggCardState status={status} title={title.toLowerCase()} />;
+
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>{title}</SectionLabel>
         {rows.length > 0 && (
@@ -690,7 +739,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
   const top = (data?.candidates ?? []).slice(0, 3);
   if (top.length === 0) return null;
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between gap-2 mb-3">
         <SectionLabel>Hot prospects from CT</SectionLabel>
         <Badge variant="info">Staff</Badge>
@@ -827,7 +876,7 @@ function ProspectsTab() {
       )}
 
       {!isLoading && all.length > 0 && status === 'promoted' && (
-        <Card hover={false}>
+        <Card>
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>Promoted into the brand catalog</SectionLabel>
             <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} promoted</span>
@@ -841,7 +890,7 @@ function ProspectsTab() {
       )}
 
       {!isLoading && all.length > 0 && status === 'rejected' && (
-        <Card hover={false}>
+        <Card>
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>Rejected (negative examples)</SectionLabel>
             <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} rejected</span>
@@ -964,19 +1013,13 @@ const GRADE_TONE: Record<string, string> = {
   'F':  '#C83C3C',
 };
 
-function EmailGradeCard({ data }: { data: EmailSecurityAggregate | null | undefined }) {
-  if (!data) {
-    return (
-      <Card hover={false}><SectionLabel>Email security grade</SectionLabel>
-        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
-      </Card>
-    );
-  }
+function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
+  if (!data) return <AggCardState status={status} title="email security grade" />;
   const total = data.grade_distribution.reduce((s, r) => s + r.count, 0);
   const max = Math.max(1, ...data.grade_distribution.map(r => r.count));
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Email security grade</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -1012,14 +1055,8 @@ function EmailGradeCard({ data }: { data: EmailSecurityAggregate | null | undefi
   );
 }
 
-function DmarcEnforcementCard({ data }: { data: EmailSecurityAggregate | null | undefined }) {
-  if (!data) {
-    return (
-      <Card hover={false}><SectionLabel>DMARC enforcement</SectionLabel>
-        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
-      </Card>
-    );
-  }
+function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
+  if (!data) return <AggCardState status={status} title="DMARC enforcement" />;
   const total = data.dmarc_distribution.reduce((s, r) => s + r.count, 0);
   const POLICY_COLORS: Record<string, string> = {
     reject: '#3CB878', quarantine: '#0A8AB5',
@@ -1028,7 +1065,7 @@ function DmarcEnforcementCard({ data }: { data: EmailSecurityAggregate | null | 
   const enforcePct = total > 0 ? (data.dmarc_enforcing / total) * 100 : 0;
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>DMARC enforcement</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -1068,18 +1105,21 @@ function DmarcEnforcementCard({ data }: { data: EmailSecurityAggregate | null | 
 // Pressure panel — leaderboards
 // ══════════════════════════════════════════════════════════════════
 
-function PressureLeaderboard({ title, rows, accent, subtitle }: {
+function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
   title: string;
   rows: PressureMover[] | undefined;
   accent: string;
   subtitle: string;
+  status: AggStatus;
 }) {
   const navigate = useNavigate();
   const top5 = (rows ?? []).slice(0, 5);
   const max = Math.max(1, ...top5.map(r => r.count));
 
+  if (!rows) return <AggCardState status={status} title={title.toLowerCase()} />;
+
   return (
-    <Card hover={false} style={{ minHeight: 200 }}>
+    <Card style={{ minHeight: 200 }}>
       <SectionLabel>{title}</SectionLabel>
       <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">{subtitle}</div>
       <div className="mt-3 space-y-1.5">
@@ -1124,16 +1164,10 @@ const TIER_COLORS: Record<string, string> = {
   customer: '#3CB878', monitored: '#E5A832', tracked: '#78A0C8',
 };
 
-function CompositionMixCard({ data }: { data: CompositionAggregate | null | undefined }) {
-  if (!data) {
-    return (
-      <Card hover={false}><SectionLabel>Catalog composition</SectionLabel>
-        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
-      </Card>
-    );
-  }
+function CompositionMixCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
+  if (!data) return <AggCardState status={status} title="catalog composition" />;
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Catalog composition</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -1212,21 +1246,15 @@ function StackedBar({ data, total }: {
   );
 }
 
-function GeoDistributionCard({ data }: { data: CompositionAggregate | null | undefined }) {
-  if (!data) {
-    return (
-      <Card hover={false}><SectionLabel>Geographic distribution</SectionLabel>
-        <div className="mt-3 text-xs text-[var(--text-tertiary)]">Loading…</div>
-      </Card>
-    );
-  }
+function GeoDistributionCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
+  if (!data) return <AggCardState status={status} title="geographic distribution" />;
   const top10 = data.hq_countries.slice(0, 10);
   const max = Math.max(1, ...top10.map(c => c.count));
   const totalGeo = top10.reduce((s, c) => s + c.count, 0);
   const unknown = data.total - data.hq_countries.reduce((s, c) => s + c.count, 0);
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Geographic distribution</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -1264,15 +1292,17 @@ function GeoDistributionCard({ data }: { data: CompositionAggregate | null | und
 // Posture panel
 // ══════════════════════════════════════════════════════════════════
 
-function ScoreBucketCard({ title, data, tone, subtitle }: {
+function ScoreBucketCard({ title, data, tone, subtitle, status }: {
   title: string;
   data: Array<{ bucket: string; count: number }> | undefined;
   tone: 'ok' | 'crit';
   subtitle: string;
+  status: AggStatus;
 }) {
+  if (!data && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
   if (!data) {
     return (
-      <Card hover={false}><SectionLabel>{title}</SectionLabel>
+      <Card><SectionLabel>{title}</SectionLabel>
         <div className="mt-3 text-xs text-[var(--text-tertiary)]">Awaiting daily snapshot</div>
       </Card>
     );
@@ -1284,7 +1314,7 @@ function ScoreBucketCard({ title, data, tone, subtitle }: {
   const palette = tone === 'crit' ? [...okPalette].reverse() : okPalette;
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>{title}</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -1319,18 +1349,21 @@ function ScoreBucketCard({ title, data, tone, subtitle }: {
   );
 }
 
-function PostureMoversCard({ title, rows, tone, emptyMsg }: {
+function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
   title: string;
   rows: PostureMover[] | undefined;
   tone: 'ok' | 'crit';
   emptyMsg: string;
+  status: AggStatus;
 }) {
   const navigate = useNavigate();
   const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
   const list = rows ?? [];
 
+  if (!rows && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
+
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>{title}</SectionLabel>
       <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">
         Brand-Health Δ vs 7 days ago
