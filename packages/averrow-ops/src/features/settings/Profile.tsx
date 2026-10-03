@@ -77,7 +77,12 @@ export function Profile() {
       sessionsEndpoint="/api/admin/sessions"
       revokeEndpoint={`/api/admin/users/${user.id}/force-logout`}
     />
-    <InstallAppCard />
+    {/* Sits outside the shared ProfilePage, so re-create its centered 720px
+        column (24px gutters). The negative top margin cancels ProfilePage's
+        64px bottom padding so the card keeps the 16px card rhythm. */}
+    <div style={{ maxWidth: 720, margin: '-64px auto 0', padding: '0 24px 64px' }}>
+      <InstallAppCard />
+    </div>
     </>
   );
 }

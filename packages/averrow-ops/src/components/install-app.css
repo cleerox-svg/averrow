@@ -1,0 +1,33 @@
+/* Shared styles for the PWA install surfaces (InstallAppBanner / InstallAppCard). */
+
+/* Ops-local token: ink colour on amber fills (matches the fallback the shared
+   Login/Profile primitives already use). */
+:root { --text-on-amber: #0A0F1E; }
+
+/* Gutter wrapper for the Overview banner — mirrors StatGrid/StatusRow
+   (`@container home`, 24px -> 32px) so it lines up with the hero + KPI tiles. */
+.install-gutter { padding: 16px 24px 0; }
+@container home (min-width: 480px) {
+  .install-gutter { padding: 18px 32px 0; }
+}
+
+.install-step-n {
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 24px; height: 24px; border-radius: 9999px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 900;
+  background: var(--amber);
+  color: var(--text-on-amber);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--amber) 45%, transparent);
+}
+
+/* Touch targets: >=44px tall on coarse pointers (phones/tablets). */
+@media (pointer: coarse) {
+  .install-btn { min-height: 44px; }
+}
+
+/* Phones: iOS steps collapse behind a "Show me how" disclosure. */
+.install-how-btn { display: none !important; } /* !important: Button sets display inline */
+@media (max-width: 767px) {
+  .install-how-btn { display: inline-flex !important; }
+  .install-steps-wrap[data-open="false"] .install-steps { display: none; }
+}

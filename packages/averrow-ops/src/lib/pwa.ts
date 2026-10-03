@@ -40,3 +40,69 @@ export function isIOS(): boolean {
   if (typeof navigator === 'undefined') return false;
   return /iP(ad|hone|od)/.test(navigator.userAgent);
 }
+
+// ── Install-prompt store ─────────────────────────────────────────────────
+// Chrome fires `beforeinstallprompt` once, early — usually before any lazy
+// route (Overview, Profile) has mounted a consumer. The listeners are
+// therefore registered at app startup (main.tsx → captureInstallPrompt) and
+// the event is held in this module-level store so every consumer, whenever
+// it mounts, sees the same event. Read via useInstallPrompt().
+
+export interface BeforeInstallPromptEvent extends Event {
+  readonly platforms?: readonly string[];
+  prompt: () => Promise<void>;
+  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+let installEvent: BeforeInstallPromptEvent | null = null;
+let installed = false;
+let captureStarted = false;
+const installListeners = new Set<() => void>();
+
+function emitInstallChange(): void {
+  installListeners.forEach((l) => l());
+}
+
+/** Idempotent. Registers the window listeners that feed the install store. */
+export function captureInstallPrompt(): void {
+  if (captureStarted || typeof window === 'undefined') return;
+  captureStarted = true;
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
+    e.preventDefault();
+    installEvent = e as BeforeInstallPromptEvent;
+    emitInstallChange();
+  });
+  window.addEventListener('appinstalled', () => {
+    installEvent = null;
+    installed = true;
+    emitInstallChange();
+  });
+}
+
+export function subscribeInstallPrompt(listener: () => void): () => void {
+  installListeners.add(listener);
+  return () => { installListeners.delete(listener); };
+}
+
+export function getInstallPromptEvent(): BeforeInstallPromptEvent | null {
+  return installEvent;
+}
+
+/** True once `appinstalled` fired in this page's lifetime. */
+export function getAppInstalled(): boolean {
+  return installed;
+}
+
+/** The event is single-use (spec) — drop it once prompt() has been called. */
+export function clearInstallPromptEvent(): void {
+  if (installEvent === null) return;
+  installEvent = null;
+  emitInstallChange();
+}
+
+/** Test-only: reset module state. Listeners on window are left in place. */
+export function __resetInstallPromptStoreForTests(): void {
+  installEvent = null;
+  installed = false;
+  installListeners.clear();
+}

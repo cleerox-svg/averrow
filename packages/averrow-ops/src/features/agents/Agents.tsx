@@ -506,7 +506,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
 
 // Dual-area health chart — runs + outputs over the last 24 hourly
 // buckets. Mirrors v2's drill-down chart per operator preference;
-// gives more shape than the single-bar ActivitySparkline.
+// gives more shape than a single-bar sparkline.
 function HealthChart({ name }: { name: string }) {
   const { data, isLoading } = useAgentHealth(name);
 

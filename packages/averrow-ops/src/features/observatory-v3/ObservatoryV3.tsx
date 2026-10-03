@@ -130,8 +130,10 @@ export function ObservatoryV3() {
     });
   }, [isMobile, showPanel]);
 
+  // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
+  // it tracks the real topbar + safe-area + platform-alert-banner height.
   return (
-    <div className="relative h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* Full-screen map — bottom inset reserves the stats bar + ticker
           band below (desktop: 36 + 40 = 76; mobile: 36 + 72 = 108). */}
       <div className={cn('absolute inset-0', isMobile ? 'bottom-[108px]' : 'bottom-[76px]')}>

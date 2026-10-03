@@ -76,7 +76,7 @@ export function BrandsV3() {
       </div>
 
       {/* Sticky tab strip */}
-      <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-6 px-6">
+      <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-[var(--v4-gutter-x,24px)] px-[var(--v4-gutter-x,24px)]">
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
           {V3_TABS.filter(t => !t.staffOnly || isStaff).map(tab => (
             <button

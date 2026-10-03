@@ -36,6 +36,9 @@ function SimpleStatCard({
   const containerStyle: CSSProperties = {
     padding: '16px 20px',
     position: 'relative',
+    // Clip the decorative corner glow (right/bottom -20px) to the card so it
+    // can't widen the page's scroll area at phone widths.
+    overflow: 'hidden',
     userSelect: 'none',
     cursor: onClick ? 'pointer' : undefined,
     background: 'var(--bg-card)',
