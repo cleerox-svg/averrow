@@ -25,9 +25,17 @@ export interface SparklineProps {
   animate?: boolean;
   /** Accessible name. Omit for a purely decorative sparkline. */
   label?: string;
+  /**
+   * Y-range anchor. `auto` (default) spans the data's min..max; `zero` always
+   * includes 0, so the line height is proportional to the value (use for
+   * counts/backlogs where "half the peak" should look like half).
+   */
+  baseline?: 'auto' | 'zero';
 }
 
-const PAD = 2;
+// Inset from the box edge: end-dot radius (2.5) + stroke, so the dot and its
+// glow stay inside the viewBox and never bleed into a card border.
+const PAD = 4;
 
 export const Sparkline = memo(function Sparkline({
   data,
@@ -37,6 +45,7 @@ export const Sparkline = memo(function Sparkline({
   fill = false,
   animate = true,
   label,
+  baseline = 'auto',
 }: SparklineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState(widthProp);
@@ -62,8 +71,8 @@ export const Sparkline = memo(function Sparkline({
     if (!data || data.length < 2) return null;
     const finite = data.filter(Number.isFinite);
     if (finite.length < 2) return null;
-    const min = Math.min(...finite);
-    const max = Math.max(...finite);
+    const min = baseline === 'zero' ? Math.min(0, ...finite) : Math.min(...finite);
+    const max = baseline === 'zero' ? Math.max(0, ...finite) : Math.max(...finite);
     const range = max - min || 1;
     const w = width - PAD * 2;
     const h = height - PAD * 2;
@@ -71,14 +80,15 @@ export const Sparkline = memo(function Sparkline({
       x: PAD + (i / (data.length - 1)) * w,
       y: PAD + h - (((Number.isFinite(v) ? v : min) - min) / range) * h,
     }));
-  }, [data, width, height]);
+  }, [data, width, height, baseline]);
 
   const a11y = label
     ? ({ role: 'img', 'aria-label': label } as const)
     : ({ 'aria-hidden': true } as const);
 
   const svgStyle = {
-    overflow: 'visible',
+    // Clip to the viewBox (PAD keeps the end dot inside it).
+    overflow: 'hidden',
     flexShrink: 0,
     display: 'block',
     animation: animate && !reduced ? 'shared-fade-in 600ms ease-out' : undefined,
