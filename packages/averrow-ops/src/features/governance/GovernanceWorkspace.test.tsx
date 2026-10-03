@@ -32,7 +32,13 @@ describe('GovernanceWorkspace role gating', () => {
     expect(await screen.findByRole('button', { name: /Audit Log/ })).toBeInTheDocument();
   });
 
-  it('hides Audit Log from non-admin staff who still have another tab', async () => {
+  it('shows Audit Log to analysts, who hold view_audit, but not Users', async () => {
+    mount('analyst');
+    expect(await screen.findByText('audit-pane')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Users/ })).toBeNull();
+  });
+
+  it('hides Audit Log from staff without view_audit who still have another tab', async () => {
     mount('billing');
     expect(await screen.findByRole('button', { name: /Pricing/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Audit Log/ })).toBeNull();
@@ -40,7 +46,7 @@ describe('GovernanceWorkspace role gating', () => {
   });
 
   it('redirects to /admin when a staff role has no visible tab', async () => {
-    mount('analyst');
+    mount('support');
     expect(await screen.findByText('admin-home')).toBeInTheDocument();
   });
 });

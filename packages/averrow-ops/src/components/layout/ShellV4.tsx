@@ -56,10 +56,10 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
   const platformItems: NavItem[] = [
     { label: 'Dashboard',   to: '/admin',            icon: LayoutDashboard, end: true },
     { label: 'Operations',  to: '/admin/operations', icon: Wrench },
-    // Governance tabs are role-gated (Audit/Users: admin; Pricing:
-    // view_billing; Notifications: super_admin) — hide the row when the
-    // role would see none.
-    ...(isSuperAdmin || opts.role === 'admin' || roleHasPermission(opts.role, 'view_billing')
+    // Governance tabs are role-gated (Audit: view_audit; Users: admin;
+    // Pricing: view_billing; Notifications: super_admin) — hide the row
+    // when the role would see none.
+    ...(isSuperAdmin || opts.role === 'admin' || roleHasPermission(opts.role, 'view_audit') || roleHasPermission(opts.role, 'view_billing')
       ? [{ label: 'Governance', to: '/admin/governance', icon: ClipboardList } as NavItem]
       : []),
     { label: 'Team',        to: '/admin/users?tab=members', icon: Users },

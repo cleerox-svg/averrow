@@ -755,13 +755,16 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Audit Log ────────────────────────────────────────────────────
+  // Gated on the view_audit permission (lib/role-permissions.ts), which
+  // admin/super_admin, analyst and the read-only auditor hold — the
+  // matrix is the source of truth; this route used to be requireAdmin.
   router.get("/api/admin/audit", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
+    const ctx = await requirePermission("view_audit")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListAuditLog(request, env);
   });
   router.get("/api/admin/audit/export", async (request: Request, env: Env) => {
-    const ctx = await requireAdmin(request, env);
+    const ctx = await requirePermission("view_audit")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleExportAuditLog(request, env);
   });
