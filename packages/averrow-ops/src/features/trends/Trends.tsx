@@ -13,11 +13,10 @@ import {
 } from '@/hooks/useTrends';
 import type { IntelligenceBriefing, VolumePoint } from '@/hooks/useTrends';
 import { Card } from '@/components/ui/Card';
-import { Button, Badge, PageHeader } from '@/design-system/components';
+import { Button, Badge, PageHeader, PageState } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { PageLoader } from '@/components/ui/PageLoader';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
 import { tabUrl } from '@/lib/workspaceRoutes';
@@ -617,9 +616,23 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
 
 function TrendsContent() {
   const [window, setWindow] = useState<string>('30d');
-  const { data: volume, isLoading } = useThreatVolume(window);
+  const { data: volume, isLoading, isError, refetch } = useThreatVolume(window);
 
-  if (isLoading && !volume) return <PageLoader />;
+  // Error and loading branches render NO children. The content below mounts
+  // more observers of the same query (ExecutiveSummary, ThreatVolumeChart);
+  // letting a failed query fall through to content made them re-trigger the
+  // fetch on mount, flip the query back to pending, swap the loader back in,
+  // and loop forever. A failure now stops here until the user retries.
+  if (isError && !volume) {
+    return (
+      <PageState
+        kind="error"
+        title="Couldn't load trends"
+        onRetry={() => { void refetch(); }}
+      />
+    );
+  }
+  if (isLoading && !volume) return <PageState kind="loading" />;
 
   return (
     <div className="animate-fade-in space-y-6">

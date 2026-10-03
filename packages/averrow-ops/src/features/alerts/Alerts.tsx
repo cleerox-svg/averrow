@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import {
-  StatCard,
+  StatTile,
+  PageState,
+  pageStateKind,
   Card,
   StatGrid,
   FilterBar,
@@ -20,7 +22,6 @@ import { useSavedViews, type SavedView } from '@/hooks/useSavedViews';
 import { useAuth } from '@/lib/auth';
 import { parseInitials } from '@/lib/avatar';
 import { Bell, Star, X } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -833,8 +834,11 @@ export function Alerts() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
 
-  const { data: statsData, isLoading: statsLoading } = useAlertStats();
-  const { data: alertsData, isLoading: alertsLoading } = useAlerts({
+  const { data: statsData, isLoading: statsLoading, isError: statsError } = useAlertStats();
+  const {
+    data: alertsData, isLoading: alertsLoading, isError: alertsError,
+    isPlaceholderData: alertsPlaceholder, refetch: refetchAlerts,
+  } = useAlerts({
     ...filters,
     search: search || undefined,
   });
@@ -870,6 +874,25 @@ export function Alerts() {
 
   const groups = useMemo(() => groupByBrand(alerts), [alerts]);
 
+  // Error beats loading beats empty. A failed refetch that still has this
+  // filter's data on screen keeps it and shows an inline error instead; a
+  // keepPreviousData placeholder is the PREVIOUS filter's rows, so it does
+  // not count as data here.
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load");
+  // never a misleading 0 for a stat that has not arrived.
+  const statValue = (n: number | undefined): number | null =>
+    stats ? (n ?? 0) : (statsLoading || statsError ? null : 0);
+
+  const listFailed = alertsError && (!alertsData || alertsPlaceholder);
+  const listKind = pageStateKind({
+    isLoading: alertsLoading,
+    isError: listFailed,
+    isEmpty: groups.length === 0,
+  });
+  const filtersActive =
+    !!search || aiVerdictFilter !== 'all' || slaFilter !== 'all' || mineOnly ||
+    !!filters.severity || !!filters.status || !!filters.alert_type;
+
   const setFilter = (key: keyof AlertFilters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value === 'all' ? undefined : value }));
     setSelectedAlert(null);
@@ -903,25 +926,29 @@ export function Alerts() {
       <PageHeader title="Alerts" subtitle="Brand alerts across all monitored brands — SOC triage view" />
 
       <StatGrid cols={4}>
-        <StatCard
+        <StatTile
           label="Total Alerts"
-          value={statsLoading ? '...' : (stats?.total ?? 0)}
-          accentColor="var(--red)"
+          value={statValue(stats?.total)}
+          error={statsError && !stats}
+          accent="var(--red)"
         />
-        <StatCard
+        <StatTile
           label="New / Unacknowledged"
-          value={statsLoading ? '...' : (stats?.new_count ?? 0)}
-          accentColor="var(--sev-high)"
+          value={statValue(stats?.new_count)}
+          error={statsError && !stats}
+          accent="var(--sev-high)"
         />
-        <StatCard
+        <StatTile
           label="Acknowledged"
-          value={statsLoading ? '...' : (stats?.acknowledged ?? 0)}
-          accentColor="var(--amber)"
+          value={statValue(stats?.acknowledged)}
+          error={statsError && !stats}
+          accent="var(--amber)"
         />
-        <StatCard
+        <StatTile
           label="Resolved"
-          value={statsLoading ? '...' : (stats?.resolved ?? 0)}
-          accentColor="var(--green)"
+          value={statValue(stats?.resolved)}
+          error={statsError && !stats}
+          accent="var(--green)"
         />
       </StatGrid>
 
@@ -1109,24 +1136,36 @@ export function Alerts() {
         </div>
       </FilterBar>
 
-      {/* Loading */}
-      {alertsLoading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="w-6 h-6 border-2 border-afterburner-border border-t-afterburner rounded-full animate-spin" />
-        </div>
+      {alertsError && !listFailed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh alerts" description="Showing the last loaded list." onRetry={() => { void refetchAlerts(); }} />
+      )}
+
+      {listKind === 'loading' && <PageState kind="loading" layout="table" />}
+
+      {listKind === 'error' && (
+        <PageState kind="error" layout="card" title="Couldn't load alerts" onRetry={() => { void refetchAlerts(); }} />
       )}
 
       {/* Grouped alert list */}
-      {!alertsLoading && (
+      {(listKind === null || listKind === 'empty') && (
         <div className="space-y-3">
-          {groups.length === 0 && (
-            <EmptyState
+          {listKind === 'empty' && (filtersActive ? (
+            <PageState
+              kind="empty"
+              layout="card"
               icon={<Bell />}
               title="No alerts match your filters"
-              subtitle="All alerts have been acknowledged. You're up to date."
-              variant="success"
+              description="Try clearing a filter or changing the search."
             />
-          )}
+          ) : (
+            <PageState
+              kind="clear"
+              layout="card"
+              icon={<Bell />}
+              title="No open alerts"
+              description="The alert queue is clear. You're up to date."
+            />
+          ))}
 
           {groups.map(group => (
             <div key={group.brand_id}>

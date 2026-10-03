@@ -13,7 +13,7 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search as SearchIcon, Loader2, AlertTriangle } from 'lucide-react';
-import { Card, PageHeader, EmptyState, DataRow } from '@/design-system/components';
+import { Card, PageHeader, PageState, DataRow } from '@/design-system/components';
 import { useGlobalSearch, type SearchResult } from '@/hooks/useGlobalSearch';
 import { SEARCH_GROUPS } from './searchRouting';
 
@@ -78,11 +78,11 @@ export function SearchResults() {
 
       {showEmptyQuery && (
         <Card variant="base" padding="0">
-          <EmptyState
+          <PageState
+            kind="empty"
             icon={<SearchIcon />}
             title="Start typing to search"
-            subtitle="Use ⌘K / Ctrl-K to search from anywhere, or add ?q= to this page's URL to share a search."
-            variant="clean"
+            description="Use ⌘K / Ctrl-K to search from anywhere, or add ?q= to this page's URL to share a search."
           />
         </Card>
       )}
@@ -101,22 +101,22 @@ export function SearchResults() {
 
       {showError && (
         <Card variant="base" padding="0">
-          <EmptyState
+          <PageState
+            kind="error"
             icon={<AlertTriangle />}
             title="Search failed"
-            subtitle="Something went wrong loading results. Try again in a moment."
-            variant="error"
+            description="Something went wrong loading results. Try again in a moment."
           />
         </Card>
       )}
 
       {showNoResults && (
         <Card variant="base" padding="0">
-          <EmptyState
+          <PageState
+            kind="empty"
             icon={<SearchIcon />}
             title={`No results for “${q}”`}
-            subtitle="Try a different term, or check spelling — brand, domain, actor, provider, and campaign names all match."
-            variant="clean"
+            description="Try a different term, or check spelling — brand, domain, actor, provider, and campaign names all match."
           />
         </Card>
       )}

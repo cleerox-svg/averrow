@@ -7,8 +7,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useTrademarkOverview, type TrademarkOverviewRow } from '@/hooks/useTrademarkMonitor';
-import { StatCard, StatGrid, PageHeader, Card, Badge } from '@/design-system/components';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { StatTile, StatGrid, PageHeader, Card, Badge, PageState, pageStateKind } from '@/design-system/components';
 
 function formatCount(n: number) {
   return n.toLocaleString();
@@ -54,6 +53,13 @@ export function Trademarks() {
 
   const rows = query.data?.data ?? [];
   const totals = query.data?.totals;
+  // Error beats loading beats empty. A failed refetch with the last good rows
+  // still on screen keeps them and shows an inline error instead.
+  const listKind = pageStateKind({
+    isLoading: query.isLoading,
+    isError: query.isError && !query.data,
+    isEmpty: rows.length === 0,
+  });
 
   return (
     <div className="space-y-6">
@@ -64,30 +70,35 @@ export function Trademarks() {
 
       {totals && (
         <StatGrid>
-          <StatCard label="Brands w/ marks" value={formatCount(totals.brands)} accentColor="var(--blue)" />
-          <StatCard
+          <StatTile label="Brands w/ marks" value={formatCount(totals.brands)} accent="var(--blue)" />
+          <StatTile
             label="Confirmed"
             value={formatCount(totals.confirmed)}
-            accentColor={totals.confirmed > 0 ? 'var(--red)' : 'var(--blue)'}
+            accent={totals.confirmed > 0 ? 'var(--red)' : 'var(--blue)'}
           />
-          <StatCard
+          <StatTile
             label="Likely"
             value={formatCount(totals.likely)}
-            accentColor={totals.likely > 0 ? 'var(--amber)' : 'var(--blue)'}
+            accent={totals.likely > 0 ? 'var(--amber)' : 'var(--blue)'}
           />
-          <StatCard label="Total findings" value={formatCount(totals.findings)} accentColor="var(--blue)" />
+          <StatTile label="Total findings" value={formatCount(totals.findings)} accent="var(--blue)" />
         </StatGrid>
       )}
 
-      {query.isLoading ? (
-        <div className="text-center text-white/40 font-mono text-xs py-12">
-          Loading trademark overview…
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
+      {query.isError && query.data && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh trademarks" description="Showing the last loaded data." onRetry={() => { void query.refetch(); }} />
+      )}
+
+      {listKind === 'loading' ? (
+        <PageState kind="loading" layout="card" title="Loading trademark overview…" />
+      ) : listKind === 'error' ? (
+        <PageState kind="error" layout="card" title="Couldn't load trademark overview" onRetry={() => { void query.refetch(); }} />
+      ) : listKind === 'empty' ? (
+        <PageState
+          kind="empty"
+          layout="card"
           title="No trademark data yet"
-          subtitle="The trademark scanner seeds assets and correlates wordmark misuse for monitored brands on the hourly tick."
-          variant="scanning"
+          description="The trademark scanner seeds assets and correlates wordmark misuse for monitored brands on the hourly tick."
         />
       ) : (
         <Card>

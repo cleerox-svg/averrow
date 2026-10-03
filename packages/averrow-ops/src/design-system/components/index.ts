@@ -2,13 +2,15 @@
 // Future-facing import path: @/design-system/components
 //
 // Usage:
-//   import { Card, Button, Badge, Avatar, StatCard, ... } from '@/design-system/components'
+//   import { Card, Button, Badge, Avatar, StatTile, PageState, ... } from '@/design-system/components'
 //
 // Single barrel for ops (Phase 1 PR6a folded `components/ui/index.ts` into it).
 // Badge, Tabs, FilterBar, Sparkline and Avatar come from the shared kit
 // (`@averrow/shared/ui`); PageHeader is the thin ops adapter in ./PageHeader.
+// PageState (loading/empty/clear/error/locked) and StatTile (KPI tile) also come
+// from the kit (PR6b); `BreakdownCard` is the ops-local titled metric+rows card.
 // The remaining primitives still live in components/ui/ and move to the kit in
-// PR6b (EmptyState, StatCard) and PR6c (Card, tables).
+// PR6c (Card, tables).
 
 // ── Foundation ─────────────────────────────────────────────────────────────
 export { Card, CardHeader, CardBody } from '../../components/ui/Card';
@@ -18,7 +20,7 @@ export { Button } from '../../components/ui/Button';
 export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui/Button';
 
 // ── Shared kit (@averrow/shared/ui) ────────────────────────────────────────
-export { Badge, Tabs, FilterBar, Sparkline, Avatar } from '@averrow/shared/ui';
+export { Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind } from '@averrow/shared/ui';
 export type {
   BadgeProps,
   Severity,
@@ -36,13 +38,17 @@ export type {
   AvatarProps,
   AvatarSeverity,
   AvatarTone,
+  StatTileProps,
+  StatTone,
+  PageStateProps,
+  PageStateKind,
+  PageStateLayout,
+  PageStateAction,
+  PageStateActionSpec,
 } from '@averrow/shared/ui';
 
-export { StatCard, SimpleStatCard, DetailStatCard } from '../../components/ui/StatCard';
-export type { StatCardProps } from '../../components/ui/StatCard';
-
-export { StatTile } from '../../components/ui/StatTile';
-export type { StatTileProps } from '../../components/ui/StatTile';
+export { BreakdownCard } from './BreakdownCard';
+export type { BreakdownCardProps } from './BreakdownCard';
 
 export { GradeBadge } from '../../components/ui/GradeBadge';
 export type { GradeBadgeProps, Grade } from '../../components/ui/GradeBadge';
@@ -76,9 +82,6 @@ export type {
   StateMachineState,
 } from '../../components/ui/StateMachineButtons';
 
-export { GlowNumber } from '../../components/ui/GlowNumber';
-export type { GlowNumberProps, GlowSize, GlowFormat } from '../../components/ui/GlowNumber';
-
 export { LiveIndicator } from '../../components/ui/LiveIndicator';
 export type { LiveIndicatorProps } from '../../components/ui/LiveIndicator';
 
@@ -104,7 +107,4 @@ export { Input } from '../../components/ui/Input';
 export { Select } from '../../components/ui/Select';
 
 // ── Feedback ───────────────────────────────────────────────────────────────
-export { EmptyState } from '../../components/ui/EmptyState';
-export type { EmptyVariant } from '../../components/ui/EmptyState';
-
 export { Skeleton } from '../../components/ui/Skeleton';

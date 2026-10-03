@@ -24,10 +24,10 @@ import {
   SectionLabel,
   Select,
   FilterBar,
+  PageState,
 } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
 import { Input } from '@/components/ui/Input';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
 import { parseInitials, colorForUserId, SELF_AVATAR_COLOR } from '@/lib/avatar';
@@ -77,7 +77,7 @@ export function PlatformUsers() {
   const [showInvite, setShowInvite] = useState(false);
   const searchTimer = useRef<number | undefined>(undefined);
 
-  const { data, isLoading, error } = usePlatformUsers({
+  const { data, isLoading, error, refetch } = usePlatformUsers({
     q: debounced,
     role: roleFilter,
     status: statusFilter === 'all' ? '' : statusFilter,
@@ -173,11 +173,17 @@ export function PlatformUsers() {
 
       <Card hover={false} className="p-0 overflow-hidden">
         {isLoading ? (
-          <div className="text-white/40 text-sm font-mono py-10 text-center">Loading users…</div>
+          <PageState kind="loading" layout="table" title="Loading users…" />
         ) : error ? (
-          <div className="text-sm text-accent py-10 text-center">Couldn't load users: {(error as Error).message}</div>
+          <PageState
+            kind="error"
+            layout="table"
+            title="Couldn't load users"
+            description={(error as Error).message}
+            onRetry={() => { void refetch(); }}
+          />
         ) : users.length === 0 ? (
-          <div className="py-10"><EmptyState message="No users match" description="Adjust the search or filters." /></div>
+          <PageState kind="empty" layout="table" title="No users match" description="Adjust the search or filters." />
         ) : (
           <div className="overflow-x-auto">
             <Table>

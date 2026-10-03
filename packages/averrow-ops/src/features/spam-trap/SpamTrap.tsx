@@ -32,15 +32,13 @@ import {
   useSpamTrapDaily,
   useSpamTrapInsights,
 } from '@/hooks/useSpamTrap';
-import { StatCard } from '@/components/ui/StatCard';
 import { HoneypotNetworkPanel } from './components/HoneypotNetworkPanel';
 import { CaptureForensicsPanel } from './components/CaptureForensicsPanel';
 import { CampaignPanel } from './components/CampaignPanel';
 import { ThreatActorPanel } from './components/ThreatActorPanel';
 import { TrendsTab, CorrelationsTab, StrategyTab } from './components/InsightsTabs';
-import { PageLoader } from '@/components/ui/PageLoader';
 import { relativeTime } from '@/lib/time';
-import { Sparkline } from '@/design-system/components';
+import { Sparkline, StatTile, PageState } from '@/design-system/components';
 
 type TabKey = 'operations' | 'trends' | 'correlations' | 'strategy';
 
@@ -53,14 +51,21 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 
 export function SpamTrap() {
   const { isSuperAdmin, loading: authLoading } = useAuth();
-  const { data: addresses } = useSpamTrapAddresses();
-  const { data: stats } = useSpamTrapStats();
-  const { data: daily } = useSpamTrapDaily();
+  const { data: addresses, isError: addressesError } = useSpamTrapAddresses();
+  const { data: stats, isError: statsError } = useSpamTrapStats();
+  const { data: daily, isError: dailyError } = useSpamTrapDaily();
   const { data: insights } = useSpamTrapInsights();
   const [activeTab, setActiveTab] = useState<TabKey>('operations');
 
-  if (authLoading) return <PageLoader />;
+  if (authLoading) return <PageState kind="loading" />;
   if (!isSuperAdmin) return <Navigate to="/" replace />;
+
+  // A tile whose query has not settled passes null ("—"); one whose query
+  // failed passes `error` ("Couldn't load"). Never a fake 0 / "never".
+  const addrFailed = addresses === undefined && addressesError;
+  const statsFailed = stats === undefined && statsError;
+  const dailyFailed = daily === undefined && dailyError;
+  const tileValue = <T,>(value: T, unsettled: boolean): T | null => (unsettled ? null : value);
 
   const seedCount = addresses?.length ?? 0;
   const domainCount = addresses
@@ -99,12 +104,12 @@ export function SpamTrap() {
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard label="SEEDS DEPLOYED"   value={seedCount}     accentColor="#E5A832" />
-        <StatCard label="DOMAINS"          value={domainCount}   accentColor="#E5A832" />
-        <StatCard label="CAPTURES"         value={captureCount}  accentColor="#fb923c" />
-        <StatCard label="CATCH RATE · ALL" value={catchRate}     accentColor="#4ADE80" />
-        <StatCard label="CATCH RATE · 7D"  value={last7Rate}     accentColor="#4ADE80" />
-        <StatCard label="LAST CATCH"       value={lastCatch}     accentColor="var(--text-secondary)" />
+        <StatTile label="SEEDS DEPLOYED"   value={tileValue(seedCount, addresses === undefined)}   error={addrFailed} accent="#E5A832" />
+        <StatTile label="DOMAINS"          value={tileValue(domainCount, addresses === undefined)} error={addrFailed} accent="#E5A832" />
+        <StatTile label="CAPTURES"         value={tileValue(captureCount, stats === undefined)}    error={statsFailed} accent="#fb923c" />
+        <StatTile label="CATCH RATE · ALL" value={tileValue(catchRate, addresses === undefined || stats === undefined)} error={addrFailed || statsFailed} accent="#4ADE80" />
+        <StatTile label="CATCH RATE · 7D"  value={tileValue(last7Rate, addresses === undefined || daily === undefined)} error={addrFailed || dailyFailed} accent="#4ADE80" />
+        <StatTile label="LAST CATCH"       value={tileValue(lastCatch, addresses === undefined)}   error={addrFailed} accent="var(--text-secondary)" />
       </div>
 
       {/* 30-day sparkline */}

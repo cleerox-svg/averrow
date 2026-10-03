@@ -3,11 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   Card,
-  StatCard,
+  StatTile,
   StatGrid,
   PageHeader,
   FilterBar,
-  EmptyState,
+  PageState,
   Skeleton,
   Badge,
   Sparkline,
@@ -76,11 +76,16 @@ const PROVIDER_STATUS_BADGE: Record<ProviderStatus, BadgeProps> = {
 function ClusterPanel({
   clusters,
   isLoading,
+  isError,
+  onRetry,
   selectedClusterId,
   onSelect,
 }: {
   clusters: Cluster[];
   isLoading: boolean;
+  /** Failed fetch with no usable data: shown as an error, never "no clusters". */
+  isError: boolean;
+  onRetry: () => void;
   selectedClusterId: string | null;
   onSelect: (id: string | null) => void;
 }) {
@@ -108,12 +113,16 @@ function ClusterPanel({
           Clear filter
         </button>
       )}
-      {clusters.length === 0 && (
-        <EmptyState
+      {isError && (
+        <PageState kind="error" layout="card" compact title="Couldn't load clusters" onRetry={onRetry} />
+      )}
+      {!isError && clusters.length === 0 && (
+        <PageState
+          kind="empty"
+          layout="card"
           icon={<Globe />}
           title="No clusters detected"
-          subtitle="Infrastructure clusters will appear as threat correlations are identified"
-          variant="scanning"
+          description="Infrastructure clusters will appear as threat correlations are identified"
           compact
         />
       )}
@@ -288,7 +297,9 @@ function ProviderCard({
 
 function ProviderDetailPanel({ providerId }: { providerId: string }) {
   const { data: detail, isLoading: detailLoading } = useProviderDetail(providerId);
-  const { data: threats, isLoading: threatsLoading } = useProviderThreats(providerId, { limit: 10 });
+  const {
+    data: threats, isLoading: threatsLoading, isError: threatsError, refetch: refetchThreats,
+  } = useProviderThreats(providerId, { limit: 10 });
   const { data: timeline, isLoading: timelineLoading } = useProviderTimeline(providerId);
   const { data: linkedClusters, isLoading: clustersLoading } = useProviderClusters(providerId);
 
@@ -565,7 +576,9 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
         <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
           Recent Threats
         </div>
-        {threatsLoading ? (
+        {threatsError && !threats ? (
+          <PageState kind="error" layout="card" compact title="Couldn't load recent threats" onRetry={() => { void refetchThreats(); }} />
+        ) : threatsLoading ? (
           <Skeleton className="h-32" />
         ) : threats && threats.length > 0 ? (
           <div className="overflow-x-auto">
@@ -600,11 +613,12 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
             </table>
           </div>
         ) : (
-          <EmptyState
+          <PageState
+            kind="empty"
+            layout="card"
             icon={<Globe />}
             title="No infrastructure detected"
-            subtitle="Provider intelligence populates as threats are analyzed and ASNs are identified"
-            variant="scanning"
+            description="Provider intelligence populates as threats are analyzed and ASNs are identified"
             compact
           />
         )}
@@ -663,15 +677,31 @@ export function Providers() {
     }, { replace: true });
   }, [focusId, setSearchParams]);
 
-  const { data: intelligence, isLoading: intelLoading } = useProviderIntelligence();
-  const { data: clusters, isLoading: clustersLoading } = useClusters();
-  const { data: providers, isLoading: providersLoading } = useProviders({
+  const { data: intelligence, isLoading: intelLoading, isError: intelError } = useProviderIntelligence();
+  const {
+    data: clusters, isLoading: clustersLoading, isError: clustersError,
+    isPlaceholderData: clustersPlaceholder, refetch: refetchClusters,
+  } = useClusters();
+  const {
+    data: providers, isLoading: providersLoading, isError: providersError,
+    isPlaceholderData: providersPlaceholder, refetch: refetchProviders,
+  } = useProviders({
     limit: 50,
     sort: sortBy,
     status: statusFilter === 'all' ? undefined : statusFilter,
     search: search || undefined,
     clusterId: selectedClusterId || undefined,
   });
+
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load"),
+  // never a misleading 0 for a stat that has not arrived.
+  const intelValue = (n: number | undefined): number | null =>
+    intelligence ? (n ?? 0) : (intelLoading || intelError ? null : 0);
+  const intelFailed = intelError && !intelligence;
+  // A failed fetch is an error, never "no providers". keepPreviousData rows
+  // belong to the previous filter, so they don't count as data on failure.
+  const providersFailed = providersError && (!providers || providersPlaceholder);
+  const clustersFailed = clustersError && (!clusters || clustersPlaceholder);
 
   // Scroll the focused card into view once it's rendered, exactly once.
   useEffect(() => {
@@ -688,28 +718,32 @@ export function Providers() {
       <PageHeader title="Hosting Providers" subtitle="Infrastructure hosting threat activity" />
 
       <StatGrid cols={4}>
-        <StatCard
+        <StatTile
           label="Providers Tracked"
-          value={intelLoading ? '—' : (intelligence?.total_providers ?? 0).toLocaleString()}
-          sublabel={`${intelligence?.total_clusters ?? 0} clusters`}
+          value={intelValue(intelligence?.total_providers)}
+          error={intelFailed}
+          sub={`${intelligence?.total_clusters ?? 0} clusters`}
         />
-        <StatCard
+        <StatTile
           label="Active Operations"
-          value={intelLoading ? '—' : (intelligence?.active_operations ?? 0).toLocaleString()}
-          accentColor="var(--green)"
-          sublabel="Providers with active threats"
+          value={intelValue(intelligence?.active_operations)}
+          error={intelFailed}
+          accent="var(--green)"
+          sub="Providers with active threats"
         />
-        <StatCard
+        <StatTile
           label="Accelerating"
-          value={intelLoading ? '—' : (intelligence?.accelerating ?? 0).toLocaleString()}
-          accentColor="var(--amber)"
-          sublabel="7d trend > 30d average"
+          value={intelValue(intelligence?.accelerating)}
+          error={intelFailed}
+          accent="var(--amber)"
+          sub="7d trend > 30d average"
         />
-        <StatCard
+        <StatTile
           label="Pivots Detected"
-          value={intelLoading ? '—' : (intelligence?.pivots_detected ?? 0).toLocaleString()}
-          accentColor="var(--red)"
-          sublabel="Silent after >50 threats/30d"
+          value={intelValue(intelligence?.pivots_detected)}
+          error={intelFailed}
+          accent="var(--red)"
+          sub="Silent after >50 threats/30d"
         />
       </StatGrid>
 
@@ -720,6 +754,8 @@ export function Providers() {
           <ClusterPanel
             clusters={clusters ?? []}
             isLoading={clustersLoading}
+            isError={clustersFailed}
+            onRetry={() => { void refetchClusters(); }}
             selectedClusterId={selectedClusterId}
             onSelect={id => {
               setSelectedClusterId(id);
@@ -763,7 +799,12 @@ export function Providers() {
           />
 
           {/* Provider Cards Grid */}
-          {providersLoading ? (
+          {providersError && !providersFailed && (
+            <PageState kind="error" layout="inline" title="Couldn't refresh providers" description="Showing the last loaded list." onRetry={() => { void refetchProviders(); }} />
+          )}
+          {providersFailed ? (
+            <PageState kind="error" layout="card" title="Couldn't load providers" onRetry={() => { void refetchProviders(); }} />
+          ) : providersLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {Array.from({ length: 8 }).map((_, i) => (
                 <Skeleton key={i} className="h-48 rounded-xl" />
@@ -788,11 +829,12 @@ export function Providers() {
               ))}
             </div>
           ) : (
-            <Card padding="48px" className="text-center">
-              <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                No providers match current filters
-              </div>
-            </Card>
+            <PageState
+              kind="empty"
+              layout="card"
+              title="No providers match"
+              description="No providers match the current filters."
+            />
           )}
         </div>
       </div>

@@ -177,8 +177,10 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
           </div>
         )}
 
-        <div className="flex items-end justify-between gap-2 mb-1">
-          <div className="flex items-baseline gap-2">
+        {/* flex-wrap + min-w-0: the fixed-width sparkline wraps under the count at
+            375px instead of overflowing the card. */}
+        <div className="flex flex-wrap items-end justify-between gap-2 mb-1">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
             <span
               className="font-display text-lg font-bold"
               style={{ color: 'var(--text-primary)', lineHeight: 1 }}

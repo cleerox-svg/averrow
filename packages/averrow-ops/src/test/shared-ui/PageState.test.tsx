@@ -98,4 +98,55 @@ describe('PageState content', () => {
     const { container } = render(<PageState kind="clear" />);
     expect(container.querySelector('svg')?.closest('[aria-hidden="true"]')).not.toBeNull();
   });
+
+  // Ported from the retired ops EmptyState tests (title/description/action/
+  // secondaryAction/icon/compact), minus its variant colour classes.
+  it('renders a custom icon, and hides the icon with icon={null}', () => {
+    const { rerender } = render(<PageState kind="empty" icon={<span data-testid="test-icon">i</span>} />);
+    expect(screen.getByTestId('test-icon')).toBeInTheDocument();
+    rerender(<PageState kind="empty" icon={null} />);
+    expect(screen.queryByTestId('test-icon')).not.toBeInTheDocument();
+    expect(document.querySelector('svg')).toBeNull();
+  });
+
+  it('secondaryAction click fires its handler', async () => {
+    const onClick = vi.fn();
+    render(
+      <PageState
+        kind="empty"
+        action={{ label: 'Primary', onClick: vi.fn() }}
+        secondaryAction={{ label: 'Secondary', onClick }}
+      />,
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Secondary' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('no action buttons unless an action or onRetry is given', () => {
+    render(<PageState kind="empty" title="Empty" />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('is centred, and compact uses tighter padding than the default', () => {
+    const { container, rerender } = render(<PageState kind="empty" />);
+    const root = container.firstChild as HTMLElement;
+    expect(root).toHaveClass('flex', 'items-center', 'justify-center', 'py-16');
+    rerender(<PageState kind="empty" compact />);
+    expect(container.firstChild).toHaveClass('py-8');
+    expect(container.firstChild).not.toHaveClass('py-16');
+  });
+
+  it('inline layout is a single row and keeps role=alert for errors', () => {
+    render(<PageState kind="error" layout="inline" title="Couldn't refresh" description="Showing the last list." onRetry={() => {}} />);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveClass('flex-wrap', 'items-center');
+    expect(alert).toHaveTextContent("Couldn't refresh");
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('locked is calm status, not an alert', () => {
+    render(<PageState kind="locked" title="Access denied" description="Only super admins." />);
+    expect(screen.getByRole('status')).toHaveTextContent('Access denied');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

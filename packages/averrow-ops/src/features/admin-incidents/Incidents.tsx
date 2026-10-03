@@ -4,13 +4,12 @@
 
 import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Card, Badge, FilterBar } from '@/design-system/components';
+import { Card, Badge, FilterBar, PageState } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { CheckCircle } from 'lucide-react';
 import { relativeTime } from '@/lib/time';
 import { useIncidents, useCreateIncident, type Incident, type IncidentStatus, type IncidentSeverity } from './useIncidents';
@@ -38,7 +37,7 @@ const STATUS_PILL_TEXT: Record<IncidentStatus, string> = {
 export function AdminIncidents() {
   const [filter, setFilter] = useState<Filter>('open');
   const [showCreate, setShowCreate] = useState(false);
-  const { data, isLoading } = useIncidents({ onlyOpen: filter === 'open' });
+  const { data, isLoading, isError, refetch } = useIncidents({ onlyOpen: filter === 'open' });
 
   return (
     <div className="space-y-4">
@@ -62,18 +61,25 @@ export function AdminIncidents() {
         onChange={(v) => setFilter(v as Filter)}
       />
 
-      {isLoading ? (
+      {isError && data && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh incidents" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+
+      {isError && !data ? (
+        <PageState kind="error" layout="card" compact title="Couldn't load incidents" onRetry={() => { void refetch(); }} />
+      ) : isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)}
         </div>
       ) : (data ?? []).length === 0 ? (
-        <EmptyState
+        <PageState
+          kind={filter === 'open' ? 'clear' : 'empty'}
+          layout="card"
           icon={<CheckCircle />}
           title={filter === 'open' ? 'No open incidents' : 'No incidents recorded'}
-          subtitle={filter === 'open'
+          description={filter === 'open'
             ? 'The platform is quiet right now. Critical platform_* notifications will auto-create rows here.'
             : 'Critical platform_* notifications auto-create rows here. Manual incidents land here too.'}
-          variant="clean"
           compact
         />
       ) : (

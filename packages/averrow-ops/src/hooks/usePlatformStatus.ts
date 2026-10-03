@@ -15,10 +15,10 @@ import type { PlatformStatus } from '@averrow/shared';
 const POLL_MS = 60_000;
 
 // The worker is expected to return the PlatformStatus body directly (not
-// wrapped in {success, data, error}). But api.get() only throws on 401
-// (see src/lib/api.ts), so a transient 500 that returns the platform's
-// generic error envelope {success:false, error:"..."} resolves as data
-// instead of rejecting. That envelope is a truthy object with no `overall`
+// wrapped in {success, data, error}). api.get() rejects (ApiError) on 401 and
+// on a first-attempt 5xx (see src/lib/api.ts), but a 4xx — or any 2xx whose
+// body is the generic error envelope {success:false, error:"..."} — still
+// resolves as data instead of rejecting. That envelope is a truthy object with no `overall`
 // field, so a blind cast would let `undefined` reach consumers that key a
 // lookup table on `data.overall` (e.g. PlatformStatusBadge's PALETTE[status])
 // and crash. Narrow the shape before trusting it.

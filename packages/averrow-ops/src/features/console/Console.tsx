@@ -11,6 +11,7 @@ import { AlertTriangle, Crosshair, Siren, Gavel } from 'lucide-react';
 import { Button, StatTile, WorkspaceEmbedProvider } from '@averrow/shared/ui';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
+import { PageState } from '@/design-system/components';
 import './console.css';
 
 type ConsoleTab = 'alerts' | 'threats' | 'incidents' | 'takedowns';
@@ -102,7 +103,7 @@ export function Console() {
 
       {active?.def && <p className="console-def">{active.def}</p>}
 
-      <Suspense fallback={<TabLoading />}>
+      <Suspense fallback={<PageState kind="loading" />}>
         {/* The Console owns the view's single h1; embedded panes drop theirs. */}
         <WorkspaceEmbedProvider>
           <Fragment key={params.get('q') ?? ''}>
@@ -113,14 +114,6 @@ export function Console() {
           </Fragment>
         </WorkspaceEmbedProvider>
       </Suspense>
-    </div>
-  );
-}
-
-function TabLoading() {
-  return (
-    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-      Loading…
     </div>
   );
 }

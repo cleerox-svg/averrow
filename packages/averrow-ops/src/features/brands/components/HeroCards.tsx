@@ -12,7 +12,7 @@
 // Pure presentation; all data-fetching is at the BrandDetail v3
 // shell level. No version toggle, no embedded shenanigans.
 
-import { StatCard } from '@/components/ui/StatCard';
+import { BreakdownCard } from '@/design-system/components';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
 import { BIMIStatusRow } from '@/components/ui/BIMIStatusRow';
 
@@ -65,7 +65,7 @@ export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any
   const maxCount = topTypes.length > 0 ? topTypes[0][1] : 1;
 
   return (
-    <StatCard
+    <BreakdownCard
       title="Exposure Index"
       metricLabel={<span className={tier.color}>{tier.label}</span>}
       metric={
@@ -118,7 +118,7 @@ export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any
           );
         })}
       </div>
-    </StatCard>
+    </BreakdownCard>
   );
 }
 
@@ -137,7 +137,7 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
   const totalTextClass = SEVERITY_TW[highestActive]?.text || 'text-[var(--text-muted)]';
 
   return (
-    <StatCard
+    <BreakdownCard
       title="Active Threats"
       metricLabel="TOTAL"
       metric={
@@ -164,7 +164,7 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
           <span className="font-mono text-[9px] text-white/50">7-day window</span>
         </div>
       </div>
-    </StatCard>
+    </BreakdownCard>
   );
 }
 
@@ -266,7 +266,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
     'bg-red-400';
 
   return (
-    <StatCard
+    <BreakdownCard
       title={
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -373,7 +373,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
           </button>
         )}
       </div>
-    </StatCard>
+    </BreakdownCard>
   );
 }
 
@@ -412,7 +412,7 @@ export function SocialRiskCard({
     : null;
 
   return (
-    <StatCard
+    <BreakdownCard
       title="Social Risk"
       metricLabel="PROFILES"
       metric={
@@ -459,6 +459,6 @@ export function SocialRiskCard({
           </div>
         </div>
       </div>
-    </StatCard>
+    </BreakdownCard>
   );
 }

@@ -4,17 +4,17 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import {
   Badge,
   Card,
-  StatCard,
+  StatTile,
   StatGrid,
   PageHeader,
-  EmptyState,
+  PageState,
   EntityListShell,
   type EntityListSort,
   Sparkline,
   type BadgeProps,
 } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { CardGridLoader } from '@/components/ui/PageLoader';
+import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { useCampaigns, useCampaignStats } from '@/hooks/useCampaigns';
 import {
   useOperations,
@@ -265,7 +265,9 @@ function OperationCard({
 
 function OperationDetailPanel({ operationId, operation }: { operationId: string; operation: Operation }) {
   const { data: timeline, isLoading: timelineLoading } = useOperationTimeline(operationId);
-  const { data: threats, isLoading: threatsLoading } = useOperationThreats(operationId, { limit: 10 });
+  const {
+    data: threats, isLoading: threatsLoading, isError: threatsError, refetch: refetchThreats,
+  } = useOperationThreats(operationId, { limit: 10 });
 
   const asns = parseJsonArray(operation.asns);
   const countries = parseJsonArray(operation.countries);
@@ -403,7 +405,9 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
         <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
           Recent Threats
         </div>
-        {threatsLoading ? (
+        {threatsError && !threats ? (
+          <PageState kind="error" layout="card" compact title="Couldn't load recent threats" onRetry={() => { void refetchThreats(); }} />
+        ) : threatsLoading ? (
           <Skeleton className="h-32" />
         ) : threats && threats.length > 0 ? (
           <div className="overflow-x-auto">
@@ -438,11 +442,12 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
             </table>
           </div>
         ) : (
-          <EmptyState
+          <PageState
+            kind="empty"
+            layout="card"
             icon={<Activity />}
             title="No threats linked"
-            subtitle="Threats will appear as they are correlated to this operation"
-            variant="clean"
+            description="Threats will appear as they are correlated to this operation"
             compact
           />
         )}
@@ -671,8 +676,11 @@ export function Campaigns() {
   // Data fetching. A ?focus= pivot may target a cluster outside the default
   // top-12, so widen to the API max when focusing and scroll the card in.
   const focusId = searchParams.get('focus');
-  const { data: opsStats, isLoading: opsStatsLoading } = useOperationsStats();
-  const { data: operations, isLoading: opsLoading } = useOperations({ limit: focusId ? 100 : 12 });
+  const { data: opsStats, isLoading: opsStatsLoading, isError: opsStatsError } = useOperationsStats();
+  const {
+    data: operations, isLoading: opsLoading, isError: opsError,
+    isPlaceholderData: opsPlaceholder, refetch: refetchOps,
+  } = useOperations({ limit: focusId ? 100 : 12 });
 
   useEffect(() => {
     if (!focusId || !operations?.length) return;
@@ -681,13 +689,24 @@ export function Campaigns() {
     const anchor = document.getElementById(`op-${focusId}`);
     (anchor?.firstElementChild ?? anchor)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [focusId, operations]);
-  const { data: campaignsRes, isLoading: campaignsLoading } = useCampaigns({
+  const {
+    data: campaignsRes, isLoading: campaignsLoading, isError: campaignsError,
+    isPlaceholderData: campaignsPlaceholder, refetch: refetchCampaigns,
+  } = useCampaigns({
     status: 'active',
     limit: 50,
     search: campaignSearch || undefined,
   });
   const { data: campStats } = useCampaignStats();
   const { data: geoCampaigns, isLoading: geoLoading } = useGeopoliticalCampaigns();
+
+  // A failed fetch is an error, never "no operations / campaigns". Rows kept
+  // by keepPreviousData belong to the previous query, so they don't count.
+  const opsFailed = opsError && (!operations || opsPlaceholder);
+  const campaignsFailed = campaignsError && (!campaignsRes || campaignsPlaceholder);
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load").
+  const opsStatValue = (n: number | undefined): number | null =>
+    opsStats ? (n ?? 0) : (opsStatsLoading || opsStatsError ? null : 0);
 
   const allOperations = operations ?? [];
   const allCampaigns = (campaignsRes ?? []) as Campaign[];
@@ -713,24 +732,27 @@ export function Campaigns() {
 
       {/* ─── Header Stats (4 cards) ─────────────────────────────── */}
       <StatGrid cols={4}>
-        <StatCard
+        <StatTile
           label="Active Operations"
-          value={opsStatsLoading ? '—' : (opsStats?.active_operations ?? 0).toLocaleString()}
-          accentColor="var(--green)"
+          value={opsStatValue(opsStats?.active_operations)}
+          error={opsStatsError && !opsStats}
+          accent="var(--green)"
         />
-        <StatCard
+        <StatTile
           label="Campaigns Tracked"
-          value={opsStatsLoading ? '—' : (opsStats?.campaigns_tracked ?? 0).toLocaleString()}
-          accentColor="var(--amber)"
+          value={opsStatValue(opsStats?.campaigns_tracked)}
+          error={opsStatsError && !opsStats}
+          accent="var(--amber)"
         />
-        <StatCard
+        <StatTile
           label="Brands Targeted"
-          value={opsStatsLoading ? '—' : (opsStats?.brands_targeted ?? 0).toLocaleString()}
-          accentColor="var(--red)"
+          value={opsStatValue(opsStats?.brands_targeted)}
+          error={opsStatsError && !opsStats}
+          accent="var(--red)"
         />
-        <StatCard
+        <StatTile
           label="Threat Types"
-          value={opsStatsLoading ? '—' : (() => {
+          value={!opsStats ? (opsStatsLoading || opsStatsError ? null : '0') : (() => {
             const raw: unknown = opsStats?.threat_types;
             if (raw == null) return '0';
             if (typeof raw === 'number') return raw.toLocaleString();
@@ -739,7 +761,8 @@ export function Campaigns() {
             if (typeof raw === 'object') return Object.keys(raw).join(', ');
             return String(raw);
           })()}
-          accentColor="var(--amber)"
+          error={opsStatsError && !opsStats}
+          accent="var(--amber)"
         />
       </StatGrid>
 
@@ -754,7 +777,9 @@ export function Campaigns() {
           </div>
         </div>
 
-        {opsLoading ? (
+        {opsFailed ? (
+          <PageState kind="error" layout="card" title="Couldn't load operations" onRetry={() => { void refetchOps(); }} />
+        ) : opsLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
               <Skeleton key={i} className="h-56 rounded-xl" />
@@ -793,11 +818,12 @@ export function Campaigns() {
             )}
           </>
         ) : (
-          <EmptyState
+          <PageState
+            kind="empty"
+            layout="card"
             icon={<Activity />}
             title="No active threat operations"
-            subtitle="Nexus will surface correlated attack clusters as threat data accumulates"
-            variant="scanning"
+            description="Nexus will surface correlated attack clusters as threat data accumulates"
           />
         )}
       </section>
@@ -848,6 +874,10 @@ export function Campaigns() {
         <EntityListShell<Campaign>
           items={attackFilteredCampaigns}
           isLoading={campaignsLoading}
+          isError={campaignsFailed}
+          refreshError={campaignsError && !campaignsFailed}
+          noun="campaigns"
+          onRetry={() => { void refetchCampaigns(); }}
           getKey={(c) => c.id}
           filters={ATTACK_FILTERS.map(f => ({ value: f.id, label: f.label }))}
           activeFilter={attackFilter}

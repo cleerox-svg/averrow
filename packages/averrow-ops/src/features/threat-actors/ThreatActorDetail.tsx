@@ -1,6 +1,6 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Search } from 'lucide-react';
-import { Card, StatCard, EmptyState } from '@/design-system/components';
+import { BreakdownCard, PageState } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useThreatActorDetail } from '@/hooks/useThreatActors';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
@@ -38,7 +38,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
   const params = useParams<{ actorId: string }>();
   const actorId = actorIdProp ?? params.actorId;
   const navigate = useNavigate();
-  const { data: actor, isLoading } = useThreatActorDetail(actorId ?? '');
+  const { data: actor, isLoading, isError, refetch } = useThreatActorDetail(actorId ?? '');
 
   if (isLoading) {
     return (
@@ -66,19 +66,24 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             <ArrowLeft size={12} /> Back to Threat Actors
           </button>
         )}
-        <Card hover={false}>
-          <EmptyState
+        {/* A failed fetch is an error with a retry; only a successful response
+            with no actor is "not found". */}
+        {isError ? (
+          <PageState kind="error" layout="card" title="Couldn't load this threat actor" onRetry={() => { void refetch(); }} />
+        ) : (
+          <PageState
+            kind="empty"
+            layout="card"
             icon={<Search />}
             title="Threat actor not found"
-            subtitle="The ID may have changed or the actor was merged."
-            variant="scanning"
+            description="The ID may have changed or the actor was merged."
             action={inline ? undefined : {
               label: 'Browse all threat actors',
               onClick: () => navigate('/explore?tab=actors'),
               variant: 'secondary',
             }}
           />
-        </Card>
+        )}
       </div>
     );
   }
@@ -144,7 +149,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard
+        <BreakdownCard
           title="ATTRIBUTION"
           metric={<span className="text-lg sm:text-[28px] font-bold leading-none text-[var(--sev-critical)]">{actor.attribution ?? '?'}</span>}
           metricLabel="state sponsor"
@@ -161,8 +166,8 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
               <span className="text-[11px] font-mono text-[var(--text-primary)]">{actor.country ?? 'Unknown'}</span>
             </div>
           </div>
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="TARGET SECTORS"
           metric={<span className="text-lg sm:text-[24px] font-bold leading-none" style={{ color: 'var(--amber)' }}>{sectors.length || 0}</span>}
           metricLabel="sectors"
@@ -181,8 +186,8 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           ) : (
             <span className="text-[11px] text-white/40">No sector data</span>
           )}
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="INFRASTRUCTURE"
           metric={<span className="text-xl sm:text-[32px] font-bold leading-none text-wing-blue">{actor.infrastructure?.length ?? 0}</span>}
           metricLabel="tracked"
@@ -191,8 +196,8 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             <div className="w-1.5 h-1.5 rounded-full bg-wing-blue" />
             <span className="text-[11px] text-white/60">Tracked ASNs/IPs/Domains</span>
           </div>
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="LINKED THREATS"
           metric={<span className="text-xl sm:text-[32px] font-bold leading-none text-[#f87171]">{actor.linked_threat_count}</span>}
           metricLabel="threats"
@@ -201,7 +206,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             <div className="w-1.5 h-1.5 rounded-full bg-[#f87171]" />
             <span className="text-[11px] text-white/60">From known ASNs</span>
           </div>
-        </StatCard>
+        </BreakdownCard>
       </div>
 
       {/* Campaigns */}

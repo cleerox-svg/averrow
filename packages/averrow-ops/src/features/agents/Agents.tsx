@@ -30,11 +30,10 @@ import {
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
 import { useAuth } from '@/lib/auth';
-import { Card, StatCard, StatGrid, PageHeader, Badge } from '@/design-system/components';
+import { Card, StatTile, StatGrid, PageHeader, Badge, PageState } from '@/design-system/components';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
-import { CardGridLoader } from '@/components/ui/PageLoader';
+import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { AgentIcon } from '@/components/brand/AgentIcon';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { RunStatusBlocks } from '@/components/ui/RunStatusBlocks';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import { countAgentsOnline } from '@/lib/agent-status';
@@ -891,7 +890,10 @@ function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: Vi
 }
 
 export function Agents() {
-  const { data: agents = [], isLoading } = useAgents();
+  const {
+    data: agentsData, isLoading, isError, isPlaceholderData, refetch,
+  } = useAgents();
+  const agents = agentsData ?? [];
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const isSuperAdmin = user?.role === 'super_admin';
@@ -921,6 +923,17 @@ export function Agents() {
   }, []);
 
   if (isLoading) return <CardGridLoader count={6} />;
+
+  // A failed fetch is an error, never "no agents". If a refetch fails while
+  // the last good list is still on screen, keep it and show an inline error.
+  if (isError && (!agentsData || isPlaceholderData)) {
+    return (
+      <div className="animate-fade-in space-y-6">
+        <PageHeader title="AI Agent Operations" />
+        <PageState kind="error" title="Couldn't load agents" onRetry={() => { void refetch(); }} />
+      </div>
+    );
+  }
 
   // Partition: supervisors first, then workers grouped by category.
   const supervisorSet = new Set<string>(SUPERVISOR_AGENT_IDS);
@@ -981,6 +994,10 @@ export function Agents() {
         }
       />
 
+      {isError && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh agents" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+
       <PendingApprovalsBanner />
 
       {/* Stalled runs (GA4) — stuck >15min, was only in internal diagnostics. */}
@@ -1006,22 +1023,22 @@ export function Agents() {
       )}
 
       <StatGrid cols={4}>
-        <StatCard label="Agents Operational" value={`${operational}/${agents.length}`} accentColor="var(--green)" />
-        <StatCard label="Jobs (24h)" value={totalJobs.toLocaleString()} />
-        <StatCard label="Outputs (24h)" value={totalOutputs.toLocaleString()} />
-        <StatCard
+        <StatTile label="Agents Operational" value={`${operational}/${agents.length}`} accent="var(--green)" />
+        <StatTile label="Jobs (24h)" value={totalJobs.toLocaleString()} />
+        <StatTile label="Outputs (24h)" value={totalOutputs.toLocaleString()} />
+        <StatTile
           label="Failure Patterns"
           value={failureCount + decommissionCount}
-          accentColor={(failureCount + decommissionCount) > 0 ? 'var(--sev-high)' : undefined}
+          accent={(failureCount + decommissionCount) > 0 ? 'var(--sev-high)' : undefined}
         />
       </StatGrid>
 
       {agents.length === 0 ? (
-        <EmptyState
+        <PageState
+          kind="empty"
           icon={<Bot />}
-          title="Squadron offline"
-          subtitle="No AI agents are currently registered."
-          variant="error"
+          title="No agents registered"
+          description="No AI agents are currently registered."
         />
       ) : viewMode === 'grid' ? (
         <>

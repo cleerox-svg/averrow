@@ -1,8 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Loader2 } from 'lucide-react';
-import { Badge, Button, EmptyState } from '@/design-system/components';
+import { Badge, Button, PageState } from '@/design-system/components';
 import type { BadgeStatus } from '@/design-system/components';
 
 // ─── Inline style replacements for retired design tokens ────────
@@ -249,7 +248,7 @@ export function DailyBriefingWidget() {
   const [generating, setGenerating] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const { data: row, isLoading } = useQuery({
+  const { data: row, isLoading, isError, refetch } = useQuery({
     queryKey: ['briefing-latest'],
     queryFn: async () => {
       const res = await api.get<BriefingRow>('/api/briefings/latest');
@@ -295,12 +294,26 @@ export function DailyBriefingWidget() {
   if (isLoading) {
     return (
       <div className="rounded-xl" style={glassCardStyle}>
-        <EmptyState
-          variant="scanning"
+        <PageState
+          kind="loading"
+          layout="card"
           compact
-          icon={<Loader2 className="animate-spin" />}
           title="Loading briefing…"
-          subtitle="Fetching the latest platform operations report."
+        />
+      </div>
+    );
+  }
+
+  // ── Error state — a failed fetch is never "no briefing generated yet"
+  if (isError && !row) {
+    return (
+      <div className="rounded-xl" style={glassCardStyle}>
+        <PageState
+          kind="error"
+          layout="page"
+          compact
+          title="Couldn't load the briefing"
+          onRetry={() => { void refetch(); }}
         />
       </div>
     );
@@ -310,11 +323,12 @@ export function DailyBriefingWidget() {
   if (!row || !briefing) {
     return (
       <div className="rounded-xl" style={glassCardStyle}>
-        <EmptyState
-          variant="clean"
+        <PageState
+          kind="empty"
+          layout="page"
           compact
           title="No briefing generated yet."
-          subtitle="Run one to populate this widget."
+          description="Run one to populate this widget."
         />
         <div className="flex flex-col items-center gap-2 pb-6">
           <Button variant="danger" size="sm" onClick={handleGenerate} disabled={generating} loading={generating}>

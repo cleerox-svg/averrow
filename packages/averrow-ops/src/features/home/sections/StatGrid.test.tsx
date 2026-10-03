@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
+import { stubMatchMedia } from '@/test/shared-ui/helpers';
 import { StatGrid } from './StatGrid';
 
 // StatGrid fans out to six data hooks and threads each one's
 // isLoading/isPending flag into StatTile's `value={null}` loading
-// contract (see StatTile.test.tsx for the primitive-level coverage).
+// contract (see test/shared-ui/StatTile.test.tsx for the primitive-level coverage).
 // This file locks the wiring: a pending hook must render '—' on its
 // tile, a settled hook renders its real number — including a genuine
 // 0, which must NOT be confused with the loading placeholder.
@@ -15,9 +16,9 @@ vi.mock('@/hooks/useOperations', () => ({ useOperationsStats: vi.fn() }));
 vi.mock('@/hooks/useBrands', () => ({ useBrandStats: vi.fn(), useBrands: vi.fn() }));
 vi.mock('@/hooks/useAgents', () => ({ useAgents: vi.fn() }));
 vi.mock('@/hooks/useFeeds', () => ({ useFeedStats: vi.fn() }));
-// Animation is irrelevant here and only slows/obscures assertions —
-// same rationale as StatTile.test.tsx.
-vi.mock('@/design-system/hooks/useCountUp', () => ({ useCountUp: (target: number) => target }));
+// The shared StatTile counts up unless prefers-reduced-motion is set; the
+// animation is irrelevant here and would obscure the settled-number
+// assertions, so each test runs under reduced motion (see beforeEach).
 
 import { useObservatoryStats } from '@/hooks/useObservatory';
 import { useAlertStats } from '@/hooks/useAlerts';
@@ -74,6 +75,7 @@ function mockAllSettled(overrides: { alertTotal?: number } = {}) {
 
 describe('StatGrid — loading vs settled value propagation', () => {
   beforeEach(() => {
+    stubMatchMedia(true);
     vi.clearAllMocks();
   });
 

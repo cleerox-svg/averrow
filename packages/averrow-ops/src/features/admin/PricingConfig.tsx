@@ -12,9 +12,8 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge, PageHeader } from '@/design-system/components';
+import { Badge, PageHeader, PageState } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import {
   usePricingPlans, useModulePrices,
@@ -31,7 +30,7 @@ export function PricingConfig() {
   const canView = roleHasPermission(user?.role, 'view_billing');
   const canEdit = roleHasPermission(user?.role, 'edit_pricing');
   if (!canView) {
-    return <EmptyState message="Access Denied" description="You don't have billing access to pricing config." />;
+    return <PageState kind="locked" title="Access denied" description="You don't have billing access to pricing config." />;
   }
 
   return (

@@ -5,10 +5,9 @@ import type { Takedown, TakedownScope } from '@/hooks/useTakedowns';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
 import { Shield, ShieldAlert } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
 import {
   Card,
-  StatCard,
+  StatTile,
   StatGrid,
   FilterBar,
   PageHeader,
@@ -16,6 +15,7 @@ import {
   Button,
   PriorityBar,
   Tabs,
+  PageState,
 } from '@/design-system/components';
 import type { BadgeStatus, Severity } from '@/design-system/components';
 import { ReportPanel } from '@/components/ui/ReportPanel';
@@ -672,6 +672,18 @@ export function Takedowns() {
   const { showToast } = useToast();
 
   const isLoading = isProspect ? prospectQuery.isLoading : authorizedQuery.isLoading;
+  const isError = isProspect ? prospectQuery.isError : authorizedQuery.isError;
+  const hasData = isProspect ? !!prospectQuery.data : !!authorizedQuery.data;
+  const isPlaceholder = isProspect ? prospectQuery.isPlaceholderData : authorizedQuery.isPlaceholderData;
+  const refetchActive = () => { void (isProspect ? prospectQuery.refetch() : authorizedQuery.refetch()); };
+  // A failed fetch is an error, never "no takedowns". keepPreviousData rows
+  // belong to the previous filters, so they don't count as data on failure;
+  // a failed refetch with this query's rows on screen keeps them + inline error.
+  const listFailed = isError && (!hasData || isPlaceholder);
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load"),
+  // never a misleading 0 for a count that has not arrived.
+  const statValue = (n: number): number | null =>
+    hasData ? n : (isLoading || isError ? null : 0);
   const takedowns = isProspect ? (prospectQuery.data?.takedowns ?? []) : (authorizedQuery.data?.takedowns ?? []);
   const statusCounts = isProspect ? (prospectQuery.data?.statusCounts ?? []) : (authorizedQuery.data?.statusCounts ?? []);
   // Safety-cap indicator (F1) — only meaningful in Prospect mode, where the
@@ -793,14 +805,18 @@ export function Takedowns() {
         </div>
       )}
 
+      {isError && !listFailed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh takedowns" description="Showing the last loaded data." onRetry={refetchActive} />
+      )}
+
       {isProspect ? (
         <>
           {/* ─── PROSPECT STAT CARDS ─────────────────── */}
           <StatGrid cols={4}>
-            <StatCard label="Brands"          value={prospectStats.brands}        accentColor="var(--amber)" />
-            <StatCard label="Total Drafts"    value={stats.total}                 accentColor="var(--blue)" />
-            <StatCard label="High/Critical"   value={prospectStats.highSeverity}  accentColor="var(--red)" />
-            <StatCard label="Evidence Points" value={prospectStats.evidenceTotal} accentColor="var(--green)" />
+            <StatTile label="Brands"          value={statValue(prospectStats.brands)} error={listFailed}        accent="var(--amber)" />
+            <StatTile label="Total Drafts"    value={statValue(stats.total)} error={listFailed}                 accent="var(--blue)" />
+            <StatTile label="High/Critical"   value={statValue(prospectStats.highSeverity)} error={listFailed}  accent="var(--red)" />
+            <StatTile label="Evidence Points" value={statValue(prospectStats.evidenceTotal)} error={listFailed} accent="var(--green)" />
           </StatGrid>
 
           {/* ─── LOADING STATE ───────────────────────── */}
@@ -817,7 +833,7 @@ export function Takedowns() {
           )}
 
           {/* ─── BRAND-GROUPED CARDS ─────────────────── */}
-          {!isLoading && prospectGroups.length > 0 && (
+          {!isLoading && !listFailed && prospectGroups.length > 0 && (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
@@ -829,13 +845,19 @@ export function Takedowns() {
             </div>
           )}
 
+          {/* ─── ERROR STATE ──────────────────────────── */}
+          {listFailed && (
+            <PageState kind="error" layout="card" title="Couldn't load prospect drafts" onRetry={refetchActive} />
+          )}
+
           {/* ─── EMPTY STATE ──────────────────────────── */}
-          {!isLoading && prospectGroups.length === 0 && (
-            <EmptyState
+          {!isLoading && !listFailed && prospectGroups.length === 0 && (
+            <PageState
+              kind="clear"
+              layout="card"
               icon={<ShieldAlert />}
               title="No orgless drafts"
-              subtitle="Prospect drafts appear here once Sparrow generates takedown recommendations for a brand that hasn't opted into an org yet."
-              variant="clean"
+              description="Prospect drafts appear here once Sparrow generates takedown recommendations for a brand that hasn't opted into an org yet."
             />
           )}
         </>
@@ -843,10 +865,10 @@ export function Takedowns() {
         <>
           {/* ─── STAT CARDS ──────────────────────────── */}
           <StatGrid cols={4}>
-            <StatCard label="Total Takedowns" value={stats.total}     accentColor="var(--amber)" />
-            <StatCard label="Pending Review"  value={stats.draft}     accentColor="var(--sev-high)" />
-            <StatCard label="Submitted"       value={stats.submitted} accentColor="var(--blue)" />
-            <StatCard label="Resolved"        value={stats.resolved}  accentColor="var(--green)" />
+            <StatTile label="Total Takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--amber)" />
+            <StatTile label="Pending Review"  value={statValue(stats.draft)} error={listFailed}     accent="var(--sev-high)" />
+            <StatTile label="Submitted"       value={statValue(stats.submitted)} error={listFailed} accent="var(--blue)" />
+            <StatTile label="Resolved"        value={statValue(stats.resolved)} error={listFailed}  accent="var(--green)" />
           </StatGrid>
 
           {/* ─── FILTER BAR ───────────────────────────── */}
@@ -905,7 +927,7 @@ export function Takedowns() {
           )}
 
           {/* ─── CARD GRID ────────────────────────────── */}
-          {!isLoading && takedowns.length > 0 && (
+          {!isLoading && !listFailed && takedowns.length > 0 && (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
@@ -923,13 +945,19 @@ export function Takedowns() {
             </div>
           )}
 
+          {/* ─── ERROR STATE ──────────────────────────── */}
+          {listFailed && (
+            <PageState kind="error" layout="card" title="Couldn't load takedown requests" onRetry={refetchActive} />
+          )}
+
           {/* ─── EMPTY STATE ──────────────────────────── */}
-          {!isLoading && takedowns.length === 0 && (
-            <EmptyState
+          {!isLoading && !listFailed && takedowns.length === 0 && (
+            <PageState
+              kind="empty"
+              layout="card"
               icon={<Shield />}
               title="No takedown requests"
-              subtitle="Create a takedown request from any identified threat to begin the removal process"
-              variant="clean"
+              description="Create a takedown request from any identified threat to begin the removal process"
             />
           )}
         </>

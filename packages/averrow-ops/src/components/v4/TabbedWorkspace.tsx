@@ -12,6 +12,7 @@ import { Suspense, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { Button, WorkspaceEmbedContext } from '@averrow/shared/ui';
+import { PageState } from '@/design-system/components';
 import '@/features/console/console.css';
 
 export interface WorkspaceTab {
@@ -75,7 +76,7 @@ export function TabbedWorkspace({
 
       {active?.def && <p className="console-def">{active.def}</p>}
 
-      <Suspense fallback={<TabLoading />}>
+      <Suspense fallback={<PageState kind="loading" />}>
         {/* Panes read `q` on mount only; keying on it re-applies a new ?q= (e.g. ⌘K
             "view all" while already on this tab). */}
         {/* The workspace owns the view's single h1; embedded panes drop theirs. */}
@@ -83,14 +84,6 @@ export function TabbedWorkspace({
           {Active && <Active key={params.get('q') ?? ''} />}
         </WorkspaceEmbedContext.Provider>
       </Suspense>
-    </div>
-  );
-}
-
-function TabLoading() {
-  return (
-    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-      Loading…
     </div>
   );
 }

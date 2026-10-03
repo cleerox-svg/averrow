@@ -1,7 +1,7 @@
 import { useIntelligenceBriefings, useThreatVolume, useBrandMomentum } from '@/hooks/useTrends';
 import type { VolumePoint } from '@/hooks/useTrends';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { PageState } from '@/design-system/components';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { FileText } from 'lucide-react';
 
@@ -64,8 +64,8 @@ interface ExecutiveSummaryProps {
 }
 
 export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
-  const { data: briefings, isLoading: briefingsLoading } = useIntelligenceBriefings(1);
-  const { data: volume, isLoading: volumeLoading } = useThreatVolume(period);
+  const { data: briefings, isLoading: briefingsLoading, isError: briefingsError, refetch: refetchBriefings } = useIntelligenceBriefings(1);
+  const { data: volume, isLoading: volumeLoading, isError: volumeError, refetch: refetchVolume } = useThreatVolume(period);
   const { data: brands, isLoading: brandsLoading } = useBrandMomentum();
 
   const isLoading = briefingsLoading || volumeLoading || brandsLoading;
@@ -92,12 +92,28 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
     : null;
 
   if (!latestBriefing && !metrics) {
+    // A failed fetch is an error, never "no summary available".
+    if (briefingsError || volumeError) {
+      return (
+        <PageState
+          kind="error"
+          layout="card"
+          compact
+          title="Couldn't load the intelligence summary"
+          onRetry={() => {
+            if (briefingsError) void refetchBriefings();
+            if (volumeError) void refetchVolume();
+          }}
+        />
+      );
+    }
     return (
-      <EmptyState
+      <PageState
+        kind="empty"
+        layout="card"
         icon={<FileText />}
         title="No intelligence summary available"
-        subtitle="Observer generates summaries as threat data accumulates"
-        variant="scanning"
+        description="Observer generates summaries as threat data accumulates"
         compact
       />
     );

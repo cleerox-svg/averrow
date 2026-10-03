@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import {
   Card,
-  StatCard,
+  StatTile,
   StatGrid,
-  EmptyState,
+  PageState,
   Skeleton,
   Badge,
   PageHeader,
@@ -130,7 +130,12 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
 
 export function Integrations() {
   const [hours, setHours] = useState(168);
-  const { data, isLoading } = useTakedownIntegrations(hours);
+  const { data, isLoading, isError, isPlaceholderData, refetch } = useTakedownIntegrations(hours);
+  // A failed fetch is an error, never "no integrations". keepPreviousData rows
+  // belong to the previous window, so they don't count as data on failure.
+  const failed = isError && (!data || isPlaceholderData);
+  // null = still loading / failed; never a misleading 0 for a count that has not arrived.
+  const count = (n: number): number | null => data ? n : (isLoading || isError ? null : 0);
 
   const integrations = data?.integrations ?? [];
   const liveCount = integrations.filter((i) => i.status === 'live').length;
@@ -164,10 +169,10 @@ export function Integrations() {
       />
 
       <StatGrid>
-        <StatCard label="Integrations" value={integrations.length} sublabel="registered submitters" />
-        <StatCard label="Live" value={liveCount} accentColor="var(--green)" sublabel="configured + auto-submit on" />
-        <StatCard label="Configured" value={configuredCount} sublabel="credential present" />
-        <StatCard label={`Submissions · ${data?.window_hours ?? hours}h`} value={totalSubmissions} sublabel="across all submitters" />
+        <StatTile label="Integrations" value={count(integrations.length)} error={failed} sub="registered submitters" />
+        <StatTile label="Live" value={count(liveCount)} error={failed} accent="var(--green)" sub="configured + auto-submit on" />
+        <StatTile label="Configured" value={count(configuredCount)} error={failed} sub="credential present" />
+        <StatTile label={`Submissions · ${data?.window_hours ?? hours}h`} value={count(totalSubmissions)} error={failed} sub="across all submitters" />
       </StatGrid>
 
       {data && data.send_mode === 'draft' && (
@@ -180,12 +185,18 @@ export function Integrations() {
         </Card>
       )}
 
-      {isLoading && !data ? (
+      {isError && !failed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh integrations" description="Showing the last loaded data." onRetry={() => { void refetch(); }} />
+      )}
+
+      {failed ? (
+        <PageState kind="error" layout="card" title="Couldn't load integrations" onRetry={() => { void refetch(); }} />
+      ) : isLoading && !data ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-40" />)}
         </div>
       ) : integrations.length === 0 ? (
-        <EmptyState title="No integrations" description="No takedown submitters are registered." />
+        <PageState kind="empty" layout="card" title="No integrations" description="No takedown submitters are registered." />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
           {integrations.map((it) => <IntegrationCard key={it.kind} it={it} />)}

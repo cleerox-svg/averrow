@@ -20,16 +20,16 @@ import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
 import { useAdminAction } from '@/hooks/useAdminAction';
 import {
   Card,
-  StatCard,
+  StatTile,
   StatGrid,
   PageHeader,
   Button,
   Badge,
-  FilterBar
+  FilterBar,
+  PageState,
 } from '@/design-system/components';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
-import { CardGridLoader } from '@/components/ui/PageLoader';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { relativeTime } from '@/lib/time';
 import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
 
@@ -589,9 +589,14 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
   );
 }
 
+const NO_FEEDS: FeedOverview[] = [];
+
 export function Feeds() {
-  const { data: feeds = [], isLoading } = useFeeds();
-  const { data: stats } = useFeedStats();
+  const {
+    data: feedsData, isLoading, isError, isPlaceholderData, refetch,
+  } = useFeeds();
+  const feeds = feedsData ?? NO_FEEDS;
+  const { data: stats, isError: statsError } = useFeedStats();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -624,6 +629,17 @@ export function Feeds() {
 
   if (isLoading) return <CardGridLoader count={6} />;
 
+  // A failed fetch is an error, never "no feeds". If a refetch fails while
+  // the last good list is on screen, keep it and show an inline error.
+  if (isError && (!feedsData || isPlaceholderData)) {
+    return (
+      <div className="animate-fade-in space-y-6">
+        <PageHeader title="Feed Intake" actions={<LiveIndicator />} />
+        <PageState kind="error" title="Couldn't load feeds" onRetry={() => { void refetch(); }} />
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in space-y-6">
       <PageHeader
@@ -633,13 +649,13 @@ export function Feeds() {
       />
 
       <StatGrid cols={4}>
-        <StatCard label="Active"       value={stats?.active   ?? 0} accentColor="var(--green)" />
-        <StatCard label="Disabled"     value={stats?.disabled ?? 0} />
-        <StatCard label="Records (24h)" value={(stats?.total_ingested ?? 0).toLocaleString()} />
-        <StatCard
+        <StatTile label="Active"       value={stats ? stats.active : null} error={statsError && !stats} accent="var(--green)" />
+        <StatTile label="Disabled"     value={stats ? stats.disabled : null} error={statsError && !stats} />
+        <StatTile label="Records (24h)" value={stats ? stats.total_ingested.toLocaleString() : null} error={statsError && !stats} />
+        <StatTile
           label="Failure Patterns"
           value={failureCount}
-          accentColor={failureCount > 0 ? 'var(--sev-high)' : undefined}
+          accent={failureCount > 0 ? 'var(--sev-high)' : undefined}
         />
       </StatGrid>
 
@@ -655,18 +671,23 @@ export function Feeds() {
         search={{ value: search, onChange: setSearch, placeholder: 'Search feeds…' }}
       />
 
+      {isError && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh feeds" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+
       {feeds.length === 0 ? (
-        <EmptyState
+        <PageState
+          kind="empty"
           icon={<Rss />}
           title="No feeds configured"
-          subtitle="Threat-intel feed sources haven't been wired yet."
-          variant="error"
+          description="Threat-intel feed sources haven't been wired yet."
         />
       ) : visibleFeeds.length === 0 ? (
-        <EmptyState
+        <PageState
+          kind="empty"
           icon={<Rss />}
           title="No feeds match"
-          subtitle="Adjust the search or status filter."
+          description="Adjust the search or status filter."
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

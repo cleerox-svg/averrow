@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
-import { FilterBar, Badge, Tabs } from '@/design-system/components';
+import { FilterBar, Badge, Tabs, PageState } from '@/design-system/components';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import {
@@ -62,7 +61,7 @@ export function SuperAdminOrgs() {
   const [showCreate, setShowCreate] = useState(false);
 
   if (!isSuperAdmin) {
-    return <EmptyState message="Access Denied" description="Only super admins can access organization management." />;
+    return <PageState kind="locked" title="Access denied" description="Only super admins can access organization management." />;
   }
 
   if (selectedOrgId) {
@@ -95,7 +94,7 @@ function OrgListView({ onSelect, onCreate }: {
   onSelect: (orgId: string) => void;
   onCreate: () => void;
 }) {
-  const { data: orgs, isLoading } = useAdminOrgs();
+  const { data: orgs, isLoading, isError, refetch } = useAdminOrgs();
   const [search, setSearch] = useState('');
   const [segment, setSegment] = useState('all');
 
@@ -145,16 +144,24 @@ function OrgListView({ onSelect, onCreate }: {
       />
 
       {/* List */}
-      {isLoading ? (
-        <div className="text-sm text-white/55 font-mono py-16 text-center">Loading organizations...</div>
+      {isError && orgs && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh organizations" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+
+      {isError && !orgs ? (
+        <PageState kind="error" layout="card" title="Couldn't load organizations" onRetry={() => { void refetch(); }} />
+      ) : isLoading ? (
+        <PageState kind="loading" title="Loading organizations…" />
       ) : !orgs || orgs.length === 0 ? (
-        <EmptyState
-          message="No organizations yet"
+        <PageState
+          kind="empty"
+          layout="card"
+          title="No organizations yet"
           description="Create your first organization to get started."
           action={{ label: 'Create Organization', onClick: onCreate }}
         />
       ) : visibleOrgs.length === 0 ? (
-        <EmptyState message="No organizations match" description="Adjust the search or filter." />
+        <PageState kind="empty" layout="card" title="No organizations match" description="Adjust the search or filter." />
       ) : (
         <div className="space-y-3">
           {visibleOrgs.map((org) => (
@@ -226,14 +233,27 @@ const DETAIL_TABS = [
 
 function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void }) {
   const [activeTab, setActiveTab] = useState('members');
-  const { data: org, isLoading } = useAdminOrgDetail(orgId);
+  const { data: org, isLoading, isError, refetch } = useAdminOrgDetail(orgId);
 
   if (isLoading) {
-    return <div className="text-sm text-white/55 font-mono py-16 text-center">Loading organization...</div>;
+    return <PageState kind="loading" title="Loading organization…" />;
+  }
+
+  // A failed fetch is an error with a retry; only a successful response with
+  // no org is "not found".
+  if (isError && !org) {
+    return <PageState kind="error" title="Couldn't load this organization" onRetry={() => { void refetch(); }} secondaryAction={{ label: 'Back to organizations', onClick: onBack }} />;
   }
 
   if (!org) {
-    return <EmptyState message="Organization not found" />;
+    return (
+      <PageState
+        kind="empty"
+        title="Organization not found"
+        description="It may have been removed, or the link is stale."
+        action={{ label: 'Back to organizations', onClick: onBack }}
+      />
+    );
   }
 
   return (
@@ -335,7 +355,7 @@ function DetailMembersTab({ orgId, members }: {
       )}
 
       {members.length === 0 ? (
-        <EmptyState message="No members yet" description="Invite the first member to this organization." />
+        <PageState kind="empty" layout="card" title="No members yet" description="Invite the first member to this organization." />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -443,7 +463,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
       )}
 
       {brands.length === 0 ? (
-        <EmptyState message="No brands assigned" description="Add brands to start monitoring threats for this organization." />
+        <PageState kind="empty" layout="card" title="No brands assigned" description="Add brands to start monitoring threats for this organization." />
       ) : (
         <div className="space-y-3">
           {brands.map((b) => (

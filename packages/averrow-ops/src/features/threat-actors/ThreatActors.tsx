@@ -6,7 +6,7 @@ import {
   Card,
   PageHeader,
   SaasTechniqueBadge,
-  StatCard,
+  BreakdownCard,
   StatGrid,
   EntityListShell,
   type EntityListSort,
@@ -349,7 +349,9 @@ export function ThreatActors() {
   const [search, setSearch] = useState(initialQuery);
   const country = filter === 'all' ? undefined : filter;
 
-  const { data: actors, isLoading } = useThreatActors({
+  const {
+    data: actors, isLoading, isError, isPlaceholderData, refetch,
+  } = useThreatActors({
     country,
     status: broaden ? undefined : 'active',
     search: search || undefined,
@@ -419,7 +421,7 @@ export function ThreatActors() {
 
       {/* Stats */}
       <StatGrid cols={4}>
-        <StatCard
+        <BreakdownCard
           title="Tracked Actors"
           metric={stats?.total ?? 0}
           metricLabel="Total"
@@ -441,9 +443,9 @@ export function ThreatActors() {
               {stats?.active ?? 0}
             </span>
           </div>
-        </StatCard>
+        </BreakdownCard>
 
-        <StatCard
+        <BreakdownCard
           title="Infrastructure"
           metric={stats?.tracked_infrastructure ?? 0}
           metricLabel="Tracked"
@@ -459,9 +461,9 @@ export function ThreatActors() {
             }} />
             <span>ASNs / IPs / Domains</span>
           </div>
-        </StatCard>
+        </BreakdownCard>
 
-        <StatCard
+        <BreakdownCard
           title="Targeted Brands"
           metric={stats?.targeted_brands ?? 0}
           metricLabel="Brands"
@@ -477,9 +479,9 @@ export function ThreatActors() {
             }} />
             <span>In crosshairs</span>
           </div>
-        </StatCard>
+        </BreakdownCard>
 
-        <StatCard
+        <BreakdownCard
           title="By Attribution"
           metric={attributionGroups.length}
           metricLabel="Groups"
@@ -506,7 +508,7 @@ export function ThreatActors() {
               </div>
             ))}
           </div>
-        </StatCard>
+        </BreakdownCard>
       </StatGrid>
 
       {/* List — shared shell owns search / sort / pagination; country pills
@@ -514,6 +516,12 @@ export function ThreatActors() {
       <EntityListShell<ThreatActor>
         items={actors}
         isLoading={isLoading}
+        // A failed fetch is an error, never "no threat actors". keepPreviousData
+        // rows belong to the previous filter, so they don't count as data.
+        isError={isError && (!actors || isPlaceholderData)}
+        refreshError={isError && !!actors && !isPlaceholderData}
+        noun="threat actors"
+        onRetry={() => { void refetch(); }}
         getKey={(a) => a.id}
         filters={filterOptions}
         activeFilter={filter}

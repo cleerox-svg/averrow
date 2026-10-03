@@ -19,7 +19,6 @@ import { tabUrl } from '@/lib/workspaceRoutes';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ScanSearch, ShieldCheck } from 'lucide-react';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
-import { SimpleStatCard } from '@/components/ui/StatCard';
 import { api } from '@/lib/api';
 import {
   useBrandFullDetail,
@@ -40,10 +39,8 @@ import { useLookalikes, type LookalikeDomain } from '@/hooks/useLookalikes';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
 import { Card } from '@/components/ui/Card';
-import { Avatar, Badge, Button, Sparkline } from '@/design-system/components';
+import { Avatar, Badge, Button, Sparkline, StatTile, PageState } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { PageLoader } from '@/components/ui/PageLoader';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { SignalBreakdownCard } from '@/components/ui/SignalBreakdownCard';
 import { timeAgo } from '@/lib/time';
 import {
@@ -88,7 +85,7 @@ export function BrandDetailV3() {
 
   const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
 
-  const { data, isLoading } = useBrandFullDetail(id);
+  const { data, isLoading, isError, refetch } = useBrandFullDetail(id);
   useBrandTimeline(id, '7d'); // primes cache; not rendered in v3 yet
   const { data: darkWebData } = useDarkWebMentions(id);
   const { data: appStoreData } = useAppStoreMonitor(id);
@@ -136,7 +133,7 @@ export function BrandDetailV3() {
     [takedownData, id],
   );
 
-  if (isLoading) return <PageLoader />;
+  if (isLoading) return <PageState kind="loading" />;
 
   if (!brand) {
     return (
@@ -144,7 +141,13 @@ export function BrandDetailV3() {
         <button onClick={() => navigate('/explore?tab=brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
           &larr; Back to Brands
         </button>
-        <Card hover={false}><p className="text-sm text-[var(--text-tertiary)]">Brand not found</p></Card>
+        {/* A failed fetch is an error with a retry; only a successful response
+            with no brand is "not found". */}
+        {isError ? (
+          <PageState kind="error" layout="card" title="Couldn't load this brand" onRetry={() => { void refetch(); }} />
+        ) : (
+          <PageState kind="empty" layout="card" title="Brand not found" description="It may have been removed, or the link is stale." />
+        )}
       </div>
     );
   }
@@ -310,7 +313,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
 
   // Snapshot the hero strip from an unfiltered 200-row peek so the
   // totals don't dance every time the table filters change.
-  const { data: peek } = useQuery({
+  const { data: peek, isError: peekError } = useQuery({
     queryKey: ['brand-threats-peek', brandId],
     queryFn: async () => {
       const p = new URLSearchParams({ brand_id: brandId, limit: '200', offset: '0', sort: 'last_seen', dir: 'desc' });
@@ -323,6 +326,9 @@ function ThreatsTab({ brandId }: { brandId: string }) {
 
   const peekRows = peek?.threats ?? [];
   const peekTotal = peek?.total ?? 0;
+  // The hero tiles show "—" until the peek settles and "Couldn't load" if it
+  // fails; never a fake 0 / "no data" for a request that did not succeed.
+  const peekFailed = peekError && !peek;
 
   const sevCounts = useMemo(() => {
     const c: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -377,29 +383,33 @@ function ThreatsTab({ brandId }: { brandId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SimpleStatCard
+        <StatTile
           label="Total threats"
-          value={peekTotal.toLocaleString()}
-          sublabel={`${peekRows.length.toLocaleString()} in latest window`}
-          accentColor={SEVERITY_ACCENT[highestSev]}
+          value={peek ? peekTotal.toLocaleString() : null}
+          error={peekFailed}
+          sub={peek ? `${peekRows.length.toLocaleString()} in latest window` : undefined}
+          accent={SEVERITY_ACCENT[highestSev]}
         />
-        <SimpleStatCard
+        <StatTile
           label="Critical · High"
-          value={(sevCounts.critical + sevCounts.high).toLocaleString()}
-          sublabel={`${sevCounts.critical} critical · ${sevCounts.high} high`}
-          accentColor={sevCounts.critical > 0 ? SEVERITY_ACCENT.critical : SEVERITY_ACCENT.high}
+          value={peek ? (sevCounts.critical + sevCounts.high).toLocaleString() : null}
+          error={peekFailed}
+          sub={peek ? `${sevCounts.critical} critical · ${sevCounts.high} high` : undefined}
+          accent={sevCounts.critical > 0 ? SEVERITY_ACCENT.critical : SEVERITY_ACCENT.high}
         />
-        <SimpleStatCard
+        <StatTile
           label="Top threat type"
-          value={topType ? topType[0].replace(/_/g, ' ') : '—'}
-          sublabel={topType ? `${topType[1]} indicators` : 'no data'}
-          accentColor={SEVERITY_ACCENT.high}
+          value={peek ? (topType ? topType[0].replace(/_/g, ' ') : '—') : null}
+          error={peekFailed}
+          sub={peek ? (topType ? `${topType[1]} indicators` : 'no data') : undefined}
+          accent={SEVERITY_ACCENT.high}
         />
-        <SimpleStatCard
+        <StatTile
           label="Top source feed"
-          value={topSource ? topSource[0] : '—'}
-          sublabel={topSource ? `${topSource[1]} indicators` : 'no data'}
-          accentColor={SEVERITY_ACCENT.medium}
+          value={peek ? (topSource ? topSource[0] : '—') : null}
+          error={peekFailed}
+          sub={peek ? (topSource ? `${topSource[1]} indicators` : 'no data') : undefined}
+          accent={SEVERITY_ACCENT.medium}
         />
       </div>
 
@@ -1156,20 +1166,12 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
       <Card hover={false}>
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3">
-          <EmptyState
-            // `scanning` (amber), NOT `configure-me`. The name is
-            // tempting but wrong: EmptyState aliases `configure-me` onto
-            // `locked`, which renders the gray "you lack setup or
-            // permission" treatment. Nothing here needs configuring —
-            // the sweep just hasn't run yet, and it will on its own.
-            // Amber is also what every sibling surface uses for this
-            // state (ThreatActorDetail, Campaigns, Apps, Providers,
-            // DarkWeb, Trademarks, …), so gray would read as "gated"
-            // against a convention operators have already learned.
-            variant="scanning"
+          <PageState
+            kind="empty"
+            layout="card"
             icon={<ScanSearch />}
             title={rows.length === 0 ? 'No lookalike domains to analyze' : 'Never scanned'}
-            subtitle={
+            description={
               rows.length === 0
                 ? 'No lookalike permutations exist for this brand yet — generate lookalikes to enable live-page analysis.'
                 : `${rows.length} lookalike domain${rows.length === 1 ? '' : 's'} tracked, none fetched yet. The deterministic page-content scorer runs on registered + resolving + has_web lookalikes on a 24h cadence.`
@@ -1191,11 +1193,12 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
       <Card hover={false}>
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3">
-          <EmptyState
-            variant="clean"
+          <PageState
+            kind="clear"
+            layout="card"
             icon={<ShieldCheck />}
             title="Checked — nothing found"
-            subtitle={`${checked.length} lookalike page${checked.length === 1 ? '' : 's'} fetched and scored${lastChecked ? `, most recently ${timeAgo(lastChecked)}` : ''}. No phishing-page signals fired.`}
+            description={`${checked.length} lookalike page${checked.length === 1 ? '' : 's'} fetched and scored${lastChecked ? `, most recently ${timeAgo(lastChecked)}` : ''}. No phishing-page signals fired.`}
             compact
           />
         </div>
@@ -1385,7 +1388,7 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
         </div>
         <div className="mt-3 space-y-2">
           {takedowns.length === 0 && (
-            <EmptyState title="No open takedowns" description="Sparrow has no drafts assembled for this brand right now." />
+            <PageState kind="clear" layout="card" compact title="No open takedowns" description="Sparrow has no drafts assembled for this brand right now." />
           )}
           {breached.map((t: any) => (
             <TakedownRow key={t.id} takedown={t} breached />
@@ -1411,7 +1414,7 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
         </div>
         <div className="mt-3 space-y-2">
           {alerts.length === 0 && (
-            <EmptyState title="No open alerts" description="Auto-triage has cleared everything we'd surface." />
+            <PageState kind="clear" layout="card" compact title="No open alerts" description="Auto-triage has cleared everything we'd surface." />
           )}
           {alerts.slice(0, 8).map((a: any) => (
             <AlertRow key={a.id} alert={a} />

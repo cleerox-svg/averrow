@@ -5,8 +5,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useAppStoreOverview, type AppStoreOverviewRow } from '@/hooks/useAppStoreMonitor';
-import { StatCard, StatGrid, PageHeader, Card, Badge } from '@/design-system/components';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { StatTile, StatGrid, PageHeader, Card, Badge, PageState, pageStateKind } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 
 function formatCount(n: number) {
@@ -63,6 +62,13 @@ export function Apps() {
 
   const rows = query.data?.data ?? [];
   const totals = query.data?.totals;
+  // Error beats loading beats empty. A failed refetch with the last good rows
+  // still on screen keeps them and shows an inline error instead.
+  const listKind = pageStateKind({
+    isLoading: query.isLoading,
+    isError: query.isError && !query.data,
+    isEmpty: rows.length === 0,
+  });
 
   const goToBrand = (brandId: string) => {
     navigate(`/brands/${brandId}?tab=apps`);
@@ -77,38 +83,43 @@ export function Apps() {
 
       {totals && (
         <StatGrid>
-          <StatCard
+          <StatTile
             label="Total Listings"
             value={formatCount(totals.total)}
-            accentColor="var(--blue)"
+            accent="var(--blue)"
           />
-          <StatCard
+          <StatTile
             label="Impersonation"
             value={formatCount(totals.impersonation)}
-            accentColor={totals.impersonation > 0 ? 'var(--red)' : 'var(--blue)'}
+            accent={totals.impersonation > 0 ? 'var(--red)' : 'var(--blue)'}
           />
-          <StatCard
+          <StatTile
             label="Suspicious"
             value={formatCount(totals.suspicious)}
-            accentColor={totals.suspicious > 0 ? 'var(--amber)' : 'var(--blue)'}
+            accent={totals.suspicious > 0 ? 'var(--amber)' : 'var(--blue)'}
           />
-          <StatCard
+          <StatTile
             label="Legit / Official"
             value={formatCount(totals.legitimate + totals.official)}
-            accentColor="var(--green)"
+            accent="var(--green)"
           />
         </StatGrid>
       )}
 
-      {query.isLoading ? (
-        <div className="text-center text-white/40 font-mono text-xs py-12">
-          Loading app-store overview…
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
+      {query.isError && query.data && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh apps" description="Showing the last loaded data." onRetry={() => { void query.refetch(); }} />
+      )}
+
+      {listKind === 'loading' ? (
+        <PageState kind="loading" layout="card" title="Loading app-store overview…" />
+      ) : listKind === 'error' ? (
+        <PageState kind="error" layout="card" title="Couldn't load app-store overview" onRetry={() => { void query.refetch(); }} />
+      ) : listKind === 'empty' ? (
+        <PageState
+          kind="empty"
+          layout="card"
           title="No monitored brands yet"
-          subtitle="Add brands to monitored_brands to start scanning the iOS App Store for impersonations."
-          variant="scanning"
+          description="Add brands to monitored_brands to start scanning the iOS App Store for impersonations."
         />
       ) : (
         <Card>
