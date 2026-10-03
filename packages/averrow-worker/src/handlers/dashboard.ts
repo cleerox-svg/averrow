@@ -6,6 +6,7 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
+import { scopeCacheSegment } from "../lib/scope-cache-key";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -16,7 +17,7 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
   const session = getReadSession(env, ctx);
   try {
     // KV cache: dashboard overview fires 7 parallel queries — cache for 5 minutes.
-    const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
+    const scopeHash = await scopeCacheSegment(scope);
     const cacheKey = `dashboard_overview:${scopeHash}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
@@ -192,7 +193,7 @@ export async function handleDashboardTopBrands(request: Request, env: Env, scope
     const url = new URL(request.url);
     const limit = Math.min(20, parseInt(url.searchParams.get("limit") ?? "10", 10));
 
-    const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
+    const scopeHash = await scopeCacheSegment(scope);
 
     // KV cache — 5 min TTL
     const cacheKey = `dashboard_top_brands:${limit}:${scopeHash}`;

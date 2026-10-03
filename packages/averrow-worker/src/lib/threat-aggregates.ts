@@ -21,6 +21,7 @@
 import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
 import { cachedValue } from './cached-value';
+import { scopeCacheSegment } from './scope-cache-key';
 
 export interface ThreatAggregateFilters {
   severity?:  string;
@@ -143,7 +144,7 @@ export async function threatAggregate(
     ? [filters.actor_id, ...params]
     : params;
 
-  const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(',') : 'global';
+  const scopeHash = await scopeCacheSegment(scope);
   const cacheKey = [
     'threat-agg', scopeHash,
     filters.severity ?? '', filters.type ?? '', filters.status ?? '',

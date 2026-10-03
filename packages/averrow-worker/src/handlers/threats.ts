@@ -3,6 +3,7 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
+import { scopeCacheSegment } from "../lib/scope-cache-key";
 import type { Env, UpdateThreatBody } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -37,7 +38,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     const sortCol = SORT_COLUMNS[sortParam] ?? SORT_COLUMNS.severity;
 
     // KV cache: threats list with complex JOINs — cache for 5 minutes.
-    const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
+    const scopeHash = await scopeCacheSegment(scope);
     const cacheKey = `threats_list:${severity ?? ""}:${type ?? ""}:${status ?? ""}:${source ?? ""}:${country ?? ""}:${brandId ?? ""}:${search ?? ""}:${sortParam}:${dir}:${limit}:${offset}:${scopeHash}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return attachBookmark(json(JSON.parse(cached), 200, origin), session);
