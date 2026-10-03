@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { BrandSocialFindings } from './BrandSocialFindings';
 import type { SocialProfileRow } from '@/lib/socialModule';
@@ -70,5 +71,32 @@ describe('BrandSocialFindings badges', () => {
     renderWithProviders(<BrandSocialFindings />);
     expect(screen.getByText(/No social profiles tracked/)).toBeInTheDocument();
     expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  });
+
+  it('shows an alert with a retry that refetches when loading fails', async () => {
+    const refetch = vi.fn();
+    vi.mocked(useSocialModuleSummary).mockReturnValue({ data: undefined } as never);
+    vi.mocked(useBrandSocialFindings).mockReturnValue({
+      data: undefined, isLoading: false, isError: true, error: new Error('boom 500'), refetch,
+    } as never);
+    renderWithProviders(<BrandSocialFindings />);
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load profiles");
+    expect(screen.getByRole('alert')).toHaveTextContent('boom 500');
+    expect(screen.queryByText(/No social profiles tracked/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load profiles" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps stale rows and shows an inline error when a refetch fails', () => {
+    vi.mocked(useSocialModuleSummary).mockReturnValue({ data: undefined } as never);
+    vi.mocked(useBrandSocialFindings).mockReturnValue({
+      data: { brand_id: 'b1', profiles: [profile()], page_size: 100 },
+      isLoading: false, isError: true, error: new Error('boom'), refetch: vi.fn(),
+    } as never);
+    renderWithProviders(<BrandSocialFindings />);
+    // Inline stale-data banner is a polite role="status", not an alert.
+    expect(screen.getByRole('status')).toHaveTextContent("Couldn't refresh profiles");
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('article')).toBeInTheDocument();
   });
 });

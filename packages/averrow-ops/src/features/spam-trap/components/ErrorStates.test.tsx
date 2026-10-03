@@ -23,8 +23,8 @@ vi.mock('@/hooks/useSpamTrap', () => ({
 const cases = [
   ['HoneypotNetworkPanel', HoneypotNetworkPanel, "Couldn't load seed addresses"],
   ['CampaignPanel', CampaignPanel, "Couldn't load campaigns"],
-  ['ThreatActorPanel', ThreatActorPanel, "Couldn't load captures"],
-  ['CaptureForensicsPanel', CaptureForensicsPanel, "Couldn't load captures"],
+  ['ThreatActorPanel', ThreatActorPanel, "Couldn't load threat actors"],
+  ['CaptureForensicsPanel', CaptureForensicsPanel, "Couldn't load capture forensics"],
 ] as const;
 
 describe.each(cases)('%s load failure', (_n, Component, title) => {

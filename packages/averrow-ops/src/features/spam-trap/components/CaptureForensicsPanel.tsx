@@ -322,7 +322,7 @@ export function CaptureForensicsPanel() {
 
   if (isError) {
     return (
-      <PageState kind="error" layout="card" compact title="Couldn't load captures" onRetry={() => { void refetch(); }} />
+      <PageState kind="error" layout="card" compact title="Couldn't load capture forensics" onRetry={() => { void refetch(); }} />
     );
   }
 
