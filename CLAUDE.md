@@ -247,6 +247,11 @@ Set via `document.documentElement.setAttribute('data-theme', 'light')`.
 Stored in `localStorage` via `useTheme()` hook.
 
 ### Component Usage (after R2+)
+
+The shared kit at `@averrow/shared/ui` (`packages/shared/src/ui/`; see
+`AVERROW_UI_STANDARD.md` "Shared kit") is the target for new components. Ops
+`@/design-system/components` will re-export it in Phase 1 PR6.
+
 ```typescript
 import {
   Card, Button, Badge, Avatar, StatCard,

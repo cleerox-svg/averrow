@@ -21,8 +21,9 @@ and `CLAUDE.md` §4-5. If touching login/profile/PWA/biometric, read
 identical; only the listed per-product deltas may differ.
 
 ## Non-negotiable guardrails
-- Import components from `@/design-system/components`. Never rebuild Card,
-  Button, Badge, etc. inline.
+- Import components from `@/design-system/components` (new components:
+  prefer the shared kit `@averrow/shared/ui`, which that barrel re-exports from
+  Phase 1 PR6). Never rebuild Card, Button, Badge, etc. inline.
 - Use CSS custom properties (`var(--amber)`, `var(--text-primary)`,
   `var(--sev-critical)`). **Never** use old tokens in new/restructured code
   (`glass-card`, `bg-cockpit`, `text-parchment`, `text-contrail`). Don't mix
