@@ -827,11 +827,13 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/threat-actors` | User | List threat actors (KV cached, read replicas, parallel count+list) |
-| GET | `/api/threat-actors/stats` | User | Threat actor statistics (KV cached, read replicas, parallel 6-query aggregation) |
-| GET | `/api/threat-actors/:id` | User | Get threat actor detail with infrastructure + targets |
-| GET | `/api/threat-actors/by-brand/:brandId` | User | Threat actors targeting a specific brand |
-| GET | `/api/threat-actors/:id/threats` | User | Threats linked to actor via `threat_attributions` (Phase B — OTX/NEXUS/news) **OR** known ASN infrastructure |
+| GET | `/api/threat-actors` | Staff | List threat actors (KV cached, read replicas, parallel count+list) |
+| GET | `/api/threat-actors/stats` | Staff | Threat actor statistics (KV cached, read replicas, parallel 6-query aggregation) |
+| GET | `/api/threat-actors/:id` | Staff | Get threat actor detail with infrastructure + targets |
+| GET | `/api/threat-actors/by-brand/:brandId` | Staff | Threat actors targeting a specific brand |
+| GET | `/api/threat-actors/:id/threats` | Staff | Threats linked to actor via `threat_attributions` (Phase B — OTX/NEXUS/news) **OR** known ASN infrastructure |
+
+All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including the read-only `auditor` seat); a tenant `client` gets 403. They are cross-tenant (`/:id/threats` spans all brands, `/by-brand/:brandId` accepts any brand id). Tenants use the org-scoped `/api/orgs/:orgId/modules/threat-actor` routes instead.
 
 ## Intel
 
