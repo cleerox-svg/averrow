@@ -681,8 +681,8 @@ Phase 1 PR5 (`docs/UI_CONSOLIDATION_PLAN_2026-10.md`). Source:
 `packages/shared/src/ui/`, single barrel `index.ts`. Named exports only; no `@/`
 or router imports, so ops and tenant render it identically. **New code imports
 from the kit.** The legacy ops primitives documented above are collapsed into it
-by PR6 (6a done: Badge, Tabs, FilterBar, Sparkline, Avatar, PageHeader; 6b: states
-and stat tiles; 6c: Card and tables).
+by PR6 (6a done: Badge, Tabs, FilterBar, Sparkline, Avatar, PageHeader; 6b done:
+states and stat tiles; 6c done: Card and tables).
 
 ```tsx
 import {
@@ -720,8 +720,17 @@ and Avatar straight from the kit, and exports an ops `PageHeader` adapter
 these from the barrel. PR6b added `PageState`, `pageStateKind` and `StatTile`
 (the ops `EmptyState`, `StatCard`, `StatTile`, `GlowNumber` and `PageLoader` are
 gone) plus the ops-local `BreakdownCard` (titled headline-metric + breakdown rows,
-formerly `DetailStatCard`). The remaining ops primitives (Card, Table, ...) still
-live in `components/ui/` until PR6c.
+formerly `DetailStatCard`). The remaining ops primitives (Button, DataRow, ...) still
+live in `components/ui/`.
+
+**Card and tables (PR6c):** `Card`, `Table`, `Th`, `Td`, `Tr` and `DataTable` are
+re-exported from the kit via the barrel (`components/ui/Card.tsx` and
+`components/ui/Table.tsx` are gone). `Card` takes `variant`
+(`base | elevated | active | critical | flat`), `accent` (only with `active`) and
+`padding`: `none | sm | md | lg` (0/12/20/24px), a number (px) or raw CSS, default
+`md` (20px). Pass `padding="none"` when composing `CardHeader`/`CardContent`/
+`CardFooter`. There is no `hover` prop. Use `DataTable` for column-driven tables
+and `Table`/`Th`/`Td` for hand-built ones. Never put `role="button"` on a `<tr>` that contains other controls; make the first cell hold a real disclosure/name `<button>` (`aria-expanded` + `aria-controls` for an expansion row) and treat the row click as a mouse convenience. `Card variant="flat"` is for panels inset in a table or card. No raw `<table>` in ops.
 
 **List pages (PR6b):** never branch a list on `rows.length === 0` alone. Use
 `pageStateKind({ isLoading, isError, isEmpty })` (error beats loading beats empty)
@@ -878,7 +887,7 @@ Every future UI session starts with:
 cat packages/averrow-ops/src/design-system/components/index.ts
 cat packages/shared/src/ui/Badge.tsx
 cat packages/shared/src/ui/Avatar.tsx
-cat packages/averrow-ops/src/components/ui/Card.tsx
+cat packages/shared/src/ui/Card.tsx
 cat packages/averrow-ops/src/components/ui/Button.tsx
 ```
 

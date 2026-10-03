@@ -43,7 +43,7 @@ describe('Tenant Notifications inbox states', () => {
     const refetch = vi.fn();
     mockQuery({ error: new Error('boom'), refetch });
     renderWithProviders(<Notifications />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Try again/ }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
@@ -68,11 +68,13 @@ describe('Tenant Notifications inbox states', () => {
     mockQuery({ data: { notifications: [note()], unread_count: 1 }, error: new Error('refetch failed'), refetch });
     renderWithProviders(<Notifications />);
     expect(screen.getByText('Digest ready')).toBeInTheDocument();
-    const alert = screen.getByRole('alert');
+    // Stale-data banner is polite (role=status), not an assertive alert.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    const alert = screen.getByRole('status');
     expect(alert).toHaveTextContent('refetch failed');
     // Error sits above the stale list.
     expect(alert.compareDocumentPosition(screen.getByText('Digest ready')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Try again/ }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
