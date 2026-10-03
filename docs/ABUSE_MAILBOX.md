@@ -38,8 +38,11 @@ Inbound email (Cloudflare Email Routing)
       1. rules verdict                       src/lib/abuse-mailbox-rules(-runner).ts
            M1 intel correlation / M2 named-threat IOC|regex /
            M3 device-code ≥0.85 → phishing HIGH;  M4 risky attachment →
-           malware CRITICAL;  else ambiguous / review (never benign/spam)
-         + AI second opinion only when AI_MODE allows and rules said review
+           malware CRITICAL;  else H1 heuristic score → "likely phishing"
+           HIGH;  else ambiguous / review (never benign/spam)
+         + AI second opinion when rules said review AND either
+           ABUSE_AI_PROVIDER=workers_ai (Workers AI, any AI_MODE) or
+           AI_MODE allows Anthropic
       2. sleep ~2 minutes
       3. deliverAbuseDetermination — atomic determination_sent_at claim;
          THROWS on a transient send failure so the step retries
@@ -117,6 +120,34 @@ never emailed. The ack is sent only inline by that same INSERT path.
   `abuse_mailbox_verdict` notification `message` is fixed copy per verdict
   (`RULES_OPERATOR_NOTE` / `AI_OPERATOR_NOTE`), never the model's reasoning.
 
+### Workers AI second opinion
+
+`ABUSE_AI_PROVIDER = "workers_ai"` (prod `[vars]`, with the prod-only `[ai]`
+binding) routes the AI pass to Cloudflare Workers AI
+(`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, via the `averrow-ai-gateway` AI
+Gateway; `lib/workers-ai.ts`). It runs even under `AI_MODE=rules_only`, which
+only blocks Anthropic. Only rows the rules already reviewed (`ambiguous` +
+`classified_by='rules'`) — never `pending` (a row it classified first could
+never get a later rules malicious verdict) and never a rules malicious
+(M1–M4 / H1) row. `clampWorkersAiVerdict` limits what it may decide:
+
+| Model says | Stored |
+|---|---|
+| phishing / malware ≥ 70 | same class, HIGH, `escalate`, confidence ≤ 80; email "Likely phishing/malware" |
+| anything else, incl. every `benign` and `spam` | `ambiguous`, MEDIUM, `review` |
+
+No spam tier: the spam email tells the reporter the message is harmless and to
+use its unsubscribe link, which a phish dressed as a newsletter could exploit.
+`classified_by='workers_ai'`. Never promotes URLs to `threats` (and Sparrow
+excludes `workers_ai` rows from takedown drafting), never runs the Sonnet deep
+analyzer, no confidence % in the email. The model's free text is never stored
+in `classification_reason` / `ai_assessment` (both render in the tenant UI) —
+fixed copy (`WORKERS_AI_REASON`) goes there; the raw reasoning goes to Worker
+logs only. Daily cap `WORKERS_AI_DAILY_CALL_CAP` (500, KV counter, fails
+closed) — over it the pass is a deliberate skip and rules verdicts stand. The system prompt carries an explicit injection guard (email content
+is data, not instructions). A Workers AI failure leaves the rules verdict and
+its email untouched. Kill switch: remove `ABUSE_AI_PROVIDER`.
+
 ### Rules evidence
 
 - **M1** — an active, non-`abuse_mailbox` threat that either matches a message
@@ -138,6 +169,30 @@ never emailed. The ack is sent only inline by that same INSERT path.
   M3 (≥0.85) owns that case; strong-signal entries outrank keyword scores.
 - **M4** — executable / script / disk-image extensions (`.com` excluded —
   "amazon.com"-style filenames).
+- **H1** — heuristic "likely phishing" (`lib/abuse-mailbox-heuristics.ts`),
+  only when M1–M4 did not fire. Scored signals in five families: *identity*
+  (sender isn't the claimed brand / lookalike sender domain), *lure*
+  (account-locked, data-deletion, verify-credentials, payment, sign-in alert,
+  delivery wording + urgency), *link* (raw IP, punycode, `user@host` trick,
+  free-hosting tenant or shared gateway, shortener, abused TLD, lookalike or
+  brand-in-foreign host, link ≠ sender), *attachment* (`.html`/`.svg`/macro
+  Office/`.one`…), *auth* (DMARC/SPF/DKIM fail, forward-as-attachment only).
+  Fires at score ≥ 5 across ≥ 2 families, one of them *lure* or
+  *attachment*. → phishing / HIGH / escalate, confidence 60–80 (below every
+  M rule). Never promotes. The email says **"Likely phishing"** with its own
+  fixed note, never "Phishing confirmed" (product decision 2026-10-03); the
+  tenant/operator notification says "Likely phishing" too. The reporter's own
+  address is never scored as the sender, and on inline forwards only the text
+  after the forward marker is scored (the reporter's note is not the suspect).
+  False-positive guards: a bare sender≠brand only counts when the message
+  names the brand and never links to the brand's real domain (a "Pay with
+  PayPal" footer sets `brand_id` too); lookalikes must add a hyphen/digit or
+  be a homoglyph/1-edit (so `microsoftonline`, `amazonaws` aren't impostors);
+  shared platforms skip the lookalike checks. Below threshold, review rows
+  carry `h1_score:N` + the signal codes for operators.
+  Known follow-ups: H1 rows skip the AI second opinion (the classifier only
+  re-judges `ambiguous` rows), and tenant counters/badges show H1 as plain
+  "phishing".
 
 Promotion to `threats`: EXACT matched URLs only (M1 exact-URL, M2 IOC-URL),
 cap 20, never the sender IP. Domain-level matches, M3 and M4 never promote.

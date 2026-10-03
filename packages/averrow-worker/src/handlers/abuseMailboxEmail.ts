@@ -130,7 +130,9 @@ export async function handleAbuseMailboxEmail(
   // keep a best-effort parse for forensics — that row is suppressed.
   const forwardedBy = backscatter.recipient ?? parseEmailAddress(rawFromHeader ?? message.from);
 
-  const body = extractBody(rawText, RAW_BODY_SCAN_MAX);
+  const bodyParts = extractBodyParts(rawText, RAW_BODY_SCAN_MAX);
+  const body = bodyParts.text ||
+    (bodyParts.html ? htmlToText(bodyParts.html).slice(0, RAW_BODY_SCAN_MAX) : "");
 
   // 4. Try to dig the original sender / subject / body from the
   // forwarded chunk. Two paths, tried in order:
@@ -149,7 +151,7 @@ export async function handleAbuseMailboxEmail(
   // sender and the outer Subject IS what the user wrote.
   const rfc822Inner = extractInnerRfc822Message(rawText, RAW_BODY_SCAN_MAX);
   const inlineInner = extractForwardedOriginal(body);
-  const outerSubjectRaw = (outerHeaders["subject"] ?? "").trim() || null;
+  const outerSubjectRaw = decodeEncodedWords(outerHeaders["subject"] ?? "").trim() || null;
   const outerBodySnippet = body.slice(0, SNIPPET_LIMIT) || null;
 
   // Precedence: rfc822 inner → inline inner → outer envelope.
@@ -176,8 +178,12 @@ export async function handleAbuseMailboxEmail(
   // hidden inside a forward-as-attachment surface to extractUrls,
   // correlateUrls, and the classifier prompt. dedupeUrlLists merges
   // by URL string and sums counts.
-  const outerUrls       = extractUrls(body);
-  const innerUrls       = rfc822Inner ? extractUrls(rfc822Inner.body) : [];
+  // HTML hrefs too: a phishing button's real target often never appears
+  // in the text/plain alternative.
+  const outerUrls       = mergeUrlLists(extractUrls(body), extractUrls(extractHtmlHrefs(bodyParts.html)));
+  const innerUrls       = rfc822Inner
+    ? mergeUrlLists(extractUrls(rfc822Inner.body), extractUrls(rfc822Inner.hrefs))
+    : [];
   const extractedUrls   = mergeUrlLists(outerUrls, innerUrls);
   const urlCount        = extractedUrls.length;
   const attachmentList  = extractAttachments(rawText);
@@ -185,7 +191,7 @@ export async function handleAbuseMailboxEmail(
   // Store the inner (phishing) body when available — that's the
   // forensic value. Falls back to outer body for direct submissions
   // and inline forwards (which already include inner content in body).
-  const storedBody      = rfc822Inner?.body ?? body;
+  const storedBody      = rfc822Inner?.body || body;
   const rawBody         = truncate(storedBody, RAW_BODY_STORE_MAX);
   // PR-AZ: when an rfc822 inner message exists, store BOTH header sets
   // so the admin UI can show the phisher's full header chain alongside
@@ -226,7 +232,12 @@ export async function handleAbuseMailboxEmail(
   let brandMatchSignal: string | null = null;
   try {
     const monitoredBrands = await loadMonitoredBrands(env);
-    const fromDomain = original.from
+    // When no forwarded original was recovered, original.from is the
+    // REPORTER (PR-AO fallback). Their domain says nothing about which
+    // brand is being impersonated — matching on it tagged every Gmail
+    // user's report as brand_gmail_com.
+    const fromIsReporter = !rfc822Inner?.from && !inlineInner.from;
+    const fromDomain = original.from && !fromIsReporter
       ? (original.from.split("@")[1] ?? "").toLowerCase() || null
       : null;
     const match = matchAbuseMailboxBrand(
@@ -615,26 +626,225 @@ export function extractHeaderInstances(rawText: string, name: string): string[] 
   return out;
 }
 
-function extractBody(rawText: string, maxLen: number): string {
-  let bodyStart = rawText.indexOf("\r\n\r\n");
-  if (bodyStart < 0) bodyStart = rawText.indexOf("\n\n");
-  if (bodyStart < 0) return rawText.slice(0, maxLen);
+// ─── MIME body walker ────────────────────────────────────────────
+//
+// extractBody used to take "the first text/plain chunk" and cut it at the
+// first `--word` run, standing in for the MIME boundary. Gmail's inline
+// forward marker `---------- Forwarded message ---------` matches that
+// pattern, so every Gmail forward was cut right after the reporter's
+// signature: no forwarded From/Subject, no body, no URLs — and the rules
+// had nothing to decide on (prod rows 2026-10-03, raw_body = 27 bytes).
+// It also never decoded quoted-printable / base64, which Gmail uses for
+// any non-ASCII body.
+//
+// This walks the real structure: the boundary comes from the part's own
+// Content-Type header, nested multiparts are recursed, transfer encodings
+// and charsets are decoded, and text/html is the fallback when a message
+// has no text/plain part. Still lossy by design (first text part wins) —
+// enough for snippets, URL extraction, and the rules snapshot.
 
-  const offset = bodyStart + (rawText.charAt(bodyStart) === "\r" ? 4 : 2);
-  const remainder = rawText.slice(offset, offset + maxLen);
+const MAX_MIME_DEPTH = 6;
 
-  // Strip MIME boundary noise + return only the first plaintext
-  // chunk. Multipart parsing is lossy but enough for a snippet.
-  const plainStart = remainder.search(/Content-Type:\s*text\/plain/i);
-  if (plainStart >= 0) {
-    const afterCt = remainder.slice(plainStart);
-    const bodyAfterHeaders = afterCt.search(/\r?\n\r?\n/);
-    if (bodyAfterHeaders >= 0) {
-      const start = afterCt.search(/\r?\n\r?\n/) + 4;
-      return afterCt.slice(start).split(/--[-A-Za-z0-9]+/)[0]?.trim() ?? remainder;
+export interface MimeBodyParts {
+  /** First text/plain part, decoded. Empty when none. */
+  text: string;
+  /** First text/html part, decoded. Null when none. */
+  html: string | null;
+}
+
+function splitHeaderBody(raw: string): { head: string; body: string } {
+  // A part with no headers starts with its blank separator line.
+  const lead = /^\r?\n/.exec(raw);
+  if (lead) return { head: "", body: raw.slice(lead[0].length) };
+  const m = /\r?\n\r?\n/.exec(raw);
+  if (!m) return { head: raw, body: "" };
+  return { head: raw.slice(0, m.index), body: raw.slice(m.index + m[0].length) };
+}
+
+function headerParam(value: string, name: string): string | null {
+  const re = new RegExp(`(?:^|;)\\s*${name}\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, "i");
+  const m = re.exec(value);
+  return m ? (m[1] ?? m[2] ?? null) : null;
+}
+
+function bytesFromBinaryString(s: string): Uint8Array {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}
+
+function decodeBytes(bytes: Uint8Array, charset: string | null): string {
+  try {
+    return new TextDecoder((charset || "utf-8").trim().toLowerCase(), { fatal: false }).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+}
+
+/** Decode a part body per Content-Transfer-Encoding + charset. */
+export function decodeTransferEncoding(body: string, cte: string | null, charset: string | null): string {
+  const enc = (cte ?? "").trim().toLowerCase();
+  if (enc === "base64") {
+    try {
+      // A part cut at the scan cap can end mid-quantum; atob would throw
+      // and leave encoded text behind. Decode the whole quanta we have.
+      const clean = body.replace(/[^A-Za-z0-9+/=]/g, "");
+      return decodeBytes(bytesFromBinaryString(atob(clean.slice(0, clean.length - (clean.length % 4)))), charset);
+    } catch {
+      return body;
     }
   }
-  return remainder;
+  if (enc === "quoted-printable") {
+    const bin = body
+      .replace(/=\r?\n/g, "")
+      .replace(/=([0-9A-Fa-f]{2})/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    return decodeBytes(bytesFromBinaryString(bin), charset);
+  }
+  // 7bit / 8bit / binary: the raw text was decoded as UTF-8 upstream.
+  return body;
+}
+
+function walkMime(raw: string, depth: number, out: MimeBodyParts): void {
+  if (depth > MAX_MIME_DEPTH) return;
+  const { head, body } = splitHeaderBody(raw);
+  const headers = extractHeaders(head + "\r\n\r\n");
+  const ct = headers["content-type"] ?? "text/plain";
+  const type = (ct.split(";")[0] ?? "").trim().toLowerCase();
+
+  if (type.startsWith("multipart/")) {
+    const boundary = headerParam(ct, "boundary");
+    if (!boundary) {
+      // Malformed multipart: keep the raw text rather than nothing.
+      if (!out.text) out.text = body.trim();
+      return;
+    }
+    // Delimiters are only valid at the start of a line (RFC 2046 §5.1.1);
+    // "--<boundary>" mid-line is body text. The leading CRLF lets a
+    // delimiter on the body's very first line match too.
+    const delim = new RegExp(`\\r?\\n--${escapeRegExp(boundary)}`);
+    const chunks = `\r\n${body}`.split(delim);
+    // chunks[0] is the preamble; a chunk starting with "--" is the epilogue.
+    for (let i = 1; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      if (chunk.startsWith("--")) break;
+      walkMime(chunk.replace(/^[ \t]*\r?\n/, ""), depth + 1, out);
+      if (out.text && out.html !== null) return;
+    }
+    return;
+  }
+
+  // A forwarded message/rfc822 part is handled by extractInnerRfc822Message;
+  // don't let the inner email's text stand in for the reporter's own.
+  if (type === "message/rfc822") return;
+  const disposition = (headers["content-disposition"] ?? "").toLowerCase();
+  if (disposition.startsWith("attachment")) return;
+
+  const cte = headers["content-transfer-encoding"] ?? null;
+  const charset = headerParam(ct, "charset");
+  if (type === "text/plain" && !out.text) {
+    out.text = decodeTransferEncoding(body, cte, charset).trim();
+  } else if (type === "text/html" && out.html === null) {
+    out.html = decodeTransferEncoding(body, cte, charset);
+  }
+}
+
+/** Walk a full raw message (headers + body) into its first text/plain and text/html parts. */
+export function extractBodyParts(rawText: string, maxLen: number): MimeBodyParts {
+  const out: MimeBodyParts = { text: "", html: null };
+  // Headers are never large; cap the body we walk so a huge base64
+  // attachment can't blow CPU.
+  const { head, body } = splitHeaderBody(rawText);
+  walkMime(`${head}\r\n\r\n${body.slice(0, maxLen * 4)}`, 0, out);
+  out.text = out.text.slice(0, maxLen);
+  if (out.html !== null) out.html = out.html.slice(0, maxLen);
+  return out;
+}
+
+function escapeRegExp(v: string): string {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** HTML entities: named basics + numeric (&#116; / &#x74;). `&amp;` last,
+ *  so "&amp;lt;" stays "&lt;" instead of becoming "<". */
+export function decodeHtmlEntities(v: string): string {
+  return v
+    .replace(/&#(\d{1,7});/g, (m, d: string) => {
+      const n = Number(d);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h: string) => {
+      const n = parseInt(h, 16);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+// Attacker-controlled input: every pattern below is linear. A tag is
+// `<` + at most MAX_TAG_LEN non-angle chars + `>`; no lazy `[\s\S]*?`
+// spans and no nested unbounded quantifiers (an earlier version took
+// tens of seconds on 20 KB of unclosed `<a href="x"`).
+const MAX_TAG_LEN = 2048;
+const TAG_RE = new RegExp(`<([^<>]{0,${MAX_TAG_LEN}})>`, "g");
+const HREF_IN_TAG_RE = /\bhref\s{0,8}=\s{0,8}(?:"([^"]{1,2048})"|'([^']{1,2048})')/i;
+const BLOCK_TAG_RE = /^\/?(p|div|tr|li|br|h[1-6]|table|ul|ol)\b/i;
+
+/** Plain text from HTML: links kept as `text (href)` so extractUrls still sees them. */
+export function htmlToText(html: string): string {
+  const parts: string[] = [];
+  let last = 0;
+  let skipUntil: string | null = null;   // inside <script>/<style>/<head>
+  let pendingHref: string | null = null;
+  TAG_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TAG_RE.exec(html)) !== null) {
+    const inner = m[1] ?? "";
+    const name = (/^\/?([a-z0-9]{1,10})/i.exec(inner)?.[1] ?? "").toLowerCase();
+    if (skipUntil === null) parts.push(html.slice(last, m.index));
+    last = m.index + m[0].length;
+
+    if (skipUntil !== null) {
+      if (inner.startsWith("/") && name === skipUntil) skipUntil = null;
+      continue;
+    }
+    if (!inner.startsWith("/") && (name === "script" || name === "style" || name === "head")) {
+      skipUntil = name;
+      continue;
+    }
+    if (name === "a" && !inner.startsWith("/")) {
+      const h = HREF_IN_TAG_RE.exec(inner);
+      pendingHref = h ? (h[1] ?? h[2] ?? null) : null;
+      continue;
+    }
+    if (name === "a" && inner.startsWith("/")) {
+      if (pendingHref) parts.push(` (${decodeHtmlEntities(pendingHref)})`);
+      pendingHref = null;
+      continue;
+    }
+    parts.push(BLOCK_TAG_RE.test(inner) ? "\n" : " ");
+  }
+  if (skipUntil === null) parts.push(html.slice(last));
+  return decodeHtmlEntities(parts.join(""))
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n[ \t\n]*/g, (nl) => (nl.split("\n").length > 2 ? "\n\n" : "\n"))
+    .trim();
+}
+
+/** href targets in an HTML part — phishing buttons hide the real link here. */
+export function extractHtmlHrefs(html: string | null): string {
+  if (!html) return "";
+  const out: string[] = [];
+  const re = /\bhref\s{0,8}=\s{0,8}["']([^"'<>]{1,2048})["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && out.length < 200) {
+    const href = decodeHtmlEntities(m[1]!).trim();
+    if (/^https?:\/\//i.test(href)) out.push(href);
+  }
+  return out.join("\n");
 }
 
 interface ForwardedOriginal {
@@ -644,10 +854,10 @@ interface ForwardedOriginal {
 }
 
 const FORWARD_DELIMITERS = [
-  /---------- Forwarded message ----------/i,
+  /-{5,}\s*Forwarded message\s*-{5,}/i,
   /-----Original Message-----/i,
   /Begin forwarded message:/i,
-  /^From:\s.+\nDate:\s.+\nSubject:\s.+/m,    // raw header injection style
+  /^From:\s.+\r?\nDate:\s.+\r?\nSubject:\s.+/m,    // raw header injection style
 ];
 
 function extractForwardedOriginal(body: string): ForwardedOriginal {
@@ -846,6 +1056,8 @@ export interface InnerRfc822Message {
   subject: string | null;
   /** Full plaintext body of the inner email (capped to maxBodyLen). */
   body:    string;
+  /** Newline-joined http(s) href targets from the inner email's HTML part. */
+  hrefs:   string;
   /** Inner email's raw headers, lower-cased keys, same shape as extractHeaders. */
   headers: Record<string, string>;
 }
@@ -877,9 +1089,23 @@ export function extractInnerRfc822Message(
 
   // The inner message ends at the next MIME boundary marker. Boundary
   // chars per RFC 2046: ALPHA DIGIT '()+_,-./:=?
+  // The inner message ends at the ENCLOSING part's next delimiter — not at
+  // the first `--x` line, which is usually the inner message's own
+  // multipart/alternative delimiter (that cut every Gmail/Outlook
+  // forward-as-attachment down to an empty body). The enclosing delimiter
+  // is the last `--<boundary>` line before this part's headers.
   const after = scanWindow.slice(innerStart);
-  const boundaryMatch = /\r?\n--[A-Za-z0-9'()+_,./:=?-]+/.exec(after);
-  const innerEnd = boundaryMatch ? innerStart + boundaryMatch.index : scanWindow.length;
+  const before = scanWindow.slice(0, ctIdx);
+  const outerDelims = [...before.matchAll(/(?:^|\n)--([A-Za-z0-9'()+_,./:=?-]{1,70})[ \t]*\r?$/gm)];
+  const outerBoundary = outerDelims.length > 0 ? outerDelims[outerDelims.length - 1]![1]! : null;
+  let innerEnd = scanWindow.length;
+  if (outerBoundary) {
+    const end = new RegExp(`\\r?\\n--${escapeRegExp(outerBoundary)}(?:--)?[ \\t]*(?:\\r?\\n|$)`).exec(after);
+    if (end) innerEnd = innerStart + end.index;
+  } else {
+    const boundaryMatch = /\r?\n--[A-Za-z0-9'()+_,./:=?-]+/.exec(after);
+    if (boundaryMatch) innerEnd = innerStart + boundaryMatch.index;
+  }
   const innerRaw = scanWindow.slice(innerStart, innerEnd);
 
   if (innerRaw.trim().length === 0) return null;
@@ -888,14 +1114,17 @@ export function extractInnerRfc822Message(
   // extractBody walks the inner multipart too (covers the common case
   // of HTML+plaintext alternatives inside the forwarded message).
   const innerHeaders = extractHeaders(innerRaw);
-  const innerBody = extractBody(innerRaw, maxBodyLen);
+  const innerParts = extractBodyParts(innerRaw, maxBodyLen);
+  const innerBody = innerParts.text ||
+    (innerParts.html ? htmlToText(innerParts.html).slice(0, maxBodyLen) : "");
   const innerFrom = parseEmailAddress(innerHeaders["from"] ?? null);
-  const innerSubject = (innerHeaders["subject"] ?? "").trim() || null;
+  const innerSubject = decodeEncodedWords(innerHeaders["subject"] ?? "").trim() || null;
 
   return {
     from: innerFrom,
     subject: innerSubject ? innerSubject.slice(0, 500) : null,
     body: innerBody,
+    hrefs: extractHtmlHrefs(innerParts.html),
     headers: innerHeaders,
   };
 }
@@ -909,33 +1138,33 @@ function decodeAttachmentFilename(raw: string): string | null {
   if (v.toLowerCase().startsWith("utf-8''")) {
     try { v = decodeURIComponent(v.slice(7)); } catch { /* fall through */ }
   }
-  // RFC 2047 encoded-word: =?charset?B?...?= or =?charset?Q?...?=
-  // Light-touch decoder — only the common UTF-8/B and Q variants.
-  v = v.replace(/=\?([^?]+)\?([bBqQ])\?([^?]+)\?=/g, (_full, _cs, enc, payload) => {
-    try {
-      if (enc === "B" || enc === "b") {
-        return decodeBase64Utf8(payload);
-      }
-      // Q encoding — _ is space, =HH is hex
-      return payload
-        .replace(/_/g, " ")
-        .replace(/=([0-9A-Fa-f]{2})/g, (_q: string, hex: string) =>
-          String.fromCharCode(parseInt(hex, 16)));
-    } catch {
-      return payload;
-    }
-  });
+  v = decodeEncodedWords(v);
   v = v.trim();
   if (!v) return null;
   // Cap at 256 chars to keep stored JSON small.
   return v.slice(0, 256);
 }
 
-function decodeBase64Utf8(b64: string): string {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+/**
+ * RFC 2047 encoded-words (=?charset?B|Q?...?=) → text. Adjacent words
+ * separated only by whitespace are joined without it (§6.2), and the
+ * decoded bytes go through the declared charset, so multi-byte UTF-8
+ * (emoji, accents) survives Q encoding.
+ */
+export function decodeEncodedWords(value: string): string {
+  return value
+    .replace(/(=\?[^?]+\?[bBqQ]\?[^?]*\?=)\s+(?==\?[^?]+\?[bBqQ]\?[^?]*\?=)/g, "$1")
+    .replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (full, cs: string, enc: string, payload: string) => {
+      try {
+        const bin = enc === "B" || enc === "b"
+          ? atob(payload)
+          : payload.replace(/_/g, " ").replace(/=([0-9A-Fa-f]{2})/g, (_q, hex: string) =>
+              String.fromCharCode(parseInt(hex, 16)));
+        return decodeBytes(bytesFromBinaryString(bin), cs);
+      } catch {
+        return full;
+      }
+    });
 }
 
 // ─── Storage caps ──────────────────────────────────────────────

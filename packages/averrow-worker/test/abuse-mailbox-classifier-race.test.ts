@@ -40,7 +40,7 @@ function makeEnv(verdictChanges: number): { env: Env; sqls: string[] } {
     first: async () => null,
     run: async () => {
       sqls.push(sql);
-      const isVerdict = sql.includes("classified_by             = 'ai'");
+      const isVerdict = sql.includes("classified_by             = ?");
       return { success: true, meta: { changes: isVerdict ? verdictChanges : 1 } };
     },
   });

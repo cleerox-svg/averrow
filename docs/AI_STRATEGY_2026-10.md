@@ -39,7 +39,7 @@
 - Attribution Backlog now ranks clusters whose text mentions a known actor name/alias (`actor_hint`); an ordering hint only, never an attribution.
 - The AI-call counters are now emitted by analyst only.
 
-**Not started:** Phase 2 onward, including Unified Billing (deferred to Phase 2, §4.1) and the `[ai]` binding.
+**Not started:** Phase 2 onward, including Unified Billing (deferred to Phase 2, §4.1). **Exception (2026-10-03):** the `[ai]` binding now exists (prod only) for one consumer — the abuse-mailbox second opinion (#15) runs on Workers AI `llama-3.3-70b-instruct-fp8-fast` behind `ABUSE_AI_PROVIDER = "workers_ai"` (`lib/workers-ai.ts`), with verdicts clamped to "likely" phishing/malware or review, no promotion, and a daily call cap. That moves #15 off its Claude-only classification for now; the shared `lib/ai.ts` gate and the other Tier 1 moves are still Phase 2.
 
 ---
 

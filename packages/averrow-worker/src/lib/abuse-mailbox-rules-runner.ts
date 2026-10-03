@@ -59,6 +59,7 @@ export const RULES_OPERATOR_NOTE: Record<string, string> = {
   M2: "Message matches the IOC or regex signature of a named threat in the catalog.",
   M3: "Message contains a high-specificity device-code sign-in lure.",
   M4: "Message carries an executable or disk-image attachment type.",
+  H1: "Several independent phishing hallmarks (sender/brand mismatch, lure wording, risky links or attachments, auth failures) — likely phishing, no intel confirmation.",
   review: "No deterministic rule matched; queued for analyst review.",
 };
 
@@ -71,8 +72,10 @@ interface RulesRow {
   brand_id:              string | null;
   inbound_alias:         string | null;
   original_from:         string | null;
+  forwarded_by_email:    string | null;
   original_subject:      string | null;
   original_body_snippet: string | null;
+  body_text:             string | null;
   extracted_urls:        string | null;
   attachment_names:      string | null;
   auth_results:          string | null;
@@ -84,8 +87,8 @@ interface RulesRow {
 
 // The single `?` is ABUSE_RESPONSE_LOOKBACK — bind it first.
 const ROW_COLUMNS = `
-  id, org_id, brand_id, inbound_alias, original_from, original_subject,
-  original_body_snippet, extracted_urls, attachment_names, auth_results, sender_ip,
+  id, org_id, brand_id, inbound_alias, original_from, forwarded_by_email, original_subject,
+  original_body_snippet, substr(raw_body, 1, 20000) AS body_text, extracted_urls, attachment_names, auth_results, sender_ip,
   ${IS_ATTACHMENT_FORWARD_SQL} AS is_attachment_forward,
   CASE WHEN received_at < datetime('now', ?) THEN 1 ELSE 0 END AS is_stale`;
 
@@ -227,10 +230,18 @@ async function applyRulesToRow(
     senderIp: row.sender_ip,
   });
 
+  // original_from falls back to the REPORTER when intake recovered no
+  // forwarded sender (fresh report). The reporter is not the suspect —
+  // judging their domain against the brand would invent a mismatch.
+  const senderIsReporter = !!row.original_from && !!row.forwarded_by_email &&
+    row.original_from.toLowerCase() === row.forwarded_by_email.toLowerCase();
+
   const verdict = decideAbuseMailboxRulesVerdict({
     brand: brand ? { id: brand.id, canonical_domain: brand.canonical_domain } : null,
     safeDomains,
-    originalFrom: row.original_from,
+    originalFrom: senderIsReporter ? null : row.original_from,
+    subject: row.original_subject,
+    bodyText: row.body_text || row.original_body_snippet,
     urls,
     attachments,
     authResults,
@@ -360,6 +371,7 @@ async function applyRulesToRow(
       action: verdict.action,
       message: RULES_OPERATOR_NOTE[verdict.primaryRule] ?? "",
       classifiedBy: "rules",
+      likely: verdict.primaryRule === "H1",
     });
   }
 

@@ -235,7 +235,7 @@ export async function sweepAbuseDeterminations(env: Env, opts?: { limit?: number
         AND COALESCE(throttled, 0) = 0
         AND forwarded_by_email IS NOT NULL
         AND classification NOT IN ('pending', 'follow_up')
-        AND classified_by IN ('rules', 'ai')
+        AND classified_by IN ('rules', 'ai', 'workers_ai')
         AND received_at >= datetime('now', ?)
       ORDER BY received_at ASC
       LIMIT ?

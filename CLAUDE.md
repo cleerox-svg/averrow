@@ -446,6 +446,7 @@ sub-hourly latency matters).
 ### AI usage rules:
 - Before adding or changing an AI call, read `docs/AI_STRATEGY_2026-10.md` — it classifies every existing call (keep-on-Claude / move-to-Workers-AI / replace-with-rules / delete) and sets the provider direction.
 - **Prod currently runs `AI_MODE = "rules_only"`** (AI_STRATEGY Phase 0/1 done, see its "Status" section): no Anthropic request leaves the Worker. Sentinel, cartographer, attributor, seed-strategist and the lookalike scanner have no AI path at all; narrator severity and the strategist coordination check are rule-based. Any new AI call must handle `AiDisabledError` / `failure_kind: 'throttled'` as a quiet fallback.
+- **One Workers AI exception (2026-10):** the abuse-mailbox second opinion runs on Cloudflare Workers AI (`[ai]` binding, prod only; `lib/workers-ai.ts`) when `ABUSE_AI_PROVIDER = "workers_ai"` — its own switch, independent of `AI_MODE`. Verdicts are clamped (`clampWorkersAiVerdict`): "likely" phishing/malware or review — never benign or spam, never promoted, no Sonnet deep analysis, only rows the rules already reviewed, fixed text in tenant-visible columns, daily call cap (KV, fails closed); stored as `classified_by='workers_ai'`. Remove the var to turn it off. Everything else stays on the AI_STRATEGY Phase 2 plan.
 - **Haiku:** classification, scoring, short summaries — high volume
 - **Sonnet:** threat actor narratives, cluster briefs — sparingly
 - **NEVER** use AI for what SQL `GROUP BY` can do in 50ms

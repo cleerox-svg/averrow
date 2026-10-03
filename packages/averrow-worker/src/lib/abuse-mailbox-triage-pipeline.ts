@@ -22,6 +22,7 @@
 
 import type { Env } from "../types";
 import { isAiRulesOnly } from "./anthropic";
+import { isAbuseWorkersAiEnabled } from "./workers-ai";
 import { runAbuseRulesForMessage } from "./abuse-mailbox-rules-runner";
 import { deliverAbuseDetermination, type DeliveryOutcome } from "./abuse-mailbox-determination";
 
@@ -64,7 +65,8 @@ export async function runAbuseTriagePipeline(
     // retries exhaust, the hourly sweeper classifies the row anyway.
     if (r.status === "error") throw new Error(`rules pass failed: ${r.error}`);
     if (r.status !== "classified") return { rules: r.status, ai: "skipped" };
-    if (r.verdict.kind !== "review" || isAiRulesOnly(env)) {
+    // Workers AI has its own switch; AI_MODE=rules_only only blocks Anthropic.
+    if (r.verdict.kind !== "review" || (isAiRulesOnly(env) && !isAbuseWorkersAiEnabled(env))) {
       return { rules: r.verdict.kind, ai: r.verdict.kind === "review" ? "skipped_rules_only" : "skipped" };
     }
     const { runAbuseClassifierBackfill } = await import("./abuse-mailbox-classifier");

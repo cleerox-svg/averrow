@@ -66,7 +66,9 @@ export interface VerdictNotice {
   action:         string;
   /** Operator-facing message body (AI reasoning, or a fixed rules sentence). */
   message:        string;
-  classifiedBy:   "ai" | "rules";
+  classifiedBy:   "ai" | "rules" | "workers_ai";
+  /** Rules H1 heuristic tier: say "likely", never "confirmed". */
+  likely?:        boolean;
 }
 
 /**
@@ -94,7 +96,9 @@ export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<vo
     await createNotification(env, {
       type: "abuse_mailbox_verdict",
       severity: v.severity === "CRITICAL" ? "critical" : "high",
-      title: `${v.classification === "phishing" ? "Phishing" : "Malware"} confirmed — abuse mailbox report`,
+      title: v.likely
+        ? `Likely ${v.classification === "malware" ? "malware" : "phishing"} — abuse mailbox report`
+        : `${v.classification === "phishing" ? "Phishing" : "Malware"} confirmed — abuse mailbox report`,
       message: v.message,
       link,
       audience,
@@ -102,9 +106,13 @@ export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<vo
       orgId: String(v.orgId),
       restrictToOrgMembers: audience === "tenant" ? v.orgId : null,
       groupKey: `abuse_mailbox_verdict:${v.messageId}`,
-      reasonText: v.brandId
-        ? "A capture targeting one of your monitored brands was classified as a confirmed threat."
-        : "A capture sent to your abuse alias was classified as a confirmed threat.",
+      reasonText: v.likely
+        ? (v.brandId
+          ? "A capture targeting one of your monitored brands shows several phishing hallmarks (not yet confirmed by threat intelligence)."
+          : "A capture sent to your abuse alias shows several phishing hallmarks (not yet confirmed by threat intelligence).")
+        : v.brandId
+          ? "A capture targeting one of your monitored brands was classified as a confirmed threat."
+          : "A capture sent to your abuse alias was classified as a confirmed threat.",
       recommendedAction: "Open the message in the Abuse Mailbox to review indicators and take action.",
       metadata: {
         message_id: v.messageId,

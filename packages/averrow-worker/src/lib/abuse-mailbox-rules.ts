@@ -36,12 +36,19 @@
 //          → phishing / HIGH / escalate / 85
 //   M4  executable / script / disk-image attachment extension.
 //          → malware / CRITICAL / escalate / 90
+//   H1  heuristic "likely phishing" (lib/abuse-mailbox-heuristics.ts) —
+//       only when M1–M4 did not fire: several independent hallmarks
+//       (sender ≠ claimed brand, lookalike domains, account/payment lures,
+//       risky link hosts, smuggling attachments, auth failures) score
+//       ≥ 5 across ≥ 2 families. Weaker tier by design: never promotes,
+//       and the reporter is told "likely", not "confirmed".
+//          → phishing / HIGH / escalate / 60–80
 //
 // Promotion to `threats`: EXACT matched URLs only (M1 exact-URL hits and
 // M2 IOC-url hits). A domain-level match never promotes, and M3 / M4 never
 // promote — a lure or an attachment says nothing about the other links.
 //
-// Everything else lands as classification='ambiguous', classified_by=
+// Everything else (H1 included in the scan) lands as classification='ambiguous', classified_by=
 // 'rules', severity MEDIUM, ai_action 'review', with a comma list of
 // FIXED reason codes in classification_reason. The rules NEVER emit
 // 'benign' or 'spam' — absence of a match is not evidence of safety.
@@ -57,6 +64,7 @@ import { isTyposquatOf, sldLabel } from "./abuse-mailbox-brand-match";
 import { isSafeDomain } from "./safeDomains";
 import { isAuthFail, type AuthTriple } from "./abuse-mailbox-shared";
 import { detectDeviceCodePhishing, type DeviceCodeResult } from "./device-code-detector";
+import { scoreAbuseHeuristics } from "./abuse-mailbox-heuristics";
 import {
   matchNamedThreat, matchStrongestNamedThreat, DEVICE_CODE_TECHNIQUE,
   type NamedThreatEntry, type NamedThreatMatch,
@@ -86,7 +94,7 @@ export const DEVICE_CODE_RULE_THRESHOLD = 0.85;
 /** Max URLs promoted to `threats` from one rules verdict. */
 export const RULES_PROMOTE_CAP = 20;
 
-export type RuleId = "M1" | "M2" | "M3" | "M4";
+export type RuleId = "M1" | "M2" | "M3" | "M4" | "H1";
 
 // ─── Input snapshot ──────────────────────────────────────────────
 
@@ -127,6 +135,11 @@ export interface RulesSnapshot {
   /** The catalog entry behind `strongNamedThreat`. */
   strongNamedThreatEntry: NamedThreatEntry | null;
   deviceCode: DeviceCodeResult;
+  /** Decoded body text for the H1 heuristics (wider than the 500-char
+   *  snippet). Optional — absent means subject-only lure scoring. */
+  bodyText?: string | null;
+  /** Decoded original subject for the H1 lure scoring. */
+  subject?: string | null;
 }
 
 // ─── Output ──────────────────────────────────────────────────────
@@ -401,7 +414,7 @@ export function decideAbuseMailboxRulesVerdict(s: RulesSnapshot): RulesVerdict {
   }
   const m4 = m4Ext !== null;
 
-  const fired: RuleId[] = [];
+  const fired: Exclude<RuleId, "H1">[] = [];
   if (m4) fired.push("M4");
   if (m1) fired.push("M1");
   if (m2) fired.push("M2");
@@ -442,6 +455,33 @@ export function decideAbuseMailboxRulesVerdict(s: RulesSnapshot): RulesVerdict {
     };
   }
 
+  // ── H1: heuristic "likely phishing" (no positive evidence fired) ──
+  const h = scoreAbuseHeuristics({
+    senderEmail: s.originalFrom,
+    subject:     s.subject ?? null,
+    bodyText:    s.bodyText ?? null,
+    urls,
+    attachments: s.attachments,
+    brand:       s.brand,
+    safeDomains: safe,
+    authResults: s.authResults,
+    isAttachmentForward: s.isAttachmentForward,
+  });
+  if (h.fired) {
+    return {
+      kind:           "malicious",
+      primaryRule:    "H1",
+      firedRules:     ["H1"],
+      classification: "phishing",
+      severity:       "HIGH",
+      action:         "escalate",
+      confidence:     h.confidence,
+      reasonCodes:    [`h1_likely_phishing:${h.score}`, ...h.signals.map((x) => x.code)],
+      qualifyingThreatIds: [],
+      promoteUrls:    [],
+    };
+  }
+
   // ── Review: fixed reason codes, never benign/spam ──
   const reasonCodes: string[] = [];
   if (s.isAttachmentForward && s.authResults) {
@@ -460,6 +500,8 @@ export function decideAbuseMailboxRulesVerdict(s: RulesSnapshot): RulesVerdict {
   if (s.attachments.length > 0) reasonCodes.push("has_attachments");
   // Exactly one intel code: candidates existed but none qualified, or none.
   reasonCodes.push(s.threatCandidates.length > 0 ? "intel_match_unqualified" : "no_intel_match");
+  // H1 below threshold: show the operator how close it came.
+  if (h.signals.length > 0) reasonCodes.push(`h1_score:${h.score}`, ...h.signals.map((x) => x.code));
 
   return {
     kind:           "review",
@@ -479,5 +521,6 @@ export function primaryRuleFromReason(reason: string | null | undefined): RuleId
   if (first.startsWith("m2_")) return "M2";
   if (first.startsWith("m3_")) return "M3";
   if (first.startsWith("m4_")) return "M4";
+  if (first.startsWith("h1_likely_phishing")) return "H1";
   return "review";
 }
