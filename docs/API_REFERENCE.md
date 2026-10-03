@@ -998,10 +998,10 @@ All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including th
 | GET | `/api/admin/budget/status` | Admin | AI budget status and spend |
 | GET | `/api/admin/budget/breakdown` | Admin | Budget breakdown by agent |
 | PATCH | `/api/admin/budget/config` | Super Admin | Update AI budget config (monthly cap, throttle thresholds) |
-| GET | `/api/admin/organizations` | `read_customers` (analyst, sales, support, admin, super_admin) | List all organizations |
-| POST | `/api/admin/organizations` | Super Admin | Create organization |
-| GET | `/api/admin/organizations/:orgId` | `read_customers` (analyst, sales, support, admin, super_admin) | Get organization detail |
-| PATCH | `/api/admin/organizations/:orgId` | Super Admin | Update organization |
+| GET | `/api/admin/organizations` | `read_customers` (analyst, sales, support, auditor, admin, super_admin) | List all organizations, each row with `member_count` + `brand_count`. Response is the public org projection (`toPublicOrg`, `lib/org-public.ts`): `id, name, slug, plan, plan_id, status, billing_status, trial_ends_at, max_brands, max_members, sso_provider, created_at, updated_at` plus `has_webhook` (bool) and `webhook_url_redacted` (scheme + registrable domain only, e.g. `https://…slack.com/…`). Never returns `webhook_secret`, the full `webhook_url`, `sso_config_json`, `invite_code` or Stripe ids |
+| POST | `/api/admin/organizations` | Super Admin | Create organization. Returns the public org projection (see list row) plus `invite` |
+| GET | `/api/admin/organizations/:orgId` | `read_customers` (analyst, sales, support, auditor, admin, super_admin) | Get organization detail with `members` + `brands`. Response is the public org projection (`toPublicOrg`, `lib/org-public.ts`): `id, name, slug, plan, plan_id, status, billing_status, trial_ends_at, max_brands, max_members, sso_provider, created_at, updated_at` plus `has_webhook` (bool) and `webhook_url_redacted` (scheme + registrable domain only, e.g. `https://…slack.com/…`). Never returns `webhook_secret`, the full `webhook_url`, `sso_config_json`, `invite_code` or Stripe ids |
+| PATCH | `/api/admin/organizations/:orgId` | Super Admin | Update organization. Returns the public org projection (see list row) |
 | GET | `/api/admin/organizations/:orgId/abuse-branding` | `read_customers` (analyst, sales, support, admin, super_admin) | Tier 3: abuse-mailbox responder branding for the org — returns `{ stored, resolved, alias }` (stored row, defaults-merged/validated branding the responder would use, and the org's primary inbound alias) |
 | PUT | `/api/admin/organizations/:orgId/abuse-branding` | Super Admin | Tier 3: upsert per-org responder branding (from_name / product_name / tagline / accent_color / header_bg_color / logo_url / logo_alt / subject_prefix / website_url / website_label / report_url / report_label / footer_note / enabled). Envelope From stays on Averrow's authenticated domain; only display name + look are branded. Invalid fields degrade to the Averrow default at render time |
 | POST | `/api/admin/organizations/:orgId/abuse-alias` | Super Admin | Tier 3: provision (idempotent) the per-tenant `verify-<slug>@averrow.com` inbound abuse alias. Optional `{ slug }` override; reports a collision rather than hijacking an existing alias |
@@ -1075,9 +1075,9 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 | PATCH | `/api/orgs/:orgId/integrations/:integrationId` | Admin (org) | Update integration |
 | DELETE | `/api/orgs/:orgId/integrations/:integrationId` | Admin (org) | Delete integration |
 | POST | `/api/orgs/:orgId/integrations/:integrationId/test` | Admin (org) | Send a test event through an integration |
-| GET | `/api/orgs/:orgId/webhook` | Admin (org) | Get webhook config |
-| PATCH | `/api/orgs/:orgId/webhook` | Admin (org) | Update webhook |
-| POST | `/api/orgs/:orgId/webhook/regenerate-secret` | Admin (org) | Rotate webhook HMAC secret |
+| GET | `/api/orgs/:orgId/webhook` | Admin (org) | Get webhook config — the only read that returns the full `webhook_url` (the org's own admins edit it). Returns `has_secret`, never the secret |
+| PATCH | `/api/orgs/:orgId/webhook` | Admin (org) | Update webhook. On first set (no existing secret) returns the newly generated `webhook_secret` once. Audit-log `details.webhook_url` is redacted to scheme + registrable domain |
+| POST | `/api/orgs/:orgId/webhook/regenerate-secret` | Owner (org) | Rotate webhook HMAC secret; returns the new `webhook_secret` once |
 | POST | `/api/orgs/:orgId/webhook/test` | Admin (org) | Send a test webhook delivery |
 | GET | `/api/orgs/:orgId/dashboard` | Member | Tenant-scoped dashboard |
 | GET | `/api/orgs/:orgId/alerts` | Member | Tenant alerts list |

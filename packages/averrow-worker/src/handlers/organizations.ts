@@ -9,6 +9,7 @@ import { sendInviteEmail } from "../lib/invite-email";
 import { sendTestWebhook } from "../lib/webhooks";
 import { validateOutboundWebhookUrl } from "../lib/url-guard";
 import { syncOrgModulesToPlan } from "../lib/entitlements";
+import { ORG_PUBLIC_SELECT_SQL, orgPublicSelectSql, toPublicOrg, redactWebhookUrl } from "../lib/org-public";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 
@@ -96,8 +97,8 @@ export async function handleCreateOrg(
     body.max_members ?? 10,
   ).run();
 
-  const org = await env.DB.prepare("SELECT * FROM organizations WHERE slug = ?")
-    .bind(slug).first();
+  const org = await env.DB.prepare(`SELECT ${ORG_PUBLIC_SELECT_SQL} FROM organizations WHERE slug = ?`)
+    .bind(slug).first<Record<string, unknown>>();
 
   if (!org) {
     return json({ success: false, error: "Failed to create organization" }, 500, origin);
@@ -213,7 +214,7 @@ export async function handleCreateOrg(
 
   return json({
     success: true,
-    data: { ...org, invite: inviteData },
+    data: { ...toPublicOrg(org), invite: inviteData },
   }, 201, origin);
 }
 
@@ -258,16 +259,20 @@ export async function handleListOrgs(
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
   const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
+  // Explicit column list + toPublicOrg allowlist: never `o.*` — the row
+  // carries webhook_secret / webhook_url (see lib/org-public.ts) and this
+  // route is readable by every `read_customers` role.
   const { results } = await env.DB.prepare(`
-    SELECT o.*,
+    SELECT ${orgPublicSelectSql("o")},
       (SELECT COUNT(*) FROM org_members om WHERE om.org_id = o.id AND om.status = 'active') AS member_count,
       (SELECT COUNT(*) FROM org_brands ob WHERE ob.org_id = o.id) AS brand_count
     FROM organizations o
     ORDER BY o.created_at DESC
     LIMIT ? OFFSET ?
-  `).bind(limit, offset).all();
+  `).bind(limit, offset).all<Record<string, unknown>>();
 
-  return json({ success: true, data: results }, 200, origin);
+  const data = results.map((r) => toPublicOrg(r, ["member_count", "brand_count"]));
+  return json({ success: true, data }, 200, origin);
 }
 
 // ─── Admin: Get Organization Detail (super_admin) ────────────
@@ -279,8 +284,8 @@ export async function handleGetOrg(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
-  const org = await env.DB.prepare("SELECT * FROM organizations WHERE id = ?")
-    .bind(orgId).first();
+  const org = await env.DB.prepare(`SELECT ${ORG_PUBLIC_SELECT_SQL} FROM organizations WHERE id = ?`)
+    .bind(orgId).first<Record<string, unknown>>();
   if (!org) return json({ success: false, error: "Organization not found" }, 404, origin);
 
   const { results: members } = await env.DB.prepare(`
@@ -299,7 +304,7 @@ export async function handleGetOrg(
     ORDER BY ob.created_at
   `).bind(orgId).all();
 
-  return json({ success: true, data: { ...org, members, brands } }, 200, origin);
+  return json({ success: true, data: { ...toPublicOrg(org), members, brands } }, 200, origin);
 }
 
 // ─── Admin: Update Organization (super_admin) ────────────────
@@ -386,10 +391,10 @@ export async function handleUpdateOrg(
     }
   }
 
-  const org = await env.DB.prepare("SELECT * FROM organizations WHERE id = ?")
-    .bind(orgId).first();
+  const org = await env.DB.prepare(`SELECT ${ORG_PUBLIC_SELECT_SQL} FROM organizations WHERE id = ?`)
+    .bind(orgId).first<Record<string, unknown>>();
 
-  return json({ success: true, data: org }, 200, origin);
+  return json({ success: true, data: org ? toPublicOrg(org) : null }, 200, origin);
 }
 
 // ─── Org Member: Get Own Org ──────────────────────────────────
@@ -1084,7 +1089,13 @@ export async function handleUpdateWebhook(
     userId: ctx.userId,
     resourceType: "organization",
     resourceId: orgId,
-    details: { webhook_url: body.webhook_url, webhook_events: body.webhook_events },
+    // Never log the full URL: Slack/Teams-style webhook URLs embed their
+    // credential, and audit_log is readable by view_audit roles.
+    // undefined (unchanged) is dropped by JSON; "" (cleared) logs null.
+    details: {
+      webhook_url: body.webhook_url === undefined ? undefined : redactWebhookUrl(body.webhook_url),
+      webhook_events: body.webhook_events,
+    },
     request,
   });
 
