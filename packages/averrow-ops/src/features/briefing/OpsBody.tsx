@@ -1,119 +1,24 @@
-import { useState, type CSSProperties } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { Badge, Button, PageState, Table, Th, Td } from '@/design-system/components';
-import type { BadgeStatus } from '@/design-system/components';
-
-// ─── Inline style replacements for retired design tokens ────────
+// Ops body of the briefing shell (/admin -> Briefing tab).
 //
-// Theme-flippable via CSS custom properties. tokens.css defines
-// --bg-card / --border-base for both dark + light modes. Every color
-// value in this file is a CSS var — no `bg-contrail` / `bg-afterburner` /
-// `text-white/NN` / hardcoded hex, all of which are dark-only and don't
-// flip under [data-theme="light"].
-const glassCardStyle: CSSProperties = {
-  background: 'var(--bg-card)',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-  border: '1px solid var(--border-base)',
-  borderRadius: '0.75rem',
-  boxShadow: '0 4px 24px rgba(0,0,0,0.20), inset 0 1px 0 var(--border-base)',
-};
-const sectionCardStyle: CSSProperties = { background: 'var(--bg-page)', borderColor: 'var(--border-base)' };
+// The 12-section Platform Operations Briefing (`threat_briefings`), moved here
+// from the former DailyBriefingWidget, plus the payload sections that
+// widget never rendered: geopoliticalCampaigns, marketingVisibility and the
+// new-capability counts. Types live in ./types and mirror the worker's
+// `ComprehensiveBriefing`.
+
+import { useState, type CSSProperties } from 'react';
+import { Badge, Button, Card, Table, Th, Td } from '@/design-system/components';
+import { BriefingShell } from './BriefingShell';
+import { useGenerateBriefing, useOpsBriefing } from './useOpsBriefing';
+import type { ComprehensiveBriefing, PlatformOverview } from './types';
+
+// Theme-flippable via CSS custom properties (tokens.css defines them for both
+// dark and light). No hardcoded colours in this file.
 const textPrimary: CSSProperties = { color: 'var(--text-primary)' };
 const textSecondary: CSSProperties = { color: 'var(--text-secondary)' };
 const textTertiary: CSSProperties = { color: 'var(--text-tertiary)' };
 const textMuted: CSSProperties = { color: 'var(--text-muted)' };
-const amberText: CSSProperties = { color: 'var(--amber)' };
-
-// ─── Types (mirrors ComprehensiveBriefing from backend) ────────
-
-interface PlatformOverview {
-  totalThreats: number;
-  last24h: number;
-  last12h: number;
-  avgPerHour: number;
-  brandsMonitored: number;
-  brandsClassified: number;
-  todayCount: number;
-  yesterdayCount: number;
-}
-
-interface BriefingBody {
-  platformOverview: PlatformOverview;
-  newThreats: {
-    bySeverity: Array<{ severity: string; count: number }>;
-    bySource: Array<{ source_feed: string; count: number }>;
-    notable: Array<{
-      malicious_domain: string;
-      type: string;
-      severity: string;
-      source_feed: string;
-      first_seen: string;
-    }>;
-  };
-  feedProduction: Array<{ feed_name: string; runs: number; ingested: number }>;
-  feedHealth: {
-    feeds: Array<{
-      feed_name: string;
-      health_status: string;
-      last_successful_pull: string | null;
-      last_error: string | null;
-    }>;
-    summary: Array<{ health_status: string; count: number }>;
-    staleFeeds: Array<{ feed_name: string; last_successful_pull: string | null }>;
-    degradedFeeds: Array<{ feed_name: string; last_error: string | null }>;
-  };
-  enrichment: {
-    surbl_checked: number; surbl_hits: number;
-    vt_checked: number; vt_hits: number;
-    gsb_checked: number; gsb_hits: number;
-    dbl_checked: number; dbl_hits: number;
-    abuse_checked: number; abuse_hits: number;
-    gn_checked: number; sec_checked: number;
-  };
-  flightController: { summary: string | null; created_at: string | null };
-  agentActivity: Array<{ agent_id: string; runs: number; last_run: string }>;
-  newCapabilities: {
-    typosquat_total: number; typosquat_new: number;
-    social_total: number; social_new: number;
-    certstream: number;
-  };
-  spamTrap: {
-    totalSeeds: number;
-    totalCaptures: number;
-    captures12h: number;
-    latestCaptures: Array<{
-      trap_address: string; from_address: string;
-      subject: string; category: string;
-      severity: string; captured_at: string;
-    }>;
-    seedingSources: Array<{ seeded_location: string; seeds: number; catches: number }>;
-  };
-  honeypot: {
-    totalVisits: number; botVisits: number; humanVisits: number;
-    visits12h: number;
-    pageBreakdown: Array<{ page: string; visits: number; bots: number }>;
-    /** True distinct-page count; pageBreakdown is capped at top-20 by visits. */
-    pageBreakdownTotal: number;
-    recentBots: Array<{ page: string; bot_name: string; country: string; visited_at: string }>;
-    suspiciousHumans: Array<{ page: string; country: string; visited_at: string; asn: string | null; reason: 'bait' | 'probe' }>;
-  };
-  topTargetedBrands: Array<{ name: string; threats_24h: number }>;
-  brandCoverage: Array<{ sector: string; brands: number }>;
-  generatedAt: string;
-  statusBadge: 'OPERATIONAL' | 'DEGRADED';
-}
-
-interface BriefingRow {
-  id: number;
-  type: string;
-  report_date: string;
-  report_data: string;
-  generated_at: string;
-  trigger: string;
-  emailed: number;
-}
+const amberText: CSSProperties = { color: 'var(--amber-text)' };
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -124,15 +29,6 @@ function fmt(n: number | null | undefined): string {
 function pct(hits: number, checked: number): string {
   if (checked === 0) return '—';
   return ((hits / checked) * 100).toFixed(1) + '%';
-}
-
-function freshnessInfo(createdAt: string): { label: string; status: BadgeStatus } {
-  const age = Date.now() - new Date(createdAt).getTime();
-  const oneHour = 60 * 60 * 1000;
-  const oneDay = 24 * oneHour;
-  if (age < oneHour) return { label: 'FRESH', status: 'active' };
-  if (age < oneDay) return { label: 'TODAY', status: 'running' };
-  return { label: 'STALE', status: 'warning' };
 }
 
 function triggerLabel(trigger: string): string {
@@ -168,7 +64,7 @@ function OverviewCard({ title, metric, metricLabel, metricColor, children }: {
 }) {
   const metricStyle: CSSProperties = { color: metricColor ?? 'var(--text-primary)' };
   return (
-    <div className="rounded-xl border p-4" style={sectionCardStyle}>
+    <Card variant="flat" padding={16}>
       <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={textSecondary}>{title}</div>
       {/* Mobile: stacked layout, Desktop: side-by-side */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -182,7 +78,7 @@ function OverviewCard({ title, metric, metricLabel, metricColor, children }: {
           <div className="text-[9px] uppercase" style={textTertiary}>{metricLabel}</div>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -240,105 +136,9 @@ function GenerateToast({ toast }: { toast: { type: 'success' | 'error'; message:
   );
 }
 
-// ─── Main Widget ────────────────────────────────────────────────
+// ─── Sections ───────────────────────────────────────────────────
 
-export function DailyBriefingWidget() {
-  const queryClient = useQueryClient();
-  const [generating, setGenerating] = useState(false);
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-  const { data: row, isLoading, isError, refetch } = useQuery({
-    queryKey: ['briefing-latest'],
-    queryFn: async () => {
-      const res = await api.get<BriefingRow>('/api/briefings/latest');
-      return res.data ?? null;
-    },
-    // Matches useDailyBriefing.ts's documented cadence — the briefing is
-    // stable between cron runs, so a remount within 5 min shouldn't
-    // trigger a refetch.
-    staleTime: 5 * 60_000,
-  });
-
-  const handleGenerate = async () => {
-    setGenerating(true);
-    setToast(null);
-    try {
-      const res = await api.post<{ data: BriefingRow }>('/api/briefings/generate');
-      if (res.success) {
-        await queryClient.invalidateQueries({ queryKey: ['briefing-latest'] });
-        setToast({ type: 'success', message: 'Briefing generated and emailed to claude.leroux@averrow.com' });
-      } else {
-        setToast({ type: 'error', message: res.error ?? 'Generation failed' });
-      }
-    } catch (err) {
-      setToast({ type: 'error', message: String(err) });
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  // Parse briefing from report_data
-  let briefing: BriefingBody | null = null;
-  if (row?.report_data) {
-    try {
-      briefing = typeof row.report_data === 'string'
-        ? JSON.parse(row.report_data)
-        : row.report_data as unknown as BriefingBody;
-    } catch { /* noop */ }
-  }
-
-  const freshness = row ? freshnessInfo(row.generated_at) : null;
-
-  // ── Loading state
-  if (isLoading) {
-    return (
-      <div className="rounded-xl" style={glassCardStyle}>
-        <PageState
-          kind="loading"
-          layout="card"
-          compact
-          title="Loading briefing…"
-        />
-      </div>
-    );
-  }
-
-  // ── Error state — a failed fetch is never "no briefing generated yet"
-  if (isError && !row) {
-    return (
-      <div className="rounded-xl" style={glassCardStyle}>
-        <PageState
-          kind="error"
-          layout="page"
-          compact
-          title="Couldn't load the briefing"
-          onRetry={() => { void refetch(); }}
-        />
-      </div>
-    );
-  }
-
-  // ── Empty state
-  if (!row || !briefing) {
-    return (
-      <div className="rounded-xl" style={glassCardStyle}>
-        <PageState
-          kind="empty"
-          layout="page"
-          compact
-          title="No briefing generated yet."
-          description="Run one to populate this widget."
-        />
-        <div className="flex flex-col items-center gap-2 pb-6">
-          <Button variant="danger" size="sm" onClick={handleGenerate} disabled={generating} loading={generating}>
-            Run Briefing Now
-          </Button>
-          <GenerateToast toast={toast} />
-        </div>
-      </div>
-    );
-  }
-
+function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
   // ── Derived data
   const p = briefing.platformOverview ?? {} as PlatformOverview;
   const total12h = briefing.newThreats?.bySeverity?.reduce((s, r) => s + Number(r.count), 0) ?? 0;
@@ -367,71 +167,45 @@ export function DailyBriefingWidget() {
   ] : [];
 
   // Anomalies
-  const anomalies: Array<{ icon: string; text: string; level: 'warn' | 'ok' }> = [];
+  const anomalies: Array<{ text: string; level: 'warn' | 'ok' }> = [];
   if (briefing.enrichment) {
     if (briefing.enrichment.gn_checked === 0) {
-      anomalies.push({ icon: '⚠', text: 'GreyNoise: 0 enrichments — API may not be returning data', level: 'warn' });
+      anomalies.push({ text: 'GreyNoise: 0 enrichments — API may not be returning data', level: 'warn' });
     }
     if (briefing.enrichment.sec_checked === 0) {
-      anomalies.push({ icon: '⚠', text: 'SecLookup: 0 enrichments — API may not be returning data', level: 'warn' });
+      anomalies.push({ text: 'SecLookup: 0 enrichments — API may not be returning data', level: 'warn' });
     }
   }
   if (briefing.newCapabilities?.certstream === 0) {
-    anomalies.push({ icon: '⚠', text: 'CertStream: alive but 0 captures', level: 'warn' });
+    anomalies.push({ text: 'CertStream: alive but 0 captures', level: 'warn' });
   }
   for (const f of (briefing.feedHealth?.degradedFeeds ?? [])) {
-    anomalies.push({ icon: '⚠', text: `${f.feed_name}: degraded — ${f.last_error ?? 'unknown'}`, level: 'warn' });
+    anomalies.push({ text: `${f.feed_name}: degraded — ${f.last_error ?? 'unknown'}`, level: 'warn' });
   }
   if ((briefing.agentActivity ?? []).length > 0) {
-    anomalies.push({ icon: '✅', text: `All ${briefing.agentActivity.length} agents running normally`, level: 'ok' });
+    anomalies.push({ text: `All ${briefing.agentActivity.length} agents running normally`, level: 'ok' });
   }
   const producingEngines = enrichmentEngines.filter((e) => e.checked > 0).length;
-  anomalies.push({ icon: '✅', text: `Enrichment pipeline operational (${producingEngines} of 7 engines producing)`, level: 'ok' });
+  anomalies.push({ text: `Enrichment pipeline operational (${producingEngines} of 7 engines producing)`, level: 'ok' });
   if ((briefing.newCapabilities?.typosquat_new ?? 0) > 0) {
-    anomalies.push({ icon: '✅', text: `Typosquat scanner active — ${fmt(briefing.newCapabilities.typosquat_new)} domains discovered`, level: 'ok' });
+    anomalies.push({ text: `Typosquat scanner active — ${fmt(briefing.newCapabilities.typosquat_new)} domains discovered`, level: 'ok' });
   }
 
   return (
     <div className="space-y-4">
-      {/* ── HEADER BAR ──────────────────────────── */}
-      <div className="rounded-xl p-4" style={glassCardStyle}>
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <SectionTitle>Platform Operations Briefing</SectionTitle>
-            <Badge
-              status={briefing.statusBadge === 'DEGRADED' ? 'warning' : 'active'}
-              label={briefing.statusBadge ?? 'OPERATIONAL'}
-              size="xs"
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="font-mono text-[10px]" style={textSecondary}>
-              Generated {new Date(row.generated_at).toLocaleString()} &middot; {triggerLabel(row.trigger)}
-            </span>
-            {freshness && (
-              <Badge status={freshness.status} label={freshness.label} size="xs" />
-            )}
-            <Button variant="danger" size="sm" onClick={handleGenerate} disabled={generating} loading={generating}>
-              Run Briefing Now
-            </Button>
-          </div>
-        </div>
-        {toast && <div className="mt-2"><GenerateToast toast={toast} /></div>}
-      </div>
-
       {/* ── SECTION 1: PLATFORM OVERVIEW ─────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <OverviewCard title="Total Threats" metric={fmt(p.totalThreats)} metricLabel="total" metricColor="var(--amber)">
+        <OverviewCard title="Total Threats" metric={fmt(p.totalThreats)} metricLabel="total" metricColor="var(--amber-text)">
           <DotRow color="var(--red)" label="New 24h" count={p.last24h ?? 0} />
           <DotRow color="var(--amber)" label="New 12h" count={p.last12h ?? 0} />
         </OverviewCard>
 
-        <OverviewCard title="24H Ingest" metric={fmt(p.last24h)} metricLabel="new" metricColor="var(--amber)">
+        <OverviewCard title="24H Ingest" metric={fmt(p.last24h)} metricLabel="new" metricColor="var(--amber-text)">
           <DotRow color="var(--green)" label="Brands" count={p.brandsMonitored ?? 0} />
           <DotRow color="var(--blue)" label="Classified" count={p.brandsClassified ?? 0} />
         </OverviewCard>
 
-        <OverviewCard title="Hourly Rate" metric={`${fmt(p.avgPerHour)}`} metricLabel="/hr" metricColor="var(--amber)">
+        <OverviewCard title="Hourly Rate" metric={`${fmt(p.avgPerHour)}`} metricLabel="/hr" metricColor="var(--amber-text)">
           <div className="text-[11px]" style={textTertiary}>Last 24h average</div>
         </OverviewCard>
 
@@ -449,7 +223,7 @@ export function DailyBriefingWidget() {
 
       {/* ── SECTION 2: NEW THREATS (12H) ──────────── */}
       {briefing.newThreats && (
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <div className="flex items-center justify-between">
             <SectionTitle>New Threats (12h)</SectionTitle>
             <span className="font-mono text-[14px] font-bold" style={amberText}>{fmt(total12h)}</span>
@@ -497,13 +271,32 @@ export function DailyBriefingWidget() {
               </div>
             </>
           )}
-        </div>
+        </Card>
+      )}
+
+      {/* ── GEOPOLITICAL CAMPAIGNS ─────────────────── */}
+      {(briefing.geopoliticalCampaigns ?? []).length > 0 && (
+        <Card variant="flat" padding={16} className="space-y-3">
+          <SectionTitle>Geopolitical Campaigns</SectionTitle>
+          <DataTable headers={['Campaign', 'Status', 'Priority', 'Threats', 'New 24h', 'Brands']}>
+            {briefing.geopoliticalCampaigns.map((c) => (
+              <tr key={c.name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+                <Td className="p-0 py-1 pr-4 truncate max-w-[200px]" style={textPrimary} title={c.conflict ? `${c.name} · ${c.conflict}` : c.name}>{c.name}</Td>
+                <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{c.status}</Td>
+                <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{c.briefing_priority}</Td>
+                <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{fmt(c.total_threats)}</Td>
+                <Td className="p-0 py-1 pr-4 text-right" style={amberText}>{fmt(c.new_24h)}</Td>
+                <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(c.brands_hit)}</Td>
+              </tr>
+            ))}
+          </DataTable>
+        </Card>
       )}
 
       {/* ── SECTION 3 & 4: FEED PRODUCTION + HEALTH ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* FEED PRODUCTION */}
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Feed Production (12h)</SectionTitle>
           <div className="font-mono text-[10px]" style={textSecondary}>
             {(briefing.feedProduction ?? []).length} feeds &middot; {fmt(totalFeedRuns)} runs &middot; {fmt(totalIngested)} ingested
@@ -519,10 +312,10 @@ export function DailyBriefingWidget() {
               ))}
             </DataTable>
           )}
-        </div>
+        </Card>
 
         {/* FEED HEALTH */}
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Feed Health</SectionTitle>
           <div className="flex flex-wrap items-center gap-3 font-mono text-[11px]">
             {healthCounts['healthy'] != null && (
@@ -564,12 +357,12 @@ export function DailyBriefingWidget() {
               ))}
             </>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* ── SECTION 5: ENRICHMENT PIPELINE ────────── */}
       {enrichmentEngines.length > 0 && (
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Enrichment Pipeline</SectionTitle>
           <DataTable headers={['Engine', 'Checked', 'Hits', 'Hit Rate', 'Status']}>
             {enrichmentEngines.map((e) => (
@@ -578,17 +371,51 @@ export function DailyBriefingWidget() {
                 <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(e.checked)}</Td>
                 <Td className="p-0 py-1 text-right pr-4" style={amberText}>{fmt(e.hits)}</Td>
                 <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{pct(e.hits, e.checked)}</Td>
-                <Td className="p-0 py-1 text-right">{e.checked > 0 ? '✅' : '⚠️'}</Td>
+                <Td className="p-0 py-1 text-right">
+                  <Badge status={e.checked > 0 ? 'success' : 'warning'} label={e.checked > 0 ? 'OK' : 'Idle'} size="xs" />
+                </Td>
               </tr>
             ))}
           </DataTable>
-        </div>
+        </Card>
+      )}
+
+      {/* ── NEW CAPABILITIES ───────────────────────── */}
+      {briefing.newCapabilities && (
+        <Card variant="flat" padding={16} className="space-y-3">
+          <SectionTitle>New Capabilities</SectionTitle>
+          <DataTable headers={['Scanner', 'Total', 'New']}>
+            <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+              <Td className="p-0 py-1 pr-4" style={textPrimary}>Typosquat</Td>
+              <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.typosquat_total)}</Td>
+              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.typosquat_new)}</Td>
+            </tr>
+            <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+              <Td className="p-0 py-1 pr-4" style={textPrimary}>Social</Td>
+              <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.social_total)}</Td>
+              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.social_new)}</Td>
+            </tr>
+            <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+              <Td className="p-0 py-1 pr-4" style={textPrimary}>App stores</Td>
+              <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.appstore_total)}</Td>
+              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.appstore_new)}</Td>
+            </tr>
+            <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+              <Td className="p-0 py-1 pr-4" style={textPrimary}>Dark web</Td>
+              <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.darkweb_total)}</Td>
+              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.darkweb_new)}</Td>
+            </tr>
+          </DataTable>
+          <div className="font-mono text-[10px]" style={textSecondary}>
+            CertStream captures: <span style={amberText}>{fmt(briefing.newCapabilities.certstream)}</span>
+          </div>
+        </Card>
       )}
 
       {/* ── SECTION 6 & 7: FLIGHT CONTROLLER + AGENTS ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* FLIGHT CONTROLLER */}
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Flight Controller</SectionTitle>
           {briefing.flightController?.summary ? (
             <div className="font-mono text-[11px] whitespace-pre-wrap break-words" style={textSecondary}>
@@ -597,10 +424,10 @@ export function DailyBriefingWidget() {
           ) : (
             <div className="font-mono text-[10px]" style={textMuted}>No diagnostic available</div>
           )}
-        </div>
+        </Card>
 
         {/* AGENT STATUS */}
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Agent Status (12h)</SectionTitle>
           {(briefing.agentActivity ?? []).length > 0 ? (
             <DataTable headers={['Agent', 'Runs', 'Last Run']}>
@@ -617,12 +444,12 @@ export function DailyBriefingWidget() {
           ) : (
             <div className="font-mono text-[10px]" style={textMuted}>No agent activity</div>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* ── SECTION 8: SPAM TRAP INTELLIGENCE ──────── */}
       {briefing.spamTrap && (
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Spam Trap Intelligence</SectionTitle>
           <div className="flex flex-wrap gap-4 font-mono text-[11px]">
             <span style={textSecondary}>Seeds: <span style={amberText}>{fmt(briefing.spamTrap.totalSeeds)}</span></span>
@@ -661,12 +488,12 @@ export function DailyBriefingWidget() {
               </div>
             </>
           )}
-        </div>
+        </Card>
       )}
 
       {/* ── SECTION 9: HONEYPOT ACTIVITY ──────────── */}
       {briefing.honeypot && (
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Honeypot Activity</SectionTitle>
           <div className="flex flex-wrap gap-4 font-mono text-[11px]">
             <span style={textSecondary}>Total: <span style={amberText}>{fmt(briefing.honeypot.totalVisits)}</span></span>
@@ -720,12 +547,62 @@ export function DailyBriefingWidget() {
               })}
             </>
           )}
-        </div>
+        </Card>
+      )}
+
+      {/* ── MARKETING VISIBILITY ───────────────────── */}
+      {briefing.marketingVisibility && (
+        <Card variant="flat" padding={16} className="space-y-3">
+          <SectionTitle>Marketing Visibility ({fmt(briefing.marketingVisibility.windowHours)}h)</SectionTitle>
+          <div className="flex flex-wrap gap-4 font-mono text-[11px]">
+            <span style={textSecondary}>Human views: <span style={amberText}>{fmt(briefing.marketingVisibility.humanViews)}</span></span>
+            <span style={textSecondary}>AI crawlers: <span style={amberText}>{fmt(briefing.marketingVisibility.aiCrawlerViews)}</span></span>
+            <span style={textSecondary}>Other bots: <span style={textSecondary}>{fmt(briefing.marketingVisibility.otherBotViews)}</span></span>
+            <span style={textSecondary}>AI referrals: <span style={amberText}>{fmt(briefing.marketingVisibility.aiReferralSessions)}</span></span>
+            <span style={textSecondary}>CTA clicks: <span style={amberText}>{fmt(briefing.marketingVisibility.ctaClicks)}</span></span>
+            <span style={textSecondary}>Contact submissions: <span style={amberText}>{fmt(briefing.marketingVisibility.contactSubs)}</span></span>
+          </div>
+          {(briefing.marketingVisibility.topPages ?? []).length > 0 && (
+            <>
+              <hr style={{ borderColor: 'var(--border-base)' }} />
+              <DataTable headers={['Top page', 'Views']}>
+                {briefing.marketingVisibility.topPages.map((p) => (
+                  <tr key={p.page} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+                    <Td className="p-0 py-1 pr-4 truncate max-w-[220px]" style={textPrimary}>{p.page}</Td>
+                    <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(p.views)}</Td>
+                  </tr>
+                ))}
+              </DataTable>
+            </>
+          )}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(briefing.marketingVisibility.aiCrawlerBreakdown ?? []).length > 0 && (
+              <DataTable headers={['AI crawler', 'Hits']}>
+                {briefing.marketingVisibility.aiCrawlerBreakdown.map((c) => (
+                  <tr key={c.crawler_name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+                    <Td className="p-0 py-1 pr-4" style={textPrimary}>{c.crawler_name}</Td>
+                    <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(c.hits)}</Td>
+                  </tr>
+                ))}
+              </DataTable>
+            )}
+            {(briefing.marketingVisibility.aiReferralBySource ?? []).length > 0 && (
+              <DataTable headers={['AI referral source', 'Sessions']}>
+                {briefing.marketingVisibility.aiReferralBySource.map((r) => (
+                  <tr key={r.ai_source} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
+                    <Td className="p-0 py-1 pr-4" style={textPrimary}>{r.ai_source}</Td>
+                    <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(r.sessions)}</Td>
+                  </tr>
+                ))}
+              </DataTable>
+            )}
+          </div>
+        </Card>
       )}
 
       {/* ── SECTION 10: TOP TARGETED BRANDS ────────── */}
       {(briefing.topTargetedBrands ?? []).length > 0 && (
-        <div className="rounded-xl border p-4 space-y-3" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Top Targeted Brands (24h)</SectionTitle>
           <div className="space-y-1">
             {briefing.topTargetedBrands.map((b, i) => (
@@ -738,13 +615,15 @@ export function DailyBriefingWidget() {
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
 
       {/* ── SECTION 11: ANOMALIES & ALERTS ─────────── */}
       {anomalies.length > 0 && (
-        <div
-          className="rounded-xl border p-4 space-y-2"
+        <Card
+          variant="flat"
+          padding={16}
+          className="space-y-2"
           style={{
             borderColor: anomalies.some(a => a.level === 'warn') ? 'var(--amber-border)' : 'var(--green-border)',
             background:  anomalies.some(a => a.level === 'warn') ? 'var(--amber-glow)' : 'var(--green-glow)',
@@ -752,16 +631,17 @@ export function DailyBriefingWidget() {
         >
           <SectionTitle>Anomalies & Alerts</SectionTitle>
           {anomalies.map((a, i) => (
-            <div key={i} className="font-mono text-[11px]" style={{ color: a.level === 'warn' ? 'var(--amber)' : 'var(--green)' }}>
-              {a.icon} {a.text}
+            <div key={i} className="flex items-start gap-2 font-mono text-[11px]" style={textSecondary}>
+              <Badge status={a.level === 'warn' ? 'warning' : 'success'} label={a.level === 'warn' ? 'Warning' : 'OK'} size="xs" />
+              <span className="min-w-0 break-words">{a.text}</span>
             </div>
           ))}
-        </div>
+        </Card>
       )}
 
       {/* ── SECTION 12: BRAND COVERAGE ──────────────── */}
       {(briefing.brandCoverage ?? []).length > 0 && (
-        <div className="rounded-xl border p-4 space-y-2" style={sectionCardStyle}>
+        <Card variant="flat" padding={16} className="space-y-2">
           <SectionTitle>Brand Coverage</SectionTitle>
           <div className="font-mono text-[11px]" style={textSecondary}>
             {fmt(p.brandsMonitored)} monitored &middot; {fmt(p.brandsClassified)} classified
@@ -769,8 +649,63 @@ export function DailyBriefingWidget() {
           <div className="font-mono text-[11px]" style={textSecondary}>
             Top: {briefing.brandCoverage.slice(0, 5).map((c) => `${c.sector} (${c.brands})`).join(' · ')}
           </div>
-        </div>
+        </Card>
       )}
     </div>
+  );
+}
+
+// ─── Body ───────────────────────────────────────────────────────
+
+export function OpsBriefingBody() {
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const { data, isLoading, isError, refetch } = useOpsBriefing();
+  const generate = useGenerateBriefing();
+
+  const handleGenerate = async () => {
+    setToast(null);
+    try {
+      await generate.mutateAsync();
+      setToast({ type: 'success', message: 'Briefing generated and emailed.' });
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const generating = generate.isPending;
+  const runButton = (
+    <Button size="sm" onClick={handleGenerate} disabled={generating} loading={generating}>
+      Run Briefing Now
+    </Button>
+  );
+
+  // A failed fetch is never "no briefing generated yet".
+  const status = isError && !data ? 'error' : isLoading ? 'loading' : data ? 'ready' : 'empty';
+  const briefing = data?.briefing ?? null;
+
+  return (
+    <BriefingShell
+      source="ops"
+      title="Platform operations briefing"
+      eyebrow={briefing && (
+        <Badge
+          status={briefing.statusBadge === 'DEGRADED' ? 'warning' : 'active'}
+          label={briefing.statusBadge ?? 'OPERATIONAL'}
+          size="xs"
+        />
+      )}
+      generatedAt={data?.row.generated_at}
+      meta={data && <span>&middot; {triggerLabel(data.row.trigger)}</span>}
+      actions={status === 'ready' || status === 'empty' ? runButton : undefined}
+      notice={toast && <GenerateToast toast={toast} />}
+      status={status}
+      onRetry={() => { void refetch(); }}
+      errorTitle="Couldn't load the briefing"
+      emptyTitle="No briefing generated yet."
+      emptyDescription="Run one to populate this widget."
+      loadingTitle="Loading briefing…"
+    >
+      {briefing && <OpsSections briefing={briefing} />}
+    </BriefingShell>
   );
 }

@@ -8,6 +8,7 @@ import { renderWithProviders } from '@/test/utils';
 import { PageHeader } from '@/design-system/components';
 import { Console } from './Console';
 
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ isSuperAdmin: true, user: { role: 'super_admin' } }) }));
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(async () => ({ success: true, data: [] })) } }));
 beforeAll(() => {
   window.matchMedia = ((query: string) => ({

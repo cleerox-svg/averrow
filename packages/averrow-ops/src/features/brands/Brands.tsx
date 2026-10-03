@@ -40,19 +40,21 @@ import { Button } from '@/components/ui/Button';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { timeAgo } from '@/lib/time';
 
-const STAFF_ROLES = new Set(['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing']);
+// /api/admin/brand-candidates is requireAdmin, so the CT prospects surface is
+// admin+ only (other staff roles would just get a 403 envelope).
+const PROSPECT_ROLES = new Set(['super_admin', 'admin']);
 
 const V3_TABS = [
-  { id: 'intel',     label: 'Intel',      hint: "What's happening across the catalog",      staffOnly: false },
-  { id: 'all',       label: 'All Brands', hint: 'Search the full brand catalog',            staffOnly: false },
-  { id: 'prospects', label: 'Prospects',  hint: 'CT-driven candidates for sales review',   staffOnly: true  },
+  { id: 'intel',     label: 'Intel',      hint: "What's happening across the catalog",      adminOnly: false },
+  { id: 'all',       label: 'All Brands', hint: 'Search the full brand catalog',            adminOnly: false },
+  { id: 'prospects', label: 'Prospects',  hint: 'CT-driven candidates for sales review',   adminOnly: true  },
 ] as const;
 
 type V3Tab = typeof V3_TABS[number]['id'];
 
 export function BrandsV3() {
   const { user } = useAuth();
-  const isStaff = !!user && STAFF_ROLES.has(user.role);
+  const canReview = !!user && PROSPECT_ROLES.has(user.role);
   const [searchParams] = useSearchParams();
   // ?q= lets the command palette's "view all" pivot land here pre-filtered
   // (Tier-2) — jump straight to the searchable "All Brands" tab instead of
@@ -74,7 +76,7 @@ export function BrandsV3() {
       {/* Sticky tab strip */}
       <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-[var(--v4-gutter-x,24px)] px-[var(--v4-gutter-x,24px)]">
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
-          {V3_TABS.filter(t => !t.staffOnly || isStaff).map(tab => (
+          {V3_TABS.filter(t => !t.adminOnly || canReview).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -85,9 +87,9 @@ export function BrandsV3() {
               title={tab.hint}
             >
               {tab.label}
-              {tab.staffOnly && (
+              {tab.adminOnly && (
                 <span className="ml-2 inline-block px-1.5 py-0.5 text-[8px] uppercase tracking-wider rounded bg-white/10 text-[var(--text-muted)]">
-                  Staff
+                  Admin
                 </span>
               )}
             </button>
@@ -95,9 +97,9 @@ export function BrandsV3() {
         </div>
       </div>
 
-      {activeTab === 'intel' && <IntelTab isStaff={isStaff} onViewProspects={() => setActiveTab('prospects')} />}
+      {activeTab === 'intel' && <IntelTab canReview={canReview} onViewProspects={() => setActiveTab('prospects')} />}
       {activeTab === 'all' && <BrandsGrid initialQuery={initialQuery} />}
-      {activeTab === 'prospects' && isStaff && <ProspectsTab />}
+      {activeTab === 'prospects' && canReview && <ProspectsTab />}
     </div>
   );
 }
@@ -127,7 +129,7 @@ function AggCardState({ status, title }: { status: AggStatus; title: string }) {
     : <PageState kind="loading" layout="card" title={`Loading ${title}…`} />;
 }
 
-function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspects: () => void }) {
+function IntelTab({ canReview, onViewProspects }: { canReview: boolean; onViewProspects: () => void }) {
   const statsQ = useBrandStats();
   const moversQ = useBrandMovers();
   const emailQ = useEmailSecurityAggregate();
@@ -154,7 +156,7 @@ function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspe
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <SectorDonut breakdown={stats?.sector_breakdown ?? null} totalTracked={stats?.total_tracked ?? 0} status={statsS} />
         <ThreatTypeBreakdown stats={stats} status={statsS} />
-        {isStaff
+        {canReview
           ? <HotProspectsTeaser onViewAll={onViewProspects} />
           : <CatalogStatusCard stats={stats} />
         }
@@ -742,7 +744,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
     <Card>
       <div className="flex items-center justify-between gap-2 mb-3">
         <SectionLabel>Hot prospects from CT</SectionLabel>
-        <Badge variant="info">Staff</Badge>
+        <Badge variant="info">Admin</Badge>
       </div>
       <div className="space-y-2">
         {top.map(c => (

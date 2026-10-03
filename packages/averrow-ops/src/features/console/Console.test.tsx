@@ -6,6 +6,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { Console } from './Console';
 
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ isSuperAdmin: true, user: { role: 'super_admin' } }) }));
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
 // StatTile counts up via requestAnimationFrame; reduced motion makes it settle
 // on the final value immediately so assertions don't race the animation.

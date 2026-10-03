@@ -1,0 +1,21 @@
+/* Home (ops Overview). Sections sit in a gutter that matches
+   components/install-app.css (.install-gutter) so the InstallAppBanner lines up.
+   Layout is driven by the `home` container (set on the shell), not the viewport. */
+.home-section { padding: 16px 24px 0; }
+.home-split { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.home-hero-sub { margin: 8px 0 0; font-size: 16px; line-height: 1.4; color: var(--text-primary); }
+.home-hero-sub strong { font-weight: 800; }
+
+/* Queue rows: rank | content | action. Below 480px the action drops to its own row. */
+.queue-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; }
+@container home (max-width: 479px) {
+  .queue-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .queue-act { grid-column: 2; justify-self: start; }
+}
+
+@container home (min-width: 480px) {
+  .home-section { padding: 18px 32px 0; }
+}
+@container home (min-width: 900px) {
+  .home-split { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+}

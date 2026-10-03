@@ -11,6 +11,7 @@ import { AlertTriangle, Crosshair, Siren, Gavel } from 'lucide-react';
 import { Button, StatTile, WorkspaceEmbedProvider } from '@averrow/shared/ui';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
+import { useAuth } from '@/lib/auth';
 import { PageState } from '@/design-system/components';
 import './console.css';
 
@@ -56,7 +57,10 @@ export function Console() {
   const tab = tabFromParam(params.get('tab'));
   const { data: openSignals = null, isError: signalsError } = useOpenAlertCount();
 
-  const { data: incidents, isError: incidentsError } = useIncidents({ onlyOpen: true });
+  // /api/admin/incidents is super_admin-only: other roles must not request it,
+  // and get no incidents KPIs, tab or pane (a 403 would read as "0 incidents").
+  const { isSuperAdmin } = useAuth();
+  const { data: incidents, isError: incidentsError } = useIncidents({ onlyOpen: true, enabled: isSuperAdmin });
   const openIncidents = incidents?.length ?? null;
   const criticalIncidents = incidents ? incidents.filter(i => i.severity === 'critical').length : null;
 
@@ -66,6 +70,7 @@ export function Console() {
   }
 
   const active = TABS.find(t => t.id === tab);
+  const incidentsLocked = tab === 'incidents' && !isSuperAdmin;
 
   return (
     <div className="console-v4">
@@ -80,13 +85,17 @@ export function Console() {
       {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
       <div className="kpi-grid">
         <StatTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />
-        <StatTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />
-        <StatTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} error={incidentsError} />
+        {isSuperAdmin && (
+          <>
+            <StatTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />
+            <StatTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} error={incidentsError} />
+          </>
+        )}
       </div>
 
       {/* deep-linkable tab bar */}
       <div className="console-tabs">
-        {TABS.map(t => {
+        {TABS.filter(t => t.id !== 'incidents' || isSuperAdmin).map(t => {
           const Icon = t.icon;
           return (
             <Button
@@ -101,7 +110,7 @@ export function Console() {
         })}
       </div>
 
-      {active?.def && <p className="console-def">{active.def}</p>}
+      {active?.def && !incidentsLocked && <p className="console-def">{active.def}</p>}
 
       <Suspense fallback={<PageState kind="loading" />}>
         {/* The Console owns the view's single h1; embedded panes drop theirs. */}
@@ -109,7 +118,10 @@ export function Console() {
           <Fragment key={params.get('q') ?? ''}>
             {tab === 'alerts'    && <Alerts />}
             {tab === 'threats'   && <Threats />}
-            {tab === 'incidents' && <Incidents />}
+            {tab === 'incidents' && isSuperAdmin && <Incidents />}
+            {incidentsLocked && (
+              <PageState kind="locked" title="Incidents are restricted" description="Platform incidents are visible to super admins only." />
+            )}
             {tab === 'takedowns' && <Takedowns />}
           </Fragment>
         </WorkspaceEmbedProvider>

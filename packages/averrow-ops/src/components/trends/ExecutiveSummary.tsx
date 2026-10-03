@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { PageState } from '@/design-system/components';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { FileText } from 'lucide-react';
+import { stripMarkdown, truncateText } from '@/lib/briefing-text';
 
 const THREAT_TYPES: Array<{ key: keyof Omit<VolumePoint, 'date'>; label: string }> = [
   { key: 'phishing', label: 'Phishing' },
@@ -135,15 +136,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
 
       {latestBriefing?.summary && (
         <p className="text-white/60 text-sm leading-relaxed mb-4">
-          {(() => {
-            // Briefings arrive as markdown — strip bold markers so the
-            // panel preview doesn't show literal `**` asterisks. Full
-            // briefing modal still renders through ReportPanel's parser.
-            const plain = latestBriefing.summary
-              .replace(/\*\*(.+?)\*\*/g, '$1')
-              .replace(/\*(.+?)\*/g, '$1');
-            return plain.length > 280 ? plain.slice(0, 280) + '...' : plain;
-          })()}
+          {truncateText(stripMarkdown(latestBriefing.summary), 280)}
         </p>
       )}
 

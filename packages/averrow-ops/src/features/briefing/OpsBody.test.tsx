@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
-import { DailyBriefingWidget } from './DailyBriefingWidget';
+import { Briefing } from './Briefing';
 
 // Tier 4: honeypot.pageBreakdown is now capped server-side at top-20 by
 // visits, with `pageBreakdownTotal` carrying the true distinct-page
-// count. The widget renders a "Top 20 of N pages" caption when the
+// count. The ops body renders a "Top 20 of N pages" caption when the
 // briefing was actually capped, and defensively re-slices to 20 rows
 // so a STALE cached briefing (generated before the backend change,
 // still holding an unbounded pageBreakdown array) still renders capped.
@@ -57,7 +57,7 @@ function mockBriefingRow(briefing: unknown) {
   });
 }
 
-describe('DailyBriefingWidget — honeypot pageBreakdown caption + cap (Tier 4)', () => {
+describe('Briefing (ops) — honeypot pageBreakdown caption + cap (Tier 4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -73,7 +73,7 @@ describe('DailyBriefingWidget — honeypot pageBreakdown caption + cap (Tier 4)'
         suspiciousHumans: [],
       },
     }));
-    renderWithProviders(<DailyBriefingWidget />);
+    renderWithProviders(<Briefing source="ops" />);
 
     await waitFor(() => expect(screen.getByText('Top 20 of 47 pages')).toBeInTheDocument());
     // Exactly 20 rows rendered.
@@ -91,7 +91,7 @@ describe('DailyBriefingWidget — honeypot pageBreakdown caption + cap (Tier 4)'
         suspiciousHumans: [],
       },
     }));
-    renderWithProviders(<DailyBriefingWidget />);
+    renderWithProviders(<Briefing source="ops" />);
 
     await waitFor(() => expect(screen.getAllByText(/\/bait\/page-/).length).toBe(3));
     expect(screen.queryByText(/Top 20 of/)).not.toBeInTheDocument();
@@ -110,13 +110,13 @@ describe('DailyBriefingWidget — honeypot pageBreakdown caption + cap (Tier 4)'
       // pageBreakdownTotal intentionally omitted.
     };
     mockBriefingRow(staleBriefing);
-    renderWithProviders(<DailyBriefingWidget />);
+    renderWithProviders(<Briefing source="ops" />);
 
     await waitFor(() => expect(screen.getAllByText(/\/bait\/page-/).length).toBe(20));
   });
 });
 
-describe('DailyBriefingWidget — table density', () => {
+describe('Briefing (ops) — table density', () => {
   it('keeps cell text at 11px (beats the shared Td text-sm) with a single scroll wrapper', async () => {
     mockBriefingRow(makeBriefing({
       honeypot: {
@@ -124,7 +124,7 @@ describe('DailyBriefingWidget — table density', () => {
         pageBreakdown: [page(1)], pageBreakdownTotal: 1, recentBots: [], suspiciousHumans: [],
       },
     }));
-    renderWithProviders(<DailyBriefingWidget />);
+    renderWithProviders(<Briefing source="ops" />);
     const cell = (await screen.findByText('/bait/page-1')).closest('td')!;
     const table = cell.closest('table')!;
     expect(table.className).toContain('[&_td]:text-[11px]');

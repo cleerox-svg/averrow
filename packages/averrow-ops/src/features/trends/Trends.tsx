@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
 import { tabUrl } from '@/lib/workspaceRoutes';
+import { splitBriefing, parseIdList } from '@/lib/briefing-text';
 /* ── Constants ── */
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -50,44 +51,6 @@ const THREAT_TYPE_LABELS: Record<string, string> = {
 };
 
 const THREAT_TYPES = Object.keys(THREAT_TYPE_COLORS);
-
-// Briefing summaries arrive as markdown — typically `**Title** — body…`.
-// Cards want a clean preview, not raw markdown asterisks. Split into
-// title (bold prefix) + body (everything after the em-dash / dash
-// separator). The inline detail panel renders the body verbatim with
-// any remaining asterisks stripped.
-function splitBriefing(summary: string | undefined): { title: string; body: string } {
-  if (!summary) return { title: 'Untitled', body: '' };
-  const boldMatch = summary.match(/^\*\*(.+?)\*\*\s*[—–-]?\s*(.*)$/s);
-  if (boldMatch) {
-    return { title: boldMatch[1] ?? 'Untitled', body: boldMatch[2] ?? '' };
-  }
-  // No bold prefix — first 100 chars become the title, rest is body.
-  return {
-    title: summary.slice(0, 100),
-    body: summary.length > 100 ? summary.slice(100) : '',
-  };
-}
-
-function stripMarkdown(s: string): string {
-  return s
-    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
-    .replace(/_(.+?)_/g, '$1')       // italic
-    .replace(/^#+\s+/gm, '');        // headings
-}
-
-function parseIdList(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
-    if (typeof parsed === 'string') return [parsed];
-    return [];
-  } catch {
-    // Comma-separated fallback
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
-  }
-}
 
 interface ParsedDetails {
   category?: string;
@@ -195,7 +158,7 @@ function BriefingCard({
 // is in the page flow, not behind an overlay.
 function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
   const { title, body } = splitBriefing(briefing.summary);
-  const cleanBody = stripMarkdown(body).trim();
+  const cleanBody = body;
   const details = parseDetails(briefing.details);
   const brandIds = parseIdList(briefing.related_brand_ids);
   const providerIds = parseIdList(briefing.related_provider_ids);
