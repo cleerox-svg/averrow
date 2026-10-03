@@ -312,12 +312,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     return handleViewQualifiedReport(request, env, request.params["token"] ?? "");
   });
 
-  // ─── WebSocket — ThreatPushHub Durable Object ─────────────────────
-  router.get("/ws/threats", async (request: Request, env: Env) => {
-    const id = env.THREAT_PUSH_HUB.idFromName("global");
-    const hub = env.THREAT_PUSH_HUB.get(id);
-    return hub.fetch(request);
-  });
+  // ─── /ws/threats — intentionally NOT routed ──────────────────────
+  // The ThreatPushHub WebSocket upgrade used to be mounted here with no
+  // auth (appsec finding, 2026-10). No client ever connected to it and
+  // nothing ever broadcast through the hub, so the route was removed
+  // rather than guarded; /ws/threats now falls through to the catch-all
+  // 404. The DO class + THREAT_PUSH_HUB binding stay in wrangler.toml
+  // (removing a DO class needs a `deleted_classes` migration tag — a
+  // separate, deliberate change). If live push is ever wired, re-add the
+  // route behind staff auth; see test/ws-threats-route.test.ts.
 
   // ─── Public API endpoints (no auth) ──────────────────────────────
   router.get("/api/v1/public/stats", (request: Request, env: Env) => handlePublicStats(request, env));

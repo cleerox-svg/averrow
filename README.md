@@ -42,7 +42,7 @@ Averrow runs entirely on Cloudflare's edge. There is no traditional backend serv
 | Compute | Cloudflare Workers (TypeScript) |
 | Database | Cloudflare D1 (SQLite at the edge, read replicas via Sessions API) |
 | Cache | Cloudflare KV (IOC dedup, rate limiting, page-load caching) |
-| Real-time | Durable Objects — `ThreatPushHub` (WebSocket), `CertStreamMonitor` |
+| Real-time | Durable Objects — `CertStreamMonitor` (`ThreatPushHub` is deployed but dormant — no route) |
 | Workflows | Cloudflare Workflows — Cartographer backfill + NEXUS clustering (durable, no CPU ceiling) |
 | AI | Claude Haiku + Sonnet via Cloudflare AI Gateway |
 | DNS | Cloudflare DoH |

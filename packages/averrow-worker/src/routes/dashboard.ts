@@ -102,17 +102,47 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     return handleHeatmap(request, env);
   });
 
-  // ─── Observatory (unauthenticated) ────────────────────────────────
-  router.get("/api/observatory/nodes",      (request: Request, env: Env) => handleObservatoryNodes(request, env));
-  router.get("/api/observatory/arcs",       (request: Request, env: Env) => handleObservatoryArcs(request, env));
-  router.get("/api/observatory/live",       (request: Request, env: Env) => handleObservatoryLive(request, env));
-  router.get("/api/observatory/brand-arcs", (request: Request, env: Env) => handleObservatoryBrandArcs(request, env));
-  router.get("/api/observatory/stats",      (request: Request, env: Env) => handleObservatoryStats(request, env));
-  router.get("/api/observatory/heatmap",    (request: Request, env: Env) => handleObservatoryHeatmap(request, env));
-  router.get("/api/observatory/operations", (request: Request, env: Env) => handleObservatoryOperations(request, env));
+  // ─── Observatory (staff-only) ──────────────────────────────────────
+  // Formerly unauthenticated. `/live` returns recent malicious
+  // domains/URLs with the targeted brand's name, `/arcs` carries
+  // `brand_name` per corridor, and `/brand-arcs?brand_id=` accepted any
+  // brand id — together they let an anonymous caller learn which
+  // customer brands are under attack. The only callers are the staff
+  // ops SPA (averrow-ops, Bearer JWT), the frozen legacy SPA (sends its
+  // Bearer token), the MCP smoke probe (service JWT, `auditor` role —
+  // passes requireStaff) and Navigator's cache pre-warm (calls the
+  // handlers directly, not through these routes). No public/marketing
+  // surface or tenant SPA calls them, so every route is gated with
+  // requireStaff and the KV cache keys (`observatory_*`) only ever back
+  // a staff audience — no public/staff response mixing.
+  // Pinned by test/observatory-routes-auth.test.ts.
+  const observatoryRoutes: ReadonlyArray<[string, (request: Request, env: Env) => Promise<Response>]> = [
+    ["/api/observatory/nodes",      handleObservatoryNodes],
+    ["/api/observatory/arcs",       handleObservatoryArcs],
+    ["/api/observatory/live",       handleObservatoryLive],
+    ["/api/observatory/brand-arcs", handleObservatoryBrandArcs],
+    ["/api/observatory/stats",      handleObservatoryStats],
+    ["/api/observatory/heatmap",    handleObservatoryHeatmap],
+    ["/api/observatory/operations", handleObservatoryOperations],
+  ];
+  for (const [path, handler] of observatoryRoutes) {
+    router.get(path, async (request: Request, env: Env) => {
+      const ctx = await requireStaff(request, env);
+      if (!isAuthContext(ctx)) return ctx;
+      return handler(request, env);
+    });
+  }
 
   // ─── Signals ──────────────────────────────────────────────────────
-  router.get("/api/signals", (request: Request, env: Env) => handleSignals(request, env));
+  // GET is staff-only (appsec, 2026-10): handleSignals reads the GLOBAL
+  // `scans` table — every user's scans plus anonymous homepage scans — so
+  // it must never be reachable unauthenticated or by a tenant `client`.
+  // No first-party UI calls it; requireStaff admits auditor (read-only).
+  router.get("/api/signals", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleSignals(request, env);
+  });
   router.post("/api/signals", async (request: Request, env: Env) => {
     const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;

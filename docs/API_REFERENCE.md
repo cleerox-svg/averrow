@@ -52,13 +52,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api/observatory/nodes` | Observatory graph nodes |
-| GET | `/api/observatory/arcs` | Observatory graph arcs |
-| GET | `/api/observatory/live` | Live observatory feed |
-| GET | `/api/observatory/brand-arcs` | Brand-specific arcs |
-| GET | `/api/observatory/stats` | Observatory statistics |
-| GET | `/api/observatory/heatmap` | Observatory global threat heatmap points (lat/lng/severity/threat_type) |
-| GET | `/api/observatory/operations` | Observatory operations (active NEXUS clusters feed) |
 | POST | `/api/scan/public` | Public domain scan (rate-limited) |
 | POST | `/api/scan/report` | Generate brand exposure report |
 | POST | `/api/brand-scan/public` | Public brand exposure scan |
@@ -102,6 +95,20 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/trend` | Staff | Legacy v1 scan volume and quality for the last 2h, `[{ time, count, quality }]`. Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
 | GET | `/api/heatmap` | Staff | Scan-submitter heatmap, `?hours=1..168&filter=all\|phishing\|malware`. Returns `{ points: [{ lat, lng, intensity, city, country, type }], stats }`. The points geolocate the **requester IP** of each `/api/scan*` call, not the threat. That is user location data, so the route is staff-only. Was public before 2026-10. No UI calls it (`templates/heatmap-component.ts` references it but is not imported anywhere). For the public threat map, use `/api/observatory/heatmap`. |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
+
+## Observatory
+
+Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin, super_admin; `client` → 403, no token → 401). These routes were public until 2026-10: `/live` and `/arcs` carry targeted brand names and `/brand-arcs` accepted any `brand_id`, which exposed which customer brands were under attack. No public, marketing or tenant surface calls them; tenants use the org-scoped `/api/orgs/:orgId/*` routes. Navigator pre-warms the `observatory_*` KV keys by calling the handlers directly; those keys only ever back this staff audience.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/observatory/nodes` | Staff | Geo hotspot clusters from `threat_cube_geo` (`?period=24h\|7d\|30d`, `?source_feed=`) |
+| GET | `/api/observatory/arcs` | Staff | Country-to-brand attack corridors from `threat_cube_arcs`. Includes `brand_name` per arc |
+| GET | `/api/observatory/live` | Staff | Most recent active geolocated threats (`?limit=` up to 50), including malicious domain/URL and `target_brand` name |
+| GET | `/api/observatory/brand-arcs` | Staff | Arcs targeting one brand (`?brand_id=` required, `?period=`) |
+| GET | `/api/observatory/stats` | Staff | Observatory summary stats (`threats_mapped`, `threats_total`, `geo_coverage_pct`, `countries`, `active_campaigns`, `brands_monitored`) |
+| GET | `/api/observatory/heatmap` | Staff | Global threat heatmap points (lat/lng/severity/threat_type) |
+| GET | `/api/observatory/operations` | Staff | Active NEXUS clusters feed |
 
 ## Search
 
@@ -797,7 +804,7 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/signals` | User | List signals |
+| GET | `/api/signals` | Staff | List the latest scans as signals (`?limit=` max 50, `?offset=`). Reads the **global** `scans` table — every user's scans plus anonymous homepage scans — so it is staff-only (`requireStaff`, auditor included): no token → 401, tenant `client` → 403. Was unauthenticated until 2026-10 despite this row saying `User`; no first-party UI calls it. |
 | POST | `/api/signals` | Staff | Create signal |
 
 ## Scans
@@ -1242,9 +1249,16 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 
 ## WebSocket
 
-| Path | Auth | Description |
-|------|------|-------------|
-| `/ws/threats` | User | Real-time threat push (Durable Object) |
+No WebSocket routes are currently mounted.
+
+`/ws/threats` was removed (2026-10 appsec fix): it upgraded into the
+`ThreatPushHub` Durable Object with **no** auth check (this table wrongly
+listed it as `User`), no client ever connected to it, and nothing ever
+broadcast through the hub. It now returns the catch-all 404. The
+`ThreatPushHub` class and `THREAT_PUSH_HUB` binding remain in
+`wrangler.toml` (DO class removal needs a `deleted_classes` migration tag).
+Any future `/ws/*` route must be mounted behind a staff guard — pinned by
+`packages/averrow-worker/test/ws-threats-route.test.ts`.
 
 ## Corporate Site Pages
 
