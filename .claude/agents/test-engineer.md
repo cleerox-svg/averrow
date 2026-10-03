@@ -39,7 +39,7 @@ behavior-focused automated coverage — the safety net that catches regressions
   thresholds, null/empty handling. These are runtime bugs `tsc` waves through.
 - **React**: use the shared `src/test` utils; assert rendered behavior and
   states (empty/loading/error), not styling. Never reach into frozen components'
-  internals (`ThreatMap`, `ExposureGauge`, etc.).
+  internals (`PortfolioHealthCard`, `EventTicker`).
 
 ## Guardrails
 - You author and fix **tests**, not product code. If a test reveals a product

@@ -230,12 +230,12 @@ The Averrow design system (documented in `AVERROW_UI_STANDARD.md` and `RESTRUCTU
 ```
 src/components/
   ui/              — shadcn/ui primitives (Button, Card, Badge, Table, etc.)
-  layout/          — Shell, Sidebar, TopBar, Footer
+  layout/          — ShellV4 (sidebar + top bar + mobile nav in one shell), CommandPalette, ThemeCycleButton
   agents/          — AgentCard, AgentDetail, AgentHealth
   brands/          — BrandCard, BrandDetail, ThreatList
   observatory/     — ObservatoryMap, ThreatArc, FilterPanel
   takedowns/       — TakedownQueue, EvidencePanel, SubmissionDraft
-  charts/          — ThreatTrend, AgentActivity, ExposureGauge
+  charts/          — ThreatTrend, AgentActivity
 ```
 
 Each component is self-contained with its own types, styles (Tailwind), and test file. Maximum 200 lines per component.

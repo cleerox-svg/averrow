@@ -10,7 +10,7 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
 |---|---|
 | Brand admins in ops (`isBrandAdmin`) | Get the normal Overview. Delete `BrandAdminDashboard` and the classic sidebar's org label. |
 | Unused frozen components (`ThreatMap`, `ExposureGauge`, `Sparkline`, `ActivitySparkline`) | Delete them and remove them from the CLAUDE.md frozen list. `PortfolioHealthCard` and `EventTicker` stay frozen. |
-| PWA prompts | Re-mount them. `InstallAppBanner` goes on Overview, `InstallAppCard` on Profile, and `PasskeysCard` wherever the shared Profile page expects it. |
+| PWA prompts | Re-mount them. `InstallAppBanner` goes on Overview, `InstallAppCard` on Profile, and `PasskeysCard` wherever the shared Profile page expects it. **Revised 2026-10-03:** `PasskeysCard.tsx` is deleted instead — it duplicated the shared `PasskeysSection` (`packages/shared/src/profile/sections.tsx`) that the shared `ProfilePage` already renders. |
 | Worker legacy `/admin/organizations` redirect | Point it at `/v2/admin/customers`, matching the SPA. |
 | Font pair | Plus Jakarta Sans and JetBrains Mono everywhere, including the shared login. FarmTrack must adopt the same pair to stay identical (SHARED_LOGIN_SPEC). |
 | Daily briefing | Use one briefing component with two data sources. Home shows the intelligence briefing; the `/admin` Briefing tab shows the ops briefing. |
@@ -18,8 +18,8 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
 
 ## Phase 1 PRs
 
-1. **Foundations.** Add the font pair, a radius scale, motion tokens and a global reduced-motion rule to `packages/shared/src/theme/tokens.css`, and wire both apps to them. The font pair applies to the ops and tenant SPAs and the shared login. Worker-rendered public templates and marketing still use IBM Plex and are out of scope for now.
-2. **v4 parity.** Add these to `ShellV4.tsx`:
+1. **Foundations.** *(Shipped, #1737.)* Add the font pair, a radius scale, motion tokens and a global reduced-motion rule to `packages/shared/src/theme/tokens.css`, and wire both apps to them. The font pair applies to the ops and tenant SPAs and the shared login. Worker-rendered public templates and marketing still use IBM Plex and are out of scope for now.
+2. **v4 parity.** *(Shipped, #1738.)* Add these to `ShellV4.tsx`:
    - NotificationBell and the avatar menu
    - PlatformAlertBanner
    - the theme toggle
@@ -27,7 +27,9 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
    - a check that the slide-out menu works on phones in both orientations
 
    Classic is not switched off yet.
-3. **Switch to v4.** Make v4 the only shell and delete the classic one: Shell, Sidebar, TopBar, MobileNav, the drawer, DeepBackground, PageTransition, `useShellVersion`, the "Try v4" pill, `HomeUnified` and `framer-motion`. Also delete `BrandAdminDashboard` and the unused frozen components.
+3. **Switch to v4.** *(This PR.)* Make v4 the only shell and delete the classic one: Shell, Sidebar, TopBar, MobileNav, the drawer, DeepBackground, PageTransition, `useShellVersion`, the "Try v4" pill, `HomeUnified` and `framer-motion`. Also delete `BrandAdminDashboard` and the unused frozen components.
+
+   Follow-up: remove the server endpoint `GET /api/dashboard/brand-admin` (and its `docs/API_REFERENCE.md` entry) — it has no client after this PR.
 4. **Routes.** Turn the 18 standalone routes into `?tab=` redirects that keep query strings. Rewrite in-app and ⌘K links. Fix the worker's links, including the broken `/admin/feeds` and `/admin/agents` and the legacy `/admin/organizations` redirect. Keep one incidents list.
 5. **Shared kit.** Add these to `@averrow/shared/ui`, with one barrel:
    - Badge (severity, status and classification)

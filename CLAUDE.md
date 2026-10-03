@@ -106,10 +106,9 @@ papered over by editing product source to pass a check.
 │   │   ├── src/
 │   │   │   ├── design-system/    ← [RESTRUCTURE TARGET] tokens + primitives
 │   │   │   ├── features/         ← [RESTRUCTURE TARGET] domain-driven features
-│   │   │   ├── layouts/          ← Shell, Sidebar, TopBar, MobileNav
-│   │   │   ├── mobile/           ← Mobile-specific views (CommandCenter only)
-│   │   │   ├── pages/            ← Migrating to features/ during restructure
+│   │   │   ├── pages/            ← Login.tsx, NotFound.tsx only (rest migrated to features/)
 │   │   │   ├── components/       ← Migrating to features/ or design-system/
+│   │   │   │   └── layout/       ← ShellV4.tsx (the only ops shell: sidebar, top bar, mobile nav), CommandPalette, ThemeCycleButton
 │   │   │   ├── hooks/            ← TanStack Query hooks
 │   │   │   └── lib/              ← api.ts, auth.tsx, time.ts, cn.ts
 │   │   └── tailwind.config.ts
@@ -174,11 +173,11 @@ During restructure, check `RESTRUCTURE_SPEC.md` for the current component locati
 After restructure: everything imports from `@/design-system/components`.
 
 **Frozen components — never refactor these:**
-- `ThreatMap.tsx` — WebGL canvas, untouchable
-- `ExposureGauge.tsx` — custom SVG, untouchable
 - `PortfolioHealthCard.tsx` — SVG donut, untouchable
-- `Sparkline.tsx`, `ActivitySparkline.tsx` — SVG sparklines, untouchable
 - `EventTicker.tsx` — scrolling ticker, untouchable
+
+(`ThreatMap.tsx`, `ExposureGauge.tsx`, `Sparkline.tsx`, `ActivitySparkline.tsx`
+were deleted as unused in UI consolidation Phase 1 PR3, 2026-10.)
 
 ### Backend / Worker
 - All agents must write to `agent_runs` on start AND completion
@@ -317,9 +316,9 @@ Two install affordances + one biometric auto-prompt:
 
 | Component | Where | When |
 |---|---|---|
-| `<InstallAppBanner />` | Top of `Home.tsx` | Visible to non-installed users; dismissible per-device |
-| `<InstallAppCard />` | Profile page | Always visible (when not installed); not dismissible |
-| `<FirstSignInPasskeyPrompt />` | Mounted at `Shell.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
+| `<InstallAppBanner />` | Top of `features/home/OverviewV4.tsx` | Visible to non-installed users; dismissible per-device |
+| `<InstallAppCard />` | Profile page (`features/settings/Profile.tsx`, after the shared `ProfilePage`) | Always visible (when not installed); not dismissible |
+| `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
 
 All three self-gate internally. Don't add per-route logic to control them.
 
