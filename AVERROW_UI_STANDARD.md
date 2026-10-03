@@ -664,6 +664,47 @@ export function DeepBackground() {
 
 ---
 
+## Shared kit (`@averrow/shared/ui`)
+
+Phase 1 PR5 (`docs/UI_CONSOLIDATION_PLAN_2026-10.md`). Source:
+`packages/shared/src/ui/`, single barrel `index.ts`. Named exports only; no `@/`
+or router imports, so ops and tenant render it identically. **New code imports
+from the kit.** The legacy ops primitives documented above are collapsed into it
+by PR6.
+
+```tsx
+import {
+  Badge, StatTile, PageState, pageStateKind,
+  DataTable, Table, Th, Td, Tabs, FilterBar,
+  PageHeader, WorkspaceEmbedContext, WorkspaceEmbedProvider, useWorkspaceEmbed,
+  Sparkline, Avatar, Button, Card,
+} from '@averrow/shared/ui';
+```
+
+- **Avatar is for entities only** (brands, orgs, providers, actors). User avatars
+  stay initials-only via `@averrow/shared/avatar` (`parseInitials`,
+  `colorForUserId`, `SELF_AVATAR_COLOR`); there is no `avatarUrl` prop.
+- **`PageState`**: `kind` (`loading | empty | clear | error | locked`) is
+  required, no default. Error is never shown as empty or `0`. Derive it with
+  `pageStateKind({ isLoading, isError, isEmpty })` (error > loading > empty;
+  returns `null` when the data should render).
+- **`PageHeader` inside a `TabbedWorkspace`** drops its `<h1>` and subtitle (the
+  workspace owns the one h1); badge/meta/actions stay. Enabled by
+  `WorkspaceEmbedProvider`/context, or the `embedded` prop.
+- **`DataTable`**: the first click on a sortable column sorts descending; later
+  clicks flip asc/desc.
+- **Text colour**: `--text-secondary` or the `--sev-*-text` tokens for any text
+  that must be read, not `--text-tertiary`/`--text-muted`.
+- **Focus**: Tabs, Table (header cells, rows, scroll region) and FilterBar pills
+  use `focus-visible:outline` (amber; inset inside scroll containers so it is
+  not clipped). Button, StatTile and the PageHeader back control use the amber
+  ring (`focus-visible:ring-2`).
+
+The ops `@/design-system/components` barrel re-exports the kit in Phase 1 PR6.
+Until then, import kit components straight from `@averrow/shared/ui`.
+
+---
+
 ## SIDEBAR STANDARD
 
 The sidebar uses the same 5 depth rules. This replaces the current Phase 8a treatment.

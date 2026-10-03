@@ -8,7 +8,12 @@
 .console-live { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 4px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; color: var(--green); }
 .console-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: console-ping 1.8s ease-in-out infinite; }
 
-/* cinematic KPI hero */
+/* cinematic KPI hero
+   NOTE: Console now renders the shared StatTile (@averrow/shared/ui). The
+   .kpi-v4 / .kpi-* rules below are NOT dead: features/home/OverviewV4.tsx
+   still has its own KpiTile that depends on them (global CSS). Delete them
+   with OverviewV4's tile in the Home rebuild (Phase 1 PR7). Only .kpi-grid
+   is used by Console itself. */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 20px 0 22px; }
 .kpi-v4 {
   position: relative; overflow: hidden; border-radius: 18px; padding: 18px 20px 16px;

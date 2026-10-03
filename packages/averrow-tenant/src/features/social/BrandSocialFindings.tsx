@@ -8,6 +8,7 @@
 
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { Badge } from '@averrow/shared/ui';
 import {
   useBrandSocialFindings,
   useSocialModuleSummary,
@@ -80,8 +81,8 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
           <span className="text-sm font-semibold text-white/90 truncate">@{p.handle}</span>
           {p.display_name && <span className="text-[12px] text-white/45 truncate hidden sm:inline">{p.display_name}</span>}
           <PlatformChip platform={p.platform} />
-          <SeverityPill level={p.severity} />
-          <ClassificationPill classification={p.classification} />
+          <Badge severity={p.severity} size="md" />
+          <Badge classification={p.classification} size="md" />
         </div>
         {secondary && (
           <p className="text-[11px] text-white/45 mt-0.5 truncate">{secondary}</p>
@@ -146,37 +147,6 @@ function PlatformChip({ platform }: { platform: string }) {
   return (
     <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {platform}
-    </span>
-  );
-}
-
-function SeverityPill({ level }: { level: string }) {
-  // Case-insensitive — underlying tables are inconsistent
-  // (social_profiles is UPPERCASE, alerts/threats are lowercase).
-  const sev = (level ?? '').toLowerCase();
-  const tone =
-    sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
-                         'text-white/55     bg-white/[0.04]        border-white/[0.08]';
-  return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {level}
-    </span>
-  );
-}
-
-function ClassificationPill({ classification }: { classification: string }) {
-  const tone =
-    classification === 'impersonation' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    classification === 'suspicious'    ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    classification === 'official'      ? 'text-white/70     bg-white/[0.06]        border-white/[0.10]'        :
-    classification === 'legitimate'    ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
-    classification === 'parked'        ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
-                                         'text-white/55     bg-white/[0.04]        border-white/[0.08]';
-  return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {classification}
     </span>
   );
 }

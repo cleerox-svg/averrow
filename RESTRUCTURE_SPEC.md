@@ -44,6 +44,13 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 
 ## TARGET ARCHITECTURE
 
+> **Shared kit (Phase 1 PR5, 2026-10):** the primitives below now also exist in
+> `packages/shared/src/ui/` (`@averrow/shared/ui`, shared by ops + tenant) —
+> Badge, StatTile, PageState, Table/DataTable, Tabs, FilterBar, PageHeader,
+> Sparkline, Avatar, Button, Card. It is the target for new components; the ops
+> `design-system/components/index.ts` re-exports it in Phase 1 PR6. See
+> `AVERROW_UI_STANDARD.md` "Shared kit".
+
 ```
 packages/averrow-ops/src/
 │

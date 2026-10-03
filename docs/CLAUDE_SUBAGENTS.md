@@ -55,7 +55,8 @@ raw aggregates; never `DROP`/`ALTER` columns; **cron-audit rule** on any
 
 ### `frontend-engineer` — React SPAs
 Features, hooks, layouts, design-system primitives across ops/tenant/shared and
-marketing islands. **Key guardrails:** import from `@/design-system/components`;
+marketing islands. **Key guardrails:** import from `@/design-system/components` (new components: the shared kit
+`@averrow/shared/ui`, re-exported there from Phase 1 PR6);
 CSS custom properties, never old tokens; never refactor frozen components; never
 touch `public/` / `app.js` / `styles.css`; user avatars = initials only; light +
 dark theme; login/profile parity spec; `tsc --noEmit` clean.

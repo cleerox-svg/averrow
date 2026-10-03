@@ -27,11 +27,13 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
    - a check that the slide-out menu works on phones in both orientations
 
    Classic is not switched off yet.
-3. **Switch to v4.** *(This PR.)* Make v4 the only shell and delete the classic one: Shell, Sidebar, TopBar, MobileNav, the drawer, DeepBackground, PageTransition, `useShellVersion`, the "Try v4" pill, `HomeUnified` and `framer-motion`. Also delete `BrandAdminDashboard` and the unused frozen components.
+3. **Switch to v4.** *(Shipped, #1739; follow-up #1745.)* Make v4 the only shell and delete the classic one: Shell, Sidebar, TopBar, MobileNav, the drawer, DeepBackground, PageTransition, `useShellVersion`, the "Try v4" pill, `HomeUnified` and `framer-motion`. Also delete `BrandAdminDashboard` and the unused frozen components.
 
    Follow-up: remove the server endpoint `GET /api/dashboard/brand-admin` (and its `docs/API_REFERENCE.md` entry) — it has no client after this PR.
-4. **Routes.** Turn the 18 standalone routes into `?tab=` redirects that keep query strings. Rewrite in-app and ⌘K links. Fix the worker's links, including the broken `/admin/feeds` and `/admin/agents` and the legacy `/admin/organizations` redirect. Keep one incidents list.
-5. **Shared kit.** Add these to `@averrow/shared/ui`, with one barrel:
+4. **Routes.** *(Shipped, #1747.)* Turn the 18 standalone routes into `?tab=` redirects that keep query strings. Rewrite in-app and ⌘K links. Fix the worker's links, including the broken `/admin/feeds` and `/admin/agents` and the legacy `/admin/organizations` redirect. Keep one incidents list.
+
+   Follow-ups that shipped alongside it: audit-log `view_audit` gating (#1748) and the org webhook secret fix (#1749).
+5. **Shared kit.** *(This PR.)* Add these to `@averrow/shared/ui`, with one barrel:
    - Badge (severity, status and classification)
    - StatTile
    - PageState
@@ -41,11 +43,24 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
    - PageHeader
    - Sparkline
    - Avatar
+
+   The barrel is `packages/shared/src/ui/index.ts` (it also re-exports the existing Button and Card). Correction: `@averrow/shared/ui` did not have 0 imports before this PR. `Button` was already imported by two ops files (`components/v4/TabbedWorkspace.tsx` and `features/console/Console.tsx`). Usage rules are in `AVERROW_UI_STANDARD.md` "Shared kit".
 6. **Collapse duplicates in ops.**
    - Stat tiles become StatTile.
    - Severity and status badges become Badge.
    - DeepCard becomes Card.
    - Raw tables become Table, here or in a follow-up PR.
+   - The ops `design-system/components/index.ts` barrel re-exports the kit.
+
+   Known API differences PR6 must handle:
+   - `PageHeader`: the ops `back.to` (router path) becomes `back.onClick` or `back.href`; the kit has no router import.
+   - `EmptyState` to `PageState` is not drop-in. It needs an adapter or codemod for `message`, `subtitle` and `variant`; `kind` is required (`title`/`description` replace the text props).
+   - `Sparkline` renders a flat placeholder line for fewer than 2 points instead of returning `null`.
+   - `Avatar` is `aria-hidden` unless `label` is set.
+   - `StatTile` changes visually from the ops version.
+   - Console panes need `WorkspaceEmbedProvider`, otherwise `PageHeader` renders a second `<h1>`.
+   - Tenant severity colours for "high" are inconsistent (amber vs orange); pick one when the tenant moves onto `Badge`.
+   - `Badge` radius differs from the tenant's 4px chips.
 7. **Home rebuild.** Build a ranked "needs you now" queue from existing hooks, with no new endpoint. Add digest links, a platform pulse, a tempo band and the merged briefing component. Re-mount `InstallAppBanner`. Delete the sections the digest replaces. Then retire any Navigator cache warmers for endpoints nothing reads any more.
 
 Phase 2 moves the tenant app onto the kit and adds the `ModuleLanding` template, the 6-item navigation, a mobile shell and tokens. Phase 3 adds new capabilities: React 19.3 View Transitions, actor dossier pages, Ask Averrow and the MapLibre 5 globe.
