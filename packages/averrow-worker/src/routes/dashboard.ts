@@ -197,7 +197,7 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   router.put("/api/notifications/subscriptions/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleUpdateSubscription(request, env, request.params["brandId"] ?? "", ctx.userId);
+    return handleUpdateSubscription(request, env, request.params["brandId"] ?? "", ctx.userId, ctx.role);
   });
   router.delete("/api/notifications/subscriptions/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
