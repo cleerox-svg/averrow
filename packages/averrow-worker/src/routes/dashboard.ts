@@ -35,9 +35,27 @@ import {
 
 export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   // ─── Dashboard Stats (v1) ─────────────────────────────────────────
-  router.get("/api/dashboard/stats", (request: Request, env: Env) => handleStats(request, env));
-  router.get("/api/dashboard/sources", (request: Request, env: Env) => handleSourceMix(request, env));
-  router.get("/api/dashboard/trend", (request: Request, env: Env) => handleQualityTrend(request, env));
+  // Staff-only. These were registered with no auth check. They only return
+  // platform-wide aggregates over the `scans` table, but no UI calls them
+  // any more (ops, tenant, marketing, worker templates and the legacy SPA
+  // were all checked), so they are gated, not left public. requireStaff
+  // lets the read-only auditor seat through. The public aggregate is
+  // /api/stats/public (or /api/v1/public/stats).
+  router.get("/api/dashboard/stats", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleStats(request, env);
+  });
+  router.get("/api/dashboard/sources", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleSourceMix(request, env);
+  });
+  router.get("/api/dashboard/trend", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleQualityTrend(request, env);
+  });
 
   // ─── Dashboard v2 (Observatory) ───────────────────────────────────
   router.get("/api/dashboard/overview", async (request: Request, env: Env) => {
@@ -70,8 +88,19 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     return handleBrandAdminDashboard(request, env, scope);
   });
 
-  // ─── Public Heatmap ───────────────────────────────────────────────
-  router.get("/api/heatmap", (request: Request, env: Env) => handleHeatmap(request, env));
+  // ─── Scan Heatmap (staff-only) ────────────────────────────────────
+  // Was public. The points are where the people running scans are, not
+  // where the threats are: handleScan geolocates the requester's
+  // CF-Connecting-IP, including signed-in users. Each point is a 0.1° cell
+  // (about 11 km) with a city name and the trust score of what was
+  // scanned. Nothing calls this route: the only reference is
+  // templates/heatmap-component.ts, and none of its exports are imported.
+  // The public threat map is /api/observatory/heatmap.
+  router.get("/api/heatmap", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleHeatmap(request, env);
+  });
 
   // ─── Observatory (staff-only) ──────────────────────────────────────
   // Formerly unauthenticated. `/live` returns recent malicious
