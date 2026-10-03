@@ -37,7 +37,7 @@ import {
 } from '@/hooks/useAdminAbuseMailbox';
 import { relativeTime } from '@/lib/time';
 
-import { PageState } from '@/design-system/components';
+import { PageState, Table, Td } from '@/design-system/components';
 export function AdminAbuseMailbox() {
   const { isSuperAdmin, loading: authLoading } = useAuth();
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
@@ -123,20 +123,18 @@ export function AdminAbuseMailbox() {
         <div className="text-white/40 text-sm font-mono py-12 text-center">Loading mailbox…</div>
       )}
       {summaryQ.error && (
-        <div
-          className="rounded-xl p-4"
-          style={{
-            background: 'rgba(248,113,113,0.06)',
-            border: '1px solid rgba(248,113,113,0.30)',
-          }}
-        >
-          <h3 className="text-sm font-semibold text-white/90">Couldn't load abuse mailbox</h3>
-          <p className="text-[12px] text-white/55 mt-1">
-            {summaryQ.error.message ?? 'Unknown error'}
-          </p>
-          <p className="text-[11px] text-white/45 font-mono mt-2">
-            If the response code is SELF_ORG_NOT_PROVISIONED, run migration 0180.
-          </p>
+        <div className="space-y-2">
+          <PageState
+            kind="error"
+            layout="card"
+            title="Couldn't load abuse mailbox"
+            description={summaryQ.error.message ?? undefined}
+            onRetry={() => { void summaryQ.refetch(); }}
+          />
+          <details className="text-[11px] text-white/60 font-mono px-1">
+            <summary className="cursor-pointer select-none">Operator hint</summary>
+            <p className="mt-1">If the response code is SELF_ORG_NOT_PROVISIONED, run migration 0180.</p>
+          </details>
         </div>
       )}
 
@@ -944,16 +942,16 @@ function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; 
       style={{ border: '1px solid rgba(255,255,255,0.05)' }}
     >
       <div className="max-h-72 overflow-auto">
-        <table className="w-full text-[11px] font-mono">
+        <Table className="w-full text-[11px] font-mono">
           <tbody className="divide-y divide-white/[0.04]">
             {sorted.map(([k, v]) => (
               <tr key={k}>
-                <td className="align-top px-3 py-1.5 text-[var(--amber)] whitespace-nowrap">{k}</td>
-                <td className="align-top px-3 py-1.5 text-white/85 break-all">{v}</td>
+                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-[var(--amber)] whitespace-nowrap">{k}</Td>
+                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-white/85 break-all">{v}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </div>
   );

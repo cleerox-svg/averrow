@@ -24,8 +24,7 @@ import {
   type DarkWebStatus,
   type Severity,
 } from '@/hooks/useDarkWebMonitor';
-import { Card, PageHeader, StatTile, StatGrid, Badge, PageState, pageStateKind } from '@/design-system/components';
-import { Table, Th, Td } from '@/components/ui/Table';
+import { Card, PageHeader, StatTile, StatGrid, Badge, PageState, pageStateKind, Table, Th, Td } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 
 const PAGE_SIZE = 50;

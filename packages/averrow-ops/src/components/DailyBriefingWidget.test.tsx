@@ -115,3 +115,21 @@ describe('DailyBriefingWidget — honeypot pageBreakdown caption + cap (Tier 4)'
     await waitFor(() => expect(screen.getAllByText(/\/bait\/page-/).length).toBe(20));
   });
 });
+
+describe('DailyBriefingWidget — table density', () => {
+  it('keeps cell text at 11px (beats the shared Td text-sm) with a single scroll wrapper', async () => {
+    mockBriefingRow(makeBriefing({
+      honeypot: {
+        totalVisits: 30, botVisits: 20, humanVisits: 10, visits12h: 5,
+        pageBreakdown: [page(1)], pageBreakdownTotal: 1, recentBots: [], suspiciousHumans: [],
+      },
+    }));
+    renderWithProviders(<DailyBriefingWidget />);
+    const cell = (await screen.findByText('/bait/page-1')).closest('td')!;
+    const table = cell.closest('table')!;
+    expect(table.className).toContain('[&_td]:text-[11px]');
+    // Table's own wrapper is the only overflow-x-auto between table and its parent.
+    expect(table.parentElement!.className).toContain('overflow-x-auto');
+    expect(table.parentElement!.parentElement!.className).not.toContain('overflow-x-auto');
+  });
+});

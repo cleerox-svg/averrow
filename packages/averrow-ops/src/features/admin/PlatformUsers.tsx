@@ -25,8 +25,8 @@ import {
   Select,
   FilterBar,
   PageState,
+  Table, Th, Td,
 } from '@/design-system/components';
-import { Table, Th, Td } from '@/components/ui/Table';
 import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
@@ -171,7 +171,7 @@ export function PlatformUsers() {
         }
       />
 
-      <Card hover={false} className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-hidden">
         {isLoading ? (
           <PageState kind="loading" layout="table" title="Loading users…" />
         ) : error ? (
@@ -339,9 +339,9 @@ function UserRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} className="px-5 pb-4 pt-1">
+          <Td colSpan={6} className="px-5 pb-4 pt-1 border-b-0">
             <SessionsPanel userId={u.id} />
-          </td>
+          </Td>
         </tr>
       )}
     </>
@@ -404,7 +404,7 @@ function InvitePanel({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Invite a user</SectionLabel>
       <div className="grid grid-cols-1 sm:grid-cols-[2fr_max-content_max-content] gap-2 items-end">
         <div>
@@ -431,7 +431,7 @@ function PendingInvites() {
   if (isLoading || invites.length === 0) return null;
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel className="mb-3">Pending invitations</SectionLabel>
       <div className="space-y-2">
         {invites.map((inv) => (

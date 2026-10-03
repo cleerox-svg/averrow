@@ -60,7 +60,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
   const hasAny = breach || has10k || hasNews || hasMaturity || hasCISO;
 
   return (
-    <Card hover={false} variant={breach && breach.variant === 'critical' ? 'critical' : 'base'}>
+    <Card variant={breach && breach.variant === 'critical' ? 'critical' : 'base'}>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Buying Signals</SectionLabel>
         {breach && (

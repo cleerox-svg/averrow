@@ -16,7 +16,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { api } from '@/lib/api';
-import { Card } from '@/design-system/components';
+import { Card, PageState } from '@/design-system/components';
 
 // Threat-type → fill/stroke color. Aligned with the Threat Volume
 // chart on /trends so the palette stays consistent across the two
@@ -72,8 +72,8 @@ type Window = '24h' | '7d';
 // 5xx GET and any 401 reject with ApiError instead).
 // Without this, a malformed response would blind-cast through and the
 // `data.buckets.map(...)` below throws, crashing the whole root route via
-// the ErrorBoundary. Returning null routes to the component's "No data"
-// fallback instead. Mirrors the isPlatformStatus guard in usePlatformStatus.
+// the ErrorBoundary. A malformed body is a failed load (query error), never
+// "no data" / 0 indicators. Mirrors the isPlatformStatus guard in usePlatformStatus.
 function isInflowResponse(value: unknown): value is InflowResponse {
   return (
     typeof value === 'object' &&
@@ -86,13 +86,10 @@ function isInflowResponse(value: unknown): value is InflowResponse {
 function useThreatInflow(window: Window) {
   return useQuery({
     queryKey: ['threats', 'inflow', window],
-    queryFn: async (): Promise<InflowResponse | null> => {
-      try {
-        const res = await api.get(`/api/threats/inflow?window=${window}`);
-        return isInflowResponse(res) ? res : null;
-      } catch {
-        return null;
-      }
+    queryFn: async (): Promise<InflowResponse> => {
+      const res = await api.get(`/api/threats/inflow?window=${window}`);
+      if (!isInflowResponse(res)) throw new Error('Unexpected threat inflow response');
+      return res;
     },
     refetchInterval: 5 * 60_000, // matches cube refresh cadence
     staleTime: 60_000,
@@ -128,7 +125,8 @@ interface Props {
 
 export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {}) {
   const [window, setWindow] = useState<Window>(defaultWindow);
-  const { data, isLoading } = useThreatInflow(window);
+  const { data, isLoading, isError, refetch } = useThreatInflow(window);
+  const failed = isError && !data;
 
   // Pivot the API response into Recharts' flat-row shape:
   //   [{ bucket, phishing, malware_distribution, ...other types }, ...]
@@ -144,7 +142,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
     : [];
 
   const chartHeight = height ?? 220;
-  const headline = data?.total ?? 0;
+  const headline = data?.total ?? null;
 
   return (
     <Card style={{ padding: 18 }}>
@@ -163,7 +161,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
             fontSize: 26, fontWeight: 700,
             color: 'var(--text-primary)', lineHeight: 1.1,
           }}>
-            {headline.toLocaleString()}
+            {headline === null ? '—' : headline.toLocaleString()}
           </div>
           <div style={{
             fontFamily: 'var(--font-mono)', fontSize: 10,
@@ -176,7 +174,9 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
       </div>
 
       {/* Chart */}
-      {isLoading || !data ? (
+      {failed ? (
+        <PageState kind="error" layout="card" compact title="Couldn't load threat inflow" onRetry={() => { void refetch(); }} />
+      ) : isLoading || !data ? (
         <div
           style={{
             height: chartHeight,

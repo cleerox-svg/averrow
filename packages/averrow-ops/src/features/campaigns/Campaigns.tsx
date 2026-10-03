@@ -12,6 +12,7 @@ import {
   type EntityListSort,
   Sparkline,
   type BadgeProps,
+  Table, Th, Td,
 } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CardGridLoader } from '@/components/ui/ListLoaders';
@@ -141,7 +142,6 @@ function OperationCard({
   return (
     <Card
       variant={variant}
-      hover={!isSelected}
       onClick={() => onSelect(operation.id)}
       className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
     >
@@ -411,35 +411,35 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
           <Skeleton className="h-32" />
         ) : threats && threats.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <Table className="w-full">
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   {['Type', 'Domain', 'Severity', 'First Seen'].map(h => (
-                    <th key={h} className="font-mono text-[9px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
+                    <Th key={h} className="p-0 font-mono text-[9px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
                       {h}
-                    </th>
+                    </Th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {threats.map((threat, i) => (
                   <tr key={String(threat.id ?? i)} className="data-row border-b border-white/[0.04]">
-                    <td className="font-mono text-[11px] py-1.5 px-2" style={{ color: 'var(--text-primary)' }}>{String(threat.threat_type ?? '—')}</td>
-                    <td className="font-mono text-[11px] py-1.5 px-2 truncate max-w-[200px]" style={{ color: 'var(--text-secondary)' }}>
+                    <Td className="p-0 font-mono text-[11px] py-1.5 px-2" style={{ color: 'var(--text-primary)' }}>{String(threat.threat_type ?? '—')}</Td>
+                    <Td className="p-0 font-mono text-[11px] py-1.5 px-2 truncate max-w-[200px]" style={{ color: 'var(--text-secondary)' }}>
                       {String(threat.malicious_domain ?? '—')}
-                    </td>
-                    <td className="py-1.5 px-2">
+                    </Td>
+                    <Td className="p-0 py-1.5 px-2">
                       <span className={`inline-flex font-mono text-[9px] font-bold uppercase px-2 py-0.5 rounded border ${severityBadge(String(threat.severity ?? 'low'))}`}>
                         {String(threat.severity ?? '—')}
                       </span>
-                    </td>
-                    <td className="font-mono text-[10px] text-white/50 py-1.5 px-2">
+                    </Td>
+                    <Td className="p-0 font-mono text-[10px] text-white/50 py-1.5 px-2">
                       {threat.first_seen ? new Date(String(threat.first_seen)).toLocaleDateString() : '—'}
-                    </td>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         ) : (
           <PageState
@@ -492,7 +492,6 @@ function CampaignCard({
   return (
     <Card
       variant="elevated"
-      hover
       onClick={onClick}
       className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
     >
@@ -569,7 +568,6 @@ function GeoCampaignCard({
   return (
     <Card
       variant="elevated"
-      hover
       onClick={onClick}
       className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
     >

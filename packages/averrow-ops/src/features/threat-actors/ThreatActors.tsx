@@ -118,7 +118,6 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
   return (
     <Card
       variant={variant}
-      hover
       onClick={onClick}
       className="p-4 flex flex-col gap-3 cursor-pointer transition-all"
     >

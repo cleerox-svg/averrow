@@ -2,26 +2,134 @@ import * as React from 'react';
 import { cn } from './cn';
 
 // Cinematic glass card. `variant` controls elevation/glow; fully fluid width
-// so it reflows in any responsive grid. Brand tokens via arbitrary-value
-// Tailwind classes (portable across both apps, no config changes).
-type CardVariant = 'base' | 'elevated' | 'glow' | 'critical';
+// so it reflows in any responsive grid. Styling is inline + CSS custom
+// properties from @averrow/shared/theme (portable across both apps).
+//
+// Composition note: `padding` defaults to 20px so a bare <Card> never sits its
+// content flush against the rounded corners. When composing with CardHeader /
+// CardContent / CardFooter (which carry their own padding), pass padding="none".
+export type CardVariant = 'base' | 'elevated' | 'active' | 'critical' | 'flat';
+export type CardPaddingToken = 'none' | 'sm' | 'md' | 'lg';
 
-export const Card = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { variant?: CardVariant }
->(({ className, variant = 'base', ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      'rounded-2xl border border-[var(--border-base)] [background:linear-gradient(160deg,var(--bg-card),var(--bg-card-deep,var(--bg-card)))]',
-      variant === 'elevated' && 'shadow-[0_24px_64px_rgba(0,0,0,0.45)]',
-      variant === 'glow' && 'border-[rgba(229,168,50,0.25)] shadow-[0_0_28px_rgba(229,168,50,0.16)]',
-      variant === 'critical' && 'border-[rgba(200,60,60,0.30)] shadow-[0_0_28px_rgba(200,60,60,0.18)]',
-      className,
-    )}
-    {...props}
-  />
-));
+/** Token scale. `md` is the historical ops default (20px). */
+const PADDING_TOKENS: Record<CardPaddingToken, string> = {
+  none: '0',
+  sm: '12px',
+  md: '20px',
+  lg: '24px',
+};
+
+/** Token -> CSS; number -> px; any other string is passed through as raw CSS. */
+export function resolveCardPadding(padding: CardPaddingToken | string | number | undefined): string {
+  if (padding === undefined) return PADDING_TOKENS.md;
+  if (typeof padding === 'number') return `${padding}px`;
+  return (PADDING_TOKENS as Record<string, string>)[padding] ?? padding;
+}
+
+const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string; rim: string; shadow: string }> = {
+  base: {
+    bg: 'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',
+    border: 'var(--border-base)',
+    rim: 'var(--border-strong)',
+    shadow: 'var(--card-shadow)',
+  },
+  elevated: {
+    bg: 'linear-gradient(160deg, var(--bg-elevated) 0%, var(--bg-card-deep) 100%)',
+    border: 'var(--border-strong)',
+    rim: 'rgba(255, 255, 255, 0.18)',
+    shadow: '0 12px 48px rgba(0, 0, 0, 0.75)',
+  },
+  active: {
+    bg: 'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',
+    border: 'var(--amber-border)',
+    rim: 'rgba(229, 168, 50, 0.35)',
+    shadow: 'var(--card-shadow), 0 0 20px var(--amber-glow)',
+  },
+  // Inset panel (e.g. a table's expansion row): surface + border only, no
+  // shadow, rims or blur.
+  flat: {
+    bg: 'var(--bg-card-deep)',
+    border: 'var(--border-base)',
+    rim: 'transparent',
+    shadow: 'none',
+  },
+  critical: {
+    // Theme-aware: dark default is the near-black red wash; light resolves to a
+    // pale red-washed card (tokens.css --card-critical-bg).
+    bg: 'var(--card-critical-bg)',
+    border: 'var(--red-border)',
+    rim: 'rgba(239, 68, 68, 0.45)',
+    shadow: 'var(--card-shadow), 0 0 24px var(--red-glow)',
+  },
+};
+
+export interface CardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'color'> {
+  variant?: CardVariant | 'glow';
+  /** Custom glow colour (hex or `var(--token)`); only applies with `variant="active"`. */
+  accent?: string;
+  /** `none | sm | md | lg`, a number (px) or raw CSS (`'16px 20px'`). Default `md` (20px). */
+  padding?: CardPaddingToken | string | number;
+}
+
+export const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ variant: variantProp = 'base', accent, padding, style, onClick, children, ...props }, ref) => {
+    // `glow` is the pre-6c shared name for the amber look.
+    const variant: CardVariant = variantProp === 'glow' ? 'active' : variantProp;
+    const v = VARIANT_STYLES[variant];
+
+    // color-mix works for raw hex and var() tokens alike (hex-alpha suffixes
+    // are invalid on var()). Percentages are theme-aware tokens
+    // (--card-accent-*-pct) so light mode keeps the accent legible.
+    const custom = !!accent && variant === 'active';
+    const border = custom ? `color-mix(in srgb, ${accent} var(--card-accent-border-pct), transparent)` : v.border;
+    const rim = custom ? `color-mix(in srgb, ${accent} var(--card-accent-rim-pct), transparent)` : v.rim;
+    const shadow = custom
+      ? `var(--card-shadow), 0 0 20px color-mix(in srgb, ${accent} var(--card-accent-glow-pct), transparent)`
+      : v.shadow;
+
+    return (
+      <div
+        ref={ref}
+        onClick={onClick}
+        {...props}
+        style={{
+          background: v.bg,
+          backdropFilter: variant === 'flat' ? undefined : 'blur(20px)',
+          WebkitBackdropFilter: variant === 'flat' ? undefined : 'blur(20px)',
+          border: `1px solid ${border}`,
+          borderRadius: 'var(--card-radius)',
+          position: 'relative',
+          overflow: 'hidden',
+          cursor: onClick ? 'pointer' : 'default',
+          padding: resolveCardPadding(padding),
+          boxShadow: variant === 'flat'
+            ? 'none'
+            : [shadow, `inset 0 1px 0 ${rim}`, 'inset 0 -1px 0 rgba(0, 0, 0, 0.40)'].join(', '),
+          ...style,
+        }}
+      >
+        {variant !== 'flat' && (<>
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 1,
+            background: `linear-gradient(90deg, transparent, ${rim} 25%, ${rim} 75%, transparent)`,
+            pointerEvents: 'none', zIndex: 2,
+          }}
+        />
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0, height: 1,
+            background: 'rgba(0, 0, 0, 0.50)', pointerEvents: 'none', zIndex: 2,
+          }}
+        />
+        </>)}
+        {children}
+      </div>
+    );
+  },
+);
 Card.displayName = 'Card';
 
 export const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(

@@ -5,22 +5,23 @@
 //   import { Card, Button, Badge, Avatar, StatTile, PageState, ... } from '@/design-system/components'
 //
 // Single barrel for ops (Phase 1 PR6a folded `components/ui/index.ts` into it).
-// Badge, Tabs, FilterBar, Sparkline and Avatar come from the shared kit
+// Badge, Tabs, FilterBar, Sparkline, Avatar, Card and the Table primitives
+// (Table/Th/Td/DataTable, PR6c) come from the shared kit
 // (`@averrow/shared/ui`); PageHeader is the thin ops adapter in ./PageHeader.
 // PageState (loading/empty/clear/error/locked) and StatTile (KPI tile) also come
 // from the kit (PR6b); `BreakdownCard` is the ops-local titled metric+rows card.
-// The remaining primitives still live in components/ui/ and move to the kit in
-// PR6c (Card, tables).
+// Other primitives still live in components/ui/.
 
 // ── Foundation ─────────────────────────────────────────────────────────────
-export { Card, CardHeader, CardBody } from '../../components/ui/Card';
-export type { CardProps, CardVariant } from '../../components/ui/Card';
-
 export { Button } from '../../components/ui/Button';
 export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui/Button';
 
 // ── Shared kit (@averrow/shared/ui) ────────────────────────────────────────
-export { Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind } from '@averrow/shared/ui';
+export {
+  Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind,
+  Card, CardHeader, CardTitle, CardContent, CardFooter,
+  Table, Th, Td, DataTable,
+} from '@averrow/shared/ui';
 export type {
   BadgeProps,
   Severity,
@@ -45,6 +46,16 @@ export type {
   PageStateLayout,
   PageStateAction,
   PageStateActionSpec,
+  CardProps,
+  CardVariant,
+  CardPaddingToken,
+  TableProps,
+  Column,
+  DataTableProps,
+  SortState,
+  SortDir,
+  RowSeverity,
+  TableDensity,
 } from '@averrow/shared/ui';
 
 export { BreakdownCard } from './BreakdownCard';

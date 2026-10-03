@@ -74,7 +74,7 @@ export function FirmographicsCard({ lead, onRefresh, refreshing }: Firmographics
   const hasAny = rows.length > 0;
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Firmographics</SectionLabel>
         {onRefresh && (

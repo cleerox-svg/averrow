@@ -193,7 +193,7 @@ describe('AdminDashboard', () => {
     const alerts = screen.getAllByRole('alert');
     expect(alerts.some((a) => /couldn't load activity/i.test(a.textContent ?? ''))).toBe(true);
     expect(container.querySelectorAll('.animate-pulse').length).toBe(0);
-    const retry = screen.getAllByRole('button', { name: 'Try again' });
+    const retry = screen.getAllByRole('button', { name: /^Try again/ });
     await userEvent.setup().click(retry[retry.length - 1]);
     expect(refetch).toHaveBeenCalled();
   });

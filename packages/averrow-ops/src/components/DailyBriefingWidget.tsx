@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Badge, Button, PageState } from '@/design-system/components';
+import { Badge, Button, PageState, Table, Th, Td } from '@/design-system/components';
 import type { BadgeStatus } from '@/design-system/components';
 
 // ─── Inline style replacements for retired design tokens ────────
@@ -207,20 +207,19 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function DataTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full font-mono text-[11px]">
+    // [&_td] beats the shared Td's own text-sm, so cell text stays 11px.
+    <Table className="w-full font-mono text-[11px] [&_td]:text-[11px]">
         <thead>
           <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
             {headers.map((h) => (
-              <th key={h} className="text-left text-[9px] uppercase tracking-widest pb-2 pr-4 font-medium last:text-right" style={textSecondary}>
+              <Th key={h} className="p-0 text-left text-[9px] uppercase tracking-widest pb-2 pr-4 font-medium last:text-right" style={textSecondary}>
                 {h}
-              </th>
+              </Th>
             ))}
           </tr>
         </thead>
         <tbody>{children}</tbody>
-      </table>
-    </div>
+    </Table>
   );
 }
 
@@ -473,8 +472,8 @@ export function DailyBriefingWidget() {
               <DataTable headers={['Source', 'Count']}>
                 {briefing.newThreats.bySource.map((s) => (
                   <tr key={s.source_feed} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                    <td className="py-1 pr-4" style={textPrimary}>{s.source_feed}</td>
-                    <td className="py-1 text-right" style={textSecondary}>{fmt(s.count)}</td>
+                    <Td className="p-0 py-1 pr-4" style={textPrimary}>{s.source_feed}</Td>
+                    <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(s.count)}</Td>
                   </tr>
                 ))}
               </DataTable>
@@ -513,9 +512,9 @@ export function DailyBriefingWidget() {
             <DataTable headers={['Feed', 'Runs', 'Ingested']}>
               {briefing.feedProduction.map((f) => (
                 <tr key={f.feed_name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                  <td className="py-1 pr-4 truncate max-w-[140px]" style={textPrimary}>{f.feed_name}</td>
-                  <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(f.runs)}</td>
-                  <td className="py-1 text-right" style={amberText}>{fmt(f.ingested)}</td>
+                  <Td className="p-0 py-1 pr-4 truncate max-w-[140px]" style={textPrimary}>{f.feed_name}</Td>
+                  <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(f.runs)}</Td>
+                  <Td className="p-0 py-1 text-right" style={amberText}>{fmt(f.ingested)}</Td>
                 </tr>
               ))}
             </DataTable>
@@ -575,11 +574,11 @@ export function DailyBriefingWidget() {
           <DataTable headers={['Engine', 'Checked', 'Hits', 'Hit Rate', 'Status']}>
             {enrichmentEngines.map((e) => (
               <tr key={e.name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                <td className="py-1 pr-4" style={textPrimary}>{e.name}</td>
-                <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(e.checked)}</td>
-                <td className="py-1 text-right pr-4" style={amberText}>{fmt(e.hits)}</td>
-                <td className="py-1 text-right pr-4" style={textSecondary}>{pct(e.hits, e.checked)}</td>
-                <td className="py-1 text-right">{e.checked > 0 ? '✅' : '⚠️'}</td>
+                <Td className="p-0 py-1 pr-4" style={textPrimary}>{e.name}</Td>
+                <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(e.checked)}</Td>
+                <Td className="p-0 py-1 text-right pr-4" style={amberText}>{fmt(e.hits)}</Td>
+                <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{pct(e.hits, e.checked)}</Td>
+                <Td className="p-0 py-1 text-right">{e.checked > 0 ? '✅' : '⚠️'}</Td>
               </tr>
             ))}
           </DataTable>
@@ -607,11 +606,11 @@ export function DailyBriefingWidget() {
             <DataTable headers={['Agent', 'Runs', 'Last Run']}>
               {briefing.agentActivity.map((a) => (
                 <tr key={a.agent_id} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                  <td className="py-1 pr-4" style={textPrimary}>{a.agent_id}</td>
-                  <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(a.runs)}</td>
-                  <td className="py-1 text-right" style={textSecondary}>
+                  <Td className="p-0 py-1 pr-4" style={textPrimary}>{a.agent_id}</Td>
+                  <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(a.runs)}</Td>
+                  <Td className="p-0 py-1 text-right" style={textSecondary}>
                     {a.last_run ? new Date(a.last_run).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—'}
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </DataTable>
@@ -637,9 +636,9 @@ export function DailyBriefingWidget() {
               <DataTable headers={['Source', 'Seeds', 'Catches']}>
                 {briefing.spamTrap.seedingSources.map((s) => (
                   <tr key={s.seeded_location} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                    <td className="py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{s.seeded_location}</td>
-                    <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(s.seeds)}</td>
-                    <td className="py-1 text-right" style={amberText}>{fmt(s.catches)}</td>
+                    <Td className="p-0 py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{s.seeded_location}</Td>
+                    <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(s.seeds)}</Td>
+                    <Td className="p-0 py-1 text-right" style={amberText}>{fmt(s.catches)}</Td>
                   </tr>
                 ))}
               </DataTable>
@@ -686,9 +685,9 @@ export function DailyBriefingWidget() {
               <DataTable headers={['Page', 'Visits', 'Bots']}>
                 {briefing.honeypot.pageBreakdown.slice(0, 20).map((p) => (
                   <tr key={p.page} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
-                    <td className="py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{p.page}</td>
-                    <td className="py-1 text-right pr-4" style={textSecondary}>{fmt(p.visits)}</td>
-                    <td className="py-1 text-right" style={textSecondary}>{fmt(p.bots)}</td>
+                    <Td className="p-0 py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{p.page}</Td>
+                    <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(p.visits)}</Td>
+                    <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(p.bots)}</Td>
                   </tr>
                 ))}
               </DataTable>

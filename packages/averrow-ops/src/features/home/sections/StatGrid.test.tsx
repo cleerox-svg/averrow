@@ -129,3 +129,43 @@ describe('StatGrid — loading vs settled value propagation', () => {
     expect(screen.getByText('10')).toBeInTheDocument();
   });
 });
+
+describe('StatGrid — failed queries are errors, never 0', () => {
+  beforeEach(() => {
+    stubMatchMedia(true);
+    vi.clearAllMocks();
+  });
+
+  it('a failed alerts query shows "Couldn\'t load" on its tile, not 0', () => {
+    mockAllSettled();
+    (useAlertStats as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isPending: false, isError: true });
+    renderWithProviders(<StatGrid />);
+
+    expect(screen.getByText("Couldn't load")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "Alerts: couldn't load" })).toBeInTheDocument();
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('every tile errors (no zeros) when all six queries fail', () => {
+    (useObservatoryStats as ReturnType<typeof vi.fn>).mockReturnValue({ data: null, isLoading: false, error: new Error('x') });
+    for (const h of [useAlertStats, useOperationsStats, useBrandStats, useAgents, useFeedStats]) {
+      (h as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isPending: false, isError: true });
+    }
+    (useBrands as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isPending: false });
+    renderWithProviders(<StatGrid />);
+
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(6);
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('a failed refetch with data on screen keeps the data', () => {
+    mockAllSettled();
+    (useAlertStats as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { total: 17, critical: 6, new_count: 4 }, isPending: false, isError: true,
+    });
+    renderWithProviders(<StatGrid />);
+
+    expect(screen.getByText('17')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
+  });
+});

@@ -38,8 +38,7 @@ import {
 import { useLookalikes, type LookalikeDomain } from '@/hooks/useLookalikes';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
-import { Card } from '@/components/ui/Card';
-import { Avatar, Badge, Button, Sparkline, StatTile, PageState } from '@/design-system/components';
+import { Card, Avatar, Badge, Button, Sparkline, StatTile, PageState, Table, Th, Td } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { SignalBreakdownCard } from '@/components/ui/SignalBreakdownCard';
 import { timeAgo } from '@/lib/time';
@@ -641,7 +640,7 @@ function SurfaceTab({
           <EmailSecurityHistoryStrip history={emailSecHistory} />
         </div>
 
-        <Card hover={false}>
+        <Card>
           <SectionLabel>Confirmed presence</SectionLabel>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <FootprintTile
@@ -725,7 +724,7 @@ function RiskTab({
         />
       </div>
 
-      <Card hover={false}>
+      <Card>
         <SectionLabel>Risk surface roll-up</SectionLabel>
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
           <RollupTile
@@ -792,7 +791,7 @@ function AttackInfraSection({ providers, campaigns }: {
   if (providers.length === 0 && campaigns.length === 0) return null;
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>Attacking infrastructure</SectionLabel>
       <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Hosting providers → /providers?focus=:id (inline auto-expand) */}
@@ -879,7 +878,7 @@ function EmailSecurityHistoryStrip({ history }: { history: EmailSecurityHistoryP
   const first = chrono[0];
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between mb-2">
         <SectionLabel>Email posture · {chrono.length}-scan history</SectionLabel>
         <div className="font-mono text-[10px] text-[var(--text-tertiary)]">
@@ -1029,7 +1028,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
 
   if (rows.length === 0) {
     return (
-      <Card hover={false}>
+      <Card>
         <SectionLabel>Typosquats</SectionLabel>
         <div className="mt-3 text-[12px] text-[var(--text-tertiary)] font-mono">
           No active typosquatting threats attributed to this brand.
@@ -1042,7 +1041,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
   const high     = rows.filter((r) => r.severity === 'high').length;
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-baseline justify-between">
         <SectionLabel>Typosquats <span className="text-[var(--text-muted)]">({rows.length})</span></SectionLabel>
         {(critical > 0 || high > 0) && (
@@ -1053,7 +1052,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
         )}
       </div>
       <div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] overflow-hidden">
-        <table className="w-full text-[12px]">
+        <Table className="w-full text-[12px]">
           <thead className="border-b border-white/[0.06] bg-white/[0.02]">
             <tr className="text-left">
               <TsTh>Domain</TsTh>
@@ -1096,7 +1095,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       <div className="mt-2 text-[11px] text-[var(--text-muted)] font-mono">
         Customer-side takedown submission is in the tenant Domain Findings view.
@@ -1154,7 +1153,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
 
   if (isLoading) {
     return (
-      <Card hover={false}>
+      <Card>
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3 text-[12px] text-[var(--text-secondary)] font-mono">Loading…</div>
       </Card>
@@ -1163,7 +1162,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
 
   if (checked.length === 0) {
     return (
-      <Card hover={false}>
+      <Card>
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3">
           <PageState
@@ -1190,7 +1189,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
       .sort()
       .at(-1);
     return (
-      <Card hover={false}>
+      <Card>
         <SectionLabel>Page Analysis</SectionLabel>
         <div className="mt-3">
           <PageState
@@ -1211,7 +1210,7 @@ function PageAnalysisSection({ brandId }: { brandId: string }) {
   );
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>
         Page Analysis <span className="text-[var(--text-secondary)]">({sorted.length})</span>
       </SectionLabel>
@@ -1276,11 +1275,11 @@ function tsShortSource(source: string | null | undefined): string {
 }
 
 function TsTh({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2 text-[10px] uppercase tracking-widest font-mono text-[var(--text-tertiary)] font-normal">{children}</th>;
+  return <Th className="text-[10px] tracking-widest font-normal">{children}</Th>;
 }
 
 function TsTd({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2.5 ${className}`}>{children}</td>;
+  return <Td className={`text-[12px] border-b-0 ${className}`}>{children}</Td>;
 }
 
 // ── WORKFLOW ─────────────────────────────────────────────────────────────
@@ -1351,7 +1350,7 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
 
       {/* Provider escalations — providers with multiple opens or any breach */}
       {providerStats.length > 0 && (
-        <Card hover={false}>
+        <Card>
           <SectionLabel>Provider escalations</SectionLabel>
           <div className="mt-2 text-[11px] font-mono text-[var(--text-tertiary)]">
             Providers with multiple open takedowns or any SLA breach against this brand
@@ -1379,7 +1378,7 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
       )}
 
       {/* Open takedowns — breached first, then on-time */}
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between">
           <SectionLabel>Open takedowns</SectionLabel>
           <span className="text-[11px] font-mono text-[var(--text-muted)]">
@@ -1405,7 +1404,7 @@ function WorkflowTab({ alerts, takedowns }: { alerts: any[]; takedowns: any[] })
       </Card>
 
       {/* Open alerts — unchanged from scaffold; severity-sorted */}
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between">
           <SectionLabel>Open alerts</SectionLabel>
           <span className="text-[11px] font-mono text-[var(--text-muted)]">
@@ -1462,7 +1461,7 @@ function ScoreCard({
   const empty = score === null || score === undefined;
 
   return (
-    <Card hover={false} variant="active" accent={accent}>
+    <Card variant="active" accent={accent}>
       <div className="flex items-center justify-between">
         <SectionLabel>{label}</SectionLabel>
         {grade && (
@@ -1538,7 +1537,7 @@ function HealthExposureQuadrant({
   const y = haveBoth ? 1 - healthScore! / 100 : 0.5;
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>Posture quadrant</SectionLabel>
       <div className="mt-3 relative" style={{ aspectRatio: '1', maxWidth: 220, margin: '0 auto' }}>
         <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%' }}>
@@ -1604,7 +1603,7 @@ function DomainFootprintCard({
   const others = brandDomains.filter(d => d.domain_type !== 'apex');
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Owned domain footprint</SectionLabel>
         <span className="text-[11px] font-mono text-[var(--text-muted)]">
@@ -1689,7 +1688,7 @@ function FirmographicBlock({
   );
 
   return (
-    <Card hover={false}>
+    <Card>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Who you are</SectionLabel>
         {firmographics?.source && (

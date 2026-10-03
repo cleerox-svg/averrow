@@ -274,7 +274,7 @@ export function NotificationPreferences() {
           previously hiding push-enable behind 5 scroll-screens.
           Status badge, single CTA, and a Test button right next to it
           so the user gets immediate feedback the channel works end-to-end. */}
-      <Card hover={false}>
+      <Card>
         {pushError && (
           <div className="mb-3 p-2 rounded text-[11px] font-mono"
             style={{ background: 'var(--sev-critical-bg)', color: 'var(--sev-critical)', border: '1px solid var(--sev-critical-border)' }}>
@@ -345,7 +345,7 @@ export function NotificationPreferences() {
 
       {/* 1. DELIVERY CHANNELS ─────────────────────────────────────────── */}
       <PanelHeader title="Delivery" subtitle="What severity counts as worth your attention, per channel" icon={<Inbox size={14} />} />
-      <Card hover={false}>
+      <Card>
         <div className="space-y-3">
           <ChannelRow
             icon={<Bell size={14} />}
@@ -380,7 +380,7 @@ export function NotificationPreferences() {
         subtitle="Distinct cadence per audience group — refines the legacy Digest setting"
         icon={<Clock size={14} />}
       />
-      <Card hover={false}>
+      <Card>
         <div className="space-y-4">
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -422,7 +422,7 @@ export function NotificationPreferences() {
 
       {/* 2b. DIGEST (legacy single cadence — affects tenant brand events) */}
       <PanelHeader title="Tenant brand-event digest" subtitle="Cadence for brand-targeted events (DMARC drift, lookalikes, social impersonation)" icon={<Clock size={14} />} />
-      <Card hover={false}>
+      <Card>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Frequency">
             <Select
@@ -443,7 +443,7 @@ export function NotificationPreferences() {
 
       {/* 3. EVENT TOGGLES ─────────────────────────────────────────────── */}
       <PanelHeader title="Events" subtitle="Per-event firing controls — works alongside delivery floors" icon={<AlertTriangle size={14} />} />
-      <Card hover={false}>
+      <Card>
         <div className="space-y-2.5">
           {USER_TOGGLEABLE_EVENTS.map((event) => (
             <div key={event.key} className="flex items-start justify-between gap-3 py-1.5">
@@ -473,7 +473,7 @@ export function NotificationPreferences() {
       {!isSuperAdmin && (
         <>
           <PanelHeader title="Subscriptions" subtitle="Override delivery floors for specific brands you watch" icon={<Building2 size={14} />} />
-          <Card hover={false}>
+          <Card>
             {subscriptions.length === 0 ? (
               <div className="text-xs py-3 text-center" style={{ color: 'var(--text-tertiary)' }}>
                 No brand subscriptions yet. Add a brand to your monitored list and it auto-appears here.
@@ -520,7 +520,7 @@ export function NotificationPreferences() {
 
       {/* 5. QUIET HOURS ──────────────────────────────────────────────── */}
       <PanelHeader title="Quiet hours" subtitle="Suppress push during these hours; in-app bell still updates" icon={<Globe size={14} />} />
-      <Card hover={false}>
+      <Card>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Field label="Start">
             <input
@@ -567,7 +567,7 @@ export function NotificationPreferences() {
       {/* 6. PUSH DEVICES — device-management list. The main on/off +
             test live in the EnablePushBanner at the top of the page. */}
       <PanelHeader title="Registered devices" subtitle="Browsers and phones currently subscribed for push" icon={<Smartphone size={14} />} />
-      <Card hover={false}>
+      <Card>
         {pushDevices && pushDevices.length > 0 ? (
           <div className="space-y-1.5">
             {pushDevices.map((d) => (
@@ -585,7 +585,7 @@ export function NotificationPreferences() {
       {isSuperAdmin && (
         <>
           <PanelHeader title="Super admin" subtitle="See tenant-scoped notifications across the platform" icon={<Eye size={14} />} />
-          <Card hover={false}>
+          <Card>
             <label className="flex items-start justify-between gap-3 cursor-pointer">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>

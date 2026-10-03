@@ -14,8 +14,8 @@ import {
   PageHeader,
   FilterBar,
   PageState,
+  Table, Th, Td,
 } from '@/design-system/components';
-import { Table, Th, Td } from '@/components/ui/Table';
 import { TableLoader } from '@/components/ui/ListLoaders';
 import { DrillHeader } from '@/components/mobile/DrillHeader';
 import { useToast } from '@/components/ui/Toast';
@@ -323,7 +323,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
       </FilterBar>
 
       <div className="overflow-x-auto">
-        <Card hover={false} className="p-0 overflow-hidden">
+        <Card className="p-0 overflow-hidden">
           <Table>
             <thead>
               <tr>
@@ -582,7 +582,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
         <ScoreBreakdownCard breakdownJson={lead.score_breakdown_json} totalScore={lead.prospect_score} />
 
         {/* AI Findings */}
-        <Card hover={false}>
+        <Card>
           <SectionLabel className="mb-3">AI Findings</SectionLabel>
           <AgentAttribution agent="Pathfinder" />
           {lead.findings_summary ? (
@@ -598,7 +598,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
             before sending. Subject stays as-is (rare to need editing); body is
             where the personalization happens. */}
         {lead.ai_enriched === 1 && (outreach1 || outreach2) && (
-          <Card hover={false}>
+          <Card>
             <SectionLabel className="mb-3">Outreach Emails</SectionLabel>
             <div className="flex gap-2 mb-4">
               {outreach1 && (
@@ -648,7 +648,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
         {/* Contact Info — primary outreach target. Buying-signals card surfaces
             the CISO LinkedIn already; this card is for manual override + email +
             additional context the AI didn't capture. */}
-        <Card hover={false}>
+        <Card>
           <SectionLabel className="mb-3">Contact</SectionLabel>
           {lead.target_name ? (
             <div className="space-y-2 text-sm">
@@ -682,7 +682,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
 
         {/* Cross-pipeline link — inbound public scan for the same company */}
         {correlatedScanLead && (
-          <Card hover={false}>
+          <Card>
             <SectionLabel className="mb-3">Also a public scan lead</SectionLabel>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm">
@@ -704,7 +704,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
         )}
 
         {/* Actions */}
-        <Card hover={false}>
+        <Card>
           <SectionLabel className="mb-3">Actions</SectionLabel>
           <div className="flex flex-wrap gap-2">
             {lead.status === 'new' && (
@@ -770,7 +770,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
       </StatGrid>
 
       {unenriched.length > 0 && (
-        <Card hover={false}>
+        <Card>
           <div className="flex items-center justify-between mb-4">
             <SectionLabel>Un-enriched Leads</SectionLabel>
             <Button
@@ -815,7 +815,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
       )}
 
       {unenriched.length === 0 && (
-        <Card hover={false}>
+        <Card>
           <p className="text-sm text-positive/70 text-center py-6 font-mono">
             All leads have been AI enriched.
           </p>

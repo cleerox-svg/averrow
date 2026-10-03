@@ -119,7 +119,7 @@ describe('VerdictBand', () => {
     expect(screen.queryByText('PENDING')).not.toBeInTheDocument();
     expect(screen.getByText('UNAVAILABLE')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(/couldn't load platform health/i);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Try again/ }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 

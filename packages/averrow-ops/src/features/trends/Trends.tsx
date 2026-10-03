@@ -12,8 +12,7 @@ import {
   useNexusActive,
 } from '@/hooks/useTrends';
 import type { IntelligenceBriefing, VolumePoint } from '@/hooks/useTrends';
-import { Card } from '@/components/ui/Card';
-import { Button, Badge, PageHeader, PageState } from '@/design-system/components';
+import { Card, Button, Badge, PageHeader, PageState, Table, Th, Td } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -218,7 +217,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
     : [];
 
   return (
-    <Card hover={false} variant="elevated">
+    <Card variant="elevated">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
@@ -339,7 +338,7 @@ function IntelligenceBriefings() {
           ))}
         </div>
       ) : !briefings?.length ? (
-        <Card hover={false}>
+        <Card>
           <p className="text-sm text-white/40">No intelligence briefings available</p>
         </Card>
       ) : (
@@ -372,7 +371,7 @@ function ThreatVolumeChart({ window }: { window: string }) {
   return (
     <section>
       <SectionLabel className="mb-4">Threat Volume</SectionLabel>
-      <Card hover={false}>
+      <Card>
         {isLoading ? (
           <Skeleton className="h-[280px] lg:h-[280px] h-[200px] rounded-lg" />
         ) : !volume?.length ? (
@@ -424,7 +423,7 @@ function BrandRiskMomentum() {
   }
 
   return (
-    <Card hover={false} className="h-full">
+    <Card className="h-full">
       <SectionLabel className="mb-4">Brand Risk Momentum</SectionLabel>
       {isLoading ? (
         <Skeleton className="h-48 rounded-lg" />
@@ -432,13 +431,13 @@ function BrandRiskMomentum() {
         <p className="text-sm text-white/40">No brand data</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <Table className="w-full text-sm">
             <thead>
               <tr className="text-left font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
-                <th className="pb-2">Brand</th>
-                <th className="pb-2 text-right">This Week</th>
-                <th className="pb-2 text-right">Last Week</th>
-                <th className="pb-2 text-right">Change%</th>
+                <Th className="p-0 pb-2">Brand</Th>
+                <Th className="p-0 pb-2 text-right">This Week</Th>
+                <Th className="p-0 pb-2 text-right">Last Week</Th>
+                <Th className="p-0 pb-2 text-right">Change%</Th>
               </tr>
             </thead>
             <tbody>
@@ -453,21 +452,21 @@ function BrandRiskMomentum() {
                   : 'NEW';
                 return (
                   <tr key={b.target_brand_id ?? b.brand_name} className="data-row border-t border-white/5">
-                    <td className="py-2" style={{ color: 'var(--text-primary)' }}>
+                    <Td className="p-0 py-2" style={{ color: 'var(--text-primary)' }}>
                       {b.target_brand_id
                         ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--amber)] transition-colors">{b.brand_name}</Link>
                         : b.brand_name}
-                    </td>
-                    <td className="py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</td>
-                    <td className="py-2 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{lastWeek.toLocaleString()}</td>
-                    <td className="py-2 text-right font-mono font-semibold" style={changeGlow(isFinite(changePct) ? changePct : 0)}>
+                    </Td>
+                    <Td className="p-0 py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</Td>
+                    <Td className="p-0 py-2 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{lastWeek.toLocaleString()}</Td>
+                    <Td className="p-0 py-2 text-right font-mono font-semibold" style={changeGlow(isFinite(changePct) ? changePct : 0)}>
                       {displayChange}
-                    </td>
+                    </Td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </Card>
@@ -493,7 +492,7 @@ function ProviderMomentumPanel() {
 
   return (
     <div className="space-y-4">
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-4">Provider Momentum</SectionLabel>
         {provLoading ? (
           <Skeleton className="h-36 rounded-lg" />
@@ -528,7 +527,7 @@ function ProviderMomentumPanel() {
         )}
       </Card>
 
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">NEXUS Active Clusters</SectionLabel>
         <AgentAttribution agent="Nexus" />
         {nexusLoading ? (
@@ -572,7 +571,7 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
   return (
     <section>
       <SectionLabel className="mb-4">Threat Type Totals</SectionLabel>
-      <Card hover={false}>
+      <Card>
         <ResponsiveContainer width="100%" height={totals.length * 40 + 20}>
           <BarChart data={totals} layout="vertical" margin={{ left: 120, right: 20, top: 5, bottom: 5 }}>
             <XAxis

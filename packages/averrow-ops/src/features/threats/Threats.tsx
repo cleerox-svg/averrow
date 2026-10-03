@@ -9,6 +9,7 @@ import {
   Card,
   DataRow,
   PageHeader,
+  PageState,
   SaasTechniqueBadge,
   type Severity,
 } from '@/design-system/components';
@@ -121,7 +122,10 @@ export function Threats() {
     brand_id: s.brandId || undefined,
     search:   s.q || undefined,
   }), [s.severity, s.type, s.status, s.country, s.brandId, s.q]);
-  const { data: agg } = useThreatAggregate(filters);
+  const { data: agg, isError: aggError, refetch: refetchAgg } = useThreatAggregate(filters);
+  // A failed aggregate is an error, never "no multi-brand patterns" / 0 tiles.
+  const aggFailed = aggError && !agg;
+  const retryAgg = () => { void refetchAgg(); };
 
   const { data, isLoading } = useQuery({
     queryKey: ['threats', table.params],
@@ -158,18 +162,18 @@ export function Threats() {
 
       <SliceSummaryStrip agg={agg} hasFilters={hasAnyFilter} />
 
-      <HeroStrip agg={agg} />
+      <HeroStrip agg={agg} failed={aggFailed} />
 
       <ThreatInflowChart />
 
       <PanelHeader title="Coordination" subtitle="Patterns hitting multiple brands at once" />
-      <MultiBrandPanel agg={agg} />
+      <MultiBrandPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
 
       <PanelHeader title="Evolving" subtitle="What's growing week-over-week" />
-      <SurgingSignalsPanel agg={agg} />
+      <SurgingSignalsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
 
       <PanelHeader title="Top of pile" subtitle="Where the pressure is concentrated" />
-      <LeaderboardsPanel agg={agg} />
+      <LeaderboardsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
 
       <PanelHeader title="Slice" subtitle="Filter, sort, and inspect — click a row for the evidence behind the verdict" />
       <ThreatsTable
@@ -434,7 +438,7 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
 // ══════════════════════════════════════════════════════════════════
 // HeroStrip — 4 Card hero tiles condensing the 6 narrative axes
 // ══════════════════════════════════════════════════════════════════
-function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
+function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; failed: boolean }) {
   const total = agg?.total ?? 0;
   const confirmedPct = total > 0 ? Math.round(((agg?.confirmed ?? 0) / total) * 100) : 0;
   const correlatedPct = total > 0 ? Math.round(((agg?.correlated ?? 0) / total) * 100) : 0;
@@ -481,7 +485,8 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
       {tiles.map(t => {
         const Icon = t.icon;
         return (
-          <Card key={t.label} variant="active" accent={t.accent}
+          <Card key={t.label} variant="active" accent={t.accent} aria-label={failed ? `${t.label}: couldn't load` : undefined}
+            role={failed ? 'group' : undefined}
             style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
             <div style={{
               position: 'absolute', right: -20, bottom: -20,
@@ -500,9 +505,11 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
                 fontSize: 30, fontWeight: 800, lineHeight: 1.05,
                 color: t.accent, textShadow: `0 0 12px ${t.accent}55`,
               }}>
-                {agg ? t.value : '…'}
+                {agg ? t.value : (failed ? '—' : '…')}
               </div>
-              <div className="mt-1 text-[11px] font-mono text-[var(--text-tertiary)] truncate">{t.sub}</div>
+              <div className="mt-1 text-[11px] font-mono text-[var(--text-secondary)] truncate">
+                {failed ? "Couldn't load" : t.sub}
+              </div>
             </div>
           </Card>
         );
@@ -514,16 +521,23 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
 // ══════════════════════════════════════════════════════════════════
 // MultiBrandPanel — coordination signals
 // ══════════════════════════════════════════════════════════════════
-function MultiBrandPanel({ agg }: { agg: ThreatAggregate | null | undefined }) {
+function AggregateState({ failed, onRetry, what }: { failed: boolean; onRetry: () => void; what: string }) {
+  return failed
+    ? <PageState kind="error" layout="card" compact title={`Couldn't load ${what}`} onRetry={onRetry} />
+    : <PageState kind="loading" layout="card" title={`Loading ${what}…`} />;
+}
+
+function MultiBrandPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
   const campaigns = agg?.multi_brand_campaigns ?? [];
   const actors = agg?.multi_brand_actors ?? [];
   const providers = agg?.multi_brand_providers ?? [];
   const navigate = useNavigate();
   const allEmpty = campaigns.length === 0 && actors.length === 0 && providers.length === 0;
 
+  if (!agg) return <AggregateState failed={failed} onRetry={onRetry} what="multi-brand patterns" />;
   if (allEmpty) {
     return (
-      <Card hover={false}>
+      <Card>
         <div className="text-xs text-[var(--text-tertiary)] py-3">
           No multi-brand patterns in the current slice — every active threat targets a single brand.
         </div>
@@ -579,7 +593,7 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
   emptyMsg: string;
 }) {
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>{title}</SectionLabel>
       <div className="mt-2 space-y-1.5">
         {rows.length === 0 && (
@@ -616,11 +630,12 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
 // ══════════════════════════════════════════════════════════════════
 // SurgingSignalsPanel — week-over-week deltas
 // ══════════════════════════════════════════════════════════════════
-function SurgingSignalsPanel({ agg }: { agg: ThreatAggregate | null | undefined }) {
+function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
   const signals = agg?.surging_signals ?? [];
+  if (!agg) return <AggregateState failed={failed} onRetry={onRetry} what="surging signals" />;
   if (signals.length === 0) {
     return (
-      <Card hover={false}>
+      <Card>
         <div className="text-xs text-[var(--text-tertiary)] py-3">
           No surging signals this week. Catalog activity is steady.
         </div>
@@ -631,7 +646,7 @@ function SurgingSignalsPanel({ agg }: { agg: ThreatAggregate | null | undefined 
   const navigate = useNavigate();
 
   return (
-    <Card hover={false}>
+    <Card>
       <SectionLabel>Surging this week vs last</SectionLabel>
       <div className="mt-3 space-y-1.5">
         {signals.map(s => {
@@ -683,8 +698,8 @@ function SurgingSignalsPanel({ agg }: { agg: ThreatAggregate | null | undefined 
 // ══════════════════════════════════════════════════════════════════
 // LeaderboardsPanel — top brands / countries / providers / actors
 // ══════════════════════════════════════════════════════════════════
-function LeaderboardsPanel({ agg }: { agg: ThreatAggregate | null | undefined }) {
-  if (!agg) return null;
+function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
+  if (!agg) return failed ? <AggregateState failed onRetry={onRetry} what="leaderboards" /> : null;
   const navigate = useNavigate();
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -733,7 +748,7 @@ function Leaderboard({ title, accent, rows }: {
 }) {
   const max = Math.max(1, ...rows.map(r => r.count));
   return (
-    <Card hover={false} style={{ minHeight: 200 }}>
+    <Card style={{ minHeight: 200 }}>
       <SectionLabel>{title}</SectionLabel>
       <div className="mt-2 space-y-1.5">
         {rows.length === 0 && (

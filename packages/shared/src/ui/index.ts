@@ -16,7 +16,8 @@
 export { cn } from './cn';
 export { Button, buttonVariants, type ButtonProps } from './Button';
 export {
-  Card, CardHeader, CardTitle, CardContent, CardFooter,
+  Card, CardHeader, CardTitle, CardContent, CardFooter, resolveCardPadding,
+  type CardProps, type CardVariant, type CardPaddingToken,
 } from './Card';
 export {
   Badge,

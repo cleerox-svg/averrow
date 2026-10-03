@@ -18,7 +18,7 @@ import {
 } from '@/hooks/useAttributionBacklog';
 import type { BacklogCluster, ActorOption } from '@/hooks/useAttributionBacklog';
 import { useNavigate } from 'react-router-dom';
-import { Card, FilterBar, PageHeader, StatTile, PageState } from '@/design-system/components';
+import { Card, FilterBar, PageHeader, StatTile, PageState, Table, Th, Td } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { timeAgo } from '@/lib/time';
@@ -42,15 +42,21 @@ function ClusterRow({
   busy: boolean;
 }) {
   return (
-    <tr
-      onClick={onSelect}
-      className="border-b cursor-pointer transition-colors"
-      style={{ borderColor: 'var(--border-base)' }}
-    >
-      <td className="px-3 py-2 font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>
-        {cluster.cluster_name || cluster.id.slice(0, 12)}
-      </td>
-      <td
+    // The row keeps native semantics (the Attribute/Dismiss buttons stay
+    // reachable). Keyboard/AT navigation is the name button in the first cell;
+    // the row click is a mouse convenience only.
+    <tr onClick={onSelect} className="data-row cursor-pointer">
+      <Td className="px-3 py-2 font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onSelect(); }}
+          aria-label={`Open cluster ${cluster.cluster_name || cluster.id.slice(0, 12)}`}
+          className="text-left font-mono text-[11px] rounded hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]"
+        >
+          {cluster.cluster_name || cluster.id.slice(0, 12)}
+        </button>
+      </Td>
+      <Td
         className="px-3 py-2 text-right font-mono text-[12px] font-semibold"
         style={{
           color:
@@ -61,20 +67,20 @@ function ClusterRow({
         }}
       >
         {cluster.threat_count.toLocaleString()}
-      </td>
-      <td
+      </Td>
+      <Td
         className="px-3 py-2 font-mono text-[10px]"
         style={{ color: 'var(--text-secondary)' }}
       >
         {cluster.asns ? cluster.asns.split(',').slice(0, 2).join(', ') : '—'}
-      </td>
-      <td
+      </Td>
+      <Td
         className="px-3 py-2 font-mono text-[10px]"
         style={{ color: 'var(--text-secondary)' }}
       >
         {cluster.countries ? cluster.countries.split(',').slice(0, 3).join(', ') : '—'}
-      </td>
-      <td
+      </Td>
+      <Td
         className="px-3 py-2 text-center font-mono text-[10px]"
         style={{
           color: cluster.attribution_attempted_at
@@ -83,24 +89,26 @@ function ClusterRow({
         }}
       >
         {cluster.attribution_attempted_at ? 'AI: unknown' : 'never tried'}
-      </td>
-      <td
+      </Td>
+      <Td
         className="px-3 py-2 font-mono text-[10px]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {relTime(cluster.first_detected)}
-      </td>
-      <td
+      </Td>
+      <Td
         className="px-3 py-2 font-mono text-[10px]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {relTime(cluster.last_seen)}
-      </td>
-      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+      </Td>
+      <Td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-1.5 justify-end">
           <button
             type="button"
             onClick={onTogglePicker}
+            aria-expanded={pickerOpen}
+            aria-controls={`attribute-picker-${cluster.id}`}
             disabled={busy}
             className="font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
             style={{ color: 'var(--amber)', background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(229,168,50,0.35)' }}
@@ -117,7 +125,7 @@ function ClusterRow({
             Dismiss
           </button>
         </div>
-      </td>
+      </Td>
     </tr>
   );
 }
@@ -149,8 +157,8 @@ function AttributePickerRow({ cluster, onDone }: {
   };
 
   return (
-    <tr>
-      <td colSpan={8} className="px-4 pb-3 pt-1">
+    <tr id={`attribute-picker-${cluster.id}`}>
+      <Td colSpan={8} className="px-4 pb-3 pt-1 text-[12px]">
         <div
           className="rounded-lg p-3 space-y-2"
           style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-base)' }}
@@ -196,7 +204,7 @@ function AttributePickerRow({ cluster, onDone }: {
             )
           )}
         </div>
-      </td>
+      </Td>
     </tr>
   );
 }
@@ -288,7 +296,7 @@ export function AttributionBacklog() {
         search={{ value: search, onChange: submitSearch, placeholder: 'Search name, ASN, or country…' }}
       />
 
-      <Card hover={false} padding={0} className="overflow-hidden">
+      <Card padding={0} className="overflow-hidden">
         <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
           <div
             className="font-mono text-[10px] uppercase tracking-widest"
@@ -309,60 +317,17 @@ export function AttributionBacklog() {
         ) : items.length === 0 ? (
           <PageState kind="clear" layout="table" title="No unattributed clusters" description="Attributor is keeping up." />
         ) : (
-          <table className="w-full">
+          <Table label="Unattributed clusters">
             <thead>
-              <tr
-                className="border-b"
-                style={{ borderColor: 'var(--border-base)' }}
-              >
-                <th
-                  className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Cluster
-                </th>
-                <th
-                  className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Threats
-                </th>
-                <th
-                  className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  ASNs
-                </th>
-                <th
-                  className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Countries
-                </th>
-                <th
-                  className="px-3 py-2 text-center font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Attribution
-                </th>
-                <th
-                  className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  First seen
-                </th>
-                <th
-                  className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Last seen
-                </th>
-                <th
-                  className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-widest"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Actions
-                </th>
+              <tr>
+                <Th>Cluster</Th>
+                <Th className="text-right">Threats</Th>
+                <Th>ASNs</Th>
+                <Th>Countries</Th>
+                <Th className="text-center">Attribution</Th>
+                <Th>First seen</Th>
+                <Th>Last seen</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -384,7 +349,7 @@ export function AttributionBacklog() {
                 </Fragment>
               ))}
             </tbody>
-          </table>
+          </Table>
         )}
 
         {/* Pagination — unattributed count drives the page total */}

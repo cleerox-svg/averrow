@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Badge } from '@/design-system/components';
+import { Card, Badge } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useSsoConfig, useUpdateSsoConfig, useTestSsoConnection } from '@/hooks/useOrganization';
 
@@ -102,7 +101,7 @@ export function SsoConfig({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-6">
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between mb-4">
           <SectionLabel>SSO Configuration</SectionLabel>
           {ssoConfig?.protocol && ssoConfig.protocol !== 'none' && (
@@ -348,7 +347,7 @@ export function SsoConfig({ slug }: { slug: string }) {
       </Card>
 
       {/* Info Card */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-2">How SSO Works</SectionLabel>
         <ul className="space-y-1.5 text-[11px] text-[color:var(--text-secondary)]">
           <li className="flex items-start gap-2">

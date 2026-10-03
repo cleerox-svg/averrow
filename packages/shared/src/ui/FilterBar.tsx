@@ -41,7 +41,7 @@ export function FilterBar<V extends string = string>({
   const searchId = React.useId();
   const searchLabel = search?.label ?? search?.placeholder ?? 'Search';
   return (
-    <Card variant="base" className={cn('px-4 py-2.5 mb-3', className)}>
+    <Card variant="base" padding="10px 16px" className={cn('mb-3', className)}>
       <div className="flex flex-wrap items-center gap-2">
         {search && (
           <>

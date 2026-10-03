@@ -6,7 +6,7 @@
 //
 // States
 //   value === null            loading: "—" + aria-busy (never a misleading 0)
-//   value === null + error    "Couldn't load", not busy; root aria-label
+//   value === null + error    "Couldn't load", not busy (glow dimmed); root aria-label
 //                             `<label>: couldn't load` / `<label>: loading`
 //   value === 0               neutral accent (resolveStatAccent), calm not alarming
 //   onClick                   renders a real <button>
@@ -95,7 +95,11 @@ export function StatTile({
     <>
       <span
         aria-hidden
-        className="pointer-events-none absolute -right-[34px] -top-[34px] h-[130px] w-[130px] rounded-full opacity-[0.55] blur-[36px] max-sm:h-[70px] max-sm:w-[70px] max-sm:blur-[24px]"
+        className={cn(
+          'pointer-events-none absolute -right-[34px] -top-[34px] h-[130px] w-[130px] rounded-full blur-[36px] max-sm:h-[70px] max-sm:w-[70px] max-sm:blur-[24px]',
+          // A loading or failed tile must not glow like a live red/amber alert.
+          loading || failed ? 'opacity-20' : 'opacity-[0.55]',
+        )}
         style={{ background: accent }}
       />
       {critCount > 0 && (
@@ -127,7 +131,7 @@ export function StatTile({
           Couldn't load
         </span>
       ) : sub ? (
-        <span className="relative mt-2 block font-mono text-[11px] text-[var(--text-secondary)] max-sm:hidden">{sub}</span>
+        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1 max-sm:text-[10px]">{sub}</span>
       ) : null}
       {footer ? <span className="relative mt-3 block">{footer}</span> : null}
       {clickable && (
@@ -165,8 +169,10 @@ export function StatTile({
       </button>
     );
   }
+  // aria-label on a plain div is ignored without a role, so the state name
+  // needs role="group" to be exposed.
   return (
-    <div className={cls} {...aria} {...rest}>
+    <div className={cls} {...aria} {...(stateName ? { role: 'group' } : {})} {...rest}>
       {inner}
     </div>
   );

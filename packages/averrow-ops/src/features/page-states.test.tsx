@@ -73,13 +73,18 @@ function errorAlert(title: RegExp) {
   return screen.queryAllByRole('alert').find((el) => title.test(el.textContent ?? ''));
 }
 
+/** The inline "Couldn't refresh" stale-data banner (polite role=status). */
+function staleBanner(title: RegExp) {
+  return screen.queryAllByRole('status').find((el) => title.test(el.textContent ?? ''));
+}
+
 async function expectErrorWithRetry(title: RegExp, listPrefix: string, emptyCopy: RegExp[]) {
   await waitFor(() => expect(errorAlert(title)).toBeTruthy());
   const alert = errorAlert(title)!;
   for (const copy of emptyCopy) expect(screen.queryByText(copy)).not.toBeInTheDocument();
 
   const before = callsTo(listPrefix);
-  await userEvent.setup().click(within(alert).getByRole('button', { name: 'Try again' }));
+  await userEvent.setup().click(within(alert).getByRole('button', { name: /^Try again/ }));
   await waitFor(() => expect(callsTo(listPrefix)).toBeGreaterThan(before));
 }
 
@@ -252,7 +257,7 @@ describe('Trends (infinite refetch loop)', () => {
     await waitFor(() => expect(errorAlert(/couldn't load trends/i)).toBeTruthy());
 
     routeApi([{ match: volume, result: { success: true, data: [] } }]);
-    await userEvent.setup().click(within(errorAlert(/couldn't load trends/i)!).getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(within(errorAlert(/couldn't load trends/i)!).getByRole('button', { name: /^Try again/ }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Trends' })).toBeInTheDocument());
     // The recovered content mounts further observers of the same key, so the
     // count is >= 2 (initial + retry), not exactly 2.
@@ -273,7 +278,7 @@ describe('NotificationPreferences', () => {
     expect(screen.queryByText('Events')).not.toBeInTheDocument();
 
     const before = callsTo(v1);
-    await userEvent.setup().click(within(errorAlert(/couldn't load your notification/i)!).getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(within(errorAlert(/couldn't load your notification/i)!).getByRole('button', { name: /^Try again/ }));
     await waitFor(() => expect(callsTo(v1)).toBeGreaterThan(before));
   });
 
@@ -430,12 +435,12 @@ describe('Providers: stale data and failed keepPreviousData filters', () => {
     await client.refetchQueries({ queryKey: ['providers-v2'] });
 
     const inline = await waitFor(() => {
-      const el = errorAlert(/couldn't refresh providers/i);
+      const el = staleBanner(/couldn't refresh providers/i);
       expect(el).toBeTruthy();
       return el!;
     });
     expect(inline).toHaveTextContent(/showing the last loaded list/i);
-    expect(within(inline).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(within(inline).getByRole('button', { name: /^Try again/ })).toBeInTheDocument();
     // Last good (empty) data is still on screen, not replaced by the card error.
     expect(screen.getByText('No providers match')).toBeInTheDocument();
     expect(errorAlert(/couldn't load providers/i)).toBeUndefined();
@@ -473,7 +478,7 @@ describe('Takedowns: refetch fails after an empty result', () => {
     routeApi([{ match: list, result: 'reject' }]);
     await client.refetchQueries({ queryKey: ['admin-takedowns'] });
 
-    await waitFor(() => expect(errorAlert(/couldn't refresh takedowns/i)).toBeTruthy());
+    await waitFor(() => expect(staleBanner(/couldn't refresh takedowns/i)).toBeTruthy());
     expect(screen.getByText('No takedown requests')).toBeInTheDocument();
     expect(errorAlert(/couldn't load takedown requests/i)).toBeUndefined();
   });

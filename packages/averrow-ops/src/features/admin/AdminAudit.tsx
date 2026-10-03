@@ -21,7 +21,7 @@ function resourceHref(type: string | null, id: string | null): string | null {
     default:              return null;
   }
 }
-import { Button, Card, Input, PageHeader, StatTile, PageState } from '@/design-system/components';
+import { Button, Card, Input, PageHeader, StatTile, PageState, Table, Th, Td } from '@/design-system/components';
 import { relativeTime, parseUtc } from '@/lib/time';
 import { api } from '@/lib/api';
 
@@ -59,22 +59,27 @@ function formatTimestamp(ts: string): string {
   return parseUtc(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
-function outcomeColor(outcome: string): string {
-  if (outcome === 'success') return 'text-green-400';
-  if (outcome === 'failure') return 'text-red-400';
-  return 'text-amber-400';
+// Theme-aware outcome tokens (--sev-*-text flips to an AA-contrast variant in
+// light mode). success = info/green, failure = critical, denied = medium.
+type OutcomeTone = 'info' | 'critical' | 'medium';
+const outcomeTone = (outcome: string): OutcomeTone =>
+  outcome === 'success' ? 'info' : outcome === 'failure' ? 'critical' : 'medium';
+
+function outcomeTextStyle(outcome: string): React.CSSProperties {
+  return { color: `var(--sev-${outcomeTone(outcome)}-text)` };
 }
 
-function outcomeDotColor(outcome: string): string {
-  if (outcome === 'success') return 'bg-green-400';
-  if (outcome === 'failure') return 'bg-red-400';
-  return 'bg-amber-400';
+function outcomeDotStyle(outcome: string): React.CSSProperties {
+  return { background: `var(--sev-${outcomeTone(outcome)}-text)` };
 }
 
-function outcomeBadgeClass(outcome: string): string {
-  if (outcome === 'success') return 'border-green-500/30 bg-green-900/30 text-green-400';
-  if (outcome === 'failure') return 'border-red-500/30 bg-red-900/30 text-red-400';
-  return 'border-amber-500/30 bg-amber-900/30 text-amber-400';
+function outcomeBadgeStyle(outcome: string): React.CSSProperties {
+  const t = outcomeTone(outcome);
+  return {
+    color: `var(--sev-${t}-text)`,
+    background: `var(--sev-${t}-bg)`,
+    borderColor: `var(--sev-${t}-border)`,
+  };
 }
 
 function pillStyle(active: boolean): React.CSSProperties {
@@ -102,7 +107,7 @@ function formatJson(raw: string | null): string {
 
 /* ─── Expanded Row Detail ─────────────────────────────────────────── */
 
-function RowDetail({ entry }: { entry: AuditEntry }) {
+function RowDetail({ entry, id }: { entry: AuditEntry; id: string }) {
   const [copied, setCopied] = useState(false);
 
   const copyIp = useCallback(() => {
@@ -114,9 +119,9 @@ function RowDetail({ entry }: { entry: AuditEntry }) {
   }, [entry.ip_address]);
 
   return (
-    <tr>
-      <td colSpan={7} className="px-3 py-0">
-        <Card hover={false} padding={16} className="mb-3 mt-1 space-y-3">
+    <tr id={id}>
+      <Td colSpan={7} className="px-3 py-0 border-b-0">
+        <Card variant="flat" padding={16} className="mb-3 mt-1 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Full Timestamp</span>
@@ -158,7 +163,7 @@ function RowDetail({ entry }: { entry: AuditEntry }) {
             </pre>
           </div>
         </Card>
-      </td>
+      </Td>
     </tr>
   );
 }
@@ -291,7 +296,7 @@ export function AdminAudit() {
       </div>
 
       {/* Filter Bar */}
-      <Card hover={false} padding={12}>
+      <Card padding={12}>
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           {/* Search */}
           <div className="w-full lg:w-64">
@@ -381,7 +386,7 @@ export function AdminAudit() {
       {isLoading && !failed && (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
-            <Card key={i} hover={false} padding={16} className="animate-pulse h-12">{null}</Card>
+            <Card key={i} padding={16} className="animate-pulse h-12">{null}</Card>
           ))}
         </div>
       )}
@@ -395,20 +400,19 @@ export function AdminAudit() {
 
       {/* Audit Table */}
       {!isLoading && !failed && entries.length > 0 && (
-        <Card hover={false} padding={0} className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[600px]">
+        <Card padding={0} className="overflow-hidden">
+          <Table label="Audit log" className="min-w-[600px]">
               <thead>
-                <tr className="border-b border-white/[0.06]">
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>Timestamp</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>Action</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>Outcome</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>User</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>IP Address</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-left" style={{ color: 'var(--text-secondary)' }}>Resource</th>
-                  <th className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 py-2.5 text-center w-10" style={{ color: 'var(--text-secondary)' }}>
+                <tr>
+                  <Th>Timestamp</Th>
+                  <Th>Action</Th>
+                  <Th>Outcome</Th>
+                  <Th>User</Th>
+                  <Th>IP Address</Th>
+                  <Th>Resource</Th>
+                  <Th className="text-center w-10">
                     <span className="sr-only">Expand</span>
-                  </th>
+                  </Th>
                 </tr>
               </thead>
               <tbody>
@@ -421,8 +425,7 @@ export function AdminAudit() {
                   />
                 ))}
               </tbody>
-            </table>
-          </div>
+          </Table>
         </Card>
       )}
 
@@ -486,46 +489,57 @@ function AuditRow({ entry, expanded, onToggle }: {
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const detailId = `audit-detail-${entry.id}`;
   return (
     <>
-      <tr
-        onClick={onToggle}
-        className="data-row border-b border-white/[0.03] group"
-      >
+      {/* Keyboard/AT activation is the disclosure button in the first cell; the
+          row click is a mouse convenience only. The row keeps its native
+          semantics so the resource link stays reachable. */}
+      <tr onClick={onToggle} className="data-row group cursor-pointer border-b border-[var(--border-base)]">
         {/* Timestamp */}
-        <td className="px-3 py-2.5 font-mono text-[12px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }} title={formatTimestamp(entry.timestamp)}>
-          {relativeTime(entry.timestamp)}
-        </td>
+        <Td className="px-3 py-2.5 font-mono text-[12px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }} title={formatTimestamp(entry.timestamp)}>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            className="font-mono text-[12px] whitespace-nowrap rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]"
+            style={{ color: 'inherit' }}
+          >
+            {relativeTime(entry.timestamp)}
+            <span className="sr-only"> — {entry.action} {entry.outcome}, {expanded ? 'collapse' : 'expand'} details</span>
+          </button>
+        </Td>
 
         {/* Action */}
-        <td className="px-3 py-2.5">
-          <span className={`inline-block font-mono text-[10px] px-2 py-0.5 rounded border ${outcomeBadgeClass(entry.outcome)}`}>
+        <Td className="px-3 py-2.5">
+          <span className="inline-block font-mono text-[10px] px-2 py-0.5 rounded border" style={outcomeBadgeStyle(entry.outcome)}>
             {entry.action}
           </span>
-        </td>
+        </Td>
 
         {/* Outcome */}
-        <td className="px-3 py-2.5">
+        <Td className="px-3 py-2.5">
           <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${outcomeDotColor(entry.outcome)} ${entry.outcome === 'success' ? 'animate-pulse' : ''}`} />
-            <span className={`font-mono text-[10px] ${outcomeColor(entry.outcome)}`}>
+            <span aria-hidden className={`w-2 h-2 rounded-full ${entry.outcome === 'success' ? 'animate-pulse' : ''}`} style={outcomeDotStyle(entry.outcome)} />
+            <span className="font-mono text-[10px]" style={outcomeTextStyle(entry.outcome)}>
               {entry.outcome}
             </span>
           </span>
-        </td>
+        </Td>
 
         {/* User */}
-        <td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>
+        <Td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>
           {entry.user_id ? truncateMiddle(entry.user_id, 20) : <span className="text-white/40">System</span>}
-        </td>
+        </Td>
 
         {/* IP */}
-        <td className="px-3 py-2.5 font-mono text-[11px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
+        <Td className="px-3 py-2.5 font-mono text-[11px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
           {entry.ip_address ? truncateMiddle(entry.ip_address, 15) : '—'}
-        </td>
+        </Td>
 
         {/* Resource — clickable when it maps to an entity route (GM1). */}
-        <td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+        <Td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {entry.resource_type
             ? (() => {
                 const href = resourceHref(entry.resource_type, entry.resource_id);
@@ -542,19 +556,20 @@ function AuditRow({ entry, expanded, onToggle }: {
                 ) : label;
               })()
             : '—'}
-        </td>
+        </Td>
 
         {/* Chevron */}
-        <td className="px-3 py-2.5 text-center">
+        <Td className="px-3 py-2.5 text-center">
           <svg
+            aria-hidden="true"
             className={`w-4 h-4 text-white/40 group-hover:text-white/50 transition-transform ${expanded ? 'rotate-180' : ''}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
-        </td>
+        </Td>
       </tr>
-      {expanded && <RowDetail entry={entry} />}
+      {expanded && <RowDetail entry={entry} id={detailId} />}
     </>
   );
 }

@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge } from '@/design-system/components';
+import { Card, Badge } from '@/design-system/components';
 import {
   useWebhookConfig, useUpdateWebhook, useRegenerateWebhookSecret, useTestWebhook,
   useWebhookDeliveries,
@@ -82,7 +81,7 @@ export function WebhookConfig() {
   return (
     <div className="space-y-6">
       {/* Endpoint URL */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">Webhook Configuration</SectionLabel>
 
         <div className="space-y-4">
@@ -139,7 +138,7 @@ export function WebhookConfig() {
       </Card>
 
       {/* Subscribed Events */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-3">Subscribed Events</SectionLabel>
         <div className="space-y-2">
           {WEBHOOK_EVENTS.map((evt) => (
@@ -169,7 +168,7 @@ export function WebhookConfig() {
       </Card>
 
       {/* Test + Deliveries */}
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center gap-3">
           <Button
             variant="secondary"
@@ -215,7 +214,7 @@ export function WebhookConfig() {
       </Card>
 
       {/* Webhook Payload Example */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-2">Payload Example</SectionLabel>
         <pre className="bg-[color:var(--bg-page)] border border-white/10 rounded-lg p-3 text-[10px] font-mono text-[color:var(--text-secondary)] overflow-x-auto">
 {`{
@@ -234,7 +233,7 @@ export function WebhookConfig() {
       </Card>
 
       {/* STIX Export */}
-      <Card hover={false}>
+      <Card>
         <SectionLabel className="mb-2">STIX 2.1 Export</SectionLabel>
         <p className="text-[11px] text-[color:var(--text-tertiary)] mb-3">
           Export threat indicators in STIX 2.1 format for SIEM ingestion.

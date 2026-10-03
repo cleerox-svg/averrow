@@ -10,7 +10,8 @@
 //   const kind = pageStateKind({ isLoading, isError, isEmpty: !rows.length });
 //   if (kind) return <PageState kind={kind} onRetry={refetch} />;
 //
-// Roles: error => role="alert"; loading => role="status" + aria-busy + an
+// Roles: error => role="alert" (inline error => role="status": it is the
+// stale-data banner shown above data that is still on screen); loading => role="status" + aria-busy + an
 // sr-only "Loading…"; empty/clear/locked => role="status".
 
 import { isValidElement, type ReactNode } from 'react';
@@ -43,6 +44,9 @@ export interface PageStateProps {
   /** Default `page`. */
   layout?: PageStateLayout;
   compact?: boolean;
+  /** Inline error only: force role="alert" when there is no data on screen
+   *  (an inline error is otherwise the polite stale-data banner). */
+  assertive?: boolean;
   className?: string;
 }
 
@@ -160,6 +164,7 @@ export function PageState({
   onRetry,
   layout = 'page',
   compact = false,
+  assertive = false,
   className,
 }: PageStateProps) {
   if (kind === 'loading') {
@@ -193,12 +198,16 @@ export function PageState({
   const heading = title ?? defaults.title;
   const body = description ?? defaults.description;
   const glyph = icon === undefined ? ICONS[kind] : icon;
-  const role = kind === 'error' ? 'alert' : 'status';
+  // An inline error is the stale-data banner (a refetch failed while data is
+  // still on screen), so it is polite; a blocking error with no data is assertive.
+  const role = kind === 'error' && (layout !== 'inline' || assertive) ? 'alert' : 'status';
 
   const primary = action != null ? renderAction(action, 'primary') : null;
   const secondary = secondaryAction != null ? renderAction(secondaryAction, 'secondary') : null;
+  // The accessible name carries the title so several error cards on one page
+  // expose distinct "Try again" buttons (the visible label stays "Try again").
   const retry = kind === 'error' && onRetry
-    ? <Button size="sm" variant={primary ? 'secondary' : 'primary'} onClick={onRetry}>Try again</Button>
+    ? <Button size="sm" variant={primary ? 'secondary' : 'primary'} onClick={onRetry} aria-label={`Try again: ${heading}`}>Try again</Button>
     : null;
   const hasActions = !!(primary || secondary || retry);
 

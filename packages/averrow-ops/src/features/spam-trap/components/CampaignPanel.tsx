@@ -4,7 +4,7 @@ import { useSpamTrapCampaigns, useSpamTrapDaily } from '@/hooks/useSpamTrap';
 import type { SeedCampaign } from '@/hooks/useSpamTrap';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Badge, type BadgeStatus } from '@/design-system/components';
+import { Badge, type BadgeStatus, Table, Th, Td, PageState } from '@/design-system/components';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const GLASS_CARD: CSSProperties = {
@@ -49,26 +49,26 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
 
       {/* Channel performance table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left">
+        <Table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/[0.06]">
-              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5">Channel</th>
-              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Seeds</th>
-              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Catches</th>
-              <th className="font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Rate</th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5">Channel</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Seeds</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Catches</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Rate</Th>
             </tr>
           </thead>
           <tbody>
             {channels.map((ch) => (
               <tr key={ch} className="border-b border-white/[0.03]">
-                <td className="py-1.5 font-mono text-[11px] text-white/60">{ch}</td>
-                <td className="py-1.5 font-mono text-[11px] text-white/50 text-right">{seedCount}</td>
-                <td className="py-1.5 font-mono text-[11px] text-white/50 text-right">{catches}</td>
-                <td className="py-1.5 font-mono text-[11px] text-[#E5A832] text-right">{catchRate}%</td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/60">{ch}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{seedCount}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{catches}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-[#E5A832] text-right">{catchRate}%</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </div>
   );
@@ -181,15 +181,7 @@ export function CampaignPanel() {
 
   if (isError) {
     return (
-      <div className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3" style={GLASS_CARD}>
-        <span className="text-white/40 text-sm font-mono">Unable to load campaigns</span>
-        <button
-          onClick={() => refetch()}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-mono text-white/60 transition-colors"
-        >
-          RETRY
-        </button>
-      </div>
+      <PageState kind="error" layout="card" compact title="Couldn't load campaigns" onRetry={() => { void refetch(); }} />
     );
   }
 

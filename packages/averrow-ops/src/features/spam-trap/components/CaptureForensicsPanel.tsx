@@ -4,7 +4,7 @@ import { useSpamTrapCaptures, useSpamTrapCapture } from '@/hooks/useSpamTrap';
 import type { SpamTrapCapture, SpamTrapCaptureDetail } from '@/hooks/useSpamTrap';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Badge } from '@/design-system/components';
+import { Badge, PageState } from '@/design-system/components';
 
 const GLASS_CARD: CSSProperties = {
   background: 'var(--bg-card)',
@@ -322,15 +322,7 @@ export function CaptureForensicsPanel() {
 
   if (isError) {
     return (
-      <div className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3" style={GLASS_CARD}>
-        <span className="text-white/40 text-sm font-mono">Unable to load captures</span>
-        <button
-          onClick={() => refetch()}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-mono text-white/60 transition-colors"
-        >
-          RETRY
-        </button>
-      </div>
+      <PageState kind="error" layout="card" compact title="Couldn't load captures" onRetry={() => { void refetch(); }} />
     );
   }
 

@@ -1,6 +1,6 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Search } from 'lucide-react';
-import { BreakdownCard, PageState } from '@/design-system/components';
+import { BreakdownCard, PageState, Table, Th, Td } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useThreatActorDetail } from '@/hooks/useThreatActors';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
@@ -265,35 +265,35 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             Known Infrastructure
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-[11px] font-mono">
+            <Table className="w-full text-[11px] font-mono">
               <thead>
                 <tr className="text-[var(--text-tertiary)] text-left border-b border-white/10">
-                  <th className="pb-2 pr-4">ASN</th>
-                  <th className="pb-2 pr-4">Domain</th>
-                  <th className="pb-2 pr-4">Country</th>
-                  <th className="pb-2 pr-4">Confidence</th>
-                  <th className="pb-2">Notes</th>
+                  <Th className="p-0 text-[11px] pb-2 pr-4">ASN</Th>
+                  <Th className="p-0 text-[11px] pb-2 pr-4">Domain</Th>
+                  <Th className="p-0 text-[11px] pb-2 pr-4">Country</Th>
+                  <Th className="p-0 text-[11px] pb-2 pr-4">Confidence</Th>
+                  <Th className="p-0 text-[11px] pb-2">Notes</Th>
                 </tr>
               </thead>
               <tbody>
                 {actor.infrastructure.map(infra => (
                   <tr key={infra.id} className="data-row border-b border-white/5 text-white/70">
-                    <td className="py-2 pr-4">{infra.asn ?? '—'}</td>
-                    <td className="py-2 pr-4">{infra.domain ?? '—'}</td>
-                    <td className="py-2 pr-4">{countryFlag(infra.country_code)} {infra.country_code ?? '—'}</td>
-                    <td className="py-2 pr-4">
+                    <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{infra.asn ?? '—'}</Td>
+                    <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{infra.domain ?? '—'}</Td>
+                    <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">{countryFlag(infra.country_code)} {infra.country_code ?? '—'}</Td>
+                    <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">
                       <span className={
                         infra.confidence === 'confirmed' ? 'text-green-400' :
                         infra.confidence === 'high' ? 'text-[var(--amber)]' : 'text-[var(--text-tertiary)]'
                       }>
                         {infra.confidence}
                       </span>
-                    </td>
-                    <td className="py-2 text-white/50">{infra.notes ?? '—'}</td>
+                    </Td>
+                    <Td className="p-0 text-[11px] py-2 text-white/50">{infra.notes ?? '—'}</Td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         </div>
       )}

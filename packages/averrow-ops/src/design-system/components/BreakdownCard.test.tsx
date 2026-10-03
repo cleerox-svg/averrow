@@ -40,9 +40,11 @@ describe('BreakdownCard', () => {
         x
       </BreakdownCard>,
     );
-    const cls = screen.getByTestId('breakdown-card').className;
-    expect(cls).toContain('border-[var(--border-base)]');
-    expect(cls).toContain('var(--bg-card)');
+    // The shared Card styles itself inline from the theme tokens.
+    const el = screen.getByTestId('breakdown-card');
+    expect(el.style.border).toContain('var(--border-base)');
+    expect(el.style.background).toContain('var(--bg-card)');
+    expect(el.style.padding).toBe('14px 16px');
   });
 
   it('merges className and style from the caller without losing containerType', () => {

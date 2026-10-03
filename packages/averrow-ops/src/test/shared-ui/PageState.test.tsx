@@ -43,8 +43,19 @@ describe('PageState roles', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('inline error is still role=alert', () => {
+  it('inline error is the polite stale-data banner (role=status), not an alert', () => {
     render(<PageState kind="error" layout="inline" />);
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('inline error with `assertive` (no data on screen) stays role=alert', () => {
+    render(<PageState kind="error" layout="inline" assertive />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+
+  it.each(['page', 'card', 'table'] as const)('blocking error (%s) stays role=alert', (layout) => {
+    render(<PageState kind="error" layout={layout} />);
     expect(screen.getByRole('alert')).toBeInTheDocument();
   });
 });
@@ -66,13 +77,27 @@ describe('PageState content', () => {
   it('shows Try again only for error, and calls onRetry', async () => {
     const onRetry = vi.fn();
     const { rerender } = render(<PageState kind="error" onRetry={onRetry} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Try again/ }));
     expect(onRetry).toHaveBeenCalledTimes(1);
 
     for (const kind of ['empty', 'clear', 'locked', 'loading'] as const) {
       rerender(<PageState kind={kind} onRetry={onRetry} />);
-      expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Try again/ })).not.toBeInTheDocument();
     }
+  });
+
+  it('the retry button name includes the title so several error cards stay distinguishable', async () => {
+    const a = vi.fn(); const b = vi.fn();
+    render(
+      <>
+        <PageState kind="error" layout="card" title="Couldn't load brands" onRetry={a} />
+        <PageState kind="error" layout="card" title="Couldn't load feeds" onRetry={b} />
+      </>,
+    );
+    expect(screen.getAllByRole('button', { name: /^Try again/ })).toHaveLength(2);
+    await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load feeds" }));
+    expect(b).toHaveBeenCalledTimes(1);
+    expect(a).not.toHaveBeenCalled();
   });
 
   it('no Try again button when onRetry is omitted', () => {
@@ -136,12 +161,12 @@ describe('PageState content', () => {
     expect(container.firstChild).not.toHaveClass('py-16');
   });
 
-  it('inline layout is a single row and keeps role=alert for errors', () => {
+  it('inline layout is a single row (role=status for the stale-data banner)', () => {
     render(<PageState kind="error" layout="inline" title="Couldn't refresh" description="Showing the last list." onRetry={() => {}} />);
-    const alert = screen.getByRole('alert');
+    const alert = screen.getByRole('status');
     expect(alert).toHaveClass('flex-wrap', 'items-center');
     expect(alert).toHaveTextContent("Couldn't refresh");
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Try again/ })).toBeInTheDocument();
   });
 
   it('locked is calm status, not an alert', () => {

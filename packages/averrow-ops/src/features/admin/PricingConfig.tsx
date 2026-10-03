@@ -10,9 +10,8 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
-import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge, PageHeader, PageState } from '@/design-system/components';
+import { Card, Badge, PageHeader, PageState } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import {
@@ -52,7 +51,7 @@ export function PricingConfig() {
 function PlansSection({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading, error } = usePricingPlans();
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading plans…</div>;
-  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load plans: {error.message}</p></Card>;
+  if (error)     return <Card className="border-accent/20"><p className="text-sm text-accent">Couldn't load plans: {error.message}</p></Card>;
   if (!data)     return null;
 
   return (
@@ -100,7 +99,7 @@ function PlanRow({ plan, canEdit }: { plan: PricingPlan; canEdit: boolean }) {
 
   if (!editing) {
     return (
-      <Card hover={false}>
+      <Card>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div className="flex items-center gap-2">
@@ -147,7 +146,7 @@ function PlanRow({ plan, canEdit }: { plan: PricingPlan; canEdit: boolean }) {
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <form onSubmit={submit} className="space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-base font-semibold text-[color:var(--text-primary)]">{plan.display_name}</h3>
@@ -200,7 +199,7 @@ function PlanRow({ plan, canEdit }: { plan: PricingPlan; canEdit: boolean }) {
 function ModulesSection({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading, error } = useModulePrices();
   if (isLoading) return <div className="text-sm text-white/55 font-mono py-12 text-center">Loading module prices…</div>;
-  if (error)     return <Card hover={false} className="border-accent/20"><p className="text-sm text-accent">Couldn't load module prices: {error.message}</p></Card>;
+  if (error)     return <Card className="border-accent/20"><p className="text-sm text-accent">Couldn't load module prices: {error.message}</p></Card>;
   if (!data)     return null;
 
   return (
@@ -245,7 +244,7 @@ function ModuleRow({ module: m, canEdit }: { module: ModulePrice; canEdit: boole
 
   if (!editing) {
     return (
-      <Card hover={false}>
+      <Card>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <div className="flex items-center gap-2">
@@ -273,7 +272,7 @@ function ModuleRow({ module: m, canEdit }: { module: ModulePrice; canEdit: boole
   }
 
   return (
-    <Card hover={false}>
+    <Card>
       <form onSubmit={submit} className="space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">{m.display_name}</h3>

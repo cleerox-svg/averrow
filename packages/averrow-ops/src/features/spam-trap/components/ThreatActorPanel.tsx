@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useSpamTrapCaptures } from '@/hooks/useSpamTrap';
 import type { SpamTrapCapture } from '@/hooks/useSpamTrap';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { PageState } from '@/design-system/components';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#f87171',
@@ -103,15 +104,7 @@ export function ThreatActorPanel() {
 
   if (isError) {
     return (
-      <div className="rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center gap-3" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
-        <span className="text-white/40 text-sm font-mono">Unable to load captures</span>
-        <button
-          onClick={() => refetch()}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-mono text-white/60 transition-colors"
-        >
-          RETRY
-        </button>
-      </div>
+      <PageState kind="error" layout="card" compact title="Couldn't load captures" onRetry={() => { void refetch(); }} />
     );
   }
 
