@@ -36,6 +36,7 @@ import {
   renderPlatformAiCallsFailing,
   renderPlatformSpamTrapSeedingStalled,
   renderPlatformSpamTrapCaptureStale,
+  renderPlatformAbuseMailboxInboundStale,
   renderPlatformGeoipRefreshStalled,
   renderPlatformWorkflowDispatchSilent,
   // NX6: previously-unwired templates.
@@ -1263,6 +1264,31 @@ export const flightControlAgent: AgentModule = {
       }
     } catch (err) {
       console.warn('[flight-control] spam-trap freshness check failed:', err);
+    }
+
+    // ─── Abuse-mailbox inbound freshness guard ───────────────────────
+    // The public abuse@/phishing@/report@/security@averrow.ca mailboxes
+    // went dark on 2026-07-17 for ~11 weeks: the Worker rename unbound the
+    // Email Routing rules, Cloudflare answered every sender with "550 5.1.1
+    // Address does not exist", and nothing alerted. The classifier-silent
+    // guard above can't see this — it only fires when rows are PENDING, and
+    // an outage upstream of the Worker produces no rows at all. Watch the
+    // newest arrival instead. MAX(received_at) is served by
+    // idx_abuse_inbox_received_at (0273).
+    try {
+      const INBOUND_STALE_DAYS = 7;   // public mailboxes + attacker probes; a silent week is abnormal
+      const inRow = await db.prepare(
+        `SELECT MAX(received_at) AS last_in FROM abuse_inbox_messages`,
+      ).first<{ last_in: string | null }>();
+      if (inRow?.last_in) {
+        const days = (Date.now() - Date.parse(inRow.last_in.replace(' ', 'T') + 'Z')) / 86_400_000;
+        if (Number.isFinite(days) && days > INBOUND_STALE_DAYS) {
+          await emitPlatformNotification(env, 'platform_abuse_mailbox_inbound_stale',
+            renderPlatformAbuseMailboxInboundStale({ days_since_message: days, threshold_days: INBOUND_STALE_DAYS }));
+        }
+      }
+    } catch (err) {
+      console.warn('[flight-control] abuse-mailbox inbound freshness check failed:', err);
     }
 
     // Collect enrichment backlog warnings into a single D1 batch

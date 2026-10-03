@@ -60,6 +60,7 @@ export type NotificationEventKey =
   | 'platform_ai_calls_failing'
   | 'platform_spam_trap_seeding_stalled'
   | 'platform_spam_trap_capture_stale'
+  | 'platform_abuse_mailbox_inbound_stale'
   | 'platform_ai_spend_burst'
   | 'platform_resend_bounces'
   | 'platform_briefing_silent'
@@ -319,6 +320,14 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDef[] = [
     key: 'platform_spam_trap_capture_stale',
     label: 'Spam-Trap Captures Stale',
     description: 'No spam-trap captures in >14 days — the honeypot has gone quiet',
+    dedupWindow: '-1 day',
+    defaultEnabled: true,
+    userToggleable: false,
+  },
+  {
+    key: 'platform_abuse_mailbox_inbound_stale',
+    label: 'Abuse Mailbox Inbound Stale',
+    description: 'No message has reached the abuse mailbox in >7 days — Email Routing may be bouncing abuse@/phishing@ before the Worker sees them',
     dedupWindow: '-1 day',
     defaultEnabled: true,
     userToggleable: false,
