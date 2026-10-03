@@ -35,8 +35,8 @@ import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour, getCubeSourceWatermark } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
-import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryOperations } from '../handlers/observatory';
-import { handleDashboardOverview, handleDashboardTopBrands } from '../handlers/dashboard';
+import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive } from '../handlers/observatory';
+import { handleDashboardOverview } from '../handlers/dashboard';
 import { handleListAgents } from '../handlers/agents';
 import { handleAdminDashboard } from '../handlers/admin';
 import type { AuthContext } from '../middleware/auth';
@@ -55,6 +55,89 @@ export const NAVIGATOR_AGENT_ID = 'navigator';
  * history for Navigator should filter on IN (NAVIGATOR_AGENT_ID, NAVIGATOR_LEGACY_AGENT_ID).
  */
 export const NAVIGATOR_LEGACY_AGENT_ID = 'fast_tick';
+
+// ─── Cache pre-warm targets ───────────────────────────────────────────
+//
+// Each entry is the EXACT path + query string a live client sends, so the
+// handler builds the same KV key the client's request reads. A warm whose
+// key no real request produces is pure D1 spend (PR7b audit, 2026-10):
+// every target below names the consumer it serves. When a client changes
+// its query string, change the matching entry here — the pin in
+// test/navigator-warm-targets.test.ts compares each warm's KV key against
+// the client's request key.
+//
+// Phases (cadence + budget gating live in runNavigatorImpl, unchanged):
+//   A  — every 10 min (Observatory landing: globe 7d + desktop side panel)
+//   A2 — every 15 min (Observatory 24h/30d period toggles)
+//   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe)
+//   C  — every 30 min (Brands + Threat Actors pages)
+
+export type NavigatorWarmPhase = 'A' | 'A2' | 'B' | 'C';
+
+export interface NavigatorWarmTarget {
+  phase: NavigatorWarmPhase;
+  /** Path + query string, byte-for-byte what the consumer requests. */
+  path: string;
+  /** Who reads the key this warm writes. */
+  consumer: string;
+  handler: (request: Request, env: Env) => Promise<Response>;
+}
+
+/**
+ * Synthetic super_admin context for warming the admin dashboard snapshot
+ * (handleAdminDashboard gates its threat_health slice on role). Warming is
+ * a trusted internal cron path — this ctx never authorizes a request, it
+ * only selects which role-scoped cache variant to populate.
+ */
+const DASHBOARD_WARM_CTX: AuthContext = {
+  userId: 'navigator',
+  email: 'navigator@averrow.internal',
+  role: 'super_admin',
+  orgId: null,
+  orgRole: null,
+  embeddedScope: undefined,
+  enrollOnly: false,
+};
+
+export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
+  // ── Phase A — Observatory landing (7d default) ──
+  // The ops client also sends `source_feed=` (and `limit=2000` on nodes);
+  // the handlers normalise empty source_feed to the `all` key segment and
+  // nodes does not key on limit, so the param-less warm is the same key.
+  { phase: 'A', path: '/api/observatory/nodes?period=7d', consumer: 'ops ObservatoryV3 + SidePanel (useObservatoryThreats)', handler: handleObservatoryNodes },
+  { phase: 'A', path: '/api/observatory/arcs?period=7d', consumer: 'ops ObservatoryV3 (useObservatoryArcs)', handler: handleObservatoryArcs },
+  { phase: 'A', path: '/api/observatory/stats?period=7d', consumer: 'ops ObservatoryV3 + SidePanel (useObservatoryStats); MCP smoke probe', handler: handleObservatoryStats },
+  { phase: 'A', path: '/api/observatory/live?limit=8', consumer: 'ops SidePanel LiveFeedWidget', handler: handleObservatoryLive },
+  { phase: 'A', path: '/api/v1/operations?limit=4&offset=0&status=active', consumer: 'ops SidePanel OperationsWidget (useOperations)', handler: handleListOperations },
+
+  // ── Phase A2 — Observatory alternate periods ──
+  { phase: 'A2', path: '/api/observatory/nodes?period=24h', consumer: 'ops ObservatoryV3 24H toggle', handler: handleObservatoryNodes },
+  { phase: 'A2', path: '/api/observatory/arcs?period=24h', consumer: 'ops ObservatoryV3 24H toggle', handler: handleObservatoryArcs },
+  { phase: 'A2', path: '/api/observatory/stats?period=24h', consumer: 'ops ObservatoryV3 24H toggle', handler: handleObservatoryStats },
+  { phase: 'A2', path: '/api/observatory/nodes?period=30d', consumer: 'ops ObservatoryV3 30D toggle', handler: handleObservatoryNodes },
+  { phase: 'A2', path: '/api/observatory/arcs?period=30d', consumer: 'ops ObservatoryV3 30D toggle', handler: handleObservatoryArcs },
+  { phase: 'A2', path: '/api/observatory/stats?period=30d', consumer: 'ops ObservatoryV3 30D toggle', handler: handleObservatoryStats },
+
+  // ── Phase B — Dashboard / agents / operations ──
+  { phase: 'B', path: '/api/dashboard/overview', consumer: 'averrow-mcp platform smoke probe (auditor JWT). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys', handler: handleDashboardOverview },
+  { phase: 'B', path: '/api/agents', consumer: 'ops Agents (useAgents)', handler: handleListAgents },
+  { phase: 'B', path: '/api/v1/operations?limit=12&offset=0', consumer: 'ops Campaigns default list (useOperations)', handler: handleListOperations },
+  { phase: 'B', path: '/api/v1/operations/stats', consumer: 'ops Campaigns (useOperationsStats); MCP smoke probe', handler: handleOperationsStats },
+  { phase: 'B', path: '/api/feeds/aggregate-stats', consumer: 'ops Feeds (useFeedStats)', handler: handleFeedsAggregateStats },
+  // Warm the super_admin variant — it's the fuller snapshot (its
+  // threat_health slice is the more expensive one to compute) and a
+  // super_admin visit hits it warm. A plain admin reads a separate
+  // role-scoped key and just repopulates cheaply on a cold visit.
+  { phase: 'B', path: '/api/admin/dashboard', consumer: 'ops admin dashboard (useDashboardSnapshot), super_admin variant', handler: (req, env) => handleAdminDashboard(req, env, DASHBOARD_WARM_CTX) },
+
+  // ── Phase C — Brands + Threat Actors ──
+  // handleListBrands keys on tab/sort/limit only (view + range are not
+  // read); this is the Observatory side panel's Top Targeted Brands load.
+  { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys and stay cold', handler: handleListBrands },
+  { phase: 'C', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
+  { phase: 'C', path: '/api/threat-actors?status=active', consumer: 'ops ThreatActors default active-only list (useThreatActors)', handler: handleListThreatActors },
+  { phase: 'C', path: '/api/threat-actors/stats', consumer: 'ops ThreatActors (useThreatActorStats)', handler: handleThreatActorStats },
+];
 
 /** How many agent_events to drain per tick. */
 const EVENT_DRAIN_LIMIT = 50;
@@ -459,20 +542,25 @@ async function runNavigatorImpl(
   // recompute the same page-load queries 288 times a day just because
   // someone *might* visit.
   //
-  //   Phase A   — every 5 min  (Observatory 7d + live + operations)
+  //   Phase A   — every 10 min (Observatory 7d + side-panel live/operations)
   //   Phase A2  — every 15 min (Observatory 24h/30d alt periods)
-  //   Phase B   — every 15 min (Dashboard + agents + operations)
-  //   Phase C   — every 30 min (Brands + Threat Actors + Intelligence)
+  //   Phase B   — every 15 min (Dashboard + agents + operations + feeds)
+  //   Phase C   — every 30 min (Brands + Threat Actors)
   //
-  // Math at ~8,640 ticks/month if Navigator runs clean:
-  //   A:  21,600 warms (was 43,200 before throttle, -50%)
-  //   A2: 17,280 (was 51,840, -67%)
-  //   B:  14,400 (was 43,200, -67%)
-  //   C:  11,520 (was 69,120, -83%)
-  // Total: ~65K warms/month, down from ~207K (-69%). Phase A throttled
-  // from every-5-min to every-10-min as part of the D1-budget cleanup;
-  // pairs with the 15-min KV TTL on Observatory endpoints so cold-load
-  // UX stays well under the cache-miss window.
+  // The exact targets (and the consumer each serves) are the module-level
+  // NAVIGATOR_WARM_TARGETS table — 21 warms across the four phases.
+  //
+  // Math over a 30-day month if Navigator runs clean (*/5 cron = 8,640
+  // ticks; the minute gates below pick the subset each phase runs on):
+  //   A:  5 warms × 4,320 ticks (minute % 10) = 21,600
+  //   A2: 6 warms × 2,880 ticks (minute % 15) = 17,280
+  //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
+  //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
+  // Total: ~61.9K warms/month, vs ~181K (21 × 8,640) if every target ran
+  // every tick (-66%). Phase A throttled from every-5-min to every-10-min
+  // as part of the D1-budget cleanup; pairs with the 15-min KV TTL on
+  // Observatory nodes/stats so cold-load UX stays inside the cache window.
+  // A2/B/C also drop out entirely while the D1 soft-cap below is tripped.
   const minute = scheduledTime.getUTCMinutes();
   const runPhaseA  = minute % 10 === 0;  // :00, :10, :20, :30, :40, :50
   const runPhaseA2 = minute % 15 === 0;  // :00, :15, :30, :45
@@ -506,71 +594,41 @@ async function runNavigatorImpl(
   let cacheWarmed = 0;
   if (!isOverCap() && status !== 'failed') {
     const warmStart = Date.now();
-    const fakeReq = (path: string) => new Request(`https://averrow.com${path}`);
-    // Synthetic super_admin context for warming the admin dashboard snapshot
-    // (handleAdminDashboard gates its threat_health slice on role). Warming
-    // is a trusted internal cron path — this ctx never authorizes a request,
-    // it only selects which role-scoped cache variant to populate.
-    const DASHBOARD_WARM_CTX: AuthContext = {
-      userId: 'navigator',
-      email: 'navigator@averrow.internal',
-      role: 'super_admin',
-      orgId: null,
-      orgRole: null,
-      embeddedScope: undefined,
-      enrollOnly: false,
+    let cacheWarmFailed = 0;
+    // Run one phase's targets in parallel (allSettled — one bad target
+    // can't sink the rest). Count only real warms: handlers catch their
+    // own errors and resolve with a 500 Response, so a fulfilled promise
+    // alone doesn't mean the KV key was written.
+    const warmPhase = async (phase: NavigatorWarmPhase): Promise<number> => {
+      const results = await Promise.allSettled(
+        NAVIGATOR_WARM_TARGETS
+          .filter(t => t.phase === phase)
+          .map(t => t.handler(new Request(`https://averrow.com${t.path}`), env)),
+      );
+      const ok = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
+      cacheWarmFailed += results.length - ok;
+      return ok;
     };
     try {
-      // Phase A: Observatory endpoints (highest impact — 10-15s cold load)
-      // Run the 5 Observatory queries in parallel for maximum throughput.
-      // Throttled to every 10 min — endpoints cache for 15 min so the
+      // Phase A: Observatory landing (highest impact — 10-15s cold load).
+      // Throttled to every 10 min — nodes/stats cache for 15 min so the
       // landing page still hits warm cache on every visit.
       if (runPhaseA) {
-        const obsResults = await Promise.allSettled([
-          handleObservatoryNodes(fakeReq('/api/observatory/nodes?period=7d'), env),
-          handleObservatoryArcs(fakeReq('/api/observatory/arcs?period=7d'), env),
-          handleObservatoryStats(fakeReq('/api/observatory/stats?period=7d'), env),
-          handleObservatoryLive(fakeReq('/api/observatory/live?limit=20'), env),
-          handleObservatoryOperations(fakeReq('/api/observatory/operations?limit=5'), env),
-        ]);
-        cacheWarmed += obsResults.filter(r => r.status === 'fulfilled').length;
+        cacheWarmed += await warmPhase('A');
       }
 
       // Phase A2: Observatory alternate periods (24h/30d) — every 15 min
       if (runPhaseA2 && !isOverCap() && !skipNonEssential) {
-        const altResults = await Promise.allSettled([
-          handleObservatoryNodes(fakeReq('/api/observatory/nodes?period=24h'), env),
-          handleObservatoryArcs(fakeReq('/api/observatory/arcs?period=24h'), env),
-          handleObservatoryStats(fakeReq('/api/observatory/stats?period=24h'), env),
-          handleObservatoryNodes(fakeReq('/api/observatory/nodes?period=30d'), env),
-          handleObservatoryArcs(fakeReq('/api/observatory/arcs?period=30d'), env),
-          handleObservatoryStats(fakeReq('/api/observatory/stats?period=30d'), env),
-        ]);
-        cacheWarmed += altResults.filter(r => r.status === 'fulfilled').length;
+        cacheWarmed += await warmPhase('A2');
       }
 
       // Phase B: Dashboard + agents + operations — every 15 min
-      // Includes the Tier 2a admin dashboard snapshot (P7). Navigator's
-      // 5-min cadence keeps it warm-ish; with a ~75s snapshot TTL the
-      // 15-min warm won't cover every TTL gap, but real /admin visits
-      // still hit warm most of the time (and a cold visit just repopulates
-      // it — the composite's own miss path is cheap since its sub-slices
-      // are independently cached).
+      // Includes the Tier 2a admin dashboard snapshot (P7). With a ~75s
+      // snapshot TTL the 15-min warm won't cover every TTL gap, but a cold
+      // visit just repopulates it — the composite's own miss path is cheap
+      // since its sub-slices are independently cached.
       if (runPhaseB && !isOverCap() && !skipNonEssential) {
-        const pageResults = await Promise.allSettled([
-          handleDashboardOverview(fakeReq('/api/dashboard/overview'), env),
-          handleDashboardTopBrands(fakeReq('/api/dashboard/top-brands'), env),
-          handleListAgents(fakeReq('/api/agents'), env),
-          handleListOperations(fakeReq('/api/v1/operations'), env),
-          handleOperationsStats(fakeReq('/api/v1/operations/stats'), env),
-          handleFeedsAggregateStats(fakeReq('/api/feeds/aggregate-stats'), env),
-          // Warm the super_admin variant — it's the fuller snapshot (its
-          // threat_health slice is the more expensive one to compute) and a
-          // super_admin visit hits it warm. A plain admin reads a separate
-          // role-scoped key and just repopulates cheaply on a cold visit.
-          handleAdminDashboard(fakeReq('/api/admin/dashboard'), env, DASHBOARD_WARM_CTX),
-        ]);
-        cacheWarmed += pageResults.filter(r => r.status === 'fulfilled').length;
+        cacheWarmed += await warmPhase('B');
       }
 
       // Phase C: Brands, Threat Actors — every 30 min
@@ -578,16 +636,10 @@ async function runNavigatorImpl(
       // in WS-B cull — those endpoints had no producers and warming the
       // empty cache was burning ~4 D1 reads per Navigator tick.)
       if (runPhaseC && !isOverCap() && !skipNonEssential) {
-        const moduleResults = await Promise.allSettled([
-          handleListBrands(fakeReq('/api/brands?limit=50&sort=threats'), env),
-          handleBrandStats(fakeReq('/api/brands/stats'), env),
-          handleListThreatActors(fakeReq('/api/threat-actors?limit=50'), env),
-          handleThreatActorStats(fakeReq('/api/threat-actors/stats'), env),
-        ]);
-        cacheWarmed += moduleResults.filter(r => r.status === 'fulfilled').length;
+        cacheWarmed += await warmPhase('C');
       }
 
-      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed in ${Date.now() - warmStart}ms (A=${runPhaseA} A2=${runPhaseA2} B=${runPhaseB} C=${runPhaseC})`);
+      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed in ${Date.now() - warmStart}ms (A=${runPhaseA} A2=${runPhaseA2} B=${runPhaseB} C=${runPhaseC})`);
     } catch (e) {
       console.error('[navigator] cache-warm error:', e instanceof Error ? e.message : String(e));
     }

@@ -56,7 +56,7 @@ Averrow runs entirely on Cloudflare's edge. There is no traditional backend serv
 
 | Agent | Role | Cadence |
 |---|---|---|
-| **Navigator** | DNS resolution, OLAP cube refresh, KV cache pre-warming (24 endpoints) | Every 5 min |
+| **Navigator** | DNS resolution, OLAP cube refresh, KV cache pre-warming (21 page-load requests) | Every 5 min |
 | **Flight Control** | Autonomous supervisor — load, AI budget, backlog throttle | Hourly (inside orchestrator) |
 | **Sentinel** | Threat classification + homoglyph detection | After feed ingest, if new records |
 | **Cartographer** | Geo / ASN / hosting enrichment (runs as a Workflow) | After Sentinel, or as fallback |

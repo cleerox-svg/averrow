@@ -224,7 +224,33 @@ interface SourceFilter {
   params: unknown[];
 }
 
-function buildSourceFilter(sourceFeed: string | null, alias?: string): SourceFilter {
+/**
+ * Canonical `source_feed` filter value: `null` means "every source".
+ *
+ * The ops client sends `source_feed=` (EMPTY string) for its "All Sources"
+ * tab (averrow-ops `hooks/useObservatory.ts` — `source === 'all' ? '' :
+ * source`), while Navigator's pre-warm and the MCP probe omit the param.
+ * Building the KV key from the raw value split those into `…:` and
+ * `…:all`, so every warm landed on a key the UI never read. Empty, absent
+ * and a literal `all` therefore all collapse to `null` here, and both the
+ * SQL filter and the cache-key segment derive from this one value.
+ *
+ * (`all` is included because it is the UI's own id for "every source"; left
+ * raw it filtered `source_feed = 'all'` — zero rows — and cached that empty
+ * payload under the very key the unfiltered landing page reads.)
+ */
+export function normalizeSourceFeed(raw: string | null): string | null {
+  if (raw === null || raw === "" || raw === "all") return null;
+  return raw;
+}
+
+/** KV-key segment for a source filter — `all` when unfiltered. */
+export function sourceFeedCacheSegment(raw: string | null): string {
+  return normalizeSourceFeed(raw) ?? "all";
+}
+
+function buildSourceFilter(rawSourceFeed: string | null, alias?: string): SourceFilter {
+  const sourceFeed = normalizeSourceFeed(rawSourceFeed);
   if (!sourceFeed) return { sql: "", params: [] };
   const col = alias ? `${alias}.source_feed` : "source_feed";
   if (sourceFeed === "feeds") return { sql: ` AND ${col} != 'spam_trap'`, params: [] };
@@ -258,7 +284,7 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
     // is rebuilt every 10 min by Navigator so 15min staleness is at
     // worst one tick old, and Navigator-driven cache warms now miss
     // ~3x less often.
-    const cacheKey = `observatory_nodes:${period}:${url.searchParams.get("source_feed") ?? "all"}`;
+    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       // Cache hit — record zero D1 reads so attribution still shows
@@ -333,7 +359,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
   const cubeSourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "c");
 
   try {
-    const cacheKey = `observatory_arcs:${period}:${url.searchParams.get("source_feed") ?? "all"}`;
+    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       recordD1Reads(env, "observatory_arcs", newTally());
@@ -371,8 +397,10 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
 
     let resultRows = rows.results ?? [];
     // D1 spend reduction (2026-05-16): bumped from 1800s → 3600s.
-    // Navigator prewarms 3 periods every 5min — at 30min TTL the cache
-    // is fresh roughly 80% of prewarm ticks (rest are forced refreshes
+    // At the time Navigator prewarmed all 3 periods every 5 min (today: 7d
+    // every 10 min in phase A, 24h/30d every 15 min in phase A2 — see
+    // NAVIGATOR_WARM_TARGETS in cron/navigator.ts). At 30min TTL the cache
+    // was fresh roughly 80% of prewarm ticks (rest were forced refreshes
     // because the TTL boundary fell inside the prewarm cycle). Production
     // audit showed 245 actual handler hits / 24h × 56K rows = 13.8M.
     // 1h TTL drops the prewarm-driven miss count from ~50/day to ~24/day
@@ -389,6 +417,10 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     // the organic-miss recompute rate on those variants. A 7-day aggregate
     // tolerates 2h staleness. (Adding source_feed variants to the Navigator
     // prewarm set is the real fix but is deliberately out of scope here.)
+    //
+    // PR7b: the "all" variant itself was ALSO a miss — the ops client sends
+    // `source_feed=` (empty) for All Sources, which keyed to `…:` instead of
+    // `…:all`. sourceFeedCacheSegment() now collapses empty/absent/`all`.
     let cacheTtlSeconds = 7200;
     let usedFallback = false;
 
@@ -476,12 +508,12 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
   const limit = Math.min(50, parseInt(url.searchParams.get("limit") ?? "20", 10));
 
   try {
-    // KV cache: live feed query. PR-Z bumped 2 → 5 min so the TTL aligns
-    // with Navigator's pre-warm cadence — at 2 min the pre-warm half the
-    // time hit a stale entry that had just expired, paying the scan cost
-    // again. 5 min keeps the "live" ticker visibly fresh while letting
-    // pre-warm always serve.
-    const cacheKey = `observatory_live:${url.searchParams.get("source_feed") ?? "all"}:${limit}`;
+    // KV cache: live feed query. PR-Z bumped 2 → 5 min to match what was
+    // then a 5-min Navigator pre-warm. Navigator now warms `?limit=8` only
+    // every 10 min (phase A), so the key is cold for roughly half of each
+    // warm interval; 5 min is kept because the "live" ticker must stay
+    // visibly fresh (the side panel refetches every 15s).
+    const cacheKey = `observatory_live:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}:${limit}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       recordD1Reads(env, "observatory_live", newTally());
@@ -668,7 +700,7 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
     // Cache key is intentionally unchanged from the raw-sourced implementation;
     // existing cached entries will serve pre-swap values until TTL expires
     // (up to 2 minutes of stale raw-sourced values post-deploy).
-    const cacheKey = `observatory_stats:${period}:${sourceFeed ?? "all"}`;
+    const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(sourceFeed)}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
       recordD1Reads(env, "observatory_stats", newTally());

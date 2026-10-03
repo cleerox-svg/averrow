@@ -529,7 +529,7 @@ while every agent reported `success`. Rules that came out of it:
 
 ### Cron schedule (wrangler.toml):
 ```
-navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, cache warming of 24 endpoints)
+navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 21 page-load requests)
                               (independent agent; FC monitors health but does not dispatch;
                                historical agent_runs rows use agent_id='fast_tick')
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
@@ -981,10 +981,19 @@ behind a feature flag.
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard
-- Navigator pre-warms 24 endpoints every 5 min across 3 phases:
-  - **A**: Observatory (7d/24h/30d nodes, arcs, stats + live + operations)
-  - **B**: Dashboard overview + top-brands, Agents, Operations list + stats
-  - **C**: Brands list + stats, Threat Actors list + stats, Breaches, ATO, Email Auth, Cloud Incidents
+- Navigator pre-warms 21 page-load requests across 4 minute-gated phases. The
+  list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
+  consumer; pinned by `test/navigator-warm-targets.test.ts`):
+  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
+  - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats
+  - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
+  - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
+  - A2/B/C are skipped when the D1 read budget is over the soft-cap
+  - The brands-list and dashboard-overview warms write the `global` scope key, which only `super_admin`/`auditor` read (`getOrgScope` returns null); other staff roles read org-scoped keys those warms don't populate.
+- **A warm must hit the exact KV key the live client request produces.** Warm
+  the client's literal query string, and normalise "no filter" spellings in the
+  handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key
+  segment via `sourceFeedCacheSegment`). A warm on a key nothing reads is pure D1 spend.
 - Cache keys must encode all query parameters for correctness
 - Default page loads (no search/filter, page 1) use reduced-dimension cache keys for higher hit rate
 - Use read replicas (`getReadSession`) for all read-heavy list/stats handlers

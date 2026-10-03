@@ -173,7 +173,7 @@ KV namespace bound as `CACHE` is used for:
 - **Rate limiting** — Per-IP counters for API rate limiting
 - **Honeypot site content** — `honeypot-site:{hostname}:{page}` stores generated honeypot HTML
 - **Session invalidation** — Forced logout flags checked during auth
-- **Page-load endpoint caching** — JSON responses for heavy page-load endpoints, pre-warmed by Navigator agent every 5 minutes
+- **Page-load endpoint caching** — JSON responses for heavy page-load endpoints, pre-warmed by the Navigator agent on minute-gated phases (every 10/15/30 min — see Cache Pre-Warming below)
 
 ### KV Cache Strategy (Page-Load Endpoints)
 
@@ -206,11 +206,14 @@ Default page loads (no search, no filter, page 1) use reduced-dimension cache ke
 
 ### Cache Pre-Warming (Navigator)
 
-The Navigator agent (every 5 minutes) pre-warms KV caches by calling handler functions with synthetic requests. This ensures users never hit a cold cache on the most critical pages (24 endpoints across 3 phases):
+The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a slower cadence below) pre-warms KV caches by calling handler functions with synthetic requests. Each warm uses the exact query string a live client sends, so it writes the KV key that client reads (21 requests across 4 phases; the list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts`, pinned by `test/navigator-warm-targets.test.ts`):
 
-- **Phase A** (always): Observatory nodes, arcs, stats for all 3 periods (7d, 24h, 30d) + live + operations (11 endpoints)
-- **Phase B** (if CPU budget allows): Dashboard overview + top-brands, Agents list, Operations list + stats (5 endpoints)
-- **Phase C** (if CPU budget allows): Brands list + stats, Threat Actors list + stats, Breaches, ATO events, Email auth, Cloud incidents (8 endpoints)
+- **Phase A** (every 10 min): Observatory 7d nodes, arcs, stats + side-panel live feed (`limit=8`) + side-panel active operations (`/api/v1/operations?limit=4&offset=0&status=active`) (5)
+- **Phase A2** (every 15 min): Observatory 24h + 30d nodes, arcs, stats (6)
+- **Phase B** (every 15 min): Dashboard overview (MCP smoke probe), Agents list, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (super_admin variant) (6)
+- **Phase C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`?status=active`) + stats (4)
+
+A2/B/C are skipped when the D1 read budget is over the soft-cap. Observatory handlers normalise `source_feed` absent / empty / `all` to one `all` key segment — the ops client sends `source_feed=` for "All Sources". The brands-list and dashboard-overview warms write the `global` scope key, which only `super_admin`/`auditor` read (`getOrgScope` returns null); other staff roles read org-scoped keys those warms don't populate.
 
 ### Counter cache (`lib/cached-count.ts`)
 
@@ -301,7 +304,7 @@ hour-only time gates, never minute gates (see the cron-audit rule in CLAUDE.md �
 
 | Cron | Dispatches | Purpose |
 |------|------------|---------|
-| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (24 endpoints) |
+| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (21 page-load requests) |
 | `7 * * * *` | orchestrator | Feed ingestion, Flight Control, agent mesh dispatch (see below) |
 | `8 * * * *` | enricher | Domain geo / brand logo / sector / firmographic enrichment (own budget since PR-E) |
 | `9 * * * *` | cartographer | Guaranteed hourly maintenance run (own budget since PR-F); FC scaleAgents adds instances for backlog drain |
@@ -346,7 +349,7 @@ historical `agent_runs` rows carry `agent_id='fast_tick'` while new runs write
 3. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` reads only threats added since the KV cursor (`reconciler:dns_queue:cursor`) and INSERT-OR-IGNOREs them into `dns_queue`. Replaces the pre-PR-BI set-diff reconciler that scanned ~83K rows on both sides every tick. Bounded at 500 candidates read per tick; cursor advances to MAX(created_at) observed. ~37 rows/tick at current feed inflow; total reconciler reads ≈ 10.7K/day (down from 15M/day pre-PR-BI, 99.4% reduction).
 3b. **DNS-queue reap (hour===0 only)** — `lib/dns-queue-reaper.ts` sweeps stale rows whose threats flipped to inactive after enqueue. Bounded ~17K reads per daily run. Writes `reconciler:dns_queue:reaper_last_run` + `reconciler:dns_queue:reaper_last_delta` KV stamps for FC stall detection (alert at >36h gap).
 4. **Cube refresh** — Rebuilds current + previous hour for `threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand`, `threat_cube_status`, `threat_cube_arcs` (10 builds total)
-5. **Cache pre-warming** — Phase A (Observatory 3 periods), Phase B (Dashboard/Agents/Operations), Phase C (Brands/Threat Actors/Intel) — 24 endpoints total
+5. **Cache pre-warming** — Phase A (Observatory 7d + side panel), Phase A2 (Observatory 24h/30d), Phase B (Dashboard/Agents/Operations/Feeds/admin snapshot), Phase C (Brands/Threat Actors) — 21 requests total (`NAVIGATOR_WARM_TARGETS`)
 6. **Logging** — Writes `agent_runs` record with timing, cube row counts, reconciler stats (cursor lag, scanned, enqueued, batch failures), reaper stats (scanned, stale_removed) on the daily tick, and error summary
 
 ### Cloudflare Workflows
