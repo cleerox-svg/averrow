@@ -995,6 +995,7 @@ behind a feature flag.
   handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key
   segment via `sourceFeedCacheSegment`). A warm on a key nothing reads is pure D1 spend.
 - Cache keys must encode all query parameters for correctness
+- **Org-scoped keys must use `scopeCacheSegment(scope)`** (`lib/scope-cache-key.ts`) for the scope segment — `global` for a null scope, else `org:<org_id>:<digest of the full sorted brand set>`. Never key on a slice/prefix of `scope.brand_ids` (the old `slice(0, 3)` key leaked cached data across orgs sharing their first 3 brands).
 - Default page loads (no search/filter, page 1) use reduced-dimension cache keys for higher hit rate
 - Use read replicas (`getReadSession`) for all read-heavy list/stats handlers
 - Parallelize list + stats queries in the same handler via `Promise.all()`

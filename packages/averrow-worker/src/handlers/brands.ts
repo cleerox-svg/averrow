@@ -17,6 +17,7 @@ import { getBrandById, getBrandByDomain, getBrandThreatCount } from "../db/brand
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
+import { scopeCacheSegment } from "../lib/scope-cache-key";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -270,7 +271,7 @@ export async function handleListBrands(request: Request, env: Env, scope?: OrgSc
     // Cache for 5 minutes. Default page loads (no search, no sector filter, page 1)
     // use a short cache key that Navigator pre-warms. Filtered/paginated views use a
     // full-dimension key — cache hit rate is lower but still avoids repeated cold queries.
-    const scopeHash = scope ? scope.brand_ids.slice(0, 3).join(",") : "global";
+    const scopeHash = await scopeCacheSegment(scope);
     const isDefaultView = !search && !sector && offset === 0;
     const cacheKey = isDefaultView
       ? `brand_list:${tab}:${sort}:${limit}:${scopeHash}`

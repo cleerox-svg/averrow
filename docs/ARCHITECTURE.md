@@ -177,7 +177,7 @@ KV namespace bound as `CACHE` is used for:
 
 ### KV Cache Strategy (Page-Load Endpoints)
 
-All high-traffic page-load endpoints check KV before querying D1. Cache keys encode query parameters for proper invalidation. Standard TTL is 300s (5 min). All cached read endpoints use D1 read replicas via `getReadSession()` and parallelize list + stats queries via `Promise.all()`.
+All high-traffic page-load endpoints check KV before querying D1. Cache keys encode query parameters for proper invalidation. `{scopeSegment}` is `scopeCacheSegment(scope)` from `lib/scope-cache-key.ts`: `global` for unscoped (super_admin/auditor) requests, otherwise `org:{org_id}:{16-hex sha256 of the sorted, de-duplicated brand_ids}` (`org:{org_id}:none` when empty). It replaced a first-3-brand-IDs prefix that let two orgs sharing those IDs read each other's cached data. Standard TTL is 300s (5 min). All cached read endpoints use D1 read replicas via `getReadSession()` and parallelize list + stats queries via `Promise.all()`.
 
 | Cache Key Pattern | TTL | Endpoint |
 |-------------------|-----|----------|
@@ -186,13 +186,13 @@ All high-traffic page-load endpoints check KV before querying D1. Cache keys enc
 | `observatory_stats:{period}:{source}` | 300s | Observatory stats |
 | `observatory_live:{source}:{limit}` | 120s | Observatory live feed |
 | `observatory_operations:{status}:{limit}` | 300s | Observatory operations |
-| `dashboard_overview:{scopeHash}` | 300s | Dashboard overview |
-| `dashboard_top_brands:{limit}:{scopeHash}` | 300s | Dashboard top brands |
+| `dashboard_overview:{scopeSegment}` | 300s | Dashboard overview |
+| `dashboard_top_brands:{limit}:{scopeSegment}` | 300s | Dashboard top brands |
 | `agents_list` | 300s | Agents list |
 | `operations_list:{status}:{limit}:{offset}` | 300s | Operations list |
 | `operations_stats` | 300s | Operations stats |
-| `brand_list:{tab}:{sort}:{limit}:{scopeHash}` | 300s | Brands list (default view, reduced-cardinality key) |
-| `brand_stats:{scopeHash}` | 300s | Brand stats |
+| `brand_list:{tab}:{sort}:{limit}:{scopeSegment}` | 300s | Brands list (default view, reduced-cardinality key) |
+| `brand_stats` | 1800s | Brand stats (unscoped catalog stats) |
 | `providers_v2:{country}:{status}:{sort}:{limit}` | 300s | Providers v2 list (default view, reduced-cardinality key) |
 | `providers_intelligence` | 300s | Provider intelligence |
 | `threat_actors:{limit}:{offset}:{filters...}` | 300s | Threat actors list (read replicas, parallel queries) |
