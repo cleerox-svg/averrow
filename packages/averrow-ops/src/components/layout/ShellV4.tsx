@@ -34,8 +34,8 @@ interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; 
 interface NavGroup { label: string; items: NavItem[]; }
 
 // Nav is built per-render so it can role-gate sensitive PLATFORM items
-// (Customers → super_admin, Pricing → view_billing), matching the classic
-// Sidebar. Anything not gated is visible to every staff role.
+// (Customers → super_admin, Pricing → view_billing). Anything not gated is
+// visible to every staff role.
 function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefined; openAlerts?: number }): NavGroup[] {
   const { isSuperAdmin, openAlerts } = opts;
 
@@ -59,7 +59,7 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
     // the Pricing / Platform Notifications tabs gate themselves inside the
     // workspace (view_billing / super_admin).
     { label: 'Governance',  to: '/admin/governance', icon: ClipboardList },
-    { label: 'Team',        to: '/admin/users',      icon: Users },
+    { label: 'Team',        to: '/admin/users?tab=members', icon: Users },
     ...(isSuperAdmin
       ? [{ label: 'Customers', to: '/admin/customers', icon: Building2 } as NavItem]
       : []),
@@ -169,6 +169,34 @@ function buildPaletteCommands(
   return [...fromNav, ...extras.filter(c => !seen.has(c.to))];
 }
 
+/**
+ * Routes that bring their own gutters (`.console-v4` = 22px 24px 44px) or
+ * need the whole outlet. Every other route gets the baseline page gutter
+ * (16px 24px; 12px 16px at <=900px) — classic-shell parity.
+ */
+const FULL_BLEED_ROUTES: ReadonlySet<string> = new Set([
+  '/',
+  '/console',
+  '/explore',
+  '/coverage',
+  '/admin/operations',
+  '/admin/governance',
+  // Shared ProfilePage already centers itself in a 720px column with 24px
+  // gutters (and must stay structurally identical to FarmTrack's).
+  '/profile',
+]);
+
+/** Observatory fills the outlet (no gutter, no scroll) and sizes via flex. */
+const FILL_ROUTE_PREFIX = '/observatory';
+
+export type OutletLayout = 'padded' | 'bleed' | 'fill';
+
+export function outletLayoutFor(pathname: string): OutletLayout {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (path === FILL_ROUTE_PREFIX || path.startsWith(FILL_ROUTE_PREFIX + '/')) return 'fill';
+  return FULL_BLEED_ROUTES.has(path) ? 'bleed' : 'padded';
+}
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
@@ -187,13 +215,11 @@ export function ShellV4() {
     openAlerts: openAlerts.isSuccess ? openAlerts.data : undefined,
   });
   const commands = buildPaletteCommands(nav, { isSuperAdmin, role: user?.role });
-  // H-3 (AUTH_AUDIT_2026-06): mirrors Shell.tsx's gate, which this shell
-  // never got when it was added. A privileged user on an enrollment-scoped
-  // session (signed in without a passkey) who has switched to the v4 shell
-  // otherwise gets the full nav + Outlet with no blocking gate — every
-  // protected fetch 403s with nothing on screen to explain why. Render
-  // nothing in the Outlet while locked; PasskeyEnrollmentGate overlays the
-  // screen instead.
+  // H-3 (AUTH_AUDIT_2026-06): a privileged user on an enrollment-scoped
+  // session (signed in without a passkey) would otherwise get the full nav
+  // + Outlet with no blocking gate — every protected fetch 403s with
+  // nothing on screen to explain why. Render nothing in the Outlet while
+  // locked; PasskeyEnrollmentGate overlays the screen instead.
   const enrollmentLocked = !!user?.passkey_required;
 
   // global ⌘K / Ctrl-K to toggle the palette (and "/" when not already typing)
@@ -347,7 +373,9 @@ export function ShellV4() {
               itself via :empty when the banner renders nothing, so no stray
               mobile padding appears on other routes. */}
           <div className="v4-banner-wrap"><PlatformAlertBanner /></div>
-          {enrollmentLocked ? null : <Outlet />}
+          <div className={`v4-page v4-page--${outletLayoutFor(location.pathname)}`}>
+            {enrollmentLocked ? null : <Outlet />}
+          </div>
         </div>
       </section>
 

@@ -71,7 +71,7 @@ function RouteLoader() {
 
 function ObservatoryLoader() {
   return (
-    <div className="flex items-center justify-center h-full" style={{ background: 'var(--bg-page)' }}>
+    <div className="flex items-center justify-center flex-1 min-h-0" style={{ background: 'var(--bg-page)' }}>
       <div className="font-mono text-sm" style={{ color: 'var(--text-secondary)' }}>Loading Observatory...</div>
     </div>
   );

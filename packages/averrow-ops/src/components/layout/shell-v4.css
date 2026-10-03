@@ -99,7 +99,12 @@
 .v4-cmdk kbd { margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border-base); color: var(--text-secondary); }
 .v4-live { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .1em; color: var(--green); margin-left: auto; }
 .v4-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: v4ping 1.8s ease-in-out infinite; }
-.v4-outlet { flex: 1; overflow: auto; min-height: 0; }
+.v4-outlet { flex: 1; overflow: auto; min-height: 0; display: flex; flex-direction: column; }
+/* Page gutter — classic-shell parity: every route is padded unless it brings
+   its own gutters (--bleed) or fills the outlet (--fill, Observatory). */
+.v4-page { flex: 1 0 auto; min-width: 0; }
+.v4-page--padded { --v4-gutter-x: 24px; padding: 16px var(--v4-gutter-x); }
+.v4-page--fill { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
 @keyframes v4ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
@@ -164,6 +169,7 @@
     padding-right: max(16px, env(safe-area-inset-right));
   }
   .v4-banner-wrap { padding: 8px 16px 0; }
+  .v4-page--padded { --v4-gutter-x: 16px; padding: 12px var(--v4-gutter-x); }
   .v4-cmdk { width: auto; flex: 1; min-width: 0; }
 }
 
