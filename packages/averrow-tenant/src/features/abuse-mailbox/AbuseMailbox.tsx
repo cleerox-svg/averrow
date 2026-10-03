@@ -19,6 +19,8 @@ import {
   type AbuseMailboxTotals,
   type AbuseAlias,
   type AbuseInboxMessageRow,
+  type AbuseDetermination,
+  type DeterminationTone,
   type AbuseInboxMessageDetail,
   type AbuseMailboxIntel,
   type AbuseMessageStatus,
@@ -320,12 +322,83 @@ function ClassChip({
   );
 }
 
+// Tone → tailwind classes for the determination the reporter was emailed.
+const DETERMINATION_TONE: Record<DeterminationTone, { text: string; bg: string; border: string }> = {
+  threat: { text: 'text-sev-critical', bg: 'bg-sev-critical/[0.08]', border: 'border-sev-critical/[0.30]' },
+  review: { text: 'text-[#A78BFA]',    bg: 'bg-[#A78BFA]/[0.08]',    border: 'border-[#A78BFA]/[0.30]' },
+  spam:   { text: 'text-amber',        bg: 'bg-amber/[0.08]',        border: 'border-amber/[0.30]' },
+  safe:   { text: 'text-green',        bg: 'bg-green/[0.08]',        border: 'border-green/[0.30]' },
+};
+
+function determinationTone(d: AbuseDetermination) {
+  return DETERMINATION_TONE[d.tone] ?? DETERMINATION_TONE.review;
+}
+
+export function DeterminationBadge({ determination }: { determination: AbuseDetermination }) {
+  const t = determinationTone(determination);
+  return (
+    <span
+      data-testid="determination-badge"
+      className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono font-semibold border rounded px-1.5 py-0.5 ${t.text} ${t.bg} ${t.border}`}
+    >
+      {determination.label}
+    </span>
+  );
+}
+
+export function DeterminationPanel({ determination, sentAt }: {
+  determination: AbuseDetermination | null | undefined;
+  sentAt: string | null;
+}) {
+  if (!determination) {
+    return (
+      <div
+        data-testid="determination-panel"
+        className="mb-4 rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-[12px] font-mono text-white/65"
+      >
+        <div className="text-[9px] uppercase tracking-widest text-white/55 mb-1">Determination</div>
+        Pending — no determination yet
+      </div>
+    );
+  }
+  const t = determinationTone(determination);
+  return (
+    <div data-testid="determination-panel" className={`mb-4 rounded-lg border px-4 py-3 ${t.bg} ${t.border}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-mono uppercase tracking-widest text-white/55">Determination</span>
+          <DeterminationBadge determination={determination} />
+        </div>
+        <span className="text-[10px] font-mono text-white/65">Sent: {sentAt ?? 'Not sent yet'}</span>
+      </div>
+      <p className="text-[13px] text-white/95 leading-relaxed">{determination.lead}</p>
+      <div className="mt-3">
+        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Analyst note</div>
+        <p className="text-[12px] text-white/85 leading-relaxed">{determination.analyst_note}</p>
+      </div>
+      {determination.next_steps.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">What you were told to do</div>
+          <ul className="list-disc pl-5 text-[12px] text-white/85 leading-relaxed space-y-0.5">
+            {determination.next_steps.map((step, i) => <li key={i}>{step}</li>)}
+          </ul>
+        </div>
+      )}
+      <div className="mt-3">
+        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Action taken</div>
+        <p className="text-[12px] text-white/85">{determination.action_label}</p>
+      </div>
+    </div>
+  );
+}
+
 function MessageRow({ message: m, expanded, onToggle }: {
   message: AbuseInboxMessageRow;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const tone =
+    m.determination ? determinationTone(m.determination).border :
     m.classification === 'phishing' || m.classification === 'malware' ? 'border-sev-critical/[0.30]' :
     m.classification === 'ambiguous' || m.classification === 'spam'   ? 'border-amber/[0.30]'        :
                                                                         'border-white/[0.06]';
@@ -337,7 +410,9 @@ function MessageRow({ message: m, expanded, onToggle }: {
     >
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <SeverityPill level={m.severity} />
-        <ClassificationPill classification={m.classification} />
+        {m.determination
+          ? <DeterminationBadge determination={m.determination} />
+          : <ClassificationPill classification={m.classification} />}
         <StatusPill status={m.status} />
         {m.throttled === 1 && (
           <span
@@ -380,7 +455,9 @@ function MessageRow({ message: m, expanded, onToggle }: {
         </p>
       )}
 
-      {m.classification_reason && (
+      {m.determination ? (
+        <p className="text-[12px] text-white/75 mt-2 leading-snug line-clamp-2">{m.determination.lead}</p>
+      ) : m.classification_reason && (
         <p className="text-[11px] text-white/40 mt-2 italic">{m.classification_reason}</p>
       )}
 
@@ -420,6 +497,8 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
         </div>
       </div>
 
+      <DeterminationPanel determination={m.determination} sentAt={m.determination_sent_at} />
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 mb-4">
         <TenantDetailField label="From"              value={m.original_from} mono accent />
         <TenantDetailField label="Forwarded by"      value={m.forwarded_by_email} mono />
@@ -444,6 +523,25 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
       </div>
 
       {(m.classification_reason || m.ai_assessment) && (
+        m.determination ? (
+          <details className="mb-4 group" data-testid="technical-details">
+            <summary className="cursor-pointer text-[9px] font-mono uppercase tracking-widest text-white/55 hover:text-white/80">
+              Technical details
+            </summary>
+            <div className="mt-2">
+
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Classifier reasoning</div>
+          <p className="text-[12px] text-white/90 leading-relaxed">
+            {m.classification_reason || m.ai_assessment}
+          </p>
+          {m.classification_reason && m.ai_assessment && m.ai_assessment !== m.classification_reason && (
+            <p className="text-[11px] text-white/65 mt-1 leading-relaxed italic">
+              {m.ai_assessment}
+            </p>
+          )}
+            </div>
+          </details>
+        ) : (
         <div className="mb-4">
           <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">AI analyst notes</div>
           <p className="text-[12px] text-white/90 leading-relaxed">
@@ -455,6 +553,7 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
             </p>
           )}
         </div>
+        )
       )}
 
       <TenantDeepAnalysisSection detail={detail} loading={detailQ.isLoading} />

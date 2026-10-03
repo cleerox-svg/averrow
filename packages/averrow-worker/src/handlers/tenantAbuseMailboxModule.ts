@@ -17,6 +17,7 @@
 //
 // Phase B sprint 6.
 
+import { describeDetermination, type DeterminationView } from "../lib/abuse-mailbox-responder";
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess, isReadOnlyGlobalRole, canPerformHITL } from "../middleware/auth";
@@ -287,7 +288,9 @@ export async function handleListAbuseInboxMessages(
     data: {
       org_id:    orgIdNum,
       brand_id:  brandIdParam ?? null,
-      messages:  messages.results,
+      // `determination`: the verdict copy the reporter was emailed
+      // (label, lead, analyst note, next steps) — same source as the email.
+      messages:  messages.results.map((m) => ({ ...m, determination: describeDetermination(m) })),
       page_size: MESSAGES_LIMIT,
     },
   }, 200, origin);
@@ -326,6 +329,8 @@ export interface AbuseInboxMessageDetail extends AbuseInboxMessageRow {
   // the row didn't qualify for deep analysis (LOW/MEDIUM verdicts,
   // spam/benign/ambiguous), or when the Sonnet call failed.
   deep_analysis:         unknown | null;
+  /** What the reporter was told (fixed copy); null while pending. */
+  determination:         DeterminationView | null;
 }
 
 interface AbuseInboxMessageDetailRow extends AbuseInboxMessageRow {
@@ -410,6 +415,7 @@ export async function handleGetAbuseInboxMessageDetail(
     correlated_threat_ids: safeJsonParse<string[]>(row.correlated_threat_ids),
     promoted_threat_ids:   safeJsonParse<string[]>(row.promoted_threat_ids),
     deep_analysis:         safeJsonParse<unknown>(row.deep_analysis),
+    determination:         describeDetermination(row),
   };
 
   return json({ success: true, data: detail }, 200, origin);

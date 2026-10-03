@@ -30,6 +30,8 @@ import {
   type AdminAbuseMailboxTotals,
   type AdminAbuseInboxMessage,
   type AdminAbuseInboxMessageDetail,
+  type AbuseDetermination,
+  type DeterminationTone,
   type AbuseMailboxIntel,
   type AbuseMessageStatus,
   type ExtractedUrl,
@@ -431,6 +433,85 @@ const CLASSIFICATION_COLORS: Record<string, string> = {
   follow_up: '#60a5fa',
 };
 
+// Tone → colour for the determination the reporter was emailed.
+// review reuses the existing "ambiguous" purple.
+const DETERMINATION_TONE_COLORS: Record<DeterminationTone, { fg: string; bg: string; border: string }> = {
+  threat: { fg: 'var(--sev-critical-text)', bg: 'var(--sev-critical-bg)', border: 'var(--sev-critical-border)' },
+  review: { fg: '#A78BFA',                  bg: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.30)' },
+  spam:   { fg: 'var(--sev-medium-text)',   bg: 'var(--sev-medium-bg)',   border: 'rgba(229,168,50,0.30)' },
+  safe:   { fg: 'var(--green)',             bg: 'rgba(60,184,120,0.10)',  border: 'rgba(60,184,120,0.30)' },
+};
+
+function determinationColors(d: AbuseDetermination) {
+  return DETERMINATION_TONE_COLORS[d.tone] ?? DETERMINATION_TONE_COLORS.review;
+}
+
+export function DeterminationBadge({ determination }: { determination: AbuseDetermination }) {
+  const c = determinationColors(determination);
+  return (
+    <span
+      className="inline-flex items-center text-[10px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+      style={{ color: c.fg, background: c.bg, border: `1px solid ${c.border}` }}
+      data-testid="determination-badge"
+    >
+      {determination.label}
+    </span>
+  );
+}
+
+export function DeterminationPanel({ determination, sentAt }: {
+  determination: AbuseDetermination | null | undefined;
+  sentAt: string | null;
+}) {
+  if (!determination) {
+    return (
+      <div
+        className="mb-4 rounded-lg px-4 py-3 text-[12px] font-mono text-white/65"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-base)' }}
+        data-testid="determination-panel"
+      >
+        <div className="text-[9px] uppercase tracking-widest text-white/55 mb-1">Determination</div>
+        Pending — no determination yet
+      </div>
+    );
+  }
+  const c = determinationColors(determination);
+  return (
+    <div
+      className="mb-4 rounded-lg px-4 py-3"
+      style={{ background: c.bg, border: `1px solid ${c.border}` }}
+      data-testid="determination-panel"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-mono uppercase tracking-widest text-white/55">Determination</span>
+          <DeterminationBadge determination={determination} />
+        </div>
+        <span className="text-[10px] font-mono text-white/65">
+          Sent: {sentAt ?? 'Not sent yet'}
+        </span>
+      </div>
+      <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">{determination.lead}</p>
+      <div className="mt-3">
+        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Analyst note</div>
+        <p className="text-[12px] text-white/85 leading-relaxed">{determination.analyst_note}</p>
+      </div>
+      {determination.next_steps.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">What the reporter was told to do</div>
+          <ul className="list-disc pl-5 text-[12px] text-white/85 leading-relaxed space-y-0.5">
+            {determination.next_steps.map((step, i) => <li key={i}>{step}</li>)}
+          </ul>
+        </div>
+      )}
+      <div className="mt-3">
+        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Action taken</div>
+        <p className="text-[12px] text-white/85">{determination.action_label}</p>
+      </div>
+    </div>
+  );
+}
+
 function MessageRow({ message, expanded, onToggle }: {
   message: AdminAbuseInboxMessage;
   expanded: boolean;
@@ -466,9 +547,18 @@ function MessageRow({ message, expanded, onToggle }: {
       <div className="flex items-center justify-between gap-3 mb-1.5">
         <div className="flex items-center gap-2 flex-wrap">
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: sevColor, boxShadow: `0 0 6px ${sevColor}` }} />
-          <span className="text-[10px] font-mono font-semibold uppercase" style={{ color: clsColor }}>
-            {cls}
-          </span>
+          {message.determination ? (
+            <>
+              <DeterminationBadge determination={message.determination} />
+              <span className="text-[9px] font-mono uppercase text-white/55" title="Raw classification">
+                {cls}
+              </span>
+            </>
+          ) : (
+            <span className="text-[10px] font-mono font-semibold uppercase" style={{ color: clsColor }}>
+              {cls}
+            </span>
+          )}
           <span className="text-white/40 text-[10px]">·</span>
           <span className="text-[10px] font-mono uppercase font-semibold" style={{ color: sevColor }}>
             {sev}
@@ -573,6 +663,9 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         </div>
       </div>
 
+      {/* Determination — the verdict the reporter was emailed */}
+      <DeterminationPanel determination={message.determination} sentAt={message.determination_sent_at} />
+
       {/* Two-column metadata grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 mb-4">
         <DetailField label="From"             value={message.original_from} mono accent />
@@ -588,7 +681,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
         <DetailField label="URLs in body"     value={String(message.url_count)} />
         <DetailField label="Attachments"      value={String(message.attachment_count)} />
         <DetailField label="Ack sent"         value={message.ack_sent_at} />
-        <DetailField label="Determination sent" value={message.determination_sent_at} />
+        <DetailField label="Determination sent" value={message.determination_sent_at ?? (message.determination ? 'Not sent yet' : 'Pending')} />
         {message.throttled === 1 && (
           <DetailField label="Rate-limited" value={throttleReasonLabel(message.throttle_reason)} color="#fbbf24" />
         )}
@@ -600,7 +693,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       {/* AI reasoning */}
       {(message.classification_reason || message.ai_assessment) && (
         <div className="mb-4">
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">AI analyst notes</div>
+          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Classifier reasoning (internal)</div>
           <p className="text-[12px] text-white/90 leading-relaxed">
             {message.classification_reason || message.ai_assessment}
           </p>

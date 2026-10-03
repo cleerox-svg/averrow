@@ -27,6 +27,7 @@
  * `17 * * * *` sweeper delivers anything the Workflow missed.
  */
 import type { Env } from "../types";
+import { primaryRuleFromReason } from "./abuse-mailbox-rules";
 import { logger } from "./logger";
 import { registrableDomain } from "./domain-utils";
 import {
@@ -847,6 +848,54 @@ function verdictCopyFor(ctx: DeterminationContext): VerdictDef {
     if (ctx.classification === "malware") return LIKELY_MALWARE_COPY;
   }
   return VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
+}
+
+// ─── Determination view (UI) ─────────────────────────────────────
+
+/** What the reporter was told, for the abuse-mailbox UIs. Built from the
+ *  SAME copy functions as the determination email, so the two can't drift.
+ *  Fixed copy only — never model output or reason codes. */
+export interface DeterminationView {
+  label:        string;
+  tone:         "threat" | "review" | "spam" | "safe";
+  lead:         string;
+  analyst_note: string;
+  next_steps:   string[];
+  action_label: string;
+}
+
+export function describeDetermination(row: {
+  classification:        string | null;
+  classified_by:         string | null;
+  classification_reason: string | null;
+  ai_action:             string | null;
+}): DeterminationView | null {
+  const cls = row.classification ?? "pending";
+  if (cls === "pending" || cls === "follow_up") return null;
+  const ctx: DeterminationContext = {
+    messageId:       "",
+    inboundAlias:    null,
+    originalSubject: null,
+    classification:  cls,
+    confidence:      0,
+    action:          row.ai_action ?? "review",
+    classifiedBy:    row.classified_by,
+    rulesRule:       row.classified_by === "rules" ? primaryRuleFromReason(row.classification_reason) : null,
+  };
+  const v = verdictCopyFor(ctx);
+  const tone: DeterminationView["tone"] =
+    cls === "phishing" || cls === "malware" ? "threat"
+    : cls === "spam" ? "spam"
+    : cls === "benign" ? "safe"
+    : "review";
+  return {
+    label:        v.label,
+    tone,
+    lead:         v.lead,
+    analyst_note: analystNote(ctx),
+    next_steps:   [...nextStepsFor(ctx, v)],
+    action_label: humanizeAction(ctx.action, ctx.classifiedBy),
+  };
 }
 
 // ─── PR-BC external-narrative sanitizer ─────────────────────────
