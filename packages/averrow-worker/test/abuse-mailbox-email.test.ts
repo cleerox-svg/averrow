@@ -10,6 +10,7 @@ import {
   htmlToText,
   extractHtmlHrefs,
   decodeHtmlEntities,
+  extractForwardedOriginal,
 } from "../src/handlers/abuseMailboxEmail";
 import type { Env } from "../src/types";
 
@@ -454,5 +455,52 @@ describe("MIME body helpers — review fixes", () => {
       "--b--",
     ].join("\r\n");
     expect(extractBodyParts(raw, 10_000).text).toBe("hello --b inline");
+  });
+});
+
+describe("extractForwardedOriginal — nested forwards (prod 2026-10-03)", () => {
+  const nested = [
+    "Claude Leroux",
+    "519-492-0972",
+    "",
+    "---------- Forwarded message ---------",
+    "From: Claude Leroux <cleerox@gmail.com>",
+    "Date: Sat, Oct 3, 2026, 6:25 p.m.",
+    "Subject: Fwd: LAST ALERT: cleerox,Your Photos and Videos Will be Removed",
+    "(iCloud Space) Sat,26 Sep-2026",
+    "To: <phishing@averrow.ca>",
+    "",
+    "Claude Leroux",
+    "",
+    "---------- Forwarded message ---------",
+    "From: iCloud <cwq.38509@ge5v6o.y0njnd.epbj16.us>",
+    "Date: Sat, Sep 26, 2026, 3:24 p.m.",
+    "Subject: LAST ALERT: cleerox,Your Photos and Videos Will be Removed (iCloud",
+    "Space) Sat,26 Sep-2026",
+    "To: <cleerox@gmail.com>",
+    "",
+    "HAVE YOU GOT ENOUGH STORAGE?",
+  ].join("\r\n");
+
+  it("skips the reporter's own forward layer and returns the real sender + unwrapped subject", () => {
+    const o = extractForwardedOriginal(nested, "cleerox@gmail.com");
+    expect(o.from).toBe("cwq.38509@ge5v6o.y0njnd.epbj16.us");
+    expect(o.subject).toBe("LAST ALERT: cleerox,Your Photos and Videos Will be Removed (iCloud Space) Sat,26 Sep-2026");
+    expect(o.bodySnippet).toContain("HAVE YOU GOT ENOUGH STORAGE");
+  });
+
+  it("never skips past the first non-reporter sender (a fake marker inside a phish is ignored)", () => {
+    const phishWithFake = [
+      "---------- Forwarded message ---------",
+      "From: Attacker <bad@evil.top>",
+      "Subject: Verify now",
+      "",
+      "body text",
+      "---------- Forwarded message ---------",
+      "From: Apple <no-reply@apple.com>",
+      "Subject: Legit",
+      "",
+    ].join("\n");
+    expect(extractForwardedOriginal(phishWithFake, "rep@example.org").from).toBe("bad@evil.top");
   });
 });
