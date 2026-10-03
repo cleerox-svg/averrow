@@ -52,7 +52,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api/heatmap` | Public threat heatmap data |
 | GET | `/api/observatory/nodes` | Observatory graph nodes |
 | GET | `/api/observatory/arcs` | Observatory graph arcs |
 | GET | `/api/observatory/live` | Live observatory feed |
@@ -98,9 +97,10 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/overview` | Staff | Dashboard overview stats |
 | GET | `/api/dashboard/top-brands` | Staff | Top targeted brands |
 | GET | `/api/dashboard/providers` | Staff | Provider summary |
-| GET | `/api/dashboard/stats` | User | Dashboard statistics |
-| GET | `/api/dashboard/sources` | User | Threat source breakdown |
-| GET | `/api/dashboard/trend` | User | Threat trend data |
+| GET | `/api/dashboard/stats` | Staff | Legacy v1 scan aggregates, platform-wide counts only: `total_signals`, `processed`, `avg_trust`, `active_alerts`, `queue_depth`, `dead_letters`, `duplicates`, `stored`. No UI calls it any more. Was unauthenticated before 2026-10 (the docs wrongly said "User"). |
+| GET | `/api/dashboard/sources` | Staff | Legacy v1 scan source mix, `[{ name, count, percentage }]` by scan source (`station-alpha/beta/gamma`). Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
+| GET | `/api/dashboard/trend` | Staff | Legacy v1 scan volume and quality for the last 2h, `[{ time, count, quality }]`. Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
+| GET | `/api/heatmap` | Staff | Scan-submitter heatmap, `?hours=1..168&filter=all\|phishing\|malware`. Returns `{ points: [{ lat, lng, intensity, city, country, type }], stats }`. The points geolocate the **requester IP** of each `/api/scan*` call, not the threat. That is user location data, so the route is staff-only. Was public before 2026-10. No UI calls it (`templates/heatmap-component.ts` references it but is not imported anywhere). For the public threat map, use `/api/observatory/heatmap`. |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
 
 ## Search
