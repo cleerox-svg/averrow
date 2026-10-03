@@ -55,11 +55,50 @@ npx wrangler d1 execute trust-radar-v2 --local --file=migrations/0030_social_mon
 # Run in production
 npx wrangler d1 execute trust-radar-v2 --file=migrations/0030_social_monitoring.sql
 
-# Also run audit DB migrations when applicable
-npx wrangler d1 execute trust-radar-v2-audit --file=migrations/XXXX_audit.sql
+# Audit DB (trust-radar-v2-audit) has its own tracked migrations in
+# packages/averrow-worker/migrations-audit/ (binding AUDIT_DB)
+cd packages/averrow-worker
+pnpm run db:migrate:audit:prod      # = wrangler d1 migrations apply AUDIT_DB --remote
 ```
 
-Migrations are also run automatically by the deploy workflow.
+Migrations are also run automatically by the deploy workflow (production only — `deploy-radar.yml` runs `db:migrate:prod` and `db:migrate:audit:prod`; staging and dev are applied by hand with `--env staging` / `--env dev`).
+
+### Audit migration 0002 — redact webhook URLs in historic audit rows
+
+`migrations-audit/0002_redact_webhook_urls.sql` rewrites `details.webhook_url` on `webhook_config_updated` rows written before PR #1749, which stored the full org webhook URL (Slack / Teams / Discord URLs embed their credential, and `view_audit` roles can read and CSV-export `audit_log`). The value becomes the `redactWebhookUrl()` form (`https://…slack.com/…`); anything the SQL can't parse strictly (non-http(s) schemes, non-numeric ports, odd IP literals, IDN/punycode, %-escapes) becomes `[redacted]`. Each rewritten row gains `webhook_url_redacted_by` and `webhook_url_original_length`, and the run is recorded as one `audit_redaction_applied` row with `rows_redacted`. Idempotent. Rows written after #1749 are left untouched and unstamped, except TS outputs for a trailing-dot host (`https://…com./…`) or a punycode host, which are re-redacted to `[redacted]` and stamped. The SQL header comment documents the exact rule and its parity with the TS helper.
+
+- **Production:** applied by `deploy-radar.yml` on merge. Manual:
+  ```bash
+  cd packages/averrow-worker
+  npx wrangler d1 migrations apply AUDIT_DB --remote
+  ```
+- **Staging / dev** (`trust-radar-v2-audit-staging` / `-dev`, not covered by CI), from `packages/averrow-worker`: `npx wrangler d1 migrations apply AUDIT_DB --remote --env staging` and `... --env dev`.
+- **Verify** (from `packages/averrow-worker`): `npx wrangler d1 execute AUDIT_DB --remote --command "SELECT details FROM audit_log WHERE action = 'audit_redaction_applied'"` shows the count, and this must return 0:
+  ```sql
+  SELECT count(*) FROM audit_log
+   WHERE action = 'webhook_config_updated'
+     AND json_valid(details)
+     AND json_extract(details,'$.webhook_url') NOT IN ('', '[redacted]')
+     AND json_extract(details,'$.webhook_url') NOT LIKE '%/…';
+  ```
+
+#### Credential rotation and customer notification (owned action item, not optional)
+
+The migration only removes the URLs from the audit log; it does not un-expose them. **Owner: platform owner.** Notifying the affected customers and getting both credentials rotated is a required action item.
+
+- **The affected set is every org with a webhook configured**, not only orgs with audit rows. Before #1749 every `read_customers` role (analyst, sales, support, auditor, and the 30-day `auditor` MCP service-account token) could read every org's live `webhook_url` **and** `webhook_secret` from `/api/admin/organizations`. List them:
+  ```sql
+  -- main DB (trust-radar-v2): every org whose webhook credentials were readable
+  SELECT id, name FROM organizations WHERE webhook_url IS NOT NULL;
+
+  -- audit DB (trust-radar-v2-audit): orgs whose full URL was also in audit_log
+  SELECT DISTINCT resource_id FROM audit_log
+   WHERE action = 'webhook_config_updated'
+     AND json_valid(details)
+     AND json_extract(details,'$.webhook_url_redacted_by') = '0002_redact_webhook_urls';
+  ```
+- **Owners must rotate both credentials:** the provider-side webhook URL (regenerate it in Slack / Teams / Discord and save the new one), and the Averrow webhook signing secret via `POST /api/orgs/:orgId/webhook/regenerate-secret` (org owner only; returns the new secret once).
+- **Exposure can't be narrowed after the fact.** Audit-log reads and CSV exports (`/api/admin/audit`, `/api/admin/audit/export`) are not themselves audited, so there is no record of who viewed these rows, and CSV / MCP copies may exist off-platform. D1 Time Travel also keeps the pre-migration state restorable for its retention window (30 days on paid plans). Treat every listed credential as compromised.
 
 ### Migration 0272 must land before (or with) the Worker that emits `platform_ai_calls_failing`
 
