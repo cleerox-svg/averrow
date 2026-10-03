@@ -28,7 +28,10 @@ export function useBrandFullDetail(brandId: string) {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const [brand, threats, locations] = await Promise.all([
-        api.get<any>(`/api/brands/${brandId}`).catch(() => ({ data: null })),
+        // Not swallowed: a failed brand fetch must surface as `error` (the page
+        // shows an error + retry), not look like "Brand not found". A 404
+        // envelope still resolves with `data: null` and reads as not-found.
+        api.get<any>(`/api/brands/${brandId}`),
         api.get<any>(`/api/brands/${brandId}/threats?status=active&limit=50`).catch(() => ({ data: [] })),
         api.get<any>(`/api/brands/${brandId}/threats/locations`).catch(() => ({ data: [] })),
       ]);
@@ -86,6 +89,9 @@ export function useBrandFullDetail(brandId: string) {
     isLoading: essential.isLoading,
     isExtendedLoading: extended.isLoading,
     error: essential.error ?? extended.error ?? null,
+    /** Failure of the essential (brand) query only — the page-blocking one. */
+    isError: essential.isError,
+    refetch: essential.refetch,
   };
 }
 

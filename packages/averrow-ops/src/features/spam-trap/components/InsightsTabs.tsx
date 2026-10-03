@@ -14,11 +14,11 @@
 // All three render directly from useSpamTrapInsights() — one
 // round-trip, KV-cached at 5min on the backend. Empty states are
 // honest (no fake data, no loading skeleton beyond the parent
-// page's PageLoader).
+// page's PageState loading skeleton).
 
 import type { CSSProperties } from 'react';
 import { TrendingUp, GitBranch, Settings, ArrowRight, AlertCircle } from 'lucide-react';
-import { Badge, Sparkline } from '@/design-system/components';
+import { Badge, Sparkline, StatTile } from '@/design-system/components';
 import type {
   SpamTrapInsights,
   SpamTrapInsightsTrendsWeek,
@@ -282,9 +282,9 @@ export function StrategyTab({ insights }: { insights: SpamTrapInsights | null })
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <StatTile label="Last run" value={last_run ? relativeTime(last_run.started_at) : 'never'} colour="#E5A832" />
-        <StatTile label="Last status" value={last_run?.status ?? '—'} colour={last_run?.status === 'success' ? '#4ADE80' : '#fb923c'} />
-        <StatTile label="Auto-pruned · 30d" value={String(recent_prunes_30d)} colour="#A78BFA" />
+        <StatTile label="Last run" value={last_run ? relativeTime(last_run.started_at) : 'never'} accent="#E5A832" />
+        <StatTile label="Last status" value={last_run?.status ?? '—'} accent={last_run?.status === 'success' ? '#4ADE80' : '#fb923c'} />
+        <StatTile label="Auto-pruned · 30d" value={recent_prunes_30d} accent="#A78BFA" />
       </div>
       {last_run && (
         <div className="rounded-xl p-4" style={GLASS_CARD}>
@@ -343,17 +343,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
       {children}
-    </div>
-  );
-}
-
-function StatTile({ label, value, colour }: { label: string; value: string; colour: string }) {
-  return (
-    <div className="rounded-xl p-3" style={GLASS_CARD}>
-      <div className="text-[9px] font-mono uppercase tracking-widest text-white/40">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color: colour }}>
-        {value}
-      </div>
     </div>
   );
 }

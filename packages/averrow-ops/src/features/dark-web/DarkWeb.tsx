@@ -24,9 +24,8 @@ import {
   type DarkWebStatus,
   type Severity,
 } from '@/hooks/useDarkWebMonitor';
-import { Card, PageHeader, StatCard, StatGrid, Badge } from '@/design-system/components';
+import { Card, PageHeader, StatTile, StatGrid, Badge, PageState, pageStateKind } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { relativeTime } from '@/lib/time';
 
 const PAGE_SIZE = 50;
@@ -131,6 +130,18 @@ export function DarkWeb() {
   }, []);
   const hasActiveFilters = !!(source || severity || classification || q);
 
+  // A failed fetch is an error, never "no mentions". keepPreviousData rows
+  // belong to the previous filters, so they don't count as data on failure.
+  const listFailed = query.isError && (!data || query.isPlaceholderData);
+  const listKind = pageStateKind({
+    isLoading: query.isLoading,
+    isError: listFailed,
+    isEmpty: rows.length === 0,
+  });
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load").
+  const statValue = (n: number): string | null =>
+    data ? formatCount(n) : (query.isLoading || query.isError ? null : '0');
+
   const goToBrand = (brandId: string | null) => {
     if (brandId) navigate(`/brands/${brandId}?tab=dark-web`);
   };
@@ -143,28 +154,32 @@ export function DarkWeb() {
       />
 
       <StatGrid>
-        <StatCard
+        <StatTile
           label="Active Mentions"
-          value={formatCount(slice?.total_active ?? 0)}
-          accentColor="var(--red)"
+          value={statValue(slice?.total_active ?? 0)}
+          error={listFailed}
+          accent="var(--red)"
         />
-        <StatCard
+        <StatTile
           label="Confirmed"
-          value={formatCount(slice?.confirmed_active ?? 0)}
-          accentColor={(slice?.confirmed_active ?? 0) > 0 ? 'var(--red)' : 'var(--blue)'}
+          value={statValue(slice?.confirmed_active ?? 0)}
+          error={listFailed}
+          accent={(slice?.confirmed_active ?? 0) > 0 ? 'var(--red)' : 'var(--blue)'}
         />
-        <StatCard
+        <StatTile
           label="Critical / High"
-          value={formatCount((slice?.critical_active ?? 0) + (slice?.high_active ?? 0))}
-          accentColor={
+          value={statValue((slice?.critical_active ?? 0) + (slice?.high_active ?? 0))}
+          error={listFailed}
+          accent={
             (slice?.critical_active ?? 0) + (slice?.high_active ?? 0) > 0
               ? 'var(--red)' : 'var(--blue)'
           }
         />
-        <StatCard
+        <StatTile
           label="Sources Active"
-          value={formatCount(bySource.length)}
-          accentColor={bySource.length > 1 ? 'var(--amber)' : 'var(--blue)'}
+          value={statValue(bySource.length)}
+          error={listFailed}
+          accent={bySource.length > 1 ? 'var(--amber)' : 'var(--blue)'}
         />
       </StatGrid>
 
@@ -185,17 +200,24 @@ export function DarkWeb() {
           </div>
         </div>
 
-        {query.isLoading ? (
-          <div className="text-center text-white/40 font-mono text-xs py-12">Loading mentions…</div>
-        ) : rows.length === 0 ? (
-          <EmptyState
+        {query.isError && !listFailed && (
+          <PageState kind="error" layout="inline" title="Couldn't refresh mentions" description="Showing the last loaded data." onRetry={() => { void query.refetch(); }} />
+        )}
+
+        {listKind === 'loading' ? (
+          <PageState kind="loading" layout="table" title="Loading mentions…" />
+        ) : listKind === 'error' ? (
+          <PageState kind="error" layout="table" title="Couldn't load mentions" onRetry={() => { void query.refetch(); }} />
+        ) : listKind === 'empty' ? (
+          <PageState
+            kind="empty"
+            layout="table"
             title={hasActiveFilters || status !== 'active' ? 'No mentions match these filters' : 'No dark web mentions yet'}
-            subtitle={
+            description={
               hasActiveFilters || status !== 'active'
                 ? 'Clear filters to see all active mentions.'
                 : 'The dark web monitor scans every 6 hours. New findings appear here as paste archives, Telegram leak channels, and ransomware leak sites are processed.'
             }
-            variant="scanning"
           />
         ) : (
           <>
@@ -397,7 +419,9 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
       <Td>
         <Badge
           classification={m.classification ?? 'unknown'}
-          label={(m.classification ?? 'unknown').replace(/_/g, ' ')}
+          // `confirmed` keeps the shared Badge's proper-cased label; the other
+          // classifications keep their raw text (underscores spaced out).
+          label={m.classification === 'confirmed' ? undefined : (m.classification ?? 'unknown').replace(/_/g, ' ')}
           size="xs"
         />
       </Td>

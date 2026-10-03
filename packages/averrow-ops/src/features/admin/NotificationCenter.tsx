@@ -20,7 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import {
   Card, Button, Badge, PageHeader, SectionLabel,
-  StatCard, StatGrid, Select,
+  StatTile, StatGrid, Select,
 } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
 import { Input } from '@/components/ui/Input';
@@ -54,7 +54,7 @@ export function NotificationCenter() {
   const { isSuperAdmin } = useAuth();
   const navigate = useNavigate();
   const [windowHours, setWindowHours] = useState('24');
-  const { data: stats, isLoading: statsLoading } = useNotificationStats(parseInt(windowHours, 10));
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useNotificationStats(parseInt(windowHours, 10));
   const { data: mutes = [] } = useNotificationMutes();
 
   // Gate: super_admin only. Bounce to dashboard for anyone else.
@@ -73,6 +73,7 @@ export function NotificationCenter() {
       <StatsPanel
         stats={stats}
         loading={statsLoading}
+        failed={statsError && !stats}
         windowHours={windowHours}
         onWindowChange={setWindowHours}
       />
@@ -85,10 +86,12 @@ export function NotificationCenter() {
 }
 
 function StatsPanel({
-  stats, loading, windowHours, onWindowChange,
+  stats, loading, failed, windowHours, onWindowChange,
 }: {
   stats: ReturnType<typeof useNotificationStats>['data'];
   loading: boolean;
+  /** Stats query failed with no data: tiles show "Couldn't load", never 0. */
+  failed: boolean;
   windowHours: string;
   onWindowChange: (v: string) => void;
 }) {
@@ -98,16 +101,13 @@ function StatsPanel({
         <SectionLabel>Activity Overview</SectionLabel>
         <Select value={windowHours} options={WINDOW_OPTIONS} onChange={(e) => onWindowChange(e.target.value)} />
       </div>
-      {loading ? (
-        <div className="text-white/40 text-sm font-mono py-4 text-center">Loading…</div>
-      ) : (
-        <StatGrid cols={4}>
-          <StatCard label="Total fired" value={stats?.totals?.total ?? 0} accentColor="#E5A832" />
-          <StatCard label="Distinct types" value={stats?.totals?.types ?? 0} accentColor="#0A8AB5" />
-          <StatCard label="Unique recipients" value={stats?.totals?.unique_recipients ?? 0} accentColor="#3CB878" />
-          <StatCard label="Critical" value={stats?.totals?.critical_count ?? 0} accentColor="#C83C3C" />
-        </StatGrid>
-      )}
+      {/* null = still loading (StatTile shows "—"); `error` on failure. Never a fake 0. */}
+      <StatGrid cols={4}>
+        <StatTile label="Total fired" value={stats ? (stats.totals?.total ?? 0) : null} error={failed} accent="#E5A832" />
+        <StatTile label="Distinct types" value={stats ? (stats.totals?.types ?? 0) : null} error={failed} accent="#0A8AB5" />
+        <StatTile label="Unique recipients" value={stats ? (stats.totals?.unique_recipients ?? 0) : null} error={failed} accent="#3CB878" />
+        <StatTile label="Critical" value={stats ? (stats.totals?.critical_count ?? 0) : null} error={failed} accent="#C83C3C" />
+      </StatGrid>
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
           <AudienceCount label="super_admin" count={stats.totals.super_admin_count} />

@@ -16,7 +16,6 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ThreatInflowChart } from './ThreatInflowChart';
 import { relativeTime } from '@/lib/time';
 import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
 import { tabUrl } from '@/lib/workspaceRoutes';
 

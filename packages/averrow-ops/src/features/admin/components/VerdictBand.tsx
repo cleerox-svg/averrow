@@ -43,7 +43,7 @@
 //      behavior preserved.
 
 import { Link } from 'react-router-dom';
-import { Card, Badge } from '@/design-system/components';
+import { Card, Badge, PageState } from '@/design-system/components';
 import type { Severity } from '@/design-system/components';
 import {
   useDashboardSnapshot,
@@ -144,8 +144,11 @@ function pipelineSeverity(pipeline: DashboardPipelineSlice): { severity: BandSev
 }
 
 export function VerdictBand() {
-  const { data: snapshot, isLoading, isError } = useDashboardSnapshot();
+  const { data: snapshot, isLoading, isError, refetch } = useDashboardSnapshot();
   const snapshotUnavailable = isLoading || isError || !snapshot;
+  // The snapshot request FAILED (not merely still loading): say so, with a
+  // retry, instead of an indefinite "Health check pending".
+  const snapshotFailed = isError && !snapshot;
 
   const contributors: Contributor[] = [];
 
@@ -217,7 +220,9 @@ export function VerdictBand() {
   const unknownContributors = contributors.filter(c => c.severity === 'unknown');
 
   let summary: string;
-  if (overall === 'ok') {
+  if (snapshotFailed) {
+    summary = '';
+  } else if (overall === 'ok') {
     summary = 'All monitored signals healthy — agents, AI budget, feeds, and pipelines.';
   } else if (overall === 'unknown') {
     summary = `Health check pending — waiting on ${unknownContributors.map(c => c.label).join(', ')}.`;
@@ -243,13 +248,22 @@ export function VerdictBand() {
         <Badge
           severity={isBadSeverity(overall) ? overall : undefined}
           status={overall === 'ok' ? 'active' : overall === 'unknown' ? 'inactive' : undefined}
-          label={LABEL[overall]}
+          label={snapshotFailed ? 'UNAVAILABLE' : LABEL[overall]}
           size="md"
           pulse={overall === 'critical' || overall === 'high'}
         />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-          {summary}
-        </span>
+        {snapshotFailed ? (
+          <PageState
+            kind="error"
+            layout="inline"
+            title="Couldn't load platform health"
+            onRetry={() => { void refetch(); }}
+          />
+        ) : (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+            {summary}
+          </span>
+        )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
         {contributors.map(c => (

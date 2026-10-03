@@ -18,41 +18,10 @@ import {
 } from '@/hooks/useAttributionBacklog';
 import type { BacklogCluster, ActorOption } from '@/hooks/useAttributionBacklog';
 import { useNavigate } from 'react-router-dom';
-import { Card, FilterBar, PageHeader } from '@/design-system/components';
+import { Card, FilterBar, PageHeader, StatTile, PageState } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { timeAgo } from '@/lib/time';
-
-function StatCard({ title, value, subtext }: {
-  title: string;
-  value: number | string;
-  subtext?: string;
-}) {
-  return (
-    <Card hover={false} padding={16}>
-      <div
-        className="font-mono text-[9px] uppercase tracking-widest mb-2"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        {title}
-      </div>
-      <div
-        className="font-mono text-[28px] font-bold leading-none"
-        style={{ color: 'var(--text-primary)' }}
-      >
-        {typeof value === 'number' ? value.toLocaleString() : value}
-      </div>
-      {subtext && (
-        <div
-          className="font-mono text-[10px] mt-1"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          {subtext}
-        </div>
-      )}
-    </Card>
-  );
-}
 
 // timeAgo from lib/time (normalizes D1's bare UTC timestamps itself).
 const relTime = (iso: string | null): string => timeAgo(iso) ?? '—';
@@ -239,11 +208,18 @@ export function AttributionBacklog() {
   const [debounced, setDebounced] = useState('');
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const searchTimer = useRef<number | undefined>(undefined);
-  const { data, isLoading } = useAttributionBacklog({ page, q: debounced });
+  const { data, isLoading, isError, isPlaceholderData, refetch } = useAttributionBacklog({ page, q: debounced });
   const dismiss = useDismissCluster();
 
   const items = data?.items ?? [];
   const totals = data?.totals;
+  // A failed fetch is an error, never "Attributor is keeping up" or 0 tiles.
+  // keepPreviousData rows belong to the previous page/search, so they don't
+  // count as data on failure.
+  const failed = isError && (!data || isPlaceholderData);
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load").
+  const tile = (n: number | undefined): number | null =>
+    totals ? (n ?? 0) : (isLoading || isError ? null : 0);
   const totalPages = Math.max(1, Math.ceil((totals?.unattributed ?? 0) / BACKLOG_PAGE_SIZE));
 
   const submitSearch = (v: string) => {
@@ -273,33 +249,38 @@ export function AttributionBacklog() {
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <StatCard
-          title="Total Clusters"
-          value={totals?.total_clusters ?? 0}
+        <StatTile
+          label="Total Clusters"
+          value={tile(totals?.total_clusters)}
+          error={failed}
         />
-        <StatCard
-          title="Unattributed"
-          value={totals?.unattributed ?? 0}
-          subtext={
+        <StatTile
+          label="Unattributed"
+          value={tile(totals?.unattributed)}
+          error={failed}
+          sub={
             totals && totals.total_clusters > 0
               ? `${Math.round((totals.unattributed / totals.total_clusters) * 100)}% of all`
               : undefined
           }
         />
-        <StatCard
-          title="AI Tried, Unknown"
-          value={totals?.attempted_unknown ?? 0}
-          subtext="Sent to Haiku → no match"
+        <StatTile
+          label="AI Tried, Unknown"
+          value={tile(totals?.attempted_unknown)}
+          error={failed}
+          sub="Sent to Haiku → no match"
         />
-        <StatCard
-          title="Never Attempted"
-          value={totals?.never_attempted ?? 0}
-          subtext="Skipped by Attributor"
+        <StatTile
+          label="Never Attempted"
+          value={tile(totals?.never_attempted)}
+          error={failed}
+          sub="Skipped by Attributor"
         />
-        <StatCard
-          title="Dismissed"
-          value={totals?.dismissed ?? 0}
-          subtext="Human: unattributable"
+        <StatTile
+          label="Dismissed"
+          value={tile(totals?.dismissed)}
+          error={failed}
+          sub="Human: unattributable"
         />
       </div>
 
@@ -317,14 +298,16 @@ export function AttributionBacklog() {
           </div>
         </div>
 
-        {isLoading && items.length === 0 ? (
-          <div className="p-6 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            Loading…
-          </div>
+        {isError && !failed && (
+          <PageState kind="error" layout="inline" className="px-4" title="Couldn't refresh the backlog" description="Showing the last loaded page." onRetry={() => { void refetch(); }} />
+        )}
+
+        {failed ? (
+          <PageState kind="error" layout="table" title="Couldn't load the attribution backlog" onRetry={() => { void refetch(); }} />
+        ) : isLoading && items.length === 0 ? (
+          <PageState kind="loading" layout="table" />
         ) : items.length === 0 ? (
-          <div className="p-6 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            No unattributed clusters — Attributor is keeping up.
-          </div>
+          <PageState kind="clear" layout="table" title="No unattributed clusters" description="Attributor is keeping up." />
         ) : (
           <table className="w-full">
             <thead>

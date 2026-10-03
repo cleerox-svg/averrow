@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { StatCard } from '@/components/ui/StatCard';
+import { BreakdownCard } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { severityColor, severityOpacity, threatTypeColor } from '@/lib/severityColor';
 import {
@@ -622,7 +622,7 @@ export function GeopoliticalCampaignDashboard() {
 
       {/* Live Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard
+        <BreakdownCard
           title="TOTAL THREATS"
           metric={
             <span className="text-[32px] font-bold leading-none" style={{ color: severityColor(null, stats?.total_threats ?? 0) }}>
@@ -643,8 +643,8 @@ export function GeopoliticalCampaignDashboard() {
               <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.high_count ?? 0}</span>
             </div>
           </div>
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="LAST 24 HOURS"
           metric={
             <span className="text-[32px] font-bold leading-none" style={{ color: 'var(--amber-text)' }}>
@@ -658,8 +658,8 @@ export function GeopoliticalCampaignDashboard() {
             <span className="text-[11px] text-white/60">7-day</span>
             <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.threats_7d ?? 0}</span>
           </div>
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="BRANDS TARGETED"
           metric={
             <span className="text-[32px] font-bold leading-none text-wing-blue">
@@ -672,8 +672,8 @@ export function GeopoliticalCampaignDashboard() {
             <div className="w-1.5 h-1.5 rounded-full bg-wing-blue" />
             <span className="text-[11px] text-white/60">Under attack</span>
           </div>
-        </StatCard>
-        <StatCard
+        </BreakdownCard>
+        <BreakdownCard
           title="INFRASTRUCTURE"
           metric={
             <span className="text-[32px] font-bold leading-none text-[#fbbf24]">
@@ -687,7 +687,7 @@ export function GeopoliticalCampaignDashboard() {
             <span className="text-[11px] text-white/60">Domains</span>
             <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.unique_domains ?? 0}</span>
           </div>
-        </StatCard>
+        </BreakdownCard>
       </div>
 
       {/* Timeline */}

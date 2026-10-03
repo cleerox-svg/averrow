@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createAppQueryClient } from '@/lib/query-client';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -19,27 +20,7 @@ bootstrapTheme();
 // Catch Chrome's one-shot `beforeinstallprompt` before any lazy route mounts.
 captureInstallPrompt();
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // 30-minute staleTime means tab-switching between pages doesn't trigger
-      // a refetch storm. Threat intel changes on a 15-min cron at the fastest,
-      // so 5 minutes was needlessly aggressive — every nav was hitting D1
-      // again for data the user had loaded seconds earlier. With 30 minutes,
-      // a typical session of cross-navigation between Brands/Threats/Campaigns
-      // touches the network once per resource per half-hour. Mutations still
-      // invalidate their relevant keys explicitly, so write paths stay correct.
-      staleTime: 30 * 60_000, // 30 minutes
-      gcTime:    60 * 60_000, // 60 minutes — keep in cache even when not displayed
-      retry: (failureCount, error: any) => {
-        // Don't retry 4xx errors — only retry network/5xx errors
-        if (error?.status >= 400 && error?.status < 500) return false;
-        return failureCount < 2;
-      },
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+const queryClient = createAppQueryClient();
 
 // Apply stored theme before React mounts — prevents flash
 (function() {

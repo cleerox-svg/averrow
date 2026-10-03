@@ -12,11 +12,10 @@
  */
 
 import { Link } from 'react-router-dom';
-import { Clock, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Clock, ShieldCheck } from 'lucide-react';
 
-import { PageHeader, Card, Badge } from '@/design-system/components';
+import { PageHeader, Card, Badge, PageState } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { relativeTime } from '@/lib/time';
 import { getAgentMetadata } from '@/lib/agent-metadata';
 import { AgentIcon } from '@/components/brand/AgentIcon';
@@ -41,7 +40,7 @@ function stateBadgeProps(state: ApprovalState): { severity?: 'critical' | 'high'
 }
 
 export function AgentApprovals() {
-  const { data, isLoading, isError, error } = usePendingApprovals();
+  const { data, isLoading, isError, error, refetch } = usePendingApprovals();
   const pending = data?.pending ?? [];
 
   return (
@@ -60,23 +59,19 @@ export function AgentApprovals() {
       )}
 
       {isError && (
-        <Card style={{ padding: '24px' }}>
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: 'var(--sev-critical)' }} />
-            <div>
-              <div className="font-mono text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
-                Failed to load approval queue
-              </div>
-              <div className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
-                {error instanceof Error ? error.message : String(error)}
-              </div>
-            </div>
-          </div>
-        </Card>
+        <PageState
+          kind="error"
+          layout="card"
+          title="Failed to load approval queue"
+          description={error instanceof Error ? error.message : String(error)}
+          onRetry={() => { void refetch(); }}
+        />
       )}
 
       {!isLoading && !isError && pending.length === 0 && (
-        <EmptyState
+        <PageState
+          kind="clear"
+          layout="card"
           icon={<ShieldCheck size={32} />}
           title="Queue is empty"
           description="No agents are awaiting review. Newly-deployed agents will land here automatically on first run."

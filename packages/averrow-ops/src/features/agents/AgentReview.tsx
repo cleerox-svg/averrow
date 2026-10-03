@@ -12,11 +12,10 @@
 
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, ShieldCheck, ShieldAlert, MessageSquare } from 'lucide-react';
+import { ArrowLeft, ShieldCheck, ShieldAlert, MessageSquare } from 'lucide-react';
 
-import { PageHeader, Card, Button, Badge } from '@/design-system/components';
+import { PageHeader, Card, Button, Badge, PageState } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { relativeTime, formatDuration } from '@/lib/time';
 import { getAgentMetadata } from '@/lib/agent-metadata';
 import { AgentIcon } from '@/components/brand/AgentIcon';
@@ -128,25 +127,21 @@ export function AgentReview() {
       )}
 
       {isError && (
-        <Card style={{ padding: '24px' }}>
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: 'var(--sev-critical)' }} />
-            <div>
-              <div className="font-mono text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
-                Failed to load review bundle
-              </div>
-              <div className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
-                {error instanceof Error ? error.message : String(error)}
-              </div>
-            </div>
-          </div>
-        </Card>
+        <PageState
+          kind="error"
+          layout="card"
+          title="Failed to load review bundle"
+          description={error instanceof Error ? error.message : String(error)}
+          onRetry={() => { void refetch(); }}
+        />
       )}
 
       {!isLoading && !isError && bundle === null && (
-        <EmptyState
+        <PageState
+          kind="empty"
+          layout="card"
           icon={<ShieldAlert size={32} />}
-          title="No approval row"
+          title="Approval not found"
           description={`No approval entry exists for ${agentId}. The agent may not be registered, or its first run hasn't fired yet.`}
         />
       )}

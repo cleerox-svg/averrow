@@ -18,7 +18,6 @@ import { Fragment, useEffect, useState } from 'react';
 import { Mail, MailCheck, MailX, Inbox, AlertTriangle, ShieldCheck, Copy, Check, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { Navigate, useLocation } from 'react-router-dom';
-import { PageLoader } from '@/components/ui/PageLoader';
 import {
   useAdminAbuseMailboxSummary,
   useAdminAbuseMailboxMessages,
@@ -38,6 +37,7 @@ import {
 } from '@/hooks/useAdminAbuseMailbox';
 import { relativeTime } from '@/lib/time';
 
+import { PageState } from '@/design-system/components';
 export function AdminAbuseMailbox() {
   const { isSuperAdmin, loading: authLoading } = useAuth();
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export function AdminAbuseMailbox() {
     }
   }, [selectedId, messagesQ.isLoading]);
 
-  if (authLoading) return <PageLoader />;
+  if (authLoading) return <PageState kind="loading" />;
   if (!isSuperAdmin) return <Navigate to="/" replace />;
 
   return (
@@ -895,7 +895,7 @@ function BodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: stri
 }
 
 function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }) {
-  if (loading) return <LoadingPanel />;
+  if (loading) return <PageState kind="loading" layout="inline" />;
   if (urls.length === 0) return <EmptyPanel text="No URLs found in the body" />;
   return (
     <div
@@ -924,7 +924,7 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
 }
 
 function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; loading: boolean }) {
-  if (loading) return <LoadingPanel />;
+  if (loading) return <PageState kind="loading" layout="inline" />;
   if (entries.length === 0) return <EmptyPanel text="No headers captured" />;
   // Sort: surface the key ones first.
   const PRIORITY = ['from', 'to', 'subject', 'date', 'reply-to', 'return-path',
@@ -960,7 +960,7 @@ function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; 
 }
 
 function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAttachment[]; loading: boolean }) {
-  if (loading) return <LoadingPanel />;
+  if (loading) return <PageState kind="loading" layout="inline" />;
   if (attachments.length === 0) return <EmptyPanel text="No attachments" />;
   return (
     <div
@@ -988,17 +988,6 @@ function EmptyPanel({ text }: { text: string }) {
       style={{ border: '1px solid rgba(255,255,255,0.04)' }}
     >
       {text}
-    </div>
-  );
-}
-
-function LoadingPanel() {
-  return (
-    <div
-      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono bg-black/20"
-      style={{ border: '1px solid rgba(255,255,255,0.04)' }}
-    >
-      Loading…
     </div>
   );
 }

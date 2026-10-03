@@ -18,9 +18,8 @@ import {
   type NotificationEventKey,
   type NotificationSeverity,
 } from '@averrow/shared';
-import { Card, Badge, SectionLabel, Button } from '@/design-system/components';
+import { Card, Badge, SectionLabel, Button, PageState } from '@/design-system/components';
 import { Input } from '@/components/ui/Input';
-import { EmptyState } from '@/components/ui/EmptyState';
 import {
   useNotificationsArchive, useMarkRead, useMarkAllRead, OPS_AUDIENCE_FILTER,
   useSnoozeNotification, useMarkDone,
@@ -96,7 +95,12 @@ export function Notifications() {
     audience: OPS_AUDIENCE_FILTER,
   };
 
-  const { data, isLoading, isFetching } = useNotificationsArchive(filters);
+  const {
+    data, isLoading, isFetching, isError, isPlaceholderData, refetch,
+  } = useNotificationsArchive(filters);
+  // A failed fetch is an error, never "Inbox zero". keepPreviousData rows belong
+  // to the previous filters, so they don't count as data on failure.
+  const failed = isError && (!data || isPlaceholderData);
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
   const snooze = useSnoozeNotification();
@@ -276,36 +280,41 @@ export function Notifications() {
       </Card>
 
       {/* Results */}
-      {isLoading ? (
-        <Card>
-          <p className="font-mono text-[12px] py-8 text-center" style={{ color: 'var(--text-tertiary)' }}>
-            Loading…
-          </p>
-        </Card>
+      {isError && !failed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh notifications" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+      {failed ? (
+        <PageState kind="error" layout="card" title="Couldn't load notifications" onRetry={() => { void refetch(); }} />
+      ) : isLoading ? (
+        <PageState kind="loading" layout="card" title="Loading notifications…" />
       ) : notifications.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={<Bell className="w-10 h-10" />}
-            title={
-              appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
-                ? 'No notifications match these filters'
-                : stateFilter === 'inbox'
-                  ? 'Inbox zero'
-                  : stateFilter === 'snoozed'
-                    ? 'Nothing snoozed'
-                    : stateFilter === 'done'
-                      ? 'Nothing done yet'
-                      : 'No notifications yet'
-            }
-            subtitle={
-              appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
-                ? 'Try a different filter or clear the search.'
-                : stateFilter === 'inbox'
-                  ? 'You\'re all caught up.'
-                  : 'Items move here as you triage them.'
-            }
-          />
-        </Card>
+        <PageState
+          kind={
+            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
+              ? 'empty'
+              : stateFilter === 'inbox' ? 'clear' : 'empty'
+          }
+          layout="card"
+          icon={<Bell />}
+          title={
+            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
+              ? 'No notifications match these filters'
+              : stateFilter === 'inbox'
+                ? 'Inbox zero'
+                : stateFilter === 'snoozed'
+                  ? 'Nothing snoozed'
+                  : stateFilter === 'done'
+                    ? 'Nothing done yet'
+                    : 'No notifications yet'
+          }
+          description={
+            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
+              ? 'Try a different filter or clear the search.'
+              : stateFilter === 'inbox'
+                ? 'You\'re all caught up.'
+                : 'Items move here as you triage them.'
+          }
+        />
       ) : (
         <Card>
           <NotificationGroupedList

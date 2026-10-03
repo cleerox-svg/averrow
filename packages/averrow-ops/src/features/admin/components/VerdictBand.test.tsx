@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { VerdictBand } from './VerdictBand';
@@ -110,11 +111,16 @@ describe('VerdictBand', () => {
     expect(screen.getByText('PENDING')).toBeInTheDocument();
   });
 
-  it('never shows OPERATIONAL when the snapshot request errored', () => {
-    (useDashboardSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, isError: true });
+  it('never shows OPERATIONAL when the snapshot request errored, and says it failed (with retry), not "pending"', async () => {
+    const refetch = vi.fn();
+    (useDashboardSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
     renderWithProviders(<VerdictBand />);
     expect(screen.queryByText('OPERATIONAL')).not.toBeInTheDocument();
-    expect(screen.getByText('PENDING')).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).not.toBeInTheDocument();
+    expect(screen.getByText('UNAVAILABLE')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn't load platform health/i);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it('a whole-snapshot failure makes every contributor read unknown, not just one', () => {

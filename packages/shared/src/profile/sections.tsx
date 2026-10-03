@@ -558,6 +558,8 @@ export function SecuritySection({
 }: SecurityProps) {
   const [data, setData] = useState<SessionSummary | null>(null);
   const [revoking, setRevoking] = useState(false);
+  /** The post-revoke list refresh failed; the revoke itself still succeeded. */
+  const [refreshFailed, setRefreshFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -574,8 +576,15 @@ export function SecuritySection({
       const res = await apiClient.post(revokeEndpoint);
       if (res.success) {
         onToast('Other sessions revoked.', 'success');
-        const r = await apiClient.get<SessionSummary>(sessionsEndpoint);
-        if (r.success && r.data) setData(r.data);
+        // The revoke succeeded; a failing refresh must not turn that into an
+        // error toast. Keep the old list and show a subtle note instead.
+        try {
+          const r = await apiClient.get<SessionSummary>(sessionsEndpoint);
+          if (r.success && r.data) { setData(r.data); setRefreshFailed(false); }
+          else setRefreshFailed(true);
+        } catch {
+          setRefreshFailed(true);
+        }
       } else {
         onToast(res.error ?? 'Could not revoke sessions.', 'error');
       }
@@ -600,6 +609,12 @@ export function SecuritySection({
           {revoking ? 'Revoking…' : 'Revoke other sessions'}
         </ProfileButton>
       </div>
+
+      {refreshFailed && (
+        <p role="status" style={{ margin: '10px 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+          Sessions revoked, but the list couldn't be refreshed. It may be out of date.
+        </p>
+      )}
 
       {data?.sessions && data.sessions.length > 0 && (
         <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>

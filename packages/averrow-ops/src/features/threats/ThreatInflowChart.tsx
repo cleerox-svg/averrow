@@ -68,7 +68,8 @@ type Window = '24h' | '7d';
 
 // Guard against the untyped `api.get` handing back a non-InflowResponse
 // body — e.g. the platform's `{success:false,error}` error envelope on a
-// transient 5xx, which `api.ts` resolves (not throws) for any non-401.
+// 4xx or a 2xx-wrapped failure, which `api.ts` resolves (a first-attempt
+// 5xx GET and any 401 reject with ApiError instead).
 // Without this, a malformed response would blind-cast through and the
 // `data.buckets.map(...)` below throws, crashing the whole root route via
 // the ErrorBoundary. Returning null routes to the component's "No data"

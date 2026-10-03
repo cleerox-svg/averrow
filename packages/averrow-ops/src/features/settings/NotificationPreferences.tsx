@@ -30,7 +30,7 @@ import {
   USER_TOGGLEABLE_EVENTS,
   NOTIFICATION_CHANNELS,
 } from '@averrow/shared';
-import { Card, SectionLabel, Button } from '@/design-system/components';
+import { Card, SectionLabel, Button, PageState } from '@/design-system/components';
 import {
   getPushStatus, subscribePush, unsubscribePush,
   listPushDevices, removePushDevice, sendTestPush,
@@ -122,7 +122,7 @@ export function NotificationPreferences() {
   const isSuperAdmin = user?.role === 'super_admin';
 
   // ── N1 prefs (event-row toggles + channel booleans + quiet hours) ──
-  const { data: prefs } = useQuery({
+  const { data: prefs, isLoading: prefsLoading, isError: prefsError, refetch: refetchPrefs } = useQuery({
     queryKey: ['notification-preferences'],
     queryFn: async () => {
       const res = await api.get<PreferencesResponse>('/api/notifications/preferences');
@@ -155,7 +155,7 @@ export function NotificationPreferences() {
   };
 
   // ── v2 prefs (per-channel severity floors + digest mode) ──
-  const { data: v2 } = useNotificationPreferencesV2();
+  const { data: v2, isLoading: v2Loading, isError: v2Error, refetch: refetchV2 } = useNotificationPreferencesV2();
   const updateV2 = useUpdateNotificationPreferencesV2();
   function patchV2(p: Partial<NotificationPreferencesV2>) { updateV2.mutate(p); }
 
@@ -216,6 +216,42 @@ export function NotificationPreferences() {
       queryClient.invalidateQueries({ queryKey: ['push-devices'] });
       await refetchPushStatus();
     } catch { /* swallow */ }
+  }
+
+  // Don't render the toggles until the preferences have loaded. On a failed
+  // fetch every switch used to render "off" and silently do nothing
+  // (handleToggle bails without prefs); show an error with retry instead.
+  const prefsFailed = (prefsError && !prefs) || (v2Error && !v2);
+  const prefsPending = !prefsFailed && ((prefsLoading && !prefs) || (v2Loading && !v2));
+  if (prefsFailed || prefsPending) {
+    return (
+      <div className="animate-fade-in space-y-5 max-w-4xl pb-12">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider hover:text-[var(--amber)] transition-colors"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            <ArrowLeft size={12} /> Back
+          </button>
+          <h1 className="text-2xl font-bold flex-1" style={{ color: 'var(--text-primary)' }}>Notification preferences</h1>
+        </div>
+        {prefsFailed ? (
+          <PageState
+            kind="error"
+            layout="card"
+            title="Couldn't load your notification preferences"
+            description="Your settings are unchanged. Try again in a moment."
+            onRetry={() => {
+              if (prefsError) void refetchPrefs();
+              if (v2Error) void refetchV2();
+            }}
+          />
+        ) : (
+          <PageState kind="loading" layout="card" title="Loading preferences…" />
+        )}
+      </div>
+    );
   }
 
   return (

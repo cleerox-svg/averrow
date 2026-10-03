@@ -288,9 +288,9 @@ export function usePipelineDetail(pipelineId: string | null) {
     queryFn: async () => {
       if (!pipelineId) return null;
       const res = await api.get<PipelineDetail>(`/api/admin/pipeline-status/${pipelineId}`);
-      // The API client doesn't throw on non-2xx — it just returns the
-      // parsed body (or, for an unparseable 500, would have thrown in
-      // fetch). A `{ success: false }` body therefore arrives here with
+      // The API client rejects on 401 and on a first-attempt 5xx GET, but
+      // it does not throw on a 4xx (or a 2xx error envelope) — it returns
+      // the parsed body. A `{ success: false }` body can therefore still arrive here with
       // `data` undefined. Returning `?? null` made react-query resolve
       // the query *successfully* to null, which the detail panel renders
       // as an infinite "Loading detail…" (it can't tell loaded-empty from

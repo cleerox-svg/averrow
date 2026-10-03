@@ -28,10 +28,9 @@ import {
   type ScanLeadIntel,
   type CorrelatedSalesLead,
 } from "@/hooks/useScanLeads";
-import { Card, Badge, Button, PageHeader, StatGrid, StatCard } from "@/design-system/components";
+import { Card, Badge, Button, PageHeader, StatGrid, StatTile, PageState } from "@/design-system/components";
 import { Table, Th, Td } from "@/components/ui/Table";
-import { TableLoader } from "@/components/ui/PageLoader";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { TableLoader } from "@/components/ui/ListLoaders";
 import { useToast } from "@/components/ui/Toast";
 import { relativeTime } from "@/lib/time";
 import { Inbox, ArrowLeft, ExternalLink, ShieldCheck, Globe, Server, Copy } from "lucide-react";
@@ -55,9 +54,12 @@ export function ScanLeadsView() {
   // `?lead=<id>` opens the drill-down — the "New lead" notification
   // deep-links straight here.
   const selectedLeadId = searchParams.get("lead");
-  const { data, isLoading } = useScanLeads(
+  const { data, isLoading, isError, isPlaceholderData, refetch } = useScanLeads(
     statusFilter === "all" ? undefined : { status: statusFilter },
   );
+  // A failed fetch is an error, never "No leads yet". keepPreviousData rows
+  // belong to the previous status filter, so they don't count as data on failure.
+  const listFailed = isError && (!data || isPlaceholderData);
   const stats = data?.stats;
   const leads = data?.leads ?? [];
 
@@ -81,11 +83,11 @@ export function ScanLeadsView() {
     <div className="space-y-6">
       {stats ? (
         <StatGrid>
-          <StatCard label="Total" value={stats.total ?? 0} />
-          <StatCard label="New" value={stats.new_leads ?? 0} />
-          <StatCard label="Contacted" value={stats.contacted ?? 0} />
-          <StatCard label="Qualified" value={stats.qualified ?? 0} />
-          <StatCard label="Converted" value={stats.converted ?? 0} />
+          <StatTile label="Total" value={stats.total ?? 0} />
+          <StatTile label="New" value={stats.new_leads ?? 0} />
+          <StatTile label="Contacted" value={stats.contacted ?? 0} />
+          <StatTile label="Qualified" value={stats.qualified ?? 0} />
+          <StatTile label="Converted" value={stats.converted ?? 0} />
         </StatGrid>
       ) : null}
 
@@ -109,11 +111,19 @@ export function ScanLeadsView() {
         ))}
       </div>
 
-      {isLoading ? (
+      {isError && !listFailed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh leads" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
+
+      {listFailed ? (
+        <PageState kind="error" layout="card" title="Couldn't load scan leads" onRetry={() => { void refetch(); }} />
+      ) : isLoading ? (
         <TableLoader />
       ) : leads.length === 0 ? (
-        <EmptyState
-          icon={<Inbox className="w-10 h-10" />}
+        <PageState
+          kind="empty"
+          layout="card"
+          icon={<Inbox />}
           title="No leads yet"
           description="Public scan submissions will land here once the homepage form receives traffic."
         />
@@ -443,7 +453,7 @@ const SEV_BADGE: Record<string, "info" | "high" | "medium" | "low" | "critical">
 };
 
 export function ScanLeadDetail({ leadId, onBack }: { leadId: string; onBack: () => void }) {
-  const { data, isLoading, isError } = useScanLead(leadId);
+  const { data, isLoading, isError, refetch } = useScanLead(leadId);
 
   const backBtn = (
     <Button size="sm" variant="ghost" onClick={onBack}>
@@ -460,12 +470,25 @@ export function ScanLeadDetail({ leadId, onBack }: { leadId: string; onBack: () 
     );
   }
 
-  if (isError || !data?.lead) {
+  // A failed fetch is an error with a retry; only a successful response with
+  // no lead is "not found".
+  if (isError && !data?.lead) {
     return (
       <div className="space-y-4">
         {backBtn}
-        <EmptyState
-          icon={<Inbox className="w-10 h-10" />}
+        <PageState kind="error" layout="card" title="Couldn't load this lead" onRetry={() => { void refetch(); }} />
+      </div>
+    );
+  }
+
+  if (!data?.lead) {
+    return (
+      <div className="space-y-4">
+        {backBtn}
+        <PageState
+          kind="empty"
+          layout="card"
+          icon={<Inbox />}
           title="Lead not found"
           description="This lead may have been removed, or the link is stale."
         />
@@ -479,6 +502,7 @@ export function ScanLeadDetail({ leadId, onBack }: { leadId: string; onBack: () 
       intel={data.intel}
       correlatedSalesLead={data.correlated_sales_lead}
       backBtn={backBtn}
+      onRetryIntel={() => { void refetch(); }}
     />
   );
 }
@@ -488,11 +512,13 @@ function ScanLeadDetailBody({
   intel,
   correlatedSalesLead,
   backBtn,
+  onRetryIntel,
 }: {
   lead: ScanLead;
   intel: ScanLeadIntel | null;
   correlatedSalesLead: CorrelatedSalesLead | null;
   backBtn: React.ReactNode;
+  onRetryIntel: () => void;
 }) {
   const actions = useLeadActions(lead);
   const { showToast } = useToast();
@@ -843,16 +869,20 @@ function ScanLeadDetailBody({
           ) : null}
         </>
       ) : !lead.domain ? (
-        <EmptyState
-          icon={<Globe className="w-10 h-10" />}
+        <PageState
+          kind="empty"
+          layout="card"
+          icon={<Globe />}
           title="No domain on this lead"
           description="This lead didn't include a domain, so there's no customer intel to show."
         />
       ) : (
-        <EmptyState
-          icon={<Globe className="w-10 h-10" />}
+        <PageState
+          kind="error"
+          layout="card"
           title="Intel temporarily unavailable"
           description={`We couldn't load customer intel for ${lead.domain} right now. Try again in a moment.`}
+          onRetry={onRetryIntel}
         />
       )}
     </div>

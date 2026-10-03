@@ -24,6 +24,19 @@ interface ApiResponse<T = unknown> {
   total?: number;
 }
 
+/**
+ * Error thrown for a failed request. Carries the HTTP `status` so retry
+ * policy (see lib/query-client.ts) can tell a 4xx (don't retry) from a 5xx.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 class ApiClient {
   private token: string | null = null;
   private refreshPromise: Promise<boolean> | null = null;
@@ -99,16 +112,33 @@ class ApiClient {
           } catch {
             // Non-JSON error body — fall back to the status-based message.
           }
-          throw new Error(message);
+          throw new ApiError(message, retryResponse.status);
         }
         return retryResponse.json() as Promise<ApiResponse<T>>;
       }
       this.onUnauthorized?.();
-      throw new Error('Unauthorized');
+      throw new ApiError('Unauthorized', 401);
     }
 
     const bookmark = response.headers.get('x-d1-bookmark');
     if (bookmark) lastBookmark = bookmark;
+
+    // A 5xx on a read must reject so react-query lands in its error path.
+    // Resolving with the `{ success: false }` envelope made every
+    // `res.data ?? []` hook look like a successful empty list, so a server
+    // failure rendered as "nothing found" (UI consolidation PR6b). Scoped to
+    // GET + 5xx: mutations and 4xx keep resolving with the envelope, since
+    // callers read `res.error` for validation / permission messages.
+    if (response.status >= 500 && (options.method ?? 'GET') === 'GET') {
+      let message = `Request failed: ${response.status}`;
+      try {
+        const body = await response.json() as ApiResponse<T>;
+        if (body?.error) message = body.error;
+      } catch {
+        // Non-JSON error body — keep the status-based message.
+      }
+      throw new ApiError(message, response.status);
+    }
 
     return response.json() as Promise<ApiResponse<T>>;
   }

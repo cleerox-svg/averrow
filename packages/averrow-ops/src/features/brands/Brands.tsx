@@ -36,10 +36,9 @@ import {
 } from '@/hooks/useBrandCandidates';
 import { BrandsGrid } from './components/BrandsGrid';
 import { Card } from '@/components/ui/Card';
-import { Badge, PageHeader } from '@/design-system/components';
+import { Badge, PageHeader, PageState, pageStateKind } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { timeAgo } from '@/lib/time';
 
 const STAFF_ROLES = new Set(['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing']);
@@ -731,7 +730,7 @@ type ProspectStatus = 'pending' | 'promoted' | 'rejected';
 
 function ProspectsTab() {
   const [status, setStatus] = useState<ProspectStatus>('pending');
-  const { data, isLoading } = useBrandCandidates(status);
+  const { data, isLoading, isError, refetch } = useBrandCandidates(status);
   // Prefetch counts for the other status buckets so sub-tab labels show
   // counts even before the user clicks. Cheap — each call is staleTime 60s
   // and refetched on the same 5min interval as the active query.
@@ -749,6 +748,9 @@ function ProspectsTab() {
   const navigate = useNavigate();
 
   const all = data?.candidates ?? [];
+  // Error beats loading beats empty. If a refetch fails while the last good
+  // list is on screen, keep the list and show an inline error instead.
+  const listKind = pageStateKind({ isLoading, isError: isError && !data, isEmpty: all.length === 0 });
   const grouped = useMemo(() => ({
     hot:    all.filter(c => c.cert_count >= 50),
     warm:   all.filter(c => c.cert_count >= 10 && c.cert_count < 50),
@@ -784,10 +786,20 @@ function ProspectsTab() {
         ))}
       </div>
 
-      {isLoading && <div className="text-sm text-[var(--text-tertiary)]">Loading prospects…</div>}
+      {isError && data && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh prospects" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+      )}
 
-      {!isLoading && all.length === 0 && (
-        <EmptyState
+      {listKind === 'loading' && <PageState kind="loading" layout="card" title="Loading prospects…" />}
+
+      {listKind === 'error' && (
+        <PageState kind="error" layout="card" title="Couldn't load prospects" onRetry={() => { void refetch(); }} />
+      )}
+
+      {listKind === 'empty' && (
+        <PageState
+          kind="empty"
+          layout="card"
           title={status === 'pending' ? 'No pending prospects'
                : status === 'promoted' ? 'No promoted candidates yet'
                : 'No rejected candidates yet'}

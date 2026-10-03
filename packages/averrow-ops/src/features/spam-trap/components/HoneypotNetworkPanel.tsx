@@ -3,8 +3,7 @@ import { useSpamTrapAddresses, useSeedingSources, useRetireSeedAddress } from '@
 import type { SeedAddress, SeedingSource } from '@/hooks/useSpamTrap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Target, Search, ChevronDown, ChevronRight } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/design-system/components';
+import { Input, PageState } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 
 // ─── Yield buckets ────────────────────────────────────────────────
@@ -468,11 +467,12 @@ export function HoneypotNetworkPanel() {
           )}
 
           {seedingGroups.length === 0 && (
-            <EmptyState
+            <PageState
+              kind="empty"
+              layout="card"
               icon={<Target />}
               title="No seeding source data"
-              subtitle="Source data will populate as honeypot addresses are discovered"
-              variant="scanning"
+              description="Source data will populate as honeypot addresses are discovered"
               compact
             />
           )}
@@ -580,13 +580,14 @@ export function HoneypotNetworkPanel() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <EmptyState
+            <PageState
+              kind="empty"
+              layout="card"
               icon={search ? <Search /> : <Target />}
               title={search ? 'No matching addresses' : 'No seed addresses deployed'}
-              subtitle={search
+              description={search
                 ? 'Try a different search term'
                 : 'Deploy honeypot email addresses to start capturing threat actor reconnaissance'}
-              variant={search ? 'clean' : 'scanning'}
               compact
             />
           ) : (

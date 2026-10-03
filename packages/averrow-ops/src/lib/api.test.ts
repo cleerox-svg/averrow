@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { api } from './api';
+import { api, ApiError } from './api';
 
 function mockResponse(status: number, body: unknown) {
   return {
@@ -104,5 +104,36 @@ describe('api.ts — post-refresh retry error handling', () => {
 
     const result = await api.get<{ ok: boolean }>('/api/agents');
     expect(result).toEqual({ success: true, data: { ok: true } });
+  });
+
+  it('a first-attempt 5xx GET REJECTS instead of resolving with the error envelope', async () => {
+    global.fetch = vi.fn(async () => mockResponse(500, { success: false, error: 'db down' })) as unknown as typeof fetch;
+    await expect(api.get('/api/alerts')).rejects.toThrow('db down');
+  });
+
+  it('the thrown error is an ApiError carrying the HTTP status (5xx, and the post-refresh retry)', async () => {
+    global.fetch = vi.fn(async () => mockResponse(502, { success: false, error: 'bad gateway' })) as unknown as typeof fetch;
+    const err = await api.get('/api/alerts').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+
+    let calls = 0;
+    global.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes('/api/auth/refresh')) return mockResponse(200, { success: true, data: { token: 't' } });
+      calls++;
+      return calls === 1 ? mockResponse(401, {}) : mockResponse(404, { success: false, error: 'gone' });
+    }) as unknown as typeof fetch;
+    const retried = await api.get('/api/x').catch((e: unknown) => e);
+    expect((retried as ApiError).status).toBe(404);
+  });
+
+  it('a 5xx on a mutation still resolves with the envelope (callers read res.error)', async () => {
+    global.fetch = vi.fn(async () => mockResponse(500, { success: false, error: 'nope' })) as unknown as typeof fetch;
+    await expect(api.post('/api/alerts/1', {})).resolves.toEqual({ success: false, error: 'nope' });
+  });
+
+  it('a 4xx GET still resolves with the envelope (not-found / permission copy is the caller\'s)', async () => {
+    global.fetch = vi.fn(async () => mockResponse(404, { success: false, error: 'missing' })) as unknown as typeof fetch;
+    await expect(api.get('/api/x')).resolves.toEqual({ success: false, error: 'missing' });
   });
 });

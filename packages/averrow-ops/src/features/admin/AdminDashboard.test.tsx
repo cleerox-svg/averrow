@@ -180,6 +180,24 @@ describe('AdminDashboard', () => {
     mocks.useAgents.mockReturnValue({ data: [], isLoading: false, isError: false });
   });
 
+  it('a failed /api/admin/dashboard shows "Couldn\'t load" tiles + an activity error with retry, never endless skeletons', async () => {
+    const refetch = vi.fn();
+    (useDashboardSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined, isLoading: false, isError: true, refetch,
+    });
+    const { container } = renderWithProviders(<AdminDashboard />);
+    expect(screen.getAllByText("Couldn't load").length).toBeGreaterThanOrEqual(4);
+    expect(screen.getByText('Threats Today')).toBeInTheDocument();
+    // VerdictBand: failed, not "pending" forever.
+    expect(screen.getByText('UNAVAILABLE')).toBeInTheDocument();
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts.some((a) => /couldn't load activity/i.test(a.textContent ?? ''))).toBe(true);
+    expect(container.querySelectorAll('.animate-pulse').length).toBe(0);
+    const retry = screen.getAllByRole('button', { name: 'Try again' });
+    await userEvent.setup().click(retry[retry.length - 1]);
+    expect(refetch).toHaveBeenCalled();
+  });
+
   it('renders page header', () => {
     renderWithProviders(<AdminDashboard />);
     expect(screen.getByText('Admin Dashboard')).toBeInTheDocument();
@@ -203,7 +221,7 @@ describe('AdminDashboard', () => {
     renderWithProviders(<AdminDashboard />);
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('3,209')).toBeInTheDocument();
-    // 6,245 appears in the StatCard and again in the agent performance subline
+    // 6,245 appears in the StatTile and again in the agent performance subline
     expect(screen.getAllByText('6,245').length).toBeGreaterThanOrEqual(1);
     // 229 appears in both stat card and agent performance section
     expect(screen.getAllByText('229').length).toBeGreaterThanOrEqual(1);

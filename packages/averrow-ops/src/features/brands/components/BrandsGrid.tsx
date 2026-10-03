@@ -6,12 +6,11 @@ import { LiveFeedCard } from './LiveFeedCard';
 import { PortfolioHealthCard } from './PortfolioHealthCard';
 import { AttackVectorsCard } from './AttackVectorsCard';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { CardGridLoader } from '@/components/ui/PageLoader';
+import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/cn';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Search, Shield } from 'lucide-react';
-import { Avatar, Card, GlowNumber, Sparkline } from '@/design-system/components';
+import { Avatar, Card, PageState, Sparkline } from '@/design-system/components';
 
 /* ─── Severity helpers (card grid) ─── */
 
@@ -623,6 +622,8 @@ function BrandCard({
 // has no page-level chrome (title, version toggle, hero stats) —
 // the v3 list shell owns those.
 
+const NO_BRANDS: Brand[] = [];
+
 export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
   const navigate = useNavigate();
 
@@ -636,7 +637,13 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
   const [modalOpen, setModalOpen] = useState(false);
   const debouncedSearch = useDebounce(search, 300);
 
-  const { data: brands = [], isLoading } = useBrands({ view: 'all', timeRange: '7d', search: debouncedSearch });
+  const {
+    data: brandsData, isLoading, isError, isPlaceholderData, refetch,
+  } = useBrands({ view: 'all', timeRange: '7d', search: debouncedSearch });
+  const brands = brandsData ?? NO_BRANDS;
+  // A failed fetch is an error, never "no brands". keepPreviousData rows
+  // belong to the previous search, so they don't count as data on failure.
+  const brandsFailed = isError && (!brandsData || isPlaceholderData);
   // useBrandStats hits `/api/brands/stats` (KV-cached 5 min on the
   // backend) so the catalog-wide total renders "for free" — it
   // gives users the honest "Showing X of Y in catalog" framing
@@ -753,7 +760,12 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
             </Card>
 
             {/* Brand card grid */}
-            {pagedBrands.length > 0 ? (
+            {isError && !brandsFailed && (
+              <PageState kind="error" layout="inline" title="Couldn't refresh brands" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
+            )}
+            {brandsFailed ? (
+              <PageState kind="error" layout="card" compact title="Couldn't load brands" onRetry={() => { void refetch(); }} />
+            ) : pagedBrands.length > 0 ? (
               <div style={{
                 display:             'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
@@ -768,16 +780,17 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                 ))}
               </div>
             ) : (
-              <EmptyState
+              <PageState
+                kind="empty"
+                layout="card"
                 icon={(brands ?? []).length === 0 ? <Shield /> : <Search />}
                 title={(brands ?? []).length === 0 ? 'No brands monitored yet' : 'No brands match your search'}
-                subtitle={(brands ?? []).length === 0
+                description={(brands ?? []).length === 0
                   ? 'Add your first brand to start tracking threats, typosquats, and email security posture'
                   : `Try a different name or domain — you're monitoring ${(brands ?? []).length} brands`}
                 action={(brands ?? []).length === 0
                   ? { label: 'Monitor new brand', onClick: () => setModalOpen(true) }
                   : { label: 'Clear search', onClick: () => { setSearch(''); setPage(1); } }}
-                variant={(brands ?? []).length === 0 ? 'scanning' : 'clean'}
                 compact
               />
             )}

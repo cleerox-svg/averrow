@@ -20,7 +20,7 @@ import { api } from '@/lib/api';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
-import { Badge, Button, Card, PageHeader, StatGrid, StatCard, Tabs } from '@/design-system/components';
+import { Badge, Button, Card, PageHeader, StatGrid, StatTile, Tabs, PageState } from '@/design-system/components';
 import { DailyBriefingWidget } from '@/components/DailyBriefingWidget';
 import { VerdictBand } from './components/VerdictBand';
 import { Pipelines }        from './metrics/Pipelines';
@@ -692,7 +692,7 @@ export function AdminDashboard() {
   // `threat_health` is null for plain admins (RBAC — see
   // handleAdminDashboard) and for any whole-snapshot fetch failure; both
   // read as "unavailable" below, never as fake zeros.
-  const { data: snapshot, isLoading: snapshotLoading, isError: snapshotError } = useDashboardSnapshot();
+  const { data: snapshot, isLoading: snapshotLoading, isError: snapshotError, refetch: refetchSnapshot } = useDashboardSnapshot();
   const threatHealth = snapshot?.threat_health ?? null;
   const healthReady = !snapshotLoading && !snapshotError && !!threatHealth;
 
@@ -846,10 +846,19 @@ export function AdminDashboard() {
                 so it's gated on `healthReady` (dashboard-snapshot-derived). */}
             {healthReady ? (
               <StatGrid cols={4}>
-                <StatCard label="Threats Today" value={fmt(threats.today)} accentColor="var(--red)" sublabel={`${fmt(threats.total)} total`} />
-                <StatCard label="Feed Ingestion" value={fmt(feeds.ingested)} accentColor="var(--amber)" sublabel="records (24h)" />
-                <StatCard label="Agent Runs" value={fmt(agents.total)} accentColor="var(--blue)" sublabel={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
-                <StatCard label="Active Sessions" value={fmt(activeSessions)} accentColor="var(--green)" sublabel="authenticated" />
+                <StatTile label="Threats Today" value={fmt(threats.today)} accent="var(--red)" sub={`${fmt(threats.total)} total`} />
+                <StatTile label="Feed Ingestion" value={fmt(feeds.ingested)} accent="var(--amber)" sub="records (24h)" />
+                <StatTile label="Agent Runs" value={fmt(agents.total)} accent="var(--blue)" sub={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
+                <StatTile label="Active Sessions" value={fmt(activeSessions)} accent="var(--green)" sub="authenticated" />
+              </StatGrid>
+            ) : snapshotError ? (
+              // The snapshot request FAILED: say so ("Couldn't load") instead of
+              // skeletons that never resolve.
+              <StatGrid cols={4}>
+                <StatTile label="Threats Today" value={null} error />
+                <StatTile label="Feed Ingestion" value={null} error />
+                <StatTile label="Agent Runs" value={null} error />
+                <StatTile label="Active Sessions" value={null} error />
               </StatGrid>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -950,6 +959,8 @@ export function AdminDashboard() {
                   </Card>
                 </div>
               </div>
+              ) : snapshotError ? (
+                <PageState kind="error" layout="card" title="Couldn't load activity" onRetry={() => { void refetchSnapshot(); }} />
               ) : (
                 <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
                   <div style={{ gridColumn: 'span 12', minWidth: 0 }} className="lg:col-span-8">

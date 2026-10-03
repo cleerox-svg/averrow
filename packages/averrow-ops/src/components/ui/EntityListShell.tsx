@@ -15,8 +15,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, CSSProperties } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { FilterBar, EmptyState } from '@/design-system/components';
-import type { FilterOption, EmptyVariant } from '@/design-system/components';
+import { FilterBar, PageState, pageStateKind } from '@/design-system/components';
+import type { FilterOption } from '@/design-system/components';
 import { Skeleton } from './Skeleton';
 
 export interface EntityListSort<T> {
@@ -29,6 +29,22 @@ export interface EntityListSort<T> {
 export interface EntityListShellProps<T> {
   items: T[] | undefined;
   isLoading?: boolean;
+  /**
+   * The list query failed with no usable rows. Renders an error state with a
+   * retry button instead of the empty state — a failed fetch is never "no
+   * results". Don't set it when stale rows are still on screen.
+   */
+  isError?: boolean;
+  /** Retry handler for the error state (usually the query's `refetch`). */
+  onRetry?: () => void;
+  /**
+   * A refetch failed but the last good rows are still on screen: keep them and
+   * show an inline "Couldn't refresh …" error with a retry above the grid.
+   * Mutually exclusive with `isError` (callers set one or the other).
+   */
+  refreshError?: boolean;
+  /** Plural noun for the refresh error title ("campaigns"). Default "this list". */
+  noun?: string;
   getKey: (item: T) => string;
   renderItem: (item: T) => ReactNode;
 
@@ -76,7 +92,8 @@ export interface EntityListShellProps<T> {
     icon?: ReactNode;
     title: string;
     subtitle?: string;
-    variant?: EmptyVariant;
+    /** `clear` for a good empty ("all caught up"); default `empty`. */
+    kind?: 'empty' | 'clear';
     action?: { label: string; onClick: () => void; variant?: 'primary' | 'secondary' };
   };
 
@@ -119,6 +136,10 @@ function SortControl({
 export function EntityListShell<T>({
   items,
   isLoading = false,
+  isError = false,
+  onRetry,
+  refreshError = false,
+  noun,
   getKey,
   renderItem,
   search,
@@ -215,18 +236,31 @@ export function EntityListShell<T>({
         />
       )}
 
-      {isLoading ? (
+      {refreshError && !isError && (
+        <PageState
+          kind="error"
+          layout="inline"
+          title={`Couldn't refresh ${noun ?? 'this list'}`}
+          description="Showing the last loaded list."
+          onRetry={onRetry}
+        />
+      )}
+
+      {pageStateKind({ isLoading, isError, isEmpty: total === 0 }) === 'error' ? (
+        <PageState kind="error" layout="card" onRetry={onRetry} />
+      ) : isLoading ? (
         <div className={gridClassName} style={gridStyle}>
           {Array.from({ length: skeletonCount }).map((_, i) => (
             <Skeleton key={i} className={skeletonClassName} />
           ))}
         </div>
       ) : total === 0 ? (
-        <EmptyState
+        <PageState
+          kind={empty.kind ?? 'empty'}
+          layout="card"
           icon={empty.icon ?? <Search />}
           title={empty.title}
-          subtitle={empty.subtitle}
-          variant={empty.variant ?? 'clean'}
+          description={empty.subtitle}
           action={empty.action}
         />
       ) : (

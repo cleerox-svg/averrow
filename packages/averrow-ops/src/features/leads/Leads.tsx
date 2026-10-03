@@ -7,20 +7,20 @@ import {
   Card,
   Badge,
   Button,
-  StatCard,
+  StatTile,
   StatGrid,
   SectionLabel,
   Select,
   PageHeader,
   FilterBar,
+  PageState,
 } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
-import { TableLoader } from '@/components/ui/PageLoader';
+import { TableLoader } from '@/components/ui/ListLoaders';
 import { DrillHeader } from '@/components/mobile/DrillHeader';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
 import { Target, AlertTriangle } from 'lucide-react';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ScoreChip } from './components/ScoreChip';
@@ -120,15 +120,16 @@ function KanbanView({ leads, onSelect }: { leads: SalesLead[]; onSelect: (lead: 
   }, {} as Record<string, SalesLead[]>);
 
   // Page-level empty state when the pipeline is fully empty. Previously
-  // each of the 8 columns rendered an identical EmptyState, training the
+  // each of the 8 columns rendered an identical empty state, training the
   // eye to ignore the kanban. Now we show one CTA at the top.
   if (leads.length === 0) {
     return (
-      <EmptyState
+      <PageState
+        kind="empty"
+        layout="card"
         icon={<Target />}
         title="No leads yet"
-        subtitle="Run Pathfinder to qualify brands from the threat data. Pathfinder scores brands on email security, active threats, social impersonation, recent breach disclosures, and SEC 10-K cybersecurity mentions."
-        variant="scanning"
+        description="Run Pathfinder to qualify brands from the threat data. Pathfinder scores brands on email security, active threats, social impersonation, recent breach disclosures, and SEC 10-K cybersecurity mentions."
       />
     );
   }
@@ -181,7 +182,7 @@ function getPipelineCount(stats: LeadStats['pipeline'], status: string): number 
   return key ? (stats[key] as number) ?? 0 : 0;
 }
 
-function PipelineView({ leads, stats, onSelect }: { leads: SalesLead[]; stats: LeadStats | null; onSelect: (lead: SalesLead) => void }) {
+function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: SalesLead[]; stats: LeadStats | null; /** The stats query failed: tiles show "Couldn't load" instead of disappearing. */ statsFailed?: boolean; onSelect: (lead: SalesLead) => void }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [pitchFilter, setPitchFilter] = useState('');
   const [revenueFilter, setRevenueFilter] = useState('');
@@ -221,14 +222,19 @@ function PipelineView({ leads, stats, onSelect }: { leads: SalesLead[]; stats: L
 
   return (
     <div className="space-y-6">
+      <StatGrid cols={4}>
+        {PIPELINE_STATUSES.map(s => (
+          <StatTile
+            key={s}
+            label={s}
+            value={stats ? getPipelineCount(stats.pipeline, s) : null}
+            error={statsFailed}
+          />
+        ))}
+      </StatGrid>
+
       {stats && (
         <>
-          <StatGrid cols={4}>
-            {PIPELINE_STATUSES.map(s => (
-              <StatCard key={s} label={s} value={getPipelineCount(stats.pipeline, s)} />
-            ))}
-          </StatGrid>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
               <div className="flex items-center justify-between">
@@ -551,14 +557,14 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
 
         {/* Overview Stats */}
         <StatGrid cols={4}>
-          <StatCard label="Prospect Score" value={Math.round(lead.prospect_score)} accentColor="#E5A832" />
-          <StatCard
+          <StatTile label="Prospect Score" value={Math.round(lead.prospect_score)} accent="#E5A832" />
+          <StatTile
             label="Email Grade"
             value={lead.email_security_grade ?? '—'}
-            accentColor={lead.email_security_grade === 'F' ? '#C83C3C' : lead.email_security_grade === 'C' ? '#FB923C' : '#0A8AB5'}
+            accent={lead.email_security_grade === 'F' ? '#C83C3C' : lead.email_security_grade === 'C' ? '#FB923C' : '#0A8AB5'}
           />
-          <StatCard label="Threats / 30d" value={lead.threat_count_30d ?? 0} accentColor="#C83C3C" />
-          <StatCard label="Status" value={columnLabel(lead.status)} />
+          <StatTile label="Threats / 30d" value={lead.threat_count_30d ?? 0} accent="#C83C3C" />
+          <StatTile label="Status" value={columnLabel(lead.status)} />
         </StatGrid>
 
         {/* Firmographics + Buying Signals — the two cards that answer
@@ -758,9 +764,9 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
   return (
     <div className="space-y-6">
       <StatGrid cols={3}>
-        <StatCard label="Total Leads" value={leads.length} accentColor="#E5A832" />
-        <StatCard label="AI Enriched" value={enriched.length} accentColor="#3CB878" />
-        <StatCard label="Awaiting Enrichment" value={unenriched.length} accentColor="#0A8AB5" />
+        <StatTile label="Total Leads" value={leads.length} accent="#E5A832" />
+        <StatTile label="AI Enriched" value={enriched.length} accent="#3CB878" />
+        <StatTile label="Awaiting Enrichment" value={unenriched.length} accent="#0A8AB5" />
       </StatGrid>
 
       {unenriched.length > 0 && (
@@ -840,8 +846,10 @@ export function Leads() {
   const initialView = isLeadsView(searchParams.get('view')) ? (searchParams.get('view') as LeadsView) : 'kanban';
   const [activeView, setActiveView] = useState<LeadsView>(initialView);
   const [selectedLead, setSelectedLead] = useState<SalesLead | null>(null);
-  const { data: leadsRes, isLoading } = useLeads();
-  const { data: stats } = useLeadStats();
+  const { data: leadsRes, isLoading, isError: leadsError, refetch: refetchLeads } = useLeads();
+  // A failed fetch is an error, never "No leads yet"; stale rows stay with an inline error.
+  const leadsFailed = leadsError && !leadsRes;
+  const { data: stats, isError: statsError } = useLeadStats();
 
   const leads = useMemo(() => leadsRes?.data || [], [leadsRes]);
 
@@ -928,13 +936,19 @@ export function Leads() {
         }
       />
 
-      {activeView === 'kanban' && (
+      {activeView !== 'scan' && leadsFailed && (
+        <PageState kind="error" layout="card" title="Couldn't load leads" onRetry={() => { void refetchLeads(); }} />
+      )}
+      {activeView !== 'scan' && leadsError && !leadsFailed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh leads" description="Showing the last loaded list." onRetry={() => { void refetchLeads(); }} />
+      )}
+      {activeView === 'kanban' && !leadsFailed && (
         <KanbanView leads={leads} onSelect={setSelectedLead} />
       )}
-      {activeView === 'pipeline' && (
-        <PipelineView leads={leads} stats={stats ?? null} onSelect={setSelectedLead} />
+      {activeView === 'pipeline' && !leadsFailed && (
+        <PipelineView leads={leads} stats={stats ?? null} statsFailed={statsError && !stats} onSelect={setSelectedLead} />
       )}
-      {activeView === 'enrich' && (
+      {activeView === 'enrich' && !leadsFailed && (
         <EnrichView leads={leads} />
       )}
       {activeView === 'scan' && (

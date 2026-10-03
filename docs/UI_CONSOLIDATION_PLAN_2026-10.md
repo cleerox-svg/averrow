@@ -47,23 +47,29 @@ Phase 1 consolidates the ops console onto one shell and one component kit. PRs s
    The barrel is `packages/shared/src/ui/index.ts` (it also re-exports the existing Button and Card). Correction: `@averrow/shared/ui` did not have 0 imports before this PR. `Button` was already imported by two ops files (`components/v4/TabbedWorkspace.tsx` and `features/console/Console.tsx`). Usage rules are in `AVERROW_UI_STANDARD.md` "Shared kit".
 6. **Collapse duplicates in ops.** Too large for one reviewable diff, so it ships as three PRs (6a, 6b, 6c), one at a time. The ops `design-system/components/index.ts` barrel becomes the single import path and re-exports the kit.
 
-   **6a. Barrel and drop-in components.** *(This PR.)*
+   **6a. Barrel and drop-in components.** *(Shipped, #1752.)*
    - One barrel: `components/ui/index.ts` is folded into `@/design-system/components` and deleted. Deep imports of the moved components are rewritten to the barrel.
    - Aliases deleted: `DeepCard` (call sites renamed to `Card`), `SeverityChip`, `DimensionalAvatar`, `DimensionalButton`.
    - Badge, Tabs, FilterBar, Sparkline and Avatar come from `@averrow/shared/ui`; the ops copies are deleted (`Badge`, `Tabs`, `FilterBar`, `Avatar`, `BrandAvatar`, `TrendSparkline`, `SeverityPill`). One-off pills (DarkWeb, BrandDetail, CampaignDetail) and the local `StatusBadge` copies (Providers, Campaigns, spam-trap `CampaignPanel`) now use `Badge`. Local single-series sparklines (Pipelines, BrandDetail) use `Sparkline`; `BrandsGrid`'s `FaviconAvatar` uses `Avatar tone="neutral"`.
    - `PageHeader` is a thin ops adapter (`design-system/components/PageHeader.tsx`) over the shared one. It maps `back.to` to `navigate()`; the shared header drops its `<h1>` and subtitle inside a workspace. Console wraps its panes in `WorkspaceEmbedProvider`, and the five panes that rendered a raw `<h1>` (Brands, Trends, AttributionBacklog, AdminAudit, PricingConfig) use the PageHeader, so every `TabbedWorkspace` and Console tab shows exactly one `<h1>`.
    - `.ds-focusable` is not undefined: it is defined in `packages/shared/src/theme/tokens.css:344-372` (focus ring, an amber-surface variant and a light-theme override), so there is nothing to fix there.
 
-   **6b. Page states and stat tiles (behaviour fixes).** `EmptyState` becomes `PageState` through an adapter, with `pageStateKind({ isLoading, isError, isEmpty })` on every list page, so a failed query shows an error and never "empty" or an all-clear. Simple `StatCard` becomes `StatTile` and the ops `StatTile` is replaced. `DetailStatCard` is kept as a `BreakdownCard`.
+   **6b. Page states and stat tiles (behaviour fixes).** *(This PR.)*
+   - `EmptyState` is replaced by the shared `PageState` at every site (50 production sites plus the local loaders); `components/ui/EmptyState.tsx` and its test are deleted, with the useful assertions ported to `test/shared-ui/PageState.test.tsx`. Every list page now reads `pageStateKind({ isLoading, isError, isEmpty })`, so a failed query shows `kind="error"` with a retry and never "empty" or an all-clear. A failed refetch with data still on screen keeps the data and shows an inline error. Access-denied pages are `locked`; not-found pages are `empty` with explicit copy, separated from the error branch.
+   - `lib/api.ts`: a first-attempt 5xx on a GET now rejects (it used to resolve with the `{ success: false }` envelope, so every `res.data ?? []` hook read a server failure as an empty list). Mutations and 4xx responses still resolve with the envelope.
+   - `PageLoader`, the local `TabLoading` copies, `LoadingPanel` and the inline "Loading…" divs are `PageState kind="loading"`. `TableLoader` and `CardGridLoader` stay.
+   - Simple `StatCard` is replaced by the shared `StatTile` (`sublabel` is `sub`, `accentColor` is `accent`; the left accent stripe is dropped). A tile whose query has not settled passes `value={null}` (and `error` on failure) instead of `'—'`/`'...'`/`0`. The ops `StatTile`, `StatCard` and `GlowNumber` are deleted, and the local `StatCard`/`StatTile` copies in AttributionBacklog, AdminAudit and spam-trap `InsightsTabs` use the shared one.
+   - `DetailStatCard` is kept as `BreakdownCard` (`design-system/components/BreakdownCard.tsx`) on the shared `Card`, with the `.detail-stat-*` container-query CSS unchanged.
+   - Not migrated (follow-ups): the `features/admin/metrics/*` `Stat` copies, the Feeds/Threats `Stat`, `BigStat` and `StatMiniCard`, and OverviewV4's `KpiTile` (PR7).
 
    **6c. Cards and tables.** Extend the shared `Card` (`active` variant, `accent`, a `padding` prop that takes tokens or raw CSS) and repoint the ops `Card` and `DeepCard` sites, which fixes the invalid `padding="lg|md"` CSS. Move raw `<table>` tags and the ops `ui/Table` users to the shared `Table`/`DataTable`.
 
    Known API differences PR6 must handle (6a status in brackets):
    - `PageHeader`: the ops `back.to` (router path) is not in the kit, which has no router import. [6a: handled by the ops adapter.]
-   - `EmptyState` to `PageState` is not drop-in. It needs an adapter or codemod for `message`, `subtitle` and `variant`; `kind` is required (`title`/`description` replace the text props). [6b]
-   - `Sparkline` renders a flat placeholder line for fewer than 2 points instead of returning `null`. [6a: callers that guard keep their guards; SpamTrap and InsightsTabs now show the placeholder.]
+   - `EmptyState` to `PageState` is not drop-in. It needs an adapter or codemod for `message`, `subtitle` and `variant`; `kind` is required (`title`/`description` replace the text props). [6b: migrated directly at every site; no adapter was left behind.]
+   - `Sparkline` renders a flat placeholder line for fewer than 2 points instead of returning `null`. [6a: callers that guard keep their guards; SpamTrap and InsightsTabs keep their `> 1` point guards, so they hide a single-point sparkline rather than showing the placeholder.]
    - `Avatar` is `aria-hidden` unless `label` is set. [6a: `label` passed where no name is shown beside the avatar.]
-   - `StatTile` changes visually from the ops version. [6b]
+   - `StatTile` changes visually from the ops version. [6b: done; `null` now means loading, so sites pass `null` rather than `'—'`.]
    - Console panes need `WorkspaceEmbedProvider`, otherwise `PageHeader` renders a second `<h1>`. [6a]
    - Tenant severity colours for "high" are inconsistent (amber vs orange); pick one when the tenant moves onto `Badge`. [Phase 2]
    - `Badge` radius differs from the tenant's 4px chips. [Phase 2]

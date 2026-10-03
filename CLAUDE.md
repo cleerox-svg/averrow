@@ -254,9 +254,9 @@ The shared kit at `@averrow/shared/ui` (`packages/shared/src/ui/`; see
 
 ```typescript
 import {
-  Card, Button, Badge, Avatar, StatCard,
+  Card, Button, Badge, Avatar, StatTile, BreakdownCard,
   DataRow, FilterBar, Tabs, PageHeader, StatGrid,
-  Input, Select, Modal, EmptyState
+  Input, Select, PageState, pageStateKind
 } from '@/design-system/components';
 
 // Card variants

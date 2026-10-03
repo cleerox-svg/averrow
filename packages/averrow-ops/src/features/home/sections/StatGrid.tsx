@@ -13,7 +13,7 @@
 //   ≥ 800 px             → 6 cols (single row)
 
 import { useNavigate } from 'react-router-dom';
-import { StatTile } from '@/components/ui/StatTile';
+import { StatTile } from '@/design-system/components';
 import { M } from '@/design-system/tokens';
 import { useObservatoryStats } from '@/hooks/useObservatory';
 import { useAlertStats } from '@/hooks/useAlerts';

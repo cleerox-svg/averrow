@@ -6,7 +6,7 @@ import {
   Badge,
   Button,
   Tabs,
-  EmptyState,
+  PageState,
   PageHeader,
   Input,
   Select,
@@ -84,14 +84,14 @@ export function Organization() {
   const [connectIntegration, setConnectIntegration] = useState<IntegrationDef | null>(null);
 
   const { data: org, isLoading: orgLoading } = useOrg();
-  const { data: members } = useOrgMembers();
-  const { data: brands } = useOrgBrands();
+  const { data: members, isLoading: membersLoading, isError: membersError, refetch: refetchMembers } = useOrgMembers();
+  const { data: brands, isLoading: brandsLoading, isError: brandsError, refetch: refetchBrands } = useOrgBrands();
   const { data: invites } = useOrgInvites();
-  const { data: apiKeys } = useOrgApiKeys();
+  const { data: apiKeys, isLoading: apiKeysLoading, isError: apiKeysError, refetch: refetchApiKeys } = useOrgApiKeys();
   const { data: integrations } = useOrgIntegrations();
 
   if (orgLoading) {
-    return <div className="text-sm text-white/55 font-mono py-16 text-center">Loading organization...</div>;
+    return <PageState kind="loading" title="Loading organization…" />;
   }
 
   const brandCount = brands?.length ?? 0;
@@ -124,7 +124,13 @@ export function Organization() {
       )}
 
       {activeTab === 'brands' && (
-        <BrandsTab brands={brands ?? []} maxBrands={maxBrands} />
+        <BrandsTab
+          brands={brands ?? []}
+          maxBrands={maxBrands}
+          loading={brandsLoading}
+          failed={brandsError && !brands}
+          onRetry={() => { void refetchBrands(); }}
+        />
       )}
 
       {activeTab === 'members' && (
@@ -132,6 +138,9 @@ export function Organization() {
           members={members ?? []}
           invites={invites ?? []}
           onInvite={() => setShowInvite(true)}
+          loading={membersLoading}
+          failed={membersError && !members}
+          onRetry={() => { void refetchMembers(); }}
         />
       )}
 
@@ -143,7 +152,13 @@ export function Organization() {
       )}
 
       {activeTab === 'api-keys' && (
-        <ApiKeysTab apiKeys={apiKeys ?? []} onCreate={() => setShowApiKey(true)} />
+        <ApiKeysTab
+          apiKeys={apiKeys ?? []}
+          onCreate={() => setShowApiKey(true)}
+          loading={apiKeysLoading}
+          failed={apiKeysError && !apiKeys}
+          onRetry={() => { void refetchApiKeys(); }}
+        />
       )}
 
       {activeTab === 'webhooks' && <WebhookConfig />}
@@ -226,9 +241,14 @@ function StatMiniCard({ label, value, pct }: { label: string; value: string; pct
 // TAB 2 — BRANDS
 // ═══════════════════════════════════════════════════════════════
 
-function BrandsTab({ brands, maxBrands }: {
+function BrandsTab({ brands, maxBrands, loading, failed, onRetry }: {
   brands: { brand_id: string; brand_name: string; canonical_domain: string; is_primary: number; threat_count: number }[];
   maxBrands: number;
+  /** The brands query failed with no data: shown as an error, never "No brands assigned". */
+  failed?: boolean;
+  /** The query has not settled yet: show a loading state, not the empty message. */
+  loading?: boolean;
+  onRetry?: () => void;
 }) {
   const removeBrand = useRemoveBrand();
   const navigate = useNavigate();
@@ -243,8 +263,12 @@ function BrandsTab({ brands, maxBrands }: {
         <span style={{ color: 'var(--amber)' }}>/admin/customers</span>.
       </p>
 
-      {brands.length === 0 ? (
-        <EmptyState message="No brands assigned" description="Add brands to start monitoring threats for your organization." />
+      {loading ? (
+        <PageState kind="loading" layout="card" title="Loading brands…" />
+      ) : failed ? (
+        <PageState kind="error" layout="card" title="Couldn't load brands" onRetry={onRetry} />
+      ) : brands.length === 0 ? (
+        <PageState kind="empty" layout="card" title="No brands assigned" description="Add brands to start monitoring threats for your organization." />
       ) : (
         <div className="space-y-3">
           {brands.map((b) => (
@@ -285,10 +309,15 @@ function BrandsTab({ brands, maxBrands }: {
 // TAB 3 — MEMBERS
 // ═══════════════════════════════════════════════════════════════
 
-function MembersTab({ members, invites, onInvite }: {
+function MembersTab({ members, invites, onInvite, loading, failed, onRetry }: {
   members: { user_id: string; user_name: string; email: string; role: string; last_active_at: string | null }[];
   invites: { id: string; email: string; org_role: string; expires_at: string }[];
   onInvite: () => void;
+  /** The members query failed with no data: shown as an error, never "No members yet". */
+  failed?: boolean;
+  /** The query has not settled yet: show a loading state, not the empty message. */
+  loading?: boolean;
+  onRetry?: () => void;
 }) {
   const removeMember = useRemoveMember();
   const updateRole = useUpdateMemberRole();
@@ -301,8 +330,12 @@ function MembersTab({ members, invites, onInvite }: {
         <Button size="sm" onClick={onInvite}>Invite Member</Button>
       </div>
 
-      {members.length === 0 ? (
-        <EmptyState message="No members yet" action={{ label: 'Invite Member', onClick: onInvite }} />
+      {loading ? (
+        <PageState kind="loading" layout="card" title="Loading members…" />
+      ) : failed ? (
+        <PageState kind="error" layout="card" title="Couldn't load members" onRetry={onRetry} />
+      ) : members.length === 0 ? (
+        <PageState kind="empty" layout="card" title="No members yet" action={{ label: 'Invite Member', onClick: onInvite }} />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -507,9 +540,14 @@ function IntegrationActivityPanel() {
 // TAB 5 — API KEYS
 // ═══════════════════════════════════════════════════════════════
 
-function ApiKeysTab({ apiKeys, onCreate }: {
+function ApiKeysTab({ apiKeys, onCreate, loading, failed, onRetry }: {
   apiKeys: { id: string; name: string; key_prefix: string; scopes: string; last_used_at: string | null; created_at: string }[];
   onCreate: () => void;
+  /** The API keys query failed with no data: shown as an error, never "No API keys". */
+  failed?: boolean;
+  /** The query has not settled yet: show a loading state, not the empty message. */
+  loading?: boolean;
+  onRetry?: () => void;
 }) {
   const revokeKey = useRevokeApiKey();
 
@@ -525,9 +563,15 @@ function ApiKeysTab({ apiKeys, onCreate }: {
         <Button size="sm" onClick={onCreate}>Create API Key</Button>
       </div>
 
-      {apiKeys.length === 0 ? (
-        <EmptyState
-          message="No API keys"
+      {loading ? (
+        <PageState kind="loading" layout="card" title="Loading API keys…" />
+      ) : failed ? (
+        <PageState kind="error" layout="card" title="Couldn't load API keys" onRetry={onRetry} />
+      ) : apiKeys.length === 0 ? (
+        <PageState
+          kind="empty"
+          layout="card"
+          title="No API keys"
           description="Create an API key to integrate with your systems."
           action={{ label: 'Create API Key', onClick: onCreate }}
         />

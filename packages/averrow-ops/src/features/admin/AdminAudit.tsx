@@ -21,7 +21,7 @@ function resourceHref(type: string | null, id: string | null): string | null {
     default:              return null;
   }
 }
-import { Button, Card, Input, PageHeader } from '@/design-system/components';
+import { Button, Card, Input, PageHeader, StatTile, PageState } from '@/design-system/components';
 import { relativeTime, parseUtc } from '@/lib/time';
 import { api } from '@/lib/api';
 
@@ -98,23 +98,6 @@ function formatJson(raw: string | null): string {
   } catch {
     return raw;
   }
-}
-
-/* ─── Stat Card ───────────────────────────────────────────────────── */
-
-function StatCard({ title, value, glowClass }: {
-  title: string;
-  value: number | string;
-  glowClass?: string;
-}) {
-  return (
-    <Card hover={false} padding={16}>
-      <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-secondary)' }}>{title}</div>
-      <div className={`font-mono text-[28px] font-bold leading-none ${glowClass ?? ''}`} style={glowClass ? undefined : { color: 'var(--text-primary)' }}>
-        {typeof value === 'number' ? value.toLocaleString() : value}
-      </div>
-    </Card>
-  );
 }
 
 /* ─── Expanded Row Detail ─────────────────────────────────────────── */
@@ -204,7 +187,7 @@ export function AdminAudit() {
   }, [searchTimeout]);
 
   // Query
-  const { data, isLoading } = useAuditLog({
+  const { data, isLoading, isError, isPlaceholderData, refetch } = useAuditLog({
     outcome: outcomeFilter !== 'all' ? outcomeFilter : undefined,
     action: actionFilter !== 'all' ? actionFilter : undefined,
     resource_type: resourceTypeFilter !== 'all' ? resourceTypeFilter : undefined,
@@ -213,6 +196,12 @@ export function AdminAudit() {
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
   });
+
+  // A failed fetch is an error, never "no entries" or 0 tiles. keepPreviousData
+  // rows (if any) belong to the previous filters, so they don't count on failure.
+  const failed = isError && (!data || isPlaceholderData);
+  // null = still loading / failed (StatTile shows "—" or "Couldn't load").
+  const tile = (n: number): number | null => (data ? n : (isLoading || isError ? null : 0));
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
@@ -295,10 +284,10 @@ export function AdminAudit() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard title="Total Events" value={total} />
-        <StatCard title="Today" value={todayCount} />
-        <StatCard title="Failures / Denied" value={failureDeniedCount} />
-        <StatCard title="Unique Actions" value={uniqueActions} />
+        <StatTile label="Total Events" value={tile(total)} error={failed} />
+        <StatTile label="Today" value={tile(todayCount)} error={failed} />
+        <StatTile label="Failures / Denied" value={tile(failureDeniedCount)} error={failed} />
+        <StatTile label="Unique Actions" value={tile(uniqueActions)} error={failed} />
       </div>
 
       {/* Filter Bar */}
@@ -389,7 +378,7 @@ export function AdminAudit() {
       </Card>
 
       {/* Loading */}
-      {isLoading && (
+      {isLoading && !failed && (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
             <Card key={i} hover={false} padding={16} className="animate-pulse h-12">{null}</Card>
@@ -397,8 +386,15 @@ export function AdminAudit() {
         </div>
       )}
 
+      {isError && !failed && (
+        <PageState kind="error" layout="inline" title="Couldn't refresh the audit log" description="Showing the last loaded entries." onRetry={() => { void refetch(); }} />
+      )}
+      {failed && (
+        <PageState kind="error" layout="card" title="Couldn't load the audit log" onRetry={() => { void refetch(); }} />
+      )}
+
       {/* Audit Table */}
-      {!isLoading && entries.length > 0 && (
+      {!isLoading && !failed && entries.length > 0 && (
         <Card hover={false} padding={0} className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[600px]">
@@ -431,10 +427,8 @@ export function AdminAudit() {
       )}
 
       {/* Empty state */}
-      {!isLoading && entries.length === 0 && (
-        <Card hover={false} padding={48} className="text-center">
-          <p className="font-mono text-[11px] text-white/40">No audit entries match the current filters</p>
-        </Card>
+      {!isLoading && !isError && entries.length === 0 && (
+        <PageState kind="empty" layout="card" title="No audit entries" description="No audit entries match the current filters." />
       )}
 
       {/* Pagination */}
