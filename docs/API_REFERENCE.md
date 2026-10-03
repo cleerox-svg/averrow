@@ -53,13 +53,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/heatmap` | Public threat heatmap data |
-| GET | `/api/observatory/nodes` | Observatory graph nodes |
-| GET | `/api/observatory/arcs` | Observatory graph arcs |
-| GET | `/api/observatory/live` | Live observatory feed |
-| GET | `/api/observatory/brand-arcs` | Brand-specific arcs |
-| GET | `/api/observatory/stats` | Observatory statistics |
-| GET | `/api/observatory/heatmap` | Observatory global threat heatmap points (lat/lng/severity/threat_type) |
-| GET | `/api/observatory/operations` | Observatory operations (active NEXUS clusters feed) |
 | POST | `/api/scan/public` | Public domain scan (rate-limited) |
 | POST | `/api/scan/report` | Generate brand exposure report |
 | POST | `/api/brand-scan/public` | Public brand exposure scan |
@@ -102,6 +95,20 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/sources` | User | Threat source breakdown |
 | GET | `/api/dashboard/trend` | User | Threat trend data |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
+
+## Observatory
+
+Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin, super_admin; `client` → 403, no token → 401). These routes were public until 2026-10: `/live` and `/arcs` carry targeted brand names and `/brand-arcs` accepted any `brand_id`, which exposed which customer brands were under attack. No public, marketing or tenant surface calls them; tenants use the org-scoped `/api/orgs/:orgId/*` routes. Navigator pre-warms the `observatory_*` KV keys by calling the handlers directly; those keys only ever back this staff audience.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/observatory/nodes` | Staff | Geo hotspot clusters from `threat_cube_geo` (`?period=24h\|7d\|30d`, `?source_feed=`) |
+| GET | `/api/observatory/arcs` | Staff | Country-to-brand attack corridors from `threat_cube_arcs`. Includes `brand_name` per arc |
+| GET | `/api/observatory/live` | Staff | Most recent active geolocated threats (`?limit=` up to 50), including malicious domain/URL and `target_brand` name |
+| GET | `/api/observatory/brand-arcs` | Staff | Arcs targeting one brand (`?brand_id=` required, `?period=`) |
+| GET | `/api/observatory/stats` | Staff | Observatory summary stats (`threats_mapped`, `threats_total`, `geo_coverage_pct`, `countries`, `active_campaigns`, `brands_monitored`) |
+| GET | `/api/observatory/heatmap` | Staff | Global threat heatmap points (lat/lng/severity/threat_type) |
+| GET | `/api/observatory/operations` | Staff | Active NEXUS clusters feed |
 
 ## Search
 
