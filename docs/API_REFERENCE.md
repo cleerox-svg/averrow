@@ -88,7 +88,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/dashboard/overview` | Staff | Dashboard overview stats |
-| GET | `/api/dashboard/top-brands` | Staff | Top targeted brands |
+| GET | `/api/dashboard/top-brands` | Staff | Top targeted brands. Only the frozen legacy SPA (`public/app.js`) calls it; not pre-warmed |
 | GET | `/api/dashboard/providers` | Staff | Provider summary |
 | GET | `/api/dashboard/stats` | Staff | Legacy v1 scan aggregates, platform-wide counts only: `total_signals`, `processed`, `avg_trust`, `active_alerts`, `queue_depth`, `dead_letters`, `duplicates`, `stored`. No UI calls it any more. Was unauthenticated before 2026-10 (the docs wrongly said "User"). |
 | GET | `/api/dashboard/sources` | Staff | Legacy v1 scan source mix, `[{ name, count, percentage }]` by scan source (`station-alpha/beta/gamma`). Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
@@ -98,7 +98,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 
 ## Observatory
 
-Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin, super_admin; `client` → 403, no token → 401). These routes were public until 2026-10: `/live` and `/arcs` carry targeted brand names and `/brand-arcs` accepted any `brand_id`, which exposed which customer brands were under attack. No public, marketing or tenant surface calls them; tenants use the org-scoped `/api/orgs/:orgId/*` routes. Navigator pre-warms the `observatory_*` KV keys by calling the handlers directly; those keys only ever back this staff audience.
+Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin, super_admin; `client` → 403, no token → 401). These routes were public until 2026-10: `/live` and `/arcs` carry targeted brand names and `/brand-arcs` accepted any `brand_id`, which exposed which customer brands were under attack. No public, marketing or tenant surface calls them; tenants use the org-scoped `/api/orgs/:orgId/*` routes. Navigator pre-warms the `observatory_*` KV keys by calling the handlers directly; those keys only ever back this staff audience. `source_feed` absent, empty (`source_feed=`, what the ops client sends for "All Sources") and `all` are equivalent — no filter, one `…:all` cache key; `feeds` = everything except `spam_trap`, `spam_trap` = spam trap only, any other value = that exact feed.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -108,7 +108,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | GET | `/api/observatory/brand-arcs` | Staff | Arcs targeting one brand (`?brand_id=` required, `?period=`) |
 | GET | `/api/observatory/stats` | Staff | Observatory summary stats (`threats_mapped`, `threats_total`, `geo_coverage_pct`, `countries`, `active_campaigns`, `brands_monitored`) |
 | GET | `/api/observatory/heatmap` | Staff | Global threat heatmap points (lat/lng/severity/threat_type) |
-| GET | `/api/observatory/operations` | Staff | Active NEXUS clusters feed |
+| GET | `/api/observatory/operations` | Staff | Active NEXUS clusters feed. No current ops/tenant caller (the Observatory side panel reads `/api/v1/operations?status=active`); not pre-warmed |
 
 ## Search
 

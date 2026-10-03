@@ -667,7 +667,10 @@ runs write `agent_id='navigator'`. Not an AI agent — pure SQL. Responsibilitie
    the queue just accumulates ghost rows).
 4. Drain stale pending `agent_events` (housekeeping)
 5. Rebuild current + previous hour for all 5 cube tables (10 cube builds)
-6. Pre-warm KV caches for Observatory, Dashboard, Agents, Operations pages
+6. Pre-warm KV caches for Observatory (globe + side panel), Dashboard, Agents,
+   Campaigns/Operations, Feeds, admin dashboard, Brands and Threat Actors — 21
+   requests, each the exact query string a live client sends
+   (`NAVIGATOR_WARM_TARGETS`, pinned by `test/navigator-warm-targets.test.ts`)
 
 Navigator finds the path (IP addresses); Cartographer maps the terrain (lat/lng,
 country, provider).
