@@ -9,7 +9,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
-import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/Toast';
 import { ShellV4 } from './ShellV4';
 
@@ -31,19 +30,9 @@ vi.mock('@/components/UserAvatar', () => ({
   UserAvatar: () => <div data-testid="user-avatar" />,
 }));
 
-// Shell.tsx (imported by ShellV4) dependencies — irrelevant here.
-vi.mock('./Sidebar', () => ({ Sidebar: () => null }));
-vi.mock('./TopBar', () => ({ TopBar: () => null }));
-vi.mock('@/layouts/MobileNav', () => ({ MobileNav: () => null }));
-vi.mock('@/layouts/MobileSidebarDrawer', () => ({ MobileSidebarDrawer: () => null }));
-vi.mock('@/components/ui/DeepBackground', () => ({ DeepBackground: () => null }));
-vi.mock('@/components/ui/PageTransition', () => ({
-  PageTransition: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
 vi.mock('@/components/FirstSignInPasskeyPrompt', () => ({ FirstSignInPasskeyPrompt: () => null }));
 vi.mock('@/components/PasskeyEnrollmentGate', () => ({ PasskeyEnrollmentGate: () => null }));
 vi.mock('@/design-system/hooks', () => ({
-  useBreakpoint: () => ({ isMobile: false, isMobileVertical: false, isMobileHorizontal: false }),
   useTheme: () => ({ theme: 'auto', cycle: vi.fn() }),
 }));
 

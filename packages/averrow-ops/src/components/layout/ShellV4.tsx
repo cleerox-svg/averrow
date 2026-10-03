@@ -1,10 +1,7 @@
-// v4 "Cinematic command center" shell (redesign coexistence — W0).
+// v4 "Cinematic command center" shell — the only ops shell.
 //
-// Renders the SAME route <Outlet/> as the current Shell, inside the new
-// cinematic chrome (3-workspace IA sidebar + topbar). Flipped on/off by
-// useShellVersion via <ShellSwitch/> — the current shell is untouched.
-// Page internals get re-skinned into the new design system in later waves;
-// W0 establishes the chrome + the coexistence gate end-to-end.
+// Renders the route <Outlet/> inside the cinematic chrome (3-workspace IA
+// sidebar + topbar). Mounted directly by App.tsx for every staff user.
 //
 // Responsive: desktop = fixed rail; <=900px = off-canvas drawer + hamburger,
 // single-column. Mostly CSS-driven (shell-v4.css); JS only tracks the drawer.
@@ -14,7 +11,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
-  Search, Sparkles, RotateCcw, Menu, X,
+  Search, Menu, X,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   ShieldAlert, Bug, Network, Megaphone, Server,
   Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
@@ -23,8 +20,6 @@ import {
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
-import { Shell } from './Shell';
-import { useShellVersion } from '@/design-system/hooks/useShellVersion';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserAvatar } from '@/components/UserAvatar';
@@ -366,30 +361,5 @@ export function ShellV4() {
           passkey. Self-gates on user.passkey_required. */}
       <PasskeyEnrollmentGate />
     </div>
-  );
-}
-
-function ShellVersionPill({ isV4, onToggle }: { isV4: boolean; onToggle: () => void }) {
-  return (
-    <button type="button" className="v4-toggle" onClick={onToggle}
-      title={isV4 ? 'Switch back to the classic shell' : 'Preview the v4 cinematic shell'}>
-      {isV4 ? <RotateCcw strokeWidth={2.2} /> : <Sparkles strokeWidth={2.2} />}
-      {isV4 ? 'Classic view' : 'Try v4'}
-    </button>
-  );
-}
-
-/**
- * Picks the shell based on the persisted shell-version preference and
- * renders the floating toggle pill in both modes. Both shells render the
- * same route <Outlet/>, so switching never changes the current route.
- */
-export function ShellSwitch() {
-  const { isV4, setVersion } = useShellVersion();
-  return (
-    <>
-      {isV4 ? <ShellV4 /> : <Shell />}
-      <ShellVersionPill isV4={isV4} onToggle={() => setVersion(isV4 ? 'current' : 'v4')} />
-    </>
   );
 }

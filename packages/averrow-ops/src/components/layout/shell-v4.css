@@ -103,36 +103,15 @@
 
 @keyframes v4ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-/* floating shell toggle pill */
-.v4-toggle {
-  position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 16px; z-index: 60;
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; font-weight: 600; letter-spacing: .04em;
-  padding: 8px 13px; border-radius: 22px; cursor: pointer;
-  color: var(--text-primary);
-  background: linear-gradient(135deg, rgba(229,168,50,.18), rgba(20,28,46,.92));
-  border: 1px solid rgba(229,168,50,.35);
-  box-shadow: 0 6px 22px rgba(0,0,0,.4), 0 0 18px rgba(229,168,50,.18);
-  backdrop-filter: blur(8px);
-  transition: transform .14s ease, box-shadow .14s ease;
-}
-.v4-toggle:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(0,0,0,.45), 0 0 24px rgba(229,168,50,.28); }
-.v4-toggle svg { width: 14px; height: 14px; color: var(--amber); }
-
-/* Desktop: clear the 248px sidebar (and its footer theme toggle) */
-@media (min-width: 901px) {
-  .v4-toggle { left: calc(248px + 16px); }
-}
-
 /* Focus ring for shell chrome (keyboard only) */
 .v4-item:focus-visible, .v4-hamburger:focus-visible, .v4-drawer-close:focus-visible,
-.v4-cmdk:focus-visible, .v4-foot button:focus-visible, .v4-toggle:focus-visible,
+.v4-cmdk:focus-visible, .v4-foot button:focus-visible,
 .v4-top button:focus-visible {
   outline: 2px solid var(--amber); outline-offset: 2px;
 }
 [data-theme="light"] .v4-item:focus-visible, [data-theme="light"] .v4-hamburger:focus-visible,
 [data-theme="light"] .v4-drawer-close:focus-visible, [data-theme="light"] .v4-cmdk:focus-visible,
-[data-theme="light"] .v4-foot button:focus-visible, [data-theme="light"] .v4-toggle:focus-visible,
+[data-theme="light"] .v4-foot button:focus-visible,
 [data-theme="light"] .v4-top button:focus-visible {
   outline-color: var(--text-primary);
 }
@@ -265,7 +244,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .shell-v4 *, .v4-toggle, .v4-side { animation: none !important; transition: none !important; }
+  .shell-v4 *, .v4-side { animation: none !important; transition: none !important; }
 }
 
 /* ── v4 cinematic token re-tone ───────────────────────────────────────────
