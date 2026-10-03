@@ -84,7 +84,9 @@ function outcomeBadgeStyle(outcome: string): React.CSSProperties {
 
 function pillStyle(active: boolean): React.CSSProperties {
   return {
-    background: active ? 'var(--amber-glow)' : 'var(--bg-input)',
+    // A light amber tint (not --amber-glow) keeps --amber-text at AA on the
+    // active pill in both themes.
+    background: active ? 'color-mix(in srgb, var(--amber) 10%, transparent)' : 'var(--bg-input)',
     border:     `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
     color:      active ? 'var(--amber-text)' : 'var(--text-secondary)',
     transition: 'var(--transition-fast)',
