@@ -293,7 +293,7 @@ platforms are independent repos for now).
 
 ### Two surfaces
 
-- **`<InstallAppBanner />`** — always-visible CTA at the top of the Home page (Averrow ops: `features/home/OverviewV4.tsx`).
+- **`<InstallAppBanner />`** — always-visible CTA on the Home page (Averrow ops: Overview, `features/home/OverviewV4.tsx`, directly below the hero).
   - Hidden when `isStandalone()`.
   - Dismissible per-device via `localStorage` key `<product>.install.dismissed`.
   - Android Chrome / Edge: captured `beforeinstallprompt` → native install button.

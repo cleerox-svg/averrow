@@ -316,7 +316,7 @@ Two install affordances + one biometric auto-prompt:
 
 | Component | Where | When |
 |---|---|---|
-| `<InstallAppBanner />` | Top of `features/home/OverviewV4.tsx` | Visible to non-installed users; dismissible per-device |
+| `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
 | `<InstallAppCard />` | Profile page (`features/settings/Profile.tsx`, after the shared `ProfilePage`) | Always visible (when not installed); not dismissible |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
 

@@ -707,7 +707,7 @@ When a session lands, update this table in the same PR.
 ### Session NX3 — Rename "Alerts" → "Signals" + brand-detail signals feed
 **What:** User-facing labels only — backend table stays `alerts`. Two visible changes: (1) tenant SPA renames its "Alerts" sidebar nav + page header + filter copy to "Signals"; (2) `/v2/brands/:id` gains a Signals tab that lists every alert against that brand. The brand detail tab is the SOC-analyst workflow for acting on tenant business from inside the brand record.
 **Files changed (averrow-tenant):**
-- `src/layout/Sidebar.tsx` — `Alerts` → `Signals` (file removed in UI consolidation Phase 1 PR3, 2026-10; nav now lives in `components/layout/ShellV4.tsx`)
+- `src/layout/Sidebar.tsx` — `Alerts` → `Signals`
 - `src/features/alerts/Alerts.tsx` — header + empty-state copy
 - `src/lib/copy.ts` (or i18n equivalent) — single source of truth for the label
 **Files changed (averrow-ops):**
