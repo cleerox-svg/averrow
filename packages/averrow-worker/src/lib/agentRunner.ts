@@ -645,7 +645,7 @@ async function tripCircuitIfNeeded(
       severity: "critical",
       title: `Agent circuit breaker tripped: ${agentId}`,
       message: `${agentId} was auto-paused after ${newCount} consecutive failures (threshold ${threshold}). Last error: ${truncatedError}`,
-      link: "/admin/agents",
+      link: "/admin/operations?tab=agents",
       metadata: {
         agent_id: agentId,
         auto_paused: true,

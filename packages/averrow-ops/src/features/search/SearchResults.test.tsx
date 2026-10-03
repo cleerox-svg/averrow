@@ -127,18 +127,18 @@ describe('SearchResults — row navigation via the shared routing table', () => 
   it('a threat_actor result row links to /threat-actors?focus=:id', () => {
     renderWithProviders(<SearchResults />);
     const row = screen.getByRole('link', { name: /APT-Acme/ });
-    expect(row).toHaveAttribute('href', '/threat-actors?focus=t1');
+    expect(row).toHaveAttribute('href', '/explore?tab=actors&focus=t1');
   });
 
   it('the brand group\'s "view all" link carries the query to /brands?q=', () => {
     renderWithProviders(<SearchResults />);
     const viewAll = screen.getByRole('link', { name: 'View all in brands →' });
-    expect(viewAll).toHaveAttribute('href', '/brands?q=ac');
+    expect(viewAll).toHaveAttribute('href', '/explore?tab=brands&q=ac');
   });
 
   it('the threat actor group\'s "view all" link carries the query to /threat-actors?q=', () => {
     renderWithProviders(<SearchResults />);
     const viewAll = screen.getByRole('link', { name: 'View all in threat actors →' });
-    expect(viewAll).toHaveAttribute('href', '/threat-actors?q=ac');
+    expect(viewAll).toHaveAttribute('href', '/explore?tab=actors&q=ac');
   });
 });

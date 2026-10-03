@@ -3,11 +3,12 @@
 // standalone pages under one nav entry without a page-logic rewrite.
 //
 // A cinematic crumb + title header and a deep-linkable (?tab=) tab bar over
-// existing page components mounted as tab bodies. The standalone routes for
-// each page stay live, so deep links / pivots are unaffected — this is an
-// additional, consolidated entry point, not a replacement.
+// existing page components mounted as tab bodies. The old standalone routes
+// redirect here (see App.tsx / lib/workspaceRoutes.ts). The active tab is
+// derived from the URL so in-app links and redirects that only change `?tab=`
+// switch panes without a remount.
 
-import { Suspense, useState, type ComponentType } from 'react';
+import { Suspense, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@averrow/shared/ui';
@@ -35,15 +36,12 @@ export function TabbedWorkspace({
   const ids = tabs.map(t => t.id);
   const fallbackId = tabs[0]?.id ?? '';
   const urlTab = params.get('tab');
-  const initial = urlTab && ids.includes(urlTab) ? urlTab : fallbackId;
-  const [tab, setTab] = useState<string>(initial);
+  const tab = urlTab && ids.includes(urlTab) ? urlTab : fallbackId;
 
   function selectTab(next: string) {
-    setTab(next);
-    const p = new URLSearchParams(params);
-    if (next === fallbackId) p.delete('tab');
-    else p.set('tab', next);
-    setParams(p, { replace: true });
+    // Only `tab` carries over — q/focus/brand_id etc. belong to the pane
+    // being left and must not filter the next one.
+    setParams(next === fallbackId ? {} : { tab: next }, { replace: true });
   }
 
   const active = tabs.find(t => t.id === tab) ?? tabs[0];
@@ -78,7 +76,9 @@ export function TabbedWorkspace({
       {active?.def && <p className="console-def">{active.def}</p>}
 
       <Suspense fallback={<TabLoading />}>
-        {Active && <Active />}
+        {/* Panes read `q` on mount only; keying on it re-applies a new ?q= (e.g. ⌘K
+            "view all" while already on this tab). */}
+        {Active && <Active key={params.get('q') ?? ''} />}
       </Suspense>
     </div>
   );

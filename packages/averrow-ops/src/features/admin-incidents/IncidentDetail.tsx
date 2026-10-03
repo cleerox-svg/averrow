@@ -113,7 +113,7 @@ export function AdminIncidentDetail() {
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
-      <Link to="/admin/incidents" style={{
+      <Link to="/console?tab=incidents" style={{
         fontFamily: 'var(--font-mono)', fontSize: 11,
         color: 'var(--text-tertiary)', textDecoration: 'none',
       }}>

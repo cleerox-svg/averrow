@@ -59,7 +59,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       <div className="p-6 space-y-4">
         {!inline && (
           <button
-            onClick={() => navigate('/threat-actors')}
+            onClick={() => navigate('/explore?tab=actors')}
             className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
             style={{ color: 'var(--text-tertiary)' }}
           >
@@ -74,7 +74,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             variant="scanning"
             action={inline ? undefined : {
               label: 'Browse all threat actors',
-              onClick: () => navigate('/threat-actors'),
+              onClick: () => navigate('/explore?tab=actors'),
               variant: 'secondary',
             }}
           />
@@ -114,7 +114,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* Back nav — hidden in inline mode (parent list is already visible) */}
       {!inline && (
         <button
-          onClick={() => navigate('/threat-actors')}
+          onClick={() => navigate('/explore?tab=actors')}
           className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
         >
           &larr; Back to Threat Actors

@@ -21,6 +21,7 @@ import { PageLoader } from '@/components/ui/PageLoader';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
 import { Badge } from '@/components/ui/Badge';
+import { tabUrl } from '@/lib/workspaceRoutes';
 /* ── Constants ── */
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -309,7 +310,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
               </span>
             )}
             {providerIds.slice(0, 6).map(id => (
-              <Link key={`p-${id}`} to={`/providers/${id}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+              <Link key={`p-${id}`} to={tabUrl('providers', { focus: id })} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
                 Provider · {id}
               </Link>
             ))}
@@ -510,7 +511,7 @@ function ProviderMomentumPanel() {
                 <div key={p.provider_id ?? p.provider} className="flex items-center gap-3">
                   <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>
                     {p.provider_id
-                      ? <Link to={`/providers?focus=${encodeURIComponent(p.provider_id)}`} className="hover:text-[var(--amber)] transition-colors">{p.provider}</Link>
+                      ? <Link to={tabUrl('providers', { focus: encodeURIComponent(p.provider_id) })} className="hover:text-[var(--amber)] transition-colors">{p.provider}</Link>
                       : p.provider}
                   </div>
                   <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">

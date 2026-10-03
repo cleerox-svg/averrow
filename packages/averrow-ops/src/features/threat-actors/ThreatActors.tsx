@@ -361,7 +361,12 @@ export function ThreatActors() {
     setBroaden(true);
     setSelectedActorId(focusId);
     setPendingScrollId(focusId);
-    setSearchParams({}, { replace: true });
+    // Strip only the one-shot focus param — the workspace owns `tab`.
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('focus');
+      return next;
+    }, { replace: true });
   }, [focusId, setSearchParams]);
 
   // The shell may need a render to page to the focused actor, so poll a few

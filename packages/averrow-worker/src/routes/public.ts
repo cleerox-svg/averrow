@@ -61,14 +61,14 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   '/admin':               '/v2/admin',
   '/admin/dashboard':     '/v2/admin',
   '/admin/users':         '/v2/admin/users',
-  '/admin/organizations': '/v2/admin/users',
-  '/admin/feeds':         '/v2/feeds',
-  '/admin/agent-config':  '/v2/agents',
-  '/admin/audit':         '/v2/admin/audit',
+  '/admin/organizations': '/v2/admin/customers',
+  '/admin/feeds':         '/v2/admin/operations?tab=feeds',
+  '/admin/agent-config':  '/v2/admin/operations?tab=agents',
+  '/admin/audit':         '/v2/admin/governance?tab=audit',
   '/admin/spam-trap':     '/v2/admin/spam-trap',
-  '/admin/takedowns':     '/v2/admin/takedowns',
+  '/admin/takedowns':     '/v2/console?tab=takedowns',
   '/observatory':         '/v2',
-  '/brands':              '/v2/brands',
+  '/brands':              '/v2/explore?tab=brands',
 };
 
 export function registerPublicRoutes(router: RouterType<IRequest>): void {

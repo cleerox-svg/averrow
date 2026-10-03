@@ -143,7 +143,7 @@ export function DailyBriefing() {
 
       <button
         type="button"
-        onClick={() => navigate('/trends')}
+        onClick={() => navigate('/coverage?tab=trends')}
         className="home-briefing-viewall"
       >
         View full briefing →

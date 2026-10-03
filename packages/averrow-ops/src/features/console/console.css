@@ -51,15 +51,8 @@
 
 @keyframes console-ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-.ci-row { transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease; }
-.ci-row:hover {
-  transform: translateY(-1px);
-  border-color: var(--border-strong) !important;
-}
-.ci-filter { transition: background .14s ease, color .14s ease, border-color .14s ease; }
-
 @media (prefers-reduced-motion: reduce) {
-  .ci-row, .ci-filter, .console-live .dot { transition: none !important; animation: none !important; }
+  .console-live .dot { transition: none !important; animation: none !important; }
 }
 
 /* Clickable KPI tiles — each jumps to its queue, so the hero is navigation,

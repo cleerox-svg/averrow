@@ -1,8 +1,8 @@
 // v4 "Operations" workspace — consolidates the four flat platform-ops pages
 // (Agents, Feeds, Takedown Integrations, Attribution Backlog) under one nav
-// entry as deep-linkable tabs, shrinking the PLATFORM group. Each standalone
-// route (/agents, /feeds, /admin/integrations,
-// /admin/agents/attribution-backlog) stays live for deep links and pivots.
+// entry as deep-linkable tabs, shrinking the PLATFORM group. The old
+// standalone paths (/agents, /feeds, /admin/integrations,
+// /admin/agents/attribution-backlog, ...) redirect here (LEGACY_TAB_PATHS).
 //
 // Metrics is NOT a tab here — it has its own 7-pill internal tab bar and
 // nesting it would create tab-inside-tab. It keeps its own nav row.

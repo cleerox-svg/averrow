@@ -99,7 +99,7 @@ export function BrandsV3() {
         </div>
       </div>
 
-      {activeTab === 'intel' && <IntelTab isStaff={isStaff} />}
+      {activeTab === 'intel' && <IntelTab isStaff={isStaff} onViewProspects={() => setActiveTab('prospects')} />}
       {activeTab === 'all' && <BrandsGrid initialQuery={initialQuery} />}
       {activeTab === 'prospects' && isStaff && <ProspectsTab />}
     </div>
@@ -112,7 +112,7 @@ export function BrandsV3() {
 // work. The visual rebuild lifts the surface from "stat tiles + plain
 // lists" (PR6 scaffold) to a chart-led intel surface with sector
 // donut, threat-type breakdown bars, and DeepCard-treated stat hero.
-function IntelTab({ isStaff }: { isStaff: boolean }) {
+function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspects: () => void }) {
   const { data: stats, isLoading: statsLoading } = useBrandStats();
   const { data: movers, isLoading: moversLoading } = useBrandMovers();
   const { data: emailAgg } = useEmailSecurityAggregate();
@@ -128,7 +128,7 @@ function IntelTab({ isStaff }: { isStaff: boolean }) {
         <SectorDonut breakdown={stats?.sector_breakdown ?? null} totalTracked={stats?.total_tracked ?? 0} />
         <ThreatTypeBreakdown stats={stats} />
         {isStaff
-          ? <HotProspectsTeaser />
+          ? <HotProspectsTeaser onViewAll={onViewProspects} />
           : <CatalogStatusCard stats={stats} />
         }
       </div>
@@ -588,7 +588,7 @@ function MoversCard({ title, rows, tone, emptyMsg, loading }: {
           return (
             <div
               key={b.id}
-              onClick={() => navigate(`/brands-v3/${b.id}`)}
+              onClick={() => navigate(`/brands/${b.id}`)}
               className="cursor-pointer hover:bg-white/[0.03] transition-colors group"
               style={{
                 padding: '10px 12px', borderRadius: 6,
@@ -688,8 +688,7 @@ function BrandFavicon({
   );
 }
 
-function HotProspectsTeaser() {
-  const navigate = useNavigate();
+function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
   const { data } = useBrandCandidates('pending');
   const top = (data?.candidates ?? []).slice(0, 3);
   if (top.length === 0) return null;
@@ -716,7 +715,7 @@ function HotProspectsTeaser() {
           </div>
         ))}
         <button
-          onClick={() => navigate('/brands-v3?tab=prospects')}
+          onClick={onViewAll}
           className="w-full mt-1 text-[11px] font-mono text-[var(--amber)] hover:underline"
         >
           View {data?.total ?? 0} pending candidates →
@@ -825,7 +824,7 @@ function ProspectsTab() {
           </div>
           <div className="space-y-2">
             {all.map(c => (
-              <ReviewedRow key={c.id} c={c} onJumpBrand={(brandId) => navigate(`/brands-v3/${brandId}`)} />
+              <ReviewedRow key={c.id} c={c} onJumpBrand={(brandId) => navigate(`/brands/${brandId}`)} />
             ))}
           </div>
         </Card>

@@ -665,7 +665,12 @@ export function Providers() {
     setSelectedClusterId(null);
     setSelectedProviderId(focusId);
     setPendingScrollId(focusId);
-    setSearchParams({}, { replace: true });
+    // Strip only the one-shot focus param — the workspace owns `tab`.
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('focus');
+      return next;
+    }, { replace: true });
   }, [focusId, setSearchParams]);
 
   const { data: intelligence, isLoading: intelLoading } = useProviderIntelligence();

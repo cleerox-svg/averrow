@@ -100,7 +100,7 @@ export function ModuleHub() {
           description="Monitored brands & exposure"
           stat={brandStats ? `${brandStats.total_tracked.toLocaleString()} brands monitored` : ''}
           accent="var(--amber)"
-          onClick={() => navigate('/brands')}
+          onClick={() => navigate('/explore?tab=brands')}
         />
         <ModuleCard
           icon={Crosshair}
@@ -108,7 +108,7 @@ export function ModuleHub() {
           description="Identities & attributions"
           stat={actorStats ? `${actorStats.active.toLocaleString()} active actors` : ''}
           accent="var(--red)"
-          onClick={() => navigate('/threat-actors')}
+          onClick={() => navigate('/explore?tab=actors')}
         />
         <ModuleCard
           icon={Activity}
@@ -116,7 +116,7 @@ export function ModuleHub() {
           description="Coordinated threat operations"
           stat={opsStats ? `${(opsStats.active_operations ?? 0).toLocaleString()} active ops` : ''}
           accent="var(--amber)"
-          onClick={() => navigate('/campaigns')}
+          onClick={() => navigate('/explore?tab=campaigns')}
         />
         <ModuleCard
           icon={Server}
@@ -124,7 +124,7 @@ export function ModuleHub() {
           description="Hosting · DNS · ASN"
           stat=""
           accent="var(--blue)"
-          onClick={() => navigate('/providers')}
+          onClick={() => navigate('/explore?tab=providers')}
         />
         <ModuleCard
           icon={Cpu}
@@ -132,7 +132,7 @@ export function ModuleHub() {
           description="AI mesh & cron health"
           stat={agents.length > 0 ? `${agentsOnline} of ${agents.length} running` : ''}
           accent="var(--blue)"
-          onClick={() => navigate('/agents')}
+          onClick={() => navigate('/admin/operations?tab=agents')}
         />
         <ModuleCard
           icon={Rss}
@@ -140,7 +140,7 @@ export function ModuleHub() {
           description="Threat ingestion sources"
           stat={feedStats ? `${feedStats.active} active` : ''}
           accent="var(--green)"
-          onClick={() => navigate('/feeds')}
+          onClick={() => navigate('/admin/operations?tab=feeds')}
         />
         {isSuperAdmin && (
           <ModuleCard
@@ -149,7 +149,7 @@ export function ModuleHub() {
             description="Operations response queue"
             stat={incidents.length > 0 ? `${openIncidents} open` : ''}
             accent="var(--red)"
-            onClick={() => navigate('/admin/incidents')}
+            onClick={() => navigate('/console?tab=incidents')}
           />
         )}
       </div>

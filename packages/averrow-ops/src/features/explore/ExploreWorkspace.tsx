@@ -1,7 +1,7 @@
 // v4 "Explorer" workspace — consolidates the four threat-intel entity
 // explorers (Brands, Threat Actors, Campaigns, Providers) under one nav entry
-// as deep-linkable tabs. Each standalone route (/brands, /threat-actors,
-// /campaigns, /providers) stays live for pivots and bookmarks.
+// as deep-linkable tabs. The old standalone list paths (/brands,
+// /threat-actors, /campaigns, /providers) redirect here (LEGACY_TAB_PATHS).
 
 import { lazy } from 'react';
 import { Shield, Users, Activity, Server } from 'lucide-react';

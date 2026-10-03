@@ -752,7 +752,7 @@ export const flightControlAgent: AgentModule = {
           recommended_action:
             `Confirm a recent bulk attribution/enrichment run. If a single provider is genuinely surging ` +
             `it will re-alert on its own once the others settle.`,
-          link: '/providers',
+          link: '/explore?tab=providers',
           // Day-scoped so the rolled-up event dedups to one alert per day.
           group_key: `platform_provider_escalation:bulk:${new Date().toISOString().slice(0, 10)}`,
           audience: 'super_admin',

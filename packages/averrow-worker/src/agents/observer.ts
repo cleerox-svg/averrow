@@ -871,8 +871,9 @@ export const observerAgent: AgentModule = {
     // Pre-fix the link was '/agents' — clicking the notification
     // dropped the operator on the Agents-Monitor view, which has
     // nothing to do with the briefing they were notified about.
-    // The Intelligence page at /trends opens with the Observer
-    // Briefings section as its first card, so deep-link there.
+    // The Intelligence page (Coverage → Trends, /coverage?tab=trends)
+    // opens with the Observer Briefings section as its first card, so
+    // deep-link there.
     if (outputs.length > 0) {
       const firstInsight = outputs[0]!;
       const summaryText = firstInsight.summary.replace(/\*\*/g, '').substring(0, 100);
@@ -885,7 +886,7 @@ export const observerAgent: AgentModule = {
           severity: 'info',
           title: 'New intelligence briefing',
           message: summaryText + '...',
-          link: '/trends',
+          link: '/coverage?tab=trends',
         });
       } catch (e) {
         console.error(`[observer] notification error:`, e);

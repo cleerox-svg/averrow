@@ -1152,7 +1152,7 @@ export function AdminDashboard() {
                     label="Compliance & Sessions"
                     right={
                       <Link
-                        to="/admin/audit"
+                        to="/admin/governance?tab=audit"
                         style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber)', textDecoration: 'none' }}
                       >
                         Audit Log →

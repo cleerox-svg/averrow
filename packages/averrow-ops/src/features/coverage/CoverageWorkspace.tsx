@@ -1,7 +1,7 @@
 // v4 "Coverage" workspace — consolidates the detection-surface pages (Apps,
 // Dark Web, Trademarks, Trends) under one nav entry as deep-linkable tabs.
-// Each standalone route (/apps, /dark-web, /trademarks, /trends) stays live
-// for pivots and bookmarks.
+// The old standalone paths (/apps, /dark-web, /trademarks, /trends) redirect
+// here (LEGACY_TAB_PATHS).
 
 import { lazy } from 'react';
 import { Smartphone, EyeOff, Award, TrendingUp } from 'lucide-react';

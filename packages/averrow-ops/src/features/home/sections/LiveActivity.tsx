@@ -74,7 +74,7 @@ export function LiveActivity() {
           <span className="home-live-activity-label">Live Activity</span>
           <button
             type="button"
-            onClick={() => navigate('/alerts')}
+            onClick={() => navigate('/console?tab=alerts')}
             className="home-live-activity-viewall"
             aria-label="View all alerts"
           >
@@ -101,7 +101,7 @@ export function LiveActivity() {
                 <li key={item.id}>
                   <button
                     type="button"
-                    onClick={() => item.link ? navigate(item.link) : navigate('/alerts')}
+                    onClick={() => item.link ? navigate(item.link) : navigate('/console?tab=alerts')}
                     className="home-live-activity-row"
                   >
                     {hasBrand ? (
