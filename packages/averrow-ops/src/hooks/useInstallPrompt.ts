@@ -1,22 +1,24 @@
-// PWA install-prompt capture — Android Chrome / Edge / Samsung Internet
-// fire `beforeinstallprompt` when the site is eligible to be installed
-// as a PWA. The event has a `.prompt()` method we can call later in
-// response to a user gesture. We capture the event on mount and expose
-// it so a button can trigger the native install sheet without the
-// user having to dig through browser menus.
+// PWA install-prompt hook — Android Chrome / Edge / Samsung Internet fire
+// `beforeinstallprompt` when the site is eligible to be installed. The event
+// is captured once at app startup into the store in `@/lib/pwa`
+// (captureInstallPrompt, called from main.tsx) so it is not lost when the
+// consuming route is lazy-loaded, and is shared by every consumer (Overview
+// banner, Profile card). This hook just subscribes to that store.
 //
 // On iOS Safari this event never fires (Apple deliberately doesn't
 // support programmatic install). Caller renders the manual
 // "Share → Add to Home Screen" steps when isIos = true.
 
-import { useEffect, useState } from 'react';
-import { isStandalone, isIOS } from '@/lib/pwa';
-
-interface BeforeInstallPromptEvent extends Event {
-  readonly platforms?: readonly string[];
-  prompt: () => Promise<void>;
-  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
+import { useCallback, useState, useSyncExternalStore } from 'react';
+import {
+  captureInstallPrompt,
+  clearInstallPromptEvent,
+  getAppInstalled,
+  getInstallPromptEvent,
+  isIOS,
+  isStandalone,
+  subscribeInstallPrompt,
+} from '@/lib/pwa';
 
 export interface InstallPromptState {
   /** True when the page is running as an installed PWA. */
@@ -30,39 +32,30 @@ export interface InstallPromptState {
 }
 
 export function useInstallPrompt(): InstallPromptState {
-  const [event, setEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [standalone, setStandalone] = useState<boolean>(() => isStandalone());
+  // Idempotent safety net: normally main.tsx already started the capture.
+  captureInstallPrompt();
+  const event = useSyncExternalStore(subscribeInstallPrompt, getInstallPromptEvent, getInstallPromptEvent);
+  const installed = useSyncExternalStore(subscribeInstallPrompt, getAppInstalled, getAppInstalled);
+  const [standaloneAtLoad] = useState<boolean>(() => isStandalone());
   const [ios] = useState<boolean>(() => isIOS());
+  const standalone = standaloneAtLoad || installed;
 
-  useEffect(() => {
-    const onBeforePrompt = (e: Event) => {
-      e.preventDefault();
-      setEvent(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setEvent(null);
-      setStandalone(true);
-    };
-    window.addEventListener('beforeinstallprompt', onBeforePrompt);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforePrompt);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
-  }, []);
-
-  const install = async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
-    if (!event) return 'unavailable';
+  const install = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
+    const current = getInstallPromptEvent();
+    if (!current) return 'unavailable';
     try {
-      await event.prompt();
-      const choice = await event.userChoice;
-      // Spec says the event can only be used once.
-      setEvent(null);
+      // Spec: the event can only be used once — clear it as soon as prompt()
+      // is invoked so no consumer offers a dead button afterwards.
+      const shown = current.prompt();
+      clearInstallPromptEvent();
+      await shown;
+      const choice = await current.userChoice;
       return choice.outcome;
     } catch {
+      clearInstallPromptEvent();
       return 'unavailable';
     }
-  };
+  }, []);
 
   return {
     isStandalone: standalone,

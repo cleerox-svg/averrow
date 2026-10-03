@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth';
 import { ToastProvider } from '@/components/ui/Toast';
-import { registerServiceWorker } from '@/lib/pwa';
+import { registerServiceWorker, captureInstallPrompt } from '@/lib/pwa';
 import { bootstrapTheme } from '@/design-system/hooks/useTheme';
 import App from '@/App';
 import '@/index.css';
@@ -15,6 +15,9 @@ import '@/index.css';
 // theme — visible flash. bootstrapTheme reads localStorage and
 // sets data-theme on <html> in one shot.
 bootstrapTheme();
+
+// Catch Chrome's one-shot `beforeinstallprompt` before any lazy route mounts.
+captureInstallPrompt();
 
 const queryClient = new QueryClient({
   defaultOptions: {
