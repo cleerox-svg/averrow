@@ -1,7 +1,7 @@
 /**
  * ThreatMapV3 — GPU-driven particle animation via deck.gl TripsLayer.
  *
- * Key differences from ThreatMap (v2):
+ * Design notes (vs. the retired v2 map):
  *   - Particles use TripsLayer with a single `currentTime` uniform (zero CPU per frame)
  *   - MapboxOverlay runs in overlaid mode (interleaved=false) so particle redraws
  *     don't force basemap redraws

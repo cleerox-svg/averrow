@@ -7,7 +7,7 @@
 // which brands the whole thing targets.
 //
 // Custom SVG (no graph-lib dependency) in the platform's bespoke-SVG tradition
-// (ExposureGauge, donut, ThreatMap). Deterministic radial layout — infra fans
+// (donut, exposure gauge, map). Deterministic radial layout — infra fans
 // right (campaign → provider → IP → domain), brands arc left. Nodes are
 // CLICKABLE and pivot into the rest of the entity graph:
 //   provider → /providers?focus=:id   brand → /brands/:id
