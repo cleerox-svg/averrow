@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, PageHeader } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -36,13 +36,11 @@ export function PricingConfig() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <header>
-        <h1 className="text-xl font-bold text-[color:var(--text-primary)] font-display">Pricing Config</h1>
-        <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">
-          Baseline prices for tiers + modules. Per-customer overrides are managed
-          in <code className="font-mono">/admin/customers/&lt;org&gt;</code> &gt; Pricing.
-        </p>
-      </header>
+      <PageHeader
+        title="Pricing Config"
+        subtitle="Baseline prices for tiers + modules. Per-customer overrides are managed in /admin/customers/<org> > Pricing."
+        className="mb-0"
+      />
 
       <PlansSection canEdit={canEdit} />
       <ModulesSection canEdit={canEdit} />

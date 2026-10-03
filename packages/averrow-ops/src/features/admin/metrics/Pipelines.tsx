@@ -27,9 +27,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { Card, Button } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
-import type { VerdictTag } from '@/components/ui/Badge';
+import { Card, Button, Badge, type VerdictTag, Sparkline } from '@/design-system/components';
 import { ChevronDown } from 'lucide-react';
 import { usePipelineStatus, usePipelineDetail, useTriggerAgent } from '@/hooks/useAgents';
 import type { Agent, PipelineEntry, PipelineDetail } from '@/hooks/useAgents';
@@ -77,56 +75,6 @@ function agentStatusLabel(status: string): 'active' | 'failed' | 'degraded' | 'i
   if (status === 'error')    return 'failed';
   if (status === 'degraded') return 'degraded';
   return 'inactive';
-}
-
-// Hand-rolled SVG mini sparkline for pipeline cards. Same pattern
-// as the agents-v3 CardHealthChart — single series, gradient fill,
-// no axes / tooltip / legend (those live in the expanded detail).
-// Color flips to sev-high when the pipeline's verdict is GROWING
-// so a problem reads at a glance.
-function CardSparkline({
-  values, color, width = 100, height = 28,
-}: {
-  values: number[];
-  color:  string;
-  width?: number;
-  height?: number;
-}) {
-  if (!values || values.length < 2) return null;
-  const N = values.length;
-  const peak = Math.max(...values, 1);
-  // Inset the drawing area by half the stroke width on each side so
-  // the leftmost and rightmost stroke pixels render fully inside the
-  // SVG viewport (no half-thickness clip at the edges).
-  const STROKE = 1.2;
-  const PAD = STROKE / 2;
-  const innerW = width - PAD * 2;
-  const stepX = N > 1 ? innerW / (N - 1) : innerW;
-  const points = values.map((v, i) => {
-    const x = PAD + i * stepX;
-    const y = height - (v / peak) * (height - 2) - 1;
-    return { x, y };
-  });
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-  const areaPath = `${linePath} L ${(width - PAD).toFixed(1)} ${height} L ${PAD.toFixed(1)} ${height} Z`;
-  const gradId   = `pipeline-card-spark-${Math.random().toString(36).slice(2, 9)}`;
-  return (
-    // Default SVG clipping (no overflow-visible) so strokes near the
-    // right edge don't bleed into the card border. The card row uses
-    // justify-between, so this SVG sits flush against the right
-    // padded edge — overflow-visible would push the rightmost stroke
-    // pixel past the card's rounded corner.
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-      <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="5%"  stopColor={color} stopOpacity={0.40} />
-          <stop offset="95%" stopColor={color} stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} stroke={color} strokeWidth={STROKE} fill="none" strokeLinejoin="round" />
-    </svg>
-  );
 }
 
 // Explicit failure-pattern / health reason text. Returns null when
@@ -248,11 +196,13 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
               ≥2 samples. Color flips to sev-high on growing trend
               so problems read at a glance. */}
           {p.sparkline && p.sparkline.length >= 2 && (
-            <CardSparkline
-              values={p.sparkline.map(s => s.count)}
+            <Sparkline
+              data={p.sparkline.map(s => s.count)}
               color={p.trend_direction === 'up' ? 'var(--sev-high)' : 'var(--amber)'}
               width={80}
               height={24}
+              animate={false}
+              baseline="zero"
             />
           )}
         </div>

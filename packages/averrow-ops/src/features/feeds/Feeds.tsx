@@ -19,13 +19,17 @@ import { useFeeds, useFeedStats, useFeedHistory } from '@/hooks/useFeeds';
 import type { FeedOverview, FeedPullRecord } from '@/hooks/useFeeds';
 import { useAdminAction } from '@/hooks/useAdminAction';
 import {
-  Card, StatCard, StatGrid, PageHeader, Button,
+  Card,
+  StatCard,
+  StatGrid,
+  PageHeader,
+  Button,
+  Badge,
+  FilterBar
 } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FilterBar } from '@/components/ui/FilterBar';
 import { relativeTime } from '@/lib/time';
 import { Rss, AlertTriangle, ChevronDown, Pause, Activity, Clock, Play, RotateCw, Loader2, Check, X } from 'lucide-react';
 

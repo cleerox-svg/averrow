@@ -18,8 +18,7 @@ import {
 } from '@/hooks/useAttributionBacklog';
 import type { BacklogCluster, ActorOption } from '@/hooks/useAttributionBacklog';
 import { useNavigate } from 'react-router-dom';
-import { Card } from '@/design-system/components';
-import { FilterBar } from '@/components/ui/FilterBar';
+import { Card, FilterBar, PageHeader } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { timeAgo } from '@/lib/time';
@@ -267,20 +266,11 @@ export function AttributionBacklog() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      <div>
-        <h1
-          className="text-xl font-bold font-display"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          Attribution Backlog
-        </h1>
-        <p
-          className="text-sm font-mono mt-1"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          Infrastructure clusters with no attributed actor — sorted by threat volume.
-        </p>
-      </div>
+      <PageHeader
+        title="Attribution Backlog"
+        subtitle="Infrastructure clusters with no attributed actor — sorted by threat volume."
+        className="mb-0"
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatCard

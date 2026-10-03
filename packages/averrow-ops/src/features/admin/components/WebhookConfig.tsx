@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge } from '@/components/ui/Badge';
+import { Badge } from '@/design-system/components';
 import {
   useWebhookConfig, useUpdateWebhook, useRegenerateWebhookSecret, useTestWebhook,
   useWebhookDeliveries,

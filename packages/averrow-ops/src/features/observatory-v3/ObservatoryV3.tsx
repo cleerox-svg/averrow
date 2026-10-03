@@ -13,7 +13,7 @@ import { ThreatMapV3 } from './components/ThreatMapV3';
 import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
-import { Card, Tabs, Button } from '@/components/ui';
+import { Card, Tabs, Button } from '@/design-system/components';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';

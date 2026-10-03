@@ -18,8 +18,7 @@
 
 import type { CSSProperties } from 'react';
 import { TrendingUp, GitBranch, Settings, ArrowRight, AlertCircle } from 'lucide-react';
-import { TrendSparkline } from '@/components/ui/TrendSparkline';
-import { Badge } from '@/design-system/components';
+import { Badge, Sparkline } from '@/design-system/components';
 import type {
   SpamTrapInsights,
   SpamTrapInsightsTrendsWeek,
@@ -82,9 +81,11 @@ function WeeklyTrendCard({ weekly }: { weekly: SpamTrapInsightsTrendsWeek[] }) {
           {totals.reduce((s, v) => s + v, 0)} total
         </span>
       </div>
-      <div className="mt-3">
-        <TrendSparkline data={totals} color="#fb923c" height={48} fill />
-      </div>
+      {totals.length > 1 && (
+        <div className="mt-3">
+          <Sparkline data={totals} color="var(--sev-high)" height={48} fill />
+        </div>
+      )}
       <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
         {weekly.slice(-4).map((w) => (
           <div key={w.week_start} className="rounded p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-base)' }}>

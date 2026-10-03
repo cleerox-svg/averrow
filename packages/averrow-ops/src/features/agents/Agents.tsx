@@ -30,8 +30,7 @@ import {
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
 import { useAuth } from '@/lib/auth';
-import { Card, StatCard, StatGrid, PageHeader } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
+import { Card, StatCard, StatGrid, PageHeader, Badge } from '@/design-system/components';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { AgentIcon } from '@/components/brand/AgentIcon';

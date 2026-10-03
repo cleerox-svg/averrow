@@ -4,7 +4,7 @@
 
 import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Card, Badge, FilterBar } from '@/components/ui';
+import { Card, Badge, FilterBar } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';

@@ -7,8 +7,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useTrademarkOverview, type TrademarkOverviewRow } from '@/hooks/useTrademarkMonitor';
-import { StatCard, StatGrid, PageHeader, Card } from '@/components/ui';
-import { Badge } from '@/components/ui/Badge';
+import { StatCard, StatGrid, PageHeader, Card, Badge } from '@/design-system/components';
 import { EmptyState } from '@/components/ui/EmptyState';
 
 function formatCount(n: number) {

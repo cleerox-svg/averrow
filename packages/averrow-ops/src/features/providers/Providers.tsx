@@ -10,8 +10,9 @@ import {
   EmptyState,
   Skeleton,
   Badge,
+  Sparkline,
+  type BadgeProps,
 } from '@/design-system/components';
-import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Globe, Mail, ExternalLink, Zap } from 'lucide-react';
 import {
   useProviderIntelligence,
@@ -60,26 +61,15 @@ function getClusterStatus(c: Cluster): ProviderStatus {
   return c.status === 'active' ? 'active' : 'quiet';
 }
 
-// ─── Status Badge Component ──────────────────────────────────
-
-function StatusBadge({ status }: { status: ProviderStatus }) {
-  // Bundle C R8 migration: use the Badge.context tags (NEXUS-style
-  // trend signals) instead of overloading `status` with custom labels.
-  // Notable semantic fix: PIVOT was rendering with status="running"
-  // (blue) — misleading because "went silent recently" should read
-  // as critical/red, not as a healthy run state. Badge.context.pivot
-  // is dedicated red.
-  switch (status) {
-    case 'accelerating':
-      return <Badge context="accelerating" />;
-    case 'pivot':
-      return <Badge context="pivot" />;
-    case 'active':
-      return <Badge status="active" label="ACTIVE" />;
-    case 'quiet':
-      return <Badge context="quiet" />;
-  }
-}
+// ─── Status → Badge props ────────────────────────────────────
+// Trend signals use Badge.context tags (PIVOT reads red, not the healthy
+// run-state blue it once got by overloading `status`).
+const PROVIDER_STATUS_BADGE: Record<ProviderStatus, BadgeProps> = {
+  accelerating: { context: 'accelerating' },
+  pivot:        { context: 'pivot' },
+  active:       { status: 'active', label: 'ACTIVE' },
+  quiet:        { context: 'quiet' },
+};
 
 // ─── Cluster Sidebar ─────────────────────────────────────────
 
@@ -142,7 +132,7 @@ function ClusterPanel({
               <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
                 {cluster.cluster_name || `Cluster ${cluster.id.slice(0, 8)}`}
               </div>
-              <StatusBadge status={status} />
+              <Badge {...PROVIDER_STATUS_BADGE[status]} size="xs" />
             </div>
             <div className="flex items-center gap-2 mt-1">
               <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -222,7 +212,7 @@ function ProviderCard({
               {provider.name}
             </span>
             {nexusLinked && <Badge context="nexus" size="xs" />}
-            <StatusBadge status={status} />
+            <Badge {...PROVIDER_STATUS_BADGE[status]} size="xs" />
           </div>
           <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
             {provider.asn || 'No ASN'}{provider.country ? ` · ${provider.country}` : ''}
@@ -261,7 +251,7 @@ function ProviderCard({
         {sparkData.length > 1 && (
           <div className="flex flex-col items-end gap-1">
             <div style={{ width: 120, height: 36 }}>
-              <TrendSparkline
+              <Sparkline
                 data={sparkData}
                 fill
                 height={36}
@@ -551,7 +541,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                     <span className="font-mono text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
                       {cluster.cluster_name || `Cluster ${cluster.id.slice(0, 8)}`}
                     </span>
-                    <StatusBadge status={getClusterStatus(cluster)} />
+                    <Badge {...PROVIDER_STATUS_BADGE[getClusterStatus(cluster)]} size="xs" />
                   </div>
                   <div className="font-mono text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
                     {cluster.threat_count} threats

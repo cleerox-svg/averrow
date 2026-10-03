@@ -8,9 +8,10 @@ import {
   SaasTechniqueBadge,
   StatCard,
   StatGrid,
-} from '@/components/ui';
-import { EntityListShell, type EntityListSort } from '@/design-system/components';
-import { TrendSparkline } from '@/components/ui/TrendSparkline';
+  EntityListShell,
+  type EntityListSort,
+  Sparkline,
+} from '@/design-system/components';
 import { useThreatActors, useThreatActorStats } from '@/hooks/useThreatActors';
 import type { ThreatActor } from '@/hooks/useThreatActors';
 import { saasTechniquesForTtps } from '@/lib/saas-techniques';
@@ -219,7 +220,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
         {sparkData.length > 1 && sparkData.some(v => v > 0) && (
           <div className="flex flex-col items-end gap-1">
             <div style={{ width: 120, height: 36 }}>
-              <TrendSparkline
+              <Sparkline
                 data={sparkData}
                 fill
                 height={36}

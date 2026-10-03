@@ -35,6 +35,14 @@ describe('shared Badge', () => {
     expect(screen.getByText(text)).toBeInTheDocument();
   });
 
+  it('classification confirmed renders "Confirmed" in the critical tone (case-insensitive)', () => {
+    const { rerender } = render(<Badge classification="confirmed" />);
+    const el = screen.getByText('Confirmed');
+    expect(styleAttr(el)).toContain('--sev-critical-text');
+    rerender(<Badge classification="CONFIRMED" />);
+    expect(styleAttr(screen.getByText('Confirmed'))).toContain('--sev-critical-text');
+  });
+
   it.each(['impersonation', 'suspicious', 'official', 'legitimate', 'parked'] as const)(
     'classification %s renders its raw text',
     (c) => {
@@ -125,6 +133,20 @@ describe('shared Badge', () => {
     const style = styleAttr(screen.getByText(sev[0]!.toUpperCase() + sev.slice(1)));
     expect(style).toContain(`var(${token})`);
     expect(style).not.toMatch(/(^|;\s*)color:\s*#/);
+  });
+
+  it('applies the base chip styling (uppercase mono label, bordered tinted pill)', () => {
+    render(<Badge severity="low" />);
+    const el = screen.getByText('Low');
+    expect(el).toHaveClass('uppercase', 'font-mono');
+    expect(el.style.border).toBeTruthy();
+    expect(el.style.background).toBeTruthy();
+  });
+
+  it('renders without a severity, status or variant (neutral, no crash)', () => {
+    const { container } = render(<Badge>DEFAULT</Badge>);
+    expect(screen.getByText('DEFAULT')).toBeInTheDocument();
+    expect(container.firstChild).toBeInTheDocument();
   });
 
   it('accepts a custom className', () => {

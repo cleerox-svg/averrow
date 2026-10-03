@@ -12,9 +12,9 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useProviderMovers, type ProviderMover } from '@/hooks/useProviderMovers';
-import { BrandAvatar } from '@/components/ui/BrandAvatar';
 import { providerFaviconUrl } from '@/lib/providerFavicon';
 import { M } from '@/design-system/tokens';
+import { Avatar } from '@/design-system/components';
 
 interface MoverListProps {
   title: string;
@@ -42,8 +42,10 @@ function MoverList({ title, rows, accent, accentDim, formatDelta, emptyLabel }: 
                 onClick={() => navigate(`/explore?tab=providers&focus=${encodeURIComponent(row.id)}`)}
                 aria-label={`${row.name} — ${formatDelta(row.delta_7d)} threats over 7 days`}
               >
-                <BrandAvatar
+                <Avatar
                   name={row.name}
+                  size={40}
+                  glow
                   color={accent}
                   dimColor={accentDim}
                   faviconUrl={providerFaviconUrl(row.name)}

@@ -1,10 +1,17 @@
 import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/cn';
-import { StatCard, Card, StatGrid, FilterBar, PageHeader, DataRow } from '@/components/ui';
+import {
+  StatCard,
+  Card,
+  StatGrid,
+  FilterBar,
+  PageHeader,
+  DataRow,
+  Badge,
+  type Severity,
+} from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
-import { Badge } from '@/components/ui/Badge';
-import type { Severity } from '@/components/ui/Badge';
 import {
   useAlerts, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
   type Alert, type AlertFilters,

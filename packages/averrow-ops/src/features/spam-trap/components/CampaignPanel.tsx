@@ -4,7 +4,7 @@ import { useSpamTrapCampaigns, useSpamTrapDaily } from '@/hooks/useSpamTrap';
 import type { SeedCampaign } from '@/hooks/useSpamTrap';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Badge } from '@/design-system/components';
+import { Badge, type BadgeStatus } from '@/design-system/components';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const GLASS_CARD: CSSProperties = {
@@ -15,13 +15,10 @@ const GLASS_CARD: CSSProperties = {
   boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const s = (status ?? '—').toLowerCase();
-  const label = (status ?? '—').toUpperCase();
-  if (s === 'active')    return <Badge status="active"   label={label} size="xs" />;
-  if (s === 'completed') return <Badge status="healthy"  label={label} size="xs" />;
-  return                        <Badge status="inactive" label={label} size="xs" />;
-}
+const CAMPAIGN_STATUS_BADGE: Record<string, BadgeStatus> = {
+  active: 'active',
+  completed: 'healthy',
+};
 
 function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
   let targetBrands: string[] = [];
@@ -38,7 +35,11 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
     <div className="rounded-xl p-4 space-y-3" style={GLASS_CARD}>
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-semibold text-[var(--text-primary)]">{campaign.name ?? '—'}</span>
-        <StatusBadge status={campaign.status ?? 'unknown'} />
+        <Badge
+          status={CAMPAIGN_STATUS_BADGE[(campaign.status ?? '').toLowerCase()] ?? 'inactive'}
+          label={(campaign.status ?? '—').toUpperCase()}
+          size="xs"
+        />
       </div>
       <div className="flex items-center gap-4 text-[10px] font-mono text-white/40">
         <span>{seedCount} seeds</span>

@@ -291,7 +291,7 @@ describe('Takedowns — prospect brand grouping', () => {
   it('gives each severity badge its own distinct color — no tier-shifting (D1)', () => {
     renderTakedownsAt('/takedowns?scope=prospect');
 
-    // Badge's SEV config (components/ui/Badge.tsx): critical=var(--sev-critical-text),
+    // Badge's SEV config (packages/shared/src/ui/Badge.tsx): critical=var(--sev-critical-text),
     // high=var(--sev-high-text), low=var(--sev-low-text) (S2.3 design review —
     // these were hardcoded hex critical=#fca5a5/high=#fdba74/low=#93c5fd until
     // they were swapped for theme-aware tokens so light mode passes contrast).

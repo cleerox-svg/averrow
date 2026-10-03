@@ -35,8 +35,7 @@ import {
   BarChart, Bar, ComposedChart, Line, XAxis, YAxis, Tooltip, Legend,
   CartesianGrid, ResponsiveContainer,
 } from 'recharts';
-import { Card } from '@/design-system/components';
-import { Badge, type BadgeStatus } from '@/components/ui/Badge';
+import { Card, Badge, type BadgeStatus } from '@/design-system/components';
 import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
 import { ChevronDown, TrendingDown } from 'lucide-react';
 import { useAiSpend } from '@/hooks/useMetrics';

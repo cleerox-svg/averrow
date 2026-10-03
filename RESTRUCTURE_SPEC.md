@@ -47,9 +47,15 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 > **Shared kit (Phase 1 PR5, 2026-10):** the primitives below now also exist in
 > `packages/shared/src/ui/` (`@averrow/shared/ui`, shared by ops + tenant) —
 > Badge, StatTile, PageState, Table/DataTable, Tabs, FilterBar, PageHeader,
-> Sparkline, Avatar, Button, Card. It is the target for new components; the ops
-> `design-system/components/index.ts` re-exports it in Phase 1 PR6. See
-> `AVERROW_UI_STANDARD.md` "Shared kit".
+> Sparkline, Avatar, Button, Card. It is the target for new components. Phase 1
+> PR6a (2026-10) made `design-system/components/index.ts` the single ops barrel
+> (`components/ui/index.ts` deleted) and moved Badge, Tabs, FilterBar, Sparkline,
+> Avatar onto the kit, with an ops `PageHeader` adapter over the kit header.
+> The deleted ops files: `components/ui/{Badge,Tabs,FilterBar,PageHeader,Avatar,
+> BrandAvatar,DimensionalAvatar,TrendSparkline,SeverityChip,SeverityPill,DeepCard,
+> DimensionalButton}.tsx` + `index.ts`. The file-tree sketch below is the original
+> R-session plan, not the current layout; for what exists today read the barrel.
+> See `AVERROW_UI_STANDARD.md` "Shared kit" and `docs/UI_CONSOLIDATION_PLAN_2026-10.md`.
 
 ```
 packages/averrow-ops/src/

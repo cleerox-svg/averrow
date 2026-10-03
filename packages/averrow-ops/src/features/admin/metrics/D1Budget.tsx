@@ -19,8 +19,7 @@
 // Same hook (useD1Budget) → same data → same backend cost.
 
 import { Fragment, useState } from 'react';
-import { Card } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
+import { Card, Badge } from '@/design-system/components';
 import { ChevronDown } from 'lucide-react';
 import { useD1Budget } from '@/hooks/useMetrics';
 import type {

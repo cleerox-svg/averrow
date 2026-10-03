@@ -169,6 +169,8 @@ const GRADE = {
 
 ### 1. DeepCard — The Foundation
 
+> **Removed in UI consolidation Phase 1 PR6a (2026-10).** `components/ui/DeepCard.tsx` was a re-export of `Card` and is deleted; every call site now uses `Card` (`import { Card } from '@/design-system/components'`). The variants below are `Card`'s variants. The code excerpt is retained as historical reference only.
+
 Four variants. Every card in the platform is one of these.
 
 ```tsx
@@ -289,6 +291,8 @@ export function DeepCard({
 
 ### 2. DimensionalAvatar — Solid gradient avatar
 
+> **Removed in PR6a (2026-10).** `components/ui/DimensionalAvatar.tsx`, `Avatar.tsx` and `BrandAvatar.tsx` are deleted. Entity avatars use the shared kit `Avatar` (`@averrow/shared/ui`, re-exported by `@/design-system/components`): `size={40} glow` is the old BrandAvatar look, `tone="neutral"` the quiet list-row tile, and `label` makes a standalone avatar `role="img"`. User avatars stay initials-only (`UserAvatar`). The code excerpt is retained as historical reference only.
+
 Used for: brand initials, user avatar, threat actor, org logo placeholders.
 This is what makes the "CL" button and brand avatars look physical.
 
@@ -352,6 +356,8 @@ export function DimensionalAvatar({
 ---
 
 ### 3. SeverityChip — legacy alias for Badge
+
+> **Removed in PR6a (2026-10).** `SeverityChip.tsx`, `SeverityPill.tsx` and the ops `Badge.tsx` are deleted. `Badge` is the shared kit component (accepts any/unknown/null `severity`, plus `status`, `context`, `verdict`, `classification`). The code excerpt is retained as historical reference only.
 
 Superseded by `Badge` (§ CORE COMPONENTS). `SeverityChip.tsx` is now a
 12-line compatibility wrapper that renders `<Badge severity={...} />` —
@@ -494,6 +500,8 @@ export function SectionLabel({
 ---
 
 ### 6. DimensionalButton — Primary and secondary buttons
+
+> **Removed in PR6a (2026-10).** `components/ui/DimensionalButton.tsx` was a re-export of `Button` and is deleted; use `Button` from `@/design-system/components`.
 
 ```tsx
 // packages/averrow-ops/src/components/ui/DimensionalButton.tsx
@@ -670,7 +678,8 @@ Phase 1 PR5 (`docs/UI_CONSOLIDATION_PLAN_2026-10.md`). Source:
 `packages/shared/src/ui/`, single barrel `index.ts`. Named exports only; no `@/`
 or router imports, so ops and tenant render it identically. **New code imports
 from the kit.** The legacy ops primitives documented above are collapsed into it
-by PR6.
+by PR6 (6a done: Badge, Tabs, FilterBar, Sparkline, Avatar, PageHeader; 6b: states
+and stat tiles; 6c: Card and tables).
 
 ```tsx
 import {
@@ -700,8 +709,13 @@ import {
   not clipped). Button, StatTile and the PageHeader back control use the amber
   ring (`focus-visible:ring-2`).
 
-The ops `@/design-system/components` barrel re-exports the kit in Phase 1 PR6.
-Until then, import kit components straight from `@averrow/shared/ui`.
+**Ops import path (PR6a):** `@/design-system/components` is the single ops barrel
+(`components/ui/index.ts` is gone). It re-exports Badge, Tabs, FilterBar, Sparkline
+and Avatar straight from the kit, and exports an ops `PageHeader` adapter
+(`design-system/components/PageHeader.tsx`) that wraps the kit header and maps
+`back.to` to a router `navigate()` (the kit has no router import). Import all of
+these from the barrel; the remaining ops primitives (Card, StatCard, EmptyState,
+Table, ...) still live in `components/ui/` until PR6b/6c.
 
 ---
 
@@ -849,15 +863,16 @@ NEVER use:          text-white/20 or below on readable content
 Every future UI session starts with:
 
 ```bash
-cat packages/averrow-ops/src/components/ui/DeepCard.tsx
-cat packages/averrow-ops/src/components/ui/DimensionalAvatar.tsx
-cat packages/averrow-ops/src/components/ui/Badge.tsx
-cat packages/averrow-ops/src/components/ui/DimensionalButton.tsx
+cat packages/averrow-ops/src/design-system/components/index.ts
+cat packages/shared/src/ui/Badge.tsx
+cat packages/shared/src/ui/Avatar.tsx
+cat packages/averrow-ops/src/components/ui/Card.tsx
+cat packages/averrow-ops/src/components/ui/Button.tsx
 ```
 
 Then the prompt says:
-"Use the Averrow UI Standard. Every card is a DeepCard variant.
-Every avatar is DimensionalAvatar. Every button is DimensionalButton.
+"Use the Averrow UI Standard. Every card is a Card variant.
+Every entity avatar is the shared Avatar. Every button is Button.
 No flat backgrounds. No rgba() fills without the 5 depth rules."
 
 ---

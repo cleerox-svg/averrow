@@ -16,7 +16,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { api } from '@/lib/api';
-import { Card } from '@/components/ui';
+import { Card } from '@/design-system/components';
 
 // Threat-type → fill/stroke color. Aligned with the Threat Volume
 // chart on /trends so the palette stays consistent across the two

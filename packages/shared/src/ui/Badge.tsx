@@ -40,7 +40,7 @@ export type VerdictTag =
 
 /** Social / trademark / app-store finding classification. */
 export type Classification =
-  | 'impersonation' | 'suspicious' | 'official' | 'legitimate' | 'parked';
+  | 'impersonation' | 'suspicious' | 'official' | 'legitimate' | 'parked' | 'confirmed';
 
 /** @deprecated Use `severity` / `status` instead. */
 export type LegacyVariant =
@@ -133,8 +133,11 @@ const STATUS: Record<BadgeStatus, Tone> = {
 
 // Matches the tenant ClassificationPill tones, on theme-aware tokens.
 const CLASSIFICATION: Record<Classification, Tone> = {
-  impersonation: SEV.critical,
-  suspicious:    SEV.medium,
+  // Classifications keep their raw text (no tone label) except `confirmed`.
+  impersonation: { ...SEV.critical, label: undefined },
+  // A confirmed finding reads as critical, with a proper-cased label.
+  confirmed:     { ...SEV.critical, label: 'Confirmed' },
+  suspicious:    { ...SEV.medium, label: undefined },
   official:      { bg: 'var(--border-base)', border: 'var(--border-strong)', text: 'var(--text-secondary)' },
   legitimate:    NEUTRAL,
   parked:        { ...NEUTRAL },
@@ -187,8 +190,9 @@ export function Badge(props: BadgeProps) {
   const showDot = pulse && !!tone.dot;
 
   // Caller label/children win; then the tone's pretty-cased label; then raw.
-  // Classification keeps its raw (case-insensitive) text.
-  const text = label ?? children ?? (props.classification?.trim() ? undefined : tone.label) ?? fallbackText;
+  // Classifications have no tone label (except `confirmed`), so they keep their
+  // raw (case-insensitive) text.
+  const text = label ?? children ?? tone.label ?? fallbackText;
 
   return (
     <span

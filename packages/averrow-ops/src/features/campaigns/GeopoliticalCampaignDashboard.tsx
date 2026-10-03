@@ -17,7 +17,7 @@ import type { GeoCampaignThreat } from '@/hooks/useGeopoliticalCampaign';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ReportPanel } from '@/components/ui/ReportPanel';
-import { Badge } from '@/components/ui/Badge';
+import { Badge } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 
 // ─── Helpers ────────────────────────────────────────────────────

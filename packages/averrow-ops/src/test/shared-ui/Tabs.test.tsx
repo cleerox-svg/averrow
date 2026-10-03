@@ -50,6 +50,30 @@ describe.each(['pills', 'underline', 'bar'] as const)('shared Tabs (%s)', (varia
     expect(tab(/^Three/)).toHaveTextContent('0');
   });
 
+  it('highlights the active tab with --amber-text and keeps inactive tabs on --text-secondary', () => {
+    const { rerender } = render(<Tabs tabs={TABS} activeTab="two" onChange={() => {}} variant={variant} />);
+    expect(tab(/^Two/).style.color).toBe('var(--amber-text)');
+    expect(tab(/^One/).style.color).toBe('var(--text-secondary)');
+    expect(tab(/^Three/).style.color).toBe('var(--text-secondary)');
+    // Active styling follows the controlled activeTab prop.
+    rerender(<Tabs tabs={TABS} activeTab="three" onChange={() => {}} variant={variant} />);
+    expect(tab(/^Three/).style.color).toBe('var(--amber-text)');
+    expect(tab(/^Two/).style.color).toBe('var(--text-secondary)');
+  });
+
+  it('renders tabs that have no count or badge', () => {
+    render(
+      <Tabs
+        tabs={[{ id: 'a', label: 'Tab A' }, { id: 'b', label: 'Tab B' }]}
+        activeTab="a"
+        onChange={() => {}}
+        variant={variant}
+      />,
+    );
+    expect(tab('Tab A')).toBeInTheDocument();
+    expect(tab('Tab B')).toBeInTheDocument();
+  });
+
   it('clicking selects', async () => {
     const onChange = vi.fn();
     render(<Harness variant={variant} onChange={onChange} />);
@@ -166,6 +190,11 @@ describe('shared Tabs tab stop + focus', () => {
     expect(cls).toContain('focus-visible:outline-[var(--amber-text)]');
     expect(cls).not.toContain('focus-visible:ring');
     expect(cls).not.toContain('focus-visible:outline-none');
+  });
+
+  it('bar tabs have horizontal padding so the active pill does not hug its text', () => {
+    render(<Harness variant="bar" />);
+    expect(tab(/^One/).className).toContain('px-2');
   });
 
   it('underline tabs use a negative outline offset so the scroller does not clip it', () => {

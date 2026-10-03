@@ -18,8 +18,8 @@ import { useNavigate } from 'react-router-dom';
 import { Server, Layers, Zap } from 'lucide-react';
 import { useIntelHotlist } from '@/hooks/useIntelHotlist';
 import type { FanoutIp, ConsensusIp, Burst } from '@/hooks/useIntelHotlist';
-import { BrandAvatar } from '@/components/ui/BrandAvatar';
 import { M } from '@/design-system/tokens';
+import { Avatar } from '@/design-system/components';
 
 function relTimeFromSqlite(s: string): string {
   const iso = s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
@@ -220,8 +220,10 @@ export function IntelHotlist() {
                 }
                 title={`${b.distinct_domains.toLocaleString()} distinct domains · window ${b.burst_start} → ${b.burst_end}`}
               >
-                <BrandAvatar
+                <Avatar
                   name={b.brand_name}
+                  size={40}
+                  glow
                   color={M.AMBER}
                   dimColor={M.AMBER_DIM}
                   faviconUrl={

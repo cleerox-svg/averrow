@@ -10,8 +10,9 @@ import {
   EmptyState,
   EntityListShell,
   type EntityListSort,
+  Sparkline,
+  type BadgeProps,
 } from '@/design-system/components';
-import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CardGridLoader } from '@/components/ui/PageLoader';
 import { useCampaigns, useCampaignStats } from '@/hooks/useCampaigns';
@@ -47,26 +48,20 @@ function formatDate(d: string | null) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-// ─── Status Badge ─────────────────────────────────────────────
-
-type OpStatus = 'accelerating' | 'pivot' | 'active' | 'dormant';
-
-function StatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase() as OpStatus;
-  // Bundle C R8 migration: use the Badge.context tags instead of
-  // overloading `status` with custom labels. Notable semantic fix:
-  // PIVOT was previously rendered as `status="active"` which is the
-  // healthy GREEN color. But "pivot" means "infrastructure went
-  // silent recently \u2014 possibly evading takedowns" \u2014 that should
-  // read as critical/red, not as green/healthy. Badge.context.pivot
-  // is dedicated red. Same fix as Providers (#1085).
-  switch (s) {
-    case 'accelerating': return <Badge context="accelerating" size="xs" />;
-    case 'pivot':        return <Badge context="pivot" size="xs" />;
-    case 'active':       return <Badge status="active"   label="Active" size="xs" />;
-    default:             return <Badge status="inactive" label="Dormant" size="xs" />;
-  }
-}
+// ─── Status → Badge props ─────────────────────────────────────
+// Trend signals use Badge.context tags: PIVOT ("infrastructure went silent,
+// possibly evading takedowns") must read red, not the healthy-green it got
+// when it was rendered as `status="active"`. Same fix as Providers (#1085).
+const OP_STATUS_BADGE: Record<string, BadgeProps> = {
+  accelerating: { context: 'accelerating' },
+  pivot:        { context: 'pivot' },
+  active:       { status: 'active', label: 'Active' },
+};
+const OP_STATUS_DORMANT: BadgeProps = { status: 'inactive', label: 'Dormant' };
+const opStatusBadge = (status: string): BadgeProps => {
+  const key = status.toLowerCase();
+  return Object.hasOwn(OP_STATUS_BADGE, key) ? OP_STATUS_BADGE[key]! : OP_STATUS_DORMANT;
+};
 
 // ─── Attack Type Badge ────────────────────────────────────────
 
@@ -172,7 +167,7 @@ function OperationCard({
             >
               {operation.cluster_name || `Cluster ${operation.id.slice(0, 8)}`}
             </span>
-            <StatusBadge status={operation.status} />
+            <Badge {...opStatusBadge(operation.status)} size="xs" />
             {operation.actor_id && operation.actor_name && (
               <Link
                 to={tabUrl('actors', { focus: operation.actor_id })}
@@ -237,7 +232,7 @@ function OperationCard({
         {sparkData.length >= 2 && (
           <div className="flex flex-col items-end gap-1">
             <div style={{ width: 120, height: 36 }}>
-              <TrendSparkline
+              <Sparkline
                 data={sparkData}
                 fill
                 height={36}
@@ -307,7 +302,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
             {asns.join(', ')} {countries.length > 0 ? `\u00B7 ${countries.map(countryFlag).join(' ')}` : ''}
           </div>
         </div>
-        <StatusBadge status={operation.status} />
+        <Badge {...opStatusBadge(operation.status)} size="xs" />
       </div>
 
       {/* Three columns */}

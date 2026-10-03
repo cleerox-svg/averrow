@@ -24,9 +24,8 @@ import {
   type DarkWebStatus,
   type Severity,
 } from '@/hooks/useDarkWebMonitor';
-import { Card, PageHeader, StatCard, StatGrid } from '@/components/ui';
+import { Card, PageHeader, StatCard, StatGrid, Badge } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
-import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { relativeTime } from '@/lib/time';
 
@@ -393,10 +392,14 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
         </span>
       </Td>
       <Td>
-        <SeverityPill level={m.severity} />
+        <Badge severity={m.severity} size="xs" />
       </Td>
       <Td>
-        <ClassificationPill classification={m.classification} />
+        <Badge
+          classification={m.classification ?? 'unknown'}
+          label={(m.classification ?? 'unknown').replace(/_/g, ' ')}
+          size="xs"
+        />
       </Td>
       <Td>
         {m.brand_id ? (
@@ -448,37 +451,6 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
         )}
       </Td>
     </tr>
-  );
-}
-
-function SeverityPill({ level }: { level: string }) {
-  const sev = (level ?? '').toLowerCase();
-  const variant: 'critical' | 'high' | 'default' =
-    sev === 'critical' ? 'critical' :
-    sev === 'high'     ? 'high'     :
-                         'default';
-  // Badge uses 'critical' / 'high' variants — map MEDIUM/LOW to default with text accent.
-  if (sev === 'medium' || sev === 'low') {
-    return (
-      <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 text-[var(--amber-text)] bg-[var(--amber-glow)] border-[var(--amber-border)]">
-        {level}
-      </span>
-    );
-  }
-  return <Badge variant={variant}>{level}</Badge>;
-}
-
-function ClassificationPill({ classification }: { classification: string }) {
-  const tone =
-    classification === 'confirmed'      ? 'text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
-    classification === 'suspicious'     ? 'text-[var(--amber-text)]        bg-[var(--amber-glow)]       border-[var(--amber-border)]'        :
-    classification === 'false_positive' ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
-    classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
-                                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
-  return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {classification}
-    </span>
   );
 }
 

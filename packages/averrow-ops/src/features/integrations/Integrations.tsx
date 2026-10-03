@@ -6,8 +6,8 @@ import {
   EmptyState,
   Skeleton,
   Badge,
+  PageHeader,
 } from '@/design-system/components';
-import { PageHeader } from '@averrow/shared/ui';
 import { Zap, Send, AlertTriangle } from 'lucide-react';
 import {
   useTakedownIntegrations,

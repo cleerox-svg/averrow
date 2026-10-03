@@ -53,23 +53,3 @@ export function resolveStatAccent(
       : Number(String(value).replace(/[\s,%]/g, ''));
   return Number.isFinite(numeric) && numeric === 0 ? M.NEUTRAL : accent;
 }
-
-// `text` values are var(--sev-*-text) tokens (tokens.css), not resolved
-// hexes — safe here because the only consumer (SeverityPill.tsx) drops
-// `.text` straight into an inline `style.color`, never resolves or
-// manipulates it as a color value. The dark-mode CSS var values are
-// byte-identical to the hexes this table used to hardcode, so dark
-// mode is unchanged; light mode now gets the AA-contrast overrides
-// from tokens.css instead of rendering pale-on-white (S2.3 follow-up).
-export const SEV: Record<string, {
-  dot: string;
-  bg: string;
-  border: string;
-  text: string;
-}> = {
-  critical: { dot: '#f87171', bg: 'rgba(239,68,68,0.10)',  border: 'rgba(239,68,68,0.30)',  text: 'var(--sev-critical-text)' },
-  high:     { dot: '#fb923c', bg: 'rgba(249,115,22,0.08)', border: 'rgba(249,115,22,0.25)', text: 'var(--sev-high-text)' },
-  medium:   { dot: '#fbbf24', bg: 'rgba(229,168,50,0.08)', border: 'rgba(229,168,50,0.22)', text: 'var(--sev-medium-text)' },
-  low:      { dot: '#60a5fa', bg: 'rgba(59,130,246,0.07)', border: 'rgba(59,130,246,0.20)', text: 'var(--sev-low-text)' },
-  info:     { dot: '#4ade80', bg: 'rgba(74,222,128,0.07)', border: 'rgba(74,222,128,0.15)', text: 'var(--sev-info-text)' },
-};

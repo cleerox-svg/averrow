@@ -151,7 +151,7 @@ export function Tabs({
         <button
           key={tab.id}
           {...common}
-          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', FOCUS_RING)}
+          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', FOCUS_RING)}
           style={{
             border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
             background: active ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',

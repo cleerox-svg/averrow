@@ -5,8 +5,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useAppStoreOverview, type AppStoreOverviewRow } from '@/hooks/useAppStoreMonitor';
-import { StatCard, StatGrid, PageHeader, Card } from '@/components/ui';
-import { Badge } from '@/components/ui/Badge';
+import { StatCard, StatGrid, PageHeader, Card, Badge } from '@/design-system/components';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { relativeTime } from '@/lib/time';
 
