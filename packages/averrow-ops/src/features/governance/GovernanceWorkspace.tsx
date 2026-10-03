@@ -1,8 +1,9 @@
 // v4 "Governance" workspace — consolidates the compliance/config trio
 // (Audit Log, Pricing, Platform Notifications) under one nav entry as
 // deep-linkable tabs. Tabs are role-gated to match the APIs they call:
-// Audit Log and Users need admin (/api/admin/audit is requireAdmin);
-// Pricing needs view_billing; Platform Notifications is super_admin-only.
+// Audit Log needs view_audit (/api/admin/audit is requirePermission
+// 'view_audit'); Users needs admin; Pricing needs view_billing; Platform
+// Notifications is super_admin-only.
 // The old standalone paths (/admin/audit, /admin/pricing, ...) redirect here.
 // A staff user with no visible tab is sent back to /admin, as the old
 // gated pages did.
@@ -24,10 +25,12 @@ export function GovernanceWorkspace() {
   const isAdmin = isSuperAdmin || user?.role === 'admin';
 
   const tabs: WorkspaceTab[] = [
-    ...(isAdmin
+    ...(roleHasPermission(user?.role, 'view_audit')
       ? [{ id: 'audit', label: 'Audit Log', icon: ClipboardList, Component: AdminAudit,
-          def: 'The compliance audit trail — every privileged action on the platform, filterable by outcome, window, and action type.' } as WorkspaceTab,
-         { id: 'users', label: 'Users', icon: Users, Component: PlatformUsers,
+          def: 'The compliance audit trail — every privileged action on the platform, filterable by outcome, window, and action type.' } as WorkspaceTab]
+      : []),
+    ...(isAdmin
+      ? [{ id: 'users', label: 'Users', icon: Users, Component: PlatformUsers,
           def: 'Platform accounts — roles, access status, sessions, force sign-out, and staff invitations.' } as WorkspaceTab]
       : []),
     ...(roleHasPermission(user?.role, 'view_billing')
