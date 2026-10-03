@@ -159,13 +159,15 @@ export interface PipelineEntry {
   sparkline?: Array<{ count: number; recorded_at: string }>;
 }
 
-export function useAgents() {
+export function useAgents(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['agents'],
     queryFn: async () => {
       const res = await api.get<Agent[]>('/api/agents');
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load agents');
       return res.data || [];
     },
+    enabled: opts.enabled !== false,
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
   });

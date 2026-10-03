@@ -1,4 +1,5 @@
-// Powers the "Brand Movers" section on the unified Home.
+// Powers the Brand Movers panel on Explore → Brands (and the Home digest count,
+// read from cache only).
 //
 // Calls /api/brands/movers (Phase 3) which returns:
 //   { rising:  [{...brand row, today_count, week_ago_count, delta_7d}],
@@ -32,9 +33,12 @@ export interface BrandMoversData {
   falling: BrandMover[];
 }
 
+/** Exported so Home's digest can read the cached value without fetching. */
+export const BRAND_MOVERS_QUERY_KEY = ['brand-movers', 'v1'] as const;
+
 export function useBrandMovers() {
   return useQuery({
-    queryKey: ['brand-movers', 'v1'],
+    queryKey: BRAND_MOVERS_QUERY_KEY,
     queryFn: async (): Promise<BrandMoversData> => {
       const res = await api.get<BrandMoversData>('/api/brands/movers');
       return res.data ?? { rising: [], falling: [] };

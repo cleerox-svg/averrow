@@ -58,13 +58,16 @@ interface PendingResponse {
 /** Pending + changes_requested agents — drives the approval queue
  *  page. Refreshes every 60s so a freshly-deployed agent appears in
  *  the queue without a manual reload. */
-export function usePendingApprovals() {
+export function usePendingApprovals(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['agent-approvals', 'pending'],
     queryFn: async () => {
       const res = await api.get<PendingResponse>('/api/admin/agents/approvals/pending');
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load pending approvals');
       return res.data ?? { pending: [], total: 0 };
     },
+    // Endpoint is super_admin-only; callers pass enabled=false for other roles.
+    enabled: opts.enabled !== false,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });

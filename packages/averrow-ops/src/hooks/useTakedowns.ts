@@ -62,7 +62,7 @@ export interface TakedownFilters {
   brand_id?: string;
 }
 
-export function useAdminTakedowns(options?: TakedownFilters, queryOptions?: { enabled?: boolean }) {
+export function useAdminTakedowns(options?: TakedownFilters, queryOptions?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery({
     queryKey: ['admin-takedowns', options],
     queryFn: async () => {
@@ -81,6 +81,7 @@ export function useAdminTakedowns(options?: TakedownFilters, queryOptions?: { en
         `/api/admin/takedowns${qs ? `?${qs}` : ''}`
       );
       const body = res as unknown as { data: Takedown[]; total: number; status_counts: StatusCount[]; scope: TakedownScope };
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load takedowns');
       return {
         takedowns: body.data ?? [],
         total: body.total ?? 0,
@@ -89,7 +90,7 @@ export function useAdminTakedowns(options?: TakedownFilters, queryOptions?: { en
       };
     },
     placeholderData: keepPreviousData,
-    refetchInterval: 30_000,
+    refetchInterval: queryOptions?.refetchInterval ?? 30_000,
     enabled: queryOptions?.enabled ?? true,
   });
 }

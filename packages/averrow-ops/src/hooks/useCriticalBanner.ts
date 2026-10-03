@@ -30,13 +30,17 @@ export interface CriticalBannerData {
   generated_at: string;
 }
 
-export function useCriticalBanner() {
+export function useCriticalBanner(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['intel-critical-banner'],
     queryFn: async () => {
       const res = await api.get<CriticalBannerData>('/api/intel/critical-banner');
+      // An explicit failure envelope must land in the error path, never
+      // read as "no critical events".
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load critical intelligence');
       return res.data ?? null;
     },
+    enabled: opts.enabled !== false,
     placeholderData: keepPreviousData,
     // Backend caches 60s; client polls every 60s for parity.
     refetchInterval: 60_000,

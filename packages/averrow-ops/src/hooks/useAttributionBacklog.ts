@@ -44,7 +44,7 @@ export interface AttributionBacklogData {
 
 export const BACKLOG_PAGE_SIZE = 50;
 
-export function useAttributionBacklog(opts: { page?: number; q?: string } = {}) {
+export function useAttributionBacklog(opts: { page?: number; q?: string; enabled?: boolean } = {}) {
   const { page = 1, q = '' } = opts;
   return useQuery({
     queryKey: ['attribution-backlog', page, q],
@@ -56,8 +56,10 @@ export function useAttributionBacklog(opts: { page?: number; q?: string } = {}) 
       const res = await api.get<AttributionBacklogData>(
         `/api/admin/agents/attribution-backlog?${params}`,
       );
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load the attribution backlog');
       return res.data ?? null;
     },
+    enabled: opts.enabled !== false,
     placeholderData: keepPreviousData,
     // 60s — operator triages live; backend caches 60s too.
     refetchInterval: 60_000,
