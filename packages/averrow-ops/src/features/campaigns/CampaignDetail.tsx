@@ -34,6 +34,7 @@ import {
   useCampaignInfrastructure,
   useCampaignBrands,
 } from '@/hooks/useCampaigns';
+import { tabUrl } from '@/lib/workspaceRoutes';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ export function CampaignDetail() {
   const { data: infrastructure, isLoading: infraLoading } = useCampaignInfrastructure(id);
   const { data: brandImpact, isLoading: brandsLoading } = useCampaignBrands(id);
 
-  const backToList = () => navigate('/campaigns');
+  const backToList = () => navigate('/explore?tab=campaigns');
 
   if (campaignLoading) {
     return (
@@ -335,7 +336,7 @@ export function CampaignDetail() {
               (infrastructure?.providers ?? []).slice(0, 8).map(p => (
                 <Link
                   key={p.provider_id}
-                  to={`/providers/${p.provider_id}`}
+                  to={tabUrl('providers', { focus: p.provider_id })}
                   className="flex items-center justify-between gap-2 px-2 py-1.5 rounded transition-colors hover:bg-white/[0.04]"
                 >
                   <div className="min-w-0 flex-1 truncate text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -400,7 +401,7 @@ export function CampaignDetail() {
             (threats ?? []).slice(0, 25).map(t => (
               <Link
                 key={t.id}
-                to={`/threats?q=${encodeURIComponent(t.malicious_domain || t.malicious_url || t.ip_address || t.id)}`}
+                to={`/console?tab=threats&q=${encodeURIComponent(t.malicious_domain || t.malicious_url || t.ip_address || t.id)}`}
                 className="flex items-center gap-3 px-1 py-2 transition-colors hover:bg-white/[0.03]"
               >
                 <SeverityPill severity={t.severity} />

@@ -140,7 +140,7 @@ export function IntelHotlist() {
                 type="button"
                 className="home-intel-row"
                 onClick={() =>
-                  navigate(`/threats?ip=${encodeURIComponent(row.ip_address)}`)
+                  navigate(`/console?tab=threats&q=${encodeURIComponent(row.ip_address)}`)
                 }
                 title={`${row.threat_count.toLocaleString()} active threats · last seen ${row.last_seen}`}
               >
@@ -178,7 +178,7 @@ export function IntelHotlist() {
                 type="button"
                 className="home-intel-row"
                 onClick={() =>
-                  navigate(`/threats?ip=${encodeURIComponent(row.ip_address)}`)
+                  navigate(`/console?tab=threats&q=${encodeURIComponent(row.ip_address)}`)
                 }
                 title={`Flagged by: ${row.feeds}`}
               >

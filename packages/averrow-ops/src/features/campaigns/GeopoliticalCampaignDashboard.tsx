@@ -466,7 +466,7 @@ export function GeopoliticalCampaignDashboard() {
   if (!campaign) {
     return (
       <div className="p-6">
-        <button onClick={() => navigate('/campaigns')} className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors mb-4">
+        <button onClick={() => navigate('/explore?tab=campaigns')} className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors mb-4">
           &larr; Back to Operations
         </button>
         <p className="text-[var(--text-tertiary)] font-mono">Geopolitical campaign not found.</p>
@@ -488,7 +488,7 @@ export function GeopoliticalCampaignDashboard() {
     <div className="animate-fade-in p-6 space-y-6">
       {/* Back nav */}
       <button
-        onClick={() => navigate('/campaigns')}
+        onClick={() => navigate('/explore?tab=campaigns')}
         className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
       >
         &larr; Back to Operations

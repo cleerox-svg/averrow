@@ -68,7 +68,7 @@ export function StatGrid() {
                 : `${obsStats?.countries ?? 0} countries`
           }
           accent={M.RED}
-          onClick={() => navigate('/threats')}
+          onClick={() => navigate('/console?tab=threats')}
         />
         <StatTile
           label="Alerts"
@@ -76,35 +76,35 @@ export function StatGrid() {
           sub={alertPending ? '—' : `${criticalCount} critical · ${alertStats?.new_count ?? 0} new`}
           accent={M.RED}
           critical={criticalCount}
-          onClick={() => navigate('/alerts')}
+          onClick={() => navigate('/console?tab=alerts')}
         />
         <StatTile
           label="Campaigns"
           value={opsPending ? null : (opsStats?.campaigns_tracked ?? 0)}
           sub={opsPending ? '—' : `${opsStats?.active_operations ?? 0} active ops`}
           accent={M.AMBER}
-          onClick={() => navigate('/campaigns')}
+          onClick={() => navigate('/explore?tab=campaigns')}
         />
         <StatTile
           label="Brands"
           value={brandPending ? null : (brandStats?.total_tracked ?? 0)}
           sub={brandPending ? '—' : `${brandStats?.new_this_week ?? 0} new this week`}
           accent={M.AMBER}
-          onClick={() => navigate('/brands')}
+          onClick={() => navigate('/explore?tab=brands')}
         />
         <StatTile
           label="Agents"
           value={agentsPending ? null : agentsOnline}
           sub={agentsPending ? '—' : `of ${agents.length || 0} online`}
           accent={M.BLUE}
-          onClick={() => navigate('/agents')}
+          onClick={() => navigate('/admin/operations?tab=agents')}
         />
         <StatTile
           label="Feeds"
           value={feedsPending ? null : feedActive}
           sub={feedsPending ? '—' : `of ${feedTotal || 0} active`}
           accent={M.GREEN}
-          onClick={() => navigate('/feeds')}
+          onClick={() => navigate('/admin/operations?tab=feeds')}
         />
       </div>
 

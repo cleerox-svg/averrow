@@ -98,7 +98,7 @@ describe('CommandPalette — data search routing', () => {
 
     await userEvent.click(screen.getByText('APT-Acme'));
 
-    expect(mocks.navigate).toHaveBeenCalledWith('/threat-actors?focus=t1');
+    expect(mocks.navigate).toHaveBeenCalledWith('/explore?tab=actors&focus=t1');
   });
 
   it('routes a provider row to /providers?focus=:id', async () => {
@@ -107,7 +107,7 @@ describe('CommandPalette — data search routing', () => {
 
     await userEvent.click(screen.getByText('CloudCo'));
 
-    expect(mocks.navigate).toHaveBeenCalledWith('/providers?focus=p1');
+    expect(mocks.navigate).toHaveBeenCalledWith('/explore?tab=providers&focus=p1');
   });
 
   it('routes a campaign row to /campaigns/:id', async () => {
@@ -128,7 +128,7 @@ describe('CommandPalette — data search routing', () => {
     // No per-listing detail page, and BrandDetail has no 'apps' tab (so
     // /brands/:id?tab=apps silently falls back to Surface), so an app hit
     // routes to the cross-brand /apps overview — the honest working landing.
-    expect(mocks.navigate).toHaveBeenCalledWith('/apps');
+    expect(mocks.navigate).toHaveBeenCalledWith('/coverage?tab=apps');
   });
 
   it('routes "View all results" carrying the current query as ?q= (not the bare list route)', async () => {
@@ -142,7 +142,7 @@ describe('CommandPalette — data search routing', () => {
     // /brands?q=ac, not the bare /brands — so the list page can seed its
     // own search state from ?q= (Tier-2; see the DATA_GROUPS comment in
     // CommandPalette.tsx and Brands.tsx/BrandsGrid.tsx).
-    expect(mocks.navigate).toHaveBeenCalledWith('/brands?q=ac');
+    expect(mocks.navigate).toHaveBeenCalledWith('/explore?tab=brands&q=ac');
   });
 
   it('renders a "view all" trailer per group, each pointing at its own list route with the query attached', async () => {
@@ -153,18 +153,18 @@ describe('CommandPalette — data search routing', () => {
     expect(viewAllRows).toHaveLength(5); // one per DATA_GROUPS entry, including APPS
 
     await userEvent.click(viewAllRows[1]); // threat actors
-    expect(mocks.navigate).toHaveBeenCalledWith('/threat-actors?q=ac');
+    expect(mocks.navigate).toHaveBeenCalledWith('/explore?tab=actors&q=ac');
 
     await userEvent.click(viewAllRows[2]); // providers
-    expect(mocks.navigate).toHaveBeenLastCalledWith('/providers?q=ac');
+    expect(mocks.navigate).toHaveBeenLastCalledWith('/explore?tab=providers&q=ac');
 
     await userEvent.click(viewAllRows[3]); // campaigns
-    expect(mocks.navigate).toHaveBeenLastCalledWith('/campaigns?q=ac');
+    expect(mocks.navigate).toHaveBeenLastCalledWith('/explore?tab=campaigns&q=ac');
 
     // apps' "view all" goes to the cross-brand /apps overview — it has no
     // ?q= reader and is deliberately not query-scoped (see DATA_GROUPS).
     await userEvent.click(viewAllRows[4]); // apps
-    expect(mocks.navigate).toHaveBeenLastCalledWith('/apps');
+    expect(mocks.navigate).toHaveBeenLastCalledWith('/coverage?tab=apps');
   });
 
   it('URL-encodes special characters in the carried query', async () => {
@@ -174,7 +174,7 @@ describe('CommandPalette — data search routing', () => {
     const viewAllBrands = screen.getAllByText('View all results for “a&b”')[0];
     await userEvent.click(viewAllBrands);
 
-    expect(mocks.navigate).toHaveBeenCalledWith('/brands?q=a%26b');
+    expect(mocks.navigate).toHaveBeenCalledWith('/explore?tab=brands&q=a%26b');
   });
 
   it('omits a group entirely when it has no results, rather than rendering an empty heading', async () => {

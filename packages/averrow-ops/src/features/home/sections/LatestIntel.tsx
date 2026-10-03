@@ -61,7 +61,7 @@ export function LatestIntel() {
         <span className="home-latest-intel-label">Latest Intel</span>
         <button
           type="button"
-          onClick={() => navigate('/agents')}
+          onClick={() => navigate('/admin/operations?tab=agents')}
           className="home-latest-intel-viewall"
           aria-label="View all agent outputs"
         >

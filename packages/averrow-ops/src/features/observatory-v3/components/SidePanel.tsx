@@ -209,7 +209,7 @@ function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worse
   return (
     <div
       className="flex items-center justify-between py-1.5 cursor-pointer hover:bg-white/[0.03] rounded -mx-1 px-1 transition-colors"
-      onClick={() => navigate(`/providers?focus=${encodeURIComponent(p.provider_id)}`)}
+      onClick={() => navigate(`/explore?tab=providers&focus=${encodeURIComponent(p.provider_id)}`)}
     >
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>

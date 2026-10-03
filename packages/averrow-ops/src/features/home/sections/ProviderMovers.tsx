@@ -39,7 +39,7 @@ function MoverList({ title, rows, accent, accentDim, formatDelta, emptyLabel }: 
               <button
                 type="button"
                 className="home-mover-row"
-                onClick={() => navigate(`/providers/${encodeURIComponent(row.id)}`)}
+                onClick={() => navigate(`/explore?tab=providers&focus=${encodeURIComponent(row.id)}`)}
                 aria-label={`${row.name} — ${formatDelta(row.delta_7d)} threats over 7 days`}
               >
                 <BrandAvatar

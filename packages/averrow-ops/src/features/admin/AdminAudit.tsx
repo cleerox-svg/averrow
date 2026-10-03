@@ -13,9 +13,9 @@ function resourceHref(type: string | null, id: string | null): string | null {
     case 'brand_profile': return `/brands/${id}`;
     case 'incident':      return `/admin/incidents/${id}`;
     case 'campaign':      return `/campaigns/${id}`;
-    case 'threat_actor':  return `/threat-actors?focus=${encodeURIComponent(id)}`;
+    case 'threat_actor':  return `/explore?tab=actors&focus=${encodeURIComponent(id)}`;
     case 'provider':
-    case 'hosting_provider': return `/providers?focus=${encodeURIComponent(id)}`;
+    case 'hosting_provider': return `/explore?tab=providers&focus=${encodeURIComponent(id)}`;
     case 'organization':
     case 'org':           return '/admin/customers';
     default:              return null;

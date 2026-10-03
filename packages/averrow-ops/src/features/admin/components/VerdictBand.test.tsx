@@ -264,7 +264,7 @@ describe('VerdictBand', () => {
     it('links the Agents contributor to /agents', () => {
       mockSnapshot();
       renderWithProviders(<VerdictBand />);
-      expect(hrefForContributor('Agents')).toBe('/agents');
+      expect(hrefForContributor('Agents')).toBe('/admin/operations?tab=agents');
     });
 
     // Tier 3: /admin/metrics was merged into /admin as additional tabs
@@ -294,7 +294,7 @@ describe('VerdictBand', () => {
       mockSnapshot({ data: { threat_health: null } });
       renderWithProviders(<VerdictBand />);
       expect(hrefForContributor('Feeds')).toBe('/admin?tab=feeds');
-      expect(hrefForContributor('Agents')).toBe('/agents');
+      expect(hrefForContributor('Agents')).toBe('/admin/operations?tab=agents');
     });
   });
 

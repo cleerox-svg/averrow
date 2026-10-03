@@ -48,14 +48,14 @@ describe('outletLayoutFor', () => {
     '%s is full-bleed', (p) => expect(outletLayoutFor(p)).toBe('bleed'),
   );
   it.each(['/observatory', '/observatory/'])('%s fills the outlet', (p) => expect(outletLayoutFor(p)).toBe('fill'));
-  it.each(['/brands', '/admin', '/admin/users', '/alerts', '/agents', '/leads', '/feeds', '/trends', '/brands/b_1'])(
+  it.each(['/admin', '/admin/users', '/leads', '/notifications', '/brands/b_1', '/campaigns/c_1', '/agents/approvals'])(
     '%s is padded', (p) => expect(outletLayoutFor(p)).toBe('padded'),
   );
 });
 
 describe('ShellV4 outlet gutter class', () => {
   it('wraps a standalone page in the padded gutter', () => {
-    const { container, getByTestId } = renderAt('/brands');
+    const { container, getByTestId } = renderAt('/brands/b_1');
     const page = container.querySelector('.v4-outlet > .v4-page') as HTMLElement;
     expect(page).toHaveClass('v4-page--padded');
     expect(page).toContainElement(getByTestId('page'));

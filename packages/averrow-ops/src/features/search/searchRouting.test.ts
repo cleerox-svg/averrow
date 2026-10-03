@@ -42,11 +42,11 @@ describe('SEARCH_GROUPS — routeFor(id)', () => {
   });
 
   it('threat_actor routes to /threat-actors?focus=:id', () => {
-    expect(groupFor('threat_actor').routeFor('t1')).toBe('/threat-actors?focus=t1');
+    expect(groupFor('threat_actor').routeFor('t1')).toBe('/explore?tab=actors&focus=t1');
   });
 
   it('provider routes to /providers?focus=:id', () => {
-    expect(groupFor('provider').routeFor('p1')).toBe('/providers?focus=p1');
+    expect(groupFor('provider').routeFor('p1')).toBe('/explore?tab=providers&focus=p1');
   });
 
   it('campaign routes to /campaigns/:id', () => {
@@ -54,38 +54,38 @@ describe('SEARCH_GROUPS — routeFor(id)', () => {
   });
 
   it('app_store routes to the cross-brand /apps overview regardless of id (no per-listing destination yet)', () => {
-    expect(groupFor('app_store').routeFor('b42')).toBe('/apps');
-    expect(groupFor('app_store').routeFor('anything-else')).toBe('/apps');
+    expect(groupFor('app_store').routeFor('b42')).toBe('/coverage?tab=apps');
+    expect(groupFor('app_store').routeFor('anything-else')).toBe('/coverage?tab=apps');
   });
 });
 
 describe('SEARCH_GROUPS — viewAllTo(q)', () => {
   it('brand carries the query to /brands?q=', () => {
-    expect(groupFor('brand').viewAllTo('acme')).toBe('/brands?q=acme');
+    expect(groupFor('brand').viewAllTo('acme')).toBe('/explore?tab=brands&q=acme');
   });
 
   it('threat_actor carries the query to /threat-actors?q=', () => {
-    expect(groupFor('threat_actor').viewAllTo('acme')).toBe('/threat-actors?q=acme');
+    expect(groupFor('threat_actor').viewAllTo('acme')).toBe('/explore?tab=actors&q=acme');
   });
 
   it('provider carries the query to /providers?q=', () => {
-    expect(groupFor('provider').viewAllTo('acme')).toBe('/providers?q=acme');
+    expect(groupFor('provider').viewAllTo('acme')).toBe('/explore?tab=providers&q=acme');
   });
 
   it('campaign carries the query to /campaigns?q=', () => {
-    expect(groupFor('campaign').viewAllTo('acme')).toBe('/campaigns?q=acme');
+    expect(groupFor('campaign').viewAllTo('acme')).toBe('/explore?tab=campaigns&q=acme');
   });
 
   it('app_store ignores the query and always lands on /apps (no ?q= reader there)', () => {
-    expect(groupFor('app_store').viewAllTo('acme')).toBe('/apps');
-    expect(groupFor('app_store').viewAllTo('')).toBe('/apps');
+    expect(groupFor('app_store').viewAllTo('acme')).toBe('/coverage?tab=apps');
+    expect(groupFor('app_store').viewAllTo('')).toBe('/coverage?tab=apps');
   });
 
   it('URL-encodes special characters for every query-carrying group', () => {
-    expect(groupFor('brand').viewAllTo('a&b c')).toBe('/brands?q=a%26b%20c');
-    expect(groupFor('threat_actor').viewAllTo('a&b c')).toBe('/threat-actors?q=a%26b%20c');
-    expect(groupFor('provider').viewAllTo('a&b c')).toBe('/providers?q=a%26b%20c');
-    expect(groupFor('campaign').viewAllTo('a&b c')).toBe('/campaigns?q=a%26b%20c');
+    expect(groupFor('brand').viewAllTo('a&b c')).toBe('/explore?tab=brands&q=a%26b%20c');
+    expect(groupFor('threat_actor').viewAllTo('a&b c')).toBe('/explore?tab=actors&q=a%26b%20c');
+    expect(groupFor('provider').viewAllTo('a&b c')).toBe('/explore?tab=providers&q=a%26b%20c');
+    expect(groupFor('campaign').viewAllTo('a&b c')).toBe('/explore?tab=campaigns&q=a%26b%20c');
   });
 });
 
@@ -100,5 +100,12 @@ describe('searchPageUrl', () => {
 
   it('round-trips an empty string', () => {
     expect(searchPageUrl('')).toBe('/search?q=');
+  });
+});
+
+describe('SEARCH_GROUPS — id encoding', () => {
+  it('percent-encodes ids containing & and #', () => {
+    expect(groupFor('threat_actor').routeFor('a&b#c')).toBe('/explore?tab=actors&focus=a%26b%23c');
+    expect(groupFor('provider').routeFor('a&b#c')).toBe('/explore?tab=providers&focus=a%26b%23c');
   });
 });

@@ -399,7 +399,7 @@ export function AttributionBacklog() {
                     cluster={c}
                     // Pivot to this cluster's operation card on the Campaigns
                     // page (?focus= pre-expands + scrolls to it).
-                    onSelect={() => navigate(`/campaigns?focus=${encodeURIComponent(c.id)}`)}
+                    onSelect={() => navigate(`/explore?tab=campaigns&focus=${encodeURIComponent(c.id)}`)}
                     pickerOpen={pickerFor === c.id}
                     onTogglePicker={() => setPickerFor(prev => prev === c.id ? null : c.id)}
                     onDismiss={() => doDismiss(c)}

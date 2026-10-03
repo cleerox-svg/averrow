@@ -15,7 +15,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { useNotifications, useMarkRead, type Notification } from '@/hooks/useNotifications';
 
-const SHOW_ON_PATHS = ['/', '/agents', '/feeds'];
+// Overview, plus the Agents and Feeds panes of the Operations workspace
+// (`?tab=` absent or unknown renders the default pane, Agents). Only the
+// panes known NOT to be health panes hide the banner.
+const HIDE_ON_OPERATIONS_TABS: readonly string[] = ['takedown-integrations', 'attribution'];
 const DISMISSED_KEY = 'averrow:platform-alerts:dismissed-v1';
 
 function loadDismissed(): Set<string> {
@@ -98,7 +101,10 @@ const PALETTE: Record<Notification['severity'], PaletteEntry> = {
 
 export function PlatformAlertBanner() {
   const location = useLocation();
-  const onTargetRoute = SHOW_ON_PATHS.includes(location.pathname);
+  const opsTab = new URLSearchParams(location.search).get('tab');
+  const onTargetRoute =
+    location.pathname === '/' ||
+    (location.pathname === '/admin/operations' && !(opsTab && HIDE_ON_OPERATIONS_TABS.includes(opsTab)));
   // useNotifications takes an `enabled` flag; only fetch on the routes
   // we actually render on, to avoid every page paying the network cost.
   const { data } = useNotifications(onTargetRoute);
@@ -212,7 +218,7 @@ export function PlatformAlertBanner() {
       </div>
 
       <Link
-        to="/alerts"
+        to="/console?tab=alerts"
         onClick={handleMarkRead}
         style={{
           fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,

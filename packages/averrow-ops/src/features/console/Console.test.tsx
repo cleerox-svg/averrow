@@ -10,7 +10,7 @@ vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
 vi.mock('react-countup', () => ({
   default: ({ end }: { end: number }) => <span>{end}</span>,
 }));
-vi.mock('@/features/console/views/ConsoleIncidents', () => ({ ConsoleIncidents: () => null }));
+vi.mock('@/features/admin-incidents/Incidents', () => ({ AdminIncidents: () => null }));
 vi.mock('@/features/alerts/Alerts', () => ({ Alerts: () => null }));
 vi.mock('@/features/threats/Threats', () => ({ Threats: () => null }));
 vi.mock('@/features/takedowns/Takedowns', () => ({ Takedowns: () => null }));

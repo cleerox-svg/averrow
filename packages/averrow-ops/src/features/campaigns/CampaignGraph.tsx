@@ -100,7 +100,7 @@ export function CampaignGraph({
       nodes.push({
         id: pid, type: 'provider', label: truncate(p.provider_name, 16),
         x: ptX(R_PROV, pAng), y: ptY(R_PROV, pAng), r: 12,
-        href: `/providers?focus=${encodeURIComponent(p.provider_id)}`,
+        href: `/explore?tab=providers&focus=${encodeURIComponent(p.provider_id)}`,
         title: `${p.provider_name} · ${p.threat_count} threats`,
       });
       edges.push({ from: 'campaign', to: pid });
@@ -116,7 +116,7 @@ export function CampaignGraph({
         nodes.push({
           id: iid, type: 'ip', label: ip.ip_address,
           x: ptX(R_IP, iAng), y: ptY(R_IP, iAng), r: 7,
-          href: `/threats?q=${encodeURIComponent(ip.ip_address)}`,
+          href: `/console?tab=threats&q=${encodeURIComponent(ip.ip_address)}`,
           title: `${ip.ip_address} · ${ip.domain_count} domains`,
         });
         edges.push({ from: pid, to: iid });
@@ -132,7 +132,7 @@ export function CampaignGraph({
           nodes.push({
             id: did, type: 'domain', label: d.domain,
             x: ptX(R_DOM, dAng), y: ptY(R_DOM, dAng), r: 4,
-            href: `/threats?q=${encodeURIComponent(d.domain)}`,
+            href: `/console?tab=threats&q=${encodeURIComponent(d.domain)}`,
             title: d.domain,
           });
           edges.push({ from: iid, to: did });

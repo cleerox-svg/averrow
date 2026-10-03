@@ -1,11 +1,14 @@
 // v4 "Governance" workspace — consolidates the compliance/config trio
 // (Audit Log, Pricing, Platform Notifications) under one nav entry as
-// deep-linkable tabs. Tabs are role-gated to match the pages they mount:
-// Pricing needs view_billing; Platform Notifications is super_admin-only
-// (the page itself bounces everyone else to /admin). Standalone routes
-// (/admin/audit, /admin/pricing, /admin/notifications) stay live.
+// deep-linkable tabs. Tabs are role-gated to match the APIs they call:
+// Audit Log and Users need admin (/api/admin/audit is requireAdmin);
+// Pricing needs view_billing; Platform Notifications is super_admin-only.
+// The old standalone paths (/admin/audit, /admin/pricing, ...) redirect here.
+// A staff user with no visible tab is sent back to /admin, as the old
+// gated pages did.
 
 import { lazy } from 'react';
+import { Navigate } from 'react-router-dom';
 import { ClipboardList, DollarSign, Bell, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
@@ -21,10 +24,10 @@ export function GovernanceWorkspace() {
   const isAdmin = isSuperAdmin || user?.role === 'admin';
 
   const tabs: WorkspaceTab[] = [
-    { id: 'audit', label: 'Audit Log', icon: ClipboardList, Component: AdminAudit,
-      def: 'The compliance audit trail — every privileged action on the platform, filterable by outcome, window, and action type.' },
     ...(isAdmin
-      ? [{ id: 'users', label: 'Users', icon: Users, Component: PlatformUsers,
+      ? [{ id: 'audit', label: 'Audit Log', icon: ClipboardList, Component: AdminAudit,
+          def: 'The compliance audit trail — every privileged action on the platform, filterable by outcome, window, and action type.' } as WorkspaceTab,
+         { id: 'users', label: 'Users', icon: Users, Component: PlatformUsers,
           def: 'Platform accounts — roles, access status, sessions, force sign-out, and staff invitations.' } as WorkspaceTab]
       : []),
     ...(roleHasPermission(user?.role, 'view_billing')
@@ -37,5 +40,6 @@ export function GovernanceWorkspace() {
       : []),
   ];
 
+  if (tabs.length === 0) return <Navigate to="/admin" replace />;
   return <TabbedWorkspace crumb="PLATFORM" title="Governance" tabs={tabs} />;
 }

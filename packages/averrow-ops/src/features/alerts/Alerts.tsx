@@ -575,14 +575,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           <div className="flex flex-col gap-1">
             {alert.source_type === 'threat' && alert.source_id && (
               <Link
-                to={`/threats?q=${encodeURIComponent(alert.source_id)}`}
+                to={`/console?tab=threats&q=${encodeURIComponent(alert.source_id)}`}
                 className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
               >
                 View source threat →
               </Link>
             )}
             <Link
-              to={`/threats?brand_id=${encodeURIComponent(alert.brand_id)}`}
+              to={`/console?tab=threats&brand_id=${encodeURIComponent(alert.brand_id)}`}
               className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
             >
               View brand's threats →

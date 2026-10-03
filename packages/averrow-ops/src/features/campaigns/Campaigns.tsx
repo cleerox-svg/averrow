@@ -25,6 +25,7 @@ import type { Operation } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import type { GeopoliticalCampaign } from '@/hooks/useGeopoliticalCampaign';
 import { Activity, ChevronDown } from 'lucide-react';
+import { tabUrl } from '@/lib/workspaceRoutes';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ function OperationCard({
             <StatusBadge status={operation.status} />
             {operation.actor_id && operation.actor_name && (
               <Link
-                to={`/threat-actors/${operation.actor_id}`}
+                to={tabUrl('actors', { focus: operation.actor_id })}
                 onClick={(e) => e.stopPropagation()}
                 className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded transition-colors hover:underline"
                 style={{

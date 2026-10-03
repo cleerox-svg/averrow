@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
+import { tabUrl } from '@/lib/workspaceRoutes';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -55,10 +56,12 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
   const platformItems: NavItem[] = [
     { label: 'Dashboard',   to: '/admin',            icon: LayoutDashboard, end: true },
     { label: 'Operations',  to: '/admin/operations', icon: Wrench },
-    // Governance is visible to all staff — its Audit Log tab is all-staff;
-    // the Pricing / Platform Notifications tabs gate themselves inside the
-    // workspace (view_billing / super_admin).
-    { label: 'Governance',  to: '/admin/governance', icon: ClipboardList },
+    // Governance tabs are role-gated (Audit/Users: admin; Pricing:
+    // view_billing; Notifications: super_admin) — hide the row when the
+    // role would see none.
+    ...(isSuperAdmin || opts.role === 'admin' || roleHasPermission(opts.role, 'view_billing')
+      ? [{ label: 'Governance', to: '/admin/governance', icon: ClipboardList } as NavItem]
+      : []),
     { label: 'Team',        to: '/admin/users?tab=members', icon: Users },
     ...(isSuperAdmin
       ? [{ label: 'Customers', to: '/admin/customers', icon: Building2 } as NavItem]
@@ -70,9 +73,9 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
     {
       label: 'SOC CONSOLE',
       items: [
-        // Console consolidates Signals / Threats / Incidents / Takedowns as
+        // Console consolidates Alerts / Threats / Incidents / Takedowns as
         // tabs — so those don't appear as separate menu items in v4 (their
-        // routes stay live for deep links). Abuse Mailbox + Spam Trap are NOT
+        // old standalone paths redirect to the tabs). Abuse Mailbox + Spam Trap are NOT
         // Console tabs, so they remain standalone here — but both pages
         // hard-bounce non-super-admins, so their rows are gated to match.
         { label: 'Console',       to: '/console',              icon: SquareTerminal, count: openAlerts },
@@ -92,7 +95,7 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
         // detection-surface pages are consolidated into two tabbed
         // workspaces: Explorer (Brands / Threat Actors / Campaigns /
         // Providers) and Coverage (Apps / Dark Web / Trademarks / Trends).
-        // Their standalone routes remain live for deep links / pivots.
+        // Their old standalone list paths redirect to the tabs.
         { label: 'Observatory', to: '/observatory',    icon: Globe },
         { label: 'Explorer',    to: '/explore',        icon: Compass },
         { label: 'Coverage',    to: '/coverage',       icon: Layers },
@@ -110,9 +113,9 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 // Palette commands = every nav destination (already role-gated by buildV4Nav)
-// PLUS the consolidated targets that live inside Console/Explorer/Coverage as
-// tabs and the entity pages that don't get their own sidebar row, so ⌘K can
-// still jump straight to any page. Keywords cover synonyms an analyst might
+// PLUS the consolidated targets that live inside the workspaces as tabs
+// (linked by canonical `?tab=` URL, never through a redirect), so ⌘K can still
+// jump straight to any page. Keywords cover synonyms an analyst might
 // type (e.g. "alerts" for Signals, "typosquat" for Trademarks).
 function buildPaletteCommands(
   nav: NavGroup[],
@@ -130,35 +133,35 @@ function buildPaletteCommands(
 
   const extras: PaletteCommand[] = [
     // Platform-ops pages consolidated under the Operations / Governance
-    // workspaces (standalone routes stay live; gating mirrors the pages)
-    { label: 'Agents',                to: '/agents',            group: 'PLATFORM', icon: Cpu, keywords: 'fleet runs mesh' },
-    { label: 'Feeds',                 to: '/feeds',             group: 'PLATFORM', icon: Rss, keywords: 'ingestion sources pulls' },
-    { label: 'Takedown Integrations', to: '/admin/integrations', group: 'PLATFORM', icon: Plug, keywords: 'submitters providers registrars' },
-    { label: 'Attribution Backlog',   to: '/admin/agents/attribution-backlog', group: 'PLATFORM', icon: ListChecks, keywords: 'clusters unattributed' },
-    { label: 'Audit Log',             to: '/admin/audit',       group: 'PLATFORM', icon: ClipboardList, keywords: 'compliance history actions' },
+    // workspaces (gating mirrors the pages)
+    { label: 'Agents',                to: tabUrl('agents'),            group: 'PLATFORM', icon: Cpu, keywords: 'fleet runs mesh' },
+    { label: 'Feeds',                 to: tabUrl('feeds'),             group: 'PLATFORM', icon: Rss, keywords: 'ingestion sources pulls' },
+    { label: 'Takedown Integrations', to: tabUrl('takedown-integrations'), group: 'PLATFORM', icon: Plug, keywords: 'submitters providers registrars' },
+    { label: 'Attribution Backlog',   to: tabUrl('attribution'), group: 'PLATFORM', icon: ListChecks, keywords: 'clusters unattributed' },
+    { label: 'Audit Log',             to: tabUrl('audit'),       group: 'PLATFORM', icon: ClipboardList, keywords: 'compliance history actions' },
     ...(isSuperAdmin || role === 'admin'
-      ? [{ label: 'Platform Users', to: '/admin/platform-users', group: 'PLATFORM', icon: Users, keywords: 'staff accounts roles sessions invites' } as PaletteCommand]
+      ? [{ label: 'Platform Users', to: tabUrl('users'), group: 'PLATFORM', icon: Users, keywords: 'staff accounts roles sessions invites' } as PaletteCommand]
       : []),
     ...(roleHasPermission(role, 'view_billing')
-      ? [{ label: 'Pricing', to: '/admin/pricing', group: 'PLATFORM', icon: DollarSign, keywords: 'plans billing modules' } as PaletteCommand]
+      ? [{ label: 'Pricing', to: tabUrl('pricing'), group: 'PLATFORM', icon: DollarSign, keywords: 'plans billing modules' } as PaletteCommand]
       : []),
     ...(isSuperAdmin
-      ? [{ label: 'Platform Notifications', to: '/admin/notifications', group: 'PLATFORM', icon: Bell, keywords: 'mutes system alerts volume' } as PaletteCommand]
+      ? [{ label: 'Platform Notifications', to: tabUrl('notifications'), group: 'PLATFORM', icon: Bell, keywords: 'mutes system alerts volume' } as PaletteCommand]
       : []),
-    // Console tabs (deep-linked routes that don't have their own nav row)
-    { label: 'Alerts',    to: '/alerts',           group: 'SOC CONSOLE', icon: ShieldAlert, keywords: 'alerts queue triage signals' },
-    { label: 'Threats',   to: '/threats',          group: 'SOC CONSOLE', icon: Bug, keywords: 'iocs indicators' },
-    { label: 'Incidents', to: '/admin/incidents',  group: 'SOC CONSOLE', icon: ShieldAlert, keywords: 'cases' },
-    { label: 'Takedowns', to: '/admin/takedowns',  group: 'SOC CONSOLE', icon: Target, keywords: 'sparrow disruption removal' },
+    // Console tabs (no own nav row)
+    { label: 'Alerts',    to: tabUrl('alerts'),           group: 'SOC CONSOLE', icon: ShieldAlert, keywords: 'alerts queue triage signals' },
+    { label: 'Threats',   to: tabUrl('threats'),          group: 'SOC CONSOLE', icon: Bug, keywords: 'iocs indicators' },
+    { label: 'Incidents', to: tabUrl('incidents'),  group: 'SOC CONSOLE', icon: ShieldAlert, keywords: 'cases' },
+    { label: 'Takedowns', to: tabUrl('takedowns'),  group: 'SOC CONSOLE', icon: Target, keywords: 'sparrow disruption removal' },
     // Intelligence entity pages (consolidated under Explorer / Coverage tabs)
-    { label: 'Brands',        to: '/brands',        group: 'INTELLIGENCE', icon: Building2 },
-    { label: 'Threat Actors', to: '/threat-actors', group: 'INTELLIGENCE', icon: Network, keywords: 'apt groups attribution' },
-    { label: 'Campaigns',     to: '/campaigns',     group: 'INTELLIGENCE', icon: Megaphone },
-    { label: 'Providers',     to: '/providers',     group: 'INTELLIGENCE', icon: Server, keywords: 'hosting asn' },
-    { label: 'Apps',          to: '/apps',          group: 'INTELLIGENCE', icon: Smartphone, keywords: 'app store mobile impersonation' },
-    { label: 'Dark Web',      to: '/dark-web',      group: 'INTELLIGENCE', icon: EyeOff, keywords: 'breach leak' },
-    { label: 'Trademarks',    to: '/trademarks',    group: 'INTELLIGENCE', icon: Scale, keywords: 'typosquat lookalike' },
-    { label: 'Trends',        to: '/trends',        group: 'INTELLIGENCE', icon: TrendingUp, keywords: 'intelligence analytics' },
+    { label: 'Brands',        to: tabUrl('brands'),        group: 'INTELLIGENCE', icon: Building2 },
+    { label: 'Threat Actors', to: tabUrl('actors'), group: 'INTELLIGENCE', icon: Network, keywords: 'apt groups attribution' },
+    { label: 'Campaigns',     to: tabUrl('campaigns'),     group: 'INTELLIGENCE', icon: Megaphone },
+    { label: 'Providers',     to: tabUrl('providers'),     group: 'INTELLIGENCE', icon: Server, keywords: 'hosting asn' },
+    { label: 'Apps',          to: tabUrl('apps'),          group: 'INTELLIGENCE', icon: Smartphone, keywords: 'app store mobile impersonation' },
+    { label: 'Dark Web',      to: tabUrl('dark-web'),      group: 'INTELLIGENCE', icon: EyeOff, keywords: 'breach leak' },
+    { label: 'Trademarks',    to: tabUrl('trademarks'),    group: 'INTELLIGENCE', icon: Scale, keywords: 'typosquat lookalike' },
+    { label: 'Trends',        to: tabUrl('trends'),        group: 'INTELLIGENCE', icon: TrendingUp, keywords: 'intelligence analytics' },
     // Account / personal
     { label: 'Profile',       to: '/profile',       group: 'ACCOUNT', icon: UserCog, keywords: 'account sign out settings' },
     { label: 'Notifications', to: '/notifications', group: 'ACCOUNT', icon: Bell, keywords: 'inbox' },

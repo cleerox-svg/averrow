@@ -437,7 +437,7 @@ function NotificationList({
           the count is the headline, the icon plays a supporting role. */}
       {showTriage && (
         <button
-          onClick={() => { navigate('/alerts?status=new'); onClose(); }}
+          onClick={() => { navigate('/console?tab=alerts&status=new'); onClose(); }}
           className="mx-4 mb-3 flex items-center justify-between gap-2 px-3 py-2 rounded-md transition-colors touch-target"
           style={{
             background: criticalCount > 0 ? 'var(--sev-critical-bg)' : 'var(--sev-medium-bg)',

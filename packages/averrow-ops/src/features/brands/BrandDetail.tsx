@@ -15,6 +15,7 @@
 
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { tabUrl } from '@/lib/workspaceRoutes';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ScanSearch, ShieldCheck } from 'lucide-react';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
@@ -143,7 +144,7 @@ export function BrandDetailV3() {
   if (!brand) {
     return (
       <div className="animate-fade-in">
-        <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
+        <button onClick={() => navigate('/explore?tab=brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
           &larr; Back to Brands
         </button>
         <Card hover={false}><p className="text-sm text-[var(--text-tertiary)]">Brand not found</p></Card>
@@ -154,7 +155,7 @@ export function BrandDetailV3() {
   return (
     <div className="animate-fade-in space-y-6">
       <div>
-        <button onClick={() => navigate('/brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
+        <button onClick={() => navigate('/explore?tab=brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
           &larr; Back to Brands
         </button>
       </div>
@@ -442,12 +443,12 @@ function ThreatsTab({ brandId }: { brandId: string }) {
               {(data?.total ?? 0).toLocaleString()} matching · raw indicators feeding the Risk score · click a row for evidence
             </div>
           </div>
-          <a
-            href={`/v2/threats?brand_id=${encodeURIComponent(brandId)}`}
+          <Link
+            to={tabUrl('threats', { brand_id: brandId })}
             className="text-[11px] font-mono text-[var(--amber)] hover:underline"
           >
-            Open in /threats →
-          </a>
+            Open in Threats →
+          </Link>
         </div>
         <ThreatsTable
           columns={['type', 'target', 'actor', 'technique', 'severity', 'status', 'evidence', 'last_seen']}
@@ -466,7 +467,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
             const actorId = r.actor_id;
             return actorId ? (
               <div style={{ marginTop: 14, display: 'flex', gap: 16 }}>
-                <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/threat-actors/${actorId}`)}>↗ Threat actor</button>
+                <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>
               </div>
             ) : null;
           }}
@@ -510,12 +511,12 @@ function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
               {signals.length} total · brand alerts (impersonation, typosquat, BIMI/DMARC drift, dark-web mentions)
             </div>
           </div>
-          <a
-            href={`/v2/alerts?brand_id=${encodeURIComponent(brandId)}`}
+          <Link
+            to={tabUrl('alerts', { brand_id: brandId })}
             className="text-[11px] font-mono text-[var(--amber)] hover:underline"
           >
-            Open in /alerts →
-          </a>
+            Open in Alerts →
+          </Link>
         </div>
 
         <div className="flex flex-wrap gap-2 mt-3">
@@ -797,7 +798,7 @@ function AttackInfraSection({ providers, campaigns }: {
             ) : providers.slice(0, 8).map(p => (
               <Link
                 key={p.provider_id}
-                to={`/providers?focus=${encodeURIComponent(p.provider_id)}`}
+                to={`/explore?tab=providers&focus=${encodeURIComponent(p.provider_id)}`}
                 className="flex items-center justify-between gap-2 px-2 py-1.5 rounded transition-colors hover:bg-white/[0.04]"
               >
                 <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">{p.name}</span>

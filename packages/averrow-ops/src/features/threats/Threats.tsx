@@ -14,6 +14,7 @@ import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, Trending
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
 import type { Severity } from '@/components/ui/Badge';
+import { tabUrl } from '@/lib/workspaceRoutes';
 
 interface Threat {
   id: string;
@@ -198,7 +199,7 @@ export function Threats() {
           return (
             <div style={{ marginTop: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
               {brandId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
-              {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/threat-actors/${actorId}`)}>↗ Threat actor</button>}
+              {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
               {transitions.length > 0 && (
                 <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Triage:</span>
@@ -547,7 +548,7 @@ function MultiBrandPanel({ agg }: { agg: ThreatAggregate | null | undefined }) {
           id: a.id, name: a.name,
           brand_count: a.brand_count,
           threat_count: a.threat_count,
-          onClick: () => navigate(`/threat-actors/${a.id}`),
+          onClick: () => navigate(tabUrl('actors', { focus: a.id })),
         }))}
         emptyMsg="No actors hitting multiple brands"
       />
@@ -559,7 +560,7 @@ function MultiBrandPanel({ agg }: { agg: ThreatAggregate | null | undefined }) {
           tag: p.asn ?? undefined,
           brand_count: p.brand_count,
           threat_count: p.threat_count,
-          onClick: () => navigate(`/providers/${p.id}`),
+          onClick: () => navigate(tabUrl('providers', { focus: p.id })),
         }))}
         emptyMsg="No providers hosting multi-brand attacks"
       />
@@ -698,7 +699,7 @@ function LeaderboardsPanel({ agg }: { agg: ThreatAggregate | null | undefined })
         rows={agg.top_providers.slice(0, 5).map(p => ({
           id: p.provider_id, label: p.name, sub: p.asn ?? '',
           count: p.count,
-          onClick: () => navigate(`/providers/${p.provider_id}`),
+          onClick: () => navigate(tabUrl('providers', { focus: p.provider_id })),
         }))}
       />
       <Leaderboard
@@ -707,7 +708,7 @@ function LeaderboardsPanel({ agg }: { agg: ThreatAggregate | null | undefined })
         rows={agg.top_actors.slice(0, 5).map(a => ({
           id: a.actor_id, label: a.actor_name,
           count: a.count,
-          onClick: () => navigate(`/threat-actors/${a.actor_id}`),
+          onClick: () => navigate(tabUrl('actors', { focus: a.actor_id })),
         }))}
       />
       <Leaderboard

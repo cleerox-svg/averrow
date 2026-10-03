@@ -153,7 +153,7 @@ export function VerdictBand() {
   // for any whole-snapshot failure).
   const threatHealth = snapshot?.threat_health;
   if (snapshotUnavailable || !threatHealth) {
-    contributors.push({ key: 'agents', label: 'Agents', severity: 'unknown', detail: 'status pending', to: '/agents' });
+    contributors.push({ key: 'agents', label: 'Agents', severity: 'unknown', detail: 'status pending', to: '/admin/operations?tab=agents' });
   } else {
     const errors = threatHealth.agents_24h.errors;
     contributors.push({
@@ -161,7 +161,7 @@ export function VerdictBand() {
       label:    'Agents',
       severity: errors > 0 ? 'high' : 'ok',
       detail:   errors > 0 ? `${errors} agent error${errors === 1 ? '' : 's'} (24h)` : 'no errors (24h)',
-      to:       '/agents',
+      to:       '/admin/operations?tab=agents',
     });
   }
 
