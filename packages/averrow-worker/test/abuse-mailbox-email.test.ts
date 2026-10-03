@@ -8,6 +8,8 @@ import {
   decodeEncodedWords,
   decodeTransferEncoding,
   htmlToText,
+  extractHtmlHrefs,
+  decodeHtmlEntities,
 } from "../src/handlers/abuseMailboxEmail";
 import type { Env } from "../src/types";
 
@@ -367,5 +369,90 @@ describe("MIME body helpers", () => {
 
   it("htmlToText keeps link targets", () => {
     expect(htmlToText('<p>Hi</p><a href="https://p.example/x">Click</a>')).toContain("Click (https://p.example/x)");
+  });
+});
+
+describe("MIME body helpers — review fixes", () => {
+  it("htmlToText / extractHtmlHrefs stay linear on hostile HTML (ReDoS)", () => {
+    const payloads = [
+      "<".repeat(131_072),
+      '<a href="x"'.repeat(2_000),
+      "<head".repeat(26_000),
+      "<a href=\"" + "x".repeat(100_000),
+    ];
+    for (const p of payloads) {
+      const t0 = Date.now();
+      htmlToText(p);
+      extractHtmlHrefs(p);
+      expect(Date.now() - t0).toBeLessThan(500);
+    }
+  });
+
+  it("htmlToText drops script/style/head and keeps anchors", () => {
+    const out = htmlToText('<head><title>t</title></head><style>a{}</style><p>Hi</p><a class="b" href="https://p.example/x?a=1&amp;b=2">Go</a><script>evil()</script>');
+    expect(out).toContain("Go (https://p.example/x?a=1&b=2)");
+    expect(out).not.toMatch(/evil|a\{\}|>t</);
+  });
+
+  it("decodes numeric entities in hrefs and decodes &amp; last", () => {
+    expect(extractHtmlHrefs('<a href="h&#116;tps://e&#x76;il.example/a">x</a>')).toBe("https://evil.example/a");
+    expect(decodeHtmlEntities("&amp;lt;")).toBe("&lt;");
+  });
+
+  it("forward-as-attachment with a multipart/alternative inner message keeps the inner body and hrefs", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv({ alias: { org_id: 42, alias: "phishing@averrow.ca" } }, captured);
+    const raw = [
+      "From: Reporter <rep@example.org>",
+      "To: phishing@averrow.ca",
+      "Subject: Fwd: suspicious",
+      'Content-Type: multipart/mixed; boundary="OUT"',
+      "",
+      "--OUT",
+      "Content-Type: text/plain; charset=UTF-8",
+      "",
+      "see attached",
+      "--OUT",
+      "Content-Type: message/rfc822",
+      "",
+      "From: Bad <bad@evil.top>",
+      "Subject: Your account is suspended",
+      'Content-Type: multipart/alternative; boundary="IN"',
+      "",
+      "--IN",
+      "Content-Type: text/plain; charset=UTF-8",
+      "",
+      "Your account is suspended. Restore access now.",
+      "--IN",
+      "Content-Type: text/html; charset=UTF-8",
+      "",
+      '<a href="https://restore.evil.top/x">Restore</a>',
+      "--IN--",
+      "--OUT--",
+    ].join("\r\n");
+    await handleAbuseMailboxEmail(makeMessage("phishing@averrow.ca", "rep@example.org", raw), env);
+    const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
+    expect(insert?.binds[6]).toBe("bad@evil.top");
+    expect(insert?.binds[11]).toContain("Restore access now");       // raw_body = inner text, not ""
+    const urls = (JSON.parse(insert?.binds[13] as string) as Array<{ url: string }>).map((u) => u.url);
+    expect(urls).toContain("https://restore.evil.top/x");
+  });
+
+  it("a base64 part cut mid-quantum still decodes", () => {
+    const b64 = btoa("hello world, this is a test");
+    expect(decodeTransferEncoding(b64.slice(0, b64.length - 3), "base64", "utf-8")).toMatch(/^hello world/);
+  });
+
+  it("a boundary string appearing mid-line is body text, not a delimiter", () => {
+    const raw = [
+      'Content-Type: multipart/alternative; boundary="b"',
+      "",
+      "--b",
+      "Content-Type: text/plain",
+      "",
+      "hello --b inline",
+      "--b--",
+    ].join("\r\n");
+    expect(extractBodyParts(raw, 10_000).text).toBe("hello --b inline");
   });
 });

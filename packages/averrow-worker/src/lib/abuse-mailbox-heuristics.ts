@@ -125,6 +125,47 @@ function isUnder(host: string, root: string): boolean {
   return host === root || host.endsWith(`.${root}`);
 }
 
+/**
+ * Lookalike for H1: isTyposquatOf, minus its bare-containment case.
+ * Containment alone ("microsoftonline", "amazonaws") matches the brands'
+ * own real infrastructure; an impostor almost always adds a hyphen or a
+ * digit ("acme-account-help", "paypa1-secure"). Homoglyph / edit-distance
+ * hits (no containment) still count.
+ */
+export function isStrictLookalike(candidateSld: string, canonical: string): boolean {
+  if (!isTyposquatOf(candidateSld, canonical)) return false;
+  const canSld = sldLabel(canonical);
+  if (!candidateSld.includes(canSld)) return true;
+  return /[-\d]/.test(candidateSld);
+}
+
+/** True when the brand's own name appears as a whole word in `text`. */
+function mentionsBrand(text: string, canonical: string): boolean {
+  const label = sldLabel(canonical);
+  if (label.length < 4) return false;
+  return new RegExp(`(^|[^a-z0-9])${label.replace(/[^a-z0-9]/g, "")}([^a-z0-9]|$)`, "i").test(text);
+}
+
+const FORWARD_MARKERS: ReadonlyArray<RegExp> = [
+  /-{5,}\s*Forwarded message\s*-{5,}/i,
+  /-----Original Message-----/i,
+  /Begin forwarded message:/i,
+];
+
+/**
+ * For an inline forward, the stored body is the reporter's whole text part:
+ * their own note and signature, then the forwarded message. Only the part
+ * after the forward marker is the suspect's — "can you verify this account
+ * email? looks urgent" must not score as a lure. No marker = unchanged.
+ */
+export function suspectPortion(text: string): string {
+  for (const re of FORWARD_MARKERS) {
+    const m = re.exec(text);
+    if (m) return text.slice(m.index + m[0].length);
+  }
+  return text;
+}
+
 // ─── Scoring ─────────────────────────────────────────────────────
 
 export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
@@ -139,18 +180,25 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
   const senderDomain = input.senderEmail?.split("@")[1]?.trim().toLowerCase() || null;
   const senderReg = senderDomain ? registrableDomain(senderDomain) : null;
 
+  const text = `${input.subject ?? ""}\n${suspectPortion(input.bodyText ?? "").slice(0, 20_000)}`;
+
   // ── identity: who the message claims to be vs who sent it ──
+  // A brand_id can come from a mere link to the brand (a "Pay with PayPal"
+  // footer), so a bare sender mismatch only counts when the message itself
+  // names the brand AND never links to the brand's real domain.
   if (senderDomain && canonical && !isTrusted(senderDomain)) {
-    if (isTyposquatOf(sldLabel(senderDomain), canonical)) {
+    if (isStrictLookalike(sldLabel(senderDomain), canonical)) {
       add("sender_lookalike_domain", "identity", 4);
     } else {
-      // Content (subject/body/links) points at the brand, the sender isn't it.
-      add("sender_not_brand", "identity", 3);
+      const linksRealBrand = input.urls.some((u) => {
+        const h = (u.host ?? hostOfUrl(u.url))?.replace(/^www\./, "") ?? null;
+        return !!h && isUnder(h, canonical);
+      });
+      if (!linksRealBrand && mentionsBrand(text, canonical)) add("sender_not_brand", "identity", 3);
     }
   }
 
   // ── lure: what the message asks for ──
-  const text = `${input.subject ?? ""}\n${(input.bodyText ?? "").slice(0, 20_000)}`;
   let lureKinds = 0;
   for (const p of LURE_PATTERNS) {
     if (lureKinds >= 2) break;
@@ -173,14 +221,23 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
     if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) linkAdd("link_raw_ip", 3);
     if (host.split(".").some((l) => l.startsWith("xn--"))) linkAdd("link_punycode", 2);
     if (/^https?:\/\/[^/?#]*@/i.test(u.url)) linkAdd("link_userinfo_trick", 3);
+    const sharedHost = isPlatformTenantHost(host) || isMultiTenantHost(host);
     if (SHORTENER_HOSTS.has(host)) linkAdd("link_shortener", 1);
     // A tenant subdomain on a free platform (x.pages.dev, x.web.app) or a
     // shared gateway (docs.google.com, github.com): anyone can publish there.
-    else if (isPlatformTenantHost(host) || isMultiTenantHost(host)) linkAdd("link_free_hosting", 2);
+    else if (sharedHost) linkAdd("link_free_hosting", 2);
     const tld = host.split(".").pop() ?? "";
     if (ABUSED_TLDS.has(tld)) linkAdd("link_abused_tld", 1);
-    if (canonical && isTyposquatOf(sldLabel(host), canonical)) linkAdd("link_lookalike_domain", 3);
-    if (canonical && !isUnder(host, canonical) && host.includes(sldLabel(canonical)) && sldLabel(canonical).length >= 4) {
+    // Lookalike checks skip shared platforms: "s3.amazonaws.com" is not an
+    // Amazon impostor, and a tenant label on pages.dev already scored above.
+    if (canonical && !sharedHost && isStrictLookalike(sldLabel(host), canonical)) {
+      linkAdd("link_lookalike_domain", 3);
+    }
+    const brandLabel = canonical ? sldLabel(canonical) : "";
+    if (canonical && !sharedHost && brandLabel.length >= 4 && !isUnder(host, canonical) &&
+        host.split(/[.-]/).includes(brandLabel)) {
+      // Brand as a whole label of someone else's host ("paypal.login-help.top",
+      // "chase-verify.example") — not a substring ("purchase", "pineapple").
       linkAdd("link_brand_in_foreign_host", 2);
     }
     const hostReg = registrableDomain(host);

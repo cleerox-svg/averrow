@@ -191,7 +191,7 @@ export async function handleAbuseMailboxEmail(
   // Store the inner (phishing) body when available — that's the
   // forensic value. Falls back to outer body for direct submissions
   // and inline forwards (which already include inner content in body).
-  const storedBody      = rfc822Inner?.body ?? body;
+  const storedBody      = rfc822Inner?.body || body;
   const rawBody         = truncate(storedBody, RAW_BODY_STORE_MAX);
   // PR-AZ: when an rfc822 inner message exists, store BOTH header sets
   // so the admin UI can show the phisher's full header chain alongside
@@ -686,7 +686,10 @@ export function decodeTransferEncoding(body: string, cte: string | null, charset
   const enc = (cte ?? "").trim().toLowerCase();
   if (enc === "base64") {
     try {
-      return decodeBytes(bytesFromBinaryString(atob(body.replace(/[^A-Za-z0-9+/=]/g, ""))), charset);
+      // A part cut at the scan cap can end mid-quantum; atob would throw
+      // and leave encoded text behind. Decode the whole quanta we have.
+      const clean = body.replace(/[^A-Za-z0-9+/=]/g, "");
+      return decodeBytes(bytesFromBinaryString(atob(clean.slice(0, clean.length - (clean.length % 4)))), charset);
     } catch {
       return body;
     }
@@ -710,9 +713,16 @@ function walkMime(raw: string, depth: number, out: MimeBodyParts): void {
 
   if (type.startsWith("multipart/")) {
     const boundary = headerParam(ct, "boundary");
-    if (!boundary) return;
-    const delim = `--${boundary}`;
-    const chunks = body.split(delim);
+    if (!boundary) {
+      // Malformed multipart: keep the raw text rather than nothing.
+      if (!out.text) out.text = body.trim();
+      return;
+    }
+    // Delimiters are only valid at the start of a line (RFC 2046 §5.1.1);
+    // "--<boundary>" mid-line is body text. The leading CRLF lets a
+    // delimiter on the body's very first line match too.
+    const delim = new RegExp(`\\r?\\n--${escapeRegExp(boundary)}`);
+    const chunks = `\r\n${body}`.split(delim);
     // chunks[0] is the preamble; a chunk starting with "--" is the epilogue.
     for (let i = 1; i < chunks.length; i++) {
       const chunk = chunks[i]!;
@@ -746,25 +756,81 @@ export function extractBodyParts(rawText: string, maxLen: number): MimeBodyParts
   const { head, body } = splitHeaderBody(rawText);
   walkMime(`${head}\r\n\r\n${body.slice(0, maxLen * 4)}`, 0, out);
   out.text = out.text.slice(0, maxLen);
-  if (out.html !== null) out.html = out.html.slice(0, maxLen * 4);
+  if (out.html !== null) out.html = out.html.slice(0, maxLen);
   return out;
 }
 
-/** Plain text from HTML: links kept as `text (href)` so extractUrls still sees them. */
-export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => `${text} (${href})`)
-    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h[1-6])>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
+function escapeRegExp(v: string): string {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** HTML entities: named basics + numeric (&#116; / &#x74;). `&amp;` last,
+ *  so "&amp;lt;" stays "&lt;" instead of becoming "<". */
+export function decodeHtmlEntities(v: string): string {
+  return v
+    .replace(/&#(\d{1,7});/g, (m, d: string) => {
+      const n = Number(d);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h: string) => {
+      const n = parseInt(h, 16);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
     .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+// Attacker-controlled input: every pattern below is linear. A tag is
+// `<` + at most MAX_TAG_LEN non-angle chars + `>`; no lazy `[\s\S]*?`
+// spans and no nested unbounded quantifiers (an earlier version took
+// tens of seconds on 20 KB of unclosed `<a href="x"`).
+const MAX_TAG_LEN = 2048;
+const TAG_RE = new RegExp(`<([^<>]{0,${MAX_TAG_LEN}})>`, "g");
+const HREF_IN_TAG_RE = /\bhref\s{0,8}=\s{0,8}(?:"([^"]{1,2048})"|'([^']{1,2048})')/i;
+const BLOCK_TAG_RE = /^\/?(p|div|tr|li|br|h[1-6]|table|ul|ol)\b/i;
+
+/** Plain text from HTML: links kept as `text (href)` so extractUrls still sees them. */
+export function htmlToText(html: string): string {
+  const parts: string[] = [];
+  let last = 0;
+  let skipUntil: string | null = null;   // inside <script>/<style>/<head>
+  let pendingHref: string | null = null;
+  TAG_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TAG_RE.exec(html)) !== null) {
+    const inner = m[1] ?? "";
+    const name = (/^\/?([a-z0-9]{1,10})/i.exec(inner)?.[1] ?? "").toLowerCase();
+    if (skipUntil === null) parts.push(html.slice(last, m.index));
+    last = m.index + m[0].length;
+
+    if (skipUntil !== null) {
+      if (inner.startsWith("/") && name === skipUntil) skipUntil = null;
+      continue;
+    }
+    if (!inner.startsWith("/") && (name === "script" || name === "style" || name === "head")) {
+      skipUntil = name;
+      continue;
+    }
+    if (name === "a" && !inner.startsWith("/")) {
+      const h = HREF_IN_TAG_RE.exec(inner);
+      pendingHref = h ? (h[1] ?? h[2] ?? null) : null;
+      continue;
+    }
+    if (name === "a" && inner.startsWith("/")) {
+      if (pendingHref) parts.push(` (${decodeHtmlEntities(pendingHref)})`);
+      pendingHref = null;
+      continue;
+    }
+    parts.push(BLOCK_TAG_RE.test(inner) ? "\n" : " ");
+  }
+  if (skipUntil === null) parts.push(html.slice(last));
+  return decodeHtmlEntities(parts.join(""))
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n\s*/g, "\n\n")
+    .replace(/ ?\n[ \t\n]*/g, (nl) => (nl.split("\n").length > 2 ? "\n\n" : "\n"))
     .trim();
 }
 
@@ -772,10 +838,11 @@ export function htmlToText(html: string): string {
 export function extractHtmlHrefs(html: string | null): string {
   if (!html) return "";
   const out: string[] = [];
-  const re = /href\s*=\s*["'](https?:\/\/[^"']+)["']/gi;
+  const re = /\bhref\s{0,8}=\s{0,8}["']([^"'<>]{1,2048})["']/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null && out.length < 200) {
-    out.push(m[1]!.replace(/&amp;/gi, "&"));
+    const href = decodeHtmlEntities(m[1]!).trim();
+    if (/^https?:\/\//i.test(href)) out.push(href);
   }
   return out.join("\n");
 }
@@ -1022,9 +1089,23 @@ export function extractInnerRfc822Message(
 
   // The inner message ends at the next MIME boundary marker. Boundary
   // chars per RFC 2046: ALPHA DIGIT '()+_,-./:=?
+  // The inner message ends at the ENCLOSING part's next delimiter — not at
+  // the first `--x` line, which is usually the inner message's own
+  // multipart/alternative delimiter (that cut every Gmail/Outlook
+  // forward-as-attachment down to an empty body). The enclosing delimiter
+  // is the last `--<boundary>` line before this part's headers.
   const after = scanWindow.slice(innerStart);
-  const boundaryMatch = /\r?\n--[A-Za-z0-9'()+_,./:=?-]+/.exec(after);
-  const innerEnd = boundaryMatch ? innerStart + boundaryMatch.index : scanWindow.length;
+  const before = scanWindow.slice(0, ctIdx);
+  const outerDelims = [...before.matchAll(/(?:^|\n)--([A-Za-z0-9'()+_,./:=?-]{1,70})[ \t]*\r?$/gm)];
+  const outerBoundary = outerDelims.length > 0 ? outerDelims[outerDelims.length - 1]![1]! : null;
+  let innerEnd = scanWindow.length;
+  if (outerBoundary) {
+    const end = new RegExp(`\\r?\\n--${escapeRegExp(outerBoundary)}(?:--)?[ \\t]*(?:\\r?\\n|$)`).exec(after);
+    if (end) innerEnd = innerStart + end.index;
+  } else {
+    const boundaryMatch = /\r?\n--[A-Za-z0-9'()+_,./:=?-]+/.exec(after);
+    if (boundaryMatch) innerEnd = innerStart + boundaryMatch.index;
+  }
   const innerRaw = scanWindow.slice(innerStart, innerEnd);
 
   if (innerRaw.trim().length === 0) return null;

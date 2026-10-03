@@ -241,7 +241,7 @@ async function applyRulesToRow(
     safeDomains,
     originalFrom: senderIsReporter ? null : row.original_from,
     subject: row.original_subject,
-    bodyText: row.body_text ?? row.original_body_snippet,
+    bodyText: row.body_text || row.original_body_snippet,
     urls,
     attachments,
     authResults,
@@ -371,6 +371,7 @@ async function applyRulesToRow(
       action: verdict.action,
       message: RULES_OPERATOR_NOTE[verdict.primaryRule] ?? "",
       classifiedBy: "rules",
+      likely: verdict.primaryRule === "H1",
     });
   }
 

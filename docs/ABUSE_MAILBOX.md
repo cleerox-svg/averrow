@@ -150,9 +150,19 @@ never emailed. The ack is sent only inline by that same INSERT path.
   Fires at score ≥ 5 across ≥ 2 families, one of them *lure* or
   *attachment*. → phishing / HIGH / escalate, confidence 60–80 (below every
   M rule). Never promotes. The email says **"Likely phishing"** with its own
-  fixed note, never "Phishing confirmed" (product decision 2026-10-03). The
-  reporter's own address is never scored as the sender. Below threshold,
-  review rows carry `h1_score:N` + the signal codes for operators.
+  fixed note, never "Phishing confirmed" (product decision 2026-10-03); the
+  tenant/operator notification says "Likely phishing" too. The reporter's own
+  address is never scored as the sender, and on inline forwards only the text
+  after the forward marker is scored (the reporter's note is not the suspect).
+  False-positive guards: a bare sender≠brand only counts when the message
+  names the brand and never links to the brand's real domain (a "Pay with
+  PayPal" footer sets `brand_id` too); lookalikes must add a hyphen/digit or
+  be a homoglyph/1-edit (so `microsoftonline`, `amazonaws` aren't impostors);
+  shared platforms skip the lookalike checks. Below threshold, review rows
+  carry `h1_score:N` + the signal codes for operators.
+  Known follow-ups: H1 rows skip the AI second opinion (the classifier only
+  re-judges `ambiguous` rows), and tenant counters/badges show H1 as plain
+  "phishing".
 
 Promotion to `threats`: EXACT matched URLs only (M1 exact-URL, M2 IOC-URL),
 cap 20, never the sender IP. Domain-level matches, M3 and M4 never promote.

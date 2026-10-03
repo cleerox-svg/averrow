@@ -68,7 +68,7 @@ describe("scoreAbuseHeuristics — gating", () => {
 
   it("identity + links without any lure or attachment never fires", () => {
     const r = scoreAbuseHeuristics(input({
-      senderEmail: "news@acrne.example",
+      senderEmail: "news@acme-billing.example",
       brand: { id: "b", canonical_domain: "acme.com" },
       urls: [{ url: "http://198.51.100.1/x", host: "198.51.100.1" }],
     }));
@@ -195,5 +195,77 @@ describe("determination email — H1 copy", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("scoreAbuseHeuristics — review false-positive cases", () => {
+  it("a merchant email with a 'Pay with PayPal' footer link is not a PayPal impostor", () => {
+    const r = scoreAbuseHeuristics(input({
+      senderEmail: "orders@my-shop.example",
+      subject: "Update your payment details",
+      bodyText: "Your payment failed. Update your billing details. Pay with PayPal.",
+      urls: [{ url: "https://www.paypal.com/checkout", host: "www.paypal.com" }],
+      brand: { id: "brand_paypal", canonical_domain: "paypal.com" },
+    }));
+    expect(codes(r)).not.toContain("sender_not_brand");
+    expect(r.fired).toBe(false);
+  });
+
+  it("brands' own infrastructure is not a lookalike (amazonaws, microsoftonline)", () => {
+    const aws = scoreAbuseHeuristics(input({
+      senderEmail: "billing@vendor.example",
+      subject: "Invoice: payment failed, update your card",
+      urls: [{ url: "https://bucket.s3.amazonaws.com/invoice.pdf", host: "bucket.s3.amazonaws.com" }],
+      brand: { id: "brand_amazon", canonical_domain: "amazon.com" },
+    }));
+    expect(codes(aws)).not.toContain("link_lookalike_domain");
+    expect(codes(aws)).not.toContain("link_brand_in_foreign_host");
+    expect(codes(aws)).not.toContain("sender_not_brand");
+    // A plain invoice notice with an S3 link doesn't fire. (With "payment
+    // failed, update your card" it does: lure + anonymous bucket + off-sender
+    // link is a real S3-hosted-lure pattern, and it scores exactly 5.)
+    const plain = scoreAbuseHeuristics(input({
+      senderEmail: "billing@vendor.example",
+      subject: "Your invoice is attached",
+      urls: [{ url: "https://bucket.s3.amazonaws.com/invoice.pdf", host: "bucket.s3.amazonaws.com" }],
+      brand: { id: "brand_amazon", canonical_domain: "amazon.com" },
+    }));
+    expect(plain.fired).toBe(false);
+
+    const ms = scoreAbuseHeuristics(input({
+      senderEmail: "no-reply@microsoftonline.com",
+      subject: "New sign-in to your account",
+      brand: { id: "brand_ms", canonical_domain: "microsoft.com" },
+    }));
+    expect(codes(ms)).not.toContain("sender_lookalike_domain");
+    expect(ms.fired).toBe(false);
+  });
+
+  it("brand-in-foreign-host needs a whole label, not a substring", () => {
+    const sub = scoreAbuseHeuristics(input({
+      urls: [{ url: "https://purchase.example/x", host: "purchase.example" }],
+      brand: { id: "b", canonical_domain: "chase.com" },
+    }));
+    expect(codes(sub)).not.toContain("link_brand_in_foreign_host");
+    const lbl = scoreAbuseHeuristics(input({
+      urls: [{ url: "https://chase-verify.example/x", host: "chase-verify.example" }],
+      brand: { id: "b", canonical_domain: "chase.com" },
+    }));
+    expect(codes(lbl)).toContain("link_brand_in_foreign_host");
+  });
+
+  it("the reporter's own note above an inline forward is not scored as a lure", () => {
+    const r = scoreAbuseHeuristics(input({
+      bodyText: [
+        "Can you verify this account email is legit? Looks urgent.",
+        "",
+        "---------- Forwarded message ---------",
+        "From: Team <hello@newsletter.example>",
+        "Subject: Our autumn newsletter",
+        "",
+        "Here are this month's product updates.",
+      ].join("\n"),
+    }));
+    expect(r.families).not.toContain("lure");
   });
 });
