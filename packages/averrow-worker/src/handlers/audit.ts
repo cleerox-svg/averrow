@@ -107,16 +107,28 @@ export async function handleExportAuditLog(request: Request, env: Env): Promise<
 
     const header = "timestamp,user_id,action,resource_type,resource_id,outcome,ip_address,details\n";
     const csvRows = rows.results.map((r: Record<string, unknown>) =>
-      [r.timestamp, r.user_id, r.action, r.resource_type, r.resource_id, r.outcome, r.ip_address, `"${String(r.details ?? "").replace(/"/g, '""')}"`].join(","),
+      [r.timestamp, r.user_id, r.action, r.resource_type, r.resource_id, r.outcome, r.ip_address, r.details]
+        .map(csvCell)
+        .join(","),
     );
 
     return new Response(header + csvRows.join("\n"), {
       headers: {
         "Content-Type": "text/csv",
+        "Cache-Control": "no-store",
         "Content-Disposition": `attachment; filename="audit-log-${since.slice(0, 10)}.csv"`,
       },
     });
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, request.headers.get("Origin"));
   }
+}
+
+// Quote every cell (a resource_id like "a,b" from a bulk action must not
+// shift columns) and neutralise spreadsheet formulas: a cell starting with
+// = + - @ (or a tab/CR) is prefixed with ' so Excel/Sheets treat it as text.
+export function csvCell(value: unknown): string {
+  let s = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
 }
