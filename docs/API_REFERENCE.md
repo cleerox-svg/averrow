@@ -1240,9 +1240,16 @@ All internal endpoints require `Authorization: Bearer $AVERROW_INTERNAL_SECRET`.
 
 ## WebSocket
 
-| Path | Auth | Description |
-|------|------|-------------|
-| `/ws/threats` | User | Real-time threat push (Durable Object) |
+No WebSocket routes are currently mounted.
+
+`/ws/threats` was removed (2026-10 appsec fix): it upgraded into the
+`ThreatPushHub` Durable Object with **no** auth check (this table wrongly
+listed it as `User`), no client ever connected to it, and nothing ever
+broadcast through the hub. It now returns the catch-all 404. The
+`ThreatPushHub` class and `THREAT_PUSH_HUB` binding remain in
+`wrangler.toml` (DO class removal needs a `deleted_classes` migration tag).
+Any future `/ws/*` route must be mounted behind a staff guard — pinned by
+`packages/averrow-worker/test/ws-threats-route.test.ts`.
 
 ## Corporate Site Pages
 
