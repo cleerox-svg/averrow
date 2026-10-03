@@ -11,7 +11,7 @@
 import { Suspense, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
-import { Button } from '@averrow/shared/ui';
+import { Button, WorkspaceEmbedContext } from '@averrow/shared/ui';
 import '@/features/console/console.css';
 
 export interface WorkspaceTab {
@@ -78,7 +78,10 @@ export function TabbedWorkspace({
       <Suspense fallback={<TabLoading />}>
         {/* Panes read `q` on mount only; keying on it re-applies a new ?q= (e.g. ⌘K
             "view all" while already on this tab). */}
-        {Active && <Active key={params.get('q') ?? ''} />}
+        {/* The workspace owns the view's single h1; embedded panes drop theirs. */}
+        <WorkspaceEmbedContext.Provider value={true}>
+          {Active && <Active key={params.get('q') ?? ''} />}
+        </WorkspaceEmbedContext.Provider>
       </Suspense>
     </div>
   );

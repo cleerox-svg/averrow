@@ -7,9 +7,8 @@
 
 import { Fragment, Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import CountUp from 'react-countup';
 import { AlertTriangle, Crosshair, Siren, Gavel } from 'lucide-react';
-import { Button } from '@averrow/shared/ui';
+import { Button, StatTile } from '@averrow/shared/ui';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import './console.css';
@@ -79,9 +78,9 @@ export function Console() {
 
       {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
       <div className="kpi-grid">
-        <KpiTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />
-        <KpiTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />
-        <KpiTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} error={incidentsError} />
+        <StatTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />
+        <StatTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />
+        <StatTile tone="blue"  label="Open incidents"     value={openIncidents}     sub="platform & ops"   onClick={() => selectTab('incidents')} error={incidentsError} />
       </div>
 
       {/* deep-linkable tab bar */}
@@ -121,28 +120,4 @@ function TabLoading() {
       Loading…
     </div>
   );
-}
-
-function KpiTile({ tone, label, value, sub, onClick, error }: { tone: 'amber' | 'red' | 'blue'; label: string; value: number | null; sub?: string; onClick?: () => void; error?: boolean }) {
-  const inner = (
-    <>
-      <div className="kpi-glow" aria-hidden />
-      <div className="kpi-lbl">{label}</div>
-      <div className="kpi-num">
-        {value == null ? '—' : <CountUp end={value} duration={1.1} separator="," />}
-      </div>
-      {error && value == null
-        ? <div className="kpi-sub" role="status" style={{ color: 'var(--text-tertiary)' }}>Couldn't load</div>
-        : sub && <div className="kpi-sub">{sub}</div>}
-      {onClick && <span className="kpi-go" aria-hidden>View →</span>}
-    </>
-  );
-  if (onClick) {
-    return (
-      <button type="button" className={`kpi-v4 ${tone} kpi-clickable`} onClick={onClick}>
-        {inner}
-      </button>
-    );
-  }
-  return <div className={`kpi-v4 ${tone}`}>{inner}</div>;
 }

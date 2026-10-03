@@ -7,11 +7,19 @@
 // mutations port in subsequent sprints.
 
 import { Bell, Inbox, Clock, type LucideIcon } from 'lucide-react';
+import { PageState, pageStateKind } from '@averrow/shared/ui';
 import { useTenantNotifications, type Notification } from '@/lib/notifications';
 import { cn } from '@/lib/cn';
 
 export function Notifications() {
-  const { data, isLoading, error } = useTenantNotifications();
+  const { data, isLoading, error, refetch } = useTenantNotifications();
+  // Error only replaces the list when there is nothing to show; a failed
+  // background refetch keeps the stale list on screen.
+  const kind = pageStateKind({
+    isLoading,
+    isError: !!error && !data,
+    isEmpty: !!data && data.notifications.length === 0,
+  });
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -35,17 +43,38 @@ export function Notifications() {
         </div>
       )}
 
-      {isLoading && <Loading />}
-      {error    && <ErrorState error={error.message} />}
-
-      {data && (
-        data.notifications.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <section className="space-y-2">
-            {data.notifications.map((n) => <NotificationRow key={n.id} notification={n} />)}
-          </section>
-        )
+      {kind === 'loading' && <PageState kind="loading" layout="card" title="Loading notifications…" />}
+      {kind === 'error' && (
+        <PageState
+          kind="error"
+          layout="card"
+          title="Couldn't load notifications"
+          description={error?.message}
+          onRetry={() => { void refetch(); }}
+        />
+      )}
+      {kind === 'empty' && (
+        <PageState
+          kind="empty"
+          layout="card"
+          icon={<Inbox size={24} aria-hidden />}
+          title="Inbox zero."
+          description="No notifications waiting for you."
+        />
+      )}
+      {error && data && (
+        <PageState
+          kind="error"
+          layout="inline"
+          title="Couldn't refresh notifications"
+          description={`${error.message} Showing the last loaded list.`}
+          onRetry={() => { void refetch(); }}
+        />
+      )}
+      {data && data.notifications.length > 0 && (
+        <section className="space-y-2">
+          {data.notifications.map((n) => <NotificationRow key={n.id} notification={n} />)}
+        </section>
       )}
     </div>
   );
@@ -117,29 +146,6 @@ function RollupCard({
         <Icon size={11} /><span>{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value}</div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="rounded-xl border border-white/[0.06] bg-bg-card p-8 text-center">
-      <Inbox size={28} className="mx-auto text-white/30 mb-2" />
-      <p className="text-sm text-white/70">Inbox zero.</p>
-      <p className="text-[11px] text-white/40 mt-1">No notifications waiting for you.</p>
-    </div>
-  );
-}
-
-function Loading() {
-  return <div className="text-white/40 text-sm font-mono py-12 text-center">Loading notifications…</div>;
-}
-
-function ErrorState({ error }: { error: string }) {
-  return (
-    <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
-      <h3 className="text-sm font-semibold text-white/90">Couldn't load notifications</h3>
-      <p className="text-[12px] text-white/55 mt-1">{error}</p>
     </div>
   );
 }
