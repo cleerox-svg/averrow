@@ -1,10 +1,8 @@
 // Averrow brand identity for the tenant sidebar.
 //
-// Mirrors averrow-ops/src/components/brand/AverrowLogo.tsx but
-// uses the "TENANT" subtitle so customers see they're in the
-// customer surface (the back-office shows "THREAT INTERCEPTOR").
-// Same red-Arrow icon either way — keeps the parent brand
-// recognizable across products.
+// Uses the "TENANT" subtitle so customers see they're in the
+// customer surface (the back-office uses the shared AverrowMark).
+// Keeps the parent brand recognizable across products.
 
 export function AverrowLogo({ size = 'default' }: { size?: 'small' | 'default' | 'large' }) {
   const dim = size === 'small' ? 24 : size === 'large' ? 40 : 28;

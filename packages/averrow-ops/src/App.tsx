@@ -1,14 +1,13 @@
 import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { ShellSwitch } from '@/components/layout/ShellV4';
-import { useShellVersion } from '@/design-system/hooks/useShellVersion';
+import { ShellV4 } from '@/components/layout/ShellV4';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
 
 // All feature routes are lazy-loaded so a cold visit to any single page
-// doesn't pull every other feature's bundle (recharts, framer-motion,
+// doesn't pull every other feature's bundle (recharts,
 // route-specific components). Observatory's deck.gl/maplibre stay isolated
 // to that route. Login and NotFound stay eager because they're tiny and
 // needed immediately at startup.
@@ -54,9 +53,7 @@ const CoverageWorkspace = React.lazy(() => import('@/features/coverage/CoverageW
 const OperationsWorkspace = React.lazy(() => import('@/features/operations/OperationsWorkspace').then(m => ({ default: m.OperationsWorkspace })));
 const GovernanceWorkspace = React.lazy(() => import('@/features/governance/GovernanceWorkspace').then(m => ({ default: m.GovernanceWorkspace })));
 const PlatformUsers = React.lazy(() => import('@/features/admin/PlatformUsers').then(m => ({ default: m.PlatformUsers })));
-const Home = React.lazy(() => import('@/pages/Home').then(m => ({ default: m.Home })));
 const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 })));
-const BrandAdminDashboard = React.lazy(() => import('@/features/admin/BrandAdminDashboard').then(m => ({ default: m.BrandAdminDashboard })));
 const Threats = React.lazy(() => import('@/features/threats/Threats').then(m => ({ default: m.Threats })));
 const Profile = React.lazy(() => import('@/features/settings/Profile').then(m => ({ default: m.Profile })));
 const Notifications = React.lazy(() => import('@/features/settings/Notifications').then(m => ({ default: m.Notifications })));
@@ -109,11 +106,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/**
- * Role-aware home route.
- * Brand admins land on their scoped dashboard.
- * Super admins land on Observatory (desktop) or Mobile Command Center (mobile).
- */
 // Redirect /brands-v3/:brandId → /brands/:brandId after v2 decommission.
 // Bookmark / external-link safety net; can be deleted once we're sure
 // no live URLs reference the v3 path.
@@ -135,17 +127,6 @@ function RedirectToActorFocus() {
   return <Navigate to={actorId ? `/threat-actors?focus=${actorId}` : '/threat-actors'} replace />;
 }
 
-function RoleAwareHome() {
-  const { isBrandAdmin } = useAuth();
-  const { isV4 } = useShellVersion();
-  if (isBrandAdmin) {
-    return <BrandAdminDashboard />;
-  }
-  // In the v4 shell, "/" is the cinematic command-center Overview; classic
-  // keeps the existing Home.
-  return isV4 ? <OverviewV4 /> : <Home />;
-}
-
 export default function App() {
   const { isAuthenticated } = useAuth();
 
@@ -156,12 +137,12 @@ export default function App() {
       } />
       <Route path="/" element={
         <ProtectedRoute>
-          <ShellSwitch />
+          <ShellV4 />
         </ProtectedRoute>
       }>
-        <Route index element={lazyRoute(<RoleAwareHome />)} />
+        <Route index element={lazyRoute(<OverviewV4 />)} />
         {/* v4 SOC Console workspace (hosts Signals/Threats/Incidents/Takedowns
-            as ?tab= panes). Reachable in both shells; the v4 sidebar links it. */}
+            as ?tab= panes). The v4 sidebar links it. */}
         <Route path="console" element={lazyRoute(<Console />)} />
         {/* v4 consolidated Intelligence workspaces — Explorer (Brands /
             Threat Actors / Campaigns / Providers) and Coverage (Apps /

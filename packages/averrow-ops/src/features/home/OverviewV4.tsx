@@ -1,18 +1,15 @@
-// v4 Overview — the command-center landing (shown at "/" only in the v4 shell;
-// the classic Home is untouched).
+// v4 Overview — the command-center landing shown at "/" for every staff user.
 //
-// IMPORTANT: this reuses EVERY rich section from HomeUnified — only the header
-// is swapped for the bold cinematic hero (greeting + glowing count-up triage
-// KPIs). Nothing from the classic dashboard is dropped (status,
-// stat grid, threat pulse, briefing, intel, activity, movers, module hub,
-// provider movers all stay). Sections are the same shared components, so the
-// classic Home is unaffected.
+// Cinematic hero (greeting + glowing count-up triage KPIs) followed by the
+// shared home sections (status, stat grid, threat pulse, briefing, intel,
+// activity, movers, module hub, provider movers).
 
 import { Link } from 'react-router-dom';
 import CountUp from 'react-countup';
 import { useAuth } from '@/lib/auth';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
+import { InstallAppBanner } from '@/components/InstallAppBanner';
 import { StatusRow } from '@/features/home/sections/StatusRow';
 import { StatGrid } from '@/features/home/sections/StatGrid';
 import { ThreatPulse } from '@/features/home/sections/ThreatPulse';
@@ -84,6 +81,7 @@ export function OverviewV4() {
   return (
     <div style={SHELL_STYLE}>
       <V4Hero />
+      <InstallAppBanner />
       <StatusRow />
       <StatGrid />
       <ThreatPulse />

@@ -27,9 +27,9 @@ identical; only the listed per-product deltas may differ.
   `var(--sev-critical)`). **Never** use old tokens in new/restructured code
   (`glass-card`, `bg-cockpit`, `text-parchment`, `text-contrail`). Don't mix
   systems in one file — old files stay old until their restructure session.
-- **Frozen components — never refactor**: `ThreatMap.tsx`, `ExposureGauge.tsx`,
-  `PortfolioHealthCard.tsx`, `Sparkline.tsx`, `ActivitySparkline.tsx`,
-  `EventTicker.tsx`.
+- **Frozen components — never refactor**: `PortfolioHealthCard.tsx`,
+  `EventTicker.tsx`. (`ThreatMap`, `ExposureGauge`, `Sparkline`,
+  `ActivitySparkline` were deleted as unused in UI consolidation Phase 1 PR3.)
 - **Never touch** `public/`, `app.js`, `styles.css` — frozen forever.
 - **User avatars = initials only.** Use `parseInitials` / `colorForUserId` /
   `SELF_AVATAR_COLOR` from `@/lib/avatar`. Never render `user.avatar_url` /

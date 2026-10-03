@@ -1,7 +1,6 @@
 // /v2 auth context — wraps @averrow/shared/auth's AuthProvider with
 // product-specific deltas (HTTP client adapter, role==='client'
-// redirect to /tenant/, lastSignInMethod cleanup on logout, the
-// `isBrandAdmin` derived selector).
+// redirect to /tenant/, lastSignInMethod cleanup on logout).
 //
 // Per SHARED_LOGIN_SPEC the auth lifecycle is canonical and lives
 // in the shared package. Edit the shared component, NOT this
@@ -54,13 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// /v2 derived selector — kept for callers that branch on brand-admin
-// (i.e. an org admin who is NOT super_admin). Computed from the
-// shared state.
-export function useAuth(): SharedAuthState & { isBrandAdmin: boolean } {
-  const state = useSharedAuth();
-  const isBrandAdmin = !!state.user
-    && state.user.role !== 'super_admin'
-    && !!state.user.organization;
-  return { ...state, isBrandAdmin };
+// /v2 useAuth — the shared auth state as-is (no product-specific selectors).
+export function useAuth(): SharedAuthState {
+  return useSharedAuth();
 }

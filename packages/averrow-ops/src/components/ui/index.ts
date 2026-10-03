@@ -33,7 +33,6 @@ export type { SectionLabelProps } from './SectionLabel';
 export { DimensionalButton } from './DimensionalButton';
 export { LiveIndicator } from './LiveIndicator';
 export type { LiveIndicatorProps } from './LiveIndicator';
-export { DeepBackground } from './DeepBackground';
 
 export { Tabs } from './Tabs';
 export type { Tab, TabsProps } from './Tabs';

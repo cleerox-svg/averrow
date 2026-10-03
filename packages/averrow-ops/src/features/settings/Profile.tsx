@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { ProfilePage } from '@averrow/shared/profile';
 import type { ProfileApiClient, PasskeyAdapter } from '@averrow/shared/profile';
 import { useAuth } from '@/lib/auth';
+import { InstallAppCard } from '@/components/InstallAppCard';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -40,6 +41,7 @@ export function Profile() {
   if (!user) return null;
 
   return (
+    <>
     <ProfilePage
       user={{
         id:               user.id,
@@ -75,5 +77,7 @@ export function Profile() {
       sessionsEndpoint="/api/admin/sessions"
       revokeEndpoint={`/api/admin/users/${user.id}/force-logout`}
     />
+    <InstallAppCard />
+    </>
   );
 }

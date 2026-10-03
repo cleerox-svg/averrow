@@ -36,11 +36,9 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 - TanStack Query setup in main.tsx — solid. Keep.
 - All hooks/ — the data layer works. Reorganize, don't rewrite.
 - All backend routes/handlers — untouched throughout restructure.
-- Observatory WebGL map (ThreatMap.tsx) — untouched.
-- ExposureGauge.tsx — untouched.
 - PortfolioHealthCard.tsx (SVG donut) — untouched.
-- Sparkline.tsx, ActivitySparkline.tsx — untouched.
 - EventTicker.tsx — untouched.
+- (ThreatMap.tsx, ExposureGauge.tsx, Sparkline.tsx, ActivitySparkline.tsx were removed as unused in UI consolidation Phase 1 PR3, 2026-10.)
 
 ---
 
@@ -69,7 +67,7 @@ packages/averrow-ops/src/
 │   │   └── index.ts                  ← single import for everything
 │   └── hooks/
 │       ├── useTheme.ts               ← dark/light/custom theme switching
-│       └── useBreakpoint.ts          ← responsive breakpoint hook
+│       └── useBreakpoint.ts          ← responsive breakpoint hook (target tree; removed in UI consolidation Phase 1 PR3, 2026-10)
 │
 ├── features/                         ← domain-driven. self-contained.
 │   ├── brands/
@@ -79,7 +77,7 @@ packages/averrow-ops/src/
 │   │   ├── BrandDetailPage.tsx
 │   │   └── components/
 │   │       ├── BrandRow.tsx          ← shared brand list row
-│   │       ├── ExposureGauge.tsx     ← KEEP AS-IS (unique SVG)
+│   │       ├── ExposureGauge.tsx     ← (removed as unused in UI consolidation Phase 1 PR3, 2026-10)
 │   │       ├── EmailPosture.tsx      ← BIMIStatusRow + grade display
 │   │       └── PortfolioHealth.tsx   ← KEEP AS-IS (unique SVG donut)
 │   ├── threats/
@@ -96,7 +94,7 @@ packages/averrow-ops/src/
 │   │   ├── hooks.ts
 │   │   ├── ObservatoryPage.tsx
 │   │   └── components/
-│   │       ├── ThreatMap.tsx         ← KEEP AS-IS (WebGL — untouchable)
+│   │       ├── ThreatMap.tsx         ← (removed as unused in UI consolidation Phase 1 PR3, 2026-10)
 │   │       ├── EventTicker.tsx       ← KEEP AS-IS
 │   │       └── ObservatoryChrome.tsx ← mode tabs, stat bar, bottom panel
 │   ├── campaigns/
@@ -119,6 +117,9 @@ packages/averrow-ops/src/
 │           └── ApiKeySheet.tsx
 │
 ├── layouts/                          ← ONE shell, adapts to everything
+│   │   (TARGET TREE — superseded: the layouts/ folder and Shell/Sidebar/TopBar/MobileNav
+│   │    were removed in UI consolidation Phase 1 PR3, 2026-10. The single shell is now
+│   │    components/layout/ShellV4.tsx — sidebar, top bar and mobile nav in one file.)
 │   ├── Shell.tsx                     ← responsive, role-aware
 │   ├── Sidebar.tsx                   ← desktop nav
 │   ├── TopBar.tsx                    ← header with theme toggle
@@ -490,7 +491,7 @@ export function useTheme() {
 ```
 
 ### Theme toggle location
-TopBar → right side, before notifications bell.
+Top bar (ShellV4's `ThemeCycleButton`, `components/layout/ThemeCycleButton.tsx`) → right side, before notifications bell.
 Sun/moon icon. Persists in localStorage.
 Applies `data-theme` to `<html>`. All CSS vars update instantly.
 
@@ -499,6 +500,7 @@ Applies `data-theme` to `<html>`. All CSS vars update instantly.
 ## RESPONSIVE STRATEGY
 
 ### One Shell, Not Two UIs
+(Current state: `components/layout/ShellV4.tsx` is the only shell and handles responsive layout itself; `useBreakpoint()` and `Shell.tsx` were removed in UI consolidation Phase 1 PR3, 2026-10. Original spec follows.)
 Shell.tsx detects mobile via `useBreakpoint()` and adapts:
 - Mobile: no sidebar, show MobileNav (bottom bar), full-width content
 - Desktop: sidebar visible, TopBar visible, content with left margin
@@ -549,15 +551,15 @@ Status reflects what's landed in `packages/averrow-ops/` on `master`. Use this a
 
 | Session | Status | Evidence / notes |
 |---------|--------|------------------|
-| R1 — Design system foundation | ✅ Landed | `design-system/tokens.css`, `design-system/hooks/useTheme.ts`, `design-system/hooks/useBreakpoint.ts` present |
+| R1 — Design system foundation | ✅ Landed | `design-system/tokens.css`, `design-system/hooks/useTheme.ts`, `design-system/hooks/useBreakpoint.ts` present (`useBreakpoint.ts` removed in UI consolidation Phase 1 PR3, 2026-10) |
 | R2 — Rebuild Card + Button + Badge | ✅ Landed | `components/ui/Card.tsx`, `Button.tsx`, `Badge.tsx` rebuilt; re-exported via `design-system/components/index.ts` |
 | R3 — Unify StatCard + Avatar + GlowNumber | ✅ Landed | `components/brands/StatCard.tsx` deleted; single `components/ui/StatCard.tsx` with `SimpleStatCard` / `DetailStatCard`; `DimensionalAvatar` is now an alias for `Avatar` |
 | R4 — Tabs + DataRow + FilterBar + Modal | 🟡 Partial | Tabs, DataRow, FilterBar all present; Modal not yet exported from the barrel — confirm whether a new Modal shipped or the need was absorbed by Dropdown removal |
 | R5 — PageHeader + StatGrid + barrel | ✅ Landed | `PageHeader`, `StatGrid`, `design-system/components/index.ts` all present |
 | R6 — Feature folder structure | ✅ Landed | `src/features/` exists with `admin`, `agents`, `alerts`, `brands`, `campaigns`, `feeds`, `leads`, `observatory-v3`, `providers`, `settings`, `spam-trap`, `takedowns`, `threat-actors`, `threats`, `trends` (the `observatory` (v2) folder was deleted in #35 Phase D — see R10) |
-| R7 — Shell responsive + MobileNav | ✅ Landed | `src/mobile/` folder removed; Shell handles responsive layout |
+| R7 — Shell responsive + MobileNav | ✅ Landed | `src/mobile/` folder removed; Shell handles responsive layout (Shell/Sidebar/TopBar/MobileNav themselves removed in UI consolidation Phase 1 PR3, 2026-10; `components/layout/ShellV4.tsx` is the only shell) |
 | R8 — Apply DataRow + FilterBar to all pages | ✅ Landed | Page migrations done across Alerts (#1083), Takedowns (#1084), Providers (#1085), Metrics PipelineAutomation (#1086), Incidents (#1087), Campaigns + Alerts banner (#1088). Threats / Brands / Feeds / Agents / Leads / Admin Dashboard already use design-system primitives correctly — no further consolidation required |
-| R9 — Remove old tokens | 🟡 Effectively done | Zero R8 / feature pages reference the legacy classes. `index.css` definitions for `.glass-card`, `.glass-card-amber`, `.badge-glass` are kept because the FROZEN components (`ThreatMap.tsx`, `PortfolioHealthCard.tsx` — see "WHAT NEVER CHANGES" below) still use them. Full deletion of the class definitions is blocked until those frozen components are unfrozen (out of scope) |
+| R9 — Remove old tokens | 🟡 Effectively done | Zero R8 / feature pages reference the legacy classes. `index.css` definitions for `.glass-card`, `.glass-card-amber`, `.badge-glass` are kept because the FROZEN component `PortfolioHealthCard.tsx` (see "WHAT NEVER CHANGES" below) still uses them (`ThreatMap.tsx`, the other original consumer, was removed in UI consolidation Phase 1 PR3, 2026-10). Full deletion of the class definitions is blocked until that frozen component is unfrozen (out of scope) |
 | R10 — Observatory chrome + Mobile polish | ✅ Landed | v2 (`features/observatory/`) deleted in #35 Phase D; v3 (`features/observatory-v3/`) is now the sole Observatory, rendered at the canonical `/observatory` route (`App.tsx`) with `/observatory-v3` redirecting to it. Version-toggle machinery removed (`components/ui/VersionToggle.tsx`, `ObservatoryVersionToggle.tsx`, `design-system/hooks/useVersionToggle.ts`, `useObservatoryVersion.ts`). Phase D also rebuilt the Agent-Intelligence + Live-Feed widgets and source filter, added a light-theme pass, and shipped mobile chrome (collapsible filter + intel drawer). Remaining gap: full light-mode parity on the CARTO dark basemap itself (doesn't re-theme) is still open |
 | R-Bundle-C-Primitives — 6 spec amendments from 2026-05-06 audit | ✅ Landed (session 1) | `StatCard` + `StatTile` zero-state rule (`resolveStatAccent` in `design-system/tokens.ts`); `Badge.context` + `Badge.verdict` types (NEXUS / PIVOT / ACCELERATING / QUIET / WORSENING / IMPROVING; CLEAR / DRAINING / STEADY / GROWING / STALE / UPDATED / STABLE); new `PriorityBar` and `StateMachineButtons` components; `EmptyState` semantic-alias variants (success / empty-list / data-unavailable / configure-me) |
 | Admin Dashboard Tier 3 — merge `/admin` + `/admin/metrics` into one tabbed surface | ✅ Landed | Commits `38e56ba` + `52f22a0` (2026-07-12). `features/admin/AdminDashboard.tsx` is now `PageHeader` + an always-visible `VerdictBand` above an 8-tab `Tabs` (`variant="pills"`, `?tab=`-synced, lazy-mounted bodies): Overview · Pipelines · Feeds · Cost & Budget · Geo Coverage · Email Security · System · Briefing. `features/admin/Metrics.tsx` is now a `<Navigate>` redirect shim preserving old `?tab=` bookmarks via a legacy-id map (`summary→overview`, `d1-budget`/`ai-spend`/`cost-optimization→cost`, `geo-coverage→geo`, `feed-failures→feeds`, missing/unknown→`overview`); the `/admin/metrics` route stays live in `App.tsx` for those bookmarks. The redundant "Metrics" nav entry was removed from Sidebar/ShellV4/MobileNav. |
@@ -620,6 +622,7 @@ Subsequent R8 page migrations (Alerts → Threats → Takedowns → Brands → C
 **Time:** 1 session
 
 ### Session R7 — Shell responsive + MobileNav
+*(Historical — Shell.tsx/MobileNav.tsx removed in UI consolidation Phase 1 PR3, 2026-10; `components/layout/ShellV4.tsx` is the only shell.)*
 **What:** Make Shell.tsx truly responsive. Extract MobileNav from MobileCommandCenter.
 **Remove isMobile branching from page components.**
 **Time:** 1 session
@@ -792,11 +795,9 @@ isCampaignSignificant(campaign) ⇒
 
 These files are frozen throughout all sessions:
 - packages/averrow-worker/src/** — backend untouched
-- ThreatMap.tsx — WebGL canvas untouched
-- ExposureGauge.tsx — custom SVG untouched
 - PortfolioHealthCard.tsx — SVG donut untouched
-- Sparkline.tsx, ActivitySparkline.tsx — untouched
 - EventTicker.tsx — untouched
+- (ThreatMap, ExposureGauge, Sparkline, ActivitySparkline removed as unused in UI consolidation Phase 1 PR3, 2026-10)
 - All hook logic — only file locations change
 - All API endpoints — untouched
 - lib/api.ts, lib/auth.tsx — untouched
@@ -820,14 +821,14 @@ These files are frozen throughout all sessions:
 ## SUCCESS CRITERIA
 
 After all sessions complete:
-- [ ] Dark/light toggle in TopBar works instantly platform-wide
+- [ ] Dark/light toggle in the top bar (ShellV4) works instantly platform-wide
 - [ ] All 71 files use CSS vars, not hardcoded hex values
 - [ ] One Card component. One Button. One Badge. One StatCard. One Avatar.
 - [ ] All pages use DataRow for clickable rows (hover treatment consistent)
 - [ ] All pages use FilterBar for search/filter (consistent UI)
 - [ ] All pages use PageHeader (consistent page titles)
 - [ ] All pages use StatGrid (consistent stat card layout)
-- [ ] Mobile is Shell + MobileNav, not a separate app
+- [ ] Mobile is the one shell (ShellV4), not a separate app
 - [ ] Feature folders — each domain is self-contained
 - [ ] pnpm typecheck passes with zero errors
 - [ ] Observatory WebGL still works

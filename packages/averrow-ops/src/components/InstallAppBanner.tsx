@@ -1,4 +1,4 @@
-// Surfaces an install-as-app CTA on Home when eligible.
+// Surfaces an install-as-app CTA on the Overview when eligible.
 //
 //   · Android Chrome / Edge / Samsung Internet → captured
 //     beforeinstallprompt → one-tap native install sheet.

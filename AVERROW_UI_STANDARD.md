@@ -636,6 +636,8 @@ export function LiveIndicator({
 
 ### 8. DeepBackground — Page atmosphere layer
 
+> **Removed in UI consolidation Phase 1 PR3 (2026-10).** `components/ui/DeepBackground.tsx` was deleted along with the legacy Shell; the v4 shell (`components/layout/ShellV4.tsx`) owns the page atmosphere. The spec below is retained as historical reference only — do not import it.
+
 ```tsx
 // packages/averrow-ops/src/components/ui/DeepBackground.tsx
 // Already built in Phase 8a — this is the locked spec
@@ -826,7 +828,7 @@ Priority order for applying this standard:
 1. **Sidebar** — upgrade to sidebar standard above
 2. **Observatory mobile chrome** — mode tabs, stat bar, bottom panel
 3. **Brands Hub** — table rows, stat cards, search bar
-4. **Brand Detail** — ExposureGauge card, tab bar, stat grid
+4. **Brand Detail** — exposure card (ExposureGauge removed in PR3, 2026-10), tab bar, stat grid
 5. **Threats / Alerts** — table rows, filter chips, detail cards
 6. **All remaining pages** — systematic pass
 

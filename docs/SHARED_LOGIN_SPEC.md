@@ -293,13 +293,13 @@ platforms are independent repos for now).
 
 ### Two surfaces
 
-- **`<InstallAppBanner />`** — always-visible CTA on the Home page.
+- **`<InstallAppBanner />`** — always-visible CTA on the Home page (Averrow ops: Overview, `features/home/OverviewV4.tsx`, directly below the hero).
   - Hidden when `isStandalone()`.
   - Dismissible per-device via `localStorage` key `<product>.install.dismissed`.
   - Android Chrome / Edge: captured `beforeinstallprompt` → native install button.
   - iOS Safari: four-step Share → Add to Home Screen instructions inline.
 
-- **`<InstallAppCard />`** — always-visible affordance on Profile.
+- **`<InstallAppCard />`** — always-visible affordance on Profile (Averrow ops: `features/settings/Profile.tsx`, after the shared `ProfilePage`).
   - Hidden when `isStandalone()`.
   - **Not dismissible** — user can always reach it from Profile.
   - Includes a "Show manual steps" expander for desktop browsers that didn't fire `beforeinstallprompt`.
@@ -319,7 +319,7 @@ platforms are independent repos for now).
 
 ### `<FirstSignInPasskeyPrompt />`
 
-Mounted at the Shell layout root. Self-gates internally on:
+Mounted at the Shell layout root (Averrow ops: `components/layout/ShellV4.tsx`). Self-gates internally on:
 - WebAuthn supported (`isPasskeySupported()`)
 - `user.passkey_count === 0`
 - localStorage key `<product>.passkey-prompt.dismissed` not set
@@ -436,7 +436,7 @@ diffed against the sibling repo and kept structurally identical:
 | `features/settings/Profile.tsx` | Section order must match. Card composition identical. |
 | `components/InstallAppCard.tsx` | Verbatim, swap product name |
 | `components/InstallAppBanner.tsx` | Verbatim, swap product name + dismiss key |
-| `components/PasskeysCard.tsx` | Verbatim |
+| `components/PasskeysCard.tsx` | Verbatim (Averrow ops: deleted 2026-10 — duplicated the shared `PasskeysSection`; ops Profile uses the shared one) |
 | `components/FirstSignInPasskeyPrompt.tsx` | Verbatim, swap product name in copy + dismiss key |
 | `hooks/useInstallPrompt.ts` | Verbatim |
 | `lib/avatar.ts` | Verbatim |
