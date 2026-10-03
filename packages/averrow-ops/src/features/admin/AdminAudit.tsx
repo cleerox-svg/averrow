@@ -86,7 +86,7 @@ function pillStyle(active: boolean): React.CSSProperties {
   return {
     background: active ? 'var(--amber-glow)' : 'var(--bg-input)',
     border:     `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
-    color:      active ? 'var(--amber)' : 'var(--text-tertiary)',
+    color:      active ? 'var(--amber-text)' : 'var(--text-secondary)',
     transition: 'var(--transition-fast)',
   };
 }

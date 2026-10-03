@@ -37,7 +37,7 @@ import {
 } from '@/hooks/useAdminAbuseMailbox';
 import { relativeTime } from '@/lib/time';
 
-import { PageState, Table, Td } from '@/design-system/components';
+import { PageState, pageStateKind, Table, Td } from '@/design-system/components';
 export function AdminAbuseMailbox() {
   const { isSuperAdmin, loading: authLoading } = useAuth();
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
@@ -82,6 +82,14 @@ export function AdminAbuseMailbox() {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [selectedId, messagesQ.isLoading]);
+
+  // Error beats loading beats empty. A failed refetch with the last good
+  // messages still on screen keeps them and shows an inline error instead.
+  const messagesKind = pageStateKind({
+    isLoading: messagesQ.isLoading,
+    isError: messagesQ.isError && !messagesQ.data,
+  });
+  const messagesUnavailable = messagesQ.isError && !messagesQ.data;
 
   if (authLoading) return <PageState kind="loading" />;
   if (!isSuperAdmin) return <Navigate to="/" replace />;
@@ -148,11 +156,20 @@ export function AdminAbuseMailbox() {
 
           {/* PR-BD — Intel highlights from deep_analysis aggregates */}
           {intelQ.data && <IntelHighlights intel={intelQ.data} />}
+          {intelQ.isError && !intelQ.data && (
+            <PageState
+              kind="error"
+              layout="card"
+              title="Couldn't load intel highlights"
+              onRetry={() => { void intelQ.refetch(); }}
+            />
+          )}
 
           {/* PR-BD — Inbox with tabs/filters/search */}
           <section className="space-y-3">
             <InboxToolbar
               messages={messagesQ.data?.messages ?? []}
+              countsUnavailable={messagesUnavailable}
               activeBrand={activeBrand}
               onClearBrand={() => setActiveBrand(null)}
               statusTab={statusTab}
@@ -163,8 +180,25 @@ export function AdminAbuseMailbox() {
               onSearchChange={setSearchText}
             />
 
-            {messagesQ.isLoading && (
+            {messagesQ.isError && messagesQ.data && (
+              <PageState
+                kind="error"
+                layout="inline"
+                title="Couldn't refresh messages"
+                description="Showing the last loaded data."
+                onRetry={() => { void messagesQ.refetch(); }}
+              />
+            )}
+            {messagesKind === 'loading' && (
               <div className="text-white/40 text-sm font-mono py-8 text-center">Loading messages…</div>
+            )}
+            {messagesKind === 'error' && (
+              <PageState
+                kind="error"
+                layout="card"
+                title="Couldn't load messages"
+                onRetry={() => { void messagesQ.refetch(); }}
+              />
             )}
             {messagesQ.data && (() => {
               const filtered = filterMessages(messagesQ.data.messages, statusTab, classFilter, searchText);
@@ -1239,12 +1273,14 @@ const CLASSIFICATION_CHIPS: Array<{ key: string; label: string }> = [
 ];
 
 function InboxToolbar({
-  messages, activeBrand, onClearBrand,
+  messages, countsUnavailable, activeBrand, onClearBrand,
   statusTab, onStatusTabChange,
   classFilter, onClassFilterChange,
   searchText, onSearchChange,
 }: {
   messages: AdminAbuseInboxMessage[];
+  /** True when the messages request failed with nothing cached: counts are unknown, not zero. */
+  countsUnavailable: boolean;
   activeBrand: string | null;
   onClearBrand: () => void;
   statusTab: 'all' | AbuseMessageStatus;
@@ -1264,7 +1300,7 @@ function InboxToolbar({
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
-          Inbox <span className="text-white/40 ml-1">({messages.length})</span>
+          Inbox <span className="text-white/40 ml-1">({countsUnavailable ? '—' : messages.length})</span>
         </h2>
         {activeBrand && (
           <button
@@ -1280,7 +1316,7 @@ function InboxToolbar({
       {/* Status tabs */}
       <div className="flex items-center gap-1 flex-wrap border-b border-white/[0.06] pb-2">
         {STATUS_TABS.map((t) => {
-          const count = statusCounts[t.key] ?? 0;
+          const count = countsUnavailable ? '—' : (statusCounts[t.key] ?? 0);
           const active = statusTab === t.key;
           return (
             <button

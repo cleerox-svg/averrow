@@ -8,7 +8,7 @@
 
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
-import { Badge } from '@averrow/shared/ui';
+import { Badge, PageState, pageStateKind } from '@averrow/shared/ui';
 import {
   useBrandSocialFindings,
   useSocialModuleSummary,
@@ -18,7 +18,10 @@ import {
 export function BrandSocialFindings() {
   const { brandId } = useParams<{ brandId: string }>();
   const { data: summary } = useSocialModuleSummary();
-  const { data, isLoading, error } = useBrandSocialFindings(brandId ?? null);
+  const { data, isLoading, isError, error, refetch } = useBrandSocialFindings(brandId ?? null);
+  // Error beats loading. A failed refetch with the last good rows still on
+  // screen keeps them and shows an inline error instead.
+  const kind = pageStateKind({ isLoading, isError: isError && !data });
 
   const brand = summary?.brands.find((b) => b.brand_id === brandId);
 
@@ -34,12 +37,24 @@ export function BrandSocialFindings() {
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading profiles…</div>}
-      {error && (
-        <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
-          <h3 className="text-sm font-semibold text-white/90">Couldn't load profiles</h3>
-          <p className="text-[12px] text-white/55 mt-1">{error.message}</p>
-        </div>
+      {kind === 'loading' && <PageState kind="loading" layout="card" title="Loading profiles…" />}
+      {kind === 'error' && (
+        <PageState
+          kind="error"
+          layout="card"
+          title="Couldn't load profiles"
+          description={error?.message}
+          onRetry={() => { void refetch(); }}
+        />
+      )}
+      {isError && data && (
+        <PageState
+          kind="error"
+          layout="inline"
+          title="Couldn't refresh profiles"
+          description={`${error?.message ?? 'Request failed.'} Showing the last loaded profiles.`}
+          onRetry={() => { void refetch(); }}
+        />
       )}
 
       {data && (
