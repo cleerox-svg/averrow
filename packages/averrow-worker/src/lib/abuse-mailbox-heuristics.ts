@@ -159,11 +159,15 @@ const FORWARD_MARKERS: ReadonlyArray<RegExp> = [
  * email? looks urgent" must not score as a lure. No marker = unchanged.
  */
 export function suspectPortion(text: string): string {
+  // The EARLIEST marker of any kind: the reporter's own forward marker
+  // always precedes the suspect's content, so a fake marker an attacker
+  // buries deeper in their message can't hide the text before it.
+  let cut = -1;
   for (const re of FORWARD_MARKERS) {
     const m = re.exec(text);
-    if (m) return text.slice(m.index + m[0].length);
+    if (m && (cut < 0 || m.index < cut)) cut = m.index + m[0].length;
   }
-  return text;
+  return cut < 0 ? text : text.slice(cut);
 }
 
 // ─── Scoring ─────────────────────────────────────────────────────

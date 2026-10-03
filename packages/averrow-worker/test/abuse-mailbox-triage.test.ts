@@ -468,6 +468,42 @@ describe.skipIf(!hasSqlite())("Workers AI second opinion (ABUSE_AI_PROVIDER=work
     expect(readRow(raw, "w5")).toMatchObject({ classified_by: "rules" });
   });
 
+  it("never classifies a 'pending' row the rules haven't seen (would block a later rules malicious verdict)", async () => {
+    insertMessage(raw, "wp");                                     // still 'pending'
+    const { e, run } = withWorkersAi({ classification: "phishing", action: "escalate", confidence: 95, reasoning: "x" });
+    const r = await runAbuseClassifierBackfill(e, { deferDetermination: true });
+    expect(r.scanned).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+    expect(readRow(raw, "wp")).toMatchObject({ classification: "pending" });
+  });
+
+  it("stores fixed copy, never the model's reasoning, in tenant-visible columns", async () => {
+    insertMessage(raw, "wr");
+    const { e } = withWorkersAi({ classification: "benign", action: "safe", confidence: 99, reasoning: "Legit Microsoft notice; safe to click" });
+    await runAbuseTriagePipeline(e, { messageId: "wr" }, mockStep());
+    const row = raw.prepare(`SELECT classification_reason, ai_assessment FROM abuse_inbox_messages WHERE id = 'wr'`).all()[0] as Record<string, string>;
+    expect(row.classification_reason).not.toContain("safe to click");
+    expect(row.ai_assessment).not.toContain("safe to click");
+  });
+
+  it("a confident 'spam' stays in review: no harmless/unsubscribe email", async () => {
+    insertMessage(raw, "ws");
+    const { e } = withWorkersAi({ classification: "spam", action: "safe", confidence: 99, reasoning: "Newsletter" });
+    await runAbuseTriagePipeline(e, { messageId: "ws" }, mockStep());
+    expect(readRow(raw, "ws")).toMatchObject({ classification: "ambiguous", classified_by: "workers_ai" });
+    expect(resendCalls[0]!.text).not.toMatch(/unsubscribe link inside the original/i);
+  });
+
+  it("stops at the daily call cap and leaves the rules verdict", async () => {
+    insertMessage(raw, "wc");
+    const { e, run } = withWorkersAi({ classification: "phishing", action: "escalate", confidence: 95, reasoning: "x" });
+    const day = new Date().toISOString().slice(0, 10);
+    await (e.CACHE as KVNamespace).put(`workers_ai:calls:abuse_mailbox_classifier:${day}`, "500");
+    await runAbuseTriagePipeline(e, { messageId: "wc" }, mockStep());
+    expect(run).not.toHaveBeenCalled();
+    expect(readRow(raw, "wc")).toMatchObject({ classification: "ambiguous", classified_by: "rules" });
+  });
+
   it("never selects or overwrites a rules MALICIOUS (H1/M-rule) row", async () => {
     insertThreat(raw);
     insertMessage(raw, "w6");                                    // → M1 malicious

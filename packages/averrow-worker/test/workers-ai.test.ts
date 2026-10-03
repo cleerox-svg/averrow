@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJsonObject, isAbuseWorkersAiEnabled } from "../src/lib/workers-ai";
+import { extractJsonObject, isAbuseWorkersAiEnabled, reserveWorkersAiCall } from "../src/lib/workers-ai";
 import { clampWorkersAiVerdict } from "../src/lib/abuse-mailbox-classifier";
 import type { Env } from "../src/types";
 
@@ -32,10 +32,9 @@ describe("clampWorkersAiVerdict", () => {
   it("below 70 stays in review", () => {
     expect(v("phishing", 69)).toMatchObject({ classification: "ambiguous", action: "review", likely: false });
   });
-  it("benign never survives; spam needs >=85", () => {
+  it("benign and spam never survive — both tell the reporter the message is harmless", () => {
     expect(v("benign", 100)).toMatchObject({ classification: "ambiguous", action: "review" });
-    expect(v("spam", 84)).toMatchObject({ classification: "ambiguous" });
-    expect(v("spam", 90)).toMatchObject({ classification: "spam", severity: "LOW", action: "review" });
+    expect(v("spam", 100)).toMatchObject({ classification: "ambiguous", action: "review" });
   });
   it("never emits 'safe' or 'takedown'", () => {
     for (const c of ["phishing", "spam", "benign", "malware", "ambiguous"] as const) {
@@ -43,5 +42,22 @@ describe("clampWorkersAiVerdict", () => {
         expect(["safe", "takedown"]).not.toContain(v(c, conf).action);
       }
     }
+  });
+});
+
+describe("reserveWorkersAiCall", () => {
+  function kv() {
+    const m = new Map<string, string>();
+    return { get: async (k: string) => m.get(k) ?? null, put: async (k: string, v: string) => { m.set(k, v); } };
+  }
+  it("allows up to the cap per day, then refuses", async () => {
+    const env = { CACHE: kv() } as unknown as Env;
+    expect(await reserveWorkersAiCall(env, "t", 2)).toBe(true);
+    expect(await reserveWorkersAiCall(env, "t", 2)).toBe(true);
+    expect(await reserveWorkersAiCall(env, "t", 2)).toBe(false);
+  });
+  it("fails closed when KV errors", async () => {
+    const env = { CACHE: { get: async () => { throw new Error("kv down"); }, put: async () => undefined } } as unknown as Env;
+    expect(await reserveWorkersAiCall(env, "t", 10)).toBe(false);
   });
 });

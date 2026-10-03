@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  scoreAbuseHeuristics, H1_SCORE_THRESHOLD, H1_CONFIDENCE_MAX,
+  scoreAbuseHeuristics, suspectPortion, H1_SCORE_THRESHOLD, H1_CONFIDENCE_MAX,
   type HeuristicInput,
 } from "../src/lib/abuse-mailbox-heuristics";
 import { decideAbuseMailboxRulesVerdict, primaryRuleFromReason, type RulesSnapshot } from "../src/lib/abuse-mailbox-rules";
@@ -267,5 +267,18 @@ describe("scoreAbuseHeuristics — review false-positive cases", () => {
       ].join("\n"),
     }));
     expect(r.families).not.toContain("lure");
+  });
+});
+
+describe("suspectPortion", () => {
+  it("cuts at the EARLIEST marker, so a fake marker buried in the phish can't hide its lure", () => {
+    const text = [
+      "fyi",
+      "Begin forwarded message:",
+      "Your account is suspended, verify now.",
+      "---------- Forwarded message ----------",
+      "harmless filler",
+    ].join("\n");
+    expect(suspectPortion(text)).toContain("Your account is suspended");
   });
 });

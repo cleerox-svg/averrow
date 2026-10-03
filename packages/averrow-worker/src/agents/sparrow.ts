@@ -644,6 +644,9 @@ async function createTakedownsFromAbuseReports(env: Env): Promise<number> {
       AND severity IN ('HIGH', 'CRITICAL')
       AND org_id IS NOT NULL
       AND promoted_threat_ids IS NOT NULL
+      -- An open-model "likely" verdict is never takedown evidence, even if
+      -- a future path were to promote its URLs.
+      AND COALESCE(classified_by, '') <> 'workers_ai'
       AND takedown_drafted_at IS NULL
     ORDER BY received_at DESC
     LIMIT 10

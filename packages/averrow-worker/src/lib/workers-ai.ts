@@ -91,3 +91,23 @@ export async function runWorkersAiJson(
   if (!parsed) throw new WorkersAiError("parse_error: Workers AI output was not a JSON object");
   return parsed;
 }
+
+/**
+ * Count one call against a per-consumer daily cap (UTC day, KV). Returns
+ * false once the cap is reached. Best-effort: KV is eventually consistent,
+ * so concurrent isolates can overshoot slightly; a KV failure fails CLOSED
+ * (no call) because the alternative is unbounded postpaid spend.
+ */
+export async function reserveWorkersAiCall(env: Env, consumer: string, cap: number): Promise<boolean> {
+  if (!env.CACHE) return false;
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `workers_ai:calls:${consumer}:${day}`;
+  try {
+    const used = Number((await env.CACHE.get(key)) ?? "0") || 0;
+    if (used >= cap) return false;
+    await env.CACHE.put(key, String(used + 1), { expirationTtl: 2 * 86_400 });
+    return true;
+  } catch {
+    return false;
+  }
+}

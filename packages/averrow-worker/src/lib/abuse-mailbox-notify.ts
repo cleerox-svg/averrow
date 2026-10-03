@@ -66,7 +66,7 @@ export interface VerdictNotice {
   action:         string;
   /** Operator-facing message body (AI reasoning, or a fixed rules sentence). */
   message:        string;
-  classifiedBy:   "ai" | "rules";
+  classifiedBy:   "ai" | "rules" | "workers_ai";
   /** Rules H1 heuristic tier: say "likely", never "confirmed". */
   likely?:        boolean;
 }
@@ -97,7 +97,7 @@ export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<vo
       type: "abuse_mailbox_verdict",
       severity: v.severity === "CRITICAL" ? "critical" : "high",
       title: v.likely
-        ? "Likely phishing — abuse mailbox report"
+        ? `Likely ${v.classification === "malware" ? "malware" : "phishing"} — abuse mailbox report`
         : `${v.classification === "phishing" ? "Phishing" : "Malware"} confirmed — abuse mailbox report`,
       message: v.message,
       link,

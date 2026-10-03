@@ -126,19 +126,25 @@ never emailed. The ack is sent only inline by that same INSERT path.
 binding) routes the AI pass to Cloudflare Workers AI
 (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, via the `averrow-ai-gateway` AI
 Gateway; `lib/workers-ai.ts`). It runs even under `AI_MODE=rules_only`, which
-only blocks Anthropic. Same rows as the Anthropic pass: `pending` or rules
-review (`ambiguous` + `classified_by='rules'`) — never a rules malicious
+only blocks Anthropic. Only rows the rules already reviewed (`ambiguous` +
+`classified_by='rules'`) — never `pending` (a row it classified first could
+never get a later rules malicious verdict) and never a rules malicious
 (M1–M4 / H1) row. `clampWorkersAiVerdict` limits what it may decide:
 
 | Model says | Stored |
 |---|---|
 | phishing / malware ≥ 70 | same class, HIGH, `escalate`, confidence ≤ 80; email "Likely phishing/malware" |
-| spam ≥ 85 | spam, LOW, `review` |
-| anything else, incl. every `benign` | `ambiguous`, MEDIUM, `review` |
+| anything else, incl. every `benign` and `spam` | `ambiguous`, MEDIUM, `review` |
 
-`classified_by='workers_ai'`. Never promotes URLs to `threats`, never runs the
-Sonnet deep analyzer, no confidence % in the email, model reasoning never
-emailed. The system prompt carries an explicit injection guard (email content
+No spam tier: the spam email tells the reporter the message is harmless and to
+use its unsubscribe link, which a phish dressed as a newsletter could exploit.
+`classified_by='workers_ai'`. Never promotes URLs to `threats` (and Sparrow
+excludes `workers_ai` rows from takedown drafting), never runs the Sonnet deep
+analyzer, no confidence % in the email. The model's free text is never stored
+in `classification_reason` / `ai_assessment` (both render in the tenant UI) —
+fixed copy (`WORKERS_AI_REASON`) goes there; the raw reasoning goes to Worker
+logs only. Daily cap `WORKERS_AI_DAILY_CALL_CAP` (500, KV counter, fails
+closed) — over it the pass is a deliberate skip and rules verdicts stand. The system prompt carries an explicit injection guard (email content
 is data, not instructions). A Workers AI failure leaves the rules verdict and
 its email untouched. Kill switch: remove `ABUSE_AI_PROVIDER`.
 

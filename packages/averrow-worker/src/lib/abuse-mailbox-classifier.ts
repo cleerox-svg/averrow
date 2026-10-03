@@ -19,9 +19,11 @@
 // even under AI_MODE=rules_only (that switch only blocks Anthropic). An
 // open-model verdict is a SECOND OPINION, clamped by
 // clampWorkersAiVerdict: it can say "likely phishing/malware" (never
-// "confirmed"), downgrade to spam on high confidence, or leave the row in
-// review. It never says benign/safe, never promotes URLs into `threats`,
-// never runs the Sonnet deep analyzer. Stored as classified_by='workers_ai'.
+// "confirmed") or leave the row in review. It never says benign, safe or
+// spam, never promotes URLs into `threats`, never runs the Sonnet deep
+// analyzer. Stored as classified_by='workers_ai'. It only ever sees rows the
+// rules already reviewed (never 'pending'), and its free-text reasoning is
+// never stored in a tenant-visible column.
 //
 // Cost shape: 1 Haiku call per message (~$0.001/message). At a
 // realistic customer scale (5-20 forwarded mails/day across the
@@ -53,7 +55,7 @@ import {
 } from './named-threat-matcher';
 import { notifyAbuseVerdict, notifyNamedThreatIdentified } from './abuse-mailbox-notify';
 import { ABUSE_RESPONSE_LOOKBACK, parseJsonSafe } from './abuse-mailbox-shared';
-import { isAbuseWorkersAiEnabled, runWorkersAiJson, WorkersAiError } from './workers-ai';
+import { isAbuseWorkersAiEnabled, runWorkersAiJson, reserveWorkersAiCall, WorkersAiError } from './workers-ai';
 import { suspectPortion } from './abuse-mailbox-heuristics';
 
 /** Fixed operator-facing notification sentence per AI verdict — the AI
@@ -281,12 +283,19 @@ export const WORKERS_AI_VERDICT_SCHEMA: Record<string, unknown> = {
   required: ['classification', 'action', 'confidence', 'reasoning'],
 };
 
+/** Max Workers AI calls per UTC day for the abuse mailbox (~100× normal volume). */
+export const WORKERS_AI_DAILY_CALL_CAP = 500;
 /** Below this an open-model phishing/malware call stays in review. */
 export const WORKERS_AI_LIKELY_MIN_CONFIDENCE = 70;
-/** Spam is a "not a threat" call, so it needs more certainty. */
-export const WORKERS_AI_SPAM_MIN_CONFIDENCE = 85;
 /** Stored confidence cap — below every confirmed tier. */
 export const WORKERS_AI_CONFIDENCE_CAP = 80;
+
+/** Fixed, tenant-safe reason text for a Workers AI verdict. */
+export const WORKERS_AI_REASON: Partial<Record<AbuseClassification, string>> = {
+  phishing:  "Automated second opinion: likely phishing. Not confirmed by threat intelligence.",
+  malware:   "Automated second opinion: likely malware delivery. Not confirmed by threat intelligence.",
+  ambiguous: "Automated second opinion could not reach a confident verdict; queued for analyst review.",
+};
 
 export interface ClampedVerdict extends ClassifyResult {
   severity: AbuseSeverity;
@@ -297,9 +306,11 @@ export interface ClampedVerdict extends ClassifyResult {
 /**
  * Map an open-model verdict onto what it is allowed to decide. Pure.
  *   phishing/malware ≥70 → same class, HIGH, escalate, likely (conf ≤80)
- *   spam ≥85            → spam, LOW, review
- *   anything else (incl. every benign) → ambiguous, MEDIUM, review
- * Never 'benign', never action 'safe' or 'takedown'.
+ *   anything else → ambiguous, MEDIUM, review
+ * Never 'benign' AND never 'spam': the spam determination email tells the
+ * reporter the message is harmless and to use its unsubscribe link — an
+ * attacker who dresses a phish as a newsletter could steer the model there
+ * (appsec review 2026-10-03). Never action 'safe' or 'takedown'.
  */
 export function clampWorkersAiVerdict(v: ClassifyResult): ClampedVerdict {
   const confidence = Math.min(v.confidence, WORKERS_AI_CONFIDENCE_CAP);
@@ -307,13 +318,16 @@ export function clampWorkersAiVerdict(v: ClassifyResult): ClampedVerdict {
       v.confidence >= WORKERS_AI_LIKELY_MIN_CONFIDENCE) {
     return { ...v, confidence, action: 'escalate', severity: 'HIGH', likely: true };
   }
-  if (v.classification === 'spam' && v.confidence >= WORKERS_AI_SPAM_MIN_CONFIDENCE) {
-    return { ...v, confidence, action: 'review', severity: 'LOW', likely: false };
-  }
   return { ...v, classification: 'ambiguous', confidence, action: 'review', severity: 'MEDIUM', likely: false };
 }
 
 async function classifyWithWorkersAi(env: Env, ctx: AbuseClassifyContext): Promise<ClassifyOutcome> {
+  // Spend ceiling: Workers AI is postpaid and these calls bypass the
+  // budget_ledger caps. Over the daily cap it behaves like AI being off —
+  // a deliberate skip that spends no retry attempt; rules verdicts stand.
+  if (!(await reserveWorkersAiCall(env, 'abuse_mailbox_classifier', WORKERS_AI_DAILY_CALL_CAP))) {
+    return { ok: false, error: 'workers_ai_daily_cap', aiDisabled: true };
+  }
   try {
     const raw = await runWorkersAiJson(env, {
       system: WORKERS_AI_SYSTEM_PROMPT,
@@ -524,12 +538,17 @@ export async function runAbuseClassifierBackfill(
       AND COALESCE(throttled, 0) = 0
       AND COALESCE(classification_attempts, 0) < ?
       AND (? IS NULL OR id = ?)
+      -- Workers AI only second-guesses rows the rules already reviewed: a
+      -- 'pending' row it classified first could never get a rules
+      -- malicious verdict afterwards (the rules UPDATE requires 'pending').
+      AND (? = 0 OR classified_by = 'rules')
     ORDER BY received_at ASC
     LIMIT ? OFFSET ?
   `).bind(
     ABUSE_RESPONSE_LOOKBACK,
     MAX_CLASSIFY_ATTEMPTS,
     opts?.messageId ?? null, opts?.messageId ?? null,
+    useWorkersAi ? 1 : 0,
     limit, offset,
   ).all<MessageRow>();
 
@@ -676,9 +695,16 @@ export async function runAbuseClassifierBackfill(
     const verdict: ClassifyResult = clamped ?? outcome.verdict;
     const severity = clamped ? clamped.severity : severityFor(verdict.classification, verdict.confidence);
     const classifiedBy = useWorkersAi ? 'workers_ai' : 'ai';
+    // Workers AI: the model's free text is attacker-steerable and both
+    // columns render in the tenant UI, so store fixed copy only and send the
+    // raw reasoning to Worker logs for operators.
+    const reasonText = useWorkersAi ? WORKERS_AI_REASON[verdict.classification] ?? WORKERS_AI_REASON.ambiguous! : verdict.reasoning;
     const aiAssessment = useWorkersAi
-      ? `[Workers AI ${outcome.verdict.classification} @${outcome.verdict.confidence}% → ${verdict.classification}] ${verdict.reasoning}`
+      ? `[Workers AI ${outcome.verdict.classification} @${outcome.verdict.confidence}% → ${verdict.classification}] ${reasonText}`
       : `[AI ${verdict.classification} @${verdict.confidence}%] ${verdict.reasoning}`;
+    if (useWorkersAi) {
+      console.log(`[abuse_mailbox_classifier] workers_ai ${m.id}: ${outcome.verdict.classification}@${outcome.verdict.confidence} — ${outcome.verdict.reasoning.replace(/[\r\n\t]/g, " ").slice(0, 240)}`);
+    }
 
     const verdictUpdate = await env.DB.prepare(`
       UPDATE abuse_inbox_messages
@@ -697,7 +723,7 @@ export async function runAbuseClassifierBackfill(
       verdict.classification,
       classifiedBy,
       verdict.confidence,
-      verdict.reasoning,
+      reasonText,
       aiAssessment,
       verdict.action,
       severity,
@@ -905,7 +931,7 @@ export async function runAbuseClassifierBackfill(
         // in push / lock screens / tenant UIs; model reasoning is shaped by
         // attacker-controlled content and stays in classification_reason.
         message: AI_OPERATOR_NOTE[verdict.classification],
-        classifiedBy: "ai",
+        classifiedBy: useWorkersAi ? "workers_ai" : "ai",
         likely: useWorkersAi,
       });
     }

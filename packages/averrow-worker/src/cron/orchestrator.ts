@@ -327,7 +327,7 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
                       AND COALESCE(throttled, 0) = 0
                       AND forwarded_by_email IS NOT NULL
                       AND classification NOT IN ('pending', 'follow_up')
-                      AND classified_by IN ('rules', 'ai')
+                      AND classified_by IN ('rules', 'ai', 'workers_ai')
                       AND received_at >= datetime('now', ?)) AS n`,
       ).bind(ABUSE_RESPONSE_LOOKBACK).first<{ n: number }>();
       if ((pendingCount?.n ?? 0) > 0) {
