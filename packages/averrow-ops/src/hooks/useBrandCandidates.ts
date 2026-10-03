@@ -19,13 +19,18 @@ export interface BrandCandidate {
   notes:              string | null;
 }
 
-export function useBrandCandidates(status: 'pending' | 'promoted' | 'rejected' = 'pending') {
+export function useBrandCandidates(
+  status: 'pending' | 'promoted' | 'rejected' = 'pending',
+  opts: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: ['brand-candidates', status],
+    enabled: opts.enabled !== false,
     queryFn: async () => {
       const res = await api.get<BrandCandidate[]>(
         `/api/admin/brand-candidates?status=${status}&limit=100`,
       );
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load brand candidates');
       return {
         candidates: (res.data ?? []) as BrandCandidate[],
         total: res.total ?? 0,

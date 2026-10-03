@@ -3,10 +3,12 @@ import { api } from '@/lib/api';
 
 /* ── Types ── */
 
+/** One Observer insight row from `/api/trends/intelligence`
+ *  (handlers/trends.ts `handleTrendIntelligence`). `type` is always
+ *  `'insight'` on this endpoint; there is no agent/output-type column. */
 export interface IntelligenceBriefing {
   id: string;
-  agent_name: string;
-  output_type: string;
+  type: string;
   summary: string;
   severity: string;
   created_at: string;
@@ -59,6 +61,7 @@ export function useIntelligenceBriefings(limit = 6) {
     queryKey: ['intelligence-briefings', limit],
     queryFn: async () => {
       const res = await api.get<IntelligenceBriefing[]>(`/api/trends/intelligence?limit=${limit}`);
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load intelligence briefings');
       return res.data ?? [];
     },
     placeholderData: keepPreviousData,

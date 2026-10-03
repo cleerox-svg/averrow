@@ -272,7 +272,7 @@ describe('AdminDashboard', () => {
       // Email Security (Email tab) is not in the DOM.
       expect(screen.queryByText('Email Security Coverage')).not.toBeInTheDocument();
       // Daily Briefing (Briefing tab) is not in the DOM.
-      expect(screen.queryByText('Daily Briefing')).not.toBeInTheDocument();
+      expect(screen.queryByText('Platform operations briefing')).not.toBeInTheDocument();
       // AI Budget (Cost tab) is not in the DOM.
       expect(screen.queryByText('AI Budget')).not.toBeInTheDocument();
     });
@@ -445,7 +445,7 @@ describe('AdminDashboard', () => {
   });
 
   it('renders AI Budget and Daily Briefing once their tabs are selected, independent of system-health loading', async () => {
-    // BudgetPanel (Cost tab) and DailyBriefingWidget (Briefing tab) don't
+    // BudgetPanel (Cost tab) and the ops Briefing (Briefing tab) don't
     // depend on useSystemHealth either — they read off the snapshot / their
     // own hook — but post-Tier-3 they're lazy-mounted, so they only appear
     // once their tab is active.
@@ -458,7 +458,7 @@ describe('AdminDashboard', () => {
     expect(screen.getAllByText('AI Budget').length).toBeGreaterThanOrEqual(1);
 
     await switchTab('Briefing');
-    expect(screen.getByText('Daily Briefing')).toBeInTheDocument();
+    expect(await screen.findByText('Platform operations briefing')).toBeInTheDocument();
   });
 
   it('renders page header immediately even while both hooks are still loading', () => {

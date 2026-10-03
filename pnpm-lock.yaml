@@ -93,9 +93,6 @@ importers:
       react:
         specifier: ^18.3.1
         version: 18.3.1
-      react-countup:
-        specifier: ^6.5.3
-        version: 6.5.3(react@18.3.1)
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
@@ -2570,9 +2567,6 @@ packages:
     resolution: {integrity: sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==}
     engines: {node: '>=18'}
 
-  countup.js@2.10.0:
-    resolution: {integrity: sha512-QQpZx7oYxsR+OeITlZe46fY/OQjV11oBqjY8wgIXzLU2jIz8GzOrbMhqKLysGY8bWI3T1ZNrYkwGzKb4JNgyzg==}
-
   cross-fetch@4.1.0:
     resolution: {integrity: sha512-uKm5PU+MHTootlWEY+mZ4vvXoCn4fLQxT9dSc1sXVMSFkINTJVN8cAQROpwcKm8bJ/c7rgZVIBWzH5T78sNZZw==}
 
@@ -3942,11 +3936,6 @@ packages:
 
   quickselect@3.0.0:
     resolution: {integrity: sha512-XdjUArbK4Bm5fLLvlm5KpTFOiOThgfWWI4axAZDWg4E/0mKdZyI9tNEfds27qCi1ze/vwTR16kvmmGhRra3c2g==}
-
-  react-countup@6.5.3:
-    resolution: {integrity: sha512-udnqVQitxC7QWADSPDOxVWULkLvKUWrDapn5i53HE4DPRVgs+Y5rr4bo25qEl8jSh+0l2cToJgGMx+clxPM3+w==}
-    peerDependencies:
-      react: '>= 16.3.0'
 
   react-dom@18.3.1:
     resolution: {integrity: sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==}
@@ -7208,8 +7197,6 @@ snapshots:
 
   cookie@1.1.1: {}
 
-  countup.js@2.10.0: {}
-
   cross-fetch@4.1.0:
     dependencies:
       node-fetch: 2.7.0
@@ -8972,11 +8959,6 @@ snapshots:
   quickselect@2.0.0: {}
 
   quickselect@3.0.0: {}
-
-  react-countup@6.5.3(react@18.3.1):
-    dependencies:
-      countup.js: 2.10.0
-      react: 18.3.1
 
   react-dom@18.3.1(react@18.3.1):
     dependencies:

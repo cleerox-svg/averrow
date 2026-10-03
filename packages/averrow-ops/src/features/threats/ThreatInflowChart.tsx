@@ -11,11 +11,11 @@
 // below the chart so the surface still tells the same story.
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { api } from '@/lib/api';
+import { useThreatInflow } from './useThreatInflow';
+import type { InflowWindow } from './useThreatInflow';
 import { Card, PageState } from '@/design-system/components';
 
 // Threat-type → fill/stroke color. Aligned with the Threat Volume
@@ -56,45 +56,7 @@ function prettyTypeLabel(type: string): string {
     .join(' ');
 }
 
-interface InflowResponse {
-  window: '24h' | '7d';
-  buckets: string[];
-  series: Array<{ threat_type: string; counts: number[]; total: number }>;
-  total: number;
-  generated_at: string;
-}
-
-type Window = '24h' | '7d';
-
-// Guard against the untyped `api.get` handing back a non-InflowResponse
-// body — e.g. the platform's `{success:false,error}` error envelope on a
-// 4xx or a 2xx-wrapped failure, which `api.ts` resolves (a first-attempt
-// 5xx GET and any 401 reject with ApiError instead).
-// Without this, a malformed response would blind-cast through and the
-// `data.buckets.map(...)` below throws, crashing the whole root route via
-// the ErrorBoundary. A malformed body is a failed load (query error), never
-// "no data" / 0 indicators. Mirrors the isPlatformStatus guard in usePlatformStatus.
-function isInflowResponse(value: unknown): value is InflowResponse {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Array.isArray((value as { buckets?: unknown }).buckets) &&
-    Array.isArray((value as { series?: unknown }).series)
-  );
-}
-
-function useThreatInflow(window: Window) {
-  return useQuery({
-    queryKey: ['threats', 'inflow', window],
-    queryFn: async (): Promise<InflowResponse> => {
-      const res = await api.get(`/api/threats/inflow?window=${window}`);
-      if (!isInflowResponse(res)) throw new Error('Unexpected threat inflow response');
-      return res;
-    },
-    refetchInterval: 5 * 60_000, // matches cube refresh cadence
-    staleTime: 60_000,
-  });
-}
+type Window = InflowWindow;
 
 function formatBucketLabel(iso: string, window: Window): string {
   // iso is `YYYY-MM-DD HH:00:00` (UTC). Show local time in the user's

@@ -102,8 +102,11 @@ const COMPLIANCE_AXES = [
 // React Query dedupes the cache so this adds zero new requests
 // when both pages are open. Kept off the Sidebar deliberately to
 // avoid amplifying API load on every authenticated session.
-function PendingApprovalsBanner() {
-  const { data } = usePendingApprovals();
+export function PendingApprovalsBanner() {
+  // /api/admin/agents/approvals/pending is super_admin-only — other roles must
+  // not fire the request (the 403 envelope would otherwise read as "none").
+  const { isSuperAdmin } = useAuth();
+  const { data } = usePendingApprovals({ enabled: isSuperAdmin });
   const count = data?.pending?.length ?? 0;
   if (count === 0) return null;
 

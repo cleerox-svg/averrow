@@ -110,7 +110,7 @@ export interface AlertTriageSummary {
   critical_count: number;
 }
 
-export function useAlertTriageSummary() {
+export function useAlertTriageSummary(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['alert-triage-summary'],
     queryFn: async () => {
@@ -120,6 +120,7 @@ export function useAlertTriageSummary() {
       if (!res.success || !res.data) throw new Error(res.error ?? 'Failed to load alert triage summary');
       return res.data;
     },
+    enabled: opts.enabled !== false,
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   });

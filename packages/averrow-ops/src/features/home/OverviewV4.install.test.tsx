@@ -13,19 +13,6 @@ const mocks = vi.hoisted(() => ({ useInstallPrompt: vi.fn() }));
 vi.mock('@/hooks/useInstallPrompt', () => ({ useInstallPrompt: mocks.useInstallPrompt }));
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn().mockResolvedValue({ success: true, data: [] }) } }));
 vi.mock('@/lib/auth', () => ({ useAuth: vi.fn(() => ({ user: { name: 'Ada Lovelace' } })) }));
-vi.mock('react-countup', () => ({
-  default: ({ end }: { end: number }) => <span>{end}</span>,
-}));
-vi.mock('@/features/home/sections/StatusRow', () => ({ StatusRow: () => null }));
-vi.mock('@/features/home/sections/StatGrid', () => ({ StatGrid: () => null }));
-vi.mock('@/features/home/sections/ThreatPulse', () => ({ ThreatPulse: () => null }));
-vi.mock('@/features/home/sections/DailyBriefing', () => ({ DailyBriefing: () => null }));
-vi.mock('@/features/home/sections/LatestIntel', () => ({ LatestIntel: () => null }));
-vi.mock('@/features/home/sections/IntelHotlist', () => ({ IntelHotlist: () => null }));
-vi.mock('@/features/home/sections/LiveActivity', () => ({ LiveActivity: () => null }));
-vi.mock('@/features/home/sections/BrandMovers', () => ({ BrandMovers: () => null }));
-vi.mock('@/features/home/sections/ModuleHub', () => ({ ModuleHub: () => null }));
-vi.mock('@/features/home/sections/ProviderMovers', () => ({ ProviderMovers: () => null }));
 
 const BANNER_TEXT = /Install Averrow as an app/i;
 

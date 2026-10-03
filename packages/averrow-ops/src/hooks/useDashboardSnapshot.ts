@@ -114,13 +114,15 @@ export interface DashboardSnapshot {
  *  string in two files. */
 export const DASHBOARD_SNAPSHOT_QUERY_KEY = ['admin-dashboard-snapshot'] as const;
 
-export function useDashboardSnapshot() {
+export function useDashboardSnapshot(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: DASHBOARD_SNAPSHOT_QUERY_KEY,
     queryFn: async () => {
       const res = await api.get<DashboardSnapshot>('/api/admin/dashboard');
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load the dashboard snapshot');
       return res.data ?? null;
     },
+    enabled: opts.enabled !== false,
     // Backend KV cache TTL is ~75s (DASHBOARD_SNAPSHOT_TTL) — match cadence
     // so this poller stays roughly in step with the cache window instead of
     // either hammering a warm cache or sitting stale behind it.

@@ -4,8 +4,8 @@
 // non-super-admin staff user with an organization attached, who used to be
 // routed to the (now deleted) BrandAdminDashboard. The real <App/> route table
 // is rendered; only auth, the network, and unrelated chrome are stubbed.
-// OverviewV4's shared sections are stubbed (as in OverviewV4.test.tsx) — the
-// real hero is what we assert on.
+// OverviewV4 renders for real against a stubbed API (every GET resolves an
+// empty list) — the hero is what we assert on.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -20,9 +20,6 @@ vi.mock('@/lib/auth', () => ({ useAuth: mocks.useAuth }));
 vi.mock('@/lib/api', () => ({
   api: { get: vi.fn().mockResolvedValue({ success: true, data: [] }) },
 }));
-vi.mock('react-countup', () => ({
-  default: ({ end }: { end: number }) => <span>{end}</span>,
-}));
 vi.mock('@/components/NotificationBell', () => ({ NotificationBell: () => null }));
 vi.mock('@/components/UserAvatar', () => ({ UserAvatar: () => null }));
 vi.mock('@/hooks/useOpenAlertCount', () => ({
@@ -31,16 +28,6 @@ vi.mock('@/hooks/useOpenAlertCount', () => ({
 vi.mock('@/components/layout/ThemeCycleButton', () => ({ ThemeCycleButton: () => null }));
 vi.mock('@/components/PlatformAlertBanner', () => ({ PlatformAlertBanner: () => null }));
 vi.mock('@/components/InstallAppBanner', () => ({ InstallAppBanner: () => null }));
-vi.mock('@/features/home/sections/StatusRow', () => ({ StatusRow: () => null }));
-vi.mock('@/features/home/sections/StatGrid', () => ({ StatGrid: () => null }));
-vi.mock('@/features/home/sections/ThreatPulse', () => ({ ThreatPulse: () => null }));
-vi.mock('@/features/home/sections/DailyBriefing', () => ({ DailyBriefing: () => null }));
-vi.mock('@/features/home/sections/LatestIntel', () => ({ LatestIntel: () => null }));
-vi.mock('@/features/home/sections/IntelHotlist', () => ({ IntelHotlist: () => null }));
-vi.mock('@/features/home/sections/LiveActivity', () => ({ LiveActivity: () => null }));
-vi.mock('@/features/home/sections/BrandMovers', () => ({ BrandMovers: () => null }));
-vi.mock('@/features/home/sections/ModuleHub', () => ({ ModuleHub: () => null }));
-vi.mock('@/features/home/sections/ProviderMovers', () => ({ ProviderMovers: () => null }));
 
 function mockUser(overrides: Record<string, unknown>, isSuperAdmin: boolean) {
   mocks.useAuth.mockReturnValue({
