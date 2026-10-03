@@ -151,8 +151,13 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Briefings ────────────────────────────────────────────────────
+  // "Run Briefing Now" is admin-only (owner decision): it writes a
+  // threat_briefings row and (unless ?sendEmail=false) emails the
+  // briefing recipient, so the level-3
+  // sub-roles and the read-only auditor are refused. Reads below stay
+  // requireStaff. Pinned by test/briefing-generate-admin-gate.test.ts.
   router.post("/api/briefings/generate", async (request: Request, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const rl = await rateLimitCustom(request, env, { key: "briefing", maxRequests: 5, windowSeconds: 60 }, ctx.userId);
     if (rl) return rl;

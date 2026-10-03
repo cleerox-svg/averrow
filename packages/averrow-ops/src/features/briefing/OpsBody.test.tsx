@@ -19,6 +19,9 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api';
 
+const authMock = vi.hoisted(() => ({ role: 'admin' as string }));
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: { id: 'u1', role: authMock.role } }) }));
+
 function page(n: number) {
   return { page: `/bait/page-${n}`, visits: 100 - n, bots: n };
 }

@@ -8,6 +8,9 @@ import { sourceChips } from './IntelligenceBody';
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 import { api } from '@/lib/api';
 
+const authMock = vi.hoisted(() => ({ role: 'admin' as string }));
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: { id: 'u1', role: authMock.role } }) }));
+
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 const post = api.post as unknown as ReturnType<typeof vi.fn>;
 
@@ -192,7 +195,7 @@ function mockOpsRow(briefing: unknown, trigger = 'cron:daily') {
 }
 
 describe('Briefing shell — ops source', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); authMock.role = 'admin'; });
 
   it('renders the ops briefing in the shared shell, tagged with its source', async () => {
     mockOpsRow(opsBriefing());
@@ -301,5 +304,36 @@ describe('Briefing shell — ops source', () => {
     renderWithProviders(<Briefing source="ops" />);
     await userEvent.click(await screen.findByRole('button', { name: /run briefing now/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Generation exploded');
+  });
+});
+
+describe('Briefing shell — ops source, Run Briefing Now role gating', () => {
+  beforeEach(() => { vi.clearAllMocks(); authMock.role = 'admin'; });
+
+  it.each(['admin', 'super_admin'])('%s sees the button and it posts', async (role) => {
+    authMock.role = role;
+    mockOpsRow(opsBriefing());
+    post.mockResolvedValue({ success: true, data: {} });
+    renderWithProviders(<Briefing source="ops" />);
+    await userEvent.click(await screen.findByRole('button', { name: /run briefing now/i }));
+    expect(post).toHaveBeenCalledWith('/api/briefings/generate');
+  });
+
+  it.each(['analyst', 'support', 'sales', 'billing', 'auditor'])('%s sees a read-only briefing with no button', async (role) => {
+    authMock.role = role;
+    mockOpsRow(opsBriefing());
+    renderWithProviders(<Briefing source="ops" />);
+    expect(await screen.findByText('TODAY')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /run briefing now/i })).not.toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(['analyst', 'support', 'sales', 'billing', 'auditor'])('%s empty state explains the schedule instead of a dead CTA', async (role) => {
+    authMock.role = role;
+    get.mockResolvedValue({ success: true, data: null });
+    renderWithProviders(<Briefing source="ops" />);
+    expect(await screen.findByText('No briefing generated yet.')).toBeInTheDocument();
+    expect(screen.getByText(/runs automatically at 13:13 UTC/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /run briefing now/i })).not.toBeInTheDocument();
   });
 });
