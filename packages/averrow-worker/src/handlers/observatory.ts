@@ -397,8 +397,10 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
 
     let resultRows = rows.results ?? [];
     // D1 spend reduction (2026-05-16): bumped from 1800s → 3600s.
-    // Navigator prewarms 3 periods every 5min — at 30min TTL the cache
-    // is fresh roughly 80% of prewarm ticks (rest are forced refreshes
+    // At the time Navigator prewarmed all 3 periods every 5 min (today: 7d
+    // every 10 min in phase A, 24h/30d every 15 min in phase A2 — see
+    // NAVIGATOR_WARM_TARGETS in cron/navigator.ts). At 30min TTL the cache
+    // was fresh roughly 80% of prewarm ticks (rest were forced refreshes
     // because the TTL boundary fell inside the prewarm cycle). Production
     // audit showed 245 actual handler hits / 24h × 56K rows = 13.8M.
     // 1h TTL drops the prewarm-driven miss count from ~50/day to ~24/day
@@ -506,11 +508,11 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
   const limit = Math.min(50, parseInt(url.searchParams.get("limit") ?? "20", 10));
 
   try {
-    // KV cache: live feed query. PR-Z bumped 2 → 5 min so the TTL aligns
-    // with Navigator's pre-warm cadence — at 2 min the pre-warm half the
-    // time hit a stale entry that had just expired, paying the scan cost
-    // again. 5 min keeps the "live" ticker visibly fresh while letting
-    // pre-warm always serve.
+    // KV cache: live feed query. PR-Z bumped 2 → 5 min to match what was
+    // then a 5-min Navigator pre-warm. Navigator now warms `?limit=8` only
+    // every 10 min (phase A), so the key is cold for roughly half of each
+    // warm interval; 5 min is kept because the "live" ticker must stay
+    // visibly fresh (the side panel refetches every 15s).
     const cacheKey = `observatory_live:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}:${limit}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {

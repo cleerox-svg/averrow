@@ -989,6 +989,7 @@ behind a feature flag.
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
   - A2/B/C are skipped when the D1 read budget is over the soft-cap
+  - The brands-list and dashboard-overview warms write the `global` scope key, which only `super_admin`/`auditor` read (`getOrgScope` returns null); other staff roles read org-scoped keys those warms don't populate.
 - **A warm must hit the exact KV key the live client request produces.** Warm
   the client's literal query string, and normalise "no filter" spellings in the
   handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key

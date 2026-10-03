@@ -560,11 +560,11 @@ selection. All references are to `packages/averrow-worker/src/`.
 | Capability | How | Code |
 |---|---|---|
 | Hourly orchestrator cron | Dispatches agent mesh (FC, Sentinel, Cartographer, Analyst, Strategist, Observer, NEXUS, etc.) | `cron/orchestrator.ts` |
-| Sub-hourly Navigator | Every-5-min cache pre-warming + cube refresh + DNS resolution + light enrichment | `cron/navigator.ts` |
+| Sub-hourly Navigator | Every-5-min cube refresh + DNS resolution + light enrichment, plus minute-gated cache pre-warming | `cron/navigator.ts` |
 | OLAP cubes | threat_cube_geo / threat_cube_provider / threat_cube_brand — pre-aggregated for sub-50ms reads | `lib/cube-builder.ts` |
 | Pre-computed columns | brands.threat_count, hosting_providers.active_threat_count, trend_7d/30d — avoid GROUP BY on hot paths | various |
 | Read replicas | D1 Sessions API — read-heavy handlers route through `getReadSession` | `lib/db.ts` |
-| KV cache pre-warm | 24 endpoints warmed every 5 min by Navigator | `cron/navigator.ts` |
+| KV cache pre-warm | 21 page-load requests warmed by Navigator in minute-gated phases (every 10/15/30 min; list in `NAVIGATOR_WARM_TARGETS`) | `cron/navigator.ts` |
 | Workflows (durable) | NEXUS + Cartographer backfill run as Cloudflare Workflows (no CPU ceiling) | `wrangler.toml`, `workflows/*.ts` |
 
 ### 7.6 Notable absences (gaps in our own implementation)

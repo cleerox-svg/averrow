@@ -18,8 +18,16 @@
 //      imports from averrow-ops) with a pointer to the source line — if a
 //      client hook changes its params, update both the literal and the
 //      matching NAVIGATOR_WARM_TARGETS entry.
+//   4. Client-source drift: the literals in (3) can't notice a client
+//      change on their own, so section 4 reads the ops / MCP source files
+//      with node fs and asserts every param name/value each warm relies on
+//      still appears there (and that the unparameterised warms are still
+//      requested with no query string). A client edit that changes a
+//      warmed param fails here and points at both places to update.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { NAVIGATOR_WARM_TARGETS } from "../src/cron/navigator";
 import {
   handleObservatoryNodes,
@@ -256,4 +264,226 @@ describe("warm KV key === live client KV key", () => {
     expect(await firstCacheKey(handleObservatoryLive, "/api/observatory/live?limit=20"))
       .not.toBe(await firstCacheKey(handleObservatoryLive, "/api/observatory/live?limit=8"));
   });
+});
+
+// ─── 4. Client-source drift ─────────────────────────────────────────
+
+/** Repo `packages/` dir, resolved from this test file. */
+const PACKAGES_DIR = resolve(__dirname, "../..");
+
+interface SourceCheck {
+  /** Repo-relative to `packages/`. */
+  file: string;
+  /** Each must match somewhere in the file. */
+  present: RegExp[];
+  /** Each must NOT match anywhere in the file. */
+  absent?: RegExp[];
+}
+
+/**
+ * Per warm path: the client source(s) whose request the warm mirrors,
+ * and the param names/values it depends on. Regexes target the param
+ * name + value with `\s*` between tokens so reformatting (spacing,
+ * line breaks, quote-adjacent whitespace) doesn't trip them; only a
+ * change to WHAT is sent does.
+ *
+ * Unparameterised warms assert the client requests the path as a
+ * closed string literal (`'/api/agents'` — the quote right after the
+ * path means no `?query` is appended).
+ */
+const OPS = "averrow-ops/src";
+const USE_OBS = `${OPS}/hooks/useObservatory.ts`;
+const OBS_V3 = `${OPS}/features/observatory-v3/ObservatoryV3.tsx`;
+const SIDE_PANEL = `${OPS}/features/observatory-v3/components/SidePanel.tsx`;
+const USE_OPS = `${OPS}/hooks/useOperations.ts`;
+const USE_BRANDS = `${OPS}/hooks/useBrands.ts`;
+const USE_TA = `${OPS}/hooks/useThreatActors.ts`;
+const MCP = "averrow-mcp/src/index.ts";
+
+/** Closed string literal for `path` — any quote style, nothing after the path. */
+const closedLiteral = (path: string) =>
+  new RegExp(`['"\`]${path.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}['"\`]`);
+
+/** Observatory hook: endpoint + `source_feed` sent empty for the `all` view. */
+const observatoryHook = (endpoint: string): SourceCheck => ({
+  file: USE_OBS,
+  present: [
+    closedLiteral(endpoint),
+    // `source_feed: source === 'all' ? '' : source` — the empty value the
+    // handlers normalise to the `all` key segment.
+    /\bsource_feed\s*:\s*source\s*===\s*['"]all['"]\s*\?\s*(''|"")/,
+    /\bsource\s*=\s*['"]all['"]/,
+    /\bperiod\s*=\s*['"]7d['"]/,
+  ],
+});
+
+/** ObservatoryV3 period toggle offers `period` (7d is the default state). */
+const observatoryPeriod = (period: string): SourceCheck => ({
+  file: OBS_V3,
+  present: period === "7d"
+    ? [/useState\(\s*['"]7d['"]\s*\)/]
+    : [new RegExp(`\\bid\\s*:\\s*['"]${period}['"]`)],
+});
+
+const useOperationsHook: SourceCheck = {
+  file: USE_OPS,
+  present: [
+    /\/api\/v1\/operations\?\$\{params\}/,
+    /\blimit\s*:\s*String\(\s*limit\s*\)/,
+    /\boffset\s*:\s*String\(\s*offset\s*\)/,
+    /\boffset\s*=\s*0\b/,
+    /params\.set\(\s*['"]status['"]\s*,\s*status\s*\)/,
+  ],
+};
+
+const SOURCE_CHECKS: Record<string, SourceCheck[]> = {
+  // Phase A / A2 — Observatory.
+  ...Object.fromEntries(
+    (["7d", "24h", "30d"] as const).flatMap((period) =>
+      (["nodes", "arcs", "stats"] as const).map((kind) => [
+        `/api/observatory/${kind}?period=${period}`,
+        [observatoryHook(`/api/observatory/${kind}`), observatoryPeriod(period)],
+      ]),
+    ),
+  ),
+  "/api/observatory/live?limit=8": [
+    { file: SIDE_PANEL, present: [/\/api\/observatory\/live\?limit=8\b/] },
+  ],
+  "/api/v1/operations?limit=4&offset=0&status=active": [
+    {
+      file: SIDE_PANEL,
+      present: [
+        /useOperations\(\s*\{[^}]*\bstatus\s*:\s*['"]active['"][^}]*\}\s*\)/,
+        /useOperations\(\s*\{[^}]*\blimit\s*:\s*4\b[^}]*\}\s*\)/,
+      ],
+      // No explicit offset → the hook's default 0, which the warm sends.
+      absent: [/useOperations\(\s*\{[^}]*\boffset\s*:[^}]*\}\s*\)/],
+    },
+    useOperationsHook,
+  ],
+  // Phase B.
+  "/api/dashboard/overview": [
+    { file: MCP, present: [/\bpath\s*:\s*['"]\/api\/dashboard\/overview['"]/] },
+  ],
+  "/api/agents": [{ file: `${OPS}/hooks/useAgents.ts`, present: [closedLiteral("/api/agents")] }],
+  "/api/v1/operations?limit=12&offset=0": [
+    {
+      file: `${OPS}/features/campaigns/Campaigns.tsx`,
+      // `useOperations({ limit: focusId ? 100 : 12 })` — default list is 12, no status.
+      present: [/useOperations\(\s*\{[^}]*\blimit\s*:[^}]*:\s*12\b[^}]*\}\s*\)/],
+      absent: [/useOperations\(\s*\{[^}]*\b(status|offset)\s*:[^}]*:\s*12\b[^}]*\}\s*\)/],
+    },
+    useOperationsHook,
+  ],
+  "/api/v1/operations/stats": [{ file: USE_OPS, present: [closedLiteral("/api/v1/operations/stats")] }],
+  "/api/feeds/aggregate-stats": [{ file: `${OPS}/hooks/useFeeds.ts`, present: [closedLiteral("/api/feeds/aggregate-stats")] }],
+  "/api/admin/dashboard": [{ file: `${OPS}/hooks/useDashboardSnapshot.ts`, present: [closedLiteral("/api/admin/dashboard")] }],
+  // Phase C.
+  "/api/brands?view=top&limit=8&offset=0&range=7d": [
+    {
+      file: SIDE_PANEL,
+      present: [
+        /useBrands\(\s*\{[^}]*\bview\s*:\s*['"]top['"][^}]*\}\s*\)/,
+        /useBrands\(\s*\{[^}]*\blimit\s*:\s*8\b[^}]*\}\s*\)/,
+        /useBrands\(\s*\{[^}]*\btimeRange\s*:\s*period\b[^}]*\}\s*\)/,
+      ],
+      absent: [/useBrands\(\s*\{[^}]*\b(offset|search)\s*:[^}]*\}\s*\)/],
+    },
+    {
+      file: USE_BRANDS,
+      present: [
+        /\/api\/brands\?\$\{params\}/,
+        /\bview\s*=\s*['"]top['"]/,
+        /\boffset\s*=\s*0\b/,
+        /\btimeRange\s*=\s*['"]7d['"]/,
+        /\blimit\s*:\s*String\(\s*limit\s*\)/,
+        /\boffset\s*:\s*String\(\s*offset\s*\)/,
+        /\brange\s*:\s*timeRange\b/,
+      ],
+    },
+  ],
+  "/api/brands/stats": [{ file: USE_BRANDS, present: [closedLiteral("/api/brands/stats")] }],
+  "/api/threat-actors?status=active": [
+    {
+      file: `${OPS}/features/threat-actors/ThreatActors.tsx`,
+      // Default (non-broadened) view sends status=active.
+      present: [/\bstatus\s*:[^,}]*['"]active['"]/],
+    },
+    {
+      file: USE_TA,
+      present: [
+        /params\.set\(\s*['"]status['"]\s*,\s*status\s*\)/,
+        /\/api\/threat-actors\$\{\s*qs\b/,
+      ],
+      // The warm sends no limit/offset; a client that starts paginating
+      // the list changes the key.
+      absent: [/params\.set\(\s*['"](limit|offset)['"]/],
+    },
+  ],
+  "/api/threat-actors/stats": [{ file: USE_TA, present: [closedLiteral("/api/threat-actors/stats")] }],
+};
+
+const sourceCache = new Map<string, string>();
+function readSource(file: string): string {
+  let src = sourceCache.get(file);
+  if (src === undefined) {
+    src = readFileSync(resolve(PACKAGES_DIR, file), "utf-8");
+    sourceCache.set(file, src);
+  }
+  return src;
+}
+
+/** Human-readable list of every failed expectation for `check` against `src`. */
+function sourceViolations(check: SourceCheck, src: string): string[] {
+  const out: string[] = [];
+  for (const re of check.present) if (!re.test(src)) out.push(`${check.file}: missing ${re}`);
+  for (const re of check.absent ?? []) if (re.test(src)) out.push(`${check.file}: unexpected ${re}`);
+  return out;
+}
+
+describe("client source still sends what each warm mirrors", () => {
+  it("every warm target has a source check", () => {
+    const missing = NAVIGATOR_WARM_TARGETS.map((t) => t.path).filter((p) => !SOURCE_CHECKS[p]);
+    expect(missing).toEqual([]);
+  });
+
+  for (const [warm, checks] of Object.entries(SOURCE_CHECKS)) {
+    it(`${warm} — client source unchanged`, () => {
+      const violations = checks.flatMap((c) => sourceViolations(c, readSource(c.file)));
+      expect(
+        violations,
+        `client drifted from warm ${warm}; update the client or NAVIGATOR_WARM_TARGETS + CLIENT_REQUESTS`,
+      ).toEqual([]);
+    });
+  }
+
+  // Mutation check: apply a realistic client edit to an in-memory copy of
+  // the real source (the ops files are never touched) and confirm the
+  // matching check now reports it. Guards against regexes that silently
+  // match anything.
+  const MUTATIONS: Array<{ warm: string; file: string; from: RegExp; to: string }> = [
+    { warm: "/api/observatory/live?limit=8", file: SIDE_PANEL, from: /live\?limit=8/, to: "live?limit=10" },
+    { warm: "/api/observatory/nodes?period=7d", file: USE_OBS, from: /source_feed:/g, to: "feed:" },
+    { warm: "/api/observatory/stats?period=7d", file: USE_OBS, from: /\? '' : source/g, to: "? 'all' : source" },
+    { warm: "/api/observatory/arcs?period=30d", file: OBS_V3, from: /id: '30d'/, to: "id: '90d'" },
+    { warm: "/api/v1/operations?limit=4&offset=0&status=active", file: SIDE_PANEL, from: /status: 'active', limit: 4/, to: "status: 'active', limit: 5" },
+    { warm: "/api/v1/operations?limit=4&offset=0&status=active", file: USE_OPS, from: /params\.set\('status'/, to: "params.set('state'" },
+    { warm: "/api/v1/operations?limit=12&offset=0", file: `${OPS}/features/campaigns/Campaigns.tsx`, from: /: 12 \}/, to: ": 20 }" },
+    { warm: "/api/brands?view=top&limit=8&offset=0&range=7d", file: SIDE_PANEL, from: /view: 'top', limit: 8/, to: "view: 'top', limit: 8, offset: 8" },
+    { warm: "/api/threat-actors?status=active", file: USE_TA, from: /if \(status\) params\.set\('status', status\);/, to: "if (status) params.set('status', status); params.set('limit', '50');" },
+    { warm: "/api/agents", file: `${OPS}/hooks/useAgents.ts`, from: /'\/api\/agents'/, to: "'/api/agents?include=retired'" },
+    { warm: "/api/brands/stats", file: USE_BRANDS, from: /'\/api\/brands\/stats'/, to: "`/api/brands/stats?range=${r}`" },
+  ];
+
+  for (const { warm, file, from, to } of MUTATIONS) {
+    it(`mutation ${file.split("/").pop()} ${from} → ${to} is caught for ${warm}`, () => {
+      const original = readSource(file);
+      const mutated = original.replace(from, to);
+      expect(mutated, `mutation pattern ${from} no longer matches ${file}`).not.toBe(original);
+      const checks = SOURCE_CHECKS[warm].filter((c) => c.file === file);
+      expect(checks.length).toBeGreaterThan(0);
+      expect(checks.flatMap((c) => sourceViolations(c, original))).toEqual([]);
+      expect(checks.flatMap((c) => sourceViolations(c, mutated)).length).toBeGreaterThan(0);
+    });
+  }
 });

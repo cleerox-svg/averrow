@@ -119,7 +119,7 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'A2', path: '/api/observatory/stats?period=30d', consumer: 'ops ObservatoryV3 30D toggle', handler: handleObservatoryStats },
 
   // ── Phase B — Dashboard / agents / operations ──
-  { phase: 'B', path: '/api/dashboard/overview', consumer: 'averrow-mcp platform smoke probe', handler: handleDashboardOverview },
+  { phase: 'B', path: '/api/dashboard/overview', consumer: 'averrow-mcp platform smoke probe (auditor JWT). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys', handler: handleDashboardOverview },
   { phase: 'B', path: '/api/agents', consumer: 'ops Agents (useAgents)', handler: handleListAgents },
   { phase: 'B', path: '/api/v1/operations?limit=12&offset=0', consumer: 'ops Campaigns default list (useOperations)', handler: handleListOperations },
   { phase: 'B', path: '/api/v1/operations/stats', consumer: 'ops Campaigns (useOperationsStats); MCP smoke probe', handler: handleOperationsStats },
@@ -133,7 +133,7 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // ── Phase C — Brands + Threat Actors ──
   // handleListBrands keys on tab/sort/limit only (view + range are not
   // read); this is the Observatory side panel's Top Targeted Brands load.
-  { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands)', handler: handleListBrands },
+  { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys and stay cold', handler: handleListBrands },
   { phase: 'C', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
   { phase: 'C', path: '/api/threat-actors?status=active', consumer: 'ops ThreatActors default active-only list (useThreatActors)', handler: handleListThreatActors },
   { phase: 'C', path: '/api/threat-actors/stats', consumer: 'ops ThreatActors (useThreatActorStats)', handler: handleThreatActorStats },
@@ -550,15 +550,17 @@ async function runNavigatorImpl(
   // The exact targets (and the consumer each serves) are the module-level
   // NAVIGATOR_WARM_TARGETS table — 21 warms across the four phases.
   //
-  // Math at ~8,640 ticks/month if Navigator runs clean:
-  //   A:  21,600 warms (was 43,200 before throttle, -50%)
-  //   A2: 17,280 (was 51,840, -67%)
-  //   B:  14,400 (was 43,200, -67%)
-  //   C:  11,520 (was 69,120, -83%)
-  // Total: ~65K warms/month, down from ~207K (-69%). Phase A throttled
-  // from every-5-min to every-10-min as part of the D1-budget cleanup;
-  // pairs with the 15-min KV TTL on Observatory endpoints so cold-load
-  // UX stays well under the cache-miss window.
+  // Math over a 30-day month if Navigator runs clean (*/5 cron = 8,640
+  // ticks; the minute gates below pick the subset each phase runs on):
+  //   A:  5 warms × 4,320 ticks (minute % 10) = 21,600
+  //   A2: 6 warms × 2,880 ticks (minute % 15) = 17,280
+  //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
+  //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
+  // Total: ~61.9K warms/month, vs ~181K (21 × 8,640) if every target ran
+  // every tick (-66%). Phase A throttled from every-5-min to every-10-min
+  // as part of the D1-budget cleanup; pairs with the 15-min KV TTL on
+  // Observatory nodes/stats so cold-load UX stays inside the cache window.
+  // A2/B/C also drop out entirely while the D1 soft-cap below is tripped.
   const minute = scheduledTime.getUTCMinutes();
   const runPhaseA  = minute % 10 === 0;  // :00, :10, :20, :30, :40, :50
   const runPhaseA2 = minute % 15 === 0;  // :00, :15, :30, :45
@@ -592,14 +594,20 @@ async function runNavigatorImpl(
   let cacheWarmed = 0;
   if (!isOverCap() && status !== 'failed') {
     const warmStart = Date.now();
-    // Run one phase's targets in parallel; count fulfilled warms.
+    let cacheWarmFailed = 0;
+    // Run one phase's targets in parallel (allSettled — one bad target
+    // can't sink the rest). Count only real warms: handlers catch their
+    // own errors and resolve with a 500 Response, so a fulfilled promise
+    // alone doesn't mean the KV key was written.
     const warmPhase = async (phase: NavigatorWarmPhase): Promise<number> => {
       const results = await Promise.allSettled(
         NAVIGATOR_WARM_TARGETS
           .filter(t => t.phase === phase)
           .map(t => t.handler(new Request(`https://averrow.com${t.path}`), env)),
       );
-      return results.filter(r => r.status === 'fulfilled').length;
+      const ok = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
+      cacheWarmFailed += results.length - ok;
+      return ok;
     };
     try {
       // Phase A: Observatory landing (highest impact — 10-15s cold load).
@@ -631,7 +639,7 @@ async function runNavigatorImpl(
         cacheWarmed += await warmPhase('C');
       }
 
-      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed in ${Date.now() - warmStart}ms (A=${runPhaseA} A2=${runPhaseA2} B=${runPhaseB} C=${runPhaseC})`);
+      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed in ${Date.now() - warmStart}ms (A=${runPhaseA} A2=${runPhaseA2} B=${runPhaseB} C=${runPhaseC})`);
     } catch (e) {
       console.error('[navigator] cache-warm error:', e instanceof Error ? e.message : String(e));
     }
