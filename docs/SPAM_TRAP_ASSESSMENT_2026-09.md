@@ -155,5 +155,9 @@ APWG eCX; OpenPhish.
   would be a scheduled external send, with an alert if it isn't captured.
   That needs an outbound sender outside Cloudflare, since Email Routing
   can't receive mail the account itself sends. Not built here.
-- `abuse_inbox_messages` silence goes unwatched unless the classifier alert
-  covers it. It went quiet on the same day and nothing fired.
+- ~~`abuse_inbox_messages` silence goes unwatched unless the classifier alert
+  covers it. It went quiet on the same day and nothing fired.~~ Closed
+  2026-10-03: Flight Control's `platform_abuse_mailbox_inbound_stale` guard
+  (severity `high`) fires when no message has arrived in >7 days (migration
+  0274 widens the CHECK). Routing rules were re-pointed to `averrow-worker`
+  the same day.

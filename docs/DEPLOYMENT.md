@@ -109,6 +109,7 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - **Verify before trusting the alert:** `pnpm run db:migrate:status:prod` should list 0272 as applied, and `SELECT sql FROM sqlite_master WHERE name = 'notifications'` should contain `platform_ai_calls_failing`. `test/notification-check-drift.test.ts` only proves the migration *file* covers the registry, not that production applied it.
 - 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
+- **0274** (`0274_notifications_add_abuse_mailbox_inbound_stale.sql`) is the same swap for `platform_abuse_mailbox_inbound_stale` (Flight Control's abuse-mailbox inbound freshness guard). Same ordering rule and same verification: the `notifications` schema must contain `platform_abuse_mailbox_inbound_stale`.
 
 ### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
 

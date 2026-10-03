@@ -799,6 +799,32 @@ export function renderPlatformSpamTrapCaptureStale(v: PlatformSpamTrapCaptureSta
   };
 }
 
+export interface PlatformAbuseMailboxInboundStaleVars {
+  days_since_message: number;
+  threshold_days: number;
+}
+export function renderPlatformAbuseMailboxInboundStale(v: PlatformAbuseMailboxInboundStaleVars): RenderedTemplate {
+  const days = Math.floor(v.days_since_message);
+  return {
+    title: `Abuse mailbox silent — no inbound mail in ${days}d`,
+    message:
+      `No message has reached abuse_inbox_messages in ${days} days (alert threshold ${v.threshold_days}d). ` +
+      `The Worker's email() handler never rejects, so senders are most likely getting a ` +
+      `"550 5.1.1 Address does not exist" bounce from Cloudflare Email Routing before the Worker runs — ` +
+      `the failure mode after the 2026-07-17 Worker rename unbound every routing rule.`,
+    reason_text: `Platform alert — operational only. Public reports to abuse@/phishing@/report@/security@averrow.ca are being lost.`,
+    recommended_action:
+      `Cloudflare dashboard → averrow.ca → Email → Email Routing → Routing rules: confirm the catch-all and each ` +
+      `abuse@/phishing@/report@/security@ rule is enabled with action "Send to Worker → averrow-worker" ` +
+      `(repeat for trustradar.ca and lrxradar.com). Then send a canary to phishing@averrow.ca and check ` +
+      `the Activity log. See docs/EMAIL_ROUTING_RUNBOOK.md.`,
+    link: PLATFORM_ADMIN_LINK,
+    group_key: `platform_abuse_mailbox_inbound_stale:${todayKey()}`,
+    audience: 'super_admin',
+    severity: 'high',
+  };
+}
+
 // ─── Emit helper (mirrors emitIntelNotification) ─────────────────────
 
 export async function emitPlatformNotification<T extends NotificationType>(

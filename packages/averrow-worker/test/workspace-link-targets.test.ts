@@ -97,6 +97,7 @@ describe("platform notification templates deep-link to canonical SPA URLs", () =
     ["aiCallsFailing", () => T.renderPlatformAiCallsFailing({ hours_since_last_call: 5, threshold_hours: 2, min_attempts: 3, failing_agents: [{ agent_id: "analyst", attempted: 4, first_failure_kind: "api_error", first_error: "boom" }] }), AGENTS],
     ["spamTrapSeedingStalled", () => T.renderPlatformSpamTrapSeedingStalled({ days_since_seed: 9, threshold_days: 7 }), AGENTS],
     ["spamTrapCaptureStale", () => T.renderPlatformSpamTrapCaptureStale({ days_since_capture: 9, threshold_days: 7 }), ADMIN],
+    ["abuseMailboxInboundStale", () => T.renderPlatformAbuseMailboxInboundStale({ days_since_message: 9, threshold_days: 7 }), ADMIN],
     ["d1BudgetWarn", () => T.renderPlatformD1BudgetWarn(budget), ADMIN],
     ["d1BudgetBreach", () => T.renderPlatformD1BudgetBreach(budget), ADMIN],
     ["kvBudgetWarn", () => T.renderPlatformKvBudgetWarn(budget), ADMIN],
