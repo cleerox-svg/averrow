@@ -288,7 +288,7 @@ export async function handleIntelCriticalBanner(
           kind: "provider_surge",
           title: surge.title,
           subtitle: surge.message,
-          link: surge.link ?? "/providers",
+          link: surge.link ?? "/explore?tab=providers",
           severity: (surge.severity === "critical" ? "critical" : "high"),
           ts: surge.created_at,
         });
@@ -415,7 +415,7 @@ export async function handleIntelCriticalBanner(
             kind: "open_critical_alerts",
             title: `${n} open critical alert${n === 1 ? "" : "s"}`,
             subtitle: "Critical-severity alerts awaiting triage.",
-            link: "/alerts?severity=critical&status=new",
+            link: "/console?tab=alerts&severity=critical&status=new",
             severity: "critical",
             ts: new Date().toISOString(),
           });

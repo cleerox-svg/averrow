@@ -530,8 +530,8 @@ export async function runFeed(
           type: 'feed_health',
           severity: 'high',
           title: `Feed degraded: ${config.display_name}`,
-          message: `${config.display_name} returned errors. Check Admin → Feeds.`,
-          link: '/admin/feeds',
+          message: `${config.display_name} returned errors. Check Operations → Feeds.`,
+          link: '/admin/operations?tab=feeds',
           metadata: { feed_name: config.feed_name },
         });
       } catch (e) {
@@ -719,7 +719,7 @@ async function autoPauseFeed(
       message: isAuthError
         ? `${config.display_name} was paused after ${failureCount} consecutive HTTP 401/403 responses. The API key needs rotation; the feed will stay paused until manually resumed. Last error: ${truncatedError}`
         : `${config.display_name} was paused after ${failureCount} consecutive failures (threshold ${threshold}). Last error: ${truncatedError}`,
-      link: '/admin/feeds',
+      link: '/admin/operations?tab=feeds',
       metadata: {
         feed_name: config.feed_name,
         auto_paused: true,

@@ -225,14 +225,15 @@ export interface PlatformBriefingSilentVars {
 // ─── Renderers (every one returns audience='super_admin') ────────────
 //
 // Link targets must match real routes in averrow-ops/src/App.tsx:
-//   /agents (NOT /admin/agents)
-//   /feeds  (NOT /admin/feeds)
+//   /admin/operations?tab=agents (NOT /admin/agents, which 404s)
+//   /admin/operations?tab=feeds  (NOT /admin/feeds, which 404s)
+//   (the bare /agents and /feeds paths only redirect to these)
 //   /admin  (admin dashboard — covers diagnostics, budget for now;
 //            no dedicated /admin/diagnostics or /admin/budget exist)
 // Get this wrong and the push notification deep-links to a 404.
 
-const PLATFORM_AGENTS_LINK = '/agents';
-const PLATFORM_FEEDS_LINK = '/feeds';
+const PLATFORM_AGENTS_LINK = '/admin/operations?tab=agents';
+const PLATFORM_FEEDS_LINK = '/admin/operations?tab=feeds';
 const PLATFORM_ADMIN_LINK = '/admin';
 
 export function renderPlatformD1BudgetWarn(v: PlatformD1BudgetVars): RenderedTemplate {
