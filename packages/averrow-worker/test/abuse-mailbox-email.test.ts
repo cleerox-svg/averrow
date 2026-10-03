@@ -4,6 +4,10 @@ import {
   extractInnerRfc822Message,
   extractAttachments,
   mergeUrlLists,
+  extractBodyParts,
+  decodeEncodedWords,
+  decodeTransferEncoding,
+  htmlToText,
 } from "../src/handlers/abuseMailboxEmail";
 import type { Env } from "../src/types";
 
@@ -222,6 +226,78 @@ describe("handleAbuseMailboxEmail", () => {
     expect(authResultsJson).toMatch(/"dmarc":"fail"/);
   });
 
+  it("2026-10-03: parses a Gmail inline forward (multipart/alternative, QP, 9-dash marker, signature on top)", async () => {
+    // Prod regression: every Gmail forward was cut at the
+    // "---------- Forwarded message ---------" line (it matched the old
+    // `--word` boundary heuristic), so the row held only the reporter's
+    // signature, original_from = the reporter, 0 URLs, and an undecoded
+    // subject. Shape below mirrors the Gmail mobile client.
+    const captured: CapturedRun[] = [];
+    const env = makeEnv({ alias: { org_id: 42, alias: "phishing@averrow.ca" } }, captured);
+    const raw = [
+      "From: Claude Leroux <cleerox@gmail.com>",
+      "To: phishing@averrow.ca",
+      "Subject: =?UTF-8?Q?Fwd=3A_We=27ve_blocked_your_account=21_=F0=9F=9A=AB_Your_photos_an?=",
+      " =?UTF-8?Q?d_videos_will_be_deleted?=",
+      'Content-Type: multipart/alternative; boundary="000000000000a1b2c3d4"',
+      "",
+      "--000000000000a1b2c3d4",
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "Claude Leroux",
+      "519-492-0972",
+      "",
+      "---------- Forwarded message ---------",
+      "From: Cloud Storage <no-reply@cloud-storage-alerts.example>",
+      "Date: Sat, Oct 3, 2026 at 5:58=E2=80=AFPM",
+      "Subject: We've blocked your account! =F0=9F=9A=AB",
+      "To: <cleerox@gmail.com>",
+      "",
+      "",
+      "Your storage is full. Your photos and videos will be deleted. Upgrade now: htt=",
+      "ps://cloud-storage-alerts.example/upgrade?id=3D42",
+      "",
+      "--000000000000a1b2c3d4",
+      'Content-Type: text/html; charset="UTF-8"',
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      '<div>Claude Leroux</div><div>---------- Forwarded message ---------</div><a href=3D"https://hidden-pay=',
+      'load.example/login">Restore access</a>',
+      "",
+      "--000000000000a1b2c3d4--",
+    ].join("\r\n");
+    const msg = makeMessage("phishing@averrow.ca", "cleerox@gmail.com", raw);
+    await handleAbuseMailboxEmail(msg, env);
+
+    const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
+    expect(insert).toBeDefined();
+    expect(insert?.binds[6]).toBe("no-reply@cloud-storage-alerts.example");  // original_from: the sender, not the reporter
+    expect(insert?.binds[7]).toBe("We've blocked your account! 🚫");          // inner subject, QP-decoded
+    expect(insert?.binds[8]).toContain("photos and videos will be deleted"); // body snippet past the signature
+    const urls = JSON.parse(insert?.binds[13] as string) as Array<{ url: string }>;
+    expect(urls.map((u) => u.url)).toEqual(expect.arrayContaining([
+      "https://cloud-storage-alerts.example/upgrade?id=42",  // QP soft break + =3D decoded
+      "https://hidden-payload.example/login",               // only in the HTML href
+    ]));
+    expect(insert?.binds[11]).toContain("Forwarded message");               // raw_body is the whole text part
+  });
+
+  it("does not take the brand from the reporter's own domain when nothing forwarded was recovered", async () => {
+    const captured: CapturedRun[] = [];
+    const env = makeEnv({ alias: { org_id: 42, alias: "phishing@averrow.ca" } }, captured);
+    const raw = [
+      "From: Reporter <someone@gmail.com>",
+      "To: phishing@averrow.ca",
+      "Subject: weird text I got",
+      "",
+      "no links, no forward",
+    ].join("\r\n");
+    await handleAbuseMailboxEmail(makeMessage("phishing@averrow.ca", "someone@gmail.com", raw), env);
+    const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
+    expect(insert?.binds[2]).toBeNull();
+  });
+
   it("counts attachments via Content-Disposition header", async () => {
     const captured: CapturedRun[] = [];
     const env = makeEnv({ alias: { org_id: 42, alias: "verify-acme@averrow.com" } }, captured);
@@ -246,5 +322,50 @@ describe("handleAbuseMailboxEmail", () => {
     await handleAbuseMailboxEmail(msg, env);
     const insert = captured.find((c) => c.sql.includes("INSERT INTO abuse_inbox_messages"));
     expect(insert?.binds[9]).toBe(1);  // attachment_count
+  });
+});
+
+describe("MIME body helpers", () => {
+  it("decodeEncodedWords joins adjacent words and decodes multi-byte UTF-8", () => {
+    expect(decodeEncodedWords("=?UTF-8?Q?Fwd=3A_caf=C3=A9_?= =?UTF-8?B?8J+aqw==?=")).toBe("Fwd: café 🚫");
+    expect(decodeEncodedWords("plain subject")).toBe("plain subject");
+  });
+
+  it("decodeTransferEncoding handles base64 with a declared charset", () => {
+    const b64 = btoa(String.fromCharCode(...new TextEncoder().encode("Vérifiez https://x.example/a")));
+    expect(decodeTransferEncoding(b64, "base64", "utf-8")).toBe("Vérifiez https://x.example/a");
+    expect(decodeTransferEncoding(btoa("caf\xe9"), "base64", "iso-8859-1")).toBe("café");
+  });
+
+  it("extractBodyParts walks nested multiparts and skips attachments", () => {
+    const raw = [
+      'Content-Type: multipart/mixed; boundary="M"',
+      "",
+      "--M",
+      'Content-Type: multipart/alternative; boundary="A"',
+      "",
+      "--A",
+      "Content-Type: text/plain; charset=UTF-8",
+      "",
+      "line one ----- not a boundary",
+      "--A",
+      "Content-Type: text/html; charset=UTF-8",
+      "",
+      "<p>html</p>",
+      "--A--",
+      "--M",
+      "Content-Type: text/plain",
+      'Content-Disposition: attachment; filename="notes.txt"',
+      "",
+      "attachment text",
+      "--M--",
+    ].join("\r\n");
+    const parts = extractBodyParts(raw, 10_000);
+    expect(parts.text).toBe("line one ----- not a boundary");
+    expect(parts.html).toContain("<p>html</p>");
+  });
+
+  it("htmlToText keeps link targets", () => {
+    expect(htmlToText('<p>Hi</p><a href="https://p.example/x">Click</a>')).toContain("Click (https://p.example/x)");
   });
 });
