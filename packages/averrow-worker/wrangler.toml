@@ -162,7 +162,8 @@ class_name = "GeoipRefreshWorkflow"
 
 # Per-message abuse-mailbox triage — dispatched by the Email Worker
 # (handlers/abuseMailboxEmail.ts) right after a report is stored + acked.
-# Steps: rules verdict (+ AI second opinion only when AI_MODE allows and
+# Steps: rules verdict (+ AI second opinion — Workers AI when ABUSE_AI_PROVIDER
+#        = workers_ai, else Anthropic when AI_MODE allows — and
 # the rules said review) → sleep ~2 min → exactly-once determination email
 # (atomic determination_sent_at claim). Instance id `abuse-<messageId>`.
 # The hourly `17 * * * *` cron remains the sweeper for anything missed.
@@ -338,6 +339,12 @@ new_classes = ["CertStreamMonitor"]
 subrequests = 50_000
 cpu_ms = 300_000
 
+# ─── Workers AI ───────────────────────────────────────────────
+# Production only (bindings don't inherit into [env.*]); staging/dev run
+# without it, so the abuse mailbox stays rules-only there.
+[ai]
+binding = "AI"
+
 # ─── Environment variables ────────────────────────────────────
 [vars]
 ENVIRONMENT = "production"
@@ -361,6 +368,12 @@ TENANT_DIGEST_MODE = "off"
 # Set to rules_only while the Anthropic account is unfunded; flip back to
 # 'enabled' only after credit is restored (or Workers AI lands in Phase 2).
 AI_MODE = "rules_only"
+# Abuse-mailbox AI second opinion provider (docs/ABUSE_MAILBOX.md).
+# 'workers_ai' = Cloudflare Workers AI via the [ai] binding below (postpaid,
+#                independent of AI_MODE): verdicts are clamped to "likely
+#                phishing/malware" / spam / review — never benign, never
+#                promoted. Remove or change the value to turn it off.
+ABUSE_AI_PROVIDER = "workers_ai"
 
 # ─── Secrets (set via: wrangler secret put <NAME>) ────────────
 # ANTHROPIC_API_KEY        — Anthropic API key for Claude Haiku AI analysis

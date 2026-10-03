@@ -134,6 +134,13 @@ export interface Env {
    *  Flight Control's platform_ai_calls_failing stays quiet.
    *  'enabled' or unset (the default) → AI calls proceed as normal. */
   AI_MODE?: 'rules_only' | 'enabled' | (string & {});
+  /** Workers AI binding (wrangler.toml [ai]). Optional: absent in tests and
+   *  any env without the binding — callers must degrade (lib/workers-ai.ts). */
+  AI?: Ai;
+  /** Abuse-mailbox AI second opinion provider. 'workers_ai' → Cloudflare
+   *  Workers AI (lib/workers-ai.ts), independent of AI_MODE. Unset / other →
+   *  the Anthropic path, which AI_MODE=rules_only blocks. Kill switch. */
+  ABUSE_AI_PROVIDER?: string;
   /** Override the daily-briefing recipient. Defaults to claude.leroux@averrow.com when unset. */
   BRIEFING_RECIPIENT?: string;
   /** HMAC secret for List-Unsubscribe one-click tokens

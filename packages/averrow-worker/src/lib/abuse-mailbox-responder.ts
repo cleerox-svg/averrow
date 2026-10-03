@@ -699,7 +699,7 @@ export const AI_EMAIL_NOTE: Record<string, string> = {
 };
 
 /** Verdict sources that are automated (no human decided the action). */
-const AUTOMATED_SOURCES: ReadonlySet<string> = new Set(["rules", "ai", "auto_graduated"]);
+const AUTOMATED_SOURCES: ReadonlySet<string> = new Set(["rules", "ai", "workers_ai", "auto_graduated"]);
 
 /**
  * Human-readable "Action taken" for an ai_action value. An automated
@@ -720,6 +720,11 @@ export function humanizeAction(action: string | null | undefined, classifiedBy?:
 
 function isRulesVerdict(ctx: DeterminationContext): boolean {
   return ctx.classifiedBy === "rules";
+}
+
+/** Rules are deterministic and open-model scores aren't calibrated: no %. */
+function hidesConfidence(ctx: DeterminationContext): boolean {
+  return ctx.classifiedBy === "rules" || ctx.classifiedBy === "workers_ai";
 }
 
 /** Analyst-notes text: fixed per-rule sentence for rules verdicts, fixed
@@ -825,8 +830,22 @@ const LIKELY_PHISHING_COPY: VerdictDef = {
   accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
 };
 
+/** Workers AI (open-model second opinion): malware is "likely" too. */
+const LIKELY_MALWARE_COPY: VerdictDef = {
+  label: "Likely malware",
+  lead:
+    "This message shows signs of delivering malicious software, though it doesn't match anything we've already " +
+    "confirmed. Don't open the attachment or click the links. Our threat team will look at it.",
+  nextSteps: VERDICT_COPY.malware!.nextSteps,
+  accent: "#C83C3C", pillBg: "#FBEDED", pillFg: "#911B1B", pillBorder: "#E8B5B5",
+};
+
 function verdictCopyFor(ctx: DeterminationContext): VerdictDef {
   if (isRulesVerdict(ctx) && ctx.rulesRule === "H1") return LIKELY_PHISHING_COPY;
+  if (ctx.classifiedBy === "workers_ai") {
+    if (ctx.classification === "phishing") return LIKELY_PHISHING_COPY;
+    if (ctx.classification === "malware") return LIKELY_MALWARE_COPY;
+  }
   return VERDICT_COPY[ctx.classification] ?? VERDICT_COPY.ambiguous!;
 }
 
@@ -988,7 +1007,7 @@ function determinationHtml(ctx: DeterminationContext, b: AbuseBranding): string 
     : "";
 
   // Rules verdicts are deterministic — a confidence % would be invented.
-  const pillText = isRulesVerdict(ctx) ? "Verdict" : `Verdict · ${ctx.confidence}% confidence`;
+  const pillText = hidesConfidence(ctx) ? "Verdict" : `Verdict · ${ctx.confidence}% confidence`;
   const body = `
     <div style="display:inline-block;padding:6px 12px;margin:0 0 16px;background:${v.pillBg};color:${v.pillFg};border:1px solid ${v.pillBorder};border-radius:999px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">${escapeHtml(pillText)}</div>
     <p style="margin:0 0 14px;color:#1A2536;">${escapeHtml(v.lead)}</p>
@@ -1033,7 +1052,7 @@ function determinationText(ctx: DeterminationContext, b: AbuseBranding): string 
     ? "\n\nWhat you should do:\n" + steps.map((s) => `  - ${s}`).join("\n")
     : "";
 
-  const headline = isRulesVerdict(ctx)
+  const headline = hidesConfidence(ctx)
     ? `Determination: ${v.label}`
     : `Determination: ${v.label} (${ctx.confidence}% confidence)`;
   return `${headline}

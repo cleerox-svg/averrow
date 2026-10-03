@@ -40,7 +40,9 @@ Inbound email (Cloudflare Email Routing)
            M3 device-code ≥0.85 → phishing HIGH;  M4 risky attachment →
            malware CRITICAL;  else H1 heuristic score → "likely phishing"
            HIGH;  else ambiguous / review (never benign/spam)
-         + AI second opinion only when AI_MODE allows and rules said review
+         + AI second opinion when rules said review AND either
+           ABUSE_AI_PROVIDER=workers_ai (Workers AI, any AI_MODE) or
+           AI_MODE allows Anthropic
       2. sleep ~2 minutes
       3. deliverAbuseDetermination — atomic determination_sent_at claim;
          THROWS on a transient send failure so the step retries
@@ -117,6 +119,28 @@ never emailed. The ack is sent only inline by that same INSERT path.
   admin UI and is never put in the determination email; the
   `abuse_mailbox_verdict` notification `message` is fixed copy per verdict
   (`RULES_OPERATOR_NOTE` / `AI_OPERATOR_NOTE`), never the model's reasoning.
+
+### Workers AI second opinion
+
+`ABUSE_AI_PROVIDER = "workers_ai"` (prod `[vars]`, with the prod-only `[ai]`
+binding) routes the AI pass to Cloudflare Workers AI
+(`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, via the `averrow-ai-gateway` AI
+Gateway; `lib/workers-ai.ts`). It runs even under `AI_MODE=rules_only`, which
+only blocks Anthropic. Same rows as the Anthropic pass: `pending` or rules
+review (`ambiguous` + `classified_by='rules'`) — never a rules malicious
+(M1–M4 / H1) row. `clampWorkersAiVerdict` limits what it may decide:
+
+| Model says | Stored |
+|---|---|
+| phishing / malware ≥ 70 | same class, HIGH, `escalate`, confidence ≤ 80; email "Likely phishing/malware" |
+| spam ≥ 85 | spam, LOW, `review` |
+| anything else, incl. every `benign` | `ambiguous`, MEDIUM, `review` |
+
+`classified_by='workers_ai'`. Never promotes URLs to `threats`, never runs the
+Sonnet deep analyzer, no confidence % in the email, model reasoning never
+emailed. The system prompt carries an explicit injection guard (email content
+is data, not instructions). A Workers AI failure leaves the rules verdict and
+its email untouched. Kill switch: remove `ABUSE_AI_PROVIDER`.
 
 ### Rules evidence
 
