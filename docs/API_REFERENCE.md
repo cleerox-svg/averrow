@@ -797,7 +797,7 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/signals` | User | List signals |
+| GET | `/api/signals` | Staff | List the latest scans as signals (`?limit=` max 50, `?offset=`). Reads the **global** `scans` table — every user's scans plus anonymous homepage scans — so it is staff-only (`requireStaff`, auditor included): no token → 401, tenant `client` → 403. Was unauthenticated until 2026-10 despite this row saying `User`; no first-party UI calls it. |
 | POST | `/api/signals` | Staff | Create signal |
 
 ## Scans

@@ -83,7 +83,15 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   router.get("/api/observatory/operations", (request: Request, env: Env) => handleObservatoryOperations(request, env));
 
   // ─── Signals ──────────────────────────────────────────────────────
-  router.get("/api/signals", (request: Request, env: Env) => handleSignals(request, env));
+  // GET is staff-only (appsec, 2026-10): handleSignals reads the GLOBAL
+  // `scans` table — every user's scans plus anonymous homepage scans — so
+  // it must never be reachable unauthenticated or by a tenant `client`.
+  // No first-party UI calls it; requireStaff admits auditor (read-only).
+  router.get("/api/signals", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleSignals(request, env);
+  });
   router.post("/api/signals", async (request: Request, env: Env) => {
     const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
