@@ -8,6 +8,15 @@
 //   GET /api/observatory/live       — 20 most recent threats (live feed)
 //   GET /api/observatory/brand-arcs — Arcs targeting a specific brand
 //   GET /api/observatory/stats      — Summary stats bar
+//   GET /api/observatory/heatmap    — Heatmap points
+//   GET /api/observatory/operations — Active NEXUS clusters
+//
+// Auth: every route is wrapped in requireStaff at the route layer
+// (routes/dashboard.ts). Handlers here do no auth of their own — the
+// responses carry targeted brand names and malicious URLs, so never
+// register one of these on a public route. Navigator calls them
+// directly for KV pre-warm; the `observatory_*` cache keys are
+// therefore staff-audience only.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
