@@ -1,13 +1,13 @@
 /**
  * ThreatPushHub — Cloudflare Durable Object for WebSocket threat push.
  *
- * Manages all connected browser clients. When a new threat is ingested
- * the feed runner calls broadcastThreat() which pushes the event to all
- * active WebSocket sessions.
- *
- * Usage:
- *   - GET /ws/threats  → upgrades to WebSocket, adds client to this DO
- *   - POST /ws/threats/broadcast (internal) → broadcast threat payload
+ * DORMANT (2026-10): no Worker route upgrades into this DO and nothing
+ * calls broadcastThreat() / POSTs /broadcast. The former unauthenticated
+ * `GET /ws/threats` route in routes/public.ts was removed (appsec). The
+ * class + THREAT_PUSH_HUB binding stay deployed because deleting a DO
+ * class requires a `deleted_classes` migration tag in wrangler.toml.
+ * If live push is wired, mount the upgrade route behind a staff guard
+ * (pinned by test/ws-threats-route.test.ts).
  */
 
 export interface ThreatPushMessage {

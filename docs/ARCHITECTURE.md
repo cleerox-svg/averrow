@@ -287,7 +287,7 @@ All requests pass through the Worker first, enabling API routing. The `not_found
 
 ## Durable Objects
 
-The `ThreatPushHub` Durable Object (`packages/averrow-worker/src/durableObjects/ThreatPushHub.ts`) manages WebSocket connections for real-time threat push notifications. When new threats are ingested, the feed runner broadcasts events to all connected browser sessions.
+The `ThreatPushHub` Durable Object (`packages/averrow-worker/src/durableObjects/ThreatPushHub.ts`) is **dormant**: the class and `THREAT_PUSH_HUB` binding are still deployed, but no route upgrades into it (the unauthenticated `/ws/threats` route was removed in 2026-10), no client connects, and nothing broadcasts through it — the feed runner never called `broadcastThreat()`. Live push, if wanted, must re-add a staff-guarded route. `CertStreamMonitor` is the only active Durable Object.
 
 ## Cron Triggers
 
