@@ -30,7 +30,7 @@ const BRAND = "brand_shared";
 
 function setup(): { raw: SqliteDb; env: Env } {
   const raw = openDerivedDb([
-    "users", "org_members", "notification_subscriptions", "notification_preferences",
+    "users", "org_members", "org_brands", "notification_subscriptions", "notification_preferences",
     "notification_preferences_v2", "notifications", "notification_deliveries", "notification_type_mutes",
   ]);
   const insert = (table: string, row: Record<string, unknown>) => {
@@ -43,7 +43,10 @@ function setup(): { raw: SqliteDb; env: Env } {
   }
   insert("org_members", { org_id: ORG_A, user_id: "usr_a", role: "analyst", status: "active" });
   insert("org_members", { org_id: ORG_B, user_id: "usr_b", role: "analyst", status: "active" });
-  // Both orgs' users subscribe to the SAME brand.
+  // Both orgs own (monitor) the SAME brand — the case restrictToOrgMembers
+  // exists for — and both orgs' users subscribe to it.
+  insert("org_brands", { org_id: ORG_A, brand_id: BRAND });
+  insert("org_brands", { org_id: ORG_B, brand_id: BRAND });
   for (const uid of ["usr_a", "usr_b"]) {
     insert("notification_subscriptions", { user_id: uid, brand_id: BRAND, level: "default" });
   }

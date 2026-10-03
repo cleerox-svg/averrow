@@ -763,9 +763,9 @@ free text. They remain on `lookalike_domains` for staff
 | POST | `/api/notifications/:id/done` | User | Mark done (Linear-style fourth state) |
 | GET | `/api/notifications/preferences/v2` | User | Per-channel severity floors + digest mode + super_admin opt-in (auto-seeds row if missing) |
 | PUT | `/api/notifications/preferences/v2` | User | Patch any subset of v2 fields |
-| GET | `/api/notifications/subscriptions` | User | List per-brand subscriptions joined with brand metadata |
-| PUT | `/api/notifications/subscriptions/:brandId` | User | Set level (watching\|default\|ignored), optional `snoozed_until` |
-| DELETE | `/api/notifications/subscriptions/:brandId` | User | Remove subscription |
+| GET | `/api/notifications/subscriptions` | User | List per-brand subscriptions joined with brand metadata. For `client` users, rows on brands no org they actively belong to owns are omitted |
+| PUT | `/api/notifications/subscriptions/:brandId` | User + brand access | Set level (watching\|default\|ignored), optional `snoozed_until`. **Org-ownership required:** staff (any non-`client` role) may watch any brand; a `client` only a brand in `org_brands` for an org where they are an active `org_members` row — otherwise `403` (also `403`, not `404`, for an unknown id, so ids can't be enumerated). Tenant-audience fan-out applies the same rule to recipients (`lib/brand-subscription-access.ts`) |
+| DELETE | `/api/notifications/subscriptions/:brandId` | User | Remove the caller's own subscription (no brand-access check — always allowed so stale rows can be cleaned up) |
 
 ### Web Push devices
 

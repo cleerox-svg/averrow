@@ -10,6 +10,7 @@
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { generateInsight, checkCostGuard } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
+import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import { renderIntelSectorTrend } from "../lib/intel-templates";
 
 export const observerAgent: AgentModule = {
@@ -43,6 +44,7 @@ export const observerAgent: AgentModule = {
     { kind: "d1_table", name: "threat_narratives" },
     { kind: "d1_table", name: "threat_signals" },
     { kind: "d1_table", name: "threats" },
+    { kind: "d1_table", name: "users" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_outputs" },
@@ -1023,18 +1025,23 @@ export const observerAgent: AgentModule = {
 
                 // Per-user fan-out via subscriptions. We pick users
                 // who have ≥1 subscription on a brand whose sector
-                // matches.
+                // matches. Only subscriptions the user may still watch
+                // count (SUBSCRIBER_MAY_WATCH_BRAND_SQL): a `client`'s
+                // row on a brand no org of theirs owns neither qualifies
+                // them nor feeds the affected/total counts.
                 const usersInSector = await env.DB.prepare(`
                   SELECT DISTINCT ns.user_id,
                          COUNT(DISTINCT CASE WHEN t.id IS NOT NULL THEN ns.brand_id END) AS affected,
                          COUNT(DISTINCT ns.brand_id) AS total
                     FROM notification_subscriptions ns
+                    JOIN users u ON u.id = ns.user_id
                     JOIN brands b ON b.id = ns.brand_id
                     LEFT JOIN threats t
                       ON t.target_brand_id = ns.brand_id
                      AND t.created_at >= datetime('now', '-7 days')
                    WHERE b.sector = ?
                      AND ns.level != 'ignored'
+                     AND ${SUBSCRIBER_MAY_WATCH_BRAND_SQL}
                    GROUP BY ns.user_id
                 `).bind(sector.sector).all<{ user_id: string; affected: number; total: number }>();
 

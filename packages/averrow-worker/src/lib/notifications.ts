@@ -38,6 +38,7 @@ import {
   type PushPayload,
   type QuietHoursPrefs,
 } from './push';
+import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from './brand-subscription-access';
 
 // Re-exported for callers that already imported these names.
 export type NotificationType = NotificationEventKey;
@@ -65,7 +66,9 @@ interface CreateNotificationOpts {
    * Audience routing. Defaults to 'tenant'. When 'tenant' + a brandId is
    * resolvable (from `brandId` arg or `metadata.brand_id`), recipients
    * are users with a notification_subscriptions row at level != 'ignored'
-   * for that brand. When 'super_admin', recipients are all users with
+   * for that brand — `client` subscribers only while an org they actively
+   * belong to owns the brand (SUBSCRIBER_MAY_WATCH_BRAND_SQL; staff are
+   * unaffected). When 'super_admin', recipients are all users with
    * role='super_admin'. When 'all' (legacy), every active user — kept
    * for compatibility with system-wide events.
    */
@@ -290,12 +293,18 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     // restrictToOrgMembers: subscribers must also be active members of
     // that org (see the option's doc). A bound parameter, never inlined.
     const orgFilter = opts.restrictToOrgMembers !== undefined && opts.restrictToOrgMembers !== null;
+    // Org-ownership filter (always on): a `client` subscriber receives a
+    // brand's tenant content only while an org they actively belong to
+    // owns that brand. Staff subscribers are unaffected. This neutralises
+    // cross-tenant rows written before the PUT gate existed and rows left
+    // behind when an org releases a brand or a member leaves.
     const subscriberSql = `SELECT DISTINCT u.id
            FROM users u
            JOIN notification_subscriptions ns ON ns.user_id = u.id
           WHERE u.status = 'active'
             AND ns.brand_id = ?
-            AND ns.level != 'ignored'` + (orgFilter
+            AND ns.level != 'ignored'
+            AND ${SUBSCRIBER_MAY_WATCH_BRAND_SQL}` + (orgFilter
       ? `
             AND EXISTS (SELECT 1 FROM org_members om
                          WHERE om.user_id = u.id

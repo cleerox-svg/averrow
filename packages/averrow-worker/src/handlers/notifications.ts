@@ -13,7 +13,8 @@
 
 import { json } from "../lib/cors";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
-import type { Env } from "../types";
+import type { Env, UserRole } from "../types";
+import { userMayWatchBrand, SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import {
   USER_TOGGLEABLE_EVENTS,
   NOTIFICATION_CHANNELS,
@@ -635,14 +636,22 @@ interface SubscriptionRow {
 //
 // Returns the user's per-brand subscription list joined with brand
 // metadata so the UI can render brand names without a second fetch.
+//
+// Rows the caller may no longer watch (a `client` whose org does not own
+// the brand — e.g. a pre-gate cross-tenant row, or a brand the org has
+// since released) are omitted, so the brand name never leaks back. Such
+// rows are also inert at fan-out (SUBSCRIBER_MAY_WATCH_BRAND_SQL) and the
+// caller can still DELETE them by brand id.
 export async function handleListSubscriptions(request: Request, env: Env, userId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const rows = await env.DB.prepare(
       `SELECT ns.brand_id, b.name AS brand_name, ns.level, ns.snoozed_until, ns.updated_at
          FROM notification_subscriptions ns
+         JOIN users u ON u.id = ns.user_id
          LEFT JOIN brands b ON b.id = ns.brand_id
         WHERE ns.user_id = ?
+          AND ${SUBSCRIBER_MAY_WATCH_BRAND_SQL}
         ORDER BY ns.updated_at DESC`
     ).bind(userId).all<SubscriptionRow>();
     return json({ success: true, data: rows.results }, 200, origin);
@@ -653,7 +662,12 @@ export async function handleListSubscriptions(request: Request, env: Env, userId
 
 // PUT /api/notifications/subscriptions/:brandId
 // Body: { level: 'watching'|'default'|'ignored', snoozed_until?: string }
-export async function handleUpdateSubscription(request: Request, env: Env, brandId: string, userId: string): Promise<Response> {
+//
+// Org-ownership gate: staff (any non-`client` role) may watch any brand;
+// a `client` only a brand owned by an org they are an active member of
+// (lib/brand-subscription-access.ts). Otherwise 403 — a subscription is a
+// recipient grant for that brand's tenant-audience notifications.
+export async function handleUpdateSubscription(request: Request, env: Env, brandId: string, userId: string, role: UserRole): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const body = await request.json() as { level?: SubscriptionLevel; snoozed_until?: string | null };
@@ -662,6 +676,11 @@ export async function handleUpdateSubscription(request: Request, env: Env, brand
     }
     if (!brandId) {
       return json({ success: false, error: "brandId required" }, 400, origin);
+    }
+    // Access gate BEFORE the existence check so a client gets the same 403
+    // for "another org's brand" and "no such brand" (no id enumeration).
+    if (!(await userMayWatchBrand(env.DB, userId, role, brandId))) {
+      return json({ success: false, error: "Forbidden: brand is not in your organization" }, 403, origin);
     }
     const brandRow = await env.DB.prepare("SELECT id FROM brands WHERE id = ?")
       .bind(brandId).first<{ id: string }>();
