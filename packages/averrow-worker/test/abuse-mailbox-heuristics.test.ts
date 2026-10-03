@@ -282,3 +282,44 @@ describe("suspectPortion", () => {
     expect(suspectPortion(text)).toContain("Your account is suspended");
   });
 });
+
+describe("H1 family points (prod FP 2026-10-03)", () => {
+  it("a genuine MEGA notice (mega.nz linking blog.mega.io) does not fire on lure + a lone +1 link signal", () => {
+    const r = scoreAbuseHeuristics(input({
+      senderEmail: "support@mega.nz",
+      subject: "Your MEGA account has been locked",
+      bodyText: "We locked your account after suspicious activity. Verify your account to restore access.",
+      urls: [{ url: "https://blog.mega.io/what-is-credential-stuffing", host: "blog.mega.io" }],
+      brand: { id: "brand_mega", canonical_domain: "mega.nz" },
+    }));
+    expect(codes(r)).not.toContain("link_brand_in_foreign_host");
+    expect(r.families).toEqual(["lure"]);
+    expect(r.fired).toBe(false);
+  });
+});
+
+describe("H1 family points", () => {
+  it("a lone +1 link signal is not a second family", () => {
+    const r = scoreAbuseHeuristics(input({
+      senderEmail: "billing@shop.example",
+      subject: "Your account has been suspended — verify your account",
+      urls: [{ url: "https://cdn.other.example/x", host: "cdn.other.example" }],
+    }));
+    expect(codes(r)).toContain("link_sender_mismatch");
+    expect(r.score).toBeGreaterThanOrEqual(5);
+    expect(r.families).toEqual(["lure"]);
+    expect(r.fired).toBe(false);
+  });
+
+  it("a spoofer linking the brand's name on another TLD still scores", () => {
+    const r = scoreAbuseHeuristics(input({
+      senderEmail: "help@secure-notice.example",
+      subject: "Your account has been suspended",
+      bodyText: "PayPal: verify your account now.",
+      urls: [{ url: "https://paypal.help-center.top/x", host: "paypal.help-center.top" }],
+      brand: { id: "b", canonical_domain: "paypal.com" },
+    }));
+    expect(codes(r)).toContain("link_brand_in_foreign_host");
+    expect(r.fired).toBe(true);
+  });
+});

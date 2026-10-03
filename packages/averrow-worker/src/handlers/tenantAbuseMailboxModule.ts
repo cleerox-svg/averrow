@@ -259,19 +259,12 @@ export async function handleListAbuseInboxMessages(
     FROM abuse_inbox_messages
     WHERE org_id = ?
   `;
+  // Newest first — an inbox reads chronologically; the UI's status /
+  // classification filters narrow this list without reordering it.
+  // (Was severity-then-classification first, which buried new reports
+  // under months-old HIGH rows.)
   const orderBy = `
-    ORDER BY
-      CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-      CASE classification
-        WHEN 'phishing'  THEN 1
-        WHEN 'malware'   THEN 2
-        WHEN 'ambiguous' THEN 3
-        WHEN 'spam'      THEN 4
-        WHEN 'pending'   THEN 5
-        WHEN 'benign'    THEN 6
-        ELSE 7
-      END,
-      received_at DESC
+    ORDER BY received_at DESC, id DESC
     LIMIT ?
   `;
 

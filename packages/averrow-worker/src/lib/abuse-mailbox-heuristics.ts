@@ -30,6 +30,8 @@ import { isAuthFail, type AuthTriple } from "./abuse-mailbox-shared";
 
 export const H1_SCORE_THRESHOLD = 5;
 export const H1_MIN_FAMILIES = 2;
+/** Points a family must contribute to count as one of the H1_MIN_FAMILIES. */
+export const H1_MIN_FAMILY_POINTS = 2;
 /** At least one of these must contribute for H1 to fire. */
 export const H1_ACTION_FAMILIES: ReadonlySet<HeuristicFamily> = new Set(["lure", "attachment"]);
 /** Confidence stamped on an H1 verdict: below every M-rule (85–90). */
@@ -183,6 +185,7 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
 
   const senderDomain = input.senderEmail?.split("@")[1]?.trim().toLowerCase() || null;
   const senderReg = senderDomain ? registrableDomain(senderDomain) : null;
+  const senderIsBrand = !!senderDomain && canonical !== null && isUnder(senderDomain, canonical);
 
   const text = `${input.subject ?? ""}\n${suspectPortion(input.bodyText ?? "").slice(0, 20_000)}`;
 
@@ -226,6 +229,11 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
     if (host.split(".").some((l) => l.startsWith("xn--"))) linkAdd("link_punycode", 2);
     if (/^https?:\/\/[^/?#]*@/i.test(u.url)) linkAdd("link_userinfo_trick", 3);
     const sharedHost = isPlatformTenantHost(host) || isMultiTenantHost(host);
+    // The genuine brand linking its own same-name sibling domain (mega.nz →
+    // blog.mega.io, apple.com → apple.news) is not impersonation. Only when
+    // the SENDER is the brand's real domain: a spoofer on another domain
+    // linking paypal.xyz still scores.
+    const brandSibling = senderIsBrand && canonical !== null && sldLabel(host) === sldLabel(canonical);
     if (SHORTENER_HOSTS.has(host)) linkAdd("link_shortener", 1);
     // A tenant subdomain on a free platform (x.pages.dev, x.web.app) or a
     // shared gateway (docs.google.com, github.com): anyone can publish there.
@@ -234,18 +242,18 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
     if (ABUSED_TLDS.has(tld)) linkAdd("link_abused_tld", 1);
     // Lookalike checks skip shared platforms: "s3.amazonaws.com" is not an
     // Amazon impostor, and a tenant label on pages.dev already scored above.
-    if (canonical && !sharedHost && isStrictLookalike(sldLabel(host), canonical)) {
+    if (canonical && !sharedHost && !brandSibling && isStrictLookalike(sldLabel(host), canonical)) {
       linkAdd("link_lookalike_domain", 3);
     }
     const brandLabel = canonical ? sldLabel(canonical) : "";
-    if (canonical && !sharedHost && brandLabel.length >= 4 && !isUnder(host, canonical) &&
+    if (canonical && !sharedHost && !brandSibling && brandLabel.length >= 4 && !isUnder(host, canonical) &&
         host.split(/[.-]/).includes(brandLabel)) {
       // Brand as a whole label of someone else's host ("paypal.login-help.top",
       // "chase-verify.example") — not a substring ("purchase", "pineapple").
       linkAdd("link_brand_in_foreign_host", 2);
     }
     const hostReg = registrableDomain(host);
-    if (senderReg && hostReg && hostReg !== senderReg) linkAdd("link_sender_mismatch", 1);
+    if (senderReg && hostReg && hostReg !== senderReg && !brandSibling) linkAdd("link_sender_mismatch", 1);
     if (linkPoints >= 5) break;
   }
 
@@ -262,7 +270,15 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
   }
 
   const score = signals.reduce((s, x) => s + x.weight, 0);
-  const families = Array.from(new Set(signals.map((s) => s.family)));
+  // A family counts toward H1_MIN_FAMILIES only when it contributes at
+  // least H1_MIN_FAMILY_POINTS: a lone +1 (e.g. link_sender_mismatch, which
+  // fires on a company's own second domain — mega.nz linking blog.mega.io)
+  // is corroboration, not an independent signal (prod FP 2026-10-03).
+  const familyPoints = new Map<HeuristicFamily, number>();
+  for (const x of signals) familyPoints.set(x.family, (familyPoints.get(x.family) ?? 0) + x.weight);
+  const families = Array.from(familyPoints.entries())
+    .filter(([, pts]) => pts >= H1_MIN_FAMILY_POINTS)
+    .map(([f]) => f);
   const fired = score >= H1_SCORE_THRESHOLD &&
     families.length >= H1_MIN_FAMILIES &&
     families.some((f) => H1_ACTION_FAMILIES.has(f));

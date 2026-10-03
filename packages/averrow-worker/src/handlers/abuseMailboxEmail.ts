@@ -150,7 +150,7 @@ export async function handleAbuseMailboxEmail(
   // "original". For a fresh report, the outer From IS the original
   // sender and the outer Subject IS what the user wrote.
   const rfc822Inner = extractInnerRfc822Message(rawText, RAW_BODY_SCAN_MAX);
-  const inlineInner = extractForwardedOriginal(body);
+  const inlineInner = extractForwardedOriginal(body, forwardedBy);
   const outerSubjectRaw = decodeEncodedWords(outerHeaders["subject"] ?? "").trim() || null;
   const outerBodySnippet = body.slice(0, SNIPPET_LIMIT) || null;
 
@@ -860,36 +860,80 @@ const FORWARD_DELIMITERS = [
   /^From:\s.+\r?\nDate:\s.+\r?\nSubject:\s.+/m,    // raw header injection style
 ];
 
-function extractForwardedOriginal(body: string): ForwardedOriginal {
-  // Find the start of the forwarded content. If we can't find any
-  // marker, fall back to extracting headers from the start of the
-  // body (sometimes Apple Mail just inlines original headers).
-  let cutAt = 0;
-  for (const re of FORWARD_DELIMITERS) {
-    const m = re.exec(body);
-    if (m) {
-      cutAt = m.index + m[0].length;
-      break;
+/** Explicit forward markers (no raw-header pattern: inside a layer that
+ *  pattern matches the layer's own header block and cuts it mid-way). */
+const LAYER_MARKERS = FORWARD_DELIMITERS.slice(0, 3);
+/** Raw "From:/Date:/Subject:" injection — top-level fallback only. */
+const RAW_HEADER_MARKER = FORWARD_DELIMITERS[3]!;
+
+/** Earliest explicit forward marker in `text`, or null. */
+function firstForwardMarker(text: string): { index: number; end: number } | null {
+  let best: { index: number; end: number } | null = null;
+  for (const re of LAYER_MARKERS) {
+    const m = re.exec(text);
+    if (m && (best === null || m.index < best.index)) best = { index: m.index, end: m.index + m[0].length };
+  }
+  return best;
+}
+
+/** Max nested forward layers walked (reporter re-forwarding their own forward). */
+const MAX_FORWARD_LAYERS = 5;
+
+/**
+ * Original sender / subject / body of an inline forward.
+ *
+ * Nested forwards: a reporter who forwards their OWN earlier forward
+ * produces "Forwarded message / From: <reporter>" on top of the real one.
+ * Layers whose From is the reporter are skipped until the first layer
+ * from someone else. Safe against spoofing: only layers ABOVE the first
+ * non-reporter sender are skipped, and an attacker's content always sits
+ * below that sender, so a fake marker inside a phish is never reached.
+ */
+export function extractForwardedOriginal(body: string, reporter: string | null = null): ForwardedOriginal {
+  const reporterAddr = reporter?.trim().toLowerCase() || null;
+  let rest = body;
+  let parsed: ForwardedOriginal = { from: null, subject: null, bodySnippet: null };
+  for (let layer = 0; layer < MAX_FORWARD_LAYERS; layer++) {
+    let marker = firstForwardMarker(rest);
+    if (!marker && layer === 0) {
+      // Raw header injection style, or headers inlined at the top (Apple
+      // Mail) — both only meaningful for the first layer.
+      const raw = RAW_HEADER_MARKER.exec(rest);
+      if (raw) marker = { index: raw.index, end: raw.index };
     }
+    if (!marker && layer > 0) break;
+    const forwarded = (marker ? rest.slice(marker.end) : rest).trimStart();
+    parsed = parseForwardBlock(forwarded);
+    if (!marker || !reporterAddr || parsed.from !== reporterAddr) break;
+    // This layer is the reporter's own forward — look one layer deeper.
+    const next = firstForwardMarker(forwarded);
+    if (!next) break;
+    rest = forwarded;
   }
-  const forwarded = body.slice(cutAt).trimStart();
+  return parsed;
+}
 
-  // Pull out From: + Subject: from the first ~5 lines.
-  const headerWindow = forwarded.split(/\r?\n/).slice(0, 10).join("\n");
-  const fromMatch    = /^From:\s*(.+)$/im.exec(headerWindow);
-  const subjectMatch = /^Subject:\s*(.+)$/im.exec(headerWindow);
-
-  // Body snippet: lines AFTER the inline headers, capped.
-  const bodyLines = forwarded.split(/\r?\n/);
-  let bodyStart = 0;
-  for (let i = 0; i < Math.min(bodyLines.length, 12); i++) {
-    if (bodyLines[i]?.trim() === "") { bodyStart = i + 1; break; }
+function parseForwardBlock(forwarded: string): ForwardedOriginal {
+  // Header block: the first lines up to the first blank line (cap 12).
+  const lines = forwarded.split(/\r?\n/);
+  let headerEnd = Math.min(lines.length, 12);
+  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+    if (lines[i]?.trim() === "") { headerEnd = i; break; }
   }
-  const snippet = bodyLines.slice(bodyStart).join("\n").trim().slice(0, SNIPPET_LIMIT);
-
+  const header = lines.slice(0, headerEnd);
+  // Unfold: a line that doesn't start a new "Name:" header continues the
+  // previous one (Gmail wraps long Subject lines).
+  const fields: string[] = [];
+  for (const l of header) {
+    if (/^[A-Za-z][A-Za-z-]{0,30}:\s/.test(l) || fields.length === 0) fields.push(l);
+    else fields[fields.length - 1] += ` ${l.trim()}`;
+  }
+  const fromLine    = fields.find((f) => /^From:\s/i.test(f));
+  const subjectLine = fields.find((f) => /^Subject:\s/i.test(f));
+  const snippet = lines.slice(headerEnd + 1).join("\n").trim().slice(0, SNIPPET_LIMIT);
   return {
-    from:        fromMatch ? parseEmailAddress(fromMatch[1] ?? null) : null,
-    subject:     subjectMatch ? (subjectMatch[1] ?? "").trim().slice(0, 500) : null,
+    from:        fromLine ? parseEmailAddress(fromLine.replace(/^From:\s*/i, "")) : null,
+    subject:     subjectLine ? subjectLine.replace(/^Subject:\s*/i, "").trim().slice(0, 500) || null : null,
     bodySnippet: snippet || null,
   };
 }

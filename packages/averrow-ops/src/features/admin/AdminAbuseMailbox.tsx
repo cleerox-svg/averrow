@@ -1225,8 +1225,7 @@ function DetailField({
 
 // ─── PR-BD: client-side message filter ──────────────────────────
 //
-// Backend returns the top 100 rows sorted by severity → classification
-// → recency. The toolbar slices that further by status tab,
+// Backend returns the newest 100 rows (received_at DESC). The toolbar slices that further by status tab,
 // classification chip, and search text. All filtering is in-memory —
 // no extra D1 reads, no pagination state to manage.
 
