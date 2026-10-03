@@ -7,9 +7,8 @@
 
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Card, PageHeader, Badge, Button } from '@/components/ui';
+import { Card, PageHeader, Badge, Button, StateMachineButtons } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { StateMachineButtons } from '@/design-system/components';
 import {
   useIncident, useAppendIncidentUpdate, useTransitionIncident, usePromoteIncident,
   useEditUpdatePublicCopy,

@@ -33,7 +33,6 @@ import {
   useSpamTrapInsights,
 } from '@/hooks/useSpamTrap';
 import { StatCard } from '@/components/ui/StatCard';
-import { TrendSparkline } from '@/components/ui/TrendSparkline';
 import { HoneypotNetworkPanel } from './components/HoneypotNetworkPanel';
 import { CaptureForensicsPanel } from './components/CaptureForensicsPanel';
 import { CampaignPanel } from './components/CampaignPanel';
@@ -41,6 +40,7 @@ import { ThreatActorPanel } from './components/ThreatActorPanel';
 import { TrendsTab, CorrelationsTab, StrategyTab } from './components/InsightsTabs';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { relativeTime } from '@/lib/time';
+import { Sparkline } from '@/design-system/components';
 
 type TabKey = 'operations' | 'trends' | 'correlations' | 'strategy';
 
@@ -108,7 +108,7 @@ export function SpamTrap() {
       </div>
 
       {/* 30-day sparkline */}
-      {sparklineValues.length > 0 && (
+      {sparklineValues.length > 1 && (
         <div
           className="rounded-xl px-4 py-3 flex items-center gap-4"
           style={{
@@ -128,9 +128,9 @@ export function SpamTrap() {
             </div>
           </div>
           <div className="flex-1 min-w-0">
-            <TrendSparkline
+            <Sparkline
               data={sparklineValues}
-              color="#fb923c"
+              color="var(--sev-high)"
               height={36}
               fill
             />

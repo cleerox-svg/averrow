@@ -14,8 +14,8 @@
 import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { useNotifications } from '@/hooks/useNotifications';
-import { BrandAvatar } from '@/components/ui/BrandAvatar';
 import { M } from '@/design-system/tokens';
+import { Avatar } from '@/design-system/components';
 
 const SEV_COLOR: Record<string, { fg: string; dim: string }> = {
   critical: { fg: 'var(--sev-critical)', dim: 'var(--sev-critical-dim, rgba(239,68,68,0.30))' },
@@ -25,7 +25,7 @@ const SEV_COLOR: Record<string, { fg: string; dim: string }> = {
   info:     { fg: 'var(--text-tertiary)', dim: 'var(--border-base)' },
 };
 
-// Severity → BrandAvatar accent pair so brand-scoped rows still
+// Severity → Avatar accent pair so brand-scoped rows still
 // communicate severity via the tint surrounding the favicon.
 const SEV_AVATAR_ACCENT: Record<string, { color: string; dim: string }> = {
   critical: { color: M.RED,    dim: M.RED_DIM    },
@@ -105,11 +105,14 @@ export function LiveActivity() {
                     className="home-live-activity-row"
                   >
                     {hasBrand ? (
-                      <BrandAvatar
+                      <Avatar
                         name={item.brand_name ?? item.title}
+                        size={40}
+                        glow
                         color={accent.color}
                         dimColor={accent.dim}
                         faviconUrl={faviconUrl}
+                        label={item.brand_name ?? undefined}
                       />
                     ) : (
                       <SevGlyph severity={sev} />

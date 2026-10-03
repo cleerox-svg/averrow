@@ -8,7 +8,7 @@
 import { Fragment, Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Crosshair, Siren, Gavel } from 'lucide-react';
-import { Button, StatTile } from '@averrow/shared/ui';
+import { Button, StatTile, WorkspaceEmbedProvider } from '@averrow/shared/ui';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import './console.css';
@@ -103,12 +103,15 @@ export function Console() {
       {active?.def && <p className="console-def">{active.def}</p>}
 
       <Suspense fallback={<TabLoading />}>
-        <Fragment key={params.get('q') ?? ''}>
-          {tab === 'alerts'    && <Alerts />}
-          {tab === 'threats'   && <Threats />}
-          {tab === 'incidents' && <Incidents />}
-          {tab === 'takedowns' && <Takedowns />}
-        </Fragment>
+        {/* The Console owns the view's single h1; embedded panes drop theirs. */}
+        <WorkspaceEmbedProvider>
+          <Fragment key={params.get('q') ?? ''}>
+            {tab === 'alerts'    && <Alerts />}
+            {tab === 'threats'   && <Threats />}
+            {tab === 'incidents' && <Incidents />}
+            {tab === 'takedowns' && <Takedowns />}
+          </Fragment>
+        </WorkspaceEmbedProvider>
       </Suspense>
     </div>
   );

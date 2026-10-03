@@ -33,8 +33,7 @@ import { useOperations } from '@/hooks/useOperations';
 import { useGeopoliticalCampaigns } from '@/hooks/useGeopoliticalCampaign';
 import { useAgents } from '@/hooks/useAgents';
 import { Card } from '@/components/ui/Card';
-import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, Avatar } from '@/design-system/components';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { relativeTime } from '@/lib/time';
 
@@ -248,12 +247,13 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
             className="flex items-center gap-2.5 py-1.5 cursor-pointer hover:bg-white/[0.03] rounded -mx-1 px-1 transition-colors"
             onClick={() => navigate(`/brands/${brand.id}`)}
           >
-            <DimensionalAvatar
+            <Avatar
               name={brand.name}
               color="var(--amber)"
               dimColor="var(--amber-dim)"
               faviconUrl={brand.canonical_domain ? `https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=32` : undefined}
               size={24}
+              glow
             />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{brand.name}</div>

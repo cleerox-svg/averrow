@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { useIntelligenceBriefings } from '@/hooks/useTrends';
 import { useDailyBriefing } from '@/hooks/useDailyBriefing';
-import { Badge } from '@/components/ui/Badge';
+import { Badge } from '@/design-system/components';
 
 const SEV_COLOR: Record<string, string> = {
   critical: 'var(--sev-critical)',

@@ -22,7 +22,6 @@ import {
   Card,
   EntityCard,
   MetricTile,
-  SeverityPill,
 } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ThreatAreaChart } from '@/components/ui/ThreatAreaChart';
@@ -404,7 +403,7 @@ export function CampaignDetail() {
                 to={`/console?tab=threats&q=${encodeURIComponent(t.malicious_domain || t.malicious_url || t.ip_address || t.id)}`}
                 className="flex items-center gap-3 px-1 py-2 transition-colors hover:bg-white/[0.03]"
               >
-                <SeverityPill severity={t.severity} />
+                <Badge severity={t.severity} size="xs" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
                     {t.malicious_domain || t.malicious_url || t.ip_address || t.id}

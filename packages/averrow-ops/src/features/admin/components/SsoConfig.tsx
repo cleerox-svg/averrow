@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
+import { Badge } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useSsoConfig, useUpdateSsoConfig, useTestSsoConnection } from '@/hooks/useOrganization';
 

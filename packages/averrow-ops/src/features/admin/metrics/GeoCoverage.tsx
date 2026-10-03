@@ -24,8 +24,7 @@ import { Fragment, useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
-import { Card } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
+import { Card, Badge } from '@/design-system/components';
 import { ChevronDown } from 'lucide-react';
 import { useGeoCoverage } from '@/hooks/useMetrics';
 import type {

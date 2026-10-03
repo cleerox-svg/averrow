@@ -36,8 +36,7 @@ import {
 } from '@/hooks/useBrandCandidates';
 import { BrandsGrid } from './components/BrandsGrid';
 import { Card } from '@/components/ui/Card';
-import { DeepCard } from '@/components/ui/DeepCard';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, PageHeader } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -70,10 +69,9 @@ export function BrandsV3() {
 
   return (
     <div className="animate-fade-in space-y-6">
-      {/* Header — title only; v2 brands surface decommissioned. */}
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Brands</h1>
-      </div>
+      {/* Header — title only; v2 brands surface decommissioned. Inside the
+          Explorer workspace the h1 is dropped (the workspace owns it). */}
+      <PageHeader title="Brands" className="mb-0" />
 
       {/* Sticky tab strip */}
       <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-[var(--v4-gutter-x,24px)] px-[var(--v4-gutter-x,24px)]">
@@ -111,7 +109,7 @@ export function BrandsV3() {
 // this week." All data pulled from existing endpoints — no new backend
 // work. The visual rebuild lifts the surface from "stat tiles + plain
 // lists" (PR6 scaffold) to a chart-led intel surface with sector
-// donut, threat-type breakdown bars, and DeepCard-treated stat hero.
+// donut, threat-type breakdown bars, and Card-treated stat hero.
 function IntelTab({ isStaff, onViewProspects }: { isStaff: boolean; onViewProspects: () => void }) {
   const { data: stats, isLoading: statsLoading } = useBrandStats();
   const { data: movers, isLoading: moversLoading } = useBrandMovers();
@@ -247,7 +245,7 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
 }
 
 // ── HeroStrip ────────────────────────────────────────────────────────
-// 4 stat tiles using DeepCard with accent gradients, big numbers,
+// 4 stat tiles using the active Card with accent gradients, big numbers,
 // and contextual sub-info. Replaces the flat 4-tile strip from the
 // PR6 scaffold which had no visual hierarchy.
 function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
@@ -281,7 +279,7 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map((t, i) => (
-        <DeepCard key={t.label} variant="active" accent={t.accent}
+        <Card key={t.label} variant="active" accent={t.accent}
           style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
           <div style={{
             position: 'absolute', top: 12, left: 16,
@@ -317,7 +315,7 @@ function HeroStrip({ stats, loading }: { stats: any; loading: boolean }) {
               </div>
             )}
           </div>
-        </DeepCard>
+        </Card>
       ))}
     </div>
   );
@@ -853,14 +851,13 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
 }) {
   if (rows.length === 0) return null;
   const accent = tone === 'crit' ? '#C83C3C' : tone === 'warn' ? '#E8923C' : '#0A8AB5';
-  // Hot leads use DeepCard with critical accent so they visually
-  // dominate; warm/worth use plain Card for visual de-emphasis.
-  const Wrapper = tone === 'crit' ? DeepCard : Card;
+  // Hot leads use the active Card variant with critical accent so they
+  // visually dominate; warm/worth use the plain Card for de-emphasis.
   const wrapperProps = tone === 'crit'
     ? { variant: 'active' as const, accent, hover: false }
     : { hover: false };
   return (
-    <Wrapper {...wrapperProps}>
+    <Card {...wrapperProps}>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>{emoji} {label}</SectionLabel>
         <span className="text-[11px] font-mono px-2 py-0.5 rounded"
@@ -912,7 +909,7 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
           );
         })}
       </div>
-    </Wrapper>
+    </Card>
   );
 }
 

@@ -17,11 +17,16 @@ import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import {
-  Card, Button, Badge, PageHeader, SectionLabel, Select,
+  Card,
+  Button,
+  Badge,
+  PageHeader,
+  SectionLabel,
+  Select,
+  FilterBar,
 } from '@/design-system/components';
 import { Table, Th, Td } from '@/components/ui/Table';
 import { Input } from '@/components/ui/Input';
-import { FilterBar } from '@/components/ui/FilterBar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { relativeTime } from '@/lib/time';
@@ -130,7 +135,8 @@ export function PlatformUsers() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Platform Users"
-        subtitle={`${total} account${total === 1 ? '' : 's'} — staff roles, access status, and sessions`}
+        subtitle="Staff roles, access status, and sessions"
+        meta={<span>{total} account{total === 1 ? '' : 's'}</span>}
         actions={
           <Button onClick={() => setShowInvite(s => !s)}>
             {showInvite ? 'Close invite' : 'Invite user'}

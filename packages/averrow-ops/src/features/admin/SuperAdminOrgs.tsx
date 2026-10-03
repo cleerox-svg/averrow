@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
-import { FilterBar } from '@/components/ui/FilterBar';
+import { FilterBar, Badge, Tabs } from '@/design-system/components';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Tabs } from '@/components/ui/Tabs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
+import { Badge } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useCreateOrg, useBrandSearch } from '@/hooks/useAdminOrgs';
 import type { BrandSearchResult } from '@/hooks/useAdminOrgs';

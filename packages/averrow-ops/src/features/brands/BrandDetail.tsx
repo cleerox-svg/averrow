@@ -39,11 +39,8 @@ import {
 import { useLookalikes, type LookalikeDomain } from '@/hooks/useLookalikes';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useAdminTakedowns } from '@/hooks/useTakedowns';
-import { DeepCard } from '@/components/ui/DeepCard';
-import { DimensionalAvatar } from '@/components/ui/DimensionalAvatar';
-import { DimensionalButton } from '@/components/ui/DimensionalButton';
 import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
+import { Avatar, Badge, Button, Sparkline } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -160,7 +157,7 @@ export function BrandDetailV3() {
         </button>
       </div>
 
-      <DeepCard variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
+      <Card variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', top: -40, left: '30%',
           width: 300, height: 200, borderRadius: '50%',
@@ -168,11 +165,12 @@ export function BrandDetailV3() {
           pointerEvents: 'none',
         }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
-          <DimensionalAvatar
+          <Avatar
             name={brand.name}
             color={SEVERITY_COLORS[brand.top_severity] || '#E5A832'}
             size={52}
             radius={14}
+            glow
             faviconUrl={`https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=64`}
             severity={brand.top_severity}
           />
@@ -196,7 +194,7 @@ export function BrandDetailV3() {
             </div>
           </div>
         </div>
-      </DeepCard>
+      </Card>
 
       <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-6 px-6">
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
@@ -406,7 +404,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
       </div>
 
       {ttpChips.length > 0 && (
-        <DeepCard padding="md">
+        <Card padding="md">
           <SectionLabel>MITRE techniques observed</SectionLabel>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {ttpChips.map((t) => {
@@ -432,10 +430,10 @@ function ThreatsTab({ brandId }: { brandId: string }) {
               );
             })}
           </div>
-        </DeepCard>
+        </Card>
       )}
 
-      <DeepCard variant="active" padding="lg">
+      <Card variant="active" padding="lg">
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-sm font-semibold text-[var(--text-primary)]">Threats</div>
@@ -473,7 +471,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
           }}
           emptyText="No threats targeting this brand yet."
         />
-      </DeepCard>
+      </Card>
     </div>
   );
 }
@@ -503,7 +501,7 @@ function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
 
   return (
     <div className="space-y-4">
-      <DeepCard padding="lg">
+      <Card padding="lg">
         <div className="flex items-center justify-between mb-2">
           <div>
             <div className="text-sm font-semibold text-[var(--text-primary)]">Alerts</div>
@@ -548,22 +546,22 @@ function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
             onChange={v => setSeverityFilter(v as typeof severityFilter)}
           />
         </div>
-      </DeepCard>
+      </Card>
 
       {filtered.length === 0 ? (
-        <DeepCard padding="lg">
+        <Card padding="lg">
           <div className="text-center text-sm text-[var(--text-secondary)] py-8">
             {signals.length === 0
               ? 'No signals for this brand yet. Scanners + abuse mailbox + spam-trap captures will land here as they fire.'
               : 'No signals match these filters.'}
           </div>
-        </DeepCard>
+        </Card>
       ) : (
-        <DeepCard padding="lg">
+        <Card padding="lg">
           <div className="space-y-2">
             {filtered.map((signal) => <AlertRow key={signal.id} alert={signal} />)}
           </div>
-        </DeepCard>
+        </Card>
       )}
     </div>
   );
@@ -759,9 +757,9 @@ function RiskTab({
       <PageAnalysisSection brandId={brand.id} />
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <DimensionalButton variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
+        <Button variant="primary" size="md" onClick={onAiDeepScan} disabled={aiPending}>
           {aiPending ? 'ANALYZING…' : 'AI DEEP SCAN'}
-        </DimensionalButton>
+        </Button>
       </div>
     </div>
   );
@@ -928,7 +926,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
   };
 
   return (
-    <DeepCard padding="lg">
+    <Card padding="lg">
       <div className="flex items-center justify-between mb-3">
         <div>
           <SectionLabel>Brand narratives</SectionLabel>
@@ -993,7 +991,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
           );
         })}
       </div>
-    </DeepCard>
+    </Card>
   );
 }
 
@@ -1061,7 +1059,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
                 <TsTd className="font-mono">
                   <span className="text-[var(--text-primary)]">{r.malicious_domain ?? r.malicious_url ?? '—'}</span>
                 </TsTd>
-                <TsTd><TsSeverityPill severity={r.severity ?? 'low'} /></TsTd>
+                <TsTd><Badge severity={r.severity ?? 'low'} size="xs" /></TsTd>
                 <TsTd>
                   {r.source_feed === 'abuse_mailbox' ? (
                     <span
@@ -1282,20 +1280,6 @@ function TsTd({ children, className = '' }: { children: React.ReactNode; classNa
   return <td className={`px-3 py-2.5 ${className}`}>{children}</td>;
 }
 
-function TsSeverityPill({ severity }: { severity: string }) {
-  const sev = severity.toLowerCase();
-  const tone =
-    sev === 'critical' ? 'text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border-[var(--sev-critical-border)]' :
-    sev === 'high'     ? 'text-[var(--amber-text)]        bg-[var(--sev-high-bg)]   border-[var(--amber-border)]'         :
-    sev === 'medium'   ? 'text-[var(--sev-medium-text)]   bg-[var(--sev-medium-bg)] border-[var(--amber-border)]'         :
-                         'text-[var(--text-secondary)] bg-white/[0.04]        border-white/[0.08]';
-  return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
-      {sev}
-    </span>
-  );
-}
-
 // ── WORKFLOW ─────────────────────────────────────────────────────────────
 // "What needs your action." Open takedowns + open alerts for this brand.
 // Provider escalations are part of the takedown automation track (Phase
@@ -1502,7 +1486,19 @@ function ScoreCard({
       </div>
 
       <div className="mt-3">
-        <Sparkline series={series} accent={accent} />
+        {series.length < 2 ? (
+          <div style={{
+            height: 28, borderRadius: 4,
+            border: '1px dashed var(--border-base)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <span className="text-[10px] font-mono text-[var(--text-muted)]">
+              {series.length === 0 ? 'no history' : '1 sample'}
+            </span>
+          </div>
+        ) : (
+          <Sparkline data={series} fill height={28} color={accent} animate={false} baseline="zero" />
+        )}
         <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-[var(--text-muted)]">
           <span>{series.length > 0 ? `${series.length}d trend` : 'No trend yet'}</span>
           {updatedAt && <span>updated {timeAgo(updatedAt)}</span>}
@@ -1515,45 +1511,6 @@ function ScoreCard({
         </div>
       )}
     </Card>
-  );
-}
-
-function Sparkline({ series, accent }: { series: number[]; accent: string }) {
-  if (series.length < 2) {
-    return (
-      <div style={{
-        height: 28, borderRadius: 4,
-        border: '1px dashed var(--border-base)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
-          {series.length === 0 ? 'no history' : '1 sample'}
-        </span>
-      </div>
-    );
-  }
-  const w = 240;
-  const h = 28;
-  const max = Math.max(...series, 1);
-  const min = Math.min(...series, 0);
-  const range = Math.max(1, max - min);
-  const step = w / (series.length - 1);
-  const points = series.map((v, i) => {
-    const x = i * step;
-    const y = h - ((v - min) / range) * (h - 4) - 2;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 28 }}>
-      <polyline
-        points={points}
-        fill="none"
-        stroke={accent}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 

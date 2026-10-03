@@ -23,8 +23,7 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card } from '@/design-system/components';
-import { Badge } from '@/components/ui/Badge';
+import { Card, Badge } from '@/design-system/components';
 import { ChevronDown, ExternalLink, AlertTriangle, Pause } from 'lucide-react';
 import { useFeedFailures } from '@/hooks/useMetrics';
 import type { FeedFailurePayload, FeedFailureRow } from '@/hooks/useMetrics';

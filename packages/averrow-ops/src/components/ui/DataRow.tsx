@@ -4,7 +4,7 @@
 // Replaces all inline div/tr row implementations.
 
 import React from 'react';
-import type { Severity } from './Badge';
+import type { Severity } from '@averrow/shared/ui';
 
 export interface DataRowProps {
   children:   React.ReactNode;

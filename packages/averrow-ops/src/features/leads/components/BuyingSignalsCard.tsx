@@ -138,7 +138,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
               <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                 Security Maturity (AI)
               </span>
-              <Badge variant={maturityVariant(lead.security_maturity)} className="capitalize">
+              <Badge variant={maturityVariant(lead.security_maturity)}>
                 {lead.security_maturity}
               </Badge>
             </div>

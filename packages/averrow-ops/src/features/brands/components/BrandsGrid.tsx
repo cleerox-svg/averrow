@@ -11,11 +11,7 @@ import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/cn';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Search, Shield } from 'lucide-react';
-import {
-  DeepCard,
-  GlowNumber,
-  TrendSparkline,
-} from '@/components/ui';
+import { Avatar, Card, GlowNumber, Sparkline } from '@/design-system/components';
 
 /* ─── Severity helpers (card grid) ─── */
 
@@ -344,56 +340,6 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
 }
 
 
-/* ─── Favicon Avatar ─── */
-
-function FaviconAvatar({
-  name,
-  faviconUrl,
-  size = 38,
-}: {
-  name:        string;
-  domain?:     string | null;
-  faviconUrl?: string;
-  size?:       number;
-}) {
-  const [failed, setFailed] = useState(false);
-  const radius = Math.round(size * 0.26);
-
-  return (
-    <div style={{
-      width:          size,
-      height:         size,
-      borderRadius:   radius,
-      background:     'linear-gradient(145deg, var(--bg-elevated), var(--bg-card-deep))',
-      border:         '1px solid var(--border-base)',
-      display:        'flex',
-      alignItems:     'center',
-      justifyContent: 'center',
-      overflow:       'hidden',
-      flexShrink:     0,
-    }}>
-      {faviconUrl && !failed ? (
-        <img
-          src={faviconUrl}
-          width={Math.round(size * 0.60)}
-          height={Math.round(size * 0.60)}
-          alt={name}
-          onError={() => setFailed(true)}
-          style={{ borderRadius: 3, display: 'block' }}
-        />
-      ) : (
-        <span style={{
-          fontSize:   Math.round(size * 0.37),
-          fontWeight: 900,
-          color:      'var(--text-secondary)',
-        }}>
-          {(name[0] ?? '?').toUpperCase()}
-        </span>
-      )}
-    </div>
-  );
-}
-
 /* ─── Brand Card ─── */
 
 function BrandCard({
@@ -465,12 +411,7 @@ function BrandCard({
 
         {/* Favicon with severity dot */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
-          <FaviconAvatar
-            name={brand.name}
-            domain={brand.canonical_domain}
-            faviconUrl={faviconUrl}
-            size={38}
-          />
+          <Avatar name={brand.name} faviconUrl={faviconUrl} size={38} tone="neutral" />
           <div style={{
             position:     'absolute',
             bottom:       -2,
@@ -640,7 +581,7 @@ function BrandCard({
       {/* ── SPARKLINE ────────────────────────────────────────── */}
       {sparkData.length > 1 ? (
         <div style={{ position: 'relative' }}>
-          <TrendSparkline
+          <Sparkline
             data={sparkData}
             fill
             height={36}
@@ -762,7 +703,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
           {/* Left: filter bar + brand rows */}
           <div className="min-w-0">
             {/* Filter bar */}
-            <DeepCard variant="base" style={{ padding: '10px 16px', marginBottom: 12 }}>
+            <Card variant="base" style={{ padding: '10px 16px', marginBottom: 12 }}>
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
               <input
                 value={search}
@@ -809,7 +750,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                 </div>
               </div>
             </div>
-            </DeepCard>
+            </Card>
 
             {/* Brand card grid */}
             {pagedBrands.length > 0 ? (

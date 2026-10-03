@@ -13,14 +13,13 @@ import {
 } from '@/hooks/useTrends';
 import type { IntelligenceBriefing, VolumePoint } from '@/hooks/useTrends';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/design-system/components';
+import { Button, Badge, PageHeader } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
-import { Badge } from '@/components/ui/Badge';
 import { tabUrl } from '@/lib/workspaceRoutes';
 /* ── Constants ── */
 
@@ -625,21 +624,20 @@ function TrendsContent() {
   return (
     <div className="animate-fade-in space-y-6">
       {/* Header + Time Filter */}
-      <div className="flex items-center justify-between">
-        <h1 className="font-display text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Trends</h1>
-        <div className="flex gap-1.5">
-          {WINDOWS.map((w) => (
-            <Button
-              key={w}
-              variant={window === w ? 'primary' : 'ghost'}
-              size="sm"
-              onClick={() => setWindow(w)}
-            >
-              {w.toUpperCase()}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Trends"
+        className="mb-0"
+        actions={WINDOWS.map((w) => (
+          <Button
+            key={w}
+            variant={window === w ? 'primary' : 'ghost'}
+            size="sm"
+            onClick={() => setWindow(w)}
+          >
+            {w.toUpperCase()}
+          </Button>
+        ))}
+      />
 
       {/* Executive Summary */}
       <ExecutiveSummary period={window} />

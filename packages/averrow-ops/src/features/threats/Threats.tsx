@@ -5,15 +5,19 @@ import { useAuth } from '@/lib/auth';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Card, DataRow, PageHeader, SaasTechniqueBadge } from '@/components/ui';
-import { DeepCard } from '@/components/ui/DeepCard';
+import {
+  Card,
+  DataRow,
+  PageHeader,
+  SaasTechniqueBadge,
+  type Severity,
+} from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ThreatInflowChart } from './ThreatInflowChart';
 import { relativeTime } from '@/lib/time';
 import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
-import type { Severity } from '@/components/ui/Badge';
 import { tabUrl } from '@/lib/workspaceRoutes';
 
 interface Threat {
@@ -147,9 +151,10 @@ export function Threats() {
 
   return (
     <div className="p-6 space-y-5 max-w-7xl">
+      {/* Count in `meta` (not subtitle) so it survives the Console embedding. */}
       <PageHeader
         title="Threats"
-        subtitle={agg ? `${agg.total.toLocaleString()} in slice · ${agg.active.toLocaleString()} active` : undefined}
+        meta={agg ? <span>{agg.total.toLocaleString()} in slice · {agg.active.toLocaleString()} active</span> : undefined}
       />
 
       <SliceSummaryStrip agg={agg} hasFilters={hasAnyFilter} />
@@ -428,7 +433,7 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// HeroStrip — 4 DeepCard hero tiles condensing the 6 narrative axes
+// HeroStrip — 4 Card hero tiles condensing the 6 narrative axes
 // ══════════════════════════════════════════════════════════════════
 function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
   const total = agg?.total ?? 0;
@@ -477,7 +482,7 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
       {tiles.map(t => {
         const Icon = t.icon;
         return (
-          <DeepCard key={t.label} variant="active" accent={t.accent}
+          <Card key={t.label} variant="active" accent={t.accent}
             style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
             <div style={{
               position: 'absolute', right: -20, bottom: -20,
@@ -500,7 +505,7 @@ function HeroStrip({ agg }: { agg: ThreatAggregate | null | undefined }) {
               </div>
               <div className="mt-1 text-[11px] font-mono text-[var(--text-tertiary)] truncate">{t.sub}</div>
             </div>
-          </DeepCard>
+          </Card>
         );
       })}
     </div>

@@ -16,9 +16,9 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useBrandMovers, type BrandMover } from '@/hooks/useBrandMovers';
-import { BrandAvatar } from '@/components/ui/BrandAvatar';
 import { GradeBadge } from '@/components/ui/GradeBadge';
 import { M } from '@/design-system/tokens';
+import { Avatar } from '@/design-system/components';
 
 interface MoverListProps {
   title: string;
@@ -48,8 +48,10 @@ function MoverList({ title, rows, accent, accentDim, formatDelta, emptyLabel }: 
                 onClick={() => navigate(`/brands/${row.id}`)}
                 aria-label={`${row.name} — ${formatDelta(row.delta_7d)} threats over 7 days`}
               >
-                <BrandAvatar
+                <Avatar
                   name={row.name}
+                  size={40}
+                  glow
                   color={accent}
                   dimColor={accentDim}
                   faviconUrl={

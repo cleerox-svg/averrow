@@ -21,7 +21,7 @@ function resourceHref(type: string | null, id: string | null): string | null {
     default:              return null;
   }
 }
-import { Button, Card, Input } from '@/design-system/components';
+import { Button, Card, Input, PageHeader } from '@/design-system/components';
 import { relativeTime, parseUtc } from '@/lib/time';
 import { api } from '@/lib/api';
 
@@ -272,24 +272,26 @@ export function AdminAudit() {
   return (
     <div className="animate-fade-in space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-display" style={{ color: 'var(--text-primary)' }}>Audit Log</h1>
-          <p className="text-sm font-mono mt-1" style={{ color: 'var(--text-tertiary)' }}>Platform activity trail</p>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleExport}
-          icon={
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          }
-        >
-          <span className="hidden sm:inline">Export CSV</span>
-        </Button>
-      </div>
+      <PageHeader
+        title="Audit Log"
+        subtitle="Platform activity trail"
+        className="mb-0"
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Export CSV"
+            onClick={handleExport}
+            icon={
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            }
+          >
+            <span className="hidden sm:inline">Export CSV</span>
+          </Button>
+        }
+      />
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
