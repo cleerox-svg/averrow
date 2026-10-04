@@ -32,6 +32,12 @@ import {
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
 
+/**
+ * TTL for the system-health 14-day daily threat trend (cachedValue). A
+ * 14-day daily series doesn't need sub-hour freshness; the old 300s TTL
+ * re-ran the full 14-day GROUP BY over raw threats ~9M rows/day.
+ */
+export const THREAT_TREND_14D_TTL_S = 3600;
 
 // Every agentId the canonical Anthropic wrapper is supposed to attribute
 // to. Used by handleBudgetLedgerHealth to surface "this call site has
@@ -340,15 +346,15 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
       `SELECT COUNT(*) as count FROM audit_log`
     ).first<{ count: number }>(),
     // 14-day daily trend. Kept as the EXACT original GROUP BY over raw
-    // threats but wrapped in cachedValue (300s) instead of sourced from
-    // threat_cube_status. The cube is hour-bucketed, so it cannot
+    // threats but wrapped in cachedValue (THREAT_TREND_14D_TTL_S) instead
+    // of sourced from threat_cube_status. The cube is hour-bucketed, so it cannot
     // reproduce the rolling `datetime('now','-14 days')` sub-hour window
     // edge: summing per-hour cube rows for the boundary day would either
     // over- or under-count the earliest partial day vs the raw series.
     // The response is a frozen contract requiring byte-identical values,
     // so cachedValue (exact SQL, exact window + timezone semantics, zero
     // per-poll recompute) is the correct swap here — not the cube.
-    cachedValue<Array<{ day: string; count: number }>>(env, "threats.trend_14d", 300, async () => {
+    cachedValue<Array<{ day: string; count: number }>>(env, "threats.trend_14d", THREAT_TREND_14D_TTL_S, async () => {
       const r = await session.prepare(`
         SELECT date(created_at) as day, COUNT(*) as count
         FROM threats

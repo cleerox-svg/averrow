@@ -2,16 +2,81 @@
 
 import { json } from "../lib/cors";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { cachedCount } from "../lib/cached-count";
+import { cachedValue } from "../lib/cached-value";
+import { hashToken } from "../lib/hash";
 import type { Env } from "../types";
+
+/**
+ * KV TTL for the operations list response. Must exceed the longest
+ * Navigator warm period for its warmed keys (Phase B, 15 min) — pinned by
+ * test/operations-list-cache.test.ts.
+ */
+export const OPERATIONS_LIST_TTL_S = 1800;
+/** Per-page 14-day cluster sparkline cache (cachedValue). */
+export const OPERATIONS_HISTORY_TTL_S = 21_600;
+/** Cluster total count (cachedCount). */
+export const OPERATIONS_TOTAL_TTL_S = 3600;
+
+/** `status` filter values the list accepts (the CASE ordering below). */
+const OPERATION_STATUSES = new Set(["accelerating", "pivot", "active", "dormant"]);
+
+/**
+ * 14-day daily threat counts per cluster, oldest day first — the same
+ * series the list query used to build with a correlated
+ * `json_group_array` subquery per row. Days with zero threats are
+ * omitted (the old GROUP BY never emitted them either) and a cluster
+ * with no threats in the window gets `[]` (json_group_array over an
+ * empty set). Cached per distinct page of cluster ids for 6h: the
+ * sparkline is coarse and the per-cluster scan was the expensive part of
+ * every list miss.
+ */
+async function loadClusterHistory14d(
+  env: Env,
+  clusterIds: string[],
+): Promise<Record<string, number[]>> {
+  if (clusterIds.length === 0) return {};
+  const ids = Array.from(new Set(clusterIds)).sort();
+  const digest = (await hashToken(ids.join(","))).slice(0, 16);
+  return cachedValue<Record<string, number[]>>(
+    env, `operations.history_14d:${digest}`, OPERATIONS_HISTORY_TTL_S,
+    async () => {
+      const ph = ids.map(() => "?").join(",");
+      const res = await env.DB.prepare(`
+        SELECT cluster_id, date(created_at) AS day, COUNT(*) AS n
+        FROM threats
+        WHERE cluster_id IN (${ph})
+          AND created_at >= datetime('now', '-14 days')
+        GROUP BY cluster_id, date(created_at)
+        ORDER BY cluster_id, day ASC
+      `).bind(...ids).all<{ cluster_id: string; day: string; n: number }>();
+      const out: Record<string, number[]> = {};
+      for (const r of res.results ?? []) {
+        (out[r.cluster_id] ??= []).push(r.n);
+      }
+      return out;
+    },
+  );
+}
 
 // GET /api/v1/operations — List infrastructure_clusters with sort/filter
 export async function handleListOperations(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const url = new URL(request.url);
-    const status = url.searchParams.get("status"); // accelerating|pivot|active|dormant
-    const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
-    const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+    const status = url.searchParams.get("status") || null;
+    // Unknown status values can only ever match zero clusters' documented
+    // states; answer with the same empty result the filter would produce,
+    // without D1 or a new KV key per arbitrary value.
+    if (status !== null && !OPERATION_STATUSES.has(status)) {
+      return json({ success: true, data: [], total: 0 }, 200, origin);
+    }
+    // Clamp both ends (NaN → default): `limit=-1` used to bind `LIMIT -1`
+    // (unbounded), which would also push >100 ids into the history IN(...).
+    const rawLimit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, rawLimit)) : 50;
+    const rawOffset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+    const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
 
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -24,7 +89,12 @@ export async function handleListOperations(request: Request, env: Env): Promise<
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     params.push(limit, offset);
 
-    // KV cache: operations list with 14-day subquery — cache for 5 minutes.
+    // KV cache: the operations list. TTL MUST exceed Navigator's warm
+    // period for both warmed keys (Phase A every 10 min:
+    // `status=active&limit=4&offset=0`; Phase B every 15 min:
+    // `limit=12&offset=0` — cron/navigator.ts NAVIGATOR_WARM_TARGETS).
+    // At the old 300s TTL every warm landed on an expired key, so each
+    // warm was a full recompute (~154 misses/day × 2 queries).
     const cacheKey = `operations_list:${status ?? "all"}:${limit}:${offset}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) {
@@ -37,18 +107,7 @@ export async function handleListOperations(request: Request, env: Env): Promise<
       SELECT ic.id, ic.cluster_name, ic.asns, ic.countries, ic.threat_count,
              ic.status, ic.confidence_score, ic.agent_notes,
              ic.first_detected, ic.last_seen, ic.last_updated,
-             ic.actor_id, ta.name AS actor_name,
-             (
-               SELECT json_group_array(daily_count)
-               FROM (
-                 SELECT COUNT(*) as daily_count
-                 FROM threats t2
-                 WHERE t2.cluster_id = ic.id
-                   AND t2.created_at >= datetime('now', '-14 days')
-                 GROUP BY date(t2.created_at)
-                 ORDER BY date(t2.created_at) ASC
-               )
-             ) as threat_history_json
+             ic.actor_id, ta.name AS actor_name
       FROM infrastructure_clusters ic
       LEFT JOIN threat_actors ta ON ta.id = ic.actor_id
       ${where}
@@ -64,21 +123,28 @@ export async function handleListOperations(request: Request, env: Env): Promise<
     `).bind(...params).all();
     addToTally(tally, rows.meta);
 
-    const total = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM infrastructure_clusters ic ${where}`
-    ).bind(...params.slice(0, -2)).first<{ n: number }>();
+    const clusterRows = rows.results as Array<Record<string, unknown>>;
+    const clusterIds = clusterRows.map((r) => String(r.id));
+
+    const [history, total] = await Promise.all([
+      loadClusterHistory14d(env, clusterIds),
+      // Cluster total — slow-moving (NEXUS writes every 4h), 1h TTL.
+      cachedCount(env, `count.operations.clusters.${status ?? "all"}`, OPERATIONS_TOTAL_TTL_S, async () => {
+        const r = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM infrastructure_clusters ic ${where}`
+        ).bind(...params.slice(0, -2)).first<{ n: number }>();
+        return r?.n ?? 0;
+      }),
+    ]);
     tally.queries += 1;
 
-    const data = (rows.results as Array<Record<string, unknown>>).map(row => ({
+    const data = clusterRows.map(row => ({
       ...row,
-      threat_history: row.threat_history_json
-        ? JSON.parse(row.threat_history_json as string)
-        : undefined,
-      threat_history_json: undefined,
+      threat_history: history[String(row.id)] ?? [],
     }));
 
-    const responseData = { success: true, data, total: total?.n ?? 0 };
-    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: 300 });
+    const responseData = { success: true, data, total };
+    await env.CACHE.put(cacheKey, JSON.stringify(responseData), { expirationTtl: OPERATIONS_LIST_TTL_S });
     recordD1Reads(env, "operations_list", tally);
     return json(responseData, 200, origin);
   } catch (err) {

@@ -184,12 +184,15 @@ All high-traffic page-load endpoints check KV before querying D1. Cache keys enc
 | `observatory_nodes:{period}:{source}` | 300s | Observatory nodes |
 | `observatory_arcs:{period}:{source}` | 300s | Observatory arcs (single time-filtered query, no fallback) |
 | `observatory_stats:{period}:{source}` | 300s | Observatory stats |
+| `cv:observatory.brands_distinct:{hours}h:{source}` | 3600s | Observatory stats `brands_monitored` (DISTINCT over the brand cube, `cachedValue`) |
 | `observatory_live:{source}:{limit}` | 120s | Observatory live feed |
 | `observatory_operations:{status}:{limit}` | 300s | Observatory operations |
 | `dashboard_overview:{scopeSegment}` | 300s | Dashboard overview |
 | `dashboard_top_brands:{limit}:{scopeSegment}` | 300s | Dashboard top brands |
 | `agents_list` | 300s | Agents list |
-| `operations_list:{status}:{limit}:{offset}` | 300s | Operations list |
+| `operations_list:{status}:{limit}:{offset}` | 1800s | Operations list (TTL must exceed the Navigator warm period — Phase A 10 min / B 15 min) |
+| `cv:operations.history_14d:{16-hex sha256 of sorted cluster ids}` | 21600s | Operations list per-cluster 14-day sparkline (`cachedValue`) |
+| `cc:count.operations.clusters.{status}` | 3600s | Operations list cluster total (`cachedCount`) |
 | `operations_stats` | 300s | Operations stats |
 | `brand_list:{tab}:{sort}:{limit}:{scopeSegment}` | 300s | Brands list (default view, reduced-cardinality key) |
 | `brand_stats` | 1800s | Brand stats (unscoped catalog stats) |

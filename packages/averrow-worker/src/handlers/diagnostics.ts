@@ -11,6 +11,11 @@ import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaus
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
+import {
+  countDnsCandidatesInThreats,
+  DNS_DRAINABLE_CACHE_KEY,
+  DNS_DRAINABLE_TTL_S,
+} from "../lib/dns-drainable";
 import { parseNewestFailure } from "../lib/haiku";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import type { Env } from "../types";
@@ -332,29 +337,14 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
 // different, still-useful metric — it stays under its honest name
 // `enrichment_pipeline.domain_geo_drainable`.)
 //
-// NOTE: this re-states flightControl's predicate rather than importing a
-// shared constant. flightControl's read-path copy IS byte-identical (and
-// this call reuses its `count.threats.dns_drainable` cache key), but the
-// reconciler/reaper wrap the same core conditions in load-bearing,
-// non-identical SQL (distinct `INDEXED BY` hints, a cursor `created_at >= ?`
-// predicate, an `IN (...)` existence check), so there's no single fragment
-// to extract across all four call sites without touching write-path SQL.
-// Keep this in sync with flightControl's count.threats.dns_drainable
-// predicate if that ever changes.
-export async function countDnsCandidatesInThreats(db: D1Database): Promise<number> {
-  const row = await db.prepare(`
-    SELECT COUNT(DISTINCT malicious_domain) AS n
-    FROM threats
-    WHERE ip_address IS NULL
-      AND status = 'active'
-      AND dns_exhausted_at IS NULL
-      AND malicious_domain IS NOT NULL
-      AND malicious_domain != ''
-      AND malicious_domain NOT LIKE '*%'
-      AND malicious_domain LIKE '%.%'
-  `).first<{ n: number }>();
-  return row?.n ?? 0;
-}
+// The count is now defined once in lib/dns-drainable.ts and Flight Control
+// calls the same function under the same cache key + TTL. The reconciler/
+// reaper still wrap the same core conditions in load-bearing, non-identical
+// SQL (distinct `INDEXED BY` hints, a cursor `created_at >= ?` predicate, an
+// `IN (...)` existence check) — keep them in sync if the predicate changes.
+// Implementation lives in lib/dns-drainable.ts (shared with Flight Control);
+// re-exported here for existing importers.
+export { countDnsCandidatesInThreats };
 
 /** Build the `dns_queue_parity` diagnostics block. `drainable_in_threats`
  *  is the threats-side candidate count (cooldown-independent); `delta`
@@ -1253,11 +1243,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // Threats-side DNS candidate count — the REAL parity partner for
     // dns_queue's row total (see countDnsCandidatesInThreats). Distinct
     // from domainGeoDrainable above, which is cooldown-filtered.
-    // Reuse flightControl's cache key (same predicate + TTL) so this
+    // Shares flightControl's cache key + TTL (lib/dns-drainable.ts) so this
     // piggybacks on its periodically-warmed count instead of running its
     // own full-table COUNT(DISTINCT) scan on every diagnostics call.
     const dnsCandidatesInThreatsP = cachedCount(
-      env, 'count.threats.dns_drainable', 300,
+      env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S,
       () => countDnsCandidatesInThreats(env.DB),
     ).then((n) => ({ n }));
 

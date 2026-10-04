@@ -164,12 +164,14 @@ export async function reapDnsQueue(env: Env): Promise<ReaperResult> {
       const placeholders = chunk.map(() => '?').join(',');
       batchesAttempted++;
       try {
+        // Unary `+` steers the plan to a malicious_domain seek — see the
+        // identical UPDATE in lib/dns-backfill.ts markExhaustedAndDrain.
         const m = await env.DB.prepare(`
           UPDATE threats
              SET dns_exhausted_at = datetime('now')
            WHERE malicious_domain IN (${placeholders})
-             AND status = 'active'
-             AND ip_address IS NULL
+             AND +status = 'active'
+             AND +ip_address IS NULL
              AND dns_exhausted_at IS NULL
         `).bind(...chunk).run();
         exhaustedMarked += m.meta?.changes ?? 0;

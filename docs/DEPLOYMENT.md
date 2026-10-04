@@ -136,6 +136,13 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - One-time build cost: one pass over `threats` per index (~1.25M rows read each, ~2.5M total), paid back within the first hour.
 - To verify, `SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_threats_asn', 'idx_threats_gsb_pending')` returns both rows.
 
+### Migration 0278 — `idx_threats_malicious_url` (D1 read-spend)
+
+- `0278_threats_malicious_url_index.sql` adds the partial index `idx_threats_malicious_url` (`threats(malicious_url) WHERE malicious_url IS NOT NULL`). It is index-only: no columns change.
+- **Applied automatically before the Worker.** CI (`deploy-radar.yml`) runs `db:migrate:prod` before `pnpm run deploy`. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first. The Worker has no hard dependency on it: without the index, the abuse-mailbox exact-URL correlation (`lib/abuse-mailbox-iocs.ts` `correlateUrls`) still returns the same rows, it just full-scans `threats` (~10M rows read/day), as it did before.
+- **One-time cost.** Building the index reads `threats` once (~1.25M rows) and writes one index entry per URL-bearing row. Storage estimate ≤ ~150 MB at the upper bound (see the migration header). After that, each threat INSERT with a non-NULL `malicious_url` writes one extra index row.
+- **Verify:** `SELECT sql FROM sqlite_master WHERE name = 'idx_threats_malicious_url'` returns the definition. `EXPLAIN QUERY PLAN SELECT id FROM threats WHERE malicious_url = 'x' LIMIT 1` should show `SEARCH threats USING INDEX idx_threats_malicious_url`. The same plan is pinned on the migration-derived schema by `test/threats-malicious-url-index.test.ts`.
+
 ### `hosting_providers.is_bulletproof` — prod-only column now defined in 0078 (fresh-bootstrap fix)
 
 - `GET /api/providers/v2` (`handlers/providers.ts`) selects `hp.is_bulletproof`. Prod gained the column out of band (`INTEGER`, nullable, `DEFAULT 0`), and no migration defined it, so any DB built from `migrations/` (staging, dev, the derived-schema test harness) returned 500 on that route.
