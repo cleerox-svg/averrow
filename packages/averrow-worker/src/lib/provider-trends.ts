@@ -16,14 +16,47 @@
 //      the diff filter eliminates the no-op writes.
 //   4. Batches the surviving UPDATEs 20 at a time (preserves the
 //      original per-batch transient-tolerance behavior).
+//   5. Zeroes trend_7d / trend_30d on providers that have DROPPED OUT
+//      of the 30-day cube window entirely (see STALE_TRENDS_SQL).
 //
-// Returns `{ providers_evaluated, providers_updated }` so the caller
-// can log the diff ratio for observability.
+// Semantics: trend_7d / trend_30d are non-negative 7-day / 30-day
+// NEW-threat COUNTS. This module is their only writer (lib/snapshots.ts
+// used to overwrite trend_7d with a day-over-week delta at hour 0 —
+// removed in PR-D so the column has a single meaning).
+//
+// Returns `{ providers_evaluated, providers_updated, providers_zeroed }`
+// so the caller can log the diff ratio for observability.
 
 export interface ProviderTrendsResult {
   providers_evaluated: number;
   providers_updated: number;
+  /** Providers absent from the 30d cube window whose stale non-zero
+   *  trend_7d / trend_30d were reset to 0 this run. */
+  providers_zeroed: number;
 }
+
+// Step 5 — zero providers absent from the 30d cube window.
+//
+// Steps 1-4 only ever touch providers that APPEAR in the cube
+// aggregate. A provider whose threats all aged out of the 30-day window
+// is absent from it, so without this step it would keep its last
+// non-zero trend_7d / trend_30d forever — surfacing as a phantom
+// "Cooling" provider (/api/providers/v2?sort=cooling) or a stale
+// accelerating/pivot status.
+//
+// Cost: the "present" set is the step-1 aggregate already in memory, so
+// the 30d cube window is NOT re-scanned. The only extra read is this
+// change-guarded candidate list — providers currently holding a non-zero
+// trend, a set bounded by the cube's distinct-provider count plus the
+// stale rows — and the absent ones are diffed out in JS. Already-zero
+// dormant providers are neither read nor written.
+export const STALE_TRENDS_SQL = `
+  SELECT id FROM hosting_providers
+  WHERE COALESCE(trend_7d, 0) != 0 OR COALESCE(trend_30d, 0) != 0
+`;
+
+/** Bind ceiling per zeroing UPDATE — under D1's 100-bound-parameter limit. */
+const ZERO_CHUNK = 90;
 
 export async function updateProviderTrends(
   db: D1Database,
@@ -45,8 +78,15 @@ export async function updateProviderTrends(
     count_30d: number;
   }>();
 
+  // An EMPTY 30d cube means the cube is not populated (fresh/unbuilt
+  // env) or its builders have stalled for >30 days — the builders use
+  // INSERT OR REPLACE and never DELETE, so a live cube is never
+  // transiently empty. Either way it is not evidence that every provider
+  // went quiet: skip everything (including the step-5 zeroing) rather
+  // than mass-zero the whole table and mass-rewrite it once the cube
+  // recovers.
   if (agg.results.length === 0) {
-    return { providers_evaluated: 0, providers_updated: 0 };
+    return { providers_evaluated: 0, providers_updated: 0, providers_zeroed: 0 };
   }
 
   // 2. Fetch current trend values in chunks (placeholder-limit safe).
@@ -101,8 +141,38 @@ export async function updateProviderTrends(
     }
   }
 
+  // 5. Zero providers that fell out of the 30d window (see STALE_TRENDS_SQL).
+  // Change-guarded twice over: the candidate SELECT only returns non-zero
+  // rows, and the UPDATE re-checks it so a row zeroed between the read
+  // and the write is not counted.
+  let providersZeroed = 0;
+  try {
+    const present = new Set(agg.results.map(r => r.hosting_provider_id));
+    const stale = await db.prepare(STALE_TRENDS_SQL).all<{ id: string }>();
+    const absent = stale.results.map(r => r.id).filter(id => !present.has(id));
+    const stmts: D1PreparedStatement[] = [];
+    for (let i = 0; i < absent.length; i += ZERO_CHUNK) {
+      const ids = absent.slice(i, i + ZERO_CHUNK);
+      const placeholders = ids.map(() => '?').join(',');
+      stmts.push(db.prepare(`
+        UPDATE hosting_providers SET
+          trend_7d = 0,
+          trend_30d = 0
+        WHERE id IN (${placeholders})
+          AND (COALESCE(trend_7d, 0) != 0 OR COALESCE(trend_30d, 0) != 0)
+      `).bind(...ids));
+    }
+    if (stmts.length > 0) {
+      const results = await db.batch(stmts);
+      for (const r of results) providersZeroed += r.meta?.changes ?? 0;
+    }
+  } catch (zeroErr) {
+    console.error('[provider-trends] zero-absent update failed:', zeroErr);
+  }
+
   return {
     providers_evaluated: agg.results.length,
     providers_updated: providersUpdated,
+    providers_zeroed: providersZeroed,
   };
 }

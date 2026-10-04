@@ -41,6 +41,7 @@ import { slugifyKey, generateClusterName } from "../lib/cluster-naming";
 export async function runNexus(db: D1Database, env: Env): Promise<{
   clustersWritten: number;
   providersUpdated: number;
+  providersZeroed: number;
   pivotsDetected: number;
   outputs: AgentOutputEntry[];
 }> {
@@ -74,9 +75,11 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   // every-row path as the dominant inline write driver on the
   // platform.
   let providersUpdated = 0;
+  let providersZeroed = 0;
   try {
     const result = await updateProviderTrends(db);
     providersUpdated = result.providers_updated;
+    providersZeroed = result.providers_zeroed;
   } catch (err) {
     console.error('[nexus] provider trend update error:', err);
   }
@@ -1230,6 +1233,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
       JSON.stringify({
         clusters_written: clustersWritten,
         providers_updated: providersUpdated,
+        providers_zeroed: providersZeroed,
         pivots_detected: pivotsDetected,
         infra_movement_pivots: infraMovementPivots,
         app_store_clusters: appStoreClustersWritten,
@@ -1242,11 +1246,12 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 
   outputs.push({
     type: "diagnostic",
-    summary: `NEXUS: ${clustersWritten} clusters written (${asnClusters.results.length} ASN groups analyzed, ${appStoreClustersWritten} app-store dev clusters, ${darkWebClustersWritten} dark-web actor clusters), ${providersUpdated} providers trend-updated, ${pivotsDetected} dormancy pivots, ${infraMovementPivots} infra-movement pivots`,
+    summary: `NEXUS: ${clustersWritten} clusters written (${asnClusters.results.length} ASN groups analyzed, ${appStoreClustersWritten} app-store dev clusters, ${darkWebClustersWritten} dark-web actor clusters), ${providersUpdated} providers trend-updated, ${providersZeroed} trend-zeroed, ${pivotsDetected} dormancy pivots, ${infraMovementPivots} infra-movement pivots`,
     severity: pivotsDetected > 0 || infraMovementPivots > 0 ? "high" : "info",
     details: {
       clusters_written: clustersWritten,
       providers_updated: providersUpdated,
+      providers_zeroed: providersZeroed,
       pivots_detected: pivotsDetected,
       infra_movement_pivots: infraMovementPivots,
       asn_clusters_analyzed: asnClusters.results.length,
@@ -1255,7 +1260,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
     },
   });
 
-  return { clustersWritten, providersUpdated, pivotsDetected, outputs };
+  return { clustersWritten, providersUpdated, providersZeroed, pivotsDetected, outputs };
 }
 
 // `generateClusterName` + `slugifyKey` moved to lib/cluster-naming.ts so
@@ -1321,6 +1326,7 @@ export const nexusAgent: AgentModule = {
       output: {
         clusters_written: result.clustersWritten,
         providers_updated: result.providersUpdated,
+        providers_zeroed: result.providersZeroed,
         pivots_detected: result.pivotsDetected,
       },
       agentOutputs: result.outputs,

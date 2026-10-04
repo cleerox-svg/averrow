@@ -167,6 +167,10 @@ runThreatFeedScan
               ├─ ASN correlation → infrastructure_clusters
               ├─ pivot detection → agent_events pivot_detected → observer (one wired edge)
               └─ provider trends → hosting_providers.trend_7d/30d
+                 (lib/provider-trends.ts — the columns' ONLY writer; 7d/30d
+                  new-threat COUNTS from threat_cube_provider, zeroes providers
+                  absent from the 30d window. Read by /api/providers/v2
+                  sort=cooling + status filters, cartographer surge rule.)
 
 Cron `8 * * * *` (PR-E)     → enricher          (domain_geo + brand backfills)
 Cron `9 * * * *` (PR-F)     → cartographer      (AI scoring + email scans + provider stats)

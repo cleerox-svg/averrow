@@ -804,7 +804,10 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
       // when the values match. Halved the per-tick UPDATE count in
       // the 2026-05-20 write-budget audit.
       const result = await updateProviderTrends(this.env.DB);
-      return { providers_updated: result.providers_updated };
+      return {
+        providers_updated: result.providers_updated,
+        providers_zeroed: result.providers_zeroed,
+      };
     });
 
     // Aggregate cluster counts across all lanes for the completion log.
@@ -847,7 +850,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
         crypto.randomUUID(),
-        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${components.componentsFormed} components (${components.clustersGrouped} clusters grouped), ${correlation.pivotsDetected} dormancy pivots, ${movement.emitted} infra-movement pivots, ${providers.providers_updated} providers updated`,
+        `NEXUS complete — ${totalClustersWritten} clusters written (${certSerialLane.clustersWritten} cert-serial, ${certSanLane.clustersWritten} cert-SAN, ${perIpLane.clustersWritten} per-IP, ${correlation.clustersWritten} ASN, ${subnetLane.clustersWritten} /24, ${registrarLane.clustersWritten} registrar), ${components.componentsFormed} components (${components.clustersGrouped} clusters grouped), ${correlation.pivotsDetected} dormancy pivots, ${movement.emitted} infra-movement pivots, ${providers.providers_updated} providers updated, ${providers.providers_zeroed} providers zeroed`,
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 

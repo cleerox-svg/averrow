@@ -994,7 +994,7 @@ as `averrow`) did rename — see §2.
 - `brands.threat_count`, `brands.last_threat_seen` — use instead of `COUNT(*) FROM threats WHERE target_brand_id = ?`
 - `brands.active_threat_count` (migration 0233) — use instead of `COUNT(*) FROM threats WHERE target_brand_id = ? AND status='active'`. Maintained by the change-guarded whole-table sync in `lib/brand-active-counts.ts`; read by `handlers/tenantData.ts` (tenant dashboard) and `handlers/emailSecurity.ts` (worst-protected brands).
 - `hosting_providers.active_threat_count`, `hosting_providers.total_threat_count` — use instead of JOIN to threats
-- `hosting_providers.trend_7d`, `hosting_providers.trend_30d` — use instead of 14-day window GROUP BY
+- `hosting_providers.trend_7d`, `hosting_providers.trend_30d` — use instead of 14-day window GROUP BY. They are 7d/30d new-threat COUNTS (never deltas); single writer `lib/provider-trends.ts`, which zeroes providers absent from the 30d `threat_cube_provider` window.
 
 Phase 2 of the D1 spend-reduction track migrated the providers list
 (`handleListProviders`, `handleWorstProviders`, `handleImprovingProviders`)

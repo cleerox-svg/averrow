@@ -130,7 +130,7 @@ Cubes use `INSERT OR REPLACE` which is idempotent — overlapping rebuilds are s
 Key tables carry denormalized aggregate columns to avoid JOINs to `threats`:
 
 - `brands.threat_count`, `brands.last_threat_seen` — maintained by feed ingestion and brand-match backfill
-- `hosting_providers.active_threat_count`, `hosting_providers.total_threat_count`, `hosting_providers.trend_7d`, `hosting_providers.trend_30d` — maintained by provider stats refresh
+- `hosting_providers.active_threat_count`, `hosting_providers.total_threat_count`, `hosting_providers.trend_7d`, `hosting_providers.trend_30d` — active/total maintained by provider stats refresh; trend_7d/trend_30d are rolling 7d/30d new-threat COUNTS (never deltas) written only by `lib/provider-trends.ts` (NEXUS), which zeroes providers absent from the 30d cube window
 
 ### Schema Overview
 

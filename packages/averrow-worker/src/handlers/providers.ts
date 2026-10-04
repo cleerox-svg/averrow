@@ -46,8 +46,11 @@ export async function handleProviderStats(request: Request, env: Env): Promise<R
 // `hosting_provider_id` over the threats table and read ~12.6M rows
 // per call (75 calls/24h = 945M rows/24h). Migrated to read from the
 // `hosting_providers` table directly, which carries pre-computed
-// counters (active_threat_count, total_threat_count, trend_7d,
-// trend_30d) maintained by Cartographer's enrichment path.
+// counters: active_threat_count / total_threat_count (Cartographer's
+// enrichment path) and trend_7d / trend_30d (lib/provider-trends.ts,
+// NEXUS). NOTE: `trend_7d_pct` / `trend_30d_pct` in this response are
+// legacy aliases that carry those raw 7d / 30d COUNTS, not percentages
+// (names kept for response-contract stability).
 //
 // What changed in the response shape:
 //   - `threat_count` now reads from total_threat_count
@@ -368,11 +371,13 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
     // hosting_providers.trend_7d / trend_30d are the rolling 7-day and
     // 30-day NEW-threat counts written by lib/provider-trends.ts from
     // threat_cube_provider (NEXUS, every 4h) — non-negative counts, not
-    // deltas. (lib/snapshots.ts also overwrites trend_7d with a
-    // day-over-week delta once a day at hour 0; the next NEXUS run
-    // restores the count, so a `trend_7d < 0` filter would be empty
-    // ~20h/day — the same empty-by-construction trap that left the old
-    // movers "Cooling Down" list blank.)
+    // deltas, so a `trend_7d < 0` filter would be empty by construction
+    // (the trap that left the old movers "Cooling Down" list blank).
+    // provider-trends.ts is the columns' single writer: it also zeroes
+    // providers that fell out of the 30d cube window, so a provider that
+    // went fully quiet doesn't linger here on stale counts. (lib/
+    // snapshots.ts used to overwrite trend_7d with a day-over-week delta
+    // at hour 0; removed in PR-D.)
     //
     // Cooling = the last 7 days ran BELOW the provider's 30-day weekly
     // average (trend_30d * 7/30) — the mirror of status=accelerating
