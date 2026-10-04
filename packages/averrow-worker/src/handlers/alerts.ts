@@ -1,24 +1,90 @@
 /**
- * Unified Alerts API handlers.
+ * Unified Alerts API handlers (ops / staff surface).
  *
  * Endpoints:
  *   GET    /api/alerts             — list alerts (filtered, paginated, with brand join)
  *   GET    /api/alerts/stats       — severity/status breakdown
+ *   GET    /api/alerts/triage-summary — bell-row counts + the top `new` alert
  *   GET    /api/alerts/:id         — single alert detail
- *   PATCH  /api/alerts/:id         — update status (acknowledge, resolve, etc.)
+ *   PATCH  /api/alerts/:id         — update status / assignment
  *   POST   /api/alerts/bulk-acknowledge — bulk acknowledge alerts
  *   POST   /api/alerts/bulk-takedown    — bulk create takedown requests from alerts
+ *
+ * PR-C (owner decision 2026-10-04): ops alerts are PLATFORM-WIDE for staff.
+ * Alert rows carry the `user_id` of the tenant org member they were fanned
+ * out to (lib/alert-fanout.ts), so the former `a.user_id = ?` pin meant staff
+ * saw ~nothing. The only filter left is the org-scope brand filter
+ * (`alertScopeFilter`): every staff role gets a null scope from getOrgScope
+ * (isPlatformStaff, PR-F) and therefore sees every alert. Reads are gated by
+ * requireStaff; mutations by requirePermission('edit_alerts') in
+ * routes/dashboard.ts. Tenant alerts (/api/orgs/:orgId/alerts,
+ * handlers/tenantData.ts) are unaffected.
  */
 
 import { json } from "../lib/cors";
-import { getAlerts, updateAlertStatus } from "../lib/alerts";
+import { updateAlertStatus } from "../lib/alerts";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { audit } from "../lib/audit";
+import { scopeCacheSegment, GLOBAL_SCOPE_SEGMENT } from "../lib/scope-cache-key";
 import type { AlertStatus, Severity } from "../lib/alerts";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
+/**
+ * Severity rank for ORDER BY. Severities are lowercase since migration 0120
+ * (and CHECK-constrained lowercase since 0121); LOWER() keeps the rank right
+ * for any straggler. Unknown values sort last.
+ */
+const SEVERITY_RANK_SQL = `CASE LOWER(a.severity)
+             WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+             WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END`;
+
+/**
+ * Org-scope brand filter shared by every staff alert handler.
+ *   - null/undefined scope (every staff role) → no filter: all alerts
+ *   - scope with brand_ids                     → `a.brand_id IN (...)`
+ *   - scope with no brands                     → null: caller answers empty / 404
+ * Clients never reach these requireStaff routes; the scoped branch keeps the
+ * handlers correct if one ever did.
+ */
+function alertScopeFilter(scope?: OrgScope | null): { where: string; params: unknown[] } | null {
+  if (!scope) return { where: "1 = 1", params: [] };
+  if (scope.brand_ids.length === 0) return null;
+  const placeholders = scope.brand_ids.map(() => "?").join(", ");
+  return { where: `a.brand_id IN (${placeholders})`, params: [...scope.brand_ids] };
+}
+
+const TRIAGE_CACHE_PREFIX = "alerts_triage:";
+const STATS_CACHE_PREFIX = "alerts_stats:";
+const ALERT_CACHE_TTL_SECONDS = 60;
+
+/**
+ * Drop the cached triage summary + stats for the caller's scope and for the
+ * `global` segment (the one every staff caller reads), so the bell count and
+ * stat tiles drop right after a mutation instead of up to 60s later.
+ */
+async function invalidateAlertCaches(env: Env, scope?: OrgScope | null): Promise<void> {
+  const segments = new Set<string>([GLOBAL_SCOPE_SEGMENT, await scopeCacheSegment(scope)]);
+  const deletes: Promise<void>[] = [];
+  for (const seg of segments) {
+    deletes.push(env.CACHE.delete(TRIAGE_CACHE_PREFIX + seg), env.CACHE.delete(STATS_CACHE_PREFIX + seg));
+  }
+  try {
+    await Promise.all(deletes);
+  } catch {
+    /* KV failure: the 60s TTL still bounds staleness */
+  }
+}
+
+/** Distinct, non-empty string ids from an untrusted body field (max 500). */
+function parseAlertIds(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  const ids = Array.from(new Set(raw.filter((v): v is string => typeof v === "string" && v.length > 0)));
+  return ids.length > 0 ? ids.slice(0, 500) : null;
+}
+
 // GET /api/alerts
-export async function handleListAlerts(request: Request, env: Env, userId: string, scope?: OrgScope | null): Promise<Response> {
+export async function handleListAlerts(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const url = new URL(request.url);
@@ -31,19 +97,14 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
     const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
-    // Build WHERE clause
-    let where = `WHERE a.user_id = ?`;
-    const params: unknown[] = [userId];
-
-    // Org scope filtering — only show alerts for org brands
-    if (scope) {
-      if (scope.brand_ids.length === 0) {
-        return json({ success: true, data: [], total: 0 }, 200, origin);
-      }
-      const placeholders = scope.brand_ids.map(() => "?").join(", ");
-      where += ` AND a.brand_id IN (${placeholders})`;
-      params.push(...scope.brand_ids);
+    // Build WHERE clause — platform-wide for staff (PR-C); org-scope brand
+    // filter only when a scope is present.
+    const scopeFilter = alertScopeFilter(scope);
+    if (!scopeFilter) {
+      return json({ success: true, data: [], total: 0 }, 200, origin);
     }
+    let where = `WHERE ${scopeFilter.where}`;
+    const params: unknown[] = [...scopeFilter.params];
 
     if (status) {
       where += ` AND a.status = ?`;
@@ -99,8 +160,7 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
          LEFT JOIN saas_techniques st ON st.id = t.saas_technique_id
          ${where}
          ORDER BY
-           CASE a.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                           WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+           ${SEVERITY_RANK_SQL},
            a.created_at DESC
          LIMIT ? OFFSET ?`
       ).bind(...params, Math.min(200, limit), offset).all();
@@ -120,8 +180,7 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
          LEFT JOIN users u ON u.id = a.assigned_to
          ${where}
          ORDER BY
-           CASE a.severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2
-                           WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+           ${SEVERITY_RANK_SQL},
            a.created_at DESC
          LIMIT ? OFFSET ?`
       ).bind(...params, Math.min(200, limit), offset).all();
@@ -136,33 +195,11 @@ export async function handleListAlerts(request: Request, env: Env, userId: strin
   }
 }
 
-/**
- * Ownership predicate shared by the by-id handlers (H2, 2026-06-10
- * audit). Mirrors handleListAlerts: alerts are owned per-user
- * (a.user_id = ?) and, for org-scoped callers, restricted to the
- * org's brand_ids. Returns null when the scope's brand list is empty
- * (caller should 404 — same outcome as the list returning []).
- */
-function buildAlertOwnershipWhere(
-  userId: string,
-  scope?: OrgScope | null,
-): { where: string; params: unknown[] } | null {
-  let where = `a.user_id = ?`;
-  const params: unknown[] = [userId];
-  if (scope) {
-    if (scope.brand_ids.length === 0) return null;
-    const placeholders = scope.brand_ids.map(() => "?").join(", ");
-    where += ` AND a.brand_id IN (${placeholders})`;
-    params.push(...scope.brand_ids);
-  }
-  return { where, params };
-}
-
 // GET /api/alerts/:id
-export async function handleGetAlert(request: Request, env: Env, alertId: string, userId: string, scope?: OrgScope | null): Promise<Response> {
+export async function handleGetAlert(request: Request, env: Env, alertId: string, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const ownership = buildAlertOwnershipWhere(userId, scope);
+    const ownership = alertScopeFilter(scope);
     if (!ownership) {
       return json({ success: false, error: "Alert not found" }, 404, origin);
     }
@@ -204,16 +241,17 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
       }
     }
 
-    // H2: verify the caller owns the alert (same predicate as the list)
-    // before mutating. updateAlertStatus itself stays id-keyed.
-    const ownership = buildAlertOwnershipWhere(userId, scope);
+    // Same scope predicate as the list (platform-wide for staff, PR-C).
+    // Also reads the prior state for the audit trail. updateAlertStatus
+    // itself stays id-keyed.
+    const ownership = alertScopeFilter(scope);
     if (!ownership) {
       return json({ success: false, error: "Alert not found" }, 404, origin);
     }
-    const owned = await env.DB.prepare(
-      `SELECT a.id FROM alerts a WHERE a.id = ? AND ${ownership.where}`
-    ).bind(alertId, ...ownership.params).first<{ id: string }>();
-    if (!owned) {
+    const prior = await env.DB.prepare(
+      `SELECT a.id, a.status, a.assigned_to FROM alerts a WHERE a.id = ? AND ${ownership.where}`
+    ).bind(alertId, ...ownership.params).first<{ id: string; status: string | null; assigned_to: string | null }>();
+    if (!prior) {
       return json({ success: false, error: "Alert not found" }, 404, origin);
     }
 
@@ -233,6 +271,28 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
       ).bind(assignee, alertId).run();
     }
 
+    await invalidateAlertCaches(env, scope);
+
+    // Who-acted trail: alerts has no acknowledged_by / resolved_by columns,
+    // so the actor is recorded in AUDIT_DB (same pattern as the tenant
+    // tenant_alert_update audit in handlers/tenantData.ts).
+    await audit(env, {
+      action: "alert_update",
+      userId,
+      resourceType: "alert",
+      resourceId: alertId,
+      details: {
+        previous_status: prior.status,
+        new_status: body.status ?? null,
+        notes: body.notes ?? null,
+        ...(hasAssignee
+          ? { previous_assigned_to: prior.assigned_to, assigned_to: body.assigned_to ?? null }
+          : {}),
+      },
+      outcome: "success",
+      request,
+    });
+
     return json({ success: true }, 200, origin);
   } catch (err) {
     console.error('[alerts]', err instanceof Error ? err.message : String(err));
@@ -246,54 +306,70 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
 // previous version checked `severity='CRITICAL'` etc. which always
 // returned 0 after the migration normalized rows to lowercase —
 // the by-severity breakdown was silently broken.
-export async function handleAlertStats(request: Request, env: Env, userId: string): Promise<Response> {
+//
+// PR-C: platform-wide for staff, so the answer is identical for every staff
+// caller — cached 60s per scope segment (`alerts_stats:global` for staff)
+// and dropped by invalidateAlertCaches on any alert mutation.
+export async function handleAlertStats(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
+    const scopeFilter = alertScopeFilter(scope);
+    const cacheKey = STATS_CACHE_PREFIX + (await scopeCacheSegment(scope));
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) {
+      recordD1Reads(env, "alerts_stats", newTally());
+      return json({ success: true, data: JSON.parse(cached) }, 200, origin);
+    }
+
     const tally = newTally();
-    const stats = await env.DB.prepare(
-      `SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status='new' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN status='acknowledged' THEN 1 ELSE 0 END) as acknowledged,
-        SUM(CASE WHEN status='resolved' THEN 1 ELSE 0 END) as resolved,
-        SUM(CASE WHEN status='false_positive' THEN 1 ELSE 0 END) as dismissed,
-        SUM(CASE WHEN status='false_positive' AND resolution_notes LIKE 'auto%' THEN 1 ELSE 0 END) as auto_dismissed,
-        SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) as critical,
-        SUM(CASE WHEN severity='high' THEN 1 ELSE 0 END) as high,
-        SUM(CASE WHEN severity='medium' THEN 1 ELSE 0 END) as medium,
-        SUM(CASE WHEN severity='low' THEN 1 ELSE 0 END) as low
-       FROM alerts WHERE user_id = ?`
-    ).bind(userId).first<Record<string, number>>();
-    tally.queries += 1;
+    let stats: Record<string, number> | null = null;
+    let byBrand: unknown[] = [];
+    if (scopeFilter) {
+      stats = await env.DB.prepare(
+        `SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN a.status='new' THEN 1 ELSE 0 END) as new_count,
+          SUM(CASE WHEN a.status='acknowledged' THEN 1 ELSE 0 END) as acknowledged,
+          SUM(CASE WHEN a.status='resolved' THEN 1 ELSE 0 END) as resolved,
+          SUM(CASE WHEN a.status='false_positive' THEN 1 ELSE 0 END) as dismissed,
+          SUM(CASE WHEN a.status='false_positive' AND a.resolution_notes LIKE 'auto%' THEN 1 ELSE 0 END) as auto_dismissed,
+          SUM(CASE WHEN a.severity='critical' THEN 1 ELSE 0 END) as critical,
+          SUM(CASE WHEN a.severity='high' THEN 1 ELSE 0 END) as high,
+          SUM(CASE WHEN a.severity='medium' THEN 1 ELSE 0 END) as medium,
+          SUM(CASE WHEN a.severity='low' THEN 1 ELSE 0 END) as low
+         FROM alerts a WHERE ${scopeFilter.where}`
+      ).bind(...scopeFilter.params).first<Record<string, number>>();
+      tally.queries += 1;
 
-    const byBrand = await env.DB.prepare(
-      `SELECT a.brand_id, b.name as brand_name, b.canonical_domain as brand_domain,
-              COUNT(*) as alert_count,
-              SUM(CASE WHEN a.status='new' THEN 1 ELSE 0 END) as new_count
-       FROM alerts a
-       LEFT JOIN brands b ON b.id = a.brand_id
-       WHERE a.user_id = ?
-       GROUP BY a.brand_id
-       ORDER BY alert_count DESC`
-    ).bind(userId).all();
-    addToTally(tally, byBrand.meta);
+      const byBrandRes = await env.DB.prepare(
+        `SELECT a.brand_id, b.name as brand_name, b.canonical_domain as brand_domain,
+                COUNT(*) as alert_count,
+                SUM(CASE WHEN a.status='new' THEN 1 ELSE 0 END) as new_count
+         FROM alerts a
+         LEFT JOIN brands b ON b.id = a.brand_id
+         WHERE ${scopeFilter.where}
+         GROUP BY a.brand_id
+         ORDER BY alert_count DESC`
+      ).bind(...scopeFilter.params).all();
+      addToTally(tally, byBrandRes.meta);
+      byBrand = byBrandRes.results;
+    }
 
+    const data = {
+      total: stats?.total ?? 0,
+      new_count: stats?.new_count ?? 0,
+      acknowledged: stats?.acknowledged ?? 0,
+      resolved: stats?.resolved ?? 0,
+      dismissed: stats?.dismissed ?? 0,
+      critical: stats?.critical ?? 0,
+      high: stats?.high ?? 0,
+      medium: stats?.medium ?? 0,
+      low: stats?.low ?? 0,
+      by_brand: byBrand,
+    };
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: ALERT_CACHE_TTL_SECONDS });
     recordD1Reads(env, "alerts_stats", tally);
-    return json({
-      success: true,
-      data: {
-        total: stats?.total ?? 0,
-        new_count: stats?.new_count ?? 0,
-        acknowledged: stats?.acknowledged ?? 0,
-        resolved: stats?.resolved ?? 0,
-        dismissed: stats?.dismissed ?? 0,
-        critical: stats?.critical ?? 0,
-        high: stats?.high ?? 0,
-        medium: stats?.medium ?? 0,
-        low: stats?.low ?? 0,
-        by_brand: byBrand.results,
-      },
-    }, 200, origin);
+    return json({ success: true, data }, 200, origin);
   } catch (err) {
     console.error('[alerts]', err instanceof Error ? err.message : String(err));
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -301,32 +377,51 @@ export async function handleAlertStats(request: Request, env: Env, userId: strin
 }
 
 // POST /api/alerts/bulk-acknowledge
-export async function handleBulkAcknowledge(request: Request, env: Env, userId: string): Promise<Response> {
+export async function handleBulkAcknowledge(request: Request, env: Env, userId: string, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as { alert_ids?: string[]; brand_id?: string };
-
-    if (body.brand_id) {
-      // Acknowledge all new alerts for a brand
-      const result = await env.DB.prepare(
-        `UPDATE alerts SET status='acknowledged', acknowledged_at=datetime('now'), updated_at=datetime('now')
-         WHERE brand_id = ? AND user_id = ? AND status='new'`
-      ).bind(body.brand_id, userId).run();
-      return json({ success: true, data: { updated: result.meta.changes ?? 0 } }, 200, origin);
-    }
-
-    if (!body.alert_ids || body.alert_ids.length === 0) {
+    const body = await request.json() as { alert_ids?: unknown; brand_id?: unknown };
+    const brandId = typeof body.brand_id === "string" && body.brand_id ? body.brand_id : null;
+    const alertIds = brandId ? null : parseAlertIds(body.alert_ids);
+    if (!brandId && !alertIds) {
       return json({ success: false, error: "Missing alert_ids or brand_id" }, 400, origin);
     }
 
-    // Bulk acknowledge by IDs
-    const placeholders = body.alert_ids.map(() => '?').join(',');
-    const result = await env.DB.prepare(
-      `UPDATE alerts SET status='acknowledged', acknowledged_at=datetime('now'), updated_at=datetime('now')
-       WHERE id IN (${placeholders}) AND user_id = ? AND status='new'`
-    ).bind(...body.alert_ids, userId).run();
+    const scopeFilter = alertScopeFilter(scope);
+    if (!scopeFilter) {
+      return json({ success: true, data: { updated: 0 } }, 200, origin);
+    }
 
-    return json({ success: true, data: { updated: result.meta.changes ?? 0 } }, 200, origin);
+    // Platform-wide for staff (PR-C): no user_id pin, only the scope filter.
+    // `a` alias so the shared scope predicate applies unchanged.
+    let target: string;
+    let targetParams: unknown[];
+    if (brandId) {
+      target = `a.brand_id = ?`;
+      targetParams = [brandId];
+    } else {
+      target = `a.id IN (${alertIds!.map(() => "?").join(",")})`;
+      targetParams = alertIds!;
+    }
+
+    const result = await env.DB.prepare(
+      `UPDATE alerts AS a SET status='acknowledged', acknowledged_at=datetime('now'), updated_at=datetime('now')
+       WHERE ${target} AND ${scopeFilter.where} AND a.status='new'`
+    ).bind(...targetParams, ...scopeFilter.params).run();
+    const updated = result.meta.changes ?? 0;
+
+    if (updated > 0) await invalidateAlertCaches(env, scope);
+    await audit(env, {
+      action: "alert_bulk_acknowledge",
+      userId,
+      resourceType: "alert",
+      resourceId: brandId ? `brand:${brandId}` : undefined,
+      details: { brand_id: brandId, alert_ids: alertIds, updated },
+      outcome: "success",
+      request,
+    });
+
+    return json({ success: true, data: { updated } }, 200, origin);
   } catch (err) {
     console.error('[alerts]', err instanceof Error ? err.message : String(err));
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -334,35 +429,39 @@ export async function handleBulkAcknowledge(request: Request, env: Env, userId: 
 }
 
 // POST /api/alerts/bulk-takedown
-export async function handleBulkTakedown(request: Request, env: Env, userId: string): Promise<Response> {
+export async function handleBulkTakedown(request: Request, env: Env, userId: string, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as { alert_ids?: string[]; brand_id?: string };
-
-    // Resolve which alerts to process
-    let alerts: { id: string; brand_id: string; title: string; summary: string; severity: string; source_id: string | null; brand_name: string | null; brand_domain: string | null }[];
-
-    if (body.brand_id) {
-      const rows = await env.DB.prepare(
-        `SELECT a.id, a.brand_id, a.title, a.summary, a.severity, a.source_id,
-                b.name as brand_name, b.canonical_domain as brand_domain
-         FROM alerts a
-         LEFT JOIN brands b ON b.id = a.brand_id
-         WHERE a.brand_id = ? AND a.user_id = ? AND a.status IN ('new','acknowledged')`
-      ).bind(body.brand_id, userId).all();
-      alerts = rows.results as typeof alerts;
-    } else if (body.alert_ids && body.alert_ids.length > 0) {
-      const placeholders = body.alert_ids.map(() => '?').join(',');
-      const rows = await env.DB.prepare(
-        `SELECT a.id, a.brand_id, a.title, a.summary, a.severity, a.source_id,
-                b.name as brand_name, b.canonical_domain as brand_domain
-         FROM alerts a
-         LEFT JOIN brands b ON b.id = a.brand_id
-         WHERE a.id IN (${placeholders}) AND a.user_id = ?`
-      ).bind(...body.alert_ids, userId).all();
-      alerts = rows.results as typeof alerts;
-    } else {
+    const body = await request.json() as { alert_ids?: unknown; brand_id?: unknown };
+    const brandId = typeof body.brand_id === "string" && body.brand_id ? body.brand_id : null;
+    const requestedIds = brandId ? null : parseAlertIds(body.alert_ids);
+    if (!brandId && !requestedIds) {
       return json({ success: false, error: "Missing alert_ids or brand_id" }, 400, origin);
+    }
+
+    // Resolve which alerts to process — platform-wide for staff (PR-C).
+    let alerts: { id: string; brand_id: string; title: string; summary: string; severity: string; source_id: string | null; brand_name: string | null; brand_domain: string | null }[] = [];
+    const scopeFilter = alertScopeFilter(scope);
+
+    if (scopeFilter && brandId) {
+      const rows = await env.DB.prepare(
+        `SELECT a.id, a.brand_id, a.title, a.summary, a.severity, a.source_id,
+                b.name as brand_name, b.canonical_domain as brand_domain
+         FROM alerts a
+         LEFT JOIN brands b ON b.id = a.brand_id
+         WHERE a.brand_id = ? AND ${scopeFilter.where} AND a.status IN ('new','acknowledged')`
+      ).bind(brandId, ...scopeFilter.params).all();
+      alerts = rows.results as typeof alerts;
+    } else if (scopeFilter && requestedIds) {
+      const placeholders = requestedIds.map(() => '?').join(',');
+      const rows = await env.DB.prepare(
+        `SELECT a.id, a.brand_id, a.title, a.summary, a.severity, a.source_id,
+                b.name as brand_name, b.canonical_domain as brand_domain
+         FROM alerts a
+         LEFT JOIN brands b ON b.id = a.brand_id
+         WHERE a.id IN (${placeholders}) AND ${scopeFilter.where}`
+      ).bind(...requestedIds, ...scopeFilter.params).all();
+      alerts = rows.results as typeof alerts;
     }
 
     if (alerts.length === 0) {
@@ -397,6 +496,17 @@ export async function handleBulkTakedown(request: Request, env: Env, userId: str
       ).bind(...alertIds).run();
     }
 
+    await invalidateAlertCaches(env, scope);
+    await audit(env, {
+      action: "alert_bulk_takedown",
+      userId,
+      resourceType: "alert",
+      resourceId: brandId ? `brand:${brandId}` : undefined,
+      details: { brand_id: brandId, alert_ids: alertIds, takedowns_created: created },
+      outcome: "success",
+      request,
+    });
+
     return json({ success: true, data: { takedowns_created: created, alerts_acknowledged: alertIds.length } }, 200, origin);
   } catch (err) {
     console.error('[alerts]', err instanceof Error ? err.message : String(err));
@@ -406,26 +516,44 @@ export async function handleBulkTakedown(request: Request, env: Env, userId: str
 
 // ─── GET /api/alerts/triage-summary ─────────────────────────────────
 //
-// Lightweight count for the bell-dropdown "X alerts need triage" row.
-// Q-D from the audit pinned the count to status='new' only — fresh
-// things to look at, not the full open workload.
+// Bell-dropdown "X alerts need triage" row. Q-D from the audit pinned the
+// count to status='new' only — fresh things to look at, not the full open
+// workload. Platform-wide for staff (PR-C).
 //
-// Two counts:
-//   new_count       — total alerts with status='new'
-//   critical_count  — alerts with status='new' AND severity='critical'
-//                     (drives the red dot indicator on the row)
+//   new_count       — alerts with status='new' in scope
+//   critical_count  — status='new' AND severity='critical' (red dot). With the
+//                     global scope this is the same predicate as
+//                     /api/intel/critical-banner's open_critical_alerts count.
+//   top             — the most severe, then newest, status='new' alert in
+//                     scope (null when there are none)
 //
-// Cached in KV for 60s per user. Bell polls this on every dropdown
-// open; the cache prevents bursts when the operator clicks around.
+// Cached in KV for 60s per scope segment (`alerts_triage:global` for every
+// staff caller); any alert mutation drops it via invalidateAlertCaches.
+export interface AlertTriageTop {
+  id: string;
+  title: string;
+  severity: string;
+  brand_id: string;
+  brand_name: string | null;
+  alert_type: string;
+  created_at: string | null;
+}
+
+export interface AlertTriageSummary {
+  new_count: number;
+  critical_count: number;
+  top: AlertTriageTop | null;
+}
+
 export async function handleAlertTriageSummary(
   request: Request,
   env: Env,
-  userId: string,
+  scope?: OrgScope | null,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const cacheKey = `alerts_triage:${userId}`;
 
   try {
+    const cacheKey = TRIAGE_CACHE_PREFIX + (await scopeCacheSegment(scope));
     // KV cache check — record an empty tally so cache hits still
     // surface as request volume in attribution.
     const cached = await env.CACHE.get(cacheKey);
@@ -434,23 +562,45 @@ export async function handleAlertTriageSummary(
       return json({ success: true, data: JSON.parse(cached) }, 200, origin);
     }
 
-    // Single SQL with conditional aggregates — one round-trip vs two.
     const tally = newTally();
-    const row = await env.DB.prepare(
-      `SELECT
-         COUNT(*) AS new_count,
-         SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical_count
-       FROM alerts
-       WHERE user_id = ? AND status = 'new'`,
-    ).bind(userId).first<{ new_count: number; critical_count: number }>();
-    tally.queries += 1;
+    const data: AlertTriageSummary = { new_count: 0, critical_count: 0, top: null };
+    const scopeFilter = alertScopeFilter(scope);
+    if (scopeFilter) {
+      const [counts, top] = await Promise.all([
+        env.DB.prepare(
+          `SELECT
+             COUNT(*) AS new_count,
+             SUM(CASE WHEN LOWER(a.severity) = 'critical' THEN 1 ELSE 0 END) AS critical_count
+           FROM alerts a
+           WHERE a.status = 'new' AND ${scopeFilter.where}`,
+        ).bind(...scopeFilter.params).first<{ new_count: number; critical_count: number | null }>(),
+        env.DB.prepare(
+          `SELECT a.id, a.title, a.severity, a.brand_id, b.name AS brand_name,
+                  a.alert_type, a.created_at
+           FROM alerts a
+           LEFT JOIN brands b ON b.id = a.brand_id
+           WHERE a.status = 'new' AND ${scopeFilter.where}
+           ORDER BY ${SEVERITY_RANK_SQL}, a.created_at DESC
+           LIMIT 1`,
+        ).bind(...scopeFilter.params).first<AlertTriageTop>(),
+      ]);
+      tally.queries += 2;
+      data.new_count = counts?.new_count ?? 0;
+      data.critical_count = counts?.critical_count ?? 0;
+      data.top = top
+        ? {
+            id: top.id,
+            title: top.title,
+            severity: top.severity,
+            brand_id: top.brand_id,
+            brand_name: top.brand_name ?? null,
+            alert_type: top.alert_type,
+            created_at: top.created_at ?? null,
+          }
+        : null;
+    }
 
-    const data = {
-      new_count: row?.new_count ?? 0,
-      critical_count: row?.critical_count ?? 0,
-    };
-
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 60 });
+    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: ALERT_CACHE_TTL_SECONDS });
     recordD1Reads(env, "alerts_triage", tally);
     return json({ success: true, data }, 200, origin);
   } catch (err) {
