@@ -1,6 +1,6 @@
-import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId } from "./types";
-import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
+import { bulkInsertThreats } from "../lib/feedRunner";
 import { logger } from "../lib/logger";
 import {
   findEocdOffset,
@@ -202,7 +202,8 @@ async function extractFromZipBuffer(bytes: Uint8Array<ArrayBuffer>): Promise<str
  * Downloads yesterday's archive (see nrdDownloadUrl for the URL shape),
  * falling back to the day before, extracts the domain list, and matches it
  * against monitored brands.
- * Brand-matched domains are inserted as typosquatting threats.
+ * Brand-matched domains are inserted as typosquatting threats, collected in
+ * memory and flushed via bulkInsertThreats (chunked INSERT OR IGNORE).
  * All NRDs are stored in nrd_domains reference table for later analysis.
  *
  * Schedule: daily (WhoisDS publishes once per day).
@@ -316,37 +317,77 @@ async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: strin
     brandKeywords.push({ id: b.id, domain: b.canonical_domain.toLowerCase(), needles });
   }
 
-  let itemsNew = 0, itemsDuplicate = 0, itemsError = 0;
+  // Match in memory, then flush in bulk. The old loop did, per matched
+  // domain and in series: isDuplicate (KV GET) → insertThreat (D1 INSERT +
+  // brand-counter UPDATE) → markSeen (KV PUT) — ~4 round trips per match,
+  // so a busy day (short keywords + homoglyphs → thousands of matches)
+  // burned thousands of serial subrequests. Same pattern as
+  // phishing_database / phishdestroy / openphish: dedupe within the payload,
+  // then chunked INSERT OR IGNORE via bulkInsertThreats. Dedup is the
+  // deterministic per-feed threatId PK (authoritative, no 24h KV TTL), and
+  // bulkInsertThreats bumps brands.threat_count only for rows that actually
+  // landed (meta.changes > 0) — exactly what insertThreat did per row.
+  const { rows, inPayloadDuplicates } = collectBrandMatchRows(domains, brandKeywords);
+
+  // Outbound KV note: this path no longer calls markSeen, so no
+  // `dedup:domain:*` key is written. ct_logs (feeds/certstream.ts) still
+  // pre-checks those keys, so it will now add its own ct_logs row (with
+  // cert columns) for a domain this feed inserted the same day, and
+  // brands.threat_count is bumped once per source — intended
+  // one-row-per-source corroboration (docs/THREAT_FEEDS.md "Cross-feed note").
+  const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
+
+  logger.info("nrd_whoisds_matched", { date, matches: rows.length, itemsNew, itemsDuplicate, itemsError });
+
+  return {
+    itemsFetched: domains.length,
+    itemsNew,
+    itemsDuplicate: itemsDuplicate + inPayloadDuplicates,
+    itemsError,
+  };
+}
+
+/**
+ * Pure domain × brand match pass — no I/O. One row per distinct matched
+ * domain: the FIRST brand (in `brandKeywords` order) whose needles hit wins,
+ * a brand's own canonical domain never matches that brand, and a domain
+ * repeated in the list counts as an in-payload duplicate (the old loop's
+ * KV pre-check caught the repeat after markSeen; here the Set does).
+ *
+ * Exported for unit tests.
+ */
+export function collectBrandMatchRows(
+  domains: string[],
+  brandKeywords: Array<{ id: string; domain: string; needles: string[] }>,
+): { rows: ThreatRow[]; inPayloadDuplicates: number } {
+  const matched = new Set<string>();
+  const rows: ThreatRow[] = [];
+  let inPayloadDuplicates = 0;
 
   for (const domain of domains) {
     for (const brand of brandKeywords) {
       // Skip if domain IS the brand's canonical domain
       if (domain === brand.domain) continue;
-
       if (!domainMatchesNeedles(domain, brand.needles)) continue;
 
-      try {
-        if (await isDuplicate(ctx.env, "domain", domain)) { itemsDuplicate++; break; }
-
-        await insertThreat(ctx.env.DB, {
-          id: threatId("nrd_hagezi", "domain", domain),
-          source_feed: "nrd_hagezi",
-          threat_type: "typosquatting",
-          malicious_url: null,
-          malicious_domain: domain,
-          target_brand_id: brand.id,
-          ioc_value: domain,
-          severity: "medium",
-          confidence_score: 60,
-        });
-        await markSeen(ctx.env, "domain", domain);
-        itemsNew++;
-        break; // One brand match per domain is enough
-      } catch { itemsError++; break; }
+      if (matched.has(domain)) { inPayloadDuplicates++; break; }
+      matched.add(domain);
+      rows.push({
+        id: threatId("nrd_hagezi", "domain", domain),
+        source_feed: "nrd_hagezi",
+        threat_type: "typosquatting",
+        malicious_url: null,
+        malicious_domain: domain,
+        target_brand_id: brand.id,
+        ioc_value: domain,
+        severity: "medium",
+        confidence_score: 60,
+      });
+      break; // One brand match per domain is enough
     }
   }
 
-  return { itemsFetched: domains.length, itemsNew, itemsDuplicate, itemsError };
+  return { rows, inPayloadDuplicates };
 }
 
 /**
