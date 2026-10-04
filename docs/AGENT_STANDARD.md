@@ -122,7 +122,7 @@ the right rule when adding a new agent.
 | Cohort | Naming style | Examples |
 |---|---|---|
 | **Operational mesh** — autonomous, cron-scheduled or event-dispatched, "does work" without prompting | Aviation / recon codename — single distinctive word, lowercased + snake_cased in code, capitalized in `displayName` | `flight_control`, `sentinel`, `sparrow`, `mockingbird`, `outrider`, `marshal`, `sounder`, `recon`, `observer`, `pathfinder`, `nexus`, `cartographer`, `analyst`, `strategist`, `narrator`, `attributor` |
-| **Sync / utility** — handler-driven, `trigger: 'api'` or `'manual'`, called by name from a route or admin action | Verb-noun describing the operation | `brand_analysis`, `brand_report`, `brand_deep_scan`, `brand_enricher`, `public_trust_check`, `evidence_assembler`, `qualified_report`, `scan_report`, `url_scan`, `admin_classify`, `honeypot_generator`, `lookalike_scanner`, `social_ai_assessor`, `geo_campaign_assessment`, `notification_narrator` |
+| **Sync / utility** — handler-driven, `trigger: 'api'` or `'manual'`, called by name from a route or admin action | Verb-noun describing the operation | `brand_analysis`, `brand_report`, `brand_deep_scan`, `brand_enricher`, `public_trust_check`, `evidence_assembler`, `qualified_report`, `scan_report`, `admin_classify`, `honeypot_generator`, `lookalike_scanner`, `social_ai_assessor`, `geo_campaign_assessment`, `notification_narrator` |
 | **Infrastructure** — pure-mechanical, no AI in the hot path | Functional name describing the artifact maintained | `cube_healer`, `navigator`, `enricher`, `geoip_refresh` |
 
 **Rationale.** Aviation codenames evoke field operatives — they're

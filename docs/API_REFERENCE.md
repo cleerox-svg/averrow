@@ -2,6 +2,8 @@
 
 Complete reference for the Averrow API. All authenticated endpoints require a `Bearer` token in the `Authorization` header. Base URL: `https://acerrow.com`
 
+> **URL-scan feature retired (2026-10-04).** `POST /api/scan`, `POST /api/scan/public`, `GET /api/scan/history`, the `/scan/:id` share page, `GET /api/signals`, `/api/dashboard/stats`, `/api/dashboard/sources`, `/api/dashboard/trend`, `/api/export/scans` and `/api/export/signals` were removed, along with the `url_scan` sync agent. They read or wrote the `scans` / `domain_cache` tables, which never existed in prod D1, so every call failed; no client called them. The API paths now 404 via the `/api/*` catch-all; `/scan/:id` falls through to the branded 404 page. `/api/heatmap` was removed earlier (PR-E). Pinned by `test/url-scan-retired.test.ts`.
+
 ## Authentication
 
 | Method | Path | Auth | Description |
@@ -52,7 +54,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| POST | `/api/scan/public` | Public domain scan (rate-limited). New scans store no requester IP, city or coordinates: the `scans` row records the requester's **country only**, from Cloudflare's `request.cf.country` (`geo_country_code` + English `geo_country`; `XX`/`T1`/absent → null). No third-party geolocation lookup (the ipapi.co call was removed in PR-E, 2026-10). |
 | POST | `/api/scan/report` | Generate brand exposure report |
 | POST | `/api/brand-scan/public` | Public brand exposure scan |
 | GET | `/api/brand-scan/public/:id` | Get public scan results |
@@ -90,9 +91,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/overview` | Staff | Dashboard overview stats |
 | GET | `/api/dashboard/top-brands` | Staff | Top targeted brands. Only the frozen legacy SPA (`public/app.js`) calls it; not pre-warmed |
 | GET | `/api/dashboard/providers` | Staff | Provider summary |
-| GET | `/api/dashboard/stats` | Staff | Legacy v1 scan aggregates, platform-wide counts only: `total_signals`, `processed`, `avg_trust`, `active_alerts`, `queue_depth`, `dead_letters`, `duplicates`, `stored`. No UI calls it any more. Was unauthenticated before 2026-10 (the docs wrongly said "User"). |
-| GET | `/api/dashboard/sources` | Staff | Legacy v1 scan source mix, `[{ name, count, percentage }]` by scan source (`station-alpha/beta/gamma`). Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
-| GET | `/api/dashboard/trend` | Staff | Legacy v1 scan volume and quality for the last 2h, `[{ time, count, quality }]`. Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
 
 ## Observatory
@@ -794,15 +792,12 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/signals` | Staff | List the latest scans as signals (`?limit=` max 50, `?offset=`). Reads the **global** `scans` table — every user's scans plus anonymous homepage scans — so it is staff-only (`requireStaff`, auditor included): no token → 401, tenant `client` → 403. Was unauthenticated until 2026-10 despite this row saying `User`; no first-party UI calls it. |
 | POST | `/api/signals` | Staff | Create signal |
 
 ## Scans
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/scan` | Staff (optional) | Trigger scan — works unauthenticated (rate-limited); a staff Bearer token attributes the scan to the caller. Same storage rule as `/api/scan/public`: country only, from `request.cf.country`; no IP, city or coordinates, no third-party geolocation. `/api/heatmap` (the scan-submitter heatmap) was removed in PR-E and now 404s. |
-| GET | `/api/scan/history` | Staff | Scan history |
 | POST | `/api/brand-scan` | Staff | Brand exposure scan |
 | GET | `/api/brand-scan/history` | Staff | Brand scan history |
 | POST | `/api/snapshots/generate` | Admin | Generate threat snapshot |
@@ -880,9 +875,7 @@ _Retired in PR-D (2026-10), no client after the Home views were removed in #1756
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/export/scans` | User | Export scan data |
-| GET | `/api/export/signals` | User | Export signals |
-| GET | `/api/export/alerts` | User | Export alerts |
+| GET | `/api/export/alerts` | Staff | Export `signal_alerts` as CSV (header-only when empty). The former fallback that exported high-risk `scans` rows was removed with the URL-scan retirement (2026-10-04). |
 | GET | `/api/export/stix/:brandId` | User | STIX bundle export |
 | GET | `/api/export/stix/:brandId/indicators` | User | STIX indicators only |
 
@@ -1272,8 +1265,7 @@ These are server-rendered HTML pages (not API endpoints):
 | `/contact` | Contact page |
 | `/privacy` | Privacy policy |
 | `/terms` | Terms of service |
-| `/scan` | Public scan page |
-| `/scan/:id` | Scan result page |
+| `/scan` | Public brand-scan landing page (calls `/api/brand-scan/public` + `/api/leads`). The `/scan/:id` URL-scan share page was retired 2026-10-04 and now 404s. |
 | `/assess` | Brand assessment (POST) |
 | `/assess/:id/results` | Assessment results |
 

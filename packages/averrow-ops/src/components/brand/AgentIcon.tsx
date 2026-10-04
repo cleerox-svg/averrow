@@ -700,30 +700,6 @@ const icons: Record<string, (size: number) => JSX.Element> = {
     </svg>
   ),
 
-  // URL Scan — public URL inspection. Visual: a globe with a
-  // magnifying glass overlay; classic inspection metaphor.
-  url_scan: (s) => (
-    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
-      {/* globe */}
-      <circle cx="14" cy="16" r="9" stroke="currentColor" strokeWidth="1.3" opacity="0.65" />
-      <ellipse cx="14" cy="16" rx="4" ry="9" stroke="currentColor" strokeWidth="1" opacity="0.45" />
-      <line x1="5" y1="16" x2="23" y2="16" stroke="currentColor" strokeWidth="1" opacity="0.45" />
-      {/* magnifying glass — lens */}
-      <circle cx="22" cy="22" r="5" stroke="currentColor" strokeWidth="1.6" fill="#0B1120" />
-      <circle cx="22" cy="22" r="2.5" stroke="currentColor" strokeWidth="1" opacity="0.5" />
-      {/* magnifier handle */}
-      <line
-        x1="26"
-        y1="26"
-        x2="32"
-        y2="32"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  ),
-
   // Scan Report — executive narrative for the public Brand Exposure
   // Report. Visual: a document with a prose paragraph + a small
   // exposure gauge in the corner.

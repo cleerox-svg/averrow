@@ -6,7 +6,7 @@
 // auditor even though the matrix grants both `view_audit`. The ops Audit tab
 // is gated on the same flag (features/governance/GovernanceWorkspace.tsx).
 //
-// The harness matches test/dashboard-v1-routes-gate.test.ts. The handlers
+// The harness matches the former test/dashboard-v1-routes-gate.test.ts. The handlers
 // are stubbed so a request that gets past the guard returns a sentinel 200
 // without touching AUDIT_DB. The guard runs for real against a signed JWT.
 

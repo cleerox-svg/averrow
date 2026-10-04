@@ -4,7 +4,6 @@ import type { Env } from "../types";
 import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope, requirePermission } from "../middleware/auth";
 import { roleHasPermission } from "../lib/role-permissions";
 import { json } from "../lib/cors";
-import { handleStats, handleSourceMix, handleQualityTrend } from "../handlers/stats";
 import {
   handleObservatoryNodes, handleObservatoryArcs, handleObservatoryLive,
   handleObservatoryBrandArcs, handleObservatoryStats, handleObservatoryOperations,
@@ -12,7 +11,7 @@ import {
 } from "../handlers/observatory";
 import { handleDashboardOverview, handleDashboardTopBrands, handleDashboardProviders } from "../handlers/dashboard";
 import { handleBrandAdminDashboard } from "../handlers/brandAdminDashboard";
-import { handleSignals, handleIngestSignal } from "../handlers/signals";
+import { handleIngestSignal } from "../handlers/signals";
 import { handleListAlerts, handleGetAlert, handleUpdateAlert, handleAlertStats, handleBulkAcknowledge, handleBulkTakedown, handleAlertTriageSummary } from "../handlers/alerts";
 import {
   handleListNotificationsV2, handleMarkNotificationReadV2, handleMarkAllNotificationsReadV2,
@@ -34,28 +33,13 @@ import {
 } from "../handlers/trends";
 
 export function registerDashboardRoutes(router: RouterType<IRequest>): void {
-  // ─── Dashboard Stats (v1) ─────────────────────────────────────────
-  // Staff-only. These were registered with no auth check. They only return
-  // platform-wide aggregates over the `scans` table, but no UI calls them
-  // any more (ops, tenant, marketing, worker templates and the legacy SPA
-  // were all checked), so they are gated, not left public. requireStaff
-  // lets the read-only auditor seat through. The public aggregate is
-  // /api/stats/public (or /api/v1/public/stats).
-  router.get("/api/dashboard/stats", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleStats(request, env);
-  });
-  router.get("/api/dashboard/sources", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleSourceMix(request, env);
-  });
-  router.get("/api/dashboard/trend", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleQualityTrend(request, env);
-  });
+  // ─── Dashboard Stats (v1) — removed ──────────────────────────────
+  // /api/dashboard/stats, /api/dashboard/sources and /api/dashboard/trend
+  // were aggregates over the `scans` / `domain_cache` tables, which never
+  // existed in prod. Retired with the URL-scan feature (2026-10-04); the
+  // paths fall through to the /api/* 404 catch-all. The public aggregate
+  // is /api/stats/public (or /api/v1/public/stats).
+  // Pinned by test/url-scan-retired.test.ts.
 
   // ─── Dashboard v2 (Observatory) ───────────────────────────────────
   router.get("/api/dashboard/overview", async (request: Request, env: Env) => {
@@ -125,15 +109,9 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   }
 
   // ─── Signals ──────────────────────────────────────────────────────
-  // GET is staff-only (appsec, 2026-10): handleSignals reads the GLOBAL
-  // `scans` table — every user's scans plus anonymous homepage scans — so
-  // it must never be reachable unauthenticated or by a tenant `client`.
-  // No first-party UI calls it; requireStaff admits auditor (read-only).
-  router.get("/api/signals", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleSignals(request, env);
-  });
+  // GET /api/signals (a list of `scans` rows) was retired with the URL-scan
+  // feature (2026-10-04) and now 404s via the /api/* catch-all. POST
+  // (manual signal ingestion into `signals`) is unaffected.
   router.post("/api/signals", async (request: Request, env: Env) => {
     const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;

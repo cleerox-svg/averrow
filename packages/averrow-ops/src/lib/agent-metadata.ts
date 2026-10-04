@@ -43,7 +43,6 @@ export type AgentId =
   | 'lookalike_scanner'
   | 'ct_monitor'
   | 'admin_classify'
-  | 'url_scan'
   | 'scan_report'
   | 'social_ai_assessor'
   | 'geo_campaign_assessment'
@@ -379,15 +378,6 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#FB923C',
     category: 'sync',
     pipelinePosition: 30,
-  },
-  url_scan: {
-    id: 'url_scan',
-    displayName: 'URL Scan',
-    codename: 'url_scan',
-    subtitle: 'Synchronous AI — public URL scan insight generator (Haiku, structured JSON, 10s timeout)',
-    color: '#0A8AB5',
-    category: 'sync',
-    pipelinePosition: 31,
   },
   scan_report: {
     id: 'scan_report',

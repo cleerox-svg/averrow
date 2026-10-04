@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { handleIngestSignal, handleSignals } from "../src/handlers/signals";
+import { handleIngestSignal } from "../src/handlers/signals";
 
 // ─── Mocks ────────────────────────────────────────────────────
 function makeEnv(overrides?: Partial<Record<string, unknown>>) {
@@ -111,50 +111,8 @@ describe("handleIngestSignal", () => {
   });
 });
 
-// ─── handleSignals ────────────────────────────────────────────
-describe("handleSignals", () => {
-  it("returns empty array when no scans exist", async () => {
-    const env = makeEnv();
-    const req = makeRequest("GET", "https://api.test/api/signals?limit=10");
-    const res = await handleSignals(req, env);
-    const json = await res.json() as any;
-    expect(json.success).toBe(true);
-    expect(json.data).toEqual([]);
-  });
-
-  it("caps limit at 50", async () => {
-    const env = makeEnv();
-    const req = makeRequest("GET", "https://api.test/api/signals?limit=200");
-    await handleSignals(req, env);
-    const prepareCall = env.DB.prepare.mock.calls[0]?.[0] as string;
-    expect(prepareCall).toContain("LIMIT");
-    const bindCall = env.DB.prepare().bind.mock.calls;
-    // Limit should be capped — the bind receives the capped value
-    expect(bindCall).toBeDefined();
-  });
-
-  it("transforms scans into signal format", async () => {
-    const scanRow = {
-      id: "scan-1", url: "https://example.com", domain: "example.com",
-      trust_score: 80, risk_level: "safe", flags: "[]", source: "web", cached: 0, created_at: "2024-01-01T00:00:00Z",
-    };
-    const env = makeEnv();
-    env.DB.prepare = vi.fn().mockReturnValue({
-      bind: vi.fn().mockReturnValue({
-        all: vi.fn().mockResolvedValue({ results: [scanRow] }),
-      }),
-    });
-
-    const req = makeRequest("GET", "https://api.test/api/signals");
-    const res = await handleSignals(req, env);
-    const json = await res.json() as any;
-    expect(json.data).toHaveLength(1);
-    expect(json.data[0].domain).toBe("example.com");
-    expect(json.data[0].quality).toBe(80);
-    expect(json.data[0].source).toBe("station-alpha");
-    expect(json.data[0].tags).toContain("nominal");
-  });
-});
+// handleSignals (GET /api/signals) was retired with the URL-scan feature
+// (2026-10-04); its 404 is pinned in test/url-scan-retired.test.ts.
 
 // NOTE: handleAlerts and handleAckAlert tests removed — these functions
 // are not exported from handlers/signals.ts (they live in handlers/alerts.ts).

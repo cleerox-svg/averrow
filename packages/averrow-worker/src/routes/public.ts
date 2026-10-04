@@ -23,7 +23,6 @@ import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
 import { handleContactSubmission } from "../handlers/contact";
 import { handleTrackEvent } from "../handlers/track";
 import { logMarketingEdgeView } from "../lib/marketing-event-logger";
-import { handleScanPage } from "../handlers/scanPage";
 import { handlePublicBrandScan } from "../handlers/brandScan";
 import {
   handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
@@ -299,9 +298,10 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     })
   );
 
-  router.get("/scan/:id", (request: Request & { params: Record<string, string> }, env: Env) =>
-    handleScanPage(request, env, request.params["id"] ?? "")
-  );
+  // /scan/:id (the URL-scan share page) was retired with the URL-scan
+  // feature (2026-10-04): it read the `scans` table, which never existed
+  // in prod. The path now falls through to the catch-all below — ASSETS
+  // 404 → branded 404 page.
 
   // ─── Qualified Report (sharable via token, no auth required) ─────
   // Admin generates the report via POST /api/admin/leads/:id/qualified-report;
