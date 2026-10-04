@@ -54,11 +54,9 @@ interface Harness {
 // answers "active" (only the role check is under test), and withSession
 // (getReadSession) returns the same DB.
 function makeHarness(): Harness {
+  // hosting_providers.is_bulletproof (read by /api/providers/v2) comes from
+  // migrations/0078 — see hosting-providers-bulletproof-schema.test.ts.
   const raw = openDerivedDb(["threats", "hosting_providers", "threat_cube_provider"]);
-  // Schema drift: prod hosting_providers carries is_bulletproof (read by
-  // /api/providers/v2) but no file in migrations/ adds it — it was applied
-  // out-of-band (docs/archive/AVERROW_MASTER_PLAN_2026-03.md). Mirror prod.
-  raw.exec("ALTER TABLE hosting_providers ADD COLUMN is_bulletproof INTEGER DEFAULT 0");
   const log: StatementLogEntry[] = [];
   const d1 = d1FromSqlite(raw, { log });
   const queries: string[] = [];
