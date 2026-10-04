@@ -13,5 +13,6 @@ export {
 export {
   TimezoneSelect, formatTimeZoneLabel, listTimeZones, detectTimeZone, type TimezoneSelectProps,
 } from './TimezoneSelect';
-export { useMediaQuery, useIsCompact, COMPACT_QUERY } from './useMediaQuery';
-export { IconTile, Spinner, type TileTone } from './parts';
+// useMediaQuery and the tile/spinner parts stay internal: the public
+// useMediaQuery and IconTile come from ../settings (one name, one export).
+export { useIsCompact, COMPACT_QUERY } from './useMediaQuery';

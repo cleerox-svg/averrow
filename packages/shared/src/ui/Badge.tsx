@@ -151,7 +151,8 @@ const LEGACY_MAP: Partial<Record<LegacyVariant, Severity>> = {
 const SIZE: Record<BadgeSize, { fontSize: number; padding: string; radius: number }> = {
   xs: { fontSize: 9,  padding: '2px 6px',  radius: 6 },
   sm: { fontSize: 9,  padding: '3px 8px',  radius: 99 },
-  md: { fontSize: 10, padding: '4px 10px', radius: 99 },
+  // md is 11px (ACCOUNT_DESIGN_SPEC §6: badge text floor on the account surface).
+  md: { fontSize: 11, padding: '4px 10px', radius: 99 },
 };
 
 function lookup<T extends string>(table: Record<T, Tone>, key: string): Tone | undefined {

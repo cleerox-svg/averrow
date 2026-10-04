@@ -211,3 +211,17 @@ describe('shared Tabs tab stop + focus', () => {
     expect(badge.style.color).toBe('var(--text-secondary)');
   });
 });
+
+describe('shared Tabs size', () => {
+  it.each(['pills', 'underline', 'bar'] as const)('%s: md is 13px with a >=44px touch height; default is unchanged', (variant) => {
+    const { rerender } = render(<Tabs tabs={TABS} activeTab="one" onChange={() => {}} variant={variant} size="md" />);
+    const md = tab(/^One/);
+    expect(md.className).toContain('text-[13px]');
+    expect(md.className).toContain('min-h-[44px]');
+    expect(md.className).not.toMatch(/text-\[(9|10|11)px\]/);
+    rerender(<Tabs tabs={TABS} activeTab="one" onChange={() => {}} variant={variant} />);
+    const sm = tab(/^One/);
+    expect(sm.className).not.toContain('min-h-[44px]');
+    expect(sm.className).toMatch(/text-\[(10|11)px\]/);
+  });
+});

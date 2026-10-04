@@ -16,7 +16,8 @@ import { useState, type CSSProperties } from 'react';
 import { cn } from './cn';
 
 export type AvatarSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type AvatarTone = 'brand' | 'neutral';
+export type AvatarTone = 'brand' | 'neutral' | 'self';
+export type AvatarShape = 'default' | 'squircle';
 
 export interface AvatarProps {
   /** Entity name; its first character is the fallback initial. */
@@ -27,9 +28,21 @@ export interface AvatarProps {
   color?: string;
   /** Gradient end colour. Defaults to a translucent `color`. */
   dimColor?: string;
-  /** `brand` (default): coloured gradient tile. `neutral`: quiet tile (list rows). */
+  /**
+   * `brand` (default): coloured gradient tile. `neutral`: quiet tile (list rows).
+   * `self`: the signed-in USER's own avatar (ACCOUNT_DESIGN_SPEC §3) — initials
+   * only, ink-on-colour (`--text-on-amber`), outer glow. It never renders an
+   * image: `faviconUrl` is ignored, so a profile picture can't leak in.
+   */
   tone?: AvatarTone;
-  /** Pixel size. Default 40. */
+  /** `squircle` = ~30% corner radius (the account hero tile). Default keeps the per-tone radius. */
+  shape?: AvatarShape;
+  /**
+   * Explicit initials to render instead of the first character of `name`
+   * (e.g. `parseInitials(name, email)` -> "CL"). Intended for `tone="self"`.
+   */
+  initials?: string;
+  /** Pixel size. Default 40; up to 72 for the account hero. */
   size?: number;
   /** Corner radius in px. Default 12 (brand) / 26% of size (neutral). */
   radius?: number;
@@ -62,27 +75,45 @@ export function Avatar({
   color = 'var(--red)',
   dimColor,
   tone = 'brand',
+  shape = 'default',
+  initials,
   size = 40,
   radius,
   fontSize,
   severity,
-  glow = false,
+  glow: glowProp,
   label,
   className,
   style,
 }: AvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const showFavicon = !!faviconUrl && failedUrl !== faviconUrl;
+  const self = tone === 'self';
+  // Self avatars are initials-only by contract: never render an image.
+  const showFavicon = !self && !!faviconUrl && failedUrl !== faviconUrl;
   const neutral = tone === 'neutral';
+  const glow = glowProp ?? self;
 
-  const r = radius ?? (neutral ? Math.round(size * 0.26) : 12);
-  const fs = fontSize ?? Math.round(size * (neutral ? 0.37 : 0.375));
+  const r = radius ?? (shape === 'squircle' ? Math.round(size * 0.3) : neutral ? Math.round(size * 0.26) : 12);
+  const text = (initials ?? '').trim();
+  const initialCount = [...text].length;
+  const fs = fontSize ?? Math.round(size * (neutral ? 0.37 : self && initialCount > 1 ? 0.36 : 0.375));
   const dot = severity ? SEV_DOT[String(severity).toLowerCase()] : undefined;
   const dotSize = Math.round(size * 0.28);
-  const initial = ([...name.trim()][0] ?? '?').toUpperCase();
-  const dim = dimColor ?? mix(color, 53);
+  const initial = (text || ([...name.trim()][0] ?? '?')).toUpperCase();
+  const dim = dimColor ?? (self ? `color-mix(in srgb, ${color} 50%, black)` : mix(color, 53));
 
-  const tileStyle: CSSProperties = neutral
+  const tileStyle: CSSProperties = self
+    ? {
+        // DimensionalAvatar recipe (spec §3): gradient, 1px tinted border, top/bottom rims, outer glow.
+        background: `linear-gradient(145deg, ${color}, ${dim})`,
+        border: `1px solid ${mix(color, 44)}`,
+        boxShadow: [
+          'inset 0 1px 0 rgba(255, 255, 255, 0.28)',
+          'inset 0 -1px 0 rgba(0, 0, 0, 0.45)',
+          glow ? `0 0 ${Math.round(size * 0.45)}px ${mix(color, 21)}` : '',
+        ].filter(Boolean).join(', '),
+      }
+    : neutral
     ? {
         background: 'linear-gradient(145deg, var(--bg-elevated), var(--bg-card-deep))',
         border: `1px solid ${dot ? mix(dot, 25) : 'var(--border-base)'}`,
@@ -135,8 +166,9 @@ export function Avatar({
             style={{
               fontSize: fs,
               lineHeight: 1,
-              color: neutral ? 'var(--text-secondary)' : '#fff',
-              textShadow: neutral ? undefined : '0 1px 3px rgba(0,0,0,0.65)',
+              color: self ? 'var(--text-on-amber)' : neutral ? 'var(--text-secondary)' : '#fff',
+              fontWeight: self ? 800 : undefined,
+              textShadow: neutral || self ? undefined : '0 1px 3px rgba(0,0,0,0.65)',
             }}
           >
             {initial}
