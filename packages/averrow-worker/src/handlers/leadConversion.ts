@@ -213,6 +213,10 @@ export async function handleConvertLeadToTenant(
 
     // ─── Add super_admin as owner-role member ───────────────────
     // Lead's prospect-side primary user joins later via invite.
+    // TEMPORARY placeholder (PR-F): the one allowed staff org membership.
+    // The PR-F staff guards ignore provisioned_by='lead_conversion', and the
+    // first customer accepting an org_role='owner' invite for this org
+    // deactivates this row (handleInviteAcceptance, handlers/auth.ts).
     await env.DB.prepare(`
       INSERT INTO org_members (org_id, user_id, role, status, accepted_at, provisioned_by)
       VALUES (?, ?, 'owner', 'active', datetime('now'), 'lead_conversion')

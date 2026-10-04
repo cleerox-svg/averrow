@@ -768,11 +768,28 @@ platform data on the ops surface; there are no tenant-affiliated staff.
 - Ops monitor READ paths (dark web, app store, trademark, social, CT,
   lookalikes) use `isPlatformStaff`; their MUTATION gates are unchanged
   (admin/super_admin, super_admin, or `hasGlobalReadScope` respectively).
+- **Alerts are the exception — still per-user until PR-C.** Every
+  `/api/alerts*` query is pinned to `a.user_id = ?` (`handlers/alerts.ts`),
+  so staff do NOT yet see all alerts; they see their own. With a null scope,
+  `PATCH /api/alerts/:id` now reaches the caller's own alerts on ANY brand
+  (previously an org-scoped staff caller was limited to its org's brands and
+  an org-less one got 404) — a widened mutation path, not an unchanged one.
 - Account handling enforces "no tenant staff": the admin role PATCH
-  (`/api/admin/users/:id`) refuses a staff role for a user with an active
-  `org_members` row (400), and invite acceptance refuses an org invite for
-  an existing staff account (instead of demoting it to `client`) and a
-  staff invite for an existing active org member.
+  (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
+  for a user with an active `org_members` row (400; status-only PATCHes and
+  re-sending the current role pass), and invite acceptance refuses an org
+  invite when ANY existing account matching the Google sub or the email
+  (case-insensitive) is staff (instead of demoting it to `client`), and a
+  staff invite for an existing active org member. Any actual role change
+  via that PATCH sets `forced_logout:<user_id>` in KV, revoking live tokens.
+- **The one allowed staff membership: the lead-conversion placeholder.**
+  `handlers/leadConversion.ts` seats the converting `super_admin` as a
+  TEMPORARY org `owner` (`org_members.provisioned_by='lead_conversion'`) so
+  the new org has an owner before the customer arrives. Both staff guards
+  above ignore that row. The first customer (`client`) to accept an
+  `org_role='owner'` invite for that org deactivates it (`status='removed'`,
+  `deprovisioned_at`), for that org only, audited as
+  `lead_conversion_placeholder_removed`.
 
 **`auditor` is minted-only.** It's a real `UserRole` with a read-only
 permission set + global org scope, but it is NOT assignable to a stored

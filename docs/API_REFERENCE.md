@@ -943,7 +943,7 @@ All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including th
 | GET | `/api/internal/budget/ledger-health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/admin/budget/ledger-health` for MCP server access. |
 | GET | `/api/internal/agents/:name/health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/agents/:name/health` for MCP server access. |
 | GET | `/api/admin/users` | Admin | List users (`?q=` name/email search, `?role=`, `?status=`, `limit`/`offset`; `total` respects the active filters). Consumed by the Platform Users admin page (`/admin/platform-users`, Governance → Users tab) |
-| PATCH | `/api/admin/users/:id` | Admin | Update user. 400 when assigning a staff role (anything but `client`) to a user with an active `org_members` row — no tenant-affiliated staff (PR-F). |
+| PATCH | `/api/admin/users/:id` | Admin | Update user. 400 when changing a non-staff user to a staff role (anything but `client`) while they hold an active `org_members` row — no tenant-affiliated staff (PR-F); the lead-conversion placeholder owner row (`provisioned_by='lead_conversion'`) is ignored, and status-only / same-role PATCHes never 400. Any actual role change sets `forced_logout:<id>` in KV, revoking the user's live tokens. |
 | GET | `/api/admin/sessions` | Admin | Active sessions |
 | POST | `/api/admin/users/:id/force-logout` | Admin | Force logout user |
 | GET | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | List invites |

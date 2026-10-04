@@ -30,10 +30,15 @@ the security of the code we ship, not external threat feeds.
   PR-F); `client` must always get an org scope. Tenant isolation lives in
   `/tenant` + `/api/orgs/:orgId/*`, where only `hasGlobalReadScope`
   (super_admin, auditor) bypasses `requireOrgMember` / `verifyOrgAccess` —
-  flag any change that widens that tenant exemption, any ops handler that
-  rolls its own narrower "global" check, and any path that makes a staff
-  user an active org member (no tenant-affiliated staff). Flag any handler
-  that leaks cross-org data to a `client`.
+  flag any change that widens that tenant exemption, any ops READ path that
+  rolls its own narrower "global" check (mutation gates are intentionally
+  stricter than `isPlatformStaff` and are not this finding), and any path
+  that makes a staff user an active org member (no tenant-affiliated staff).
+  The one allowed staff membership is the lead-conversion TEMPORARY owner
+  (`org_members.provisioned_by='lead_conversion'`), which the first customer
+  owner's invite acceptance deactivates; flag anything else. Alerts are still
+  per-user (`a.user_id = ?`) until PR-C. Flag any handler that leaks
+  cross-org data to a `client`.
 - **Auth flows**: session, passkey, and OAuth `return_to` handling; the
   mint-ui-preview-jwt path; no role escalation via preview tokens.
 - **Secrets**: never hardcoded — `env.SECRET_NAME` only. Run secret scanning on

@@ -17,6 +17,7 @@ import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
+import { ABSOLUTE_SESSION_TTL } from "../../lib/jwt";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
 import {
@@ -104,13 +105,24 @@ export async function handleAdminUpdateUser(
     return json({ success: false, error: "Cannot change your own role" }, 400, origin);
   }
 
+  const current = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+    .bind(targetUserId).first<{ role: string }>();
+  if (!current) return json({ success: false, error: "User not found" }, 404, origin);
+  const roleChanged = role !== undefined && role !== current.role;
+
   // PR-F — no tenant-affiliated staff (owner decision 2026-10-03). Staff roles
   // see ALL platform data (getOrgScope → null), so a customer org member must
-  // never be promoted into one: refuse while the user holds an ACTIVE
-  // org_members row (removal flips status to 'removed', organizations.ts).
-  if (role !== undefined && isPlatformStaff(role)) {
+  // never be promoted into one: refuse a non-staff → staff change while the
+  // user holds an ACTIVE org_members row (removal flips status to 'removed',
+  // organizations.ts). Status-only PATCHes and re-sending the current role
+  // never trip this. The lead-conversion placeholder owner row
+  // (provisioned_by='lead_conversion', leadConversion.ts) is the one allowed
+  // staff membership and is ignored here.
+  if (roleChanged && isPlatformStaff(role) && !isPlatformStaff(current.role)) {
     const membership = await env.DB.prepare(
-      "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1",
+      `SELECT org_id FROM org_members
+       WHERE user_id = ? AND status = 'active' AND provisioned_by IS NOT 'lead_conversion'
+       LIMIT 1`,
     ).bind(targetUserId).first<{ org_id: number }>();
     if (membership) {
       return json({
@@ -140,6 +152,18 @@ export async function handleAdminUpdateUser(
   ).bind(targetUserId).first();
 
   if (!user) return json({ success: false, error: "User not found" }, 404, origin);
+
+  // A role change alters what every live token for this user may reach (the
+  // JWT embeds role + org_scope), so revoke them: requireAuth and the refresh
+  // path reject tokens/sessions issued at or before this stamp. Same key and
+  // TTL convention as handleForceLogout (sessions.ts) / refresh-reuse.
+  if (roleChanged) {
+    await env.CACHE.put(
+      `forced_logout:${targetUserId}`,
+      String(Math.floor(Date.now() / 1000)),
+      { expirationTtl: ABSOLUTE_SESSION_TTL },
+    );
+  }
 
   await audit(env, {
     action: "user_updated",
