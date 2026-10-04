@@ -21,7 +21,11 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
+
+/** TTL for the stats tile's distinct-brands count over the brand cube. */
+export const OBSERVATORY_BRANDS_DISTINCT_TTL_S = 3600;
 
 // ── Brand HQ coordinates — real locations ────────────────────────────────────
 // Used as arc target positions. Format: [longitude, latitude]
@@ -708,6 +712,7 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
     }
 
     const tally = newTally();
+    let brandsDistinctQueried = false;
     const [threats, threatsTotal, countries, campaigns, brands] = await Promise.all([
       session.prepare(
         `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
@@ -730,15 +735,29 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
         `SELECT COUNT(*) AS n FROM campaigns
           WHERE status = 'active' AND last_seen >= datetime('now', '-7 days')`
       ).first<{ n: number }>(),
-      session.prepare(
-        `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threat_cube_brand WHERE hour_bucket >= ?${sf.sql}`
-      ).bind(windowStart, ...sf.params).first<{ n: number }>(),
+      // DISTINCT over the brand cube window is the expensive read here
+      // (~14M rows/day when recomputed on every stats miss, per period ×
+      // source_feed). It moves slowly, so it gets its own 1h cachedValue
+      // keyed by the canonical window length + source_feed segment (the
+      // query filters on source_feed, so the segment must be in the key).
+      cachedValue<{ n: number } | null>(
+        env,
+        `observatory.brands_distinct:${periodToHours(period)}h:${sourceFeedCacheSegment(sourceFeed)}`,
+        OBSERVATORY_BRANDS_DISTINCT_TTL_S,
+        () => {
+          brandsDistinctQueried = true;
+          return session.prepare(
+            `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threat_cube_brand WHERE hour_bucket >= ?${sf.sql}`
+          ).bind(windowStart, ...sf.params).first<{ n: number }>();
+        },
+      ),
     ]);
     // .first() doesn't expose meta — count queries but not rows_read.
     // All five reads are now cube-served (geo cube × 2, status cube,
     // campaigns table, brand cube). DISTINCT target_brand_id moved from
     // threats → threat_cube_brand to kill the last full-table-scan path.
-    tally.queries += 5;
+    // The brand-cube DISTINCT only counts when its cachedValue missed.
+    tally.queries += brandsDistinctQueried ? 5 : 4;
 
     const mapped = threats?.n ?? 0;
     const total = threatsTotal?.n ?? 0;

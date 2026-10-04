@@ -353,7 +353,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 3297,
+      "loc": 3309,
       "last_modified": "2026-10-04T04:18:21.149Z"
     },
     {

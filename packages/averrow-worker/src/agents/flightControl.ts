@@ -52,6 +52,12 @@ import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { evaluateGeoipStall, type GeoipStallWatch } from "../lib/geoip-stall";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { cachedCount } from "../lib/cached-count";
+import {
+  countDnsCandidatesInThreats,
+  DNS_DRAINABLE_CACHE_KEY,
+  DNS_DRAINABLE_TTL_S,
+  resolveDnsDrift,
+} from "../lib/dns-drainable";
 // From `lib/lookalike-budget.ts`, NOT from `scanners/lookalike-domains`:
 // importing two integers from the scanner statically dragged `lib/haiku`,
 // `email-security` and `lib/page-fetch` into this module's import graph.
@@ -910,26 +916,27 @@ export const flightControlAgent: AgentModule = {
           // legacy filter would exclude no rows anyway. The drift
           // check is now "count of threats needing DNS resolution
           // by existence" vs "count of rows in dns_queue".
-          cachedCount(env, 'count.threats.dns_drainable', 300, async () => {
-            const r = await db.prepare(`
-              SELECT COUNT(DISTINCT malicious_domain) AS n
-              FROM threats
-              WHERE ip_address IS NULL
-                AND status = 'active'
-                AND dns_exhausted_at IS NULL
-                AND malicious_domain IS NOT NULL
-                AND malicious_domain != ''
-                AND malicious_domain NOT LIKE '*%'
-                AND malicious_domain LIKE '%.%'
-            `).first<{ n: number }>();
-            return r?.n ?? 0;
-          }).then((n) => ({ n })),
+          // Key/TTL/predicate shared with diagnostics via
+          // lib/dns-drainable.ts. TTL (90 min) > FC's hourly cadence;
+          // both alerts below re-verify with a fresh count first.
+          cachedCount(env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S,
+            () => countDnsCandidatesInThreats(db),
+          ).then((n) => ({ n })),
         ]);
 
         const queueSize = queueSizeRow.n;
-        const drainable = drainableRow.n;
-        const drift = Math.abs(queueSize - drainable);
         const DRIFT_THRESHOLD = 500;
+        // The cached drainable can be up to DNS_DRAINABLE_TTL_S old; when
+        // it suggests drift > threshold, re-count fresh before either
+        // alert below (both require that), so staleness can only delay an
+        // alert, never fire one. One uncached scan only on suspected drift.
+        const { drainable, drift } = await resolveDnsDrift({
+          queueSize,
+          cachedDrainable: drainableRow.n,
+          threshold: DRIFT_THRESHOLD,
+          recount: () => countDnsCandidatesInThreats(db),
+          env,
+        });
 
         if (drift > DRIFT_THRESHOLD) {
           await emitPlatformNotification(env, 'platform_dns_queue_drift',
@@ -2239,7 +2246,12 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
       WHERE target_brand_id IS NULL
       AND status = 'active'
     `),
-    cacheCount('backlog.total_no_geo', BACKLOG_TTL_LIVE_S, `
+    // NOT a scaling input for any instance count — it only gates the
+    // low-priority single cartographer `geo_backlog` dispatch at a coarse
+    // `> 5000` threshold (see scaleAgents), and cartographer does not read
+    // that mode. A full scan over active threats every tick isn't worth
+    // it for that gate: monitoring TTL (≤3 ticks of lag at the boundary).
+    cacheCount('backlog.total_no_geo', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE (lat IS NULL OR lng IS NULL)
       AND status = 'active'

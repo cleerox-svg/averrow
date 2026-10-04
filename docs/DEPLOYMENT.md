@@ -128,6 +128,13 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - No backfill needed: verified read-only against prod on 2026-10-04 — 4,062 `takedown_requests` rows, 0 with a non-empty `notes`, so no staff note sits in the customer column.
 - **Post-deploy gate.** Between applying 0276 and the new Worker going live, the OLD Worker's ops PATCH still writes staff notes into `notes`, which the new tenant detail returns to the customer. Immediately after the Worker deploy, run (read-only) `SELECT id FROM takedown_requests WHERE notes IS NOT NULL AND notes <> ''`. For any rows, check the `audit_log` (`AUDIT_DB`) `admin_takedown_update` entries for those ids since 2026-10-04 to identify the staff-written ones, then move only those (manual, reviewed): `UPDATE takedown_requests SET staff_notes = notes, notes = NULL WHERE id IN (...)`. Customer-written notes (tenant `takedown_create` / `takedown_update`) stay put.
 
+### Migration 0278 — `idx_threats_malicious_url` (D1 read-spend)
+
+- `0278_threats_malicious_url_index.sql` adds the partial index `idx_threats_malicious_url` (`threats(malicious_url) WHERE malicious_url IS NOT NULL`). It is index-only: no columns change.
+- **Applied automatically before the Worker.** CI (`deploy-radar.yml`) runs `db:migrate:prod` before `pnpm run deploy`. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first. The Worker has no hard dependency on it: without the index, the abuse-mailbox exact-URL correlation (`lib/abuse-mailbox-iocs.ts` `correlateUrls`) still returns the same rows, it just full-scans `threats` (~10M rows read/day), as it did before.
+- **One-time cost.** Building the index reads `threats` once (~1.25M rows) and writes one index entry per URL-bearing row. Storage estimate ≤ ~150 MB at the upper bound (see the migration header). After that, each threat INSERT with a non-NULL `malicious_url` writes one extra index row.
+- **Verify:** `SELECT sql FROM sqlite_master WHERE name = 'idx_threats_malicious_url'` returns the definition. `EXPLAIN QUERY PLAN SELECT id FROM threats WHERE malicious_url = 'x' LIMIT 1` should show `SEARCH threats USING INDEX idx_threats_malicious_url`. The same plan is pinned on the migration-derived schema by `test/threats-malicious-url-index.test.ts`.
+
 ### `hosting_providers.is_bulletproof` — prod-only column now defined in 0078 (fresh-bootstrap fix)
 
 - `GET /api/providers/v2` (`handlers/providers.ts`) selects `hp.is_bulletproof`. Prod gained the column out of band (`INTEGER`, nullable, `DEFAULT 0`), and no migration defined it, so any DB built from `migrations/` (staging, dev, the derived-schema test harness) returned 500 on that route.

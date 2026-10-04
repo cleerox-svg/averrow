@@ -9,6 +9,93 @@
 
 import type { Env } from '../types';
 import { computeSanHash } from '../lib/ssl-cert-identity';
+import { cachedValue, seedValue } from '../lib/cached-value';
+
+/** KV key (cachedValue namespace) for the CertStream brand match sets. */
+export const CERTSTREAM_BRAND_SETS_CACHE_KEY = 'certstream.brand_sets';
+/**
+ * 1h. Combined with the DO's own hourly in-memory reload, a brand change
+ * can take up to ~2h to reach the matcher (a reload may read a ~1h-old
+ * entry). `/reload-brands` reads D1 and re-seeds this key immediately.
+ */
+export const CERTSTREAM_BRAND_SETS_TTL_S = 3600;
+
+export interface CertStreamBrandSets {
+  keywords: string[];
+  domains: string[];
+}
+
+/**
+ * Build the CertStream brand keyword / domain match sets from D1.
+ * Predicates are unchanged from the original in-DO loader (including the
+ * `monitoring_status = 'active'` filters — CLAUDE.md §8 calls that column
+ * vestigial, but narrowing/widening this set is a product decision, not a
+ * caching one). Throws on D1 error so a failed load is never cached.
+ */
+export async function loadCertStreamBrandSets(db: D1Database): Promise<CertStreamBrandSets> {
+  const keywords: string[] = [];
+  const domains: string[] = [];
+
+  // Load monitored brand names and domains (use monitored_brands join for consistency)
+  const brands = await db.prepare(`
+    SELECT b.name, b.canonical_domain
+    FROM brands b
+    LEFT JOIN monitored_brands mb ON mb.brand_id = b.id
+    WHERE b.monitoring_status = 'active' OR mb.status = 'active'
+  `).all<{ name: string; canonical_domain: string | null }>();
+
+  for (const brand of (brands.results || [])) {
+    if (brand.canonical_domain) domains.push(brand.canonical_domain.toLowerCase());
+    if (brand.name) {
+      const name = brand.name.toLowerCase();
+      if (name.length >= 4) keywords.push(name);
+    }
+  }
+
+  // Also load brand_keywords JSON arrays from brands table
+  const keywordRows = await db.prepare(`
+    SELECT brand_keywords FROM brands
+    WHERE brand_keywords IS NOT NULL AND monitoring_status = 'active'
+  `).all<{ brand_keywords: string }>();
+
+  for (const row of (keywordRows.results || [])) {
+    try {
+      const parsed: unknown = JSON.parse(row.brand_keywords);
+      if (Array.isArray(parsed)) {
+        for (const kw of parsed) {
+          if (typeof kw === 'string' && kw.length >= 4) keywords.push(kw.toLowerCase());
+        }
+      }
+    } catch {
+      // Skip malformed JSON
+    }
+  }
+
+  // Also load aliases from brands table
+  const aliasRows = await db.prepare(`
+    SELECT aliases FROM brands
+    WHERE aliases IS NOT NULL AND monitoring_status = 'active'
+  `).all<{ aliases: string }>();
+
+  for (const row of (aliasRows.results || [])) {
+    try {
+      const parsed: unknown = JSON.parse(row.aliases);
+      if (Array.isArray(parsed)) {
+        for (const a of parsed) {
+          if (typeof a === 'string' && a.length >= 4) keywords.push(a.toLowerCase());
+        }
+      }
+    } catch {
+      // Skip malformed JSON
+    }
+  }
+
+  // Deduplicate
+  return {
+    keywords: [...new Set(keywords)],
+    domains: [...new Set(domains)],
+  };
+}
 
 interface CertStreamMessage {
   message_type: 'certificate_update' | 'heartbeat';
@@ -92,7 +179,8 @@ export class CertStreamMonitor {
     }
 
     if (url.pathname === '/reload-brands') {
-      await this.loadBrandKeywords();
+      // Explicit operator reload reads D1 directly and re-seeds the KV cache.
+      await this.loadBrandKeywords({ bypassCache: true });
       return Response.json({
         brandsLoaded: this.brandKeywords.length,
         domainsLoaded: this.brandDomains.length,
@@ -392,74 +480,29 @@ export class CertStreamMonitor {
     }
   }
 
-  private async loadBrandKeywords() {
+  private async loadBrandKeywords(opts: { bypassCache?: boolean } = {}) {
     try {
-      const db = this.env.DB;
-
-      // Load monitored brand names and domains (use monitored_brands join for consistency)
-      const brands = await db.prepare(`
-        SELECT b.name, b.canonical_domain
-        FROM brands b
-        LEFT JOIN monitored_brands mb ON mb.brand_id = b.id
-        WHERE b.monitoring_status = 'active' OR mb.status = 'active'
-      `).all<{ name: string; canonical_domain: string | null }>();
-
-      this.brandDomains = [];
-      this.brandKeywords = [];
-
-      for (const brand of (brands.results || [])) {
-        if (brand.canonical_domain) this.brandDomains.push(brand.canonical_domain.toLowerCase());
-        if (brand.name) {
-          const name = brand.name.toLowerCase();
-          if (name.length >= 4) this.brandKeywords.push(name);
-        }
+      // KV-cached (1h): the underlying reads scan the brand catalog
+      // (~114K rows, OR across a join) and this runs on every DO wakeup /
+      // ensureConnected, not just the hourly reload. cachedValue falls
+      // through to D1 on any KV failure and never caches a thrown compute,
+      // so a D1 error leaves the previously-loaded sets in place (as before).
+      let sets: CertStreamBrandSets;
+      if (opts.bypassCache) {
+        // Operator reload: read D1, then re-seed KV so the fresh sets
+        // survive a DO restart instead of reverting to the old entry.
+        sets = await loadCertStreamBrandSets(this.env.DB);
+        await seedValue(this.env, CERTSTREAM_BRAND_SETS_CACHE_KEY, sets, CERTSTREAM_BRAND_SETS_TTL_S);
+      } else {
+        sets = await cachedValue<CertStreamBrandSets>(
+          this.env,
+          CERTSTREAM_BRAND_SETS_CACHE_KEY,
+          CERTSTREAM_BRAND_SETS_TTL_S,
+          () => loadCertStreamBrandSets(this.env.DB),
+        );
       }
-
-      // Also load brand_keywords JSON arrays from brands table
-      const keywordRows = await db.prepare(`
-        SELECT brand_keywords FROM brands
-        WHERE brand_keywords IS NOT NULL AND monitoring_status = 'active'
-      `).all<{ brand_keywords: string }>();
-
-      for (const row of (keywordRows.results || [])) {
-        try {
-          const keywords = JSON.parse(row.brand_keywords);
-          if (Array.isArray(keywords)) {
-            for (const kw of keywords) {
-              if (typeof kw === 'string' && kw.length >= 4) {
-                this.brandKeywords.push(kw.toLowerCase());
-              }
-            }
-          }
-        } catch {
-          // Skip malformed JSON
-        }
-      }
-
-      // Also load aliases from brands table
-      const aliasRows = await db.prepare(`
-        SELECT aliases FROM brands
-        WHERE aliases IS NOT NULL AND monitoring_status = 'active'
-      `).all<{ aliases: string }>();
-
-      for (const row of (aliasRows.results || [])) {
-        try {
-          const aliases = JSON.parse(row.aliases);
-          if (Array.isArray(aliases)) {
-            for (const a of aliases) {
-              if (typeof a === 'string' && a.length >= 4) {
-                this.brandKeywords.push(a.toLowerCase());
-              }
-            }
-          }
-        } catch {
-          // Skip malformed JSON
-        }
-      }
-
-      // Deduplicate
-      this.brandKeywords = [...new Set(this.brandKeywords)];
-      this.brandDomains = [...new Set(this.brandDomains)];
+      this.brandKeywords = sets.keywords;
+      this.brandDomains = sets.domains;
       this.lastBrandReload = Date.now();
 
       console.log(`[certstream] Loaded ${this.brandKeywords.length} keywords, ${this.brandDomains.length} domains`);

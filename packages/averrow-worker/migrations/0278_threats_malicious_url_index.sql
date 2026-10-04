@@ -1,0 +1,59 @@
+-- 0278 — idx_threats_malicious_url: partial index for exact-URL lookups.
+--
+-- ── Why ──────────────────────────────────────────────────────────────
+-- `lib/abuse-mailbox-iocs.ts` correlateUrls runs
+--   SELECT … FROM threats WHERE malicious_url = ? LIMIT 1
+-- once per extracted URL (≤20 per abuse-mailbox message). `threats` had no
+-- index on malicious_url, so every lookup that misses (the common case)
+-- was a full table scan — ~10M rows read/day at observed volume.
+--
+-- Binding on malicious_domain instead (to reuse idx_threats_domain) is NOT
+-- equivalent and was rejected: TAXII URL IOCs are stored with
+-- malicious_domain = NULL (feeds/taxii.ts), urlscanio stores the
+-- post-redirect page.domain next to the submitted task.url
+-- (feeds/urlscanio.ts), and historical rows from retired writers can't be
+-- audited. An index on the column actually being matched is the only
+-- predicate-preserving fix.
+--
+-- Partial (`WHERE malicious_url IS NOT NULL`): IP-only feeds (feodo, sslbl,
+-- dshield, talos, ipsum, digitalside IPs, threatfox ip:port, …) and
+-- domain-only rows never carry a URL, so they're kept out of the index.
+-- `malicious_url = ?` implies NOT NULL, so SQLite uses the partial index
+-- for the query as written (pinned by
+-- test/threats-malicious-url-index.test.ts via EXPLAIN QUERY PLAN).
+--
+-- ── Cost ─────────────────────────────────────────────────────────────
+-- One-time build: a single pass over `threats` (~1.25M rows read) plus one
+-- index-entry write per URL-bearing row. Upper bound if every row carried
+-- a URL: ~1.25M index rows.
+--
+-- Storage estimate (not measured on prod): the test fixtures' URLs are
+-- synthetic and short (~28 chars, a lower bound); real phishing/malware
+-- feed URLs (PhishTank, OpenPhish, URLhaus, phishstats, certstream's
+-- `https://<domain>`) typically run ~40–120 chars, so assume ~80 bytes
+-- avg. Index entry ≈ key + 8-byte rowid + ~4 bytes cell/record overhead
+-- ≈ ~92 bytes; at ~75% b-tree page fill that's ~120 bytes per row →
+-- ≤ ~150 MB at the 1.25M-row upper bound, less in practice because
+-- URL-less rows are excluded by the partial predicate.
+--
+-- Write amplification: every threats INSERT with a non-NULL malicious_url
+-- now also inserts one index entry (+1 row written in D1 billing); rows
+-- with NULL malicious_url are unaffected. UPDATEs only touch the index when
+-- they change malicious_url, and no code path in src/ updates that column
+-- (nor DELETEs from threats) today.
+--
+-- Other exact-URL lookups (left unchanged by this migration):
+--   * lib/url-scanner.ts `(malicious_url = ? OR malicious_domain = ?)
+--     AND status = 'active'` — on the derived schema SQLite still prefers
+--     idx_threats_status_created (status=?) here; it would become a
+--     MULTI-INDEX OR (this index + idx_threats_domain) only if the status
+--     term were neutralised (`+status`). Follow-up, not done here.
+--   * lib/abuse-mailbox-rules-runner.ts `malicious_domain = ? AND …
+--     malicious_url IN (…)` — already seeks idx_threats_domain; this index
+--     is at most an alternative there.
+--   `LIKE '%…%'` searches on malicious_url (threats/brands/public/tenant
+--   search) cannot use any b-tree index.
+
+CREATE INDEX IF NOT EXISTS idx_threats_malicious_url
+  ON threats(malicious_url)
+  WHERE malicious_url IS NOT NULL;

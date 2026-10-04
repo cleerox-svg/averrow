@@ -88,12 +88,20 @@ async function markExhaustedAndDrain(
     const chunk = domains.slice(i, i + CHUNK);
     const ph = chunk.map(() => '?').join(',');
     try {
+      // Unary `+` on ip_address / status (a value no-op) makes those
+      // terms ineligible for index lookup, so the planner can only seek
+      // on `malicious_domain IN (...)` via idx_threats_domain. Without it
+      // prod stats steered the plan to idx_threats_ip_source_feed
+      // (ip_address=NULL), walking every unresolved row (~9M reads/day
+      // across this + the reaper). Preferred over INDEXED BY because it
+      // can never hard-fail if an index is renamed/dropped. Pinned by
+      // test/dns-exhausted-update-plan.test.ts.
       await env.DB.prepare(`
         UPDATE threats
            SET dns_exhausted_at = datetime('now')
          WHERE malicious_domain IN (${ph})
-           AND status = 'active'
-           AND ip_address IS NULL
+           AND +status = 'active'
+           AND +ip_address IS NULL
            AND dns_exhausted_at IS NULL
       `).bind(...chunk).run();
     } catch (err) {

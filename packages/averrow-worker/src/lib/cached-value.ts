@@ -107,6 +107,31 @@ export async function cachedValue<T>(
   return value;
 }
 
+/**
+ * Write a value into the `cachedValue` cache from an authoritative path,
+ * so the next `cachedValue(env, key, ttlSeconds, …)` read is a hit. Sister
+ * of `seedCount` (lib/cached-count.ts): same envelope, key prefix and padded
+ * `expirationTtl` as cachedValue's own PUT. Keep `ttlSeconds` equal to the
+ * reader's TTL. Best-effort — a missing CACHE binding or KV failure is
+ * swallowed.
+ */
+export async function seedValue<T>(
+  env: { CACHE?: KVNamespace },
+  key: string,
+  value: T,
+  ttlSeconds: number,
+): Promise<void> {
+  if (ttlSeconds <= 0 || !env.CACHE) return;
+  try {
+    const entry: CachedEntry<T> = { v: value, t: Date.now() };
+    await env.CACHE.put(CACHE_PREFIX + key, JSON.stringify(entry), {
+      expirationTtl: Math.max(ttlSeconds * 2, 60),
+    });
+  } catch {
+    // Non-fatal — same contract as cachedValue's PUT.
+  }
+}
+
 // ─── Internal: hit/miss recording ─────────────────────────────────
 //
 // Shares the stats ring with cached-count.ts so the diagnostics
