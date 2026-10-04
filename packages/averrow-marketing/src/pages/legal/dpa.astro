@@ -95,8 +95,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <p>Cloudflare (edge compute, database, cache, and storage) and our AI model provider (inference, routed through an AI gateway). No customer data goes further than that.</p>
           </div>
           <div class="dpa-summary-item">
-            <h4><span class="dpa-dot" style="background:var(--green)"></span>No PII beyond account info</h4>
-            <p>Averrow scans public signals &mdash; domains, public DNS records, public social profiles, and threat feed matches. We don&rsquo;t collect email content, credentials, or internal network data.</p>
+            <h4><span class="dpa-dot" style="background:var(--green)"></span>Minimal personal data</h4>
+            <p>Averrow scans public signals &mdash; domains, public DNS records, public social profiles, and threat feed matches. We don&rsquo;t collect email content, credentials, or internal network data. Public scans record at most the approximate country of the request; we don&rsquo;t store visitor IP, city, or coordinates.</p>
           </div>
           <div class="dpa-summary-item">
             <h4><span class="dpa-dot" style="background:var(--accent)"></span>Encrypted at rest and in transit</h4>
@@ -104,7 +104,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </div>
           <div class="dpa-summary-item">
             <h4><span class="dpa-dot" style="background:var(--amber)"></span>Retention</h4>
-            <p>Active account data is retained during the subscription. Scan results are cached 24 hours. Deletion completes within 30 days of a request.</p>
+            <p>Active account data is retained during the subscription. Scan results are cached 24 hours. Deletion completes within 30 days of a request. Rate-limit records expire within about two hours.</p>
           </div>
         </div>
         <div class="dpa-compliance-row">

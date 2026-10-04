@@ -33,6 +33,11 @@ export const FORMER_USER_LABEL = "Former user";
  *  into the customer's resolution_notes, audit log and webhooks. */
 export const STAFF_TENANT_ALERT_WRITE_ERROR = "Staff must triage alerts from the Averrow console";
 
+/** Max ids per tenant `IN (...)` statement — D1 allows at most 100 bound
+ *  parameters, and the bulk UPDATE adds up to 7 more (matches the ops
+ *  MAX_BULK_ALERTS convention in handlers/alerts.ts). */
+const TENANT_BULK_MAX_IDS = 90;
+
 /** A user as a CUSTOMER may see them: staff are always "Averrow SOC". */
 export interface TenantUserLabel {
   name: string | null;
@@ -52,13 +57,21 @@ export async function resolveTenantUserLabels(
   const unique = [...new Set(ids.filter((x): x is string => typeof x === "string" && x.length > 0))];
   const out: Record<string, TenantUserLabel> = {};
   if (unique.length === 0) return out;
-  const ph = unique.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT id, role, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${ph})`,
-  ).bind(...unique).all<{ id: string; role: string | null; name: string | null }>();
-  for (const u of rows.results ?? []) {
-    const isStaff = isPlatformStaff(u.role);
-    out[u.id] = { name: isStaff ? AVERROW_SOC_LABEL : (u.name ?? null), isStaff };
+  // D1 caps a statement at 100 bound parameters — look ids up in ≤90 slices.
+  const slices: string[][] = [];
+  for (let i = 0; i < unique.length; i += TENANT_BULK_MAX_IDS) {
+    slices.push(unique.slice(i, i + TENANT_BULK_MAX_IDS));
+  }
+  const results = await Promise.all(slices.map((slice) =>
+    env.DB.prepare(
+      `SELECT id, role, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${slice.map(() => "?").join(",")})`,
+    ).bind(...slice).all<{ id: string; role: string | null; name: string | null }>(),
+  ));
+  for (const rows of results) {
+    for (const u of rows.results ?? []) {
+      const isStaff = isPlatformStaff(u.role);
+      out[u.id] = { name: isStaff ? AVERROW_SOC_LABEL : (u.name ?? null), isStaff };
+    }
   }
   return out;
 }
@@ -857,10 +870,13 @@ export async function handleTenantBulkUpdateAlerts(
   try {
     const body = await request.json() as { alert_ids?: unknown; status?: string; notes?: string; assigned_to?: string | null };
     const ids = Array.isArray(body.alert_ids)
-      ? body.alert_ids.filter((x): x is string => typeof x === "string")
+      ? [...new Set(body.alert_ids.filter((x): x is string => typeof x === "string" && x.length > 0))]
       : [];
     if (ids.length === 0) return json({ success: false, error: "alert_ids required" }, 400, origin);
-    if (ids.length > 200) return json({ success: false, error: "Too many alerts (max 200 per call)" }, 400, origin);
+    // D1 100-bind limit: SELECT binds 2 + ids, UPDATE up to 7 + ids.
+    if (ids.length > TENANT_BULK_MAX_IDS) {
+      return json({ success: false, error: `Too many alerts (max ${TENANT_BULK_MAX_IDS} per call)` }, 400, origin);
+    }
 
     const hasStatus = typeof body.status === "string";
     const hasAssignee = Object.prototype.hasOwnProperty.call(body, "assigned_to");

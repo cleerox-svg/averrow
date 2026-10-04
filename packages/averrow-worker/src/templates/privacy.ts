@@ -19,7 +19,7 @@ export function renderPrivacyPage(): string {
 
 <div class="legal-content">
   <h1>Privacy Policy</h1>
-  <p class="legal-updated">Last updated: March 21, 2026</p>
+  <p class="legal-updated">Last updated: October 4, 2026</p>
 
   <h2>Introduction</h2>
   <p>
@@ -38,9 +38,9 @@ export function renderPrivacyPage(): string {
   <p>We collect the following categories of information:</p>
   <ul>
     <li><strong>Account Information:</strong> Your name, email address, and company name provided during registration.</li>
-    <li><strong>Scan Data:</strong> Domains you submit for scanning and the resulting threat intelligence reports.</li>
+    <li><strong>Scan Data:</strong> Domains you submit for scanning and the resulting threat intelligence reports. For public (free) scans we do not store the visitor's IP address, city, or coordinates, and we do not send the IP address to any third party for location lookup. At most, we record the approximate country of the request, as provided by Cloudflare from the connection; if the country cannot be determined, nothing is recorded.</li>
     <li><strong>Monitoring Data:</strong> Threat feed matches, social media platform checks, and alert history associated with your monitored assets.</li>
-    <li><strong>Usage Data:</strong> Pages visited, features used, session duration, and interaction patterns collected to improve the platform experience.</li>
+    <li><strong>Usage Data:</strong> Pages visited, features used, session duration, and interaction patterns collected to improve the platform experience. Your IP address is used only briefly for rate limiting (short-lived records that expire within about two hours) and is not stored with scan or assessment records.</li>
   </ul>
 
   <h2>How We Use Your Information</h2>
@@ -62,7 +62,7 @@ export function renderPrivacyPage(): string {
   <h2>Third-Party Processors</h2>
   <p>We use the following third-party service providers to operate Averrow:</p>
   <ul>
-    <li><strong>Cloudflare:</strong> Infrastructure, content delivery network (CDN), and edge compute services. Cloudflare processes requests on our behalf to ensure fast, secure delivery of the platform.</li>
+    <li><strong>Cloudflare:</strong> Infrastructure, content delivery network (CDN), and edge compute services. Cloudflare processes requests on our behalf to ensure fast, secure delivery of the platform. Cloudflare also supplies the approximate country of a request.</li>
     <li><strong>AI Provider:</strong> We use an artificial intelligence provider for threat analysis, content classification, and risk scoring. Data shared with this provider is limited to what is necessary for analysis and is processed in accordance with our data processing agreements.</li>
   </ul>
 

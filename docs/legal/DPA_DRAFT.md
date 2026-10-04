@@ -32,7 +32,7 @@ an actual audit report in hand.
 
 - This draft is scoped to match the facts on `/security` and the existing
   `/privacy` and `/terms` pages (`packages/averrow-worker/src/templates/privacy.ts`,
-  `terms.ts`) as of 2026-07-14. If those pages change, this draft will drift
+  `terms.ts`) as of 2026-10-04 (country-only visitor location wording added). If those pages change, this draft will drift
   and needs to be re-checked against them before use.
 - Every `[NEEDS HUMAN INPUT: ...]` placeholder must be resolved before this
   document goes anywhere near a customer or a signature block.
@@ -166,6 +166,13 @@ we collect" / "What we DON'T collect"):
 | Social platform public profile data (for impersonation detection) | Customer PII beyond account info |
 | Threat feed matches / scan results | |
 | Usage data (pages visited, feature usage, session duration) | |
+| At most, the approximate country of public-scan requests (supplied by Cloudflare from the connection; not recorded if unknown/Tor) | Visitor IP address, city, or coordinates stored with scan or assessment records |
+
+For public scans, the visitor IP is not sent to any third party for location
+lookup and is not stored with scan records. It is used transiently only for
+rate limiting, in short-lived cache keys that expire within about two hours
+(verified in code: 1 hour for public assessment/lead/monitor keys; up to 2
+hours for the scan-report limiter).
 
 Averrow does not collect or process sensitive/special-category data as a
 matter of course. `[NEEDS HUMAN INPUT: confirm with counsel whether this
@@ -188,7 +195,7 @@ with the public site — this list must never grow ahead of what
 
 | Sub-processor | Purpose | Notes |
 |---|---|---|
-| **Cloudflare** | Infrastructure, CDN, edge compute (Workers), database (D1), and cache (KV) hosting the Averrow platform. | Processes requests on Averrow's behalf to deliver the platform. |
+| **Cloudflare** | Infrastructure, CDN, edge compute (Workers), database (D1), and cache (KV) hosting the Averrow platform. | Processes requests on Averrow's behalf to deliver the platform. Also supplies the approximate request country for public scans (no new sub-processor). |
 | **[AI Provider]** | Threat analysis, content classification, and risk scoring (AI/LLM inference). | Data shared is limited to what's necessary for analysis. `/privacy` refers to this sub-processor generically as "AI Provider" without naming the specific vendor. |
 
 `[NEEDS HUMAN INPUT: decide whether the DPA (and the customer-facing
@@ -409,6 +416,12 @@ numbers here without updating those pages too:
 - **Account deletion:** upon request, Customer's account and all associated
   data are permanently deleted within 30 days of the request. Deletion
   requests go to `privacy@averrow.com` per `/privacy`.
+- **Rate-limit records:** visitor IPs used for rate limiting of public
+  endpoints live in short-lived cache keys that expire within about two
+  hours (1 hour for public assessment/lead/monitor keys; up to 2 hours for
+  the scan-report limiter, per `middleware/rateLimit.ts` and
+  `handlers/public.ts`). They are not stored with scan or assessment
+  records.
 
 `[NEEDS HUMAN INPUT: confirm whether the DPA needs additional detail beyond
 what /privacy already states — e.g., specific retention periods for backups
