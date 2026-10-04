@@ -121,7 +121,7 @@ function severityStripe(severity: string): string {
     case 'high':     return 'var(--sev-high)';
     case 'medium':   return 'var(--sev-medium)';
     case 'low':      return 'var(--sev-low)';
-    default:         return 'rgba(255,255,255,0.10)';
+    default:         return 'var(--border-base)';
   }
 }
 
@@ -131,7 +131,7 @@ function severityChipText(severity: string): string {
     case 'high':     return 'text-[var(--sev-high)]';
     case 'medium':   return 'text-[var(--sev-medium)]';
     case 'low':      return 'text-[var(--sev-low)]';
-    default:         return 'text-white/40';
+    default:         return 'text-[var(--text-tertiary)]';
   }
 }
 
@@ -187,7 +187,7 @@ function NotificationItem({
     <div
       className="group relative w-full transition-colors"
       style={{
-        background: isUnread ? 'rgba(255,255,255,0.025)' : 'transparent',
+        background: isUnread ? 'color-mix(in srgb, var(--text-primary) 2.5%, transparent)' : 'transparent',
       }}
     >
       {/* Severity stripe — 3px on the left edge. Critical/high get full
@@ -205,14 +205,14 @@ function NotificationItem({
         }}
       />
 
-      <div className="pl-4 pr-2 py-3 hover:bg-white/[0.025]">
+      <div className="pl-4 pr-2 py-3 hover:bg-[color-mix(in_srgb,var(--text-primary)_2.5%,transparent)]">
         <div className="flex items-start gap-3">
           {/* Type icon — anchors the row visually and tells the operator
               what kind of event this is without reading the text. */}
           <div
             className="flex-shrink-0 w-7 h-7 rounded-md flex items-center justify-center mt-0.5"
             style={{
-              background: isUnread ? `${stripeColor}1A` : 'rgba(255,255,255,0.04)',
+              background: isUnread ? `color-mix(in srgb, ${stripeColor} 10%, transparent)` : 'color-mix(in srgb, var(--text-primary) 4%, transparent)',
               color: isUnread ? stripeColor : 'var(--text-tertiary)',
             }}
           >
@@ -266,7 +266,7 @@ function NotificationItem({
           <div ref={menuRef} className="relative flex-shrink-0">
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
-              className="p-1.5 rounded hover:bg-white/[0.06] opacity-40 group-hover:opacity-100 transition-opacity touch-target"
+              className="p-1.5 rounded hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] opacity-40 group-hover:opacity-100 transition-opacity touch-target"
               style={{ color: 'var(--text-tertiary)' }}
               aria-label="Notification actions"
             >
@@ -282,14 +282,14 @@ function NotificationItem({
               >
                 <button
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSnooze(notification.id); }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-white/[0.06] text-left"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] text-left"
                   style={{ color: 'var(--text-primary)' }}
                 >
                   <Clock size={12} /> Snooze 1 hour
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDone(notification.id); }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-white/[0.06] text-left"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] text-left"
                   style={{ color: 'var(--text-primary)' }}
                 >
                   <Check size={12} /> Mark done
@@ -403,7 +403,7 @@ function NotificationList({
         <div ref={menuRef} className="relative flex-shrink-0">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-2 rounded-md hover:bg-white/[0.06] touch-target"
+            className="p-2 rounded-md hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] touch-target"
             style={{ color: 'var(--text-secondary)' }}
             aria-label="Notification options"
           >
@@ -420,14 +420,14 @@ function NotificationList({
               <button
                 onClick={() => { setMenuOpen(false); markAllRead.mutate(); }}
                 disabled={unreadCount === 0}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/[0.06] text-left disabled:opacity-40 disabled:hover:bg-transparent"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] text-left disabled:opacity-40 disabled:hover:bg-transparent"
                 style={{ color: 'var(--text-primary)' }}
               >
                 <CheckCheck size={12} /> Mark all read
               </button>
               <button
                 onClick={() => { setMenuOpen(false); navigate('/notifications/preferences'); onClose(); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-white/[0.06] text-left"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] text-left"
                 style={{ color: 'var(--text-primary)' }}
               >
                 <Settings size={12} /> Preferences
@@ -497,7 +497,7 @@ function NotificationList({
               style={{
                 background: isActive ? 'var(--amber)' : 'transparent',
                 border: `1px solid ${isActive ? 'var(--amber)' : 'var(--border-base)'}`,
-                color: isActive ? '#0A0F1E' : 'var(--text-secondary)',
+                color: isActive ? 'var(--text-on-amber)' : 'var(--text-secondary)',
                 fontWeight: isActive ? 700 : 500,
               }}
             >
@@ -505,8 +505,8 @@ function NotificationList({
               <span
                 className="font-mono text-[10px] px-1 rounded"
                 style={{
-                  background: isActive ? 'rgba(10,15,30,0.18)' : 'rgba(255,255,255,0.06)',
-                  color: isActive ? '#0A0F1E' : 'var(--text-tertiary)',
+                  background: isActive ? 'color-mix(in srgb, var(--text-on-amber) 18%, transparent)' : 'color-mix(in srgb, var(--text-primary) 6%, transparent)',
+                  color: isActive ? 'var(--text-on-amber)' : 'var(--text-tertiary)',
                 }}
               >
                 {count}
@@ -525,11 +525,11 @@ function NotificationList({
             <div
               className="w-12 h-12 rounded-full flex items-center justify-center mb-3"
               style={{
-                background: 'rgba(255,255,255,0.04)',
+                background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)',
                 border: '1px solid var(--border-base)',
               }}
             >
-              <Bell size={20} className="text-white/30" />
+              <Bell size={20} className="text-[var(--text-muted)]" />
             </div>
             <p className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
               {filter === 'all' ? "You're all caught up" : 'No matches in this filter'}
@@ -545,7 +545,7 @@ function NotificationList({
               <section key={bucket}>
                 <div
                   className="px-4 pt-3 pb-1 sticky top-0 z-[1] backdrop-blur-sm"
-                  style={{ background: 'rgba(6,10,20,0.85)' }}
+                  style={{ background: 'color-mix(in srgb, var(--bg-elevated) 85%, transparent)' }}
                 >
                   <span className="text-[10px] font-mono uppercase tracking-[0.15em]" style={{ color: 'var(--text-tertiary)' }}>
                     {BUCKET_LABEL[bucket]} · {items.length}
@@ -615,13 +615,13 @@ export function NotificationBell() {
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <Bell className="w-5 h-5 text-white/70" />
+        <Bell className="w-5 h-5 text-[var(--text-secondary)]" />
         {unreadCount > 0 && (
           <span
             className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono dot-pulse-red"
             style={{
               background: 'var(--red)',
-              color: '#fff',
+              color: 'var(--text-on-red)',
             }}
           >
             {unreadCount > 99 ? '99+' : unreadCount}

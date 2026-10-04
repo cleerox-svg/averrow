@@ -163,7 +163,7 @@ export function Notifications() {
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <h1 className="font-mono text-[10px] uppercase tracking-[0.15em] font-bold" style={{ color: 'var(--text-muted)' }}>
+          <h1 className="font-display text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
             Notifications
           </h1>
         </div>
@@ -593,7 +593,7 @@ function NotificationRow({
             already done. Visible always on touch; on hover for
             mouse users. */}
         {!isDone && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
             {!isSnoozed && (
               <div className="relative">
                 <button

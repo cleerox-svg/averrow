@@ -19,6 +19,8 @@
   --amber-dim:    #B8821F;
   --amber-glow:   rgba(229, 168, 50, 0.20);
   --amber-border: rgba(229, 168, 50, 0.25);
+  --text-on-amber: #0A0F1E;  /* ink on amber fills — same in both themes */
+  --text-on-red:   #FFFFFF;  /* ink on solid red fills (count badges) */
 
   --red:          #C83C3C;
   --red-dim:      #8B1A1A;
@@ -236,6 +238,8 @@
    ~30% so labels stand out; borders darker so card edges read.
    Accents (amber/red/green/blue) stay constant per design rule. */
 [data-theme="light"] {
+  --text-on-amber: #0A0F1E;
+  --text-on-red:   #FFFFFF;
   --bg-page:      #EFF2F7;
   --bg-card:      #FFFFFF;
   --bg-card-deep: #F6F8FB;
