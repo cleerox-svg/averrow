@@ -18,6 +18,7 @@ import {
 } from "../lib/dns-drainable";
 import { parseNewestFailure } from "../lib/haiku";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
+import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../lib/nrd-retention";
 import type { Env } from "../types";
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
@@ -903,6 +904,50 @@ async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
   });
 }
 
+// ── nrd_domains retention (lib/nrd-retention.ts) ────────────────────
+export interface NrdRetentionDiag {
+  /** False when no last-result stamp exists (never run, or TTL expired). */
+  has_run: boolean;
+  last_run_at: string | null;
+  deleted: number | null;
+  cutoff: string | null;
+  age_cutoff: string | null;
+  cursor: string | null;
+  held_by_matcher: boolean | null;
+  more_remaining: boolean | null;
+  skipped: string | null;
+  error: string | null;
+}
+
+/** Build the `nrd_retention` block from the KV last-result stamp ONLY —
+ *  zero D1 reads. The purge never passes the phantom matcher's nrd cursor,
+ *  which advances only when the matcher RUNS incrementally. So
+ *  `skipped: 'no_cursor'` = the matcher has never run incrementally, and
+ *  `held_by_matcher: true` = its last incremental run is older than the
+ *  90-day window; either persisting across days means nrd_domains is
+ *  growing again until the matcher runs. */
+export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag> {
+  let raw: string | null = null;
+  try {
+    raw = await env.CACHE.get(NRD_RETENTION_LAST_RESULT_KEY);
+  } catch {
+    raw = null;
+  }
+  const last = parseNrdRetentionLastResult(raw);
+  return {
+    has_run: last !== null,
+    last_run_at: last?.ran_at ?? null,
+    deleted: last?.deleted ?? null,
+    cutoff: last?.cutoff ?? null,
+    age_cutoff: last?.age_cutoff ?? null,
+    cursor: last?.cursor ?? null,
+    held_by_matcher: last?.held_by_matcher ?? null,
+    more_remaining: last?.more_remaining ?? null,
+    skipped: last?.skipped ?? null,
+    error: last?.error ?? null,
+  };
+}
+
 /** Pure fold of the `(weaponization_flag, has_reg)` group rows into the
  *  `velocity` diagnostics block. Extracted from `buildVelocityDiag` so
  *  the coverage arithmetic is unit-testable without a D1 —
@@ -1762,6 +1807,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // diagnostics call — hit/miss feeds the same cached_count.hit_rate ring.
     const pageAnalysisP = buildPageAnalysisDiag(env);
     const velocityP = buildVelocityDiag(env);
+    const nrdRetentionP = buildNrdRetentionDiag(env);
 
     // ── Execute all in parallel ─────────────────────────────────────
     const [
@@ -1779,6 +1825,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       dnsQueueStability,
       pageAnalysis,
       velocity,
+      nrdRetention,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -1794,6 +1841,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       dnsQueueStabilityP,
       pageAnalysisP,
       velocityP,
+      nrdRetentionP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -2105,7 +2153,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // and `ai_build.persisted_delta_drift`. No field removed. The
           // block's cachedValue key carries a matching `.v2` suffix so a
           // deploy does not serve the old shape out of KV for a TTL.
-          endpoint_version: 11,
+          // 12: additive `nrd_retention` block (KV last-result stamp of the
+          // nrd_domains 90-day purge). No field removed.
+          endpoint_version: 12,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2214,6 +2264,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // — the signal that was invisible while `by_flag` alone conflated
         // the two states. Same single scan; no extra COUNT(*) passes.
         velocity: velocity,
+
+        // nrd_domains 90-day retention (lib/nrd-retention.ts), read ONLY
+        // from its KV last-result stamp — no D1 reads. The purge never
+        // passes the phantom matcher's nrd cursor, which moves only when the
+        // matcher runs incrementally: `skipped: 'no_cursor'` (never run) or
+        // `held_by_matcher: true` (last run older than 90 days) persisting
+        // across days means nrd_domains is growing again until it runs.
+        nrd_retention: nrdRetention,
 
         alerts: {
           // NX2 tier-gate visibility. `tracked` should trend to 0 (or

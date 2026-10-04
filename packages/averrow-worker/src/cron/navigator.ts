@@ -30,6 +30,14 @@ import {
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
+import {
+  purgeNrdDomains,
+  parseNrdRetentionLastResult,
+  shouldRunNrdRetention,
+  NRD_RETENTION_LAST_RESULT_KEY,
+  NRD_RETENTION_SOFT_CAP_MS,
+  type NrdRetentionResult,
+} from '../lib/nrd-retention';
 import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
@@ -184,6 +192,9 @@ interface NavigatorImplResult {
   /** DNS-queue reaper outcome — emitted on the once-per-day tick
    *  (hour===0). null on every other tick. */
   reaperResult: ReaperResult | null;
+  /** nrd_domains retention outcome — only on hour-0 ticks where the
+   *  once-per-day / continuation gate opened. null otherwise. */
+  nrdRetentionResult: NrdRetentionResult | null;
 }
 
 async function runNavigatorImpl(
@@ -204,6 +215,7 @@ async function runNavigatorImpl(
     batchesAttempted: 0, batchesFailed: 0,
   };
   let reaperResult: ReaperResult | null = null;
+  let nrdRetentionResult: NrdRetentionResult | null = null;
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -342,6 +354,35 @@ async function runNavigatorImpl(
         }
       } catch (err) {
         console.error('[navigator] dns-queue-reap escape:', err);
+      }
+    }
+
+    // ── 2d. nrd_domains retention (daily, 90d, matcher-cursor gated) ──
+    // Hour-only gate (CLAUDE.md §6 cron-audit rule — no minute check).
+    // Inside hour 0 it runs once per UTC day; a run that hit its soft cap
+    // (more_remaining) or errored is continued on the next hour-0 tick.
+    // The KV last-result read happens only inside hour 0 (≤12 reads/day).
+    // Its soft cap is min(own cap, Navigator's remaining budget); skipped
+    // when Navigator has no budget left — a later hour-0 tick picks it up
+    // (the gate re-opens because no stamp was written today). Never throws.
+    if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
+      try {
+        let last: NrdRetentionResult | null = null;
+        try {
+          last = parseNrdRetentionLastResult(await env.CACHE.get(NRD_RETENTION_LAST_RESULT_KEY));
+        } catch {
+          last = null;
+        }
+        // Respect Navigator's remaining budget, not just the purge's own cap.
+        const softCapMs = Math.min(
+          NRD_RETENTION_SOFT_CAP_MS,
+          NAVIGATOR_SOFT_CAP_MS - (Date.now() - start),
+        );
+        if (softCapMs > 0 && shouldRunNrdRetention(scheduledTime, last)) {
+          nrdRetentionResult = await purgeNrdDomains(env, { softCapMs });
+        }
+      } catch (err) {
+        console.error('[navigator] nrd-retention escape:', err);
       }
     }
   } catch (err) {
@@ -671,6 +712,7 @@ async function runNavigatorImpl(
     dnsResult,
     reconcileResult,
     reaperResult,
+    nrdRetentionResult,
   };
 }
 
@@ -878,6 +920,22 @@ export const navigatorAgent: AgentModule = {
           batches_failed: rp.batchesFailed,
           last_error: rp.lastError,
         },
+      });
+    }
+
+    // nrd_domains retention diagnostic (hour-0 ticks where the gate opened).
+    // held_by_matcher is informational: the purge waits on the phantom
+    // matcher's nrd cursor by design. An error is medium.
+    if (result.nrdRetentionResult) {
+      const nr = result.nrdRetentionResult;
+      const errSuffix = nr.error ? ` err="${nr.error.slice(0, 120)}"` : '';
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: nr.skipped
+          ? `nrd-retention: SKIPPED (${nr.skipped})${errSuffix}`
+          : `nrd-retention: deleted=${nr.deleted} cutoff=${nr.cutoff ?? 'none'} held_by_matcher=${nr.held_by_matcher ? 'yes' : 'no'} more=${nr.more_remaining ? 'yes' : 'no'} ${nr.duration_ms}ms${errSuffix}`,
+        severity: nr.error ? 'medium' : 'info',
+        details: { ...nr },
       });
     }
 
