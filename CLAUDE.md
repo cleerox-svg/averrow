@@ -788,7 +788,22 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   re-sending the current role pass), and invite acceptance refuses an org
   invite when ANY existing account matching the Google sub or the email
   (case-insensitive) is staff (instead of demoting it to `client`), and a
-  staff invite for an existing active org member. Any actual role change
+  staff invite for an existing active org member. An invite also never
+  CHANGES an existing staff account's role (any matching staff row whose
+  role differs from the invite's → refused, audited
+  `invite_accept_refused_staff_role_change`; same-role acceptance works):
+  staff role changes go through the admin PATCH only. A non-staff → staff
+  change via invite stamps `forced_logout` (one second in the past, so the
+  session the acceptance issues survives). Role writes (admin PATCH, invite
+  acceptance, org member PATCH/remove) are pinned to the role the handler
+  read (`AND role = ?`); a concurrent change → 409 / refused, retry.
+  The no-tenant-staff rule is also enforced IN SQL on both sides of the
+  race: a staff-role write (admin PATCH non-staff → staff, staff-invite
+  acceptance) carries `AND NOT USER_HAS_CUSTOMER_MEMBERSHIP_SQL`
+  (`lib/lead-conversion-placeholder.ts`), and invite acceptance's
+  `org_members` insert is `INSERT … SELECT … WHERE NOT EXISTS (user is
+  staff)`; either matching 0 rows → refused + audited, invite left pending.
+  Any actual role change
   via that PATCH sets `forced_logout:<user_id>` in KV, revoking live tokens;
   if that KV write fails the role change stands and the PATCH returns 200
   with `revocation_pending: true` + `warning` (audited
@@ -798,10 +813,18 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   covers status changes of those accounts) — an `admin` cannot demote a
   super_admin or another admin.
 - Org owner seats (`/api/orgs/:orgId/*`): inviting, promoting to, demoting
-  or removing an `owner` requires a platform `super_admin`/`admin` or an
-  active owner of that org (read from `org_members`, not the JWT claim) — a
-  customer org `admin` cannot self-escalate. Removing/demoting the org's
-  last active owner is 409.
+  or removing an `owner`, and resending or revoking an owner invite,
+  requires a platform `super_admin` or an active owner of that org (read
+  from `org_members`, not the JWT claim) — a customer org `admin` cannot
+  self-escalate. (A global `admin` never reaches these: the handlers admit
+  only `super_admin` or members of the org, and staff are never members.)
+  Removing/demoting the org's last active owner is 409. Transfer-ownership
+  demotes the CALLER's own owner row (orgs can hold several owners); its
+  promote/demote are state-guarded and chained in one batch, so a
+  concurrently removed target → 409 with nothing changed.
+- `DELETE /api/admin/invites/:id` (and the `GET` list) cover STAFF invites
+  only (`org_id IS NULL`); an org invite is 404 there and is revoked via
+  the tenant route, which applies the owner-seat rule.
 - **The one allowed staff membership: the lead-conversion placeholder.**
   `handlers/leadConversion.ts` seats the converting `super_admin` as a
   TEMPORARY org `owner` (`org_members.provisioned_by='lead_conversion'`) so
@@ -812,10 +835,12 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   (`status='removed'`, `deprovisioned_at`, audited as
   `lead_conversion_placeholder_removed`) when: the first customer (`client`)
   accepts an `org_role='owner'` invite for that org (that org only);
-  ownership is transferred to a non-placeholder member (that org only, same
-  batch); or its user's role is changed staff → `client` (all of that
+  ownership is transferred, or a member PATCH grants `owner`, to a
+  non-placeholder member (that org only, same batch); or its user's role is changed staff → `client` (all of that
   user's placeholders, same batch as the role write — otherwise the next
-  refresh would embed the org as `org_id`/`org_role=owner`).
+  refresh would embed the org as `org_id`/`org_role=owner`). The
+  placeholder is owner-or-gone: a member PATCH to any other role is 409 and
+  transfer-ownership TO it is 400.
 
 **`auditor` is minted-only.** It's a real `UserRole` with a read-only
 permission set + global org scope, but it is NOT assignable to a stored

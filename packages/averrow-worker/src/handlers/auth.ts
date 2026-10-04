@@ -7,7 +7,7 @@ import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
-import { PLACEHOLDER_EXEMPT_SQL } from "../lib/lead-conversion-placeholder";
+import { PLACEHOLDER_EXEMPT_SQL, STAFF_ROLE_LIST_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL } from "../lib/lead-conversion-placeholder";
 import {
   generateMagicLinkToken, hashMagicLinkToken, checkRateLimit,
   persistMagicLinkRow, findMagicLinkByHash, markMagicLinkUsed,
@@ -537,6 +537,28 @@ export async function handleInviteAcceptance(
     });
     return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
   }
+  // (c) An invite must never CHANGE an existing staff account's role. The
+  //     write below overwrites users.role with invite.role, so a non-org
+  //     invite minted by an `admin` (manage_invites) for a super_admin's
+  //     email would demote them on acceptance — skipping the super_admin-only
+  //     rule, the placeholder cleanup and the forced_logout of the admin user
+  //     PATCH. Refuse whenever ANY matching row is staff with a different
+  //     role; the role and the invite are untouched. Role changes for an
+  //     existing staff account go through PATCH /api/admin/users/:id only.
+  //     A same-role invite (re-linking a Google sub) still works.
+  const staffRoleChange = matches.find((m) => isPlatformStaff(m.role) && m.role !== invite.role);
+  if (staffRoleChange) {
+    await audit(env, {
+      action: "invite_accept_refused_staff_role_change",
+      userId: staffRoleChange.id,
+      resourceType: "invitation",
+      resourceId: invite.id,
+      details: { email: googleUser.email, existing_role: staffRoleChange.role, invite_role: invite.role },
+      outcome: "denied",
+      request,
+    });
+    return redirectWithError(siteOrigin, "This email belongs to an existing Averrow staff account. Its role can only be changed by an administrator, not through an invitation.");
+  }
   if (matches.length > 0 && isPlatformStaff(invite.role)) {
     const membership = await env.DB.prepare(
       `SELECT om.user_id, om.org_id FROM org_members om
@@ -560,9 +582,71 @@ export async function handleInviteAcceptance(
 
   if (existing) {
     userId = existing.id;
-    // Update google_sub + role if needed
-    await env.DB.prepare("UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ?")
-      .bind(googleUser.sub, googleUser.name, invite.role, userId).run();
+    // Update google_sub + role if needed. Only a non-staff account can reach
+    // here with a different role (guard (c) above): client → staff.
+    // Pinned to the role read above (optimistic concurrency): if an admin
+    // changed it in between, the guards were decided on stale data — refuse.
+    // A STAFF-role write also re-checks the no-tenant-staff rule IN SQL: an
+    // active customer membership that landed after the pre-check above (a
+    // concurrent org-invite acceptance) makes it match 0 rows.
+    const staffWrite = isPlatformStaff(invite.role);
+    const updated = await env.DB.prepare(
+      `UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ? AND role = ?` +
+      (staffWrite ? ` AND NOT ${USER_HAS_CUSTOMER_MEMBERSHIP_SQL}` : ""),
+    ).bind(googleUser.sub, googleUser.name, invite.role, userId, existing.role).run();
+    if (!Number(updated.meta?.changes ?? 0)) {
+      const now = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+        .bind(userId).first<{ role: string }>();
+      if (staffWrite && now?.role === existing.role) {
+        // Role unchanged → the membership guard is what refused the write.
+        await audit(env, {
+          action: "invite_accept_refused_org_member",
+          userId,
+          resourceType: "invitation",
+          resourceId: invite.id,
+          details: { email: googleUser.email, invite_role: invite.role, concurrent: true },
+          outcome: "denied",
+          request,
+        });
+        return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
+      }
+      await audit(env, {
+        action: "invite_accept_refused_concurrent_change",
+        userId,
+        resourceType: "invitation",
+        resourceId: invite.id,
+        details: { email: googleUser.email, read_role: existing.role, invite_role: invite.role },
+        outcome: "failure",
+        request,
+      });
+      return redirectWithError(siteOrigin, "Your account was changed while accepting the invitation. Please open the invite link again.");
+    }
+    if (existing.role !== invite.role) {
+      // Same revocation as the admin role PATCH: the old tokens embed the old
+      // role + org_scope. The stamp is one second in the past because the
+      // session issued just below gets iat = now, and the gates reject
+      // iat <= stamp — stamping `now` would revoke the new session too. The
+      // residual (an old-role token minted within this same second) is the
+      // same user, at the lower old role, for at most one access-token TTL.
+      // A KV failure must not fail the sign-in; it is audited instead.
+      try {
+        await env.CACHE.put(
+          `forced_logout:${userId}`,
+          String(Math.floor(Date.now() / 1000) - 1),
+          { expirationTtl: ABSOLUTE_SESSION_TTL },
+        );
+      } catch (err) {
+        await audit(env, {
+          action: "user_role_change_revocation_failed",
+          userId,
+          resourceType: "user",
+          resourceId: userId,
+          details: { via: "invite_acceptance", invitation_id: invite.id, previous_role: existing.role, new_role: invite.role, error: err instanceof Error ? err.message : String(err) },
+          outcome: "failure",
+          request,
+        });
+      }
+    }
   } else {
     userId = crypto.randomUUID();
     await env.DB.prepare(
@@ -571,16 +655,35 @@ export async function handleInviteAcceptance(
     ).bind(userId, googleUser.sub, googleUser.email, googleUser.name, invite.role, invite.id).run();
   }
 
-  // Mark invitation as accepted
-  await env.DB.prepare("UPDATE invitations SET status = 'accepted', accepted_at = datetime('now') WHERE id = ?")
-    .bind(invite.id).run();
-
-  // Create org membership if invite has org context
+  // Create org membership if invite has org context. Runs BEFORE the invite
+  // is marked accepted so a refusal below leaves it pending.
   if (invite.org_id) {
-    await env.DB.prepare(`
+    // No tenant staff, enforced IN SQL: the staff guards above ran on an
+    // earlier read, and a concurrent admin role PATCH can make this user
+    // staff in between — then the INSERT selects no row. (INSERT OR IGNORE
+    // also yields 0 rows for an existing (org_id, user_id) row, so a 0 is
+    // attributed to the staff guard only if the user is staff now.)
+    const inserted = await env.DB.prepare(`
       INSERT OR IGNORE INTO org_members (org_id, user_id, role, status, invited_by, invited_at, accepted_at, provisioned_by)
-      VALUES (?, ?, ?, 'active', (SELECT invited_by FROM invitations WHERE id = ?), datetime('now'), datetime('now'), 'invite')
-    `).bind(invite.org_id, userId, invite.org_role || "viewer", invite.id).run();
+      SELECT ?, ?, ?, 'active', (SELECT invited_by FROM invitations WHERE id = ?), datetime('now'), datetime('now'), 'invite'
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = ? AND role IN (${STAFF_ROLE_LIST_SQL}))
+    `).bind(invite.org_id, userId, invite.org_role || "viewer", invite.id, userId).run();
+    if (!Number(inserted.meta?.changes ?? 0)) {
+      const now = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+        .bind(userId).first<{ role: string }>();
+      if (now && isPlatformStaff(now.role)) {
+        await audit(env, {
+          action: "invite_accept_refused_staff_account",
+          userId,
+          resourceType: "invitation",
+          resourceId: invite.id,
+          details: { email: googleUser.email, org_id: invite.org_id, existing_role: now.role, concurrent: true },
+          outcome: "denied",
+          request,
+        });
+        return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+      }
+    }
 
     // Lead conversion (leadConversion.ts) seats the converting super_admin as
     // a TEMPORARY 'owner' (provisioned_by='lead_conversion') so the org has an
@@ -608,6 +711,10 @@ export async function handleInviteAcceptance(
       }
     }
   }
+
+  // Mark invitation as accepted
+  await env.DB.prepare("UPDATE invitations SET status = 'accepted', accepted_at = datetime('now') WHERE id = ?")
+    .bind(invite.id).run();
 
   await audit(env, {
     action: "invite_accepted",

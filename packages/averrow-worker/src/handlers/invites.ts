@@ -112,11 +112,14 @@ export async function handleListInvites(request: Request, env: Env): Promise<Res
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
   const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
+  // Staff invites only (org_id IS NULL) — the same scope as the revoke below,
+  // so the ops Platform Users "Pending invitations" panel never lists a row
+  // its Revoke button can't act on. Org invites: GET /api/orgs/:orgId/invites.
   let sql = `SELECT i.id, i.email, i.role, i.status, i.created_at, i.expires_at, i.accepted_at,
                     u.email as invited_by_email
              FROM invitations i
              LEFT JOIN users u ON u.id = i.invited_by
-             WHERE 1=1`;
+             WHERE i.org_id IS NULL`;
   const params: unknown[] = [];
 
   if (status) {
@@ -169,12 +172,16 @@ export async function handleRevokeInvite(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
+  // STAFF invites only (org_id IS NULL). An org invite is revoked through
+  // DELETE /api/orgs/:orgId/invites/:inviteId, which applies the owner-seat
+  // rule; revoking one here let any `manage_invites` holder (sales included)
+  // cancel any org's owner invite. An org invite id is a 404 here.
   const result = await env.DB.prepare(
-    "UPDATE invitations SET status = 'revoked' WHERE id = ? AND status = 'pending'",
+    "UPDATE invitations SET status = 'revoked' WHERE id = ? AND status = 'pending' AND org_id IS NULL",
   ).bind(inviteId).run();
 
   if (!result.meta.changes) {
-    return json({ success: false, error: "Invite not found or not pending" }, 404, origin);
+    return json({ success: false, error: "Staff invite not found or not pending" }, 404, origin);
   }
 
   await audit(env, {

@@ -18,7 +18,7 @@ import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
 import { ABSOLUTE_SESSION_TTL } from "../../lib/jwt";
-import { PLACEHOLDER_EXEMPT_SQL, deactivateUserPlaceholdersStmt } from "../../lib/lead-conversion-placeholder";
+import { PLACEHOLDER_EXEMPT_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL, deactivateUserPlaceholdersStmt } from "../../lib/lead-conversion-placeholder";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
 import {
@@ -124,7 +124,8 @@ export async function handleAdminUpdateUser(
   // never trip this. A lead-conversion placeholder row is exempt only while
   // its user is staff (PLACEHOLDER_EXEMPT_SQL) — here the user is a client,
   // so a leftover placeholder counts as a real membership.
-  if (roleChanged && isPlatformStaff(role) && !isPlatformStaff(current.role)) {
+  const promotesToStaff = roleChanged && isPlatformStaff(role) && !isPlatformStaff(current.role);
+  if (promotesToStaff) {
     const membership = await env.DB.prepare(
       `SELECT om.org_id FROM org_members om
        WHERE om.user_id = ? AND om.status = 'active' AND NOT (${PLACEHOLDER_EXEMPT_SQL})
@@ -150,8 +151,18 @@ export async function handleAdminUpdateUser(
     params.push(status);
   }
 
-  params.push(targetUserId);
-  const updateUser = env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...params);
+  // Optimistic concurrency: every guard above was evaluated against
+  // `current.role`. Pin the write to it so a role change landing between that
+  // read and this write (another admin's PATCH, an invite acceptance) can't
+  // be overwritten with a decision made on stale data → 409, caller retries.
+  // A promotion to staff also re-checks the membership rule above IN SQL, so
+  // an org membership landing between that check and this write (a
+  // concurrent org-invite acceptance) makes it match 0 rows → 409.
+  params.push(targetUserId, current.role);
+  const updateUser = env.DB.prepare(
+    `UPDATE users SET ${sets.join(", ")} WHERE id = ? AND role = ?` +
+    (promotesToStaff ? ` AND NOT ${USER_HAS_CUSTOMER_MEMBERSHIP_SQL}` : ""),
+  ).bind(...params);
 
   // Staff → client: the user's lead-conversion placeholder owner rows would
   // otherwise stay active and, on the next refresh, be embedded as
@@ -159,12 +170,51 @@ export async function handleAdminUpdateUser(
   // of a real tenant. Deactivate them in the SAME batch as the role write so
   // neither lands without the other.
   const demotedToClient = roleChanged && role === "client" && isPlatformStaff(current.role);
+  // (deactivateUserPlaceholdersStmt re-checks that the user is non-staff, so
+  // if the guarded role write matched 0 rows it doesn't fire either.)
   let placeholdersRemoved = 0;
+  let userRowsChanged: number;
   if (demotedToClient) {
     const results = await env.DB.batch([updateUser, deactivateUserPlaceholdersStmt(env.DB, targetUserId)]);
+    userRowsChanged = Number(results[0]?.meta?.changes ?? 0);
     placeholdersRemoved = Number(results[1]?.meta?.changes ?? 0);
   } else {
-    await updateUser.run();
+    userRowsChanged = Number((await updateUser.run()).meta?.changes ?? 0);
+  }
+  if (userRowsChanged === 0) {
+    // The placeholder statement only fires when the user is already non-staff
+    // (someone else demoted them concurrently); still record it.
+    if (placeholdersRemoved > 0) {
+      await audit(env, {
+        action: "lead_conversion_placeholder_removed",
+        userId: adminUserId,
+        resourceType: "user",
+        resourceId: targetUserId,
+        details: { reason: "staff_demoted_to_client_concurrent", placeholders_removed: placeholdersRemoved },
+        request,
+      });
+    }
+    if (promotesToStaff) {
+      const now = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+        .bind(targetUserId).first<{ role: string }>();
+      if (now?.role === current.role) {
+        // Role unchanged → the in-SQL membership guard refused the write.
+        await audit(env, {
+          action: "user_role_change_refused_org_member",
+          userId: adminUserId,
+          resourceType: "user",
+          resourceId: targetUserId,
+          details: { requested_role: role, previous_role: current.role, concurrent: true },
+          outcome: "denied",
+          request,
+        });
+        return json({
+          success: false,
+          error: "Cannot assign a staff role to a user who is an active member of a customer organization (a membership was added concurrently). Remove them from the organization first.",
+        }, 409, origin);
+      }
+    }
+    return json({ success: false, error: "User was changed concurrently; reload and retry" }, 409, origin);
   }
 
   const user = await env.DB.prepare(
