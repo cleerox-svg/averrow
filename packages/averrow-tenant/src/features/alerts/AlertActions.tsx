@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { Check, Eye, ShieldCheck, Ban, Loader2, UserCheck, UserPlus, X, type LucideIcon } from 'lucide-react';
-import { useUpdateAlert, useAssignAlert, type Alert, type AlertAction, type AlertStatus } from '@/lib/alerts';
+import { useUpdateAlert, useAssignAlert, alertAssigneeLabel, type Alert, type AlertAction, type AlertStatus } from '@/lib/alerts';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 
@@ -16,12 +16,13 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
   const assign = useAssignAlert();
   const me = user?.id ?? null;
   const assignedToMe = !!a.assigned_to && a.assigned_to === me;
+  const assigneeName = alertAssigneeLabel(a);
 
   if (!canTriage) {
-    if (!a.assigned_to_name) return null;
+    if (!assigneeName) return null;
     return (
       <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/50 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
-        <UserCheck size={10} /> {assignedToMe ? 'You' : a.assigned_to_name}
+        <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
       </span>
     );
   }
@@ -29,9 +30,9 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
   const chip = 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50';
   return (
     <div className="flex items-center gap-1.5">
-      {a.assigned_to_name && (
+      {assigneeName && (
         <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
-          <UserCheck size={10} /> {assignedToMe ? 'You' : a.assigned_to_name}
+          <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
         </span>
       )}
       {assignedToMe ? (
@@ -50,11 +51,22 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
           onClick={() => me && assign.mutate({ alertId: a.id, assignedTo: me })}
           className={`${chip} bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90 hover:border-white/[0.18]`}
         >
-          <UserPlus size={10} /> {a.assigned_to_name ? 'Reassign to me' : 'Assign to me'}
+          <UserPlus size={10} /> {a.handled_by_averrow ? 'Take over' : assigneeName ? 'Reassign to me' : 'Assign to me'}
         </button>
       )}
       {assign.isPending && <Loader2 size={11} className="text-white/40 animate-spin" />}
     </div>
+  );
+}
+
+export const STAFF_READONLY_NOTE = 'Read-only for Averrow staff. Triage happens in the Averrow console.';
+
+/** Read-only note shown (once per page) where triage controls are hidden for Averrow staff. */
+export function StaffTriageNote({ className }: { className?: string }) {
+  return (
+    <p role="note" className={cn('text-[11px] text-white/55', className)}>
+      {STAFF_READONLY_NOTE}
+    </p>
   );
 }
 

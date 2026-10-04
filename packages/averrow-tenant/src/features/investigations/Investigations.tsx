@@ -11,7 +11,8 @@ import {
   useInvestigations, useCreateInvestigation, INVESTIGATION_STATUS_LABELS,
   type InvestigationStatus, type InvestigationSeverity, type Investigation,
 } from '@/lib/investigations';
-import { useCanTriage } from '@/lib/alerts';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { StatusPill, SeverityDot } from './pills';
 
 type StatusFilter = InvestigationStatus | 'all';
@@ -19,6 +20,7 @@ const FILTERS: StatusFilter[] = ['all', 'open', 'monitoring', 'closed'];
 
 export function Investigations() {
   const canEdit = useCanTriage();
+  const isStaff = useIsStaff();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [creating, setCreating] = useState(false);
   const { data, isLoading } = useInvestigations(filter);
@@ -47,6 +49,8 @@ export function Investigations() {
           </button>
         )}
       </header>
+
+      {isStaff && <StaffTriageNote />}
 
       {creating && canEdit && <CreateForm onDone={() => setCreating(false)} />}
 

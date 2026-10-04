@@ -11,11 +11,11 @@ import {
   ArrowLeft, ShieldAlert, Network, GitBranch, Clock, FileSearch, Sparkles,
   ExternalLink, type LucideIcon,
 } from 'lucide-react';
-import { useAlert, useCanTriage, extractConfidence, type Alert, type AlertSeverity } from '@/lib/alerts';
+import { useAlert, useCanTriage, useIsStaff, extractConfidence, alertAssigneeLabel, type Alert, type AlertSeverity } from '@/lib/alerts';
 import { useThreatDetail } from '@/lib/threats';
 import type { ThreatRow } from '@averrow/shared/threats-table';
 import { AiAssessmentPanel } from './AiAssessment';
-import { AlertActions, AssigneeControl } from './AlertActions';
+import { AlertActions, AssigneeControl, StaffTriageNote } from './AlertActions';
 import { AddToInvestigation } from '@/features/investigations/AddToInvestigation';
 import { AgePill } from '@/components/AgePill';
 
@@ -24,6 +24,7 @@ type TabKey = 'overview' | 'evidence' | 'infrastructure' | 'related' | 'activity
 export function IntelligenceCard() {
   const { alertId } = useParams<{ alertId: string }>();
   const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
   const { data: alert, isLoading, error } = useAlert(alertId);
 
   // Enrichment backing only exists for threat-sourced signals.
@@ -124,6 +125,8 @@ export function IntelligenceCard() {
             </div>
             {canTriage ? (
               <AlertActions alert={alert} />
+            ) : isStaff ? (
+              <StaffTriageNote className="mt-3 pt-2.5 border-t border-white/[0.06]" />
             ) : (
               <p className="mt-3 pt-2.5 border-t border-white/[0.06] text-[11px] text-white/45 font-mono">
                 Analyst role required to act.
@@ -259,7 +262,8 @@ function ActivityTab({ alert }: { alert: Alert }) {
   const events: Ev[] = [];
   events.push({ at: alert.created_at, label: 'Signal raised' });
   if (alert.acknowledged_at) events.push({ at: alert.acknowledged_at, label: 'Acknowledged' });
-  if (alert.assigned_to_name) events.push({ at: null, label: `Assigned to ${alert.assigned_to_name}` });
+  const assignee = alertAssigneeLabel(alert);
+  if (assignee) events.push({ at: null, label: `Assigned to ${assignee}` });
   if (alert.resolved_at) {
     events.push({
       at: alert.resolved_at,

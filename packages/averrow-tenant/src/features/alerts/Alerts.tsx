@@ -17,11 +17,11 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ShieldCheck, Bell, Check, UserPlus, Loader2, X, Filter, type LucideIcon } from 'lucide-react';
 import {
-  useTenantAlerts, useCanTriage, useBulkUpdateAlerts, extractConfidence,
+  useTenantAlerts, useCanTriage, useIsStaff, useBulkUpdateAlerts, extractConfidence,
   type Alert, type AlertSeverity, type AlertStatus,
 } from '@/lib/alerts';
 import { useAuth } from '@/lib/auth';
-import { AlertActions, AssigneeControl } from './AlertActions';
+import { AlertActions, AssigneeControl, StaffTriageNote } from './AlertActions';
 import { AiAssessmentPanel } from './AiAssessment';
 import { AgePill } from '@/components/AgePill';
 import { cn } from '@/lib/cn';
@@ -70,6 +70,7 @@ export function Alerts() {
     brandId: brandFilter, alertType: typeFilter,
   });
   const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
 
   const clearSelection = () => setSelected(new Set());
 
@@ -131,6 +132,7 @@ export function Alerts() {
           <EmptyState status={status} severity={severity} />
         ) : (
           <section className="space-y-3">
+            {isStaff && <StaffTriageNote />}
             {canTriage && (
               <BulkToolbar
                 allSelected={allSelected}

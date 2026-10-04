@@ -14,13 +14,15 @@ import {
   type TakedownDetailRow,
   type TakedownSubmissionAuditRow,
 } from '@/lib/takedowns';
-import { useCanTriage } from '@/lib/alerts';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { TakedownActions } from './TakedownActions';
 
 export function TakedownDetail() {
   const { takedownId } = useParams<{ takedownId: string }>();
   const { data, isLoading, error } = useTenantTakedownDetail(takedownId ?? null);
   const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -39,6 +41,7 @@ export function TakedownDetail() {
       {data && (
         <>
           <Header takedown={data.takedown} />
+          {isStaff && <StaffTriageNote />}
           {canTriage && takedownActionsFor(data.takedown.status).length > 0 && (
             <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-2">Your decision</div>
