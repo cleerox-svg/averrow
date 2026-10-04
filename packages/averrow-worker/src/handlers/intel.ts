@@ -9,7 +9,8 @@
 // commit. Tables themselves are kept (schemas remain) in case a real
 // producer ships in the future.
 import { json } from "../lib/cors";
-import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
+import { getDbContext, getReadSession, type DbContext } from "../lib/db";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
 
 // ─── Trust Score History ────────────────────────────────────────
@@ -34,185 +35,92 @@ export async function handleTrustScoreHistory(request: Request, env: Env): Promi
   }
 }
 
-// ─── Intel Hotlist (PR-A from 2026-05-16 audit) ────────────────
+// ─── Multi-feed consensus IPs ──────────────────────────────────
 //
-// GET /api/intel/hotlist
+// GET /api/intel/multi-feed-consensus
 //
-// Surfaces three classes of high-signal intel that already exist
-// in `threats` but were never shown in the UI:
+// IPs flagged by >= 4 distinct `source_feed` values across ACTIVE
+// threats — independent intelligence sources agreeing on the same
+// infrastructure, the highest-confidence IOCs in the corpus
+// (threats.confidence_score is flat regardless of corroboration).
 //
-//  1. top_fanout_ips      — IPs hosting threats against many
-//                           distinct brands. Mass-impersonation
-//                           infrastructure that wasn't getting
-//                           consolidated as a campaign.
-//                           (audit example: 76.223.54.146 → 597 brands)
-//  2. multi_feed_consensus — IPs flagged by ≥4 independent feeds.
-//                           Currently confidence_score is flat
-//                           regardless of corroboration count.
-//                           These are the highest-confidence IOCs
-//                           in the corpus and we don't surface them.
-//  3. recent_bursts        — Domain swarms targeting one brand in
-//                           a tight time window. Detection rule
-//                           from the audit:
-//                             COUNT(*) ≥ 25 same brand in 1 hour
-//                           (audit example: 786 domains targeting
-//                           one brand in 14 min, zero campaign formed)
+// Kept from the retired /api/intel/hotlist (PR-D, 2026-10): the
+// fan-out-IP and recent-burst lanes were dropped with the Home
+// "Intel Hotlist" section; this consensus lane had no other surface.
 //
-// KV-cached 5min — operators want freshness but we don't need
-// per-second resolution; the underlying GROUP BYs are bounded
-// scans against indexes on (ip_address, target_brand_id,
-// source_feed, first_seen).
-export async function handleIntelHotlist(request: Request, env: Env): Promise<Response> {
+// Cost: the GROUP BY ip_address walks idx_threats_ip_source_feed
+// (ip_address, source_feed) in key order, but `status` and
+// `target_brand_id` / `first_seen` are not in that index, so every
+// IP-bearing threat row is still fetched — effectively a full scan
+// of threats. That is acceptable only because the result is a slow
+// signal: cachedValue with a 6h TTL bounds it to <= 4 D1 executions
+// per day (the hotlist ran it up to 48x/day on a 30-min KV TTL).
+// Do not shorten the TTL without adding a covering index.
+export const MULTI_FEED_CONSENSUS_CACHE_KEY = "intel.multi_feed_consensus.v1";
+export const MULTI_FEED_CONSENSUS_TTL_SECONDS = 6 * 60 * 60;
+export const MULTI_FEED_CONSENSUS_MIN_FEEDS = 4;
+export const MULTI_FEED_CONSENSUS_LIMIT = 50;
+
+export interface MultiFeedConsensusIp {
+  ip_address: string;
+  feed_count: number;
+  feeds: string[];
+  threat_count: number;
+  brand_count: number;
+  last_seen: string | null;
+}
+
+interface ConsensusRow {
+  ip_address: string;
+  feed_count: number;
+  feeds: string | null;
+  threat_count: number;
+  brand_count: number;
+  last_seen: string | null;
+}
+
+export async function computeMultiFeedConsensus(
+  env: Env,
+  dbCtx: DbContext,
+): Promise<MultiFeedConsensusIp[]> {
+  const session = getReadSession(env, dbCtx);
+  const res = await session.prepare(`
+    SELECT ip_address,
+           COUNT(DISTINCT source_feed)        AS feed_count,
+           GROUP_CONCAT(DISTINCT source_feed) AS feeds,
+           COUNT(*)                           AS threat_count,
+           COUNT(DISTINCT target_brand_id)    AS brand_count,
+           MAX(first_seen)                    AS last_seen
+      FROM threats
+     WHERE status = 'active'
+       AND ip_address IS NOT NULL
+       AND ip_address NOT IN ('', '0.0.0.0')
+     GROUP BY ip_address
+    HAVING feed_count >= ?
+     ORDER BY feed_count DESC, threat_count DESC
+     LIMIT ?
+  `).bind(MULTI_FEED_CONSENSUS_MIN_FEEDS, MULTI_FEED_CONSENSUS_LIMIT).all<ConsensusRow>();
+  return (res.results ?? []).map((r) => ({
+    ip_address: r.ip_address,
+    feed_count: r.feed_count,
+    feeds: r.feeds ? r.feeds.split(",").filter((f) => f.length > 0).sort() : [],
+    threat_count: r.threat_count,
+    brand_count: r.brand_count,
+    last_seen: r.last_seen,
+  }));
+}
+
+export async function handleMultiFeedConsensus(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const url = new URL(request.url);
-    const limit = Math.min(20, Math.max(1, parseInt(url.searchParams.get("limit") ?? "10", 10)));
-
-    const cacheKey = `intel:hotlist:v1:${limit}`;
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) return json(JSON.parse(cached), 200, origin);
-
-    const [fanoutRes, consensusRes, burstsRes] = await Promise.all([
-      // 1. IPs hosting threats against the most distinct brands.
-      // Active-only — taken-down/resolved threats don't count.
-      // Exclude empty/placeholder IPs (Sentinel writes '0.0.0.0' on
-      // DNS failures; audit-flagged for cleanup).
-      env.DB.prepare(`
-        SELECT ip_address,
-               COUNT(DISTINCT target_brand_id) AS brand_count,
-               COUNT(*)                         AS threat_count,
-               MAX(first_seen)                  AS last_seen
-          FROM threats
-         WHERE status = 'active'
-           AND ip_address IS NOT NULL
-           AND ip_address NOT IN ('', '0.0.0.0')
-           AND target_brand_id IS NOT NULL
-         GROUP BY ip_address
-        HAVING brand_count >= 5
-         ORDER BY brand_count DESC, threat_count DESC
-         LIMIT ?
-      `).bind(limit).all<{
-        ip_address: string;
-        brand_count: number;
-        threat_count: number;
-        last_seen: string;
-      }>(),
-      // 2. Multi-feed-corroborated IPs. ≥4 distinct source_feed
-      // means the IP is flagged by independent intelligence
-      // sources — far higher confidence than a single feed.
-      env.DB.prepare(`
-        SELECT ip_address,
-               COUNT(DISTINCT source_feed) AS feed_count,
-               COUNT(*)                     AS threat_count,
-               GROUP_CONCAT(DISTINCT source_feed) AS feeds,
-               MAX(first_seen)              AS last_seen
-          FROM threats
-         WHERE status = 'active'
-           AND ip_address IS NOT NULL
-           AND ip_address NOT IN ('', '0.0.0.0')
-         GROUP BY ip_address
-        HAVING feed_count >= 4
-         ORDER BY feed_count DESC, threat_count DESC
-         LIMIT ?
-      `).bind(limit).all<{
-        ip_address: string;
-        feed_count: number;
-        threat_count: number;
-        feeds: string;
-        last_seen: string;
-      }>(),
-      // 3. Recent temporal bursts — same brand, ≥25 threats in 1h.
-      // Window is the last 24h to keep operator-relevant; cube
-      // would be more efficient but cubes aggregate to the hour
-      // boundary, masking sub-hour swarms. Direct first_seen
-      // grouping gives true burst detection.
-      env.DB.prepare(`
-        SELECT target_brand_id                              AS brand_id,
-               strftime('%Y-%m-%d %H:00', first_seen)       AS hour_bucket,
-               COUNT(*)                                      AS threat_count,
-               COUNT(DISTINCT malicious_domain)              AS distinct_domains,
-               MIN(first_seen)                               AS burst_start,
-               MAX(first_seen)                               AS burst_end
-          FROM threats
-         WHERE status = 'active'
-           AND first_seen >= datetime('now', '-24 hours')
-           AND target_brand_id IS NOT NULL
-         GROUP BY brand_id, hour_bucket
-        HAVING threat_count >= 25
-         ORDER BY threat_count DESC
-         LIMIT ?
-      `).bind(limit).all<{
-        brand_id: string;
-        hour_bucket: string;
-        threat_count: number;
-        distinct_domains: number;
-        burst_start: string;
-        burst_end: string;
-      }>(),
-    ]);
-
-    // Resolve brand_id → name + canonical_domain + logo_url for the
-    // bursts payload so the UI can render the same favicon treatment
-    // as BrandMovers without an extra round-trip. Batched into one
-    // IN().
-    const burstBrandIds = Array.from(new Set((burstsRes.results ?? []).map(b => b.brand_id))).filter(Boolean);
-    interface BurstBrand {
-      name: string;
-      canonical_domain: string | null;
-      logo_url: string | null;
-    }
-    let brandById = new Map<string, BurstBrand>();
-    if (burstBrandIds.length > 0) {
-      const placeholders = burstBrandIds.map(() => '?').join(',');
-      const brandRows = await env.DB.prepare(
-        `SELECT id, name, canonical_domain, logo_url FROM brands WHERE id IN (${placeholders})`,
-      ).bind(...burstBrandIds).all<{
-        id: string;
-        name: string;
-        canonical_domain: string | null;
-        logo_url: string | null;
-      }>();
-      brandById = new Map(
-        brandRows.results.map(r => [r.id, {
-          name: r.name,
-          canonical_domain: r.canonical_domain,
-          logo_url: r.logo_url,
-        }]),
-      );
-    }
-    const bursts = (burstsRes.results ?? []).map(b => {
-      const brand = brandById.get(b.brand_id);
-      return {
-        brand_id:         b.brand_id,
-        brand_name:       brand?.name ?? b.brand_id,
-        brand_domain:     brand?.canonical_domain ?? null,
-        brand_logo_url:   brand?.logo_url ?? null,
-        hour_bucket:      b.hour_bucket,
-        threat_count:     b.threat_count,
-        distinct_domains: b.distinct_domains,
-        burst_start:      b.burst_start,
-        burst_end:        b.burst_end,
-      };
-    });
-
-    const body = {
-      success: true,
-      data: {
-        top_fanout_ips:        fanoutRes.results ?? [],
-        multi_feed_consensus:  consensusRes.results ?? [],
-        recent_bursts:         bursts,
-        generated_at:          new Date().toISOString(),
-      },
-    };
-    // Cost-sweep 2026-05-16: was 5min TTL → 1,800 D1 calls/24h
-    // × 235K rows/call for the GROUP BY fan-out scan = ~6M reads/day
-    // burned on Home-page Hotlist refreshes. The data doesn't shift
-    // meaningfully on a 5-min cadence (top-fan-out IPs and burst
-    // patterns are hour-scale signals) — 30min TTL cuts the burn ~6×
-    // without operator-noticeable staleness.
-    await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: 1800 });
-    return json(body, 200, origin);
-  } catch (err) {
+    const data = await cachedValue<MultiFeedConsensusIp[]>(
+      env,
+      MULTI_FEED_CONSENSUS_CACHE_KEY,
+      MULTI_FEED_CONSENSUS_TTL_SECONDS,
+      () => computeMultiFeedConsensus(env, getDbContext(request)),
+    );
+    return json({ success: true, data, total: data.length }, 200, origin);
+  } catch {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }

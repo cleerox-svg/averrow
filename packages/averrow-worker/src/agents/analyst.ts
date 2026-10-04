@@ -1245,7 +1245,7 @@ export const analystAgent: AgentModule = {
     // Always generate a diagnostic so agent_outputs gets populated even
     // when no insight-worthy events fire. Was previously type='classification'
     // (per-run summary noise) — separated from real insight rows so the
-    // `/api/insights/latest` consumer doesn't have to filter them out.
+    // insight readers don't have to filter them out.
     // Every Anthropic round-trip this run made came back unusable. The
     // agent still did real work (keyword pre-matching is rule-based and
     // unaffected), so this is a DEGRADED run, not a failed one — but it
