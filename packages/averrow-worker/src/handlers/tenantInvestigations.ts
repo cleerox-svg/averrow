@@ -93,10 +93,8 @@ export async function handleListInvestigations(
       "SELECT status, COUNT(*) AS count FROM investigations WHERE org_id = ? GROUP BY status",
     ).bind(orgId).all<{ status: string; count: number }>();
 
-    // NOTE: up to 100 rows x 2 ids. resolveTenantUserLabels de-duplicates
-    // ids but does NOT chunk its IN (...) on this branch — chunking lands in
-    // PR #1776. Until then a page referencing >100 DISTINCT users would
-    // exceed D1's 100-bind limit (same exposure as before this change).
+    // Up to 100 rows x 2 ids; resolveTenantUserLabels de-duplicates and
+    // looks them up in chunks of <=90 (D1's 100-bind limit).
     const data = await maskTenantUserRefsForRows(env, rows.results ?? [], CASE_USER_FIELDS);
 
     return json({
